@@ -143,7 +143,7 @@ func TestDashboardExplicitPeriodKeepsFiltersAndBuildsPreviousWindow(t *testing.T
 	if previous.DateFrom == nil || previous.DateTo == nil {
 		t.Fatal("previous period is incomplete")
 	}
-	if !previous.DateTo.Equal(from) || !previous.DateFrom.Equal(from.Add(-to.Sub(from))) {
+	if !previous.DateTo.Equal(from.Add(-time.Microsecond)) || !previous.DateFrom.Equal(from.Add(-to.Sub(from))) {
 		t.Fatalf("previous period = %v to %v", previous.DateFrom, previous.DateTo)
 	}
 	if previous.TeamID != filter.TeamID || previous.PageID != filter.PageID || previous.CampaignID != filter.CampaignID {

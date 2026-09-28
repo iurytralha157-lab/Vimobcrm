@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
+import { Pool } from 'pg';
 
-import { E2E_LEADS } from './support/e2e-env';
+import { E2E_LEADS, getE2EConfig } from './support/e2e-env';
 import { authenticatedAPIRequest, signInAs } from './support/auth';
 
 type LeadListPayload = {
@@ -69,10 +70,38 @@ test.describe('visibilidade e operacao de leads por perfil', () => {
     const historyBody = await historyResponse.text();
     expect(historyResponse.ok(), historyBody).toBeTruthy();
     const history = JSON.parse(historyBody) as LeadHistoryPayload;
-    const emailAudit = history.data.auditLogs.find((audit) => audit.new_data?.email === uniqueEmail);
+    const emailAudit = history.data.auditLogs
+      .filter((audit) => audit.new_data?.email === '[valor protegido]')
+      .at(-1);
     expect(emailAudit).toBeTruthy();
     expect(Object.keys(emailAudit?.new_data || {})).toEqual(['email']);
-    expect(emailAudit?.old_data).toEqual({ email: previousEmail });
+    expect(emailAudit?.old_data).toEqual({ email: previousEmail ? '[valor protegido]' : null });
+
+    const pool = new Pool({ connectionString: getE2EConfig().databaseURL });
+    try {
+      const persistedAudit = await pool.query<{ old_data: { email: string | null }; new_data: { email: string } }>(`
+        select old_data, new_data
+        from public.audit_logs
+        where entity_type = 'lead'
+          and entity_id = $1
+          and new_data->>'email' = $2
+        order by created_at desc
+        limit 1
+      `, [E2E_LEADS.team, uniqueEmail]);
+      expect(persistedAudit.rows[0]?.old_data).toEqual({ email: previousEmail });
+      expect(persistedAudit.rows[0]?.new_data).toEqual({ email: uniqueEmail });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  test('gestor lista e abre leads de qualquer equipe', async ({ page }) => {
+    await signInAs(page, 'manager');
+
+    const visible = await visibleLeadIDs(page);
+    expect(visible).toEqual(expect.arrayContaining(Object.values(E2E_LEADS)));
+    await expectLeadStatus(page, E2E_LEADS.outside, 200);
+    await expectLeadStatus(page, E2E_LEADS.team, 200);
   });
 
   test('lider lista, abre e edita leads explicitamente vinculados a sua equipe', async ({ page }) => {

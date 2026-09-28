@@ -589,7 +589,24 @@ func (repo Repository) loadOperationalRules(ctx context.Context, queryer operati
 	if err := rows.Err(); err != nil {
 		return OperationalRules{}, err
 	}
+	normalizeLegacyOperationalTaskPositions(rules.Cadence.Tasks)
 	return rules, nil
+}
+
+// Legacy templates can contain duplicate positions. Their read order is already
+// deterministic (position, due_minutes, created_at, id), so normalize only that
+// read model; the update endpoint still requires unique positions from callers.
+func normalizeLegacyOperationalTaskPositions(tasks []OperationalCadenceTask) {
+	seen := make(map[int]struct{}, len(tasks))
+	for _, task := range tasks {
+		if _, duplicate := seen[task.Position]; duplicate {
+			for index := range tasks {
+				tasks[index].Position = index
+			}
+			return
+		}
+		seen[task.Position] = struct{}{}
+	}
 }
 
 func (repo Repository) ensureOperationalTemplate(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, stage operationalStage, enabled bool) (string, error) {

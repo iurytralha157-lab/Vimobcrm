@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import {
   getDashboardDealsEvolution,
@@ -6,6 +6,7 @@ import {
   getDashboardFunnel,
   getDashboardLeadDistribution,
   getDashboardFirstContact,
+  getDashboardFirstContactLeadPage,
   getDashboardOptionalIdQueryKey,
   getDashboardSources,
   getDashboardStats,
@@ -16,6 +17,7 @@ import {
   type DashboardFunnelPoint,
   type DashboardLeadDistributionResponse,
   type DashboardFirstContactResponse,
+  type DashboardFirstContactLeadPageResponse,
   type DashboardStatsResponse,
   type DashboardTopBrokersResponse,
   type DashboardUpcomingTask,
@@ -53,6 +55,10 @@ export function useDashboardQueryScope() {
   ) ||
     normalizedMemberRole === "owner" ||
     normalizedMemberRole === "admin" ||
+    (normalizedMemberRole === "manager" &&
+      currentTenantContext?.permissions.some(
+        (permission) => permission === "lead_view_all" || permission === "*",
+      )) ||
     currentTenantContext?.isTeamLeader === true;
 
   return {
@@ -119,6 +125,7 @@ export type TopBroker = DashboardTopBrokersResponse["brokers"][number];
 export type TopBrokersResult = DashboardTopBrokersResponse;
 export type DashboardLeadDistribution = DashboardLeadDistributionResponse;
 export type DashboardFirstContact = DashboardFirstContactResponse;
+export type DashboardFirstContactLeadPage = DashboardFirstContactLeadPageResponse;
 export type UpcomingTask = DashboardUpcomingTask;
 
 export function useDashboardStats() {
@@ -228,7 +235,7 @@ export function useFunnelData(
 export function useLeadSourcesData(
   filters?: DashboardAPIFilters,
   pipelineId?: string | null,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; countEntries?: boolean } = {},
 ) {
   const { organizationId, currentUserId, accessSignature, isReady } =
     useDashboardQueryScope();
@@ -243,6 +250,7 @@ export function useLeadSourcesData(
       accessSignature,
       filterKey,
       pipelineKey,
+      options.countEntries === true ? "entries" : "cards",
     ],
     enabled: isReady && options.enabled !== false,
     queryFn: async ({ signal }): Promise<SourceDataPoint[]> => {
@@ -250,16 +258,22 @@ export function useLeadSourcesData(
         organizationId,
         filters,
         pipelineId,
+        countEntries: options.countEntries,
         signal,
       });
-      return data.map((item) => ({
-        name:
-          getDashboardSourceLabel(item.rawSource) ||
-          getDashboardSourceLabel(item.name) ||
-          item.name ||
-          "Outros",
+      const named = data.map((item) => ({
+        name: getDashboardSourceLabel(item.rawSource) ||
+          getDashboardSourceLabel(item.name) || item.name || "Outros",
         value: item.value,
         rawSource: item.rawSource,
+      }));
+      const labelCounts = new Map<string, number>();
+      named.forEach((item) => labelCounts.set(item.name, (labelCounts.get(item.name) ?? 0) + 1));
+      return named.map((item) => ({
+        ...item,
+        name: (labelCounts.get(item.name) ?? 0) > 1 && item.rawSource
+          ? `${item.name} · ${item.rawSource}`
+          : item.name,
       }));
     },
     staleTime: DASHBOARD_STALE_TIME_MS,
@@ -340,6 +354,32 @@ export function useDashboardFirstContact(
     queryFn: ({ signal }) =>
       getDashboardFirstContact({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
+  });
+}
+
+export function useDashboardFirstContactLeads(
+  filters: DashboardAPIFilters | undefined,
+  brokerId: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const { organizationId, currentUserId, accessSignature, isReady, canViewLeadDistribution } = useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
+  return useInfiniteQuery({
+    queryKey: ["dashboard-first-contact-leads", organizationId, currentUserId, accessSignature, filterKey, brokerId],
+    enabled: isReady && canViewLeadDistribution && Boolean(brokerId) && options.enabled !== false,
+    initialPageParam: 0,
+    queryFn: ({ signal, pageParam }) => getDashboardFirstContactLeadPage({
+      organizationId,
+      filters,
+      brokerId: brokerId!,
+      offset: pageParam,
+      limit: 25,
+      signal,
+    }),
+    getNextPageParam: (lastPage, pages) => lastPage.hasMore
+      ? pages.reduce((count, page) => count + page.items.length, 0)
+      : undefined,
+    staleTime: DASHBOARD_SHORT_STALE_TIME_MS,
   });
 }
 

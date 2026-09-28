@@ -35,6 +35,9 @@ const DASHBOARD_REALTIME_QUERY_KEYS = [
   "dashboard-extra-counts",
   "dashboard-lead-distribution",
   "dashboard-first-contact",
+  "dashboard-first-contact-leads",
+  "dashboard-lead-entries",
+  "dashboard-visits",
   "dashboard-recent-activities",
   "recent-activities",
   "top-brokers",
@@ -182,6 +185,15 @@ export function BackendRealtimeBus() {
     const handleMembershipAccessRefresh = (change: MembershipAccessChange) => {
       if (!isCurrentScope()) return;
 
+      void queryClientRef.current.invalidateQueries({
+        queryKey: ['lead-visibility', userId, organizationId],
+        refetchType: 'active',
+      });
+      void queryClientRef.current.invalidateQueries({
+        queryKey: ['pipeline-selected-lead-access', organizationId],
+        refetchType: 'active',
+      });
+
       if (change.revoked) {
         // Access revocation is safety-critical: leave this tenant before any
         // previously running profile refresh can delay the navigation.
@@ -241,6 +253,7 @@ export function BackendRealtimeBus() {
       }, delayMs);
     };
 
+    let connectionErrored = false;
     const disconnect = connectBackendRealtime({
       organizationId,
       onEvent: (event) => {
@@ -248,6 +261,7 @@ export function BackendRealtimeBus() {
         if (!isCurrentScope() || event.organizationId !== organizationId)
           return;
         if (event.type === "realtime.connected") {
+          connectionErrored = false;
           requestAccessRefresh();
           return;
         }
@@ -266,6 +280,28 @@ export function BackendRealtimeBus() {
             queryKey: ["invitations", organizationId],
             refetchType: "active",
           });
+          void activeQueryClient.invalidateQueries({
+            queryKey: ["teams", organizationId],
+            refetchType: "active",
+          });
+          void activeQueryClient.invalidateQueries({
+            queryKey: ["lead-visibility", userId, organizationId],
+            refetchType: "active",
+          });
+          return;
+        }
+
+        if (event.type.startsWith('team.') || event.type.startsWith('pipeline.') || event.type.startsWith('stage.')) {
+          for (const queryKey of [
+            ['teams', organizationId],
+            ['lead-visibility', userId, organizationId],
+            ['pipelines', organizationId],
+            ['stages', organizationId],
+            ['pipeline-selected-lead-access', organizationId],
+          ]) {
+            void activeQueryClient.invalidateQueries({ queryKey, refetchType: 'active' });
+          }
+          notifyLeadRealtimeChange({ organizationId, reason: event.type });
           return;
         }
 
@@ -283,6 +319,14 @@ export function BackendRealtimeBus() {
           const targetUserId =
             getString(event.data, "targetUserId") || event.userId;
           if (targetUserId === userId) {
+            void activeQueryClient.invalidateQueries({
+              queryKey: ["lead-visibility", userId, organizationId],
+              refetchType: "active",
+            });
+            void activeQueryClient.invalidateQueries({
+              queryKey: ["pipeline-selected-lead-access", organizationId],
+              refetchType: "active",
+            });
             requestAccessRefresh(() => {
               void queryClientRef.current.invalidateQueries({
                 queryKey: ["user-permissions", userId, organizationId],
@@ -333,7 +377,11 @@ export function BackendRealtimeBus() {
         }
       },
       onError: () => {
-        // The connector retries by itself; visible errors would be noisy here.
+        // Reconcile once per disconnect episode. The connector retries, while
+        // an active screen also performs a slower visible-tab reconciliation.
+        if (connectionErrored || !isCurrentScope()) return;
+        connectionErrored = true;
+        scheduleRealtimeReset();
       },
     });
 

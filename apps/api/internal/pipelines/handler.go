@@ -274,7 +274,11 @@ func writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrInvalidReference):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_pipeline_reference", "One or more pipeline references do not belong to this organization.")
 	case errors.Is(err, ErrHasLeads):
-		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_has_leads", "Move or delete related leads before deleting this item.")
+		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_has_leads", "Mova ou exclua os leads vinculados antes de excluir.")
+	case errors.Is(err, ErrHasDependencies):
+		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_has_dependencies", "Esta etapa ou funil possui histórico ou configurações vinculadas. Revise esses vínculos antes de excluir.")
+	case errors.Is(err, ErrStagesChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_stages_changed", "As colunas mudaram em outra sessão. Atualize e tente novamente.")
 	case errors.Is(err, ErrPipelineNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "pipeline_not_found", "Pipeline was not found.")
 	case errors.Is(err, ErrStageNotFound):

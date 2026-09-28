@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(30);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -53,7 +53,13 @@ from (values
   ('f1020000-0000-4000-8000-000000000005', 5),
   ('f1020000-0000-4000-8000-000000000006', 6),
   ('f1020000-0000-4000-8000-000000000007', 7)
-) as fixture(id, number);
+) as fixture(id, number)
+on conflict (id) do update set
+  organization_id = excluded.organization_id,
+  name = excluded.name,
+  email = excluded.email,
+  role = excluded.role,
+  is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 select
@@ -69,7 +75,11 @@ from (values
   ('f1020000-0000-4000-8000-000000000005', 5),
   ('f1020000-0000-4000-8000-000000000006', 6),
   ('f1020000-0000-4000-8000-000000000007', 7)
-) as fixture(id, number);
+) as fixture(id, number)
+on conflict (user_id, organization_id) do update set
+  role = excluded.role,
+  is_active = excluded.is_active,
+  deleted_at = null;
 
 insert into public.teams (id, organization_id, name, created_by, is_active)
 select
@@ -276,6 +286,69 @@ select is(
   'leader E sees none of the broker leads because the broker is not in E'
 );
 
+reset role;
+insert into public.organization_roles (id, organization_id, name, is_active)
+values (
+  'f1050000-0000-4000-8000-000000000001',
+  'f1010000-0000-4000-8000-000000000001',
+  'Legacy operational grants without lead view all',
+  true
+);
+insert into public.organization_role_permissions (
+  organization_role_id, permission_key, organization_id, role_id
+)
+select
+  'f1050000-0000-4000-8000-000000000001'::uuid,
+  permission_key,
+  'f1010000-0000-4000-8000-000000000001'::uuid,
+  'f1050000-0000-4000-8000-000000000001'::uuid
+from (values
+  ('lead_transfer'),
+  ('settings_teams'),
+  ('settings_users')
+) as grants(permission_key);
+insert into public.user_organization_roles (
+  user_id, organization_role_id, organization_id, role_id, is_active
+)
+values (
+  'f1020000-0000-4000-8000-000000000006',
+  'f1050000-0000-4000-8000-000000000001',
+  'f1010000-0000-4000-8000-000000000001',
+  'f1050000-0000-4000-8000-000000000001',
+  true
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select ok(
+  private.user_has_permission('lead_transfer', (select auth.uid()))
+    and private.user_has_permission('settings_teams', (select auth.uid()))
+    and private.user_has_permission('settings_users', (select auth.uid())),
+  'leader E holds all three legacy operational grants'
+);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'operational legacy grants do not expand leader E beyond its own unassigned team lead'
+);
+
+reset role;
+insert into public.organization_role_permissions (
+  organization_role_id, permission_key, organization_id, role_id
+)
+values (
+  'f1050000-0000-4000-8000-000000000001',
+  'lead_edit_all',
+  'f1010000-0000-4000-8000-000000000001',
+  'f1050000-0000-4000-8000-000000000001'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  6::bigint,
+  'legacy lead_edit_all still implies organization-wide lead read access'
+);
+
 select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000001', true);
 select is(
   (select count(*) from public.leads where id between 'f1040000-0000-4000-8000-000000000001' and 'f1040000-0000-4000-8000-000000000004'),
@@ -299,8 +372,8 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000002', true);
 select is(
   (select count(*) from public.leads where id between 'f1040000-0000-4000-8000-000000000001' and 'f1040000-0000-4000-8000-000000000004'),
-  1::bigint,
-  'inactive broker membership in the lead organization blocks cross-team reads'
+  0::bigint,
+  'inactive broker organization membership blocks assigned leads, including the one recorded under team A'
 );
 
 reset role;
@@ -315,8 +388,8 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000002', true);
 select is(
   (select count(*) from public.leads where id between 'f1040000-0000-4000-8000-000000000001' and 'f1040000-0000-4000-8000-000000000004'),
-  1::bigint,
-  'inactive broker user blocks cross-team reads'
+  0::bigint,
+  'inactive broker user blocks assigned leads, including the one recorded under team A'
 );
 
 reset role;
@@ -331,8 +404,25 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000002', true);
 select is(
   (select count(*) from public.leads where id between 'f1040000-0000-4000-8000-000000000001' and 'f1040000-0000-4000-8000-000000000004'),
+  0::bigint,
+  'inactive broker membership in A revokes leader A access despite the assigned lead retaining recorded team A'
+);
+select is(
+  (select count(*) from public.lead_attachments where file_name = 'broker-a.txt'),
+  0::bigint,
+  'attachment on an assigned lead follows the active assignee team, not recorded team A'
+);
+select is(
+  (select count(*) from public.leads where id = 'f1040000-0000-4000-8000-000000000005'),
   1::bigint,
-  'inactive broker membership stops cross-team reads but keeps the team A lead'
+  'leader A still reads a genuinely unassigned lead recorded under team A'
+);
+
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000003', true);
+select is(
+  (select count(*) from public.leads where id = 'f1040000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'leader B still reads the assigned lead recorded under A through the broker active in B'
 );
 
 reset role;

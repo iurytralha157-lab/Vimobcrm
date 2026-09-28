@@ -8,6 +8,7 @@ import {
   leadCreateInputSchema,
   leadListQuerySchema,
   leadMoveStageInputSchema,
+  leadRedistributeInputSchema,
   leadTagInputSchema,
   leadUpdateInputSchema,
   parseDomainInput,
@@ -42,6 +43,7 @@ type LeadRow = Tables<'leads'>
 type APILead = {
   id: string
   organizationId: string
+  canOperate?: boolean
   name: string
   email?: string
   phone?: string
@@ -85,6 +87,10 @@ type APILead = {
   boardOrderAt?: string
   lastContactAt?: string
   nextFollowUpAt?: string
+  firstResponseAt?: string
+  firstResponseSeconds?: number
+  firstResponseChannel?: string
+  firstResponseIsAutomation?: boolean
   additionalFields?: {
     cargo?: string
     empresa?: string
@@ -176,6 +182,7 @@ type LeadCreateInput = Partial<LeadInsert> & {
 
 type LeadMoveStageInput = {
   stageId: string
+  expectedStageId?: string | null
   isOwnResource?: boolean | null
   boardOrderAt?: string | null
   lostReason?: string | null
@@ -208,9 +215,11 @@ export const leadsAPI = {
     }
   },
 
-  async getLead(leadId: string, organizationId: string) {
+  async getLead(leadId: string, organizationId: string, signal?: AbortSignal) {
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
       organizationId,
+      cache: 'no-store',
+      signal,
     })
     validateDomainResponse(apiLeadResponseSchema, response, 'leads.get')
 
@@ -327,10 +336,15 @@ export const leadsAPI = {
     }
   },
 
-  async redistributeLeadRoundRobin(leadId: string, organizationId?: string) {
+  async redistributeLeadRoundRobin(
+    leadId: string,
+    organizationId?: string,
+    options?: { expectedUnassigned: boolean },
+  ) {
     const response = await vimobAPIRequest<APIRoundRobinResponse>(`/v1/leads/${leadId}/redistribute`, {
       method: 'POST',
       organizationId,
+      ...(options ? { body: parseDomainInput(leadRedistributeInputSchema, options, 'leads.redistribute') } : {}),
     })
     validateDomainResponse(apiLeadRoundRobinResponseSchema, response, 'leads.redistribute')
 
@@ -500,11 +514,13 @@ function toAPILeadUpdateBody(data: LeadUpdateInput) {
 }
 
 export function toLegacyLead(lead: APILead): LeadRow & {
+  can_operate?: boolean
   stage?: { id: string; name: string; color: string | null; stage_key: string | null }
   assignee?: { id: string; name: string; avatar_url: string | null }
   tags?: []
 } {
   return {
+    ...(typeof lead.canOperate === 'boolean' ? { can_operate: lead.canOperate } : {}),
     assigned_at: null,
     assigned_user_id: lead.assignedUserId || null,
     attention_eligible: false,
@@ -525,10 +541,10 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     feedback: lead.feedback || null,
     finalidade_compra: lead.finalidadeCompra || null,
     first_response_actor_user_id: null,
-    first_response_at: null,
-    first_response_channel: null,
-    first_response_is_automation: null,
-    first_response_seconds: null,
+    first_response_at: lead.firstResponseAt ?? null,
+    first_response_channel: lead.firstResponseChannel ?? null,
+    first_response_is_automation: lead.firstResponseIsAutomation ?? null,
+    first_response_seconds: lead.firstResponseSeconds ?? null,
     first_touch_actor_user_id: null,
     first_touch_at: null,
     first_touch_channel: null,

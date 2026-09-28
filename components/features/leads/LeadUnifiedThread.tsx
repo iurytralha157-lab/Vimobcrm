@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, Loader2, MessageCircle, Paperclip, Timer } from 'lucide-react';
+import { Bot, Loader2, MessageCircle, Paperclip, RefreshCw, Timer } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
@@ -105,8 +105,8 @@ const OUTCOME_LABELS: Record<string, string> = {
   not_seen: 'Não visualizou',
   no_whatsapp: 'Lead sem WhatsApp',
   not_replied: 'Não respondeu',
-  bounced: 'E-mail invalido',
-  done: 'Concluido',
+  bounced: 'E-mail inválido',
+  done: 'Concluído',
 };
 
 function metadataText(value: unknown): string | null {
@@ -161,7 +161,7 @@ function getStageNameFromMetadata(metadata: Record<string, unknown> | null | und
 function getOutcomeLabel(event: UnifiedHistoryEvent) {
   const outcome = metadataText(event.metadata?.outcome);
   if (!outcome) return null;
-  return OUTCOME_LABELS[outcome] || outcome;
+  return OUTCOME_LABELS[outcome] || 'Resultado registrado';
 }
 
 function getOutcomeVariant(event: UnifiedHistoryEvent): 'success' | 'warning' | 'error' | 'default' {
@@ -178,7 +178,7 @@ function getOutcomeActionLabel(event: UnifiedHistoryEvent) {
   if (!outcomeLabel) return null;
 
   const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
-  if (event.type === 'call' || channel === 'call' || channel === 'phone') return `Ligacao: ${outcomeLabel}`;
+  if (event.type === 'call' || channel === 'call' || channel === 'phone') return `Ligação: ${outcomeLabel}`;
   if (event.type === 'email' || channel === 'email') return `E-mail: ${outcomeLabel}`;
   if (event.type === 'message' || channel === 'message' || channel === 'whatsapp') return `Mensagem: ${outcomeLabel}`;
   if (event.type === 'task_completed') return `Tarefa: ${outcomeLabel}`;
@@ -401,10 +401,10 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
     const to = getStageNameFromMetadata(metadata, 'to');
     const isInitial = !from || from.toLowerCase() === 'desconhecido' || from.toLowerCase() === 'unknown';
     if (!isInitial && from && to) {
-      return `Etapa: ${from} -> ${to}`;
+      return `Lead movido: ${from} → ${to}`;
     }
     if (to) {
-      return `Iniciado no estágio ${to}`;
+      return `Lead iniciado em ${to}`;
     }
     return 'Etapa alterada';
   }
@@ -421,6 +421,8 @@ function eventSearchText(event: UnifiedHistoryEvent) {
 
 function shouldShowEvent(event: UnifiedHistoryEvent) {
   const text = eventSearchText(event);
+  if ((event.type === 'lead_assigned' || event.type === 'lead_distribution_pending')
+    && ['no_available_members', 'no_matching_queue'].includes(metadataText(event.metadata?.reason) || '')) return true;
   if (event.type === 'lead_assigned' && text.includes('registro sem fila')) return false;
   if (text.includes('sem fila de distribui')) return false;
   if (text.includes('fila "') && text.includes('sem distribui')) return false;
@@ -487,9 +489,12 @@ function isFeedbackEvent(event: UnifiedHistoryEvent) {
   return (event.type === 'note' || event.type === 'note_created') && Boolean(event.content?.trim()) && !isAttachmentEvent(event);
 }
 
-function getEventTone(event: UnifiedHistoryEvent) {
+function getEventTone(event: UnifiedHistoryEvent, plainHistory: boolean) {
   const text = `${event.type} ${event.label} ${event.content || ''}`.toLowerCase();
   const toStatus = String(event.metadata?.to_status || event.metadata?.new_status || '').toLowerCase();
+  const neutralTone = plainHistory
+    ? 'bg-zinc-700 !text-white'
+    : 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
 
   if (event.type === 'lead_created' || text.includes('foi criado')) {
     return 'bg-green-600 !text-white';
@@ -499,8 +504,12 @@ function getEventTone(event: UnifiedHistoryEvent) {
     return 'bg-amber-400 !text-amber-950';
   }
 
+  if (event.type === 'assignee_changed' && metadataText(event.metadata?.reason) === 'manual_transfer') {
+    return 'bg-violet-600 !text-white';
+  }
+
   if (event.type === 'task_completed') {
-    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
+    return neutralTone;
   }
 
   if (event.type === 'meta_form_answer') {
@@ -512,7 +521,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (event.type === 'property_selected' || event.type === 'property_linked') {
-    return 'bg-primary/10 !text-primary';
+    return plainHistory ? 'bg-orange-700 !text-white' : 'bg-primary/10 !text-primary';
   }
 
   if (
@@ -523,11 +532,11 @@ function getEventTone(event: UnifiedHistoryEvent) {
     event.type === 'meeting_scheduled' ||
     event.type === 'meeting_held'
   ) {
-    return 'bg-blue-500/10 !text-blue-600 dark:!text-blue-300';
+    return plainHistory ? 'bg-blue-600 !text-white' : 'bg-blue-500/10 !text-blue-600 dark:!text-blue-300';
   }
 
   if (event.type === 'proposal_sent') {
-    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
+    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   if (toStatus === 'won') {
@@ -539,7 +548,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (toStatus === 'open') {
-    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
+    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   if (text.includes('ganho') || text.includes('venda conclu')) {
@@ -551,7 +560,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (text.includes('reaberto')) {
-    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
+    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   const outcomeVariant = getOutcomeVariant(event);
@@ -560,20 +569,20 @@ function getEventTone(event: UnifiedHistoryEvent) {
   if (outcomeVariant === 'error') return 'bg-red-600 !text-white';
 
   if (event.type === 'stage_changed' || event.type === 'stage_change') {
-    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
+    return neutralTone;
   }
 
   if (event.type.includes('tag')) {
-    return 'bg-primary/12 !text-primary';
+    return plainHistory ? 'bg-violet-600 !text-white' : 'bg-primary/12 !text-primary';
   }
 
-  return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
+  return neutralTone;
 }
 
-function DatePill({ date }: { date: Date }) {
+function DatePill({ date, plainHistory }: { date: Date; plainHistory: boolean }) {
   return (
     <div className="my-2 flex justify-center">
-      <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
+      <span className={cn('rounded-[6px] px-2 py-1 text-[10px] font-light text-[var(--app-text-tertiary)]', plainHistory ? 'bg-transparent' : 'bg-[var(--app-surface-soft)]')}>
         {isSameDay(date, new Date()) ? 'Hoje' : format(date, "dd/MM/yyyy", { locale: ptBR })}
       </span>
     </div>
@@ -599,10 +608,113 @@ function getEventAlignment(event: UnifiedHistoryEvent) {
   return 'right';
 }
 
-function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
+function getPendingDistribution(event: UnifiedHistoryEvent) {
+  if (event.type !== 'lead_assigned' && event.type !== 'lead_distribution_pending') return null;
+  const metadata = event.metadata || {};
+  const reason = metadataText(metadata.reason);
+  if (reason !== 'no_available_members' && reason !== 'no_matching_queue') return null;
+  if (metadataText(metadata.assigned_user_id) || metadataText(metadata.to_user_id)) return null;
+  return {
+    reason,
+    queue: metadataText(metadata.distribution_queue_name) || metadataText(metadata.queue_name),
+  };
+}
+
+function getAutomaticAssignment(event: UnifiedHistoryEvent) {
+  if (event.type !== 'lead_assigned' && event.type !== 'assignee_changed') return null;
+
+  const metadata = event.metadata || {};
+  const queue = metadataText(metadata.distribution_queue_name) || metadataText(metadata.queue_name);
+  const distributionType = metadataText(metadata.distribution_type);
+  const isAutomatic = event.isAutomation
+    || metadata.is_automation === true
+    || (event.type === 'lead_assigned' && (Boolean(queue) || distributionType === 'canonical_round_robin'));
+  if (!isAutomatic) return null;
+
+  const recipient = metadataText(metadata.assigned_user_name) || metadataText(metadata.to_user_name);
+  const recipientId = metadataText(metadata.assigned_user_id) || metadataText(metadata.to_user_id);
+  if (!recipient && !recipientId) return null;
+  const reason = metadataText(metadata.reason);
+  const action = reason === 'auto_redistribution' || metadata.is_initial_distribution === false
+    ? 'Lead redistribuído'
+    : queue ? 'Lead distribuído' : 'Lead atribuído';
+
+  return { action, recipient, queue };
+}
+
+function getManualTransfer(event: UnifiedHistoryEvent) {
+  if (event.type !== 'assignee_changed' || metadataText(event.metadata?.reason) !== 'manual_transfer') return null;
+  const recipient = metadataText(event.metadata?.to_user_name);
+  if (!recipient) return null;
+  const actor = metadataText(event.metadata?.transferred_by_name) || event.actor?.name || null;
+  return { recipient, actor };
+}
+
+function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plainHistory: boolean }) {
+  const pendingDistribution = getPendingDistribution(event);
+  if (pendingDistribution) {
+    return (
+      <div className="flex justify-end px-2">
+        <div className="max-w-[88%] rounded-[8px] border-l-2 border-primary bg-zinc-700 px-3 py-1.5 text-right text-[10px] text-white">
+          <div className="break-words leading-snug">
+            {pendingDistribution.reason === 'no_matching_queue'
+              ? 'Nenhuma fila de distribuição compatível para este lead'
+              : pendingDistribution.queue
+                ? <>Tentativa de distribuição via <span className="font-medium">{pendingDistribution.queue}</span>: nenhum responsável disponível</>
+                : 'Tentativa de distribuição: nenhum responsável disponível'}
+          </div>
+          <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-white/80">
+            <span>{formatEventTime(event.timestamp)}</span>
+            <Bot aria-hidden="true" className="h-3 w-3 shrink-0" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const automaticAssignment = getAutomaticAssignment(event);
+  if (automaticAssignment) {
+    return (
+      <div className="flex justify-end px-2">
+        <div className="relative max-w-[88%] rounded-[8px] px-3 py-1.5 text-right text-[10px] text-white">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[8px] bg-primary opacity-50" />
+          <div className="relative">
+            <div className="break-words leading-snug">
+              {automaticAssignment.action}
+              {automaticAssignment.recipient && <> <span aria-hidden="true">→</span> <span className="font-medium">{automaticAssignment.recipient}</span></>}
+            </div>
+            {automaticAssignment.queue && <div className="mt-0.5 break-words text-[9px] text-white/90">Fila: {automaticAssignment.queue}</div>}
+            <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-white/90">
+              <span>{formatEventTime(event.timestamp)}</span>
+              <Bot aria-hidden="true" className="h-3 w-3 shrink-0" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const manualTransfer = getManualTransfer(event);
+  if (manualTransfer) {
+    return (
+      <div className="flex justify-end px-2">
+        <div className="flex max-w-[88%] items-end gap-1.5">
+          <div className="rounded-[8px] bg-violet-600 px-3 py-1.5 text-right text-[10px] text-white">
+            <div className="break-words leading-snug">Lead transferido para <span className="font-medium">{manualTransfer.recipient}</span></div>
+            <div className="mt-0.5 text-[9px] text-white/80">
+              {manualTransfer.actor && <span>Por {manualTransfer.actor} · </span>}
+              <span>{formatEventTime(event.timestamp)}</span>
+            </div>
+          </div>
+          <EventActor event={event} />
+        </div>
+      </div>
+    );
+  }
+
   const alignment = getEventAlignment(event);
   const detail = getEventDetail(event);
-  const toneClass = getEventTone(event);
+  const toneClass = getEventTone(event, plainHistory);
   const isSolidTone = toneClass.includes('!text-white');
   const isFirstResponse = event.type === 'first_response';
 
@@ -645,6 +757,14 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
       getSafeHttpUrl(metadataText(metadata.creative_link_url)) ||
       getSafeHttpUrl(metadataText(metadata.creative_destination_url)) ||
       getSafeHttpUrl(metadataText(metadata.creative_instagram_url));
+    const creativeTitle =
+      metadataText(metadata.creative_name) ||
+      metadataText(metadata.ad_name) ||
+      metadataText(metadata.campaign_name) ||
+      metadataText(metadata.adset_name) ||
+      metadataText(metadata.form_name) ||
+      normalizeEventLabel(event) ||
+      'Criativo Meta registrado';
 
     return (
       <div className="flex justify-end px-2">
@@ -667,6 +787,12 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
                   className="max-h-[260px] w-full object-contain"
                 />
               ) : null}
+            </div>
+          )}
+
+          {!videoUrl && !imageUrl && (
+            <div className="px-3 pt-2 text-[10px] leading-snug text-primary-foreground/90">
+              {creativeTitle}
             </div>
           )}
 
@@ -703,7 +829,7 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
         <span className={cn('ml-2', isFirstResponse ? 'text-amber-950/65' : isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
           {formatEventTime(event.timestamp)}
         </span>
-        {event.isAutomation && <Bot className="ml-1 inline h-3 w-3 align-[-2px]" />}
+        {event.isAutomation && <Bot aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-2px]" />}
       </div>
       {detail && (
         <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[10px] normal-case leading-snug', isSolidTone ? 'text-white/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
@@ -725,18 +851,18 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
     <div className="flex justify-end px-2">
       <div className="flex max-w-[88%] items-end gap-1.5">
         {bubble}
-        <EventActor event={event} />
+        {!event.isAutomation && <EventActor event={event} />}
       </div>
     </div>
   );
 }
 
-function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
+function FeedbackBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plainHistory: boolean }) {
   const actorName = event.actor?.name || 'Equipe';
 
   return (
     <div className="flex items-end justify-end gap-2 px-2">
-      <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)]">
+      <div className={cn('max-w-[82%] rounded-[8px] px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)]', plainHistory ? 'bg-[var(--lead-history-message-bg)]' : 'bg-primary/12')}>
         <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-light text-[var(--app-text-tertiary)]">
           <span>Feedback</span>
           <span>{formatEventTime(event.timestamp)}</span>
@@ -768,7 +894,12 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const hasWhatsAppModule = hasModule('whatsapp');
   const canViewWhatsApp = hasWhatsAppModule && (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
   const canOperateWhatsApp = hasWhatsAppModule && hasPermission('whatsapp_operate');
-  const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
+  const {
+    data: history = [],
+    isLoading: loadingHistory,
+    isError: historyError,
+    refetch: refetchHistory,
+  } = useLeadHistory(leadId);
   const shouldLoadComposerData = canViewWhatsApp && !readOnly;
   const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
     enabled: shouldLoadComposerData,
@@ -792,6 +923,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const {
     data: messages = [],
     isLoading: loadingMessages,
+    isError: messagesError,
     refetch: refetchMessages,
     hasOlderMessages,
     loadOlderMessages,
@@ -1177,11 +1309,34 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       />
       <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
-        <div ref={threadScrollRef} className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
+        <div ref={threadScrollRef} className={cn('lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3', readOnly && 'lead-thread-scroll-readable')}>
           {isLoading && (
             <div className="flex h-full flex-col items-center justify-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-[var(--app-text-tertiary)]" />
               <span className="text-[11px] text-[var(--app-text-tertiary)]">Carregando histórico e mensagens...</span>
+            </div>
+          )}
+
+          {!isLoading && (historyError || messagesError) && (
+            <div role="alert" className="mx-2 rounded-[8px] bg-destructive/10 px-3 py-2.5 text-[11px] text-destructive">
+              <p>
+                {historyError && messagesError
+                  ? 'Não foi possível carregar o histórico e as mensagens.'
+                  : historyError
+                    ? 'Não foi possível carregar o histórico de atividades.'
+                    : 'Não foi possível carregar as mensagens.'}
+              </p>
+              <button
+                type="button"
+                className="mt-2 inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11px] hover:bg-destructive/10"
+                onClick={() => void Promise.all([
+                  ...(historyError ? [refetchHistory()] : []),
+                  ...(messagesError ? [refetchMessages()] : []),
+                ])}
+              >
+                <RefreshCw className="h-3 w-3" />
+                Tentar novamente
+              </button>
             </div>
           )}
 
@@ -1199,7 +1354,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             </div>
           )}
 
-          {!isLoading && items.length === 0 && (
+          {!isLoading && !historyError && !messagesError && items.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center text-[var(--app-text-tertiary)]">
               <MessageCircle className="h-7 w-7" />
               <p className="text-xs">Nenhum evento ou mensagem registrado ainda.</p>
@@ -1214,12 +1369,12 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
             return (
               <div key={item.id} className="space-y-3">
-                {showDate && itemDate && <DatePill date={itemDate} />}
+                {showDate && itemDate && <DatePill date={itemDate} plainHistory={readOnly} />}
                 {item.kind === 'event' ? (
                   isFeedbackEvent(item.event) ? (
-                    <FeedbackBubble event={item.event} />
+                    <FeedbackBubble event={item.event} plainHistory={readOnly} />
                   ) : (
-                    <EventBubble event={item.event} />
+                    <EventBubble event={item.event} plainHistory={readOnly} />
                   )
                 ) : (
                   <MessageErrorBoundary messageId={item.message.id}>
@@ -1246,6 +1401,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
                       conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
                       compact
+                      plainHistory={readOnly}
                       reactionPickerPosition="outside"
                       reactions={(item.message.message_id
                         ? reactionsByMessageId.get(item.message.message_id)

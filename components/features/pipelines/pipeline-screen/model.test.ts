@@ -68,10 +68,19 @@ test('prioriza totais da API e calcula fallback e paginacao por coluna', () => {
   const stages = [
     stage({ leads: [lead], total_lead_count: 4, has_more: true }),
     stage({ id: 'stage-2', total_value: 900_000, leads: [lead], total_lead_count: 1 }),
+    stage({
+      id: 'stage-3',
+      leads: [{
+        ...lead,
+        interest_property: { preco: 900_000 },
+      } as PipelineLead],
+      total_lead_count: 1,
+    }),
   ];
 
   assert.equal(buildStageValueMap(stages).get('stage-1')?.totalValue, 350_000);
   assert.equal(buildStageValueMap(stages).get('stage-2')?.totalValue, 900_000);
+  assert.equal(buildStageValueMap(stages).get('stage-3')?.totalValue, 350_000);
   assert.deepEqual(buildStageCountMetaMap(stages).get('stage-1'), {
     total: 4,
     visible: 1,

@@ -3,6 +3,7 @@ package leads
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -291,20 +292,31 @@ func (handler Handler) RedistributeRoundRobin(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	result, err := handler.repo.RedistributeRoundRobin(r.Context(), tenantContext, r.PathValue("id"))
+	defer r.Body.Close()
+	var request RedistributeRoundRobinRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+
+	result, err := handler.repo.RedistributeRoundRobin(r.Context(), tenantContext, r.PathValue("id"), request.ExpectedUnassigned)
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
 
-	handler.publishLeadEvent(tenantContext, "lead.redistributed", result.LeadID, map[string]any{
-		"leadId":         result.LeadID,
-		"pipelineId":     result.PipelineID,
-		"stageId":        result.StageID,
-		"assignedUserId": result.AssignedUserID,
-		"roundRobinId":   result.RoundRobinID,
-		"roundRobinUsed": result.RoundRobinUsed,
-	})
+	if result.Success && result.AssignedUserID != "" {
+		handler.publishLeadEvent(tenantContext, "lead.redistributed", result.LeadID, map[string]any{
+			"leadId":         result.LeadID,
+			"pipelineId":     result.PipelineID,
+			"stageId":        result.StageID,
+			"assignedUserId": result.AssignedUserID,
+			"roundRobinId":   result.RoundRobinID,
+			"roundRobinUsed": result.RoundRobinUsed,
+		})
+	}
 	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
@@ -403,6 +415,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_input", err.Error())
 	case errors.Is(err, ErrNoLeadChanges):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "no_lead_changes", "No lead changes were provided.")
+	case errors.Is(err, ErrLeadStageChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_stage_changed", "O lead mudou de etapa em outra sessão. Atualize e tente novamente.")
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
 	case errors.Is(err, ErrLeadSourceAlreadyExists):

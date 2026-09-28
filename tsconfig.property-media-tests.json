@@ -19,6 +19,8 @@
     "lib/property-media-draft.test.ts",
     "lib/property-media-asset-input.ts",
     "lib/property-media-asset-input.test.ts",
+    "lib/property-asset-order.ts",
+    "lib/property-asset-order.test.ts",
     "lib/property-media-persistence.ts",
     "lib/api/property-media.test.ts",
     "lib/validation/common.ts",

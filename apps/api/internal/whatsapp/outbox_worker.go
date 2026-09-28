@@ -1540,17 +1540,41 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			      coalesce(lead.last_contact_at, '-infinity'::timestamptz),
 			      coalesce(message.sent_at, now())
 			    ),
-			    first_response_at = coalesce(lead.first_response_at, message.sent_at, now()),
-			    first_response_seconds = coalesce(
-			      lead.first_response_seconds,
-			      greatest(0, extract(epoch from (coalesce(message.sent_at, now()) - lead.created_at))::integer)
-			    ),
-			    first_response_channel = coalesce(lead.first_response_channel, 'whatsapp'),
-			    first_response_is_automation = coalesce(
-			      lead.first_response_is_automation,
-			      coalesce(message.metadata->>'origin', '') = 'automation'
-			    ),
-			    first_response_actor_user_id = coalesce(lead.first_response_actor_user_id, message.sender_user_id),
+			    first_response_at = case
+			      when lead.first_response_at is null
+			        or (coalesce(lead.first_response_is_automation, false)
+			          and message.sender_user_id is not null
+			          and coalesce(message.metadata->>'origin', '') <> 'automation')
+			      then coalesce(message.sent_at, now()) else lead.first_response_at end,
+			    first_response_seconds = case
+			      when lead.first_response_at is null
+			        or (coalesce(lead.first_response_is_automation, false)
+			          and message.sender_user_id is not null
+			          and coalesce(message.metadata->>'origin', '') <> 'automation')
+			      then greatest(0, extract(epoch from (coalesce(message.sent_at, now()) - coalesce(
+			        (select cycle.assigned_at from public.lead_assignment_cycles cycle
+			         where cycle.organization_id = lead.organization_id
+			           and cycle.lead_id = lead.id and cycle.ended_at is null
+			         order by cycle.cycle_number desc limit 1),
+			        lead.assigned_at, lead.created_at
+			      )))::integer)
+			      else lead.first_response_seconds end,
+			    first_response_channel = case
+			      when lead.first_response_at is null or coalesce(lead.first_response_is_automation, false)
+			        and message.sender_user_id is not null
+			        and coalesce(message.metadata->>'origin', '') <> 'automation'
+			      then 'whatsapp' else lead.first_response_channel end,
+			    first_response_is_automation = case
+			      when lead.first_response_at is null or coalesce(lead.first_response_is_automation, false)
+			        and message.sender_user_id is not null
+			        and coalesce(message.metadata->>'origin', '') <> 'automation'
+			      then coalesce(message.metadata->>'origin', '') = 'automation' or message.sender_user_id is null
+			      else lead.first_response_is_automation end,
+			    first_response_actor_user_id = case
+			      when lead.first_response_at is null or coalesce(lead.first_response_is_automation, false)
+			        and message.sender_user_id is not null
+			        and coalesce(message.metadata->>'origin', '') <> 'automation'
+			      then message.sender_user_id else lead.first_response_actor_user_id end,
 			    updated_at = now()
 			from public.whatsapp_messages as message
 			where message.id = $1::uuid

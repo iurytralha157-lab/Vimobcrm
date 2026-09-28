@@ -28,6 +28,7 @@ import {
 } from '@/lib/property-display-utils'
 import type { PropertyWorkspaceAsset, PropertyWorkspacePayload } from '@/lib/validation'
 import { cn } from '@/lib/utils'
+import { getAssetPreviewSource } from './property-asset-preview'
 
 type WorkspaceProperty = PropertyWorkspacePayload['property']
 
@@ -52,9 +53,57 @@ const ASSET_TYPE_LABELS: Record<PropertyWorkspaceAsset['asset_type'], string> = 
 }
 
 const ASSET_VISIBILITY_LABELS: Record<PropertyWorkspaceAsset['visibility'], string> = {
-  public: 'Público',
-  internal: 'Interno',
+  public: 'Pode ser publicada',
+  internal: 'Uso interno',
   confidential: 'Confidencial',
+}
+
+function AssetPhotoPreview({
+  asset,
+  name,
+  position,
+  total,
+}: {
+  asset: PropertyWorkspaceAsset
+  name: string
+  position: number
+  total: number
+}) {
+  const source = getAssetPreviewSource(asset)
+  const [failedSource, setFailedSource] = useState<string | null>(null)
+
+  return (
+    <div className="relative aspect-[4/3] overflow-hidden rounded-[6px] bg-[var(--app-surface-solid)]">
+      {source && failedSource !== source ? (
+        <Image
+          src={source}
+          alt={name}
+          fill
+          sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 33vw"
+          loading="lazy"
+          className="object-cover"
+          unoptimized
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSource(source)}
+        />
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
+          <ImageIcon aria-hidden="true" className="h-6 w-6 opacity-50" />
+          <span className="text-[11px] font-light">
+            {source ? 'Não foi possível carregar a foto' : 'Prévia da foto indisponível'}
+          </span>
+        </div>
+      )}
+      <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-2">
+        {asset.is_primary ? (
+          <Badge className="rounded-[4px] border-0 text-[10px] font-normal shadow-sm">Principal</Badge>
+        ) : <span />}
+        <span className="rounded-[4px] bg-black/65 px-2 py-1 text-[10px] font-normal text-white">
+          {position} / {total}
+        </span>
+      </div>
+    </div>
+  )
 }
 
 function formatFileSize(value: number | null) {
@@ -222,6 +271,9 @@ export function AssetCatalog({
     )
   }
 
+  const photos = assets.filter((asset) => asset.asset_type === 'photo')
+  const photoPositionById = new Map(photos.map((asset, index) => [asset.id, index + 1]))
+
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {assets.map((asset) => {
@@ -232,12 +284,17 @@ export function AssetCatalog({
           : ASSET_VISIBILITY_LABELS[asset.visibility]
 
         return (
-          <article key={asset.id} className="min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
-            <div className="flex items-start justify-between gap-3">
+          <article key={asset.id} className="min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+            {asset.asset_type === 'photo' && (
+              <AssetPhotoPreview asset={asset} name={displayName} position={photoPositionById.get(asset.id) ?? 1} total={photos.length} />
+            )}
+            <div className="mt-3 flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)] text-primary">
-                  {asset.asset_type === 'photo' ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                </span>
+                {asset.asset_type !== 'photo' && (
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)] text-primary">
+                    <FileText className="h-4 w-4" />
+                  </span>
+                )}
                 <div className="min-w-0">
                   <h4 className="break-words text-[12px] font-normal text-[var(--app-text-primary)]">{displayName}</h4>
                   <p className="mt-0.5 text-[10px] font-light text-muted-foreground">
@@ -245,7 +302,7 @@ export function AssetCatalog({
                   </p>
                 </div>
               </div>
-              {asset.is_primary && (
+              {asset.asset_type !== 'photo' && asset.is_primary && (
                 <Badge className="shrink-0 rounded-[4px] border-0 text-[9px] font-light">Principal</Badge>
               )}
             </div>
@@ -256,68 +313,74 @@ export function AssetCatalog({
               </p>
             )}
 
-            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--app-border)] pt-3 text-[10px] font-light">
-              <div>
-                <dt className="text-muted-foreground">Arquivo</dt>
-                <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.file_name || 'Não informado'}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Formato</dt>
-                <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.mime_type || 'Não informado'}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Tamanho</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatFileSize(asset.file_size_bytes)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Ordem</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.sort_order + 1}</dd>
-              </div>
-              {asset.asset_type === 'document' && (
-                <>
-                  <div>
-                    <dt className="text-muted-foreground">Categoria</dt>
-                    <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.document_category || 'Não informada'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Validade</dt>
-                    <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.expires_at)}</dd>
-                  </div>
-                </>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--app-border)] pt-2 text-[10px] font-light text-muted-foreground">
+              <span>{formatFileSize(asset.file_size_bytes)}</span>
+              {href && (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-[4px] font-normal text-primary hover:underline"
+                >
+                  Abrir arquivo <ExternalLink aria-hidden="true" className="h-3 w-3" />
+                </a>
               )}
-              <div>
-                <dt className="text-muted-foreground">Criado em</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.created_at, true)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Atualizado em</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.updated_at, true)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Origem do arquivo</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">
-                  {asset.storage_path ? 'Armazenamento protegido' : asset.external_url ? 'Link externo' : 'Não informada'}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Metadados</dt>
-                <dd className="mt-0.5 text-[var(--app-text-primary)]">{Object.keys(asset.metadata).length} campos registrados</dd>
-              </div>
-            </dl>
+            </div>
 
-            <p className="mt-3 break-all font-mono text-[9px] font-light text-muted-foreground">ID: {asset.id}</p>
-
-            {href && (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 inline-flex items-center gap-1.5 rounded-[4px] text-[11px] font-normal text-primary hover:underline"
-              >
-                Abrir arquivo
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
+            <details className="mt-2 text-[10px] font-light">
+              <summary className="w-fit cursor-pointer rounded-[4px] text-muted-foreground hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                Detalhes do arquivo
+              </summary>
+              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--app-border)] pt-2">
+                <div>
+                  <dt className="text-muted-foreground">Arquivo</dt>
+                  <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.file_name || 'Não informado'}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Formato</dt>
+                  <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.mime_type || 'Não informado'}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Tamanho</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatFileSize(asset.file_size_bytes)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Ordem</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.sort_order + 1}</dd>
+                </div>
+                {asset.asset_type === 'document' && (
+                  <>
+                    <div>
+                      <dt className="text-muted-foreground">Categoria</dt>
+                      <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.document_category || 'Não informada'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Validade</dt>
+                      <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.expires_at)}</dd>
+                    </div>
+                  </>
+                )}
+                <div>
+                  <dt className="text-muted-foreground">Criado em</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.created_at, true)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Atualizado em</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.updated_at, true)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Origem do arquivo</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">
+                    {asset.storage_path ? 'Armazenamento protegido' : asset.external_url ? 'Link externo' : 'Não informada'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Metadados</dt>
+                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{Object.keys(asset.metadata).length} campos registrados</dd>
+                </div>
+              </dl>
+              <p className="mt-3 break-all font-mono text-[9px] text-muted-foreground">ID: {asset.id}</p>
+            </details>
             {renderActions?.(asset)}
           </article>
         )

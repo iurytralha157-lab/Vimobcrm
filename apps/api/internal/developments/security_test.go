@@ -24,14 +24,24 @@ func TestReservationLeadVisibilityUsesCanonicalOwnTeamAllScopes(t *testing.T) {
 			want:  true,
 		},
 		{
-			name: "led team lead",
+			name: "unassigned lead recorded under led team",
+			context: tenant.Context{
+				UserID:      "leader",
+				LedTeamIDs:  []string{"team-1"},
+				Permissions: []string{permissions.LeadViewTeam},
+			},
+			scope: reservationLeadScope{TeamID: "team-1"},
+			want:  true,
+		},
+		{
+			name: "assigned outsider with historical led team",
 			context: tenant.Context{
 				UserID:      "leader",
 				LedTeamIDs:  []string{"team-1"},
 				Permissions: []string{permissions.LeadViewTeam},
 			},
 			scope: reservationLeadScope{AssignedUserID: "user-2", TeamID: "team-1"},
-			want:  true,
+			want:  false,
 		},
 		{
 			name: "led broker's lead from another team",

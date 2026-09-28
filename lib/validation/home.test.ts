@@ -536,7 +536,7 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
 
   assert.match(
     leadDetailSource,
-    /if \(isMobile\) \{\s*return \([\s\S]*?<Drawer\b[\s\S]*?\{MobileContentV2\(\)\}/,
+    /if \(isMobile \|\| isTablet\) \{\s*return \([\s\S]*?<Drawer\b[\s\S]*?\{MobileContentV2\(\)\}/,
   );
   assert.match(
     leadDetailSource,
@@ -551,7 +551,7 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
   assert.match(leadDetailOverlaysSource, /hasAgendaModule && \(\s*<EventSheet\b/);
   assert.match(
     leadDetailSource,
-    /if \(isMobile\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?\{overlays\}/,
+    /if \(isMobile \|\| isTablet\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?\{overlays\}/,
   );
   assert.match(
     leadDetailSource,

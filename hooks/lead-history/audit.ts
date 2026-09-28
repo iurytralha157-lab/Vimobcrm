@@ -53,8 +53,14 @@ const AUDIT_FEMININE_FIELDS = new Set(['birth_date', 'source', 'empresa', 'profi
 function auditChangedKeys(audit: AuditLogRow) {
   const newData = asMetadata(audit.new_data);
   return Object.keys(newData)
-    .filter((key) => !AUDIT_IGNORED_FIELDS.has(key))
+    .filter((key) => !AUDIT_IGNORED_FIELDS.has(key) && key in AUDIT_FIELD_LABELS)
     .sort();
+}
+
+export function visibleAuditData(data: HistoryMetadata) {
+  return Object.fromEntries(
+    Object.entries(data).filter(([key]) => key in AUDIT_FIELD_LABELS),
+  );
 }
 
 function isNearbyHistoryTimestamp(left: string, right: string, toleranceMs = 15_000) {
@@ -151,6 +157,11 @@ export function auditContent(
   if (keys.length === 0) return undefined;
   return keys.map((key) => {
     const label = auditFieldLabel(key);
+    if (oldData[key] === '[valor protegido]' || newData[key] === '[valor protegido]') {
+      if (!oldData[key] && newData[key]) return `${label} adicionado`;
+      if (oldData[key] && !newData[key]) return `${label} removido`;
+      return `${label} atualizado`;
+    }
     const oldValue = auditDisplayValue(oldData[key], formatPropertyCurrency, key);
     const newValue = auditDisplayValue(newData[key], formatPropertyCurrency, key);
     if (key === 'cpf' || key === 'rg') {

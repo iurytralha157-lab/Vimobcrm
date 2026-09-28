@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   apiStageOperationalRulesResponseSchema,
+  normalizeLegacyStageOperationalRulesResponse,
   updateStageOperationalRulesInputSchema,
   type UpdateStageOperationalRulesInput,
 } from './cadences'
@@ -127,6 +128,28 @@ test('rejeita posicoes duplicadas na linha do tempo', () => {
       ['cadence', 'tasks', 1, 'position'],
     )
   }
+})
+
+test('normaliza apenas leitura de posições legadas duplicadas sem mudar a ordem', () => {
+  const rules = validRules()
+  rules.cadence.tasks = [
+    { ...rules.cadence.tasks[0], title: 'Primeira', position: 0 },
+    { ...rules.cadence.tasks[0], title: 'Segunda', position: 0 },
+    { ...rules.cadence.tasks[0], title: 'Terceira', position: 1 },
+  ]
+  const normalized = normalizeLegacyStageOperationalRulesResponse({ data: rules })
+  const result = apiStageOperationalRulesResponseSchema.parse(normalized)
+  assert.deepEqual(result.data.cadence.tasks.map((task) => task.title), [
+    'Primeira', 'Segunda', 'Terceira',
+  ])
+  assert.deepEqual(result.data.cadence.tasks.map((task) => task.position), [0, 1, 2])
+  assert.equal(updateStageOperationalRulesInputSchema.safeParse(rules).success, false)
+  assert.equal(updateStageOperationalRulesInputSchema.safeParse(result.data).success, true)
+
+  const sparse = validRules()
+  sparse.cadence.tasks[0].position = 9
+  const unchanged = normalizeLegacyStageOperationalRulesResponse({ data: sparse })
+  assert.equal((unchanged as { data: UpdateStageOperationalRulesInput }).data.cadence.tasks[0].position, 9)
 })
 
 test('rejeita aviso geral maior que um limite ativo', () => {

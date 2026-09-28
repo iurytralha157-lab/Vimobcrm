@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useFilters } from '@/contexts/FilterContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -13,6 +13,9 @@ import {
 } from '@/lib/pipeline-date-mode';
 import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
 import { resolvePipelineFilterScopeState } from '@/lib/pipeline-filter-readiness';
+import { isTenantContextForOrganization } from '@/lib/access/tenant-navigation';
+import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cache';
+import { buildPipelineLeadMetaFilterQueryKey } from '@/lib/pipeline-board-query';
 
 export interface SharedFilters {
   datePreset: DatePreset | null;
@@ -33,12 +36,12 @@ function labelize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function uniqueOptions(items: Array<{ id?: string | null; name?: string | null }>) {
+function uniqueOptions(items: Array<{ id?: string | null; name?: string | null }>, allowOpaqueMetaIds = false) {
   const map = new Map<string, string>();
   items.forEach((item) => {
     const id = item.id || item.name;
     const name = item.name?.trim();
-    if (id && name && !isOpaqueMetaId(name)) map.set(id, name);
+    if (id && name && (allowOpaqueMetaIds || !isOpaqueMetaId(name))) map.set(id, name);
   });
   return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
 }
@@ -85,8 +88,10 @@ export function useSharedFilters(options?: {
   pipelineId?: string | null;
   dateMode?: PipelineDateMode;
   dateRangeOverride?: { from: Date; to: Date } | null;
+  entryMode?: boolean;
+  scopeMetaOptionsToBoard?: boolean;
 }) {
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, user, profile, tenantContext, isSuperAdmin, impersonating } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const organizationId = activeOrganization.organizationId;
   const {
@@ -135,6 +140,27 @@ export function useSharedFilters(options?: {
     requestedDynamicOptions || hasHydratedDynamicSelection;
   const canUseTeamFilters = hasPermission('lead_view_all') || hasPermission('lead_view_team');
   const pipelineId = options?.pipelineId ?? null;
+  const entryMode = options?.entryMode === true;
+  const scopeMetaOptionsToBoard = options?.scopeMetaOptionsToBoard === true && !entryMode;
+  const isScopedMetaOptions = entryMode || scopeMetaOptionsToBoard;
+  const currentTenantContext = isTenantContextForOrganization(organizationId, tenantContext)
+    ? tenantContext
+    : null;
+  const metaAccessSignature = isScopedMetaOptions ? createTenantQueryAccessSignature({
+    userId: user?.id ?? profile?.id,
+    organizationId,
+    memberRole: currentTenantContext?.memberRole,
+    permissions: currentTenantContext?.permissions,
+    enabledModules: currentTenantContext?.enabledModules,
+    isTeamLeader: currentTenantContext?.isTeamLeader,
+    ledTeamIds: currentTenantContext?.ledTeamIds,
+    ledUserIds: currentTenantContext?.ledUserIds,
+    ledPipelineIds: currentTenantContext?.ledPipelineIds,
+    isSuperAdmin: currentTenantContext?.isSuperAdmin ?? isSuperAdmin,
+    impersonatedOrganizationId: impersonating?.orgId,
+  }) : null;
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const metaSearchQuery = scopeMetaOptionsToBoard ? deferredSearchQuery : searchQuery;
   const hasDateRangeOverride = Object.prototype.hasOwnProperty.call(
     options || {},
     'dateRangeOverride',
@@ -160,22 +186,36 @@ export function useSharedFilters(options?: {
   });
 
   const leadMetaFiltersQuery = useQuery({
-    queryKey: [
-      'shared-filter-lead-meta-filters',
+    queryKey: buildPipelineLeadMetaFilterQueryKey({
       organizationId,
       pipelineId,
       pageId,
-      dateFromStr,
-      dateToStr,
+      dateFrom: dateFromStr,
+      dateTo: dateToStr,
       dateMode,
-    ],
-    enabled: isFiltersHydrated && shouldLoadDynamicOptions && !!organizationId,
+      entryMode,
+      scopeToBoard: scopeMetaOptionsToBoard,
+      accessSignature: metaAccessSignature,
+      teamId,
+      userId,
+      dealStatus,
+      tagIds,
+      searchQuery: metaSearchQuery,
+    }),
+    enabled: isFiltersHydrated && shouldLoadDynamicOptions && !!organizationId && (!entryMode || !!currentTenantContext),
     queryFn: ({ signal }) => getLeadMetaFilters({
       organizationId,
       dateRange: effectiveDateRange,
       dateMode,
       pipelineId,
       filterPage: pageId,
+      entryMode,
+      scopeToBoard: scopeMetaOptionsToBoard,
+      teamId,
+      userId,
+      dealStatus,
+      tagIds,
+      searchQuery: metaSearchQuery,
       signal,
     }),
     staleTime: 1000 * 60 * 10,
@@ -200,8 +240,9 @@ export function useSharedFilters(options?: {
           id: item.id,
           name: item.name,
         })),
+        entryMode,
       ),
-    [leadMetaFiltersQuery.data],
+    [entryMode, leadMetaFiltersQuery.data],
   );
 
   const adSets = useMemo(

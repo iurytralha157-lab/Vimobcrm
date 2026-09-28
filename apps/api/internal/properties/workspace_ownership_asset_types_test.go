@@ -126,6 +126,34 @@ func TestActivePropertyAssetPredicateRecognizesIntegrationRetirementMarker(t *te
 	}
 }
 
+func TestCreatePropertyAssetSortOrderConflictResolution(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested int
+		occupied  bool
+		highest   int
+		want      int
+		wantError bool
+	}{
+		{name: "free position in a populated type", requested: 2, highest: 5, want: 2},
+		{name: "first position for another asset type", requested: 0, highest: -1, want: 0},
+		{name: "collision appends after current highest", requested: 2, occupied: true, highest: 5, want: 6},
+		{name: "collision in a gap still appends", requested: 2, occupied: true, highest: 8, want: 9},
+		{name: "integer range exhausted", requested: 2, occupied: true, highest: 1<<31 - 1, wantError: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveCreatePropertyAssetSortOrder(tc.requested, tc.occupied, tc.highest)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("resolveCreatePropertyAssetSortOrder() error = %v, wantError %v", err, tc.wantError)
+			}
+			if !tc.wantError && got != tc.want {
+				t.Fatalf("resolveCreatePropertyAssetSortOrder() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPropertyAssetUploadIntentValidationMatchesPrivateBucket(t *testing.T) {
 	valid := CreatePropertyAssetUploadIntentInput{
 		AssetType: "floor_plan", FileName: "Planta final.pdf",

@@ -34,7 +34,7 @@ func (firstResponseLeadLockRow) Scan(...any) error {
 func TestFirstResponseLeadLookupUsesNoKeyUpdateLock(t *testing.T) {
 	tx := &firstResponseLeadLockTx{}
 
-	_, _, _, err := (Repository{}).getFirstResponseLeadForUpdate(
+	_, _, _, _, err := (Repository{}).getFirstResponseLeadForUpdate(
 		context.Background(),
 		tx,
 		"11111111-1111-4111-8111-111111111111",
@@ -50,6 +50,18 @@ func TestFirstResponseLeadLookupUsesNoKeyUpdateLock(t *testing.T) {
 	}
 	if strings.Contains(query, "for update of l") {
 		t.Fatalf("first-response lookup must not take the FK-blocking FOR UPDATE lock: %s", query)
+	}
+}
+
+func TestFirstResponseActorCannotBeSpoofed(t *testing.T) {
+	request := RecordFirstResponseRequest{
+		LeadID:      "22222222-2222-4222-8222-222222222222",
+		Channel:     "phone",
+		ActorUserID: "33333333-3333-4333-8333-333333333333",
+	}
+	_, err := request.Validate("11111111-1111-4111-8111-111111111111")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("spoofed actor error = %v, want ErrInvalidInput", err)
 	}
 }
 

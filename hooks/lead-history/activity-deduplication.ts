@@ -1,6 +1,34 @@
 import type { ActivityEventRow } from './types';
 import { asMetadata, metadataString } from './metadata';
 
+export function isStageChangeTriggerActivity(activity: ActivityEventRow): boolean {
+  if (activity.type !== 'stage_change' && activity.type !== 'stage_changed') return false;
+  const metadata = asMetadata(activity.metadata);
+  return !metadataString(metadata.to_pipeline)
+    && /^Movido de ".*" para ".*"$/i.test(activity.content || '');
+}
+
+function isApiStageChangeWithActor(activity: ActivityEventRow): boolean {
+  if (activity.type !== 'stage_change' && activity.type !== 'stage_changed') return false;
+  const metadata = asMetadata(activity.metadata);
+  return Boolean(activity.user_id && metadataString(metadata.to_pipeline))
+    && /^Lead ".*" movido de etapa$/i.test(activity.content || '');
+}
+
+function isSameStageTransition(left: ActivityEventRow, right: ActivityEventRow): boolean {
+  const leftMetadata = asMetadata(left.metadata);
+  const rightMetadata = asMetadata(right.metadata);
+  const leftFrom = metadataString(leftMetadata.from_stage_id) || metadataString(leftMetadata.old_stage_id);
+  const leftTo = metadataString(leftMetadata.to_stage_id) || metadataString(leftMetadata.new_stage_id);
+  const rightFrom = metadataString(rightMetadata.from_stage_id) || metadataString(rightMetadata.old_stage_id);
+  const rightTo = metadataString(rightMetadata.to_stage_id) || metadataString(rightMetadata.new_stage_id);
+  const leftTime = new Date(left.created_at).getTime();
+  const rightTime = new Date(right.created_at).getTime();
+  return Boolean(leftFrom && leftTo && leftFrom === rightFrom && leftTo === rightTo)
+    && Number.isFinite(leftTime) && Number.isFinite(rightTime)
+    && Math.abs(leftTime - rightTime) <= 5_000;
+}
+
 export function getActivityFingerprint(activity: ActivityEventRow): string {
   const metadata = asMetadata(activity.metadata);
   const timestampWindow = Math.floor(new Date(activity.created_at).getTime() / 2000);
@@ -51,6 +79,9 @@ export function getActivityDetailScore(activity: ActivityEventRow): number {
   if (metadataString(metadata.file_url) || metadataString(metadata.file_name)) score += 3;
   if (metadataString(metadata.outcome) || metadataString(metadata.notes)) score += 2;
   if (/movido de\s+"/i.test(activity.content || '')) score += 2;
+  // The backend writes this pair of fields with the authenticated actor;
+  // the lead update trigger only has a recipient fallback for user_id.
+  if (isApiStageChangeWithActor(activity)) score += 3;
   if (activity.content) score += 1;
   if (activity.user_id || metadataString(metadata.actor_id)) score += 1;
   return score;
@@ -67,7 +98,14 @@ export function dedupeActivityEvents(activityEvents: ActivityEventRow[]): Activi
     }
   });
 
-  return Array.from(dedupedActivityMap.values()).sort(
+  const deduped = Array.from(dedupedActivityMap.values()).sort(
     (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
   );
+
+  // The two writes can fall on opposite sides of the fingerprint's two-second
+  // window. Suppress the trigger only when IDs and timing prove the same move.
+  return deduped.filter((activity) => !isStageChangeTriggerActivity(activity)
+    || !deduped.some((candidate) => isApiStageChangeWithActor(candidate)
+      && candidate.type === activity.type
+      && isSameStageTransition(activity, candidate)));
 }

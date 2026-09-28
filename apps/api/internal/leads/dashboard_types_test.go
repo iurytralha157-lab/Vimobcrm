@@ -31,6 +31,7 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 		"pipelineId":     {dashboardTestUUID},
 		"limit":          {"50"},
 		"includeDetails": {"true"},
+		"countEntries":   {"true"},
 	}
 
 	filter, err := ParseDashboardFilter(values)
@@ -52,7 +53,7 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 	if filter.SearchQuery != "Maria" {
 		t.Fatalf("legacy search fallback was not preserved: %q", filter.SearchQuery)
 	}
-	if filter.Granularity != "hour" || filter.DealStatus != "won" || filter.Limit != 50 || !filter.IncludeDetails {
+	if filter.Granularity != "hour" || filter.DealStatus != "won" || filter.Limit != 50 || !filter.IncludeDetails || !filter.CountEntries {
 		t.Fatalf("bounded filters were not preserved: %#v", filter)
 	}
 }
@@ -77,6 +78,9 @@ func TestParseDashboardFilterPreservesDefaultsAndAllCompatibility(t *testing.T) 
 	}
 	if filter.IncludeDetails {
 		t.Fatal("dashboard details must remain opt-in")
+	}
+	if filter.CountEntries {
+		t.Fatal("dashboard source entry counts must remain opt-in")
 	}
 }
 
@@ -151,6 +155,9 @@ func TestParseDashboardFilterRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		},
 		"malformed include details": {
 			"includeDetails": {"sometimes"},
+		},
+		"malformed count entries": {
+			"countEntries": {"sometimes"},
 		},
 	}
 

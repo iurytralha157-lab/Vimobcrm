@@ -101,6 +101,9 @@ export function PropertyAssetDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    // This dialog lives inside the property editor's React tree. A portal does
+    // not stop submit bubbling to the editor's outer form.
+    event.stopPropagation()
     setLocalError(null)
 
     if (!editing && sourceMode === 'file') {

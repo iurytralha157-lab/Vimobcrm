@@ -51,14 +51,14 @@ test('aplica a cor hexadecimal estrita em todas as mutacoes de etapa', () => {
   }).success, true)
   assert.equal(stageUpdateInputSchema.safeParse({ color: null }).success, true)
   assert.equal(stagesReorderInputSchema.safeParse({
-    stages: [{ id: ID, name: 'Entrada', color: '#A1b2C3' }],
+    stages: [{ id: ID, name: 'Entrada', color: '#A1b2C3', isNew: true }],
   }).success, true)
 
   for (const color of ['#', '#fff', '#11223344', 'red', '112233', '']) {
     assert.equal(stageCreateInputSchema.safeParse({ name: 'Entrada', color }).success, false)
     assert.equal(stageUpdateInputSchema.safeParse({ color }).success, false)
     assert.equal(stagesReorderInputSchema.safeParse({
-      stages: [{ id: ID, name: 'Entrada', color }],
+      stages: [{ id: ID, name: 'Entrada', color, isNew: true }],
     }).success, false)
   }
 
@@ -113,6 +113,16 @@ test('valida os relogios separados no board da pipeline', () => {
     assert.equal(result.data.data[0].leads[0].board_sort_at, '2026-07-12T16:00:00Z')
     assert.equal(result.data.data[0].leads[0].whatsapp_avatar_url, 'https://cdn.example.com/avatar.jpg')
   }
+})
+
+test('reordenacao exige versao das etapas existentes e marca as novas', () => {
+  const existing = { id: ID, name: 'Entrada', expectedUpdatedAt: '2026-09-27T12:30:00Z' }
+  assert.equal(stagesReorderInputSchema.safeParse({ stages: [existing] }).success, true)
+  assert.equal(stagesReorderInputSchema.safeParse({ stages: [{ id: ID, name: 'Entrada' }] }).success, false)
+  assert.equal(stagesReorderInputSchema.safeParse({ stages: [{ id: ID, name: 'Entrada', isNew: true }] }).success, true)
+  assert.equal(stagesReorderInputSchema.safeParse({
+    stages: [{ ...existing, isNew: true }],
+  }).success, false)
 })
 
 test('exige a equipe explicita no DTO do lead da pipeline', () => {

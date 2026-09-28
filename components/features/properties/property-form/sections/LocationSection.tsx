@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { TabsContent } from "@/components/ui/tabs";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, RefreshCw } from "lucide-react";
 import { formatFixedBRLCurrency } from "@/lib/utils/formatting";
 import { RequiredMark, togglePanelClass } from "../PropertyFormFields";
 import { formatCep, formatCurrencyDisplay, onlyCepDigits, parseCurrencyInput } from "../property-form-model";
@@ -103,6 +103,9 @@ export function LocationSection() {
               <Input
                 id="property-cep"
                 aria-describedby={isCepLoading ? "property-cep-status" : undefined}
+                autoComplete="postal-code"
+                inputMode="numeric"
+                maxLength={9}
                 value={formData.cep}
                 onChange={(e) => {
                   const digits = onlyCepDigits(e.target.value);
@@ -112,17 +115,32 @@ export function LocationSection() {
                 }}
                 onBlur={() => void lookupCep(formData.cep)}
                 placeholder="00000-000"
-                className="pr-9"
+                className="pr-10"
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Reconsultar CEP"
+                title="Reconsultar CEP"
+                disabled={isCepLoading || onlyCepDigits(formData.cep).length !== 8}
+                onClick={() => void lookupCep(formData.cep, true)}
+                className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
+              >
+                {isCepLoading ? (
+                  <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw aria-hidden="true" className="h-4 w-4" />
+                )}
+              </Button>
               {isCepLoading && (
                 <span
                   id="property-cep-status"
                   role="status"
                   aria-live="polite"
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
+                  className="sr-only"
                 >
-                  <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin text-muted-foreground" />
-                  <span className="sr-only">Buscando CEP</span>
+                  Buscando CEP
                 </span>
               )}
             </div>

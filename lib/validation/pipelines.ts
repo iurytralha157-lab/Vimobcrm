@@ -54,7 +54,24 @@ export const stageOrderItemInputSchema = z.object({
   name: nameSchema,
   color: colorSchema.optional(),
   stageKey: z.string().trim().max(80).optional(),
-}).strict()
+  isNew: z.boolean().optional(),
+  expectedUpdatedAt: timestampSchema.optional(),
+}).strict().superRefine((stage, ctx) => {
+  if (!stage.isNew && !stage.expectedUpdatedAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['expectedUpdatedAt'],
+      message: 'Atualize as colunas antes de salvar',
+    })
+  }
+  if (stage.isNew && stage.expectedUpdatedAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['expectedUpdatedAt'],
+      message: 'Coluna nova nao possui versao anterior',
+    })
+  }
+})
 
 export const stagesReorderInputSchema = z.object({
   stages: z.array(stageOrderItemInputSchema).min(1).max(100),
@@ -113,6 +130,7 @@ export const apiStageResponseSchema = apiEnvelopeSchema(apiStageSchema)
 export const pipelineBoardLeadSchema = z.object({
   id: uuidSchema,
   team_id: uuidSchema.nullable(),
+  can_operate: z.boolean().optional(),
   board_sort_at: timestampSchema.nullable().optional(),
   board_order_at: timestampSchema.nullable().optional(),
   stage_entered_at: timestampSchema.nullable().optional(),
@@ -135,7 +153,6 @@ export const pipelineStageLeadsResponseSchema = z.object({
 export const pipelineStageCountsResponseSchema = apiEnvelopeSchema(
   z.record(nonNegativeIntegerSchema),
 )
-
 const metaOptionSchema = z.object({ id: z.string().min(1), name: z.string() }).passthrough()
 export const leadMetaFiltersResponseSchema = apiEnvelopeSchema(z.object({
   sources: z.array(z.string().trim().min(1).max(180)).max(500),

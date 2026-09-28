@@ -33,7 +33,7 @@ export function PublicationSection() {
           >
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                {formData.anunciar ? (
+                {isEditing ? (
                   <Globe aria-hidden="true" className="h-4 w-4" />
                 ) : (
                   <Lock aria-hidden="true" className="h-4 w-4" />
@@ -45,7 +45,7 @@ export function PublicationSection() {
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {isEditing
-                    ? `Este imóvel está ${formData.anunciar ? "publicado" : "fora do site"}. Use a Central de Publicação para validar requisitos, conferir a prévia e alterar esse estado.`
+                    ? "Salvar este formulário atualiza os dados do imóvel. Confira o estado real, as pendências e o link público na Central de Publicação."
                     : "O novo imóvel será salvo fora do site. Depois do cadastro, publique com segurança pela Central de Publicação da Ficha 360."}
                 </p>
               </div>

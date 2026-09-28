@@ -289,7 +289,7 @@ func publicDealTypeAliases(dealType string) []string {
 }
 
 func publicPropertyActiveSQL() string {
-	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo')"
+	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo', 'available', 'disponivel')"
 }
 
 func publicPropertySnapshotJoinSQL() string {

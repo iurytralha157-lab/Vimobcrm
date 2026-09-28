@@ -64,6 +64,32 @@ export function useUpdateOrganizationSite() {
   })
 }
 
+export function useUpdateSiteFooterLogo() {
+  const queryClient = useQueryClient()
+  const { activeOrganization } = useAuth()
+  const organizationId = activeOrganization.organizationId
+
+  return useMutation({
+    mutationFn: async (url: string | null) => {
+      if (!organizationId) throw new Error('Organização não encontrada.')
+      await siteAPI.updateSite({ footer_logo_url: url }, organizationId)
+      const savedSite = await siteAPI.getSite(organizationId)
+      if (!savedSite || savedSite.footer_logo_url !== url) {
+        throw new Error('A logo do rodapé não foi confirmada após salvar.')
+      }
+      return savedSite
+    },
+    onSuccess: (savedSite) => {
+      queryClient.setQueryData(['organization-site', organizationId], savedSite)
+      toast.success('Logo do rodapé salva com sucesso!')
+    },
+    onError: (error: unknown) => {
+      console.error('Error updating footer logo:', error)
+      toast.error('Erro ao salvar a logo do rodapé: ' + getErrorMessage(error))
+    },
+  })
+}
+
 export function useUploadSiteAsset() {
   const queryClient = useQueryClient()
   const { activeOrganization, organization, profile } = useAuth()

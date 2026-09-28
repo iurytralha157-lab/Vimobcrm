@@ -58,6 +58,15 @@ export type RulesDraft = Omit<StageOperationalRulesContract, 'cadence'> & {
   }
 }
 
+export function decideRulesRevisionUpdate(
+  draftRevision: number,
+  incomingRevision: number,
+  isDirty: boolean,
+): 'none' | 'adopt' | 'conflict' {
+  if (incomingRevision <= draftRevision) return 'none'
+  return isDirty ? 'conflict' : 'adopt'
+}
+
 export const TASK_TYPES: Array<{
   value: TaskType
   label: string

@@ -2,6 +2,8 @@ package leads
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
@@ -139,6 +141,44 @@ func (handler Handler) ShowDashboardFirstContact(w http.ResponseWriter, r *http.
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardFirstContact{"data": data})
+}
+
+func (handler Handler) ListDashboardFirstContactLeads(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if !canViewDashboardLeadDistribution(tenantContext) {
+		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to view first contact performance.")
+		return
+	}
+	filter, err := ParseDashboardFilter(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	brokerID, validBrokerID := normalizeUUID(strings.TrimSpace(r.URL.Query().Get("brokerId")))
+	if !validBrokerID {
+		writeLeadError(w, r, ErrInvalidInput)
+		return
+	}
+	offset := 0
+	if rawOffset := strings.TrimSpace(r.URL.Query().Get("offset")); rawOffset != "" {
+		offset, err = strconv.Atoi(rawOffset)
+		if err != nil {
+			writeLeadError(w, r, ErrInvalidInput)
+			return
+		}
+	}
+	if r.URL.Query().Get("limit") == "" {
+		filter.Limit = 25
+	}
+	data, err := handler.repo.ListDashboardFirstContactLeads(r.Context(), tenantContext, filter, brokerID, offset, filter.Limit)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardFirstContactLeadPage{"data": data})
 }
 
 func (handler Handler) ListDashboardUpcomingTasks(w http.ResponseWriter, r *http.Request) {

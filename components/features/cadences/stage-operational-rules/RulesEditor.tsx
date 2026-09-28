@@ -1,7 +1,7 @@
 'use client'
 
-import { type FormEvent, useState } from 'react'
-import { AlertCircle, Loader2, Lock, Save } from 'lucide-react'
+import { type FormEvent, useEffect, useState } from 'react'
+import { AlertCircle, Loader2, Lock, RefreshCw, Save } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -17,6 +17,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useUpdateStageOperationalRules } from '@/hooks/cadences'
+import { stageOperationalRulesErrorMessage } from '@/hooks/cadences/use-stage-operational-rules'
 import type {
   StageOperationalRules as StageOperationalRulesContract,
 } from '@/lib/api/cadences'
@@ -33,10 +34,13 @@ import {
   type GlobalAttentionState,
   type RulesDraft,
   createTask,
+  decideRulesRevisionUpdate,
   normalizePositions,
   toDraft,
   toPayload,
 } from './model'
+
+const CONFLICT_MESSAGE = 'Outra pessoa alterou esta etapa. Seu rascunho foi preservado. Carregar a versão atual substituirá suas alterações não salvas.'
 
 export function RulesEditor({
   initialRules,
@@ -44,12 +48,14 @@ export function RulesEditor({
   canEdit,
   globalAttention,
   attentionPolicies,
+  onReloadCurrent,
 }: {
   initialRules: StageOperationalRulesContract
   stageName: string
   canEdit: boolean
   globalAttention: GlobalAttentionState
   attentionPolicies: AttentionPoliciesState
+  onReloadCurrent: () => Promise<StageOperationalRulesContract>
 }) {
   const [draft, setDraft] = useState<RulesDraft>(() => toDraft(initialRules))
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(
@@ -57,13 +63,31 @@ export function RulesEditor({
   )
   const [isDirty, setIsDirty] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [hasConflict, setHasConflict] = useState(false)
+  const [isReloading, setIsReloading] = useState(false)
   const [disableCadenceConfirmationOpen, setDisableCadenceConfirmationOpen] = useState(false)
   const updateRules = useUpdateStageOperationalRules(initialRules.stage_id)
+
+  /* eslint-disable react-hooks/set-state-in-effect -- External revisions are adopted only when the local editor has no unsaved changes. */
+  useEffect(() => {
+    const decision = decideRulesRevisionUpdate(draft.revision, initialRules.revision, isDirty)
+    if (decision === 'adopt') {
+      const latestDraft = toDraft(initialRules)
+      setDraft(latestDraft)
+      setExpandedTaskKey(latestDraft.cadence.tasks[0]?.clientKey || null)
+      setHasConflict(false)
+      setFormError(null)
+    } else if (decision === 'conflict' && !hasConflict) {
+      setHasConflict(true)
+      setFormError(CONFLICT_MESSAGE)
+    }
+  }, [draft.revision, hasConflict, initialRules, isDirty])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateDraft = (updater: (current: RulesDraft) => RulesDraft) => {
     setDraft((current) => updater(current))
     setIsDirty(true)
-    setFormError(null)
+    if (!hasConflict) setFormError(null)
   }
 
   const handleCadenceToggle = (enabled: boolean) => {
@@ -165,6 +189,7 @@ export function RulesEditor({
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
+    if (hasConflict) return
     const payload = toPayload(draft)
     const validation = updateStageOperationalRulesInputSchema.safeParse(payload)
 
@@ -183,19 +208,41 @@ export function RulesEditor({
       setExpandedTaskKey(savedDraft.cadence.tasks[0]?.clientKey || null)
       setIsDirty(false)
       setFormError(null)
+      setHasConflict(false)
     } catch (error) {
       if (
         error instanceof VimobAPIError
         && error.code === 'stage_operational_rules_changed'
       ) {
-        setFormError('Outra pessoa alterou esta etapa. A versão mais recente foi recarregada.')
+        setHasConflict(true)
+        setFormError(CONFLICT_MESSAGE)
         return
       }
-      setFormError(
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível salvar as regras desta etapa.',
-      )
+      setFormError(stageOperationalRulesErrorMessage(
+        error,
+        'Não foi possível salvar as regras desta etapa.',
+      ))
+    }
+  }
+
+  const handleReloadCurrent = async () => {
+    if (isReloading) return
+    setIsReloading(true)
+    try {
+      const currentRules = await onReloadCurrent()
+      if (decideRulesRevisionUpdate(draft.revision, currentRules.revision, false) !== 'adopt') {
+        throw new Error('A versão atualizada ainda não está disponível. Seu rascunho continua aqui; tente novamente.')
+      }
+      const currentDraft = toDraft(currentRules)
+      setDraft(currentDraft)
+      setExpandedTaskKey(currentDraft.cadence.tasks[0]?.clientKey || null)
+      setIsDirty(false)
+      setHasConflict(false)
+      setFormError(null)
+    } catch (error) {
+      setFormError(stageOperationalRulesErrorMessage(error, 'Não foi possível carregar a versão atual. Seu rascunho continua aqui.'))
+    } finally {
+      setIsReloading(false)
     }
   }
 
@@ -259,6 +306,19 @@ export function RulesEditor({
           </div>
         )}
 
+        {hasConflict && canEdit && (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+            onClick={handleReloadCurrent}
+            disabled={isReloading}
+          >
+            <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isReloading ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+            Carregar versão atual
+          </Button>
+        )}
+
         {canEdit && (
           <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-3 bg-[var(--app-surface-solid)] px-1 pb-1 pt-3">
             <p className="hidden text-[11px] font-light text-[var(--app-text-tertiary)] sm:block">
@@ -267,7 +327,7 @@ export function RulesEditor({
             <Button
               type="submit"
               className="h-10 w-full rounded-[6px] bg-primary px-5 text-xs font-light text-primary-foreground shadow-none hover:bg-primary/90 sm:w-auto"
-              disabled={!isDirty || updateRules.isPending}
+              disabled={!isDirty || hasConflict || updateRules.isPending}
             >
               {updateRules.isPending ? (
                 <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />

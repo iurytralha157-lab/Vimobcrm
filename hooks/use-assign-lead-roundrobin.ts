@@ -16,7 +16,7 @@ interface AssignLeadResult {
 
 export function useAssignLeadRoundRobin() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
@@ -25,12 +25,12 @@ export function useAssignLeadRoundRobin() {
         throw new Error('Usuário não possui organização');
       }
 
-      return leadsAPI.redistributeLeadRoundRobin(leadId, organizationId);
+      return leadsAPI.redistributeLeadRoundRobin(leadId, organizationId, { expectedUnassigned: true });
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      if (organizationId) {
+      if (organizationId && data.success && data.assigned_user_id) {
         notifyLeadRealtimeChange({
           organizationId,
           leadId: data.lead_id,
@@ -41,12 +41,16 @@ export function useAssignLeadRoundRobin() {
       queryClient.invalidateQueries({ queryKey: ['lead', data.lead_id] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.lead_id] });
 
-      if (data.assigned_user_id) {
-        toast.success('Lead atribuído com sucesso via round-robin!');
-      } else if (data.round_robin_used === false) {
-        toast.warning('Nenhum round-robin ativo encontrado. Configure um round-robin primeiro.');
+      if (data.error === 'already_assigned') {
+        toast.info('Este lead já possui responsável. O card foi atualizado.');
+      } else if (data.success && data.assigned_user_id) {
+        toast.success('Lead atribuído pela fila de distribuição.');
+      } else if (data.error === 'no_available_members' || data.error === 'no_member') {
+        toast.warning('A fila deste lead não encontrou responsável disponível.');
+      } else if (data.error === 'no_matching_queue' || data.error === 'no_queue') {
+        toast.warning('A fila de origem deste lead não está disponível para distribuição.');
       } else {
-        toast.info('Lead processado, mas não foi possível atribuir automaticamente.');
+        toast.error('Não foi possível atribuir o lead pela fila de origem.');
       }
     },
     onError: (error: Error) => {

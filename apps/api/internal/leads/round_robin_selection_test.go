@@ -8,17 +8,21 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type roundRobinSelectionQueryer struct {
 	t       *testing.T
 	queries []string
+	args    [][]any
 	rows    []pgx.Row
 }
 
-func (queryer *roundRobinSelectionQueryer) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+func (queryer *roundRobinSelectionQueryer) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	queryer.t.Helper()
 	queryer.queries = append(queryer.queries, sql)
+	queryer.args = append(queryer.args, args)
 
 	if len(queryer.rows) == 0 {
 		queryer.t.Fatal("unexpected round-robin query")
@@ -27,6 +31,98 @@ func (queryer *roundRobinSelectionQueryer) QueryRow(_ context.Context, sql strin
 	row := queryer.rows[0]
 	queryer.rows = queryer.rows[1:]
 	return row
+}
+
+func TestPendingLeadDistributionQueuePrefersLatestFailedQueueOverIntakeOrigin(t *testing.T) {
+	const organizationID = "44444444-4444-4444-8444-444444444444"
+	const leadID = "55555555-5555-4555-8555-555555555555"
+	const latestQueueID = "11111111-1111-4111-8111-111111111111"
+	queryer := &roundRobinSelectionQueryer{
+		t:    t,
+		rows: []pgx.Row{roundRobinSelectionRow{values: []string{"lead_distribution_pending", "no_available_members", latestQueueID}}},
+	}
+	queueID, err := (Repository{}).pendingLeadDistributionQueue(context.Background(), queryer, organizationID, leadSnapshot{
+		ID:   leadID,
+		Data: map[string]any{"origin_round_robin_id": "22222222-2222-4222-8222-222222222222"},
+	})
+	if err != nil || queueID == nil || *queueID != latestQueueID {
+		t.Fatalf("retry queue = %v, error = %v; want latest pending queue", queueID, err)
+	}
+	if len(queryer.queries) != 1 || !strings.Contains(queryer.queries[0], "organization_id = $1::uuid") || !strings.Contains(queryer.queries[0], "lead_id = $2::uuid") {
+		t.Fatalf("retry lookup must be scoped to organization and lead: %#v", queryer.queries)
+	}
+	if got := queryer.args[0]; len(got) != 2 || got[0] != organizationID || got[1] != leadID {
+		t.Fatalf("retry lookup arguments = %#v", got)
+	}
+}
+
+func TestPendingLeadDistributionQueueDoesNotReopenRoutingAfterNoMatchingQueue(t *testing.T) {
+	queryer := &roundRobinSelectionQueryer{
+		t:    t,
+		rows: []pgx.Row{roundRobinSelectionRow{values: []string{"lead_distribution_pending", "no_matching_queue", ""}}},
+	}
+	queueID, err := (Repository{}).pendingLeadDistributionQueue(context.Background(), queryer, "44444444-4444-4444-8444-444444444444", leadSnapshot{
+		ID:   "55555555-5555-4555-8555-555555555555",
+		Data: map[string]any{"origin_round_robin_id": "22222222-2222-4222-8222-222222222222"},
+	})
+	if err != nil || queueID != nil {
+		t.Fatalf("no-matching-queue retry = %v, error = %v; want frozen no-queue", queueID, err)
+	}
+}
+
+func TestPendingLeadDistributionQueueUsesLegacyFailureBeforeOrigin(t *testing.T) {
+	const failedQueueID = "11111111-1111-4111-8111-111111111111"
+	queryer := &roundRobinSelectionQueryer{
+		t: t,
+		rows: []pgx.Row{
+			roundRobinSelectionRow{err: pgx.ErrNoRows},
+			roundRobinSelectionRow{values: []string{"no_available_members", failedQueueID}},
+		},
+	}
+	queueID, err := (Repository{}).pendingLeadDistributionQueue(context.Background(), queryer, "44444444-4444-4444-8444-444444444444", leadSnapshot{
+		ID:   "55555555-5555-4555-8555-555555555555",
+		Data: map[string]any{"origin_round_robin_id": "22222222-2222-4222-8222-222222222222"},
+	})
+	if err != nil || queueID == nil || *queueID != failedQueueID {
+		t.Fatalf("legacy retry queue = %v, error = %v; want failed queue", queueID, err)
+	}
+	if len(queryer.queries) != 2 || !strings.Contains(queryer.queries[1], "from public.round_robin_logs") {
+		t.Fatalf("legacy failure lookup was not used: %#v", queryer.queries)
+	}
+}
+
+func TestPendingLeadDistributionQueueFallsBackToImmutableOrigin(t *testing.T) {
+	const originQueueID = "22222222-2222-4222-8222-222222222222"
+	queryer := &roundRobinSelectionQueryer{
+		t:    t,
+		rows: []pgx.Row{roundRobinSelectionRow{values: []string{"lead_assigned", "", "11111111-1111-4111-8111-111111111111"}}},
+	}
+	queueID, err := (Repository{}).pendingLeadDistributionQueue(context.Background(), queryer, "44444444-4444-4444-8444-444444444444", leadSnapshot{
+		ID:   "55555555-5555-4555-8555-555555555555",
+		Data: map[string]any{"origin_round_robin_id": originQueueID},
+	})
+	if err != nil || queueID == nil || *queueID != originQueueID {
+		t.Fatalf("fallback queue = %v, error = %v; want immutable origin", queueID, err)
+	}
+}
+
+func TestRetryPreservesLeadTeamForScopedLeader(t *testing.T) {
+	teamID := "11111111-1111-4111-8111-111111111111"
+	otherTeamID := "22222222-2222-4222-8222-222222222222"
+	leader := tenant.Context{MemberRole: "leader", LedTeamIDs: []string{teamID}}
+	current := leadSnapshot{TeamID: teamID}
+	if !retryPreservesLeadTeam(leader, current, distribution.Result{Success: true, TeamID: &teamID}) {
+		t.Fatal("leader's team assignment should be allowed")
+	}
+	if retryPreservesLeadTeam(leader, current, distribution.Result{Success: true, TeamID: &otherTeamID}) {
+		t.Fatal("leader must not move the lead to another team through queue retry")
+	}
+	if retryPreservesLeadTeam(leader, current, distribution.Result{Success: true}) {
+		t.Fatal("leader must not erase team scope through queue retry")
+	}
+	if !retryPreservesLeadTeam(tenant.Context{MemberRole: "admin"}, current, distribution.Result{Success: true, TeamID: &otherTeamID}) {
+		t.Fatal("administrator may use a queue that targets another team")
+	}
 }
 
 func (queryer *roundRobinSelectionQueryer) Begin(context.Context) (pgx.Tx, error) {

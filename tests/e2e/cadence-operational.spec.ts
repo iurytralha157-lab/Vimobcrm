@@ -98,6 +98,9 @@ type NotificationState = {
   metadata?: Record<string, unknown> | null;
 };
 
+const cadenceTestTimeout = process.env.E2E_SUPABASE_WORKDIR ? 480_000 : 120_000;
+const routeReadyTimeout = process.env.E2E_SUPABASE_WORKDIR ? 180_000 : 15_000;
+
 async function parseResponse<T>(response: APIResponse, expectedStatus = 200) {
   const body = await response.text();
   expect(response.status(), body).toBe(expectedStatus);
@@ -236,7 +239,7 @@ async function readEnrollmentTasks(enrollmentID: string) {
 
 test.describe.serial('cadencias operacionais por etapa', () => {
   test('gestor configura regras, preserva lead legado e bloqueia sobrescrita concorrente', async ({ browser }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(cadenceTestTimeout);
     const adminContext = await browser.newContext();
     const userContext = await browser.newContext();
     const adminPage = await adminContext.newPage();
@@ -289,7 +292,7 @@ test.describe.serial('cadencias operacionais por etapa', () => {
       await parseResponse(staleWriter, 409);
 
       await adminPage.goto('/crm/pipelines');
-      await expect(adminPage.getByRole('heading', { name: 'Pipeline', exact: true })).toBeVisible();
+      await expect(adminPage.getByRole('heading', { name: 'Pipeline', exact: true })).toBeVisible({ timeout: routeReadyTimeout });
       await adminPage.getByRole('button', { name: 'Configurar coluna Primeiro contato E2E' }).click();
       await expect(adminPage.getByText('Configurações da Coluna')).toBeVisible();
       await adminPage.getByRole('tab', { name: 'Regras da etapa' }).click();
@@ -304,7 +307,7 @@ test.describe.serial('cadencias operacionais por etapa', () => {
   });
 
   test('corretor recebe o foco, visualiza o roteiro e conclui sem duplicidade', async ({ browser }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(cadenceTestTimeout);
     const adminContext = await browser.newContext();
     const userContext = await browser.newContext();
     const adminPage = await adminContext.newPage();
@@ -331,7 +334,7 @@ test.describe.serial('cadencias operacionais por etapa', () => {
 
       await userPage.goto('/inicio');
       const focusLink = userPage.locator(`a[href*="lead=${E2E_CADENCE_LEADS.primary}"]`).first();
-      await expect(focusLink).toBeVisible();
+      await expect(focusLink).toBeVisible({ timeout: routeReadyTimeout });
       await focusLink.click();
       await expect(userPage.getByText('Cadência / Primeiro contato E2E')).toBeVisible();
       await expect(userPage.getByText('Ligar para o lead', { exact: true })).toBeVisible();
@@ -374,7 +377,7 @@ test.describe.serial('cadencias operacionais por etapa', () => {
   });
 
   test('saída, ganho e reabertura preservam histórico e criam um novo ciclo', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(cadenceTestTimeout);
     await signInAs(page, 'user');
 
     await moveLead(page, E2E_CADENCE_LEADS.lifecycle, E2E_STAGE_CADENCE_ID);
@@ -412,14 +415,14 @@ test.describe.serial('cadencias operacionais por etapa', () => {
   });
 
   test('editor do gestor permanece operável no mobile', async ({ browser }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(cadenceTestTimeout);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
 
     try {
       await signInAs(page, 'admin');
       await page.goto('/crm/pipelines');
-      await expect(page.getByText('Novos E2E', { exact: true })).toBeVisible();
+      await expect(page.getByText('Novos E2E', { exact: true })).toBeVisible({ timeout: routeReadyTimeout });
       await page.getByRole('button', { name: /Ver pr.xima coluna/ }).click();
       await expect(page.getByText('Primeiro contato E2E', { exact: true })).toBeVisible();
       const settingsButton = page.getByRole('button', {

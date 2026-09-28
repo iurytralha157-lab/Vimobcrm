@@ -3,8 +3,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PieChart as PieChartIcon, MousePointer2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
-import { sourceLabels } from '@/hooks/use-dashboard-filters';
 import { DASHBOARD_CHART_COLORS } from '@/config/dashboard-chart-colors';
+import { DashboardChartError } from './DashboardChartError';
 
 interface SourceDataPoint {
   name: string;
@@ -14,7 +14,10 @@ interface SourceDataPoint {
 
 interface LeadSourcesChartProps {
   data: SourceDataPoint[];
+  countEntries: boolean;
   isLoading?: boolean;
+  isError: boolean;
+  onRetry: () => void;
   selectedSource?: string | null;
   onSourceChange?: (source: string | null) => void;
 }
@@ -72,7 +75,7 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   const source = entry.payload;
   const percentage = source?.percentage ?? 0;
   const value = Number(entry.value || 0);
-  const leadLabel = value === 1 ? 'lead' : 'leads';
+  const unitLabel = value === 1 ? 'lead' : 'leads';
 
   return (
     <div className="min-w-[150px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-none animate-in fade-in zoom-in-95 duration-150">
@@ -87,7 +90,7 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
       </div>
       <div className="flex items-end justify-between gap-4">
         <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-          {value} {leadLabel}
+          {value} {unitLabel}
         </span>
         <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-light tabular-nums text-[var(--app-text-primary)]">
           {percentage}%
@@ -97,7 +100,9 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   );
 }
 
-export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChange }: LeadSourcesChartProps) {
+export function LeadSourcesChart({ data, isLoading, isError, onRetry, selectedSource, onSourceChange }: LeadSourcesChartProps) {
+  const title = 'Origem dos leads';
+  const unit = 'Leads';
   if (isLoading) {
     return (
       <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
@@ -106,11 +111,29 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
               <PieChartIcon className="h-3.5 w-3.5" />
             </span>
-            Origem dos leads
+            {title}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 p-4">
           <ChartSkeleton />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-1 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
+            </span>
+            {title}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 p-4">
+          <DashboardChartError message={`Não foi possível carregar a ${title.toLowerCase()}.`} onRetry={onRetry} />
         </CardContent>
       </Card>
     );
@@ -130,13 +153,10 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     }));
 
   const handleSourceClick = (entry: LeadSourceChartPoint) => {
-    if (!onSourceChange) return;
+    if (!onSourceChange || !(entry.rawSource ?? entry.name)) return;
 
     const clickedSource = entry.rawSource ?? entry.name;
-    const clickedLabel = entry.name;
-    const currentSelectedLabel = selectedSource ? (sourceLabels[selectedSource] || selectedSource) : null;
-
-    if (clickedLabel === currentSelectedLabel) {
+    if (clickedSource === selectedSource) {
       onSourceChange(null);
     } else {
       onSourceChange(clickedSource);
@@ -151,7 +171,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
               <PieChartIcon className="h-3.5 w-3.5" />
             </span>
-            Origem dos leads
+            {title}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex items-center justify-center p-8 text-center">
@@ -174,7 +194,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
               <PieChartIcon className="h-3.5 w-3.5" />
             </span>
-            Origem dos leads
+            {title}
           </CardTitle>
           {selectedSource && (
             <button
@@ -215,7 +235,9 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                   className="outline-none"
                 >
                   {chartData.map((entry, index) => {
-                    const isSelected = selectedSource ? (sourceLabels[selectedSource] || selectedSource) === entry.name : false;
+                    const rawSource = entry.rawSource ?? entry.name;
+                    const canFilter = Boolean(rawSource && onSourceChange);
+                    const isSelected = selectedSource === rawSource;
                     const hasSelection = !!selectedSource;
 
                     return (
@@ -226,14 +248,15 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                         stroke="transparent"
                         strokeWidth={0}
                         className={cn(
-                          "cursor-pointer outline-none transition-opacity duration-200 hover:opacity-90 focus-visible:opacity-80",
+                          "outline-none transition-opacity duration-200",
+                          canFilter && "cursor-pointer hover:opacity-90 focus-visible:opacity-80",
                         )}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Filtrar por ${entry.name}: ${entry.value} ${entry.value === 1 ? 'lead' : 'leads'}`}
-                        onClick={() => handleSourceClick(entry)}
+                        role={canFilter ? "button" : undefined}
+                        tabIndex={canFilter ? 0 : -1}
+                        aria-label={`${canFilter ? 'Filtrar por ' : ''}${entry.name}: ${entry.value} ${entry.value === 1 ? 'lead' : 'leads'}`}
+                        onClick={canFilter ? () => handleSourceClick(entry) : undefined}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
+                          if (canFilter && (event.key === 'Enter' || event.key === ' ')) {
                             event.preventDefault();
                             handleSourceClick(entry);
                           }
@@ -266,7 +289,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                 <div className="absolute -bottom-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-[4px] bg-[var(--app-surface-soft)]" />
               </div>
               <span className="mt-1 text-[10px] font-light text-[var(--app-text-secondary)] sm:text-[11px]">
-                Leads
+                {unit}
               </span>
             </div>
           </div>

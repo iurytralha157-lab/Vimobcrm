@@ -74,30 +74,33 @@ func evaluatePublicationReadiness(scope publicationScope, source publicationSour
 
 func evaluateSiteReadiness(source publicationSource) ([]Check, int, string) {
 	property := source.Property
-	activeOffer := false
+	activeOffer := len(source.Offers) == 0 &&
+		(positiveNumber(property["valor_venda"]) || positiveNumber(property["valor_aluguel"]))
 	for _, offer := range source.Offers {
 		if offer.Status == "active" && offer.Price > 0 {
 			activeOffer = true
 			break
 		}
 	}
-	if !activeOffer {
-		activeOffer = positiveNumber(property["valor_venda"]) || positiveNumber(property["valor_aluguel"])
-	}
 	compatiblePurpose := hasCompatiblePurpose(property, source.Offers)
 	publicPhoto := len(publicAssetPhotos(source.Assets)) > 0
 	if !sourceHasPropertyAssetPhoto(source) {
-		publicPhoto = len(stringSlice(property["fotos"])) > 0 || text(property["imagem_principal"]) != ""
+		publicPhoto = len(legacyPropertyImages(property)) > 0
 	}
+	postalCodeValid := validPublicationPostalCode(text(property["cep"]))
+	areaValid := positiveNumber(property["area_construida"]) || positiveNumber(property["area_total"])
 
 	checks := []Check{
 		publicationCheck("site_active", "Site ativo", "error", source.SiteActive, "Ative e configure o site da organização."),
+		publicationCheck("site_module", "Módulo Site ativo", "error", source.SiteModuleActive, "Ative o módulo Site para esta organização."),
 		publicationCheck("title", "Título comercial informado", "error", text(property["titulo"]) != "", "Informe um título comercial."),
 		publicationCheck("type", "Tipo do imóvel definido", "error", text(property["tipo_imovel"]) != "", "Defina o tipo do imóvel."),
-		publicationCheck("location", "Bairro, cidade e UF informados", "error", text(property["bairro"]) != "" && text(property["cidade"]) != "" && text(property["estado"]) != "", "Informe bairro, cidade e UF."),
+		publicationCheck("location", "Bairro, cidade e UF informados", "error", text(property["bairro"]) != "" && text(property["cidade"]) != "" && len(text(property["estado"])) == 2, "Informe bairro, cidade e UF."),
+		publicationCheck("postal_code", "CEP com 8 dígitos", "error", postalCodeValid, "Informe um CEP válido com 8 dígitos."),
 		publicationCheck("description", "Descrição pública informada", "error", text(property["descricao"]) != "", "Informe a descrição do site."),
 		publicationCheck("offer", "Oferta ativa com valor válido", "error", activeOffer, "Ative uma oferta de venda ou locação com valor positivo."),
-		publicationCheck("purpose", "Finalidade compatível com a oferta", "error", compatiblePurpose, "Defina venda ou locação de acordo com a oferta ativa."),
+		publicationCheck("purpose", "Modalidade com preço compatível", "error", compatiblePurpose, "Defina a modalidade de negócio e informe um preço positivo para cada modalidade selecionada."),
+		publicationCheck("area", "Área informada", "error", areaValid, "Informe a área útil ou total do imóvel."),
 		publicationCheck("photo", "Ao menos uma foto pública", "error", publicPhoto, "Adicione uma foto pública ao imóvel."),
 		publicationCheck("owner", "Proprietário vinculado", "warning", source.OwnerPresent, "Vincule um proprietário atual para completar a operação interna."),
 		publicationCheck("responsible", "Corretor responsável definido", "warning", source.ResponsiblePresent, "Defina o corretor responsável para completar a operação interna."),
@@ -153,7 +156,7 @@ func evaluateGrupoOLXReadiness(source publicationSource) ([]Check, int, string) 
 	clientListingID := strings.TrimSpace(source.GrupoOLXClientListingID)
 	publicationType := normalizeGrupoOLXPublicationType(source.GrupoOLXPublicationType)
 	locationValid := text(property["bairro"]) != "" && text(property["cidade"]) != "" && len(text(property["estado"])) == 2
-	postalCodeValid := len(onlyDigitsPublication(text(property["cep"]))) == 8
+	postalCodeValid := validPublicationPostalCode(text(property["cep"]))
 	addressVisibility := text(property["address_visibility"])
 	if addressVisibility == "" {
 		addressVisibility = text(property["public_address_visibility"])
@@ -166,6 +169,7 @@ func evaluateGrupoOLXReadiness(source publicationSource) ([]Check, int, string) 
 	priceValid := (transactionType == "For Sale" && salePrice > 0) ||
 		(transactionType == "For Rent" && rentPrice > 0) ||
 		(transactionType == "Sale/Rent" && salePrice > 0 && rentPrice > 0)
+	priceValid = priceValid && hasCompatiblePurpose(property, source.Offers)
 	area := number(property["area_construida"])
 	if grupoOLXRequiresLotArea(propertyType) {
 		area = number(property["area_total"])
@@ -225,6 +229,7 @@ func grupoOLXMinimumAddressVisibility(value string) bool {
 }
 
 var allowedPublicationDescriptionTag = regexp.MustCompile(`(?i)</?(?:b|i)>|<br\s*/?>`)
+var publicationPostalCodePattern = regexp.MustCompile(`^(?:[0-9]{8}|[0-9]{5}-[0-9]{3})$`)
 
 func publicationTitleHasMarkup(value string) bool {
 	return strings.ContainsAny(html.UnescapeString(value), "<>")
@@ -247,15 +252,40 @@ func publicationCheck(code string, label string, severity string, resolved bool,
 	return check
 }
 
+// The overview must explain the module entitlement used by the command gate,
+// even if its cached tenant context differs temporarily from the source query.
+func markPublicationModuleUnavailable(checks []Check, code string, label string, message string) ([]Check, int, string) {
+	found := false
+	for index := range checks {
+		if checks[index].Code == code {
+			checks[index].Resolved = false
+			checks[index].Message = stringPointer(message)
+			found = true
+			break
+		}
+	}
+	if !found {
+		checks = append(checks, publicationCheck(code, label, "error", false, message))
+	}
+	resolved := 0
+	for _, check := range checks {
+		if check.Resolved {
+			resolved++
+		}
+	}
+	return checks, resolved * 100 / len(checks), ReadinessBlocked
+}
+
 func hasCompatiblePurpose(property map[string]any, offers []sourceOffer) bool {
-	purpose := normalizedASCII(text(property["finalidade"]))
-	wantsSale := strings.Contains(purpose, "venda") || strings.Contains(purpose, "sale")
-	wantsRent := strings.Contains(purpose, "locacao") || strings.Contains(purpose, "aluguel") || strings.Contains(purpose, "rent") || strings.Contains(purpose, "temporada")
+	wantsSale, wantsRent := publicationTransactionIntent(property)
 	if !wantsSale && !wantsRent {
 		return false
 	}
-	hasSale := positiveNumber(property["valor_venda"])
-	hasRent := positiveNumber(property["valor_aluguel"])
+	// Legacy properties may have no workspace offers. Once offers exist, their
+	// active prices are authoritative; old property prices cannot revive a
+	// paused offer or satisfy the wrong selected transaction.
+	hasSale := len(offers) == 0 && positiveNumber(property["valor_venda"])
+	hasRent := len(offers) == 0 && positiveNumber(property["valor_aluguel"])
 	for _, offer := range offers {
 		if offer.Status != "active" || offer.Price <= 0 {
 			continue
@@ -267,7 +297,21 @@ func hasCompatiblePurpose(property map[string]any, offers []sourceOffer) bool {
 			hasRent = true
 		}
 	}
-	return (wantsSale && hasSale) || (wantsRent && hasRent)
+	return (!wantsSale || hasSale) && (!wantsRent || hasRent)
+}
+
+func publicationTransactionIntent(property map[string]any) (bool, bool) {
+	// The property form uses finalidade for residential/commercial purpose and
+	// tipo_de_negocio for sale/rent. Older records used finalidade for both.
+	deal := normalizedASCII(text(property["tipo_de_negocio"]))
+	if deal == "" {
+		deal = normalizedASCII(text(property["finalidade"]))
+	}
+	wantsSale := strings.Contains(deal, "venda") || strings.Contains(deal, "sale") ||
+		strings.Contains(deal, "lancamento") || strings.Contains(deal, "launch")
+	wantsRent := strings.Contains(deal, "locacao") || strings.Contains(deal, "aluguel") ||
+		strings.Contains(deal, "rent") || strings.Contains(deal, "temporada") || strings.Contains(deal, "season")
+	return wantsSale, wantsRent
 }
 
 func unresolvedChecks(checks []Check) []Check {
@@ -347,7 +391,7 @@ func buildGrupoOLXSnapshot(source publicationSource, publicBaseURL string, publi
 		base.Property["fotos"] = []string{}
 		base.Property["imagem_principal"] = nil
 	}
-	switch grupoOLXTransactionType(base.Property, source.Offers) {
+	switch grupoOLXTransactionType(source.Property, source.Offers) {
 	case "For Sale":
 		base.Property["finalidade"] = "venda"
 	case "For Rent":
@@ -570,7 +614,9 @@ func applyCanonicalOffers(property map[string]any, offers []sourceOffer) {
 func publicAssetPhotos(assets []sourceAsset) []sourceAsset {
 	photos := make([]sourceAsset, 0)
 	for _, asset := range assets {
-		if asset.AssetType == "photo" && asset.Visibility == "public" && asset.ID != "" && (asset.StoragePath != "" || asset.ExternalURL != "") {
+		_, validExternalURL := safeExternalMediaURL(asset.ExternalURL)
+		if asset.AssetType == "photo" && asset.Visibility == "public" && asset.ID != "" &&
+			(strings.TrimSpace(asset.StoragePath) != "" || validExternalURL) {
 			photos = append(photos, asset)
 		}
 	}
@@ -621,9 +667,8 @@ func legacyPropertyImages(property map[string]any) []string {
 	seen := map[string]bool{}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		parsed, err := url.Parse(value)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || seen[value] {
+		value, valid := safeExternalMediaURL(value)
+		if !valid || seen[value] {
 			continue
 		}
 		seen[value] = true
@@ -640,6 +685,7 @@ func sitePublicPropertySQL(alias string) string {
 		'descricao', coalesce(nullif(` + alias + `.descricao_site, ''), nullif(` + alias + `.descricao, '')),
 		'tipo_imovel', ` + alias + `.tipo,
 		'finalidade', ` + alias + `.finalidade,
+		'tipo_de_negocio', ` + alias + `.tipo_de_negocio,
 		'valor_venda', ` + alias + `.preco,
 		'valor_aluguel', ` + alias + `.valor_locacao,
 		'valor_condominio', ` + alias + `.condominio,
@@ -772,6 +818,19 @@ func validGrupoOLXPublicationType(value string) bool {
 }
 
 func grupoOLXTransactionType(property map[string]any, offers []sourceOffer) string {
+	if text(property["tipo_de_negocio"]) != "" {
+		wantsSale, wantsRent := publicationTransactionIntent(property)
+		switch {
+		case wantsSale && wantsRent:
+			return "Sale/Rent"
+		case wantsSale:
+			return "For Sale"
+		case wantsRent:
+			return "For Rent"
+		default:
+			return ""
+		}
+	}
 	purpose := normalizedASCII(text(property["finalidade"]))
 	hasSale := strings.Contains(purpose, "venda") || strings.Contains(purpose, "sale")
 	hasRent := strings.Contains(purpose, "locacao") || strings.Contains(purpose, "aluguel") || strings.Contains(purpose, "rent")
@@ -910,14 +969,8 @@ func grupoOLXJPEGURL(value string) bool {
 	return extension == ".jpg" || extension == ".jpeg"
 }
 
-func onlyDigitsPublication(value string) string {
-	var builder strings.Builder
-	for _, r := range value {
-		if r >= '0' && r <= '9' {
-			builder.WriteRune(r)
-		}
-	}
-	return builder.String()
+func validPublicationPostalCode(value string) bool {
+	return publicationPostalCodePattern.MatchString(strings.TrimSpace(value))
 }
 
 func text(value any) string {

@@ -112,10 +112,13 @@ export function PropertyCard({
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-  const isSold = normalizedStatus === "vendido";
-  const isReserved = normalizedStatus === "reservado";
+  const isSold = normalizedStatus === "vendido" || normalizedStatus === "sold";
+  const isReserved =
+    normalizedStatus === "reservado" || normalizedStatus === "reserved";
   const isRented =
-    normalizedStatus === "alugado" || normalizedStatus === "locado";
+    normalizedStatus === "alugado" ||
+    normalizedStatus === "locado" ||
+    normalizedStatus === "rented";
   const isInactive =
     normalizedStatus === "inativo" || normalizedStatus === "inactive";
   const isPrivateStatus = [
@@ -269,8 +272,8 @@ export function PropertyCard({
   const menuIconClass = "h-3.5 w-3.5 shrink-0";
 
   return (
-    <article className="group overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
-      <div className="relative aspect-[16/10] overflow-hidden bg-[var(--app-surface-soft)]">
+    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
+      <div className="relative aspect-[16/10] shrink-0 overflow-hidden bg-[var(--app-surface-soft)]">
         {imageSrc ? (
           <Image
             src={imageSrc}
@@ -309,11 +312,12 @@ export function PropertyCard({
           </div>
         )}
 
-        <div className="pointer-events-none absolute left-0 top-0 z-20 flex flex-col items-start gap-1">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col items-start gap-1">
           {property.code && (
             <div
               data-property-card-code
-              className="rounded-br-[6px] bg-primary px-3 py-1.5 font-mono text-[10px] font-light text-primary-foreground shadow-none"
+              className="max-w-[45%] truncate rounded-br-[6px] bg-primary px-3 py-1.5 font-mono text-[10px] font-light text-primary-foreground shadow-none"
+              title={property.code}
             >
               {property.code}
             </div>
@@ -356,7 +360,7 @@ export function PropertyCard({
               type="button"
               aria-label={"Compartilhar " + propertyLabel}
               title="Compartilhar link do site"
-              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary text-primary-foreground shadow-none transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
               onClick={handleShareProperty}
             >
               <Share2 className="h-3.5 w-3.5" />
@@ -374,11 +378,11 @@ export function PropertyCard({
         )}
       </div>
 
-      <div className="relative p-3">
+      <div className="relative flex min-w-0 flex-1 flex-col p-3.5">
         <div className="mb-2 flex items-start justify-between gap-2">
           <Badge
             data-property-card-deal-type
-            className="rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary"
+            className="max-w-[70%] truncate rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary"
           >
             {property.tipo_de_negocio}
           </Badge>
@@ -554,10 +558,10 @@ export function PropertyCard({
         <button
           type="button"
           aria-label={"Ver detalhes de " + propertyLabel}
-          className="block w-full rounded-[6px] text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+          className="flex min-w-0 w-full flex-1 flex-col rounded-[6px] text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
           onClick={openProperty}
         >
-          <h3 className="mb-1.5 line-clamp-2 text-[13px] font-light leading-[18px] text-[var(--app-text-primary)]">
+          <h3 className="mb-1.5 line-clamp-2 text-[14px] font-medium leading-5 text-[var(--app-text-primary)]">
             {property.title ||
               (displayPropertyType || "Imóvel") +
                 " em " +
@@ -567,9 +571,9 @@ export function PropertyCard({
           </h3>
 
           {(property.bairro || property.cidade || quadra || lote) && (
-            <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
+            <div className="mb-2.5 flex min-w-0 items-center gap-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
               <MapPin className="h-3 w-3 shrink-0" />
-              <span className="truncate">
+              <span className="min-w-0 flex-1 truncate">
                 {[
                   property.bairro,
                   quadra ? "Quadra " + quadra : null,
@@ -582,7 +586,7 @@ export function PropertyCard({
             </div>
           )}
 
-          <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-light text-[var(--app-text-tertiary)]">
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-light text-[var(--app-text-secondary)]">
             {property.quartos != null && property.quartos > 0 && (
               <span className="flex items-center gap-1">
                 <Bed className="h-3 w-3" />
@@ -611,7 +615,7 @@ export function PropertyCard({
 
           <p
             className={cn(
-              "text-base font-normal leading-tight text-[var(--app-text-primary)]",
+              "mt-auto min-w-0 w-full break-words border-t border-[var(--app-border)] pt-3 text-[17px] font-medium leading-tight text-[var(--app-text-primary)] [overflow-wrap:anywhere]",
               isUnavailable && "text-[var(--app-text-tertiary)] line-through",
             )}
           >

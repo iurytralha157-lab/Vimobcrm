@@ -30,7 +30,11 @@ export function useLeadVisibility(userId: string | undefined) {
     queryKey: ['lead-visibility', userId, organizationId],
     queryFn: ({ signal }) => fetchLeadVisibility(userId!, organizationId, signal),
     enabled: !!userId && !!organizationId,
-    staleTime: 1000 * 60 * 15,
+    staleTime: 1000 * 30,
+    refetchInterval: 1000 * 60,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
     retry: shouldRetryPipelineQuery,
     retryDelay: 800,
   });

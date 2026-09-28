@@ -20,6 +20,7 @@ import {
   formatUnspacedBRLCurrency,
 } from '@/lib/utils/formatting';
 import { getErrorObjectMessage } from '@/lib/api/vimob-error';
+import { getLeadDisplayValue } from '@/lib/lead-display-value';
 import { toast } from 'sonner';
 
 // Deal status labels and colors
@@ -56,6 +57,7 @@ type LeadInterest = {
 
 type LeadCardLead = {
   id: string;
+  can_operate?: boolean;
   name?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -65,6 +67,7 @@ type LeadCardLead = {
   stage_entered_at?: string | null;
   first_response_at?: string | null;
   first_response_seconds?: number | null;
+  first_response_is_automation?: boolean | null;
   sla_status?: string | null;
   sla_seconds_elapsed?: number | null;
   whatsapp_avatar_url?: string | null;
@@ -103,7 +106,9 @@ interface LeadCardProps {
 
 // Formata tempo sempre em horas (ex: "30min", "2h", "72h")
 const formatShortTime = (date: Date, nowMs = Date.now()): string => {
-  const diffMs = nowMs - date.getTime();
+  const enteredAtMs = date.getTime();
+  if (!Number.isFinite(enteredAtMs)) return '—';
+  const diffMs = Math.max(0, nowMs - enteredAtMs);
   const diffHrs = Math.floor(diffMs / 3600000);
   if (diffHrs === 0) {
     const diffMins = Math.floor(diffMs / 60000);
@@ -147,9 +152,7 @@ export const LeadCard = memo(function LeadCard({
           : 'Ver mensagens';
   const leadAvatarUrl = lead.whatsapp_avatar_url || lead.whatsapp_picture || lead.contact_picture || null;
 
-  // Get interest value from: interest property, legacy valor_interesse, or property
-  const interestPropertyPrice = lead.interest_property?.preco;
-  const valorInteresse = interestPropertyPrice || lead.valor_interesse || lead.property?.preco || 0;
+  const valorInteresse = getLeadDisplayValue(lead);
   const interestLabel = lead.interest_property?.code || lead.interest_property?.title ||
                         lead.property?.code || lead.property?.title || null;
 
@@ -203,18 +206,34 @@ export const LeadCard = memo(function LeadCard({
         content: outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
         metadata: { outcome, notes, channel: outcomeType },
       });
-      await recordFirstResponse({
-        leadId: lead.id,
-        organizationId: lead.organization_id || activeOrganization.organizationId || '',
-        channel: outcomeType === 'call' ? 'phone' : 'email',
-        actorUserId: profile?.id || null,
-        firstResponseAt: lead.first_response_at,
-      });
-      setOutcomeDialogOpen(false);
     } catch (error) {
       toast.error(`Não foi possível registrar a atividade: ${getErrorObjectMessage(error)}`);
       throw error;
     }
+    const responseParams = {
+      leadId: lead.id,
+      organizationId: lead.organization_id || activeOrganization.organizationId || '',
+      channel: outcomeType === 'call' ? 'phone' as const : 'email' as const,
+      actorUserId: profile?.id || null,
+      firstResponseAt: lead.first_response_at,
+      firstResponseIsAutomation: lead.first_response_is_automation,
+    };
+    try {
+      await recordFirstResponse(responseParams);
+    } catch {
+      toast.warning('Atividade salva, mas o tempo do primeiro contato não foi registrado.', {
+        action: {
+          label: 'Tentar registro',
+          onClick: () => {
+            void recordFirstResponse(responseParams).then(
+              () => toast.success('Primeiro contato registrado.'),
+              () => toast.error('Ainda não foi possível registrar o tempo do primeiro contato.'),
+            );
+          },
+        },
+      });
+    }
+    setOutcomeDialogOpen(false);
   };
   const isLost = lead.deal_status === 'lost';
   const isWon = lead.deal_status === 'won';
@@ -476,7 +495,7 @@ export const LeadCard = memo(function LeadCard({
                     <Avatar
                       tabIndex={0}
                       aria-label={`Responsável: ${lead.assignee.name || 'não informado'}`}
-                      className="pointer-events-auto h-6 w-6 shrink-0"
+                      className="pointer-events-auto h-10 w-10 shrink-0 md:h-6 md:w-6"
                     >
                       <AvatarImage src={lead.assignee.avatar_url || undefined} alt="" />
                       <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
@@ -503,6 +522,13 @@ export const LeadCard = memo(function LeadCard({
                       Carregando responsável
                     </TooltipContent>
                   </Tooltip>
+                ) : lead.can_operate !== true ? (
+                  <Badge
+                    variant="secondary"
+                    className="bg-[var(--app-surface-soft)] px-1.5 py-0.5 text-[9px] font-normal text-muted-foreground"
+                  >
+                    Sem responsável
+                  </Badge>
                 ) : isRecentlyCreated ? (
                   <Badge variant="secondary" className="animate-pulse px-1.5 py-0.5 text-[9px] font-normal">
                     <Loader2 className="h-2 w-2 mr-1 animate-spin" />
@@ -513,8 +539,11 @@ export const LeadCard = memo(function LeadCard({
                     <button
                       type="button"
                       aria-label={`Atribuir ${leadName} via round-robin`}
-                      className="pointer-events-auto inline-flex h-6 cursor-pointer items-center rounded-[6px] bg-destructive px-1.5 text-[9px] font-normal text-destructive-foreground outline-none transition-colors hover:bg-destructive/90 focus-visible:ring-1 focus-visible:ring-destructive/50"
-                      onClick={() => onAssignNow(lead.id)}
+                      className="pointer-events-auto inline-flex h-10 cursor-pointer items-center rounded-[6px] bg-destructive px-1.5 text-[9px] font-normal text-destructive-foreground outline-none transition-colors hover:bg-destructive/90 focus-visible:ring-1 focus-visible:ring-destructive/50 md:h-6"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAssignNow(lead.id);
+                      }}
                     >
                       Sem responsável
                     </button>
@@ -527,7 +556,7 @@ export const LeadCard = memo(function LeadCard({
               {/* Ícones de ação */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={hasPhone ? `Ligar para ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasPhone ? iconColors.phone : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button type="button" aria-label={hasPhone ? `Ligar para ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasPhone ? iconColors.phone : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <Phone aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
@@ -538,7 +567,7 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={`${whatsappActionLabel}: ${leadName}`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!canUseWhatsApp} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", canUseWhatsApp ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button type="button" aria-label={`${whatsappActionLabel}: ${leadName}`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!canUseWhatsApp} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", canUseWhatsApp ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <MessageCircle aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
@@ -549,7 +578,7 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={hasEmail ? `Enviar e-mail para ${leadName}` : `${leadName} está sem e-mail`} onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasEmail ? iconColors.email : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button type="button" aria-label={hasEmail ? `Enviar e-mail para ${leadName}` : `${leadName} está sem e-mail`} onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasEmail ? iconColors.email : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <Mail aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
@@ -581,7 +610,7 @@ export const LeadCard = memo(function LeadCard({
                 </Tooltip>}
 
               {/* SLA Badge - shows warning/overdue status */}
-              {lead.assigned_user_id && !lead.first_response_seconds && (
+              {lead.assigned_user_id && !lead.first_response_at && (
                 <SlaBadge className="pointer-events-auto" slaStatus={lead.sla_status ?? null} slaSecondsElapsed={lead.sla_seconds_elapsed ?? null} firstResponseAt={lead.first_response_at ?? null} />
               )}
 

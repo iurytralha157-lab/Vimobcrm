@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { InternationalPhoneInput } from '@/components/shared/forms/InternationalPhoneInput';
 import { Textarea } from '@/components/ui/textarea';
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -49,6 +49,7 @@ import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { CopyLeadPhoneButton } from '@/components/features/leads/CopyLeadPhoneButton';
 import { LeadCadencePanel } from '@/components/features/leads/LeadCadencePanel';
+import { resolvedFirstResponse } from '@/components/features/leads/lead-detail/first-response';
 
 import type { TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
 import { toast } from 'sonner';
@@ -58,6 +59,8 @@ import { useUpdateLeadCommission } from '@/hooks/use-update-commission';
 import { useDealStatusChange } from '@/hooks/use-deal-status-change';
 import { useCreateCall } from '@/hooks/use-telephony';
 import { useRecordFirstResponseOnAction } from '@/hooks/use-first-response';
+import { formatResponseTime } from '@/hooks/use-lead-timeline';
+import { useLeadHistory } from '@/hooks/use-lead-history';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useTeams } from '@/hooks/use-teams';
@@ -65,6 +68,7 @@ import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent } from '@/hooks/use-optimistic-lead-history';
 import { leadsAPI } from '@/lib/api/leads';
 import { mergePreservingDefinedFields } from '@/lib/merge-preserving-defined';
+import { canOperateLeadFromFreshRead, mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
 import { isAttendanceScheduleType, isFinalScheduleStatus } from '@/lib/schedule-outcome';
@@ -98,6 +102,26 @@ import {
 
 export type { LeadDetailLead } from './lead-detail';
 
+function useIsLeadDetailTablet() {
+  const [isTablet, setIsTablet] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px) and (max-width: 1023px)');
+    const sync = () => setIsTablet(media.matches);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) sync();
+    });
+    media.addEventListener('change', sync);
+    return () => {
+      cancelled = true;
+      media.removeEventListener('change', sync);
+    };
+  }, []);
+
+  return isTablet;
+}
+
 export function LeadDetailDialog({
   lead: leadProp,
   stages,
@@ -109,6 +133,7 @@ export function LeadDetailDialog({
   const lead = leadProp ?? ({} as LeadDetailLead);
   const { language } = useLanguage();
   const isMobile = useIsMobile();
+  const isTablet = useIsLeadDetailTablet();
   const dateLocale = language === 'pt-BR' ? ptBR : enUS;
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const [assigneePopoverOpen, setAssigneePopoverOpen] = useState(false);
@@ -150,6 +175,7 @@ export function LeadDetailDialog({
 
   const leadId = leadProp?.id ?? null;
   const fullLeadQuery = useLead(leadId);
+  const leadHistoryQuery = useLeadHistory(leadId);
   const [lostReasonLocal, setLostReasonLocal] = useState(lead?.lost_reason || '');
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
   const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
@@ -302,7 +328,10 @@ export function LeadDetailDialog({
   } = useLeadCadenceState(leadId, cadenceOrganizationId, leadProp?.stage_id);
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
-  const canOperateLead = hasPermission('lead_operate');
+  const canOperateLead = !isUpdatingAssignee && canOperateLeadFromFreshRead(
+    hasPermission('lead_operate'),
+    fullLeadQuery,
+  );
   const handleOpenLeadEdit = () => {
     if (!canOperateLead) return;
     setIsEditingContact(false);
@@ -359,12 +388,17 @@ export function LeadDetailDialog({
     if (open) setShouldLoadLeadProperties(true);
   };
   const {
-    data: scheduleEvents = []
+    data: scheduleEvents = [],
+    isPending: schedulePending,
+    isError: scheduleError,
+    refetch: refetchScheduleEvents,
   } = useScheduleEvents({
     leadId: leadId || undefined,
     enabled: canViewLeadSchedule,
   });
   const scheduleSummaryLabel = useMemo(() => {
+    if (schedulePending && scheduleEvents.length === 0) return 'Carregando compromissos...';
+    if (scheduleError && scheduleEvents.length === 0) return 'Não foi possível carregar os compromissos';
     if (scheduleEvents.length === 0) return 'Nenhum compromisso';
     const appointments = scheduleEvents.filter((event) =>
       isAttendanceScheduleType(event.event_type),
@@ -389,7 +423,7 @@ export function LeadDetailDialog({
         ? `+ ${simpleCommitmentsCount} compromisso${simpleCommitmentsCount === 1 ? '' : 's'} simples`
         : null,
     ].filter(Boolean).join(' · ');
-  }, [scheduleEvents]);
+  }, [scheduleEvents, schedulePending, scheduleError]);
   const { data: leadMeta } = useLeadMeta(leadId);
   const completeCadenceTask = useCompleteCadenceTask();
   const updateLead = useUpdateLead();
@@ -561,7 +595,6 @@ export function LeadDetailDialog({
     if (!canOperateLead) return;
     const currentLead = localLead || lead;
     try {
-      // 1. Log in the 'activities' table for visual history
       await createActivityMutation.mutateAsync({
         lead_id: currentLead.id,
         type: quickActionOutcomeType === 'call' ? 'call' : 'email',
@@ -569,31 +602,44 @@ export function LeadDetailDialog({
         metadata: { outcome, notes, channel: quickActionOutcomeType },
       });
 
-    // 2. If it's a call, also register it in 'telephony_calls' for gamification & metrics
+    } catch (error) {
+      toast.error(`Não foi possível registrar a atividade: ${getErrorMessage(error)}`);
+      throw error;
+    }
+
     if (quickActionOutcomeType === 'call') {
-      // Use fire-and-forget logic or separate mutation to not block UI/history
       createCallMutation.mutate({
         lead_id: currentLead.id,
         phone_to: currentLead.phone || '',
         direction: 'outbound',
-        notes: notes,
-        organization_id: currentLead.organization_id || activeOrganization.organizationId || ''
+        notes,
+        organization_id: currentLead.organization_id || activeOrganization.organizationId || '',
       });
     }
 
-    await recordFirstResponse({
+    const firstResponseParams = {
       leadId: currentLead.id,
       organizationId: currentLead.organization_id || activeOrganization.organizationId || '',
       channel: quickActionOutcomeType === 'call' ? 'phone' : 'email',
       actorUserId: profile?.id || null,
       firstResponseAt: currentLead.first_response_at,
-    });
-
-      setQuickActionOutcomeOpen(false);
-    } catch (error) {
-      toast.error(`Não foi possível registrar a atividade: ${getErrorMessage(error)}`);
-      throw error;
+      firstResponseIsAutomation: currentLead.first_response_is_automation,
+    } satisfies Parameters<typeof recordFirstResponse>[0];
+    try {
+      await recordFirstResponse(firstResponseParams);
+    } catch {
+      toast.warning('Atividade salva, mas o tempo do primeiro contato não foi registrado.', {
+        action: {
+          label: 'Tentar registro',
+          onClick: () => {
+            void recordFirstResponse(firstResponseParams)
+              .then(() => toast.success('Registro do primeiro contato verificado.'))
+              .catch(() => toast.error('Não foi possível registrar o tempo do primeiro contato.'));
+          },
+        },
+      });
     }
+    setQuickActionOutcomeOpen(false);
   };
   const handleEditScheduleEvent = (event: ScheduleEvent) => {
     if (!canManageLeadSchedule) return;
@@ -767,7 +813,7 @@ export function LeadDetailDialog({
         }
       }
 
-      const optimisticLead: LeadDetailLead = {
+      const optimisticLead: LeadDetailLead = mergeLeadOperationCapability(localLead, {
         ...localLead,
         assigned_user_id: userId,
         assignee: selectedUser ? {
@@ -775,8 +821,9 @@ export function LeadDetailDialog({
           name: selectedUser.name,
           email: selectedUser.email,
           avatar_url: selectedUser.avatar_url
-        } : undefined
-      };
+        } : undefined,
+        can_operate: undefined,
+      });
 
       setLocalLead(optimisticLead);
       pipelineSnapshots = updatePipelineAssigneeCache(optimisticLead);
@@ -786,7 +833,7 @@ export function LeadDetailDialog({
       if (error) throw error;
 
       const serverLead = data as LeadDetailLead;
-      const persistedLead: LeadDetailLead = {
+      const persistedLead: LeadDetailLead = mergeLeadOperationCapability(optimisticLead, {
         ...optimisticLead,
         ...serverLead,
         assignee: serverLead.assignee ?? (
@@ -794,13 +841,15 @@ export function LeadDetailDialog({
             ? optimisticLead.assignee
             : undefined
         ),
-      };
+        can_operate: serverLead.can_operate,
+      });
 
       setLocalLead(persistedLead);
       if (organizationId) {
         queryClient.setQueryData(['lead', organizationId, lead.id], persistedLead);
       }
       updatePipelineLeadCache(lead.id, persistedLead);
+      void fullLeadQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       refreshPipelineInBackground(organizationId, lead.id, 'lead.assigned');
 
@@ -831,19 +880,32 @@ export function LeadDetailDialog({
     });
     const firstContactChannel = task.type === 'call'
       ? 'phone'
-      : task.type === 'message'
-        ? 'whatsapp'
-        : task.type === 'email'
-          ? 'email'
-          : null;
+      : task.type === 'email'
+        ? 'email'
+        : null;
     if (firstContactChannel) {
-      await recordFirstResponse({
+      const firstResponseParams = {
         leadId: lead.id,
         organizationId: lead.organization_id || activeOrganization.organizationId || '',
         channel: firstContactChannel,
         actorUserId: profile?.id || null,
         firstResponseAt: lead.first_response_at,
-      });
+        firstResponseIsAutomation: lead.first_response_is_automation,
+      } satisfies Parameters<typeof recordFirstResponse>[0];
+      try {
+        await recordFirstResponse(firstResponseParams);
+      } catch {
+        toast.warning('Tarefa concluída, mas o tempo do primeiro contato não foi registrado.', {
+          action: {
+            label: 'Tentar registro',
+            onClick: () => {
+              void recordFirstResponse(firstResponseParams)
+                .then(() => toast.success('Registro do primeiro contato verificado.'))
+                .catch(() => toast.error('Não foi possível registrar o tempo do primeiro contato.'));
+            },
+          },
+        });
+      }
     }
   };
 
@@ -1005,6 +1067,7 @@ export function LeadDetailDialog({
       const organizationId = lead.organization_id || activeOrganization.organizationId || undefined;
       const { data: updatedLead, error } = await leadsAPI.moveLeadStage(lead.id, {
         stageId,
+        expectedStageId: previousLead.stage_id ?? null,
         lostReason,
       }, organizationId);
       if (error) throw error;
@@ -1028,6 +1091,13 @@ export function LeadDetailDialog({
       return true;
     } catch (error: unknown) {
       setLocalLead(previousLead);
+      if (error instanceof VimobAPIError && error.code === 'lead_stage_changed') {
+        void queryClient.invalidateQueries({ queryKey: ['pipeline-board'] });
+        void queryClient.invalidateQueries({ queryKey: ['lead', activeOrganization.organizationId, lead.id] });
+        handleCloseLeadDetail();
+        toast.error('Este lead mudou de etapa em outra sessão. Abra novamente para ver a etapa atual.');
+        return false;
+      }
       if (
         !lostReason &&
         error instanceof VimobAPIError &&
@@ -1190,6 +1260,35 @@ export function LeadDetailDialog({
   const leadName = localLead?.name || lead.name || 'Lead';
   const canOpenLeadWhatsApp = canViewLeadWhatsApp;
   const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, localLead || lead);
+  const firstResponse = resolvedFirstResponse(localLead, leadHistoryQuery.data);
+  const firstResponseLabel = firstResponse
+    ? `${typeof firstResponse.seconds === 'number' && firstResponse.seconds >= 0 ? formatResponseTime(firstResponse.seconds) : 'Tempo indisponível'}${firstResponse.isAutomation ? ' · automático' : ''}${firstResponse.fromHistory ? ' · histórico' : ''}`
+    : leadHistoryQuery.isPending && !localLead.first_response_at
+      ? 'Carregando...'
+      : leadHistoryQuery.isError && !localLead.first_response_at
+        ? 'Indisponível'
+        : 'Não registrado';
+  const renderScheduleEvents = () => (
+    <>
+      {scheduleError && (
+        <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-[11px] text-[var(--app-text-secondary)]">
+          <span>{scheduleEvents.length > 0 ? 'Não foi possível atualizar a agenda.' : 'Não foi possível carregar a agenda.'}</span>
+          <Button type="button" variant="ghost" size="sm" className={cn('h-7 rounded-[5px] px-2 text-[11px]', (isMobile || isTablet) && 'h-10')} onClick={() => void refetchScheduleEvents()}>
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+      {schedulePending && scheduleEvents.length === 0 ? (
+        <p role="status" className="mt-2 text-[11px] text-[var(--app-text-tertiary)]">Carregando compromissos...</p>
+      ) : (scheduleEvents.length > 0 || !scheduleError) && (
+        <CompactScheduleEventsList
+          events={scheduleEvents}
+          locale={dateLocale}
+          onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
+        />
+      )}
+    </>
+  );
 
   const MobileContentV2 = () => {
     const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
@@ -1199,6 +1298,7 @@ export function LeadDetailDialog({
       { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: getLeadSourceLabel(leadSource) },
+      { label: 'Primeiro contato', value: firstResponseLabel },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
@@ -1211,6 +1311,8 @@ export function LeadDetailDialog({
       { id: 'actions', label: 'Ações', icon: Activity, badge: scheduleEvents.length ? String(scheduleEvents.length) : undefined },
       { id: 'history', label: 'Histórico', icon: MessageCircle },
     ];
+    // The shared primary-action rule fixes height at 2rem; keep mobile hit areas at 40px.
+    const mobilePrimaryActionStyle = { height: '2.5rem' };
 
     return (
       <div className="lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
@@ -1219,7 +1321,7 @@ export function LeadDetailDialog({
             <div
               data-lead-stage-stepper
               className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center overflow-x-auto pb-0.5"
-              style={stageStepperStyle}
+              style={{ ...stageStepperStyle, '--lead-stage-step-size': '2.5rem' } as CSSProperties}
             >
               {stages.map((stage, idx) => {
                 const isActive = stage.id === localLead.stage_id;
@@ -1235,7 +1337,7 @@ export function LeadDetailDialog({
                     data-lead-stage-step
                     onClick={() => handleMoveToStage(stage.id)}
                     className={cn(
-                      'lead-stage-step relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-normal',
+                      'lead-stage-step relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-normal',
                       isActive
                         ? 'bg-primary text-primary-foreground'
                         : isPast
@@ -1248,7 +1350,7 @@ export function LeadDetailDialog({
                 );
               })}
             </div>
-            <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
+            <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -1269,7 +1371,7 @@ export function LeadDetailDialog({
               {localLead.phone && (
                 <div className="mt-1 flex min-w-0 items-center gap-1.5">
                   <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(localLead.phone)}</p>
-                  <CopyLeadPhoneButton phone={localLead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)]" />
+                  <CopyLeadPhoneButton phone={localLead.phone} className="h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]" />
                 </div>
               )}
 
@@ -1318,7 +1420,7 @@ export function LeadDetailDialog({
                 <Button
                   variant="ghost"
                   aria-label="Alterar responsável pelo lead"
-                  className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs font-light text-[var(--app-text-secondary)]"
+                   className="h-10 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs font-light text-[var(--app-text-secondary)]"
                   disabled={!canTransferLead}
                   onClick={(event) => event.stopPropagation()}
                 >
@@ -1343,11 +1445,11 @@ export function LeadDetailDialog({
                   >
                     <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
                     <CommandGroup>
-                      <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                      <CommandItem onSelect={() => handleAssignUser(null)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
                         Sem responsável
                       </CommandItem>
                       {assignableUsers.map((user) => (
-                        <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                        <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
                           <div className="flex min-w-0 items-center gap-2">
                             <Avatar className="h-7 w-7">
                               <AvatarImage src={user.avatar_url || undefined} alt={user.name || user.email || 'Responsável'} />
@@ -1364,29 +1466,29 @@ export function LeadDetailDialog({
             </Popover>
 
             <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
-              <SelectTrigger className={cn('h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light', getDealStatusTriggerClass(localLead.deal_status))}>
+              <SelectTrigger className={cn('h-10 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light', getDealStatusTriggerClass(localLead.deal_status))}>
                 <SelectValue>{dealStatusLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="open">Aberto</SelectItem>
-                <SelectItem value="won">Ganho</SelectItem>
-                <SelectItem value="lost">Perdido</SelectItem>
+                <SelectItem value="open" className="min-h-10">Aberto</SelectItem>
+                <SelectItem value="won" className="min-h-10">Ganho</SelectItem>
+                <SelectItem value="lost" className="min-h-10">Perdido</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
             {localLead.phone && (
-              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Phone className="h-3.5 w-3.5" />
               </Button>
             )}
-            <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+            <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-10 rounded-[6px] px-2 text-xs">
               <MessageCircle className="mr-1 h-3.5 w-3.5" />
               Chat
             </Button>
               {localLead.email && (
-              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Mail className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -1407,7 +1509,7 @@ export function LeadDetailDialog({
                   aria-selected={isActive}
                   onClick={() => setActiveTab(tab.id)}
                   className={cn(
-                    'flex h-8 items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-light transition-colors',
+                    'flex h-10 items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-light transition-colors',
                     isActive ? 'bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]' : 'text-[var(--app-text-secondary)]',
                   )}
                 >
@@ -1427,7 +1529,7 @@ export function LeadDetailDialog({
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-[12px] font-normal">Dados do contato</h3>
-                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
+                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-10 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
                       <FileEdit className="h-3 w-3" />
                       Editar
                     </Button>}
@@ -1443,14 +1545,14 @@ export function LeadDetailDialog({
 
                   {isEditingContact && (
                     <div className="mt-3 space-y-2">
-                      <Input aria-label="Nome" value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-8 rounded-[6px]" placeholder="Nome" />
+                      <Input aria-label="Nome" value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-10 rounded-[6px]" placeholder="Nome" />
                       <div role="group" aria-label="Telefone"><InternationalPhoneInput value={editForm.phone} onChange={(value) => setEditForm({ ...editForm, phone: value })} /></div>
-                      <Input aria-label="E-mail" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-8 rounded-[6px]" placeholder="E-mail" />
+                      <Input aria-label="E-mail" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-10 rounded-[6px]" placeholder="E-mail" />
                       <div className="grid grid-cols-2 gap-2">
-                        <Input aria-label="Cargo" value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-8 rounded-[6px]" placeholder="Cargo" />
-                        <Input aria-label="Empresa" value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-8 rounded-[6px]" placeholder="Empresa" />
+                        <Input aria-label="Cargo" value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-10 rounded-[6px]" placeholder="Cargo" />
+                        <Input aria-label="Empresa" value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-10 rounded-[6px]" placeholder="Empresa" />
                       </div>
-                      <Button size="sm" className="h-8 w-full rounded-[6px]" onClick={handleSaveContact}>
+                      <Button size="sm" className="h-10 w-full rounded-[6px]" onClick={handleSaveContact}>
                         <Save className="mr-1.5 h-3.5 w-3.5" />
                         Salvar dados
                       </Button>
@@ -1472,7 +1574,7 @@ export function LeadDetailDialog({
                     <h3 className="text-[12px] font-normal">Documentação</h3>
                     {canOperateLead && (
                       <>
-                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-10 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                           Anexar
                         </Button>
@@ -1486,7 +1588,7 @@ export function LeadDetailDialog({
                         <button
                           key={doc.id}
                           type="button"
-                          className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs font-light outline-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
+                          className="flex min-h-10 w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs font-light outline-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
                           onClick={() => void handleOpenAttachment(doc)}
                         >
                           <FileText className="h-3.5 w-3.5 text-primary" />
@@ -1514,7 +1616,8 @@ export function LeadDetailDialog({
                     <Button
                       size="sm"
                       disabled={!canManageLeadSchedule}
-                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
+                      className="lead-detail-primary-action lead-agenda-action h-10 shrink-0 rounded-[6px] px-2.5"
+                      style={mobilePrimaryActionStyle}
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
@@ -1525,11 +1628,7 @@ export function LeadDetailDialog({
                       Agendar
                     </Button>
                   </div>
-                  <CompactScheduleEventsList
-                    events={scheduleEvents}
-                    locale={dateLocale}
-                    onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
-                  />
+                  {renderScheduleEvents()}
                 </section>}
 
                 <LeadCadencePanel
@@ -1552,7 +1651,7 @@ export function LeadDetailDialog({
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
                   <div className="mt-2 flex justify-end">
-                    <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+                    <Button className="lead-detail-primary-action h-10 rounded-[6px] px-3" style={mobilePrimaryActionStyle} disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                       Registrar feedback
                     </Button>
                   </div>
@@ -1586,6 +1685,7 @@ export function LeadDetailDialog({
       { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: getLeadSourceLabel(leadSource) },
+      { label: 'Primeiro contato', value: firstResponseLabel },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
@@ -1598,6 +1698,7 @@ export function LeadDetailDialog({
         <div className="border-b border-transparent bg-[var(--app-surface-solid)] px-4 pt-4">
           <DialogHeader className="sr-only">
             <DialogTitle>{leadName}</DialogTitle>
+            <DialogDescription>Dados, ações e histórico do lead.</DialogDescription>
           </DialogHeader>
 
           <ScrollArea className="w-full" type="scroll">
@@ -1883,11 +1984,7 @@ export function LeadDetailDialog({
                       Agendar
                     </Button>
                   </div>
-                  <CompactScheduleEventsList
-                    events={scheduleEvents}
-                    locale={dateLocale}
-                    onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
-                  />
+                  {renderScheduleEvents()}
                 </section>}
 
                 <LeadCadencePanel
@@ -1989,12 +2086,12 @@ export function LeadDetailDialog({
   );
 
   // Render mobile or desktop version - use JSX directly instead of component functions
-  if (isMobile) {
+  if (isMobile || isTablet) {
     return (
       <>
         <Drawer open={Boolean(leadProp)} onOpenChange={(open) => !open && handleCloseLeadDetail()} dismissible={!isEditingContact}>
           <DrawerContent
-            className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none"
+            className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none md:max-w-[760px]"
             showHandle={false}
             onInteractOutside={(event) => {
               const target = event.target as HTMLElement | null;
@@ -2010,6 +2107,7 @@ export function LeadDetailDialog({
             <DrawerTitle className="sr-only">
               {leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
             </DrawerTitle>
+            <DrawerDescription className="sr-only">Dados, ações e histórico do lead.</DrawerDescription>
             {MobileContentV2()}
           </DrawerContent>
         </Drawer>

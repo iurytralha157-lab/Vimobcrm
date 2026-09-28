@@ -195,7 +195,7 @@ func TestPublicPropertyActiveSQLIsStrictForPublicIngress(t *testing.T) {
 	for _, required := range []string{
 		"lower(",
 		"coalesce(p.status, '')",
-		"in ('active', 'ativo')",
+		"in ('active', 'ativo', 'available', 'disponivel')",
 	} {
 		if !strings.Contains(activeSQL, required) {
 			t.Fatalf("active-property SQL is missing strict allowlist fragment %q: %s", required, activeSQL)

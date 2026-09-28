@@ -76,7 +76,7 @@ type E2EConfig = {
 };
 
 let envLoaded = false;
-let localSupabaseStatus: LocalSupabaseStatus | null | undefined;
+const localSupabaseStatus = new Map<string, LocalSupabaseStatus>();
 
 type LocalSupabaseStatus = {
   API_URL: string;
@@ -123,6 +123,12 @@ export function loadE2EEnvFiles(rootDir = process.cwd()) {
 export function getE2EConfig(): E2EConfig {
   loadE2EEnvFiles();
 
+  const isolatedWorkdir = readEnv('E2E_SUPABASE_WORKDIR');
+  if (isolatedWorkdir && (!readEnv('E2E_SUPABASE_URL') || !readEnv('E2E_DATABASE_URL'))) {
+    throw new Error(
+      'An isolated E2E Supabase workdir requires explicit E2E_SUPABASE_URL and E2E_DATABASE_URL.',
+    );
+  }
   const baseURL = readEnv('E2E_BASE_URL', 'http://127.0.0.1:3100');
   const apiURL = readEnv('E2E_VIMOB_API_URL', 'http://127.0.0.1:8181');
   const configuredSupabaseURL = readEnv('E2E_SUPABASE_URL', 'http://127.0.0.1:55321');
@@ -136,10 +142,26 @@ export function getE2EConfig(): E2EConfig {
     supabaseURL: configuredSupabaseURL,
     databaseURL: configuredDatabaseURL,
   });
+  if (
+    isolatedWorkdir &&
+    ![baseURL, apiURL, configuredSupabaseURL, configuredDatabaseURL].every(isLoopbackURL)
+  ) {
+    throw new Error('An isolated local E2E workdir requires four loopback targets.');
+  }
 
   const status = isLoopbackURL(configuredSupabaseURL)
-    ? getLocalSupabaseStatus()
+    ? getLocalSupabaseStatus(isolatedWorkdir || undefined)
     : null;
+  if (isolatedWorkdir && status) {
+    if (
+      new URL(status.API_URL).href !== new URL(configuredSupabaseURL).href ||
+      new URL(status.DB_URL).href !== new URL(configuredDatabaseURL).href
+    ) {
+      throw new Error(
+        'The isolated Supabase status does not match the explicitly configured E2E URLs.',
+      );
+    }
+  }
 
   return {
     baseURL,
@@ -242,14 +264,21 @@ function normalizeEnvValue(value: string) {
   return trimmed;
 }
 
-function getLocalSupabaseStatus(): LocalSupabaseStatus {
-  if (localSupabaseStatus) return localSupabaseStatus;
+function getLocalSupabaseStatus(workdir?: string): LocalSupabaseStatus {
+  const verifiedWorkdir = workdir ? verifyIsolatedSupabaseWorkdir(workdir) : undefined;
+  const cacheKey = verifiedWorkdir || 'default';
+  const cached = localSupabaseStatus.get(cacheKey);
+  if (cached) return cached;
 
   const isWindows = process.platform === 'win32';
-  const executable = isWindows ? process.env.ComSpec || 'cmd.exe' : 'npx';
-  const args = isWindows
-    ? ['/d', '/s', '/c', 'npx.cmd supabase status -o json']
-    : ['supabase', 'status', '-o', 'json'];
+  const executable = verifiedWorkdir
+    ? 'supabase'
+    : isWindows ? process.env.ComSpec || 'cmd.exe' : 'npx';
+  const args = verifiedWorkdir
+    ? ['status', '-o', 'json', '--workdir', verifiedWorkdir]
+    : isWindows
+      ? ['/d', '/s', '/c', 'npx.cmd supabase status -o json']
+      : ['supabase', 'status', '-o', 'json'];
   let output = '';
   try {
     output = execFileSync(executable, args, {
@@ -275,8 +304,30 @@ function getLocalSupabaseStatus(): LocalSupabaseStatus {
     supabaseURL: status.API_URL,
     databaseURL: status.DB_URL,
   });
-  localSupabaseStatus = status as LocalSupabaseStatus;
-  return localSupabaseStatus;
+  localSupabaseStatus.set(cacheKey, status as LocalSupabaseStatus);
+  return status as LocalSupabaseStatus;
+}
+
+function verifyIsolatedSupabaseWorkdir(workdir: string) {
+  if (!path.isAbsolute(workdir)) {
+    throw new Error('E2E_SUPABASE_WORKDIR must be an absolute path.');
+  }
+
+  const resolved = fs.realpathSync(workdir);
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error('E2E_SUPABASE_WORKDIR must point to a directory.');
+  }
+  if (resolved.toLowerCase() === fs.realpathSync(process.cwd()).toLowerCase()) {
+    throw new Error('The isolated E2E workdir must differ from the current repository.');
+  }
+
+  const configPath = path.join(resolved, 'supabase', 'config.toml');
+  const config = fs.readFileSync(configPath, 'utf8');
+  const projectId = config.match(/^\s*project_id\s*=\s*"([^"]+)"\s*$/m)?.[1];
+  if (!projectId || projectId === 'vimob-crm') {
+    throw new Error('The isolated E2E workdir must use a distinct Supabase project_id.');
+  }
+  return resolved;
 }
 
 function isLoopbackURL(value: string) {

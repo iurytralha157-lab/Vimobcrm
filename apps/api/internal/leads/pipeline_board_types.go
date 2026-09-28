@@ -85,6 +85,7 @@ type PipelineBoardLead struct {
 	StageID                   *string                 `json:"stage_id"`
 	AssignedUserID            *string                 `json:"assigned_user_id"`
 	TeamID                    *string                 `json:"team_id"`
+	CanOperate                bool                    `json:"can_operate"`
 	PipelineID                *string                 `json:"pipeline_id"`
 	Message                   *string                 `json:"message"`
 	StageEnteredAt            *time.Time              `json:"stage_entered_at"`
@@ -103,6 +104,8 @@ type PipelineBoardLead struct {
 	FirstResponseAt           *time.Time              `json:"first_response_at"`
 	FirstResponseSeconds      *int                    `json:"first_response_seconds"`
 	FirstResponseIsAutomation *bool                   `json:"first_response_is_automation"`
+	SLAStatus                 *string                 `json:"sla_status"`
+	SLASecondsElapsed         *int                    `json:"sla_seconds_elapsed"`
 	Assignee                  *LeadEnrichmentUser     `json:"assignee"`
 	InterestProperty          *LeadEnrichmentProperty `json:"interest_property"`
 	LeadMeta                  []LeadEnrichmentMeta    `json:"lead_meta"`

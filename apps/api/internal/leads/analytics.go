@@ -109,6 +109,9 @@ func (request RecordFirstResponseRequest) Validate(defaultUserID string) (record
 		}
 		actorUserID = value
 	}
+	if defaultUserID != "" && actorUserID != defaultUserID {
+		return recordFirstResponseInput{}, fmt.Errorf("%w: actor_user_id must match the authenticated user", ErrInvalidInput)
+	}
 
 	return recordFirstResponseInput{
 		LeadID:       leadID,
@@ -315,6 +318,16 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 			'utm_source', l.utm_source,
 			'assigned_user_id', l.assigned_user_id::text,
 			'assigned_at', l.assigned_at,
+			'first_response_at', l.first_response_at,
+			'first_response_seconds', l.first_response_seconds,
+			'first_response_channel', l.first_response_channel,
+			'first_response_is_automation', l.first_response_is_automation,
+			'first_response_actor',
+				case when first_response_actor.id is null then null else jsonb_build_object(
+					'id', first_response_actor.id::text,
+					'name', first_response_actor.name,
+					'avatar_url', first_response_actor.avatar_url
+				) end,
 			'created_at', l.created_at,
 			'assigned_user',
 				case when u.id is null then null else jsonb_build_object(
@@ -325,6 +338,13 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		))
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
+		left join public.users first_response_actor
+		  on first_response_actor.id = l.first_response_actor_user_id
+		 and exists (
+		   select 1 from public.organization_members first_response_membership
+		   where first_response_membership.organization_id = l.organization_id
+		     and first_response_membership.user_id = first_response_actor.id
+		 )
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
@@ -575,6 +595,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 	if auditLogs, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
 		return nil, err
 	}
+	redactLeadHistoryAuditLogs(auditLogs)
 	if users, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
 		return nil, err
 	}
@@ -678,7 +699,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 	}
 	defer tx.Rollback(ctx)
 
-	current, responseBaselineAt, firstResponseAt, err := repo.getFirstResponseLeadForUpdate(
+	current, responseBaselineAt, firstResponseAt, firstResponseIsAutomation, err := repo.getFirstResponseLeadForUpdate(
 		ctx,
 		tx,
 		tenantContext.OrganizationID,
@@ -691,7 +712,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
-	if firstResponseAt.Valid {
+	if firstResponseAt.Valid && !firstResponseIsAutomation {
 		return map[string]any{
 			"recorded": false,
 			"skipped":  true,
@@ -703,10 +724,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		responseSeconds = 0
 	}
 
-	actorUserID := input.ActorUserID
-	if actorUserID == "" {
-		actorUserID = tenantContext.UserID
-	}
+	actorUserID := tenantContext.UserID
 
 	var recordedAt time.Time
 	err = tx.QueryRow(ctx, `
@@ -719,7 +737,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-		  and first_response_at is null
+		  and (first_response_at is null or coalesce(first_response_is_automation, false))
 		returning first_response_at
 	`, tenantContext.OrganizationID, input.LeadID, responseSeconds, input.Channel, input.IsAutomation, actorUserID).Scan(&recordedAt)
 	if err == pgx.ErrNoRows {
@@ -783,11 +801,12 @@ func (repo Repository) getFirstResponseLeadForUpdate(
 	tx pgx.Tx,
 	organizationID string,
 	leadID string,
-) (leadSnapshot, time.Time, pgtype.Timestamptz, error) {
+) (leadSnapshot, time.Time, pgtype.Timestamptz, bool, error) {
 	var current leadSnapshot
 	var assignedUserID, teamID pgtype.Text
 	var responseBaselineAt time.Time
 	var firstResponseAt pgtype.Timestamptz
+	var firstResponseIsAutomation bool
 	err := tx.QueryRow(ctx, `
 		select
 			l.assigned_user_id::text,
@@ -803,23 +822,24 @@ func (repo Repository) getFirstResponseLeadForUpdate(
 				l.assigned_at,
 				l.created_at
 			),
-			l.first_response_at
+			l.first_response_at,
+			coalesce(l.first_response_is_automation, false)
 		from public.leads l
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		for no key update of l
-	`, organizationID, leadID).Scan(&assignedUserID, &teamID, &responseBaselineAt, &firstResponseAt)
+	`, organizationID, leadID).Scan(&assignedUserID, &teamID, &responseBaselineAt, &firstResponseAt, &firstResponseIsAutomation)
 	if err == pgx.ErrNoRows {
-		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, ErrLeadNotFound
+		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, false, ErrLeadNotFound
 	}
 	if err != nil {
-		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, err
+		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, false, err
 	}
 
 	current.ID = leadID
 	current.AssignedUserID = textValue(assignedUserID)
 	current.TeamID = textValue(teamID)
-	return current, responseBaselineAt, firstResponseAt, nil
+	return current, responseBaselineAt, firstResponseAt, firstResponseIsAutomation, nil
 }
 
 func buildFirstResponseWhere(tenantContext tenant.Context, filter FirstResponseFilter) ([]string, []any) {
@@ -878,6 +898,79 @@ func (repo Repository) queryJSONArray(ctx context.Context, sql string, args ...a
 func queueHistoryJSONArray(batch *pgx.Batch, sql string, args ...any) ([]map[string]any, error) {
 	batch.Queue(sql, args...)
 	return nil, nil
+}
+
+// Audit rows may include arbitrary API payload fields. Send only known lead
+// changes to the browser, and never send values of personal/free-text fields.
+var leadHistoryAuditFields = map[string]bool{
+	"source": false, "property_code": false, "property_id": false,
+	"interest_property_id": false, "pipeline_id": false, "stage_id": false,
+	"assigned_user_id": false, "valor_interesse": false, "deal_status": false,
+	"name": true, "email": true, "phone": true, "message": true,
+	"commission_percentage": true, "lost_reason": true, "feedback": true,
+	"cargo": true, "empresa": true, "profissao": true, "endereco": true,
+	"numero": true, "complemento": true, "bairro": true, "cep": true,
+	"cidade": true, "uf": true, "renda_familiar": true,
+	"faixa_valor_imovel": true, "finalidade_compra": true, "trabalha": true,
+	"procura_financiamento": true, "person_type": true, "gender": true,
+	"social_name": true, "birth_date": true, "cpf": true, "rg": true,
+	"cnpj": true, "corporate_name": true, "trade_name": true,
+	"state_registration": true,
+}
+
+func redactLeadHistoryAuditLogs(logs []map[string]any) {
+	for _, log := range logs {
+		for _, field := range []string{"old_data", "new_data"} {
+			original, _ := log[field].(map[string]any)
+			filtered := make(map[string]any)
+			for key, value := range original {
+				redact, allowed := leadHistoryAuditFields[key]
+				if !allowed {
+					continue
+				}
+				if redact {
+					if value == nil {
+						filtered[key] = nil
+					} else if text, ok := value.(string); ok && text == "" {
+						filtered[key] = ""
+					} else {
+						filtered[key] = "[valor protegido]"
+					}
+					continue
+				}
+				if safeValue, ok := leadHistorySafeAuditValue(key, value); ok {
+					filtered[key] = safeValue
+				}
+			}
+			log[field] = filtered
+		}
+	}
+}
+
+func leadHistorySafeAuditValue(key string, value any) (any, bool) {
+	if value == nil {
+		return nil, true
+	}
+	switch key {
+	case "source", "property_code":
+		text, ok := value.(string)
+		return text, ok && len(text) <= 160
+	case "deal_status":
+		text, ok := value.(string)
+		return text, ok && validEnum(text, "open", "won", "lost")
+	case "property_id", "interest_property_id", "pipeline_id", "stage_id", "assigned_user_id":
+		text, ok := value.(string)
+		if !ok {
+			return nil, false
+		}
+		normalized, ok := normalizeUUID(text)
+		return normalized, ok
+	case "valor_interesse":
+		amount, ok := value.(float64)
+		return amount, ok && amount >= 0 && amount <= 1e15
+	default:
+		return nil, false
+	}
 }
 
 func queueHistoryJSONObject(batch *pgx.Batch, sql string, args ...any) (map[string]any, error) {

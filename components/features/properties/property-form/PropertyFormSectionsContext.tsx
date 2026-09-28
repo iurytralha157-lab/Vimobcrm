@@ -88,7 +88,7 @@ export type PropertyFormSectionsContextValue = {
   applyCity: (city: PropertyCity | null) => void;
   applyNeighborhood: (neighborhood: PropertyNeighborhood | null) => void;
   applyCondominium: (condominium: PropertyCondominium | null) => void;
-  lookupCep: (rawCep: string) => Promise<void>;
+  lookupCep: (rawCep: string, force?: boolean) => Promise<void>;
   isCepLoading: boolean;
   newCityName: string;
   setNewCityName: Dispatch<SetStateAction<string>>;

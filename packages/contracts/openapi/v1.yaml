@@ -360,13 +360,17 @@ paths:
     get:
       summary: Get dashboard KPI stats for visible leads
       description: >-
-        The optional period selects leads by their created_at (origin date).
-        Open, won and lost totals reflect the selected leads' current deal status.
-        Won conversion time still measures the interval from creation to closing.
+        totalLeads and the open, won and lost totals count unique visible lead
+        cards selected by leads.created_at and their current deal status.
+        totalEntries counts one initial arrival per visible card plus countable
+        reentry events. For entries, date, source, page and campaign filters use
+        that arrival; pipeline, owner, team, status, tags and visibility use the
+        current card. Won conversion time still measures creation to closing.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
@@ -386,6 +390,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardStatsResponse"
+  /v1/dashboard/lead-entries:
+    get:
+      summary: List visible initial arrivals and reentries behind the dashboard entry KPI
+      description: >-
+        Uses the same card scope and entry-level filters as totalEntries. Each
+        visible card contributes one initial arrival even when historical
+        initial ledger rows are duplicated. Reentries require countable ledger
+        events. Pipeline name reflects the card's current pipeline.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+        - name: cursor
+          in: query
+          description: Opaque nextCursor from the preceding response.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        "200":
+          description: Authorized page of arrivals, sorted newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLeadEntryDetailPageResponse"
   /v1/dashboard/funnel:
     get:
       summary: Get dashboard funnel counts by pipeline stage
@@ -414,9 +462,23 @@ paths:
                 $ref: "#/components/schemas/DashboardFunnelResponse"
   /v1/dashboard/sources:
     get:
-      summary: Get dashboard lead counts by source
+      summary: Get dashboard card or arrival counts by source
+      description: >-
+        By default, groups visible lead cards by their current source and
+        creation date for older clients. Set countEntries=true to group the
+        same initial arrivals and countable reentries as stats.totalEntries.
+        Entry mode uses each arrival's date and source/page/campaign/ad
+        attribution; current card ownership, team, pipeline, status, tags and
+        visibility still apply. Entries without a recorded source are returned
+        as "Não informada" with an empty rawSource, separate from "manual".
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: countEntries
+          in: query
+          description: Opt in to entry counts. Omitted or false preserves card counts.
+          schema:
+            type: boolean
+            default: false
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
         - $ref: "#/components/parameters/DashboardPipelineId"
@@ -445,6 +507,7 @@ paths:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
@@ -481,6 +544,7 @@ paths:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
@@ -522,6 +586,7 @@ paths:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
@@ -540,6 +605,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardFirstContactResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/dashboard/first-contact/leads:
+    get:
+      summary: List measured first human responses by broker
+      description: Bounded drill-down for a response actor in the visible lead creation-date cohort.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+        - name: brokerId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+      responses:
+        "200":
+          description: Paginated measured first responses for a permitted broker.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardFirstContactLeadPageResponse"
         "400":
           $ref: "#/components/responses/APIError"
         "401":
@@ -572,6 +680,7 @@ paths:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
         - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
@@ -590,6 +699,80 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardDealsEvolutionResponse"
+  /v1/dashboard/extra-counts:
+    get:
+      summary: Get property, site-session and scheduled-visit KPI counts
+      description: >-
+        The three counters have distinct populations: properties follow property
+        visibility, site sessions follow site tracking and property scope, and
+        scheduled visits/reunions use their creation date plus visible leads
+        and Agenda event privacy. The scheduled-visits total equals the total
+        returned by /v1/dashboard/visits for the same filters.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Additional dashboard counters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardExtraCountsResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/dashboard/visits:
+    get:
+      summary: Explain the scheduled-visit KPI with visits, alerts and rankings
+      description: >-
+        Counts visit and meeting events created in the optional period,
+        associated with visible leads and events permitted by Agenda privacy.
+        Lead filters include pipeline, current assignee/team, origin, Meta page,
+        campaign, ad set, ad, tags, deal status and search. Upcoming and overdue
+        are subsets of those same events; all-day overdue status uses the
+        organization timezone. Returns at most 100 newest events, 20 upcoming,
+        20 overdue, 50 authors and 50 origins while totals remain complete.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Visits matching the KPI scope and their operational detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardVisitsResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
   /v1/analytics/campaign-insights:
     get:
       summary: Get consolidated Meta Ads and CRM campaign performance
@@ -14878,10 +15061,47 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/DashboardStats"
+    DashboardLeadEntryDetailPageResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardLeadEntryDetailPage"
+    DashboardLeadEntryDetailPage:
+      type: object
+      required: [total, items, hasMore, nextCursor]
+      properties:
+        total: { type: integer, format: int64, minimum: 0 }
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, "null"] }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardLeadEntryDetail"
+    DashboardLeadEntryDetail:
+      type: object
+      required: [entryId, leadId, name, occurredAt, source, campaignName, pipelineId, pipelineName, entryType, leadUrl]
+      properties:
+        entryId: { type: string }
+        leadId: { type: string, format: uuid }
+        name: { type: string }
+        occurredAt: { type: string, format: date-time }
+        source: { type: [string, "null"] }
+        campaignName: { type: [string, "null"] }
+        pipelineId: { type: [string, "null"], format: uuid }
+        pipelineName: { type: [string, "null"] }
+        entryType: { type: string, enum: [initial, reentry] }
+        leadUrl:
+          type: string
+          description: Local /crm/pipelines?lead= deep link; opening rechecks lead access.
     DashboardStats:
       type: object
       required:
         - totalLeads
+        - uniqueLeads
+        - reentries
+        - totalEntries
+        - entriesTrend
         - leadsInProgress
         - leadsClosed
         - leadsLost
@@ -14913,6 +15133,22 @@ components:
         totalLeads:
           type: integer
           format: int64
+          description: Unique cards in the legacy created-at cohort.
+        uniqueLeads:
+          type: integer
+          format: int64
+          description: Initial arrivals matching the entry-level date and attribution filters.
+        reentries:
+          type: integer
+          format: int64
+          description: Countable reentry events matching the entry-level date and attribution filters.
+        totalEntries:
+          type: integer
+          format: int64
+          description: Sum of uniqueLeads and reentries.
+        entriesTrend:
+          type: integer
+          description: Percentage trend of totalEntries against the preceding equal-length period; zero without an explicit period.
         leadsInProgress:
           type: integer
           format: int64
@@ -15105,8 +15341,10 @@ components:
         value:
           type: integer
           format: int64
+          description: Number of cards by default, or arrivals when countEntries=true.
         rawSource:
           type: string
+          description: Empty for an entry without recorded source in countEntries mode.
     DashboardTopBrokersResponse:
       type: object
       required: [data]
@@ -15244,7 +15482,7 @@ components:
             $ref: "#/components/schemas/DashboardFirstContactSource"
     DashboardFirstContactBroker:
       type: object
-      required: [id, name, avatarUrl, leadCount, contactedLeads, averageResponseSeconds, redistributedAway, redistributedReceived]
+      required: [id, name, avatarUrl, leadCount, receivedLeads, handledLeads, contactedLeads, averageResponseSeconds, redistributedAway, redistributedReceived]
       properties:
         id:
           type: string
@@ -15258,6 +15496,16 @@ components:
           format: int64
           minimum: 0
           description: Cohort leads currently assigned to this broker.
+        receivedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct cohort leads with assignment evidence for this broker; historical coverage is incomplete.
+        handledLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct cohort leads with assignment evidence or a measured first response by this broker.
         contactedLeads:
           type: integer
           format: int64
@@ -15277,6 +15525,31 @@ components:
           format: int64
           minimum: 0
           description: Distinct cohort leads received by this broker through redistribution.
+    DashboardFirstContactLeadPageResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardFirstContactLeadPage"
+    DashboardFirstContactLeadPage:
+      type: object
+      required: [total, items, hasMore]
+      properties:
+        total: { type: integer, format: int64, minimum: 0 }
+        hasMore: { type: boolean }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, name, source, createdAt, respondedAt, responseSeconds, currentOwner]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              source: { type: string }
+              createdAt: { type: string, format: date-time }
+              respondedAt: { type: string, format: date-time }
+              responseSeconds: { type: integer, format: int64, minimum: 0 }
+              currentOwner: { type: [string, "null"] }
     DashboardFirstContactSource:
       type: object
       required: [source, leadCount, contactedLeads, averageResponseSeconds, redistributedLeads, redistributionEvents]
@@ -15356,6 +15629,179 @@ components:
         abertos:
           type: integer
           format: int64
+    DashboardExtraCountsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardExtraCounts"
+    DashboardExtraCounts:
+      type: object
+      required: [propertyCount, siteVisits, scheduledVisits]
+      properties:
+        propertyCount:
+          type: integer
+          format: int64
+          minimum: 0
+        siteVisits:
+          type: integer
+          format: int64
+          minimum: 0
+        scheduledVisits:
+          type: integer
+          format: int64
+          minimum: 0
+    DashboardVisitsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardVisits"
+    DashboardVisits:
+      type: object
+      required:
+        - reportTimezone
+        - total
+        - upcoming
+        - overdue
+        - visits
+        - visitsTruncated
+        - upcomingVisits
+        - overdueVisits
+        - creators
+        - sources
+      properties:
+        reportTimezone:
+          type: string
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        upcoming:
+          type: integer
+          format: int64
+          minimum: 0
+        overdue:
+          type: integer
+          format: int64
+          minimum: 0
+        visits:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/DashboardVisit"
+        visitsTruncated:
+          type: boolean
+        upcomingVisits:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/DashboardVisit"
+        overdueVisits:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/DashboardVisit"
+        creators:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/DashboardVisitCreator"
+        sources:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/DashboardVisitSource"
+    DashboardVisit:
+      type: object
+      required:
+        - id
+        - title
+        - event_type
+        - status
+        - created_at
+        - start_time
+        - end_time
+        - lead_id
+        - lead_name
+        - source
+        - created_by_id
+        - created_by_name
+        - created_by_avatar
+        - owner_id
+        - owner_name
+        - is_upcoming
+        - is_overdue
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        event_type:
+          type: string
+          enum: [visit, meeting]
+        status:
+          type: string
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        lead_id:
+          type: string
+          format: uuid
+        lead_name:
+          type: string
+        source:
+          type: string
+        created_by_id:
+          type: [string, "null"]
+          format: uuid
+        created_by_name:
+          type: string
+        created_by_avatar:
+          type: [string, "null"]
+        owner_id:
+          type: string
+          format: uuid
+        owner_name:
+          type: string
+        owner_avatar:
+          type: [string, "null"]
+        is_upcoming:
+          type: boolean
+        is_overdue:
+          type: boolean
+    DashboardVisitCreator:
+      type: object
+      required: [id, name, avatarUrl, count]
+      properties:
+        id:
+          type: [string, "null"]
+          format: uuid
+        name:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+        count:
+          type: integer
+          format: int64
+          minimum: 0
+    DashboardVisitSource:
+      type: object
+      required: [source, count]
+      properties:
+        source:
+          type: string
+        count:
+          type: integer
+          format: int64
+          minimum: 0
     LeadEnrichment:
       type: object
       required: [lead_id, tags, tasks_count, lead_meta]
@@ -15456,7 +15902,7 @@ components:
           type: boolean
     PipelineBoardLead:
       type: object
-      required: [id, name, organization_id, team_id]
+      required: [id, name, organization_id, team_id, can_operate]
       additionalProperties: true
       properties:
         id:
@@ -15479,6 +15925,9 @@ components:
         team_id:
           type: [string, "null"]
           format: uuid
+        can_operate:
+          type: boolean
+          description: Whether this viewer may mutate this specific lead.
         whatsapp_avatar_url:
           type: [string, "null"]
           format: uri

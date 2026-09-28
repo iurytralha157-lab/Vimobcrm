@@ -163,6 +163,83 @@ func TestScanLeadWithTotalKeepsOnlyDurableWhatsAppAvatarReference(t *testing.T) 
 	}
 }
 
+type leadFirstResponseRow struct {
+	at      time.Time
+	seconds int32
+	channel string
+}
+
+func (row leadFirstResponseRow) Scan(destinations ...any) error {
+	for index, destination := range destinations {
+		value := reflect.ValueOf(destination)
+		if value.Kind() != reflect.Pointer || value.IsNil() {
+			return fmt.Errorf("destination %d has type %T, want non-nil pointer", index, destination)
+		}
+		value.Elem().Set(reflect.Zero(value.Elem().Type()))
+	}
+	if len(destinations) < 14 {
+		return fmt.Errorf("lead scan has %d destinations, want at least 14", len(destinations))
+	}
+	responseAt, ok := destinations[len(destinations)-14].(*pgtype.Timestamptz)
+	if !ok {
+		return fmt.Errorf("response at destination has type %T", destinations[len(destinations)-14])
+	}
+	responseSeconds, ok := destinations[len(destinations)-13].(*pgtype.Int4)
+	if !ok {
+		return fmt.Errorf("response seconds destination has type %T", destinations[len(destinations)-13])
+	}
+	responseChannel, ok := destinations[len(destinations)-12].(*pgtype.Text)
+	if !ok {
+		return fmt.Errorf("response channel destination has type %T", destinations[len(destinations)-12])
+	}
+	responseAutomatic, ok := destinations[len(destinations)-11].(*pgtype.Bool)
+	if !ok {
+		return fmt.Errorf("response automation destination has type %T", destinations[len(destinations)-11])
+	}
+	*responseAt = pgtype.Timestamptz{Time: row.at, Valid: true}
+	*responseSeconds = pgtype.Int4{Int32: row.seconds, Valid: true}
+	*responseChannel = pgtype.Text{String: row.channel, Valid: true}
+	*responseAutomatic = pgtype.Bool{Bool: false, Valid: true}
+	return nil
+}
+
+func TestLeadReadModelPreservesPersistedFirstResponse(t *testing.T) {
+	at := time.Date(2026, time.July, 29, 8, 30, 15, 0, time.UTC)
+	lead, err := scanLead(leadFirstResponseRow{at: at, seconds: 1171455, channel: "phone"})
+	if err != nil {
+		t.Fatalf("scan lead: %v", err)
+	}
+	if lead.FirstResponseAt == nil || !lead.FirstResponseAt.Equal(at) ||
+		lead.FirstResponseSeconds == nil || *lead.FirstResponseSeconds != 1171455 ||
+		lead.FirstResponseChannel == nil || *lead.FirstResponseChannel != "phone" ||
+		lead.FirstResponseIsAutomation == nil || *lead.FirstResponseIsAutomation {
+		t.Fatalf("first response metric was lost in lead read model: %#v", lead)
+	}
+	fields := leadSelectFields()
+	for _, column := range []string{
+		"l.first_response_at", "l.first_response_seconds",
+		"l.first_response_channel", "l.first_response_is_automation",
+	} {
+		if !strings.Contains(fields, column) {
+			t.Fatalf("lead read model does not select %s", column)
+		}
+	}
+	payload, err := json.Marshal(lead)
+	if err != nil {
+		t.Fatalf("marshal lead: %v", err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("unmarshal lead response: %v", err)
+	}
+	if response["firstResponseAt"] != at.Format(time.RFC3339) ||
+		response["firstResponseSeconds"] != float64(1171455) ||
+		response["firstResponseChannel"] != "phone" ||
+		response["firstResponseIsAutomation"] != false {
+		t.Fatalf("first response metric was lost in API payload: %s", payload)
+	}
+}
+
 func TestTextValueWithDefaultRejectsBlankDatabaseValues(t *testing.T) {
 	if got := textValueWithDefault(pgtype.Text{String: "   ", Valid: true}, "open"); got != "open" {
 		t.Fatalf("blank value = %q, want open", got)

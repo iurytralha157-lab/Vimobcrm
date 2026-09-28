@@ -7,6 +7,7 @@ import type { StageOperationalRules } from '@/lib/api/cadences'
 import {
   MAX_OPERATIONAL_RULE_MINUTES,
   createTask,
+  decideRulesRevisionUpdate,
   formatDuration,
   getAttentionPreviewCopy,
   normalizePositions,
@@ -15,6 +16,14 @@ import {
   toDraft,
   toPayload,
 } from './model'
+
+test('sincroniza revisão mais nova somente sem rascunho e nunca adota revisão anterior', () => {
+  assert.equal(decideRulesRevisionUpdate(7, 8, false), 'adopt')
+  assert.equal(decideRulesRevisionUpdate(7, 8, true), 'conflict')
+  assert.equal(decideRulesRevisionUpdate(8, 7, false), 'none')
+  assert.equal(decideRulesRevisionUpdate(8, 7, true), 'none')
+  assert.equal(decideRulesRevisionUpdate(8, 8, true), 'none')
+})
 
 const STAGE_ID = '11111111-1111-4111-8111-111111111111'
 const OTHER_STAGE_ID = '22222222-2222-4222-8222-222222222222'

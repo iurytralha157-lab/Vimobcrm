@@ -5,6 +5,8 @@ import {
   apiDashboardExtraCountsResponseSchema,
   apiDashboardFirstContactSchema,
   apiDashboardFirstContactResponseSchema,
+  apiDashboardFirstContactLeadPageSchema,
+  apiDashboardFirstContactLeadPageResponseSchema,
   apiDashboardFunnelSchema,
   apiDashboardFunnelResponseSchema,
   apiDashboardLeadDistributionSchema,
@@ -28,12 +30,13 @@ import {
   uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
-import type { z } from 'zod'
+import { z } from 'zod'
 import { vimobAPIRequest } from './vimob-client'
 
 export type DashboardAPIFilters = {
   dateRange?: { from: Date; to: Date } | null
   granularity?: 'hour' | 'day' | 'week' | 'month' | null
+  pipelineId?: string | null
   teamId?: string | null
   userId?: string | null
   source?: string | null
@@ -54,6 +57,7 @@ export type DashboardSourcePoint = z.infer<typeof apiDashboardSourceSchema>[numb
 export type DashboardTopBrokersResponse = z.infer<typeof apiDashboardTopBrokersSchema>
 export type DashboardLeadDistributionResponse = z.infer<typeof apiDashboardLeadDistributionSchema>
 export type DashboardFirstContactResponse = z.infer<typeof apiDashboardFirstContactSchema>
+export type DashboardFirstContactLeadPageResponse = z.infer<typeof apiDashboardFirstContactLeadPageSchema>
 export type DashboardUpcomingTask = z.infer<typeof apiDashboardUpcomingTasksSchema>[number]
 export type DashboardExtraCounts = z.infer<typeof apiDashboardExtraCountsSchema>
 export type DashboardRecentActivity = z.infer<typeof apiDashboardRecentActivitiesSchema>[number]
@@ -94,7 +98,7 @@ export async function getDashboardFunnel(params: DashboardRequestContext & {
     organizationId,
     query: {
       ...buildDashboardQuery(filters),
-      pipelineId,
+      pipelineId: pipelineId ?? filters.pipelineId,
     },
     signal: params.signal,
   })
@@ -106,6 +110,7 @@ export async function getDashboardFunnel(params: DashboardRequestContext & {
 export async function getDashboardSources(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
   pipelineId?: string | null
+  countEntries?: boolean
 }) {
   const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.sources')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.sources')
@@ -114,7 +119,8 @@ export async function getDashboardSources(params: DashboardRequestContext & {
     organizationId,
     query: {
       ...buildDashboardQuery(filters),
-      pipelineId,
+      pipelineId: pipelineId ?? filters.pipelineId,
+      countEntries: params.countEntries ? true : undefined,
     },
     signal: params.signal,
   })
@@ -181,6 +187,29 @@ export async function getDashboardFirstContact(params: DashboardRequestContext &
     'dashboard.first-contact',
   )
   return validated.data
+}
+
+export async function getDashboardFirstContactLeadPage(params: DashboardRequestContext & {
+  filters?: DashboardAPIFilters
+  brokerId: string
+  offset?: number
+  limit?: number
+}) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.first-contact.leads')
+  const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.first-contact.leads')
+  const brokerId = parseDomainInput(uuidSchema, params.brokerId, 'dashboard.first-contact.leads.broker-id')
+  const offset = parseDomainInput(z.number().int().min(0).max(10_000), params.offset ?? 0, 'dashboard.first-contact.leads.offset')
+  const limit = parseDomainInput(dashboardLimitSchema, params.limit ?? 25, 'dashboard.first-contact.leads.limit')
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/first-contact/leads', {
+    organizationId,
+    query: { ...buildDashboardQuery(filters), brokerId, offset, limit },
+    signal: params.signal,
+  })
+  return validateDomainResponse(
+    apiDashboardFirstContactLeadPageResponseSchema,
+    response,
+    'dashboard.first-contact.leads',
+  ).data
 }
 
 export async function getDashboardUpcomingTasks(params: DashboardRequestContext & {
@@ -272,9 +301,10 @@ export async function getDashboardTeamLeadIds(params: DashboardRequestContext & 
   return validated.leadIds
 }
 
-function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIFilters {
+export function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIFilters {
   return {
     ...filters,
+    pipelineId: normalizeDashboardFilterValue(filters?.pipelineId),
     teamId: normalizeDashboardFilterValue(filters?.teamId),
     userId: normalizeDashboardFilterValue(filters?.userId),
     source: normalizeDashboardFilterValue(filters?.source),
@@ -295,6 +325,7 @@ export function getDashboardFiltersQueryKey(filters?: DashboardAPIFilters) {
     dateFrom: dashboardDateQueryKey(normalized.dateRange?.from),
     dateTo: dashboardDateQueryKey(normalized.dateRange?.to),
     granularity: normalized.granularity ?? null,
+    pipelineId: normalized.pipelineId ?? null,
     teamId: normalized.teamId ?? null,
     userId: normalized.userId ?? null,
     source: normalized.source ?? null,
@@ -354,11 +385,12 @@ function parseDashboardOrganizationId(value: string | null | undefined, context:
   return parseDomainInput(uuidSchema, value, `${context}.organization-id`)
 }
 
-function buildDashboardQuery(filters?: DashboardAPIFilters) {
+export function buildDashboardQuery(filters?: DashboardAPIFilters) {
   return {
     dateFrom: filters?.dateRange?.from.toISOString(),
     dateTo: filters?.dateRange?.to.toISOString(),
     granularity: filters?.granularity,
+    pipelineId: filters?.pipelineId,
     teamId: filters?.teamId,
     userId: filters?.userId,
     source: filters?.source,

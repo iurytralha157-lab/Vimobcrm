@@ -298,6 +298,48 @@ async function editPropertyThroughUI(
     'Mídia e descrições',
     '[data-tour="property-media-section"]',
   );
+  const workspaceBeforeResponse = await authenticatedAPIRequest(
+    page,
+    'GET',
+    `/v1/properties/${property.id}/workspace`,
+  );
+  expect(workspaceBeforeResponse.ok(), await workspaceBeforeResponse.text()).toBeTruthy();
+  const workspaceBefore = (await workspaceBeforeResponse.json()) as {
+    data: { assets: Array<{ asset_type: string; sort_order: number }> };
+  };
+  const previousPhotoOrders = workspaceBefore.data.assets
+    .filter((asset) => asset.asset_type === 'photo')
+    .map((asset) => asset.sort_order);
+  let propertyPatchesFromAssetDialog = 0;
+  const trackPropertyPatch = (request: { url: () => string; method: () => string }) => {
+    if (
+      new URL(request.url()).pathname === `/v1/properties/${property.id}` &&
+      request.method() === 'PATCH'
+    ) propertyPatchesFromAssetDialog += 1;
+  };
+  page.on('request', trackPropertyPatch);
+  await page.getByRole('button', { name: 'Adicionar mídia' }).click();
+  const assetDialog = page.getByRole('dialog', { name: 'Adicionar mídia ou documento' });
+  await assetDialog.locator('#asset-file').setInputFiles(image);
+  await assetDialog.getByRole('button', { name: 'Adicionar ativo' }).click();
+  await expect(assetDialog).toBeHidden();
+  await expect(page).toHaveURL(new RegExp(`/properties/${property.id}/edit$`));
+  const workspaceAfterResponse = await authenticatedAPIRequest(
+    page,
+    'GET',
+    `/v1/properties/${property.id}/workspace`,
+  );
+  expect(workspaceAfterResponse.ok(), await workspaceAfterResponse.text()).toBeTruthy();
+  const workspaceAfter = (await workspaceAfterResponse.json()) as {
+    data: { assets: Array<{ asset_type: string; sort_order: number }> };
+  };
+  const photoOrders = workspaceAfter.data.assets
+    .filter((asset) => asset.asset_type === 'photo')
+    .map((asset) => asset.sort_order);
+  expect(photoOrders).toHaveLength(previousPhotoOrders.length + 1);
+  expect(Math.max(...photoOrders)).toBe(Math.max(-1, ...previousPhotoOrders) + 1);
+  expect(propertyPatchesFromAssetDialog).toBe(0);
+  page.off('request', trackPropertyPatch);
   await page
     .getByPlaceholder('Texto comercial que será exibido no site público...')
     .fill(`Publica editada ${property.suffix}`);

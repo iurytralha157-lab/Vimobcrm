@@ -265,6 +265,7 @@ func TestSitePublicationSourceCapturesTenantScopedCondominiumName(t *testing.T) 
 	query := sitePublicPropertySQL("p")
 	for _, required := range []string{
 		"'condominio_nome'",
+		"'tipo_de_negocio', p.tipo_de_negocio",
 		"from public.property_condominiums as condominium",
 		"condominium.organization_id = p.organization_id",
 		"condominium.id = p.condominium_id",
@@ -295,7 +296,7 @@ func TestGrupoOLXReadinessAndSnapshotUseCanonicalAccountConfiguration(t *testing
 
 func TestGrupoOLXSnapshotPropagatesCanonicalRentalPeriod(t *testing.T) {
 	source := readyGrupoOLXPublicationSource()
-	source.Property["finalidade"] = "temporada"
+	source.Property["tipo_de_negocio"] = "Temporada"
 	source.Offers = []sourceOffer{{OfferType: "seasonal", Status: "active", Price: 950, PricePeriod: "weekly"}}
 
 	snapshot := buildGrupoOLXSnapshot(source, "https://api.example.com", testPublicationID, 2)
@@ -498,9 +499,45 @@ func TestSiteReadinessTreatsOperationalRelationshipsAsWarnings(t *testing.T) {
 	}
 }
 
+func TestSiteReadinessExplainsDisabledModuleSeparatelyFromActiveSite(t *testing.T) {
+	source := readyPublicationSource()
+	source.SiteModuleActive = false
+
+	checks, _, state := evaluateSiteReadiness(source)
+	if state != ReadinessBlocked {
+		t.Fatalf("readiness = %q, want blocked", state)
+	}
+	if site := findCheck(checks, "site_active"); site == nil || !site.Resolved {
+		t.Fatalf("site_active = %#v, want resolved for active site", site)
+	}
+	if module := findCheck(checks, "site_module"); module == nil || module.Resolved || module.Message == nil ||
+		!strings.Contains(*module.Message, "módulo Site") {
+		t.Fatalf("site_module = %#v, want actionable module error", module)
+	}
+}
+
+func TestPublicationOverviewExplainsMissingContextModule(t *testing.T) {
+	checks, _, state := evaluateSiteReadiness(readyPublicationSource())
+	if state != ReadinessReady {
+		t.Fatalf("ready source state = %q", state)
+	}
+	checks, score, state := markPublicationModuleUnavailable(
+		checks, "site_module", "Módulo Site ativo", "Ative o módulo Site para esta organização.",
+	)
+	if state != ReadinessBlocked || score >= 100 {
+		t.Fatalf("missing context module state = %q, score = %d", state, score)
+	}
+	if check := findCheck(checks, "site_module"); check == nil || check.Resolved || check.Message == nil {
+		t.Fatalf("site_module = %#v, want unresolved", check)
+	}
+	if check := findCheck(checks, "site_active"); check == nil || !check.Resolved {
+		t.Fatalf("site_active = %#v, want still resolved", check)
+	}
+}
+
 func TestSiteReadinessBlocksIncompatiblePurpose(t *testing.T) {
 	source := readyPublicationSource()
-	source.Property["finalidade"] = "locacao"
+	source.Property["tipo_de_negocio"] = "Aluguel"
 	source.Offers = []sourceOffer{{OfferType: "sale", Status: "active", Price: 500000}}
 	checks, _, state := evaluateSiteReadiness(source)
 	if state != ReadinessBlocked {
@@ -508,6 +545,102 @@ func TestSiteReadinessBlocksIncompatiblePurpose(t *testing.T) {
 	}
 	if check := findCheck(checks, "purpose"); check == nil || check.Resolved {
 		t.Fatalf("purpose check = %#v, want unresolved", check)
+	}
+}
+
+func TestSiteReadinessRequiresMainPublicationFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		code  string
+		alter func(*publicationSource)
+	}{
+		{"postal code missing", "postal_code", func(source *publicationSource) { delete(source.Property, "cep") }},
+		{"postal code incomplete", "postal_code", func(source *publicationSource) { source.Property["cep"] = "01001-0" }},
+		{"postal code with other text", "postal_code", func(source *publicationSource) { source.Property["cep"] = "abc01001-000" }},
+		{"postal code with extra punctuation", "postal_code", func(source *publicationSource) { source.Property["cep"] = "01..001 - 000" }},
+		{"neighborhood missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "bairro") }},
+		{"city missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "cidade") }},
+		{"state missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "estado") }},
+		{"area missing", "area", func(source *publicationSource) { delete(source.Property, "area_construida") }},
+		{"state incomplete", "location", func(source *publicationSource) { source.Property["estado"] = "S" }},
+		{"invalid legacy photo", "photo", func(source *publicationSource) {
+			source.Assets = nil
+			source.Property["imagem_principal"] = "not-a-url"
+		}},
+		{"unsafe external asset", "photo", func(source *publicationSource) {
+			source.Assets[0].ExternalURL = "file:///private/photo.jpg"
+		}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			source := readyPublicationSource()
+			test.alter(&source)
+			checks, _, state := evaluateSiteReadiness(source)
+			if state != ReadinessBlocked {
+				t.Fatalf("readiness = %q, want blocked", state)
+			}
+			if check := findCheck(checks, test.code); check == nil || check.Resolved || check.Severity != "error" || check.Message == nil {
+				t.Fatalf("%s check = %#v, want actionable error", test.code, check)
+			}
+		})
+	}
+}
+
+func TestSiteReadinessUsesDealTypeAndAuthoritativeOfferPrices(t *testing.T) {
+	source := readyPublicationSource()
+	checks, _, state := evaluateSiteReadiness(source)
+	if state != ReadinessReady {
+		t.Fatalf("canonical sale readiness = %q: %#v", state, checks)
+	}
+
+	source.Property["tipo_de_negocio"] = "Venda e Aluguel"
+	source.Property["valor_aluguel"] = 3500.0
+	checks, _, state = evaluateSiteReadiness(source)
+	if state != ReadinessBlocked || findCheck(checks, "purpose").Resolved {
+		t.Fatalf("missing active rental offer must block dual transaction: %q %#v", state, checks)
+	}
+
+	source.Offers = append(source.Offers, sourceOffer{OfferType: "rent", Status: "active", Price: 3500})
+	checks, _, state = evaluateSiteReadiness(source)
+	if state != ReadinessReady {
+		t.Fatalf("dual transaction with both active offers = %q: %#v", state, checks)
+	}
+
+	source.Offers[0].Status = "paused"
+	checks, _, state = evaluateSiteReadiness(source)
+	if state != ReadinessBlocked || findCheck(checks, "purpose").Resolved {
+		t.Fatalf("paused sale offer must not be revived by legacy price: %q %#v", state, checks)
+	}
+}
+
+func TestSiteReadinessPreservesLegacyPriceWithoutWorkspaceOffer(t *testing.T) {
+	source := readyPublicationSource()
+	delete(source.Property, "tipo_de_negocio")
+	source.Property["finalidade"] = "venda"
+	source.Offers = nil
+	checks, _, state := evaluateSiteReadiness(source)
+	if state != ReadinessReady {
+		t.Fatalf("legacy property without workspace offers = %q: %#v", state, checks)
+	}
+}
+
+func TestPublicationPostalCodeAcceptsExactStoredShapes(t *testing.T) {
+	for _, postalCode := range []string{"01001000", "01001-000", " 01001-000 "} {
+		if !validPublicationPostalCode(postalCode) {
+			t.Fatalf("valid postal code %q was rejected", postalCode)
+		}
+	}
+}
+
+func TestGrupoOLXTransactionUsesCurrentDealType(t *testing.T) {
+	source := readyGrupoOLXPublicationSource()
+	source.Offers = nil
+	source.Property["finalidade"] = "locacao"
+	source.Property["tipo_de_negocio"] = "Aluguel"
+	source.Property["valor_aluguel"] = 3500.0
+	checks, _, state := evaluateGrupoOLXReadiness(source)
+	if state != ReadinessReady || grupoOLXTransactionType(source.Property, source.Offers) != "For Rent" {
+		t.Fatalf("Grupo OLX rental from canonical deal type = %q: %#v", state, checks)
 	}
 }
 
@@ -523,16 +656,19 @@ func TestPropertyPublicURLUsesVerifiedDomainAndSubdomainFallback(t *testing.T) {
 func readyPublicationSource() publicationSource {
 	return publicationSource{
 		Property: map[string]any{
-			"id":          "33333333-3333-3333-3333-333333333333",
-			"codigo":      "AP-10",
-			"titulo":      "Apartamento central",
-			"descricao":   "Descricao publica suficiente.",
-			"tipo_imovel": "apartamento",
-			"finalidade":  "venda",
-			"bairro":      "Centro",
-			"cidade":      "Sao Paulo",
-			"estado":      "SP",
-			"valor_venda": 500000.0,
+			"id":              "33333333-3333-3333-3333-333333333333",
+			"codigo":          "AP-10",
+			"titulo":          "Apartamento central",
+			"descricao":       "Descricao publica suficiente.",
+			"tipo_imovel":     "apartamento",
+			"finalidade":      "venda",
+			"tipo_de_negocio": "venda",
+			"bairro":          "Centro",
+			"cidade":          "Sao Paulo",
+			"estado":          "SP",
+			"cep":             "01001-000",
+			"area_construida": 82.0,
+			"valor_venda":     500000.0,
 		},
 		UpdatedAt:          time.Date(2026, 8, 1, 12, 30, 0, 0, time.UTC),
 		Status:             "active",

@@ -393,6 +393,47 @@ func TestMoveStageRequestValidatesBoardOrderAt(t *testing.T) {
 	}
 }
 
+func TestMoveStageRequestPreservesExpectedStagePresence(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		payload      string
+		wantSet      bool
+		wantValue    string
+		wantInputErr bool
+	}{
+		{name: "legacy omitted", payload: `{"stageId":"11111111-1111-4111-8111-111111111111"}`},
+		{name: "unassigned origin", payload: `{"stageId":"11111111-1111-4111-8111-111111111111","expectedStageId":null}`, wantSet: true},
+		{name: "assigned origin", payload: `{"stageId":"11111111-1111-4111-8111-111111111111","expectedStageId":"22222222-2222-4222-8222-222222222222"}`, wantSet: true, wantValue: "22222222-2222-4222-8222-222222222222"},
+		{name: "invalid origin", payload: `{"stageId":"11111111-1111-4111-8111-111111111111","expectedStageId":"invalid"}`, wantInputErr: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var request MoveStageRequest
+			if err := json.Unmarshal([]byte(testCase.payload), &request); err != nil {
+				t.Fatal(err)
+			}
+			input, err := request.Validate()
+			if testCase.wantInputErr {
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			if input.ExpectedStageID.Set != testCase.wantSet {
+				t.Fatalf("expectedStageId present = %v, want %v", input.ExpectedStageID.Set, testCase.wantSet)
+			}
+			if testCase.wantValue != "" && (input.ExpectedStageID.Value == nil || *input.ExpectedStageID.Value != testCase.wantValue) {
+				t.Fatalf("expectedStageId = %#v, want %q", input.ExpectedStageID.Value, testCase.wantValue)
+			}
+			if testCase.wantSet && testCase.wantValue == "" && input.ExpectedStageID.Value != nil {
+				t.Fatalf("expectedStageId = %#v, want explicit null", input.ExpectedStageID.Value)
+			}
+		})
+	}
+}
+
 func TestMoveStageRequestRejectsZeroBoardOrderAt(t *testing.T) {
 	zero := time.Time{}
 	request := MoveStageRequest{

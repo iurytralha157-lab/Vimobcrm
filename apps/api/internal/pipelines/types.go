@@ -18,6 +18,8 @@ var (
 	ErrPipelineNotFound = errors.New("pipeline not found")
 	ErrStageNotFound    = errors.New("stage not found")
 	ErrHasLeads         = errors.New("pipeline or stage has leads")
+	ErrHasDependencies  = errors.New("pipeline or stage has linked history or configuration")
+	ErrStagesChanged    = errors.New("pipeline stages changed since they were loaded")
 	ErrNoChanges        = errors.New("no pipeline changes provided")
 )
 
@@ -139,10 +141,12 @@ type ReorderStagesRequest struct {
 }
 
 type StageOrderItem struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Color    string `json:"color,omitempty"`
-	StageKey string `json:"stageKey,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	Color             string     `json:"color,omitempty"`
+	StageKey          string     `json:"stageKey,omitempty"`
+	IsNew             bool       `json:"isNew,omitempty"`
+	ExpectedUpdatedAt *time.Time `json:"expectedUpdatedAt,omitempty"`
 }
 
 type reorderStagesInput struct {
@@ -150,11 +154,13 @@ type reorderStagesInput struct {
 }
 
 type stageOrderItem struct {
-	ID       string
-	Name     string
-	Color    string
-	StageKey string
-	Position int
+	ID                string
+	Name              string
+	Color             string
+	StageKey          string
+	Position          int
+	IsNew             bool
+	ExpectedUpdatedAt *time.Time
 }
 
 type SetPipelineRoundRobinRequest struct {
@@ -310,13 +316,22 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 		if stageKey == "" {
 			stageKey = buildStageKey(name)
 		}
+		if item.IsNew {
+			if item.ExpectedUpdatedAt != nil {
+				return reorderStagesInput{}, fmt.Errorf("%w: new stages cannot have expectedUpdatedAt", ErrInvalidInput)
+			}
+		} else if item.ExpectedUpdatedAt == nil || item.ExpectedUpdatedAt.IsZero() {
+			return reorderStagesInput{}, ErrStagesChanged
+		}
 
 		input.Stages = append(input.Stages, stageOrderItem{
-			ID:       id,
-			Name:     name,
-			Color:    color,
-			StageKey: stageKey,
-			Position: index,
+			ID:                id,
+			Name:              name,
+			Color:             color,
+			StageKey:          stageKey,
+			Position:          index,
+			IsNew:             item.IsNew,
+			ExpectedUpdatedAt: item.ExpectedUpdatedAt,
 		})
 	}
 

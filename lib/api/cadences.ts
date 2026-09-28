@@ -4,6 +4,7 @@ import {
   apiStageOperationalRulesResponseSchema,
   apiSwitchLeadCadenceResponseSchema,
   createCadenceTaskInputSchema,
+  normalizeLegacyStageOperationalRulesResponse,
   parseDomainInput,
   type StageOperationalRules,
   type UpdateStageOperationalRulesInput,
@@ -123,12 +124,12 @@ export const cadencesAPI = {
       `/v1/stages/${parsedStageId}/operational-rules`,
       { organizationId },
     )
-    validateDomainResponse(
+    const validated = validateDomainResponse(
       apiStageOperationalRulesResponseSchema,
-      response,
+      normalizeLegacyStageOperationalRulesResponse(response),
       'cadences.stage-rules.get',
     )
-    return response.data
+    return validated.data
   },
 
   async updateStageOperationalRules(

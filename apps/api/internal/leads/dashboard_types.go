@@ -33,10 +33,15 @@ type DashboardFilter struct {
 	PipelineID     string
 	Limit          int
 	IncludeDetails bool
+	CountEntries   bool
 }
 
 type DashboardStats struct {
 	TotalLeads               int64                 `json:"totalLeads"`
+	UniqueLeads              int64                 `json:"uniqueLeads"`
+	Reentries                int64                 `json:"reentries"`
+	TotalEntries             int64                 `json:"totalEntries"`
+	EntriesTrend             int                   `json:"entriesTrend"`
 	LeadsInProgress          int64                 `json:"leadsInProgress"`
 	LeadsClosed              int64                 `json:"leadsClosed"`
 	LeadsLost                int64                 `json:"leadsLost"`
@@ -160,6 +165,8 @@ type DashboardFirstContactBroker struct {
 	Name                   string   `json:"name"`
 	AvatarURL              *string  `json:"avatarUrl"`
 	LeadCount              int64    `json:"leadCount"`
+	ReceivedLeads          int64    `json:"receivedLeads"`
+	HandledLeads           int64    `json:"handledLeads"`
 	ContactedLeads         int64    `json:"contactedLeads"`
 	AverageResponseSeconds *float64 `json:"averageResponseSeconds"`
 	RedistributedAway      int64    `json:"redistributedAway"`
@@ -183,6 +190,22 @@ type DashboardFirstContact struct {
 	RedistributionEvents   int64                         `json:"redistributionEvents"`
 	Brokers                []DashboardFirstContactBroker `json:"brokers"`
 	Sources                []DashboardFirstContactSource `json:"sources"`
+}
+
+type DashboardFirstContactLead struct {
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Source          string  `json:"source"`
+	CreatedAt       string  `json:"createdAt"`
+	RespondedAt     string  `json:"respondedAt"`
+	ResponseSeconds int64   `json:"responseSeconds"`
+	CurrentOwner    *string `json:"currentOwner"`
+}
+
+type DashboardFirstContactLeadPage struct {
+	Total   int64                       `json:"total"`
+	Items   []DashboardFirstContactLead `json:"items"`
+	HasMore bool                        `json:"hasMore"`
 }
 
 type UpcomingTask struct {
@@ -274,6 +297,13 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 			return DashboardFilter{}, fmt.Errorf("%w: invalid includeDetails", ErrInvalidInput)
 		}
 	}
+	countEntries := false
+	if rawCountEntries := strings.TrimSpace(values.Get("countEntries")); rawCountEntries != "" {
+		countEntries, err = strconv.ParseBool(rawCountEntries)
+		if err != nil {
+			return DashboardFilter{}, fmt.Errorf("%w: invalid countEntries", ErrInvalidInput)
+		}
+	}
 
 	teamID, err := normalizeDashboardUUIDFilter("teamId", values.Get("teamId"))
 	if err != nil {
@@ -350,6 +380,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		PipelineID:     pipelineID,
 		Limit:          limit,
 		IncludeDetails: includeDetails,
+		CountEntries:   countEntries,
 	}, nil
 }
 

@@ -11,6 +11,7 @@
   --app-surface: rgb(23 23 23 / 0.74);
   --app-surface-solid: #171717;
   --app-surface-soft: rgb(255 255 255 / 0.045);
+  --lead-history-message-bg: #303030;
   --app-surface-muted: rgb(255 255 255 / 0.032);
   --app-surface-hover: rgb(255 255 255 / 0.07);
   --app-overlay-soft: rgb(0 0 0 / 0.3);
@@ -232,6 +233,7 @@
   --app-surface: #ffffff;
   --app-surface-solid: #ffffff;
   --app-surface-soft: rgb(15 23 42 / 0.055);
+  --lead-history-message-bg: #ffffff;
   --app-surface-muted: rgb(15 23 42 / 0.035);
   --app-surface-hover: rgb(15 23 42 / 0.075);
   --app-lead-card: #eef1ef;
@@ -1871,6 +1873,28 @@ body {
 
 .lead-thread-scroll {
   scrollbar-width: none;
+}
+
+.lead-thread-scroll-readable {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--app-text-secondary) 42%, transparent) transparent;
+  scrollbar-gutter: stable;
+}
+
+.lead-thread-scroll-readable::-webkit-scrollbar {
+  display: block;
+  width: 7px;
+}
+
+.lead-thread-scroll-readable::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-text-secondary) 42%, transparent);
+  background-clip: padding-box;
+}
+
+.light .lead-thread-panel [data-message-timestamp-position="bottom-right"] {
+  color: var(--app-text-secondary);
 }
 
 .lead-stage-rail {

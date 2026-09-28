@@ -2,6 +2,8 @@ package leads
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -83,6 +85,32 @@ func (handler Handler) ListLeadMetaFilters(w http.ResponseWriter, r *http.Reques
 	filter, err := ParsePipelineBoardFilter(r.URL.Query())
 	if err != nil {
 		writeLeadError(w, r, err)
+		return
+	}
+	entryMode := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("entryMode")); raw != "" {
+		entryMode, err = strconv.ParseBool(raw)
+		if err != nil {
+			writeLeadError(w, r, ErrInvalidInput)
+			return
+		}
+	}
+	if entryMode {
+		// Keep the existing pipeline/contact response unchanged. The dashboard
+		// opts into options from its own entry cohort after stats confirms support.
+		values := r.URL.Query()
+		values.Set("pageId", filter.FilterPage)
+		dashboardFilter, parseErr := ParseDashboardFilter(values)
+		if parseErr != nil {
+			writeLeadError(w, r, parseErr)
+			return
+		}
+		filters, listErr := handler.repo.ListDashboardEntryFilterOptions(r.Context(), tenantContext, dashboardFilter)
+		if listErr != nil {
+			writeLeadError(w, r, listErr)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]LeadMetaFilters{"data": filters})
 		return
 	}
 

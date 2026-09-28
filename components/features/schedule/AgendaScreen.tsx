@@ -110,6 +110,7 @@ const EVENT_TYPE_FILTER_OPTIONS: Array<{
 
 const AGENDA_VIEW_MODES = ["day", "week", "month", "year", "list"] as const;
 type AgendaViewMode = (typeof AGENDA_VIEW_MODES)[number];
+const EMPTY_SCHEDULE_EVENTS: ScheduleEvent[] = [];
 
 const isAgendaViewMode = (value: string | null): value is AgendaViewMode =>
   value !== null && AGENDA_VIEW_MODES.includes(value as AgendaViewMode);
@@ -175,6 +176,7 @@ function AgendaCalendar() {
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEvent, setSheetEvent] = useState<ScheduleEvent | null>(null);
+  const handledFocusedEventRef = useRef<string | null>(null);
   const [sheetDefaultTime, setSheetDefaultTime] = useState<string | undefined>(
     undefined,
   );
@@ -291,7 +293,7 @@ function AgendaCalendar() {
   }, [effectiveViewMode, pivotDate, scheduleTimeZone]);
 
   const {
-    data: events = [],
+    data: events = EMPTY_SCHEDULE_EVENTS,
     isLoading: eventsLoading,
     isError: eventsFailed,
     refetch: refetchEvents,
@@ -300,7 +302,7 @@ function AgendaCalendar() {
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
   });
-  const { data: focusedEvents = [] } = useScheduleEvents({
+  const { data: focusedEvents = EMPTY_SCHEDULE_EVENTS } = useScheduleEvents({
     enabled: Boolean(focusedEventId),
     eventId: focusedEventId || undefined,
   });
@@ -356,7 +358,13 @@ function AgendaCalendar() {
   };
 
   useEffect(() => {
-    if (!focusedEventId) return;
+    if (!focusedEventId) {
+      handledFocusedEventRef.current = null;
+      return;
+    }
+
+    const focusKey = `${organizationId}:${focusedEventId}`;
+    if (handledFocusedEventRef.current === focusKey) return;
 
     const focusedEvent =
       events.find((event) => event.id === focusedEventId) || focusedEvents[0];
@@ -370,7 +378,8 @@ function AgendaCalendar() {
     let isActive = true;
 
     queueMicrotask(() => {
-      if (!isActive) return;
+      if (!isActive || handledFocusedEventRef.current === focusKey) return;
+      handledFocusedEventRef.current = focusKey;
 
       setSelectedDate(eventDate);
       setPivotDate(eventDate);
@@ -392,6 +401,7 @@ function AgendaCalendar() {
     events,
     focusedEventId,
     focusedEvents,
+    organizationId,
     router,
     scheduleTimeZone,
     searchParamsString,

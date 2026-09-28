@@ -219,9 +219,12 @@ export function PropertyPreviewDialog({
     .toLowerCase();
   const isUnavailable =
     normalizedStatus === "vendido" ||
+    normalizedStatus === "sold" ||
     normalizedStatus === "reservado" ||
+    normalizedStatus === "reserved" ||
     normalizedStatus === "alugado" ||
-    normalizedStatus === "locado";
+    normalizedStatus === "locado" ||
+    normalizedStatus === "rented";
   const isInactive =
     normalizedStatus === "inativo" || normalizedStatus === "inactive";
   const isActive = !isInactive;

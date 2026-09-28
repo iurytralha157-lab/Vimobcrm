@@ -172,6 +172,7 @@ export const leadUpdateInputSchema = z.object({
 
 export const leadMoveStageInputSchema = z.object({
   stageId: uuidSchema,
+  expectedStageId: uuidSchema.nullish(),
   isOwnResource: z.boolean().nullish(),
   boardOrderAt: timestampSchema.nullish(),
   lostReason: optionalText(300),
@@ -179,6 +180,10 @@ export const leadMoveStageInputSchema = z.object({
 
 export const leadAssignInputSchema = z.object({
   assignedUserId: uuidSchema.nullable(),
+}).strict()
+
+export const leadRedistributeInputSchema = z.object({
+  expectedUnassigned: z.boolean(),
 }).strict()
 
 export const leadTagInputSchema = z.object({ tagId: uuidSchema }).strict()
@@ -233,6 +238,7 @@ export const apiLeadSensitiveProfileResponseSchema = z.object({
 export const apiLeadSchema = z.object({
   id: uuidSchema,
   organizationId: uuidSchema,
+  canOperate: z.boolean().optional(),
   name: z.string().min(1),
   email: z.string().optional(),
   phone: z.string().optional(),
@@ -276,6 +282,10 @@ export const apiLeadSchema = z.object({
   boardOrderAt: timestampSchema.optional(),
   lastContactAt: timestampSchema.optional(),
   nextFollowUpAt: timestampSchema.optional(),
+  firstResponseAt: timestampSchema.optional(),
+  firstResponseSeconds: nonNegativeIntegerSchema.optional(),
+  firstResponseChannel: z.string().optional(),
+  firstResponseIsAutomation: z.boolean().optional(),
   additionalFields: leadAdditionalFieldsSchema.optional(),
 }).passthrough()
 

@@ -45,12 +45,14 @@ export async function signInAs(page: Page, userKey: E2EUserKey) {
   expect(tokenPayload.access_token, 'Supabase should return an access token after login').toBeTruthy();
   accessTokens.set(page, tokenPayload.access_token!);
 
-  await expect(page).toHaveURL(/\/inicio/, { timeout: 30_000 });
+  // A fresh local Next dev server may compile /inicio only after login.
+  const navigationTimeout = process.env.E2E_SUPABASE_WORKDIR ? 180_000 : 30_000;
+  await expect(page).toHaveURL(/\/inicio/, { timeout: navigationTimeout });
   const viewport = page.viewportSize();
   const applicationNavigation = viewport && viewport.width < 768
     ? page.locator('nav.app-mobile-bottom-nav')
     : page.locator('aside.app-sidebar');
-  await expect(applicationNavigation).toBeVisible({ timeout: 30_000 });
+  await expect(applicationNavigation).toBeVisible({ timeout: navigationTimeout });
 }
 
 export async function fetchTenantContext(page: Page): Promise<TenantContext> {

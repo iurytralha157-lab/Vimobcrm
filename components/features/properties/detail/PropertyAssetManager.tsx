@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,10 @@ import {
 } from '@/hooks/properties'
 import type { PropertyWorkspaceAsset } from '@/lib/validation'
 import { PROPERTY_MEDIA_MAX_PHOTOS } from '@/lib/property-media-draft'
+import {
+  releaseConfirmedPropertyAssetSortOrders,
+  reserveNextPropertyAssetSortOrder,
+} from '@/lib/property-asset-order'
 
 import { PropertyAssetDeleteDialog } from './PropertyAssetDeleteDialog'
 import { PropertyAssetDialog, type AssetSubmitCommand } from './PropertyAssetDialog'
@@ -29,6 +33,10 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingAsset, setEditingAsset] = useState<PropertyWorkspaceAsset | null>(null)
   const [deletingAsset, setDeletingAsset] = useState<PropertyWorkspaceAsset | null>(null)
+  const sortOrderReservations = useRef({
+    propertyId,
+    nextByType: new Map<string, number>(),
+  })
 
   const response = workspaceQuery.data
   const assets = useMemo(
@@ -39,6 +47,10 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
     ),
     [response?.data.assets],
   )
+  useEffect(() => {
+    if (!response || sortOrderReservations.current.propertyId !== propertyId) return
+    releaseConfirmedPropertyAssetSortOrders(assets, sortOrderReservations.current.nextByType)
+  }, [assets, propertyId, response])
   const canManage = Boolean(response?.meta.can_manage && response.meta.normalized_resources_available !== false)
   const photoCount = assets.filter((asset) => asset.asset_type === 'photo').length
   const photoCreationDisabled = photoCount >= PROPERTY_MEDIA_MAX_PHOTOS
@@ -55,7 +67,21 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
 
   const submitAsset = async (command: AssetSubmitCommand) => {
     if (command.mode === 'create') {
-      await createMutation.mutateAsync({ input: command.input, file: command.file })
+      if (sortOrderReservations.current.propertyId !== propertyId) {
+        sortOrderReservations.current = {
+          propertyId,
+          nextByType: new Map<string, number>(),
+        }
+      }
+      const nextSortOrder = reserveNextPropertyAssetSortOrder(
+        assets,
+        command.input.asset_type,
+        sortOrderReservations.current.nextByType,
+      )
+      await createMutation.mutateAsync({
+        input: { ...command.input, sort_order: nextSortOrder },
+        file: command.file,
+      })
     } else {
       await updateMutation.mutateAsync({ assetId: command.assetId, input: command.input })
     }
@@ -102,12 +128,12 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-[12px] font-normal text-[var(--app-text-primary)]">Biblioteca canônica do imóvel</p>
+          <p className="text-[12px] font-normal text-[var(--app-text-primary)]">Fotos e arquivos do imóvel</p>
           <p className="mt-1 text-[11px] font-light text-muted-foreground">
-            Arquivos ficam privados no Storage e alterações desta área são salvas automaticamente.
+            Os arquivos ficam protegidos e as alterações desta área são salvas automaticamente.
           </p>
           <p className="mt-1 text-[11px] font-light text-muted-foreground">
-            {photoCount}/{PROPERTY_MEDIA_MAX_PHOTOS} fotos
+            {photoCount} de {PROPERTY_MEDIA_MAX_PHOTOS} fotos
             {photoCreationDisabled
               ? ' — limite atingido; remova uma foto para adicionar outra.'
               : ''}
@@ -133,10 +159,10 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
                   <Star className="mr-1.5 h-3.5 w-3.5" />Principal
                 </Button>
               )}
-              <Button type="button" variant="ghost" size="icon" aria-label="Mover para cima" disabled={pending || index <= 0} onClick={() => void moveAsset(asset, -1).catch(() => undefined)}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Mover para cima" title="Mover para cima" disabled={pending || index <= 0} onClick={() => void moveAsset(asset, -1).catch(() => undefined)}>
                 <ArrowUp className="h-3.5 w-3.5" />
               </Button>
-              <Button type="button" variant="ghost" size="icon" aria-label="Mover para baixo" disabled={pending || index >= siblings.length - 1} onClick={() => void moveAsset(asset, 1).catch(() => undefined)}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Mover para baixo" title="Mover para baixo" disabled={pending || index >= siblings.length - 1} onClick={() => void moveAsset(asset, 1).catch(() => undefined)}>
                 <ArrowDown className="h-3.5 w-3.5" />
               </Button>
               <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => { setEditingAsset(asset); setDialogOpen(true) }}>

@@ -1,6 +1,18 @@
 export const PIPELINE_STAGE_PAGE_SIZE = 12;
 export const PIPELINE_STAGE_RESTORE_LIMIT = 60;
 
+export function hasMorePipelineStageLeadsAfterPage(params: {
+  totalCount: number;
+  loadedCount: number;
+  receivedCount: number;
+  addedCount: number;
+  requestedCount: number;
+}) {
+  return params.addedCount > 0 &&
+    params.receivedCount >= params.requestedCount &&
+    params.totalCount > params.loadedCount;
+}
+
 export type PipelinePaginationLead = {
   id: string;
   board_sort_at?: string | null;

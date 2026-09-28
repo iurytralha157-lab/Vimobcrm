@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -30,6 +30,7 @@ import {
   buildPipelineStageRestorePlans,
   createPipelinePaginationStorageKey,
   getPipelineStageLoadedCountsFromBoard,
+  hasMorePipelineStageLeadsAfterPage,
   mergePipelineStageLoadedCounts,
   parsePipelineStageLoadedCounts,
   type PipelineStageLoadedCounts,
@@ -61,6 +62,7 @@ type LeadMetaRow = {
 export type PipelineLead = Partial<Tables<'leads'>> & {
   id: string;
   stage_id: string | null;
+  can_operate?: boolean;
   board_sort_at?: string | null;
   assigned_user_id?: string | null;
   interest_property_id?: string | null;
@@ -160,6 +162,11 @@ export function useStagesWithLeads(
     organizationId && pipelineId && (options?.enabled ?? true),
   );
   const backgroundRestoreStateRef = useRef<PipelineBackgroundRestoreState | null>(null);
+  const [restoreError, setRestoreError] = useState<{
+    queryKeyId: string;
+    generation: number;
+    error: unknown;
+  } | null>(null);
   const restoreLifecycleRef = useRef(true);
   const restoreAllowedRef = useRef(isBoardEnabled);
 
@@ -183,7 +190,7 @@ export function useStagesWithLeads(
         previousData,
         previousQuery?.queryKey,
         queryKey,
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
       ),
     enabled: isBoardEnabled,
     refetchOnMount: true,
@@ -194,6 +201,7 @@ export function useStagesWithLeads(
         getPendingPipelineMoves<PipelineLead>(queryKey),
       ),
     queryFn: async ({ signal }) => {
+      setRestoreError(null);
       const cachedBoard = queryClient.getQueryData<StageWithLeads[]>(queryKey);
       const desiredLoadedCounts = mergePipelineStageLoadedCounts(
         readPipelineStageLoadedCounts(paginationStorageKey),
@@ -264,9 +272,19 @@ export function useStagesWithLeads(
             filters: filters as PipelineBoardFilters,
             limit: plan.limit,
           })) as { stageId: string; leads: PipelineLead[] };
-        } catch {
-          // The initial page remains usable. A manual refresh starts a new,
-          // bounded restore generation instead of retrying in a tight loop.
+        } catch (error) {
+          // Preserve the initial page and expose this bounded restore failure.
+          // A manual refresh starts a new generation for another attempt.
+          if (
+            restoreLifecycleRef.current &&
+            restoreAllowedRef.current &&
+            backgroundRestoreStateRef.current === restoreState
+          ) {
+            setRestoreError((current) => current?.generation === restoreState.generation &&
+              current.queryKeyId === queryKeyId
+              ? current
+              : { queryKeyId, generation: restoreState.generation, error });
+          }
           continue;
         }
 
@@ -298,7 +316,13 @@ export function useStagesWithLeads(
             return {
               ...stage,
               leads,
-              has_more: stage.total_lead_count > leads.length,
+              has_more: hasMorePipelineStageLeadsAfterPage({
+                totalCount: stage.total_lead_count,
+                loadedCount: leads.length,
+                receivedCount: response.leads.length,
+                addedCount: uniqueLeads.length,
+                requestedCount: plan.limit,
+              }),
             };
           });
         });
@@ -326,7 +350,10 @@ export function useStagesWithLeads(
     queryKeyId,
   ]);
 
-  return boardQuery;
+  return {
+    ...boardQuery,
+    restoreError: restoreError?.queryKeyId === queryKeyId ? restoreError : null,
+  };
 }
 
 export function useLeadMetaFilters(
@@ -558,7 +585,14 @@ export function useReorderStages() {
   return useMutation({
     mutationFn: ({ pipelineId, stages }: {
       pipelineId: string;
-      stages: Array<{ id: string; name: string; color?: string | null; stage_key?: string | null }>;
+      stages: Array<{
+        id: string;
+        name: string;
+        color?: string | null;
+        stage_key?: string | null;
+        isNew?: boolean;
+        expectedUpdatedAt?: string;
+      }>;
     }) => pipelinesAPI.reorderStages(pipelineId, stages, organizationId),
     onSuccess: () => invalidatePipelineQueries(queryClient),
   });
@@ -620,7 +654,13 @@ export function useLoadMoreLeads() {
             return {
               ...stage,
               leads: [...(stage.leads || []), ...newLeads],
-              has_more: stage.total_lead_count > loadedCount,
+              has_more: hasMorePipelineStageLeadsAfterPage({
+                totalCount: stage.total_lead_count,
+                loadedCount,
+                receivedCount: leads.length,
+                addedCount: newLeads.length,
+                requestedCount: LEADS_PER_STAGE,
+              }),
             };
           });
         },

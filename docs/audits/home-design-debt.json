@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "f8ae22d313b3c0b67e7ad013f4e7425e97bb0ccb73e149fd1bf0115d01c5f4c3",
-  "surfaceInventoryDigestSha256": "02a7fc4e42e23f65a920b0bf739d3e470d99b8eb09e52f935247727f014b9f72",
+  "sourceDigestSha256": "d005f9e7bb33b3533c6d3dce1676a1786a47886637dd1010b38b84f5047359ab",
+  "surfaceInventoryDigestSha256": "2331fee2afd6b2eaaf6079bee938575e4f954a5e107d842a39b39897462f49bd",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 540,
+    "filesScanned": 544,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
     "filesWithFindings": 43,
-    "findings": 114,
+    "findings": 115,
     "protectedReachableFilesWithFindings": 42,
-    "protectedReachableFindings": 113,
+    "protectedReachableFindings": 114,
     "bySurfaceScope": {
-      "protected-only": 103,
+      "protected-only": 104,
       "protected-and-public": 10,
       "public-only": 1,
       "infrastructure": 0
@@ -21,7 +21,7 @@
     "byPriority": {
       "P1": 56,
       "P2": 13,
-      "P3": 45
+      "P3": 46
     },
     "byRule": {
       "heavy-shadow": {
@@ -67,7 +67,7 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 45,
+        "count": 46,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -338,6 +338,14 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
       "count": 2,
       "score": 2,
@@ -379,14 +387,6 @@
     },
     {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -684,6 +684,14 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
       "count": 2,
       "score": 2,
@@ -725,14 +733,6 @@
     },
     {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -900,7 +900,16 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 215,
+      "line": 312,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "line": 348,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -945,7 +954,7 @@
     },
     {
       "file": "components/features/leads/LeadCard.tsx",
-      "line": 392,
+      "line": 411,
       "match": "#25D366",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1332,7 +1341,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 708,
+      "line": 725,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1341,7 +1350,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 734,
+      "line": 751,
       "match": "group-hover:translate-x-0.5",
       "priority": "P2",
       "rule": "aggressive-motion",
@@ -1350,7 +1359,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 789,
+      "line": 810,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1359,7 +1368,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1187,
+      "line": 1212,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1368,7 +1377,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1222,
+      "line": 1247,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",

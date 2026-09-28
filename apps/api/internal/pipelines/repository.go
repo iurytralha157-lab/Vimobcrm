@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -275,6 +276,13 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	}
 	if leadCount > 0 {
 		return ErrHasLeads
+	}
+	linked, err := repo.hasDeletionDependencies(ctx, tx, tenantContext.OrganizationID, pipelineID, "")
+	if err != nil {
+		return err
+	}
+	if linked {
+		return ErrHasDependencies
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -577,12 +585,14 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	// segunda. As posicoes temporarias sao exclusivas e ficam acima do maior
 	// valor atual; qualquer falha continua protegida pelo rollback da transacao.
 	type existingStageOrder struct {
-		ID       string
-		Position int
+		ID        string
+		Position  int
+		UpdatedAt time.Time
+		IsActive  bool
 	}
 	existingStages := []existingStageOrder{}
 	existingRows, err := tx.Query(ctx, `
-		select id::text, coalesce(position, 0)
+		select id::text, coalesce(position, 0), updated_at, coalesce(is_active, true)
 		from public.stages
 		where organization_id = $1::uuid
 		  and pipeline_id = $2::uuid
@@ -594,7 +604,7 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	}
 	for existingRows.Next() {
 		var existing existingStageOrder
-		if err := existingRows.Scan(&existing.ID, &existing.Position); err != nil {
+		if err := existingRows.Scan(&existing.ID, &existing.Position, &existing.UpdatedAt, &existing.IsActive); err != nil {
 			existingRows.Close()
 			return nil, err
 		}
@@ -606,10 +616,36 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	}
 	existingRows.Close()
 
+	// The editor sends every visible stage and the version it loaded. Check the
+	// complete active set before writing, so a second tab cannot silently
+	// recreate a deleted stage or reorder around a newly created one.
+	existingByID := make(map[string]existingStageOrder, len(existingStages))
+	for _, existing := range existingStages {
+		existingByID[existing.ID] = existing
+	}
+	requestedStageIDs := make(map[string]struct{}, len(input.Stages))
+	for _, item := range input.Stages {
+		requestedStageIDs[item.ID] = struct{}{}
+		existing, found := existingByID[item.ID]
+		if item.IsNew {
+			if found {
+				return nil, ErrStagesChanged
+			}
+			continue
+		}
+		if !found || item.ExpectedUpdatedAt == nil || !item.ExpectedUpdatedAt.Equal(existing.UpdatedAt) {
+			return nil, ErrStagesChanged
+		}
+	}
+	for _, existing := range existingStages {
+		if _, requested := requestedStageIDs[existing.ID]; !requested && existing.IsActive {
+			return nil, ErrStagesChanged
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `
 		update public.stages
-		set position = position + $3,
-		    updated_at = now()
+		set position = position + $3
 		where organization_id = $1::uuid
 		  and pipeline_id = $2::uuid
 	`, tenantContext.OrganizationID, pipelineID, temporaryPositionBase); err != nil {
@@ -617,24 +653,9 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	}
 
 	for _, item := range input.Stages {
-		var existingPipelineID pgtype.Text
-		err := tx.QueryRow(ctx, `
-			select pipeline_id::text
-			from public.stages
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			limit 1
-		`, tenantContext.OrganizationID, item.ID).Scan(&existingPipelineID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
-		}
-		if existingPipelineID.Valid && existingPipelineID.String != pipelineID {
-			return nil, ErrInvalidReference
-		}
-	}
-
-	for _, item := range input.Stages {
-		tag, err := tx.Exec(ctx, `
+		var tag pgconn.CommandTag
+		if item.IsNew {
+			tag, err = tx.Exec(ctx, `
 			insert into public.stages (
 				id,
 				organization_id,
@@ -655,27 +676,30 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 				$7,
 				true
 			)
-			on conflict (id) do update set
-				name = excluded.name,
-				color = excluded.color,
-				position = excluded.position,
-				stage_key = excluded.stage_key,
-				updated_at = now()
-			where public.stages.organization_id = $2::uuid
-			  and public.stages.pipeline_id = $3::uuid
+			on conflict (id) do nothing
 		`, item.ID, tenantContext.OrganizationID, pipelineID, item.Name, item.Color, item.Position, item.StageKey)
+		} else {
+			tag, err = tx.Exec(ctx, `
+			update public.stages
+			set name = $4,
+			    color = $5,
+			    position = $6,
+			    stage_key = $7,
+			    updated_at = now()
+			where organization_id = $2::uuid
+			  and pipeline_id = $3::uuid
+			  and id = $1::uuid
+			  and updated_at = $8::timestamptz
+		`, item.ID, tenantContext.OrganizationID, pipelineID, item.Name, item.Color, item.Position, item.StageKey, *item.ExpectedUpdatedAt)
+		}
 		if err != nil {
 			return nil, err
 		}
 		if tag.RowsAffected() != 1 {
-			return nil, ErrInvalidReference
+			return nil, ErrStagesChanged
 		}
 	}
 
-	requestedStageIDs := map[string]struct{}{}
-	for _, item := range input.Stages {
-		requestedStageIDs[item.ID] = struct{}{}
-	}
 	nextPosition := len(input.Stages)
 	for _, existing := range existingStages {
 		if _, requested := requestedStageIDs[existing.ID]; requested {
@@ -731,6 +755,13 @@ func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Con
 	}
 	if leadCount > 0 {
 		return ErrHasLeads
+	}
+	linked, err := repo.hasDeletionDependencies(ctx, tx, tenantContext.OrganizationID, "", stageID)
+	if err != nil {
+		return err
+	}
+	if linked {
+		return ErrHasDependencies
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -890,6 +921,50 @@ func (repo Repository) countPipelineLeads(ctx context.Context, tx pgx.Tx, organi
 		  and pipeline_id = $2::uuid
 	`, organizationID, pipelineID).Scan(&count)
 	return count, err
+}
+
+// The deletion guard runs after the parent pipeline/stage row is locked FOR
+// UPDATE. FK-backed writers then wait until this transaction finishes. Rows
+// outside leads also matter: cycles and history must not be cascaded away, and
+// configured intake/automation destinations must not silently become NULL.
+// Empty pipelineID checks one stage; empty stageID checks the entire pipeline.
+func (repo Repository) hasDeletionDependencies(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	pipelineID string,
+	stageID string,
+) (bool, error) {
+	var linked bool
+	err := tx.QueryRow(ctx, `
+		with stage_scope as (
+			select id
+			from public.stages
+			where organization_id = $1::uuid
+			  and (
+				pipeline_id = nullif($2::text, '')::uuid
+				or id = nullif($3::text, '')::uuid
+			  )
+		)
+		select
+			exists (select 1 from public.lead_stage_cycles x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.lead_stage_history x where x.stage_id in (select id from stage_scope))
+			or exists (select 1 from public.lead_entry_events x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.lead_attention_instances x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.lead_attention_policies x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.pipeline_sla_settings x where x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope))
+			or exists (select 1 from public.meta_form_configs x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.meta_integrations x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.portal_integrations x where x.default_pipeline_id = nullif($2::text, '')::uuid or x.default_stage_id in (select id from stage_scope))
+			or exists (select 1 from public.round_robins x where x.organization_id = $1::uuid and (x.target_pipeline_id = nullif($2::text, '')::uuid or x.pipeline_id = nullif($2::text, '')::uuid or x.target_stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.webhooks_integrations x where x.target_pipeline_id = nullif($2::text, '')::uuid or x.target_stage_id in (select id from stage_scope))
+			or exists (select 1 from public.whatsapp_inbound_rules x where x.organization_id = $1::uuid and (x.target_pipeline_id = nullif($2::text, '')::uuid or x.target_stage_id in (select id from stage_scope)))
+			or exists (select 1 from public.team_pipelines x where x.pipeline_id = nullif($2::text, '')::uuid)
+			or exists (select 1 from public.stage_automations x where x.stage_id in (select id from stage_scope) or x.target_stage_id in (select id from stage_scope))
+			or exists (select 1 from public.stage_operational_configs x where x.stage_id in (select id from stage_scope))
+			or exists (select 1 from public.cadence_templates x where x.organization_id = $1::uuid and (x.pipeline_id = nullif($2::text, '')::uuid or x.stage_id in (select id from stage_scope)))
+	`, organizationID, pipelineID, stageID).Scan(&linked)
+	return linked, err
 }
 
 func (repo Repository) getStagePipelineID(ctx context.Context, tx pgx.Tx, organizationID string, stageID string) (string, error) {

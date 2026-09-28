@@ -6,6 +6,7 @@ import {
 } from '@/lib/pipeline-board-cache';
 import type { LeadDetailLead, PipelineCacheStage } from './types';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
+import { mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 
 export type LeadDetailPipelineCacheSnapshot = Array<[QueryKey, unknown]>;
 
@@ -47,12 +48,13 @@ export function useLeadDetailPipelineCache() {
             return acc;
           }
 
-          acc.push({
+          acc.push(mergeLeadOperationCapability(stageLead, {
             ...stageLead,
             assigned_user_id: nextLead.assigned_user_id,
             assignee: nextLead.assignee || undefined,
             updated_at: nextUpdatedAt,
-          });
+            can_operate: undefined,
+          }));
           return acc;
         }, []);
 
@@ -96,11 +98,12 @@ export function useLeadDetailPipelineCache() {
         .find((stageLead) => stageLead?.id === leadIdToUpdate);
       if (!currentLead) return;
 
-      const nextLead: LeadDetailLead = {
+      const nextLead: LeadDetailLead = mergeLeadOperationCapability(currentLead, {
         ...currentLead,
         ...patch,
         updated_at: nextUpdatedAt,
-      };
+        can_operate: patch.can_operate,
+      });
       const nextStages = patchPipelineLeadInBoard<LeadDetailLead, PipelineCacheStage>(cachedData, leadIdToUpdate, nextLead, {
         keepInDestination: pipelineLeadMatchesQueryKeyScope(
           Array.isArray(queryKey) ? queryKey : [],

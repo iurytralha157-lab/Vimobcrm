@@ -9,6 +9,7 @@ import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 import { runLeadImportBatch, type ImportBatchProgress } from '@/lib/lead-import-batch';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
+import { mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 import {
   countImportDistributionOutcome,
   createEmptyImportDistributionSummary,
@@ -121,12 +122,13 @@ const getErrorCode = (error: unknown) => {
 };
 
 export type Lead = Tables<'leads'> & {
+  can_operate?: boolean;
   tags?: LeadTag[];
   assignee?: { id: string; name: string; avatar_url: string | null };
   stage?: { id: string; name: string; color: string | null; stage_key: string | null };
 };
 
-const leadReadRelationKeys = new Set<keyof Lead>(['tags', 'assignee', 'stage']);
+const leadReadRelationKeys = new Set<keyof Lead>(['can_operate', 'tags', 'assignee', 'stage']);
 
 export type UpdateLeadInput = Partial<Lead> & {
   id: string;
@@ -403,14 +405,15 @@ export function useUpdateLead() {
     },
     onSuccess: (data, variables) => {
       if (data?.id) {
-        queryClient.setQueryData(['lead', organizationId, data.id], data);
+        queryClient.setQueryData<Lead>(['lead', organizationId, data.id], (current) =>
+          mergeLeadOperationCapability(current, data));
         queryClient.setQueriesData<Lead[]>({ queryKey: ['leads'] }, (current) => {
           if (!Array.isArray(current)) return current;
-          return current.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead);
+          return current.map((lead) => lead.id === data.id ? mergeLeadOperationCapability(lead, data) : lead);
         });
         queryClient.setQueriesData<Lead[]>({ queryKey: ['contacts-list'] }, (current) => {
           if (!Array.isArray(current)) return current;
-          return current.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead);
+          return current.map((lead) => lead.id === data.id ? mergeLeadOperationCapability(lead, data) : lead);
         });
         queryClient.setQueriesData<Array<{ leads?: Array<Partial<Lead> & { id: string }> }>>(
           { queryKey: ['stages-with-leads'] },
@@ -420,7 +423,9 @@ export function useUpdateLead() {
               if (!Array.isArray(stage?.leads)) return stage;
               return {
                 ...stage,
-                leads: stage.leads.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead),
+                leads: stage.leads.map((lead) => lead.id === data.id
+                  ? mergeLeadOperationCapability(lead, data)
+                  : lead),
               };
             });
           },

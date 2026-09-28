@@ -126,7 +126,7 @@ export async function persistStagedPropertyPhotosWithClient(
   const createdAssets: PropertyWorkspaceAsset[] = []
   const completedPreviewURLs: string[] = []
   const rollbackFailedUploadPaths: string[] = []
-  let cursor = 0
+  let cursor = 1
   let firstError: unknown = null
 
   const uploadOne = async (previewURL: string, sortOrder: number) => {
@@ -189,8 +189,19 @@ export async function persistStagedPropertyPhotosWithClient(
     }
   }
 
-  const workerCount = Math.min(PROPERTY_MEDIA_UPLOAD_CONCURRENCY, ordered.length)
-  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  // Establish the selected cover before sending the gallery. The API promotes
+  // the first public photo automatically, and a later cover promotion changes
+  // that asset's optimistic-lock version during a concurrent batch.
+  try {
+    await uploadOne(ordered[0], 0)
+  } catch (error) {
+    firstError = error
+  }
+
+  if (!firstError) {
+    const workerCount = Math.min(PROPERTY_MEDIA_UPLOAD_CONCURRENCY, ordered.length - 1)
+    await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  }
 
   if (firstError) {
     const rollbackFailedAssetIds = await rollbackCreatedAssets(

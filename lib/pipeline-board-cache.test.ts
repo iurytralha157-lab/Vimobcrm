@@ -216,6 +216,24 @@ test('rollback restaura uma unica copia na posicao original', () => {
   assert.equal(restoredBoard[1].total_lead_count, 0);
 });
 
+test('falha do segundo movimento retorna ao primeiro movimento confirmado', () => {
+  const initialBoard = createBoard();
+  const firstMove = createMove('contacted', 1);
+  const secondMove = createMove('qualified', 2);
+  const boardWithSecondMove = applyPendingPipelineMoves(initialBoard, [firstMove, secondMove]);
+  const lastConfirmedBoard = applyPendingPipelineMoves(initialBoard, [firstMove]);
+  const restoredBoard = restorePipelineLeadSnapshot(
+    boardWithSecondMove,
+    lastConfirmedBoard,
+    'lead-1',
+  );
+  assert.ok(restoredBoard);
+  assert.deepEqual(leadLocations(restoredBoard, 'lead-1'), ['contacted']);
+  assert.equal(restoredBoard[0].total_lead_count, 1);
+  assert.equal(restoredBoard[1].total_lead_count, 1);
+  assert.equal(restoredBoard[2].total_lead_count, 0);
+});
+
 test('movimento otimista e rollback reconciliam os totais monetarios', () => {
   const initialBoard = createBoard();
   initialBoard[0].leads[0].valor_interesse = 250_000;

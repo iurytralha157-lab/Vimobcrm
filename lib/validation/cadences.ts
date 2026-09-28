@@ -167,6 +167,38 @@ export const stageOperationalRulesSchema = z.object({
 export const updateStageOperationalRulesInputSchema = stageOperationalRulesSchema
 export const apiStageOperationalRulesResponseSchema = apiEnvelopeSchema(stageOperationalRulesSchema)
 
+// Older templates may have duplicate positions. The API returns tasks in a
+// stable order, so the GET adapter can number that list without relaxing PUT.
+export function normalizeLegacyStageOperationalRulesResponse(response: unknown): unknown {
+  if (!response || typeof response !== 'object') return response
+  const envelope = response as Record<string, unknown>
+  const data = envelope.data
+  if (!data || typeof data !== 'object') return response
+  const rules = data as Record<string, unknown>
+  const cadence = rules.cadence
+  if (!cadence || typeof cadence !== 'object') return response
+  const cadenceRecord = cadence as Record<string, unknown>
+  const tasks = cadenceRecord.tasks
+  if (!Array.isArray(tasks) || !tasks.every((task) =>
+    task && typeof task === 'object' &&
+    Number.isInteger(task.position) && task.position >= 0
+  )) return response
+
+  const positions = tasks.map((task) => task.position as number)
+  if (new Set(positions).size === positions.length) return response
+
+  return {
+    ...envelope,
+    data: {
+      ...rules,
+      cadence: {
+        ...cadenceRecord,
+        tasks: tasks.map((task, position) => ({ ...task, position })),
+      },
+    },
+  }
+}
+
 export type StageOperationalCadenceTask = z.infer<typeof stageOperationalCadenceTaskSchema>
 export type StageOperationalAttentionMode = z.infer<typeof stageOperationalAttentionModeSchema>
 export type StageOperationalAttentionSourceMode = z.infer<typeof stageOperationalAttentionSourceModeSchema>

@@ -39,6 +39,7 @@ import { useState } from 'react'
 
 import type { SiteGeneralValues } from './site-control-center-types'
 import { SitePerformancePanel } from './SitePerformancePanel'
+import { SiteFooterLogoUpload } from './SiteFooterLogoUpload'
 
 type SiteGeneralDashboardProps = {
   site: OrganizationSite
@@ -49,6 +50,7 @@ type SiteGeneralDashboardProps = {
   onChange: (patch: Partial<SiteGeneralValues>) => void
   onOpenDomainGuide: () => void
   onUploadLogo: (url: string | null) => Promise<void>
+  onUploadFooterLogo: (url: string | null) => Promise<void>
   onUploadFavicon: (url: string | null) => Promise<void>
 }
 
@@ -75,6 +77,7 @@ export function SiteGeneralDashboard({
   onChange,
   onOpenDomainGuide,
   onUploadLogo,
+  onUploadFooterLogo,
   onUploadFavicon,
 }: SiteGeneralDashboardProps) {
   const [maintenanceDialogOpen, setMaintenanceDialogOpen] = useState(false)
@@ -392,13 +395,13 @@ export function SiteGeneralDashboard({
         <div>
           <h2 id="site-identity-title" className="text-[14px] font-normal">Identidade do site</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Logo principal e ícone exibido na aba do navegador.
+            Logos do cabeçalho e rodapé e ícone exibido na aba do navegador.
           </p>
         </div>
-        <div className="mt-5 grid items-start gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.65fr)]">
+        <div className="mt-5 grid items-start gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,0.75fr)]">
           <ImageUpload
-            label="Logo"
-            description="PNG, JPG ou WebP recomendado"
+            label="Logo principal"
+            description="Usada no cabeçalho. PNG, JPG ou WebP recomendado."
             value={site.logo_url}
             onChange={onUploadLogo}
             bucket="site-images"
@@ -407,6 +410,11 @@ export function SiteGeneralDashboard({
             disabled={!canManage}
             aspectRatio="banner"
             className="min-w-0"
+          />
+          <SiteFooterLogoUpload
+            value={site.footer_logo_url}
+            onChange={onUploadFooterLogo}
+            disabled={!canManage}
           />
           <ImageUpload
             label="Favicon"

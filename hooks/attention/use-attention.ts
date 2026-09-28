@@ -62,24 +62,24 @@ export function useAttentionSummary(scope: AttentionScope) {
   });
 }
 
-export function useAttentionPolicies() {
+export function useAttentionPolicies(options?: { enabled?: boolean }) {
   const organizationId = useOrganizationId();
 
   return useQuery({
     queryKey: ["attention", "policies", organizationId],
-    enabled: Boolean(organizationId),
+    enabled: Boolean(organizationId) && (options?.enabled ?? true),
     queryFn: () => attentionAPI.listPolicies(organizationId),
     staleTime: 60_000,
     gcTime: 10 * 60_000,
   });
 }
 
-export function useAttentionSettings() {
+export function useAttentionSettings(options?: { enabled?: boolean }) {
   const organizationId = useOrganizationId();
 
   return useQuery({
     queryKey: ["attention", "settings", organizationId],
-    enabled: Boolean(organizationId),
+    enabled: Boolean(organizationId) && (options?.enabled ?? true),
     queryFn: () => attentionAPI.getSettings(organizationId),
     staleTime: 60_000,
     gcTime: 10 * 60_000,

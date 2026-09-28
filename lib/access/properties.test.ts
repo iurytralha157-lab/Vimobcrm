@@ -658,14 +658,10 @@ test("cards de imóveis usam selos sólidos para código, modalidade e status", 
   assert.ok(cardSource.includes("data-property-card-deal-type"));
   assert.ok(cardSource.includes("data-property-card-status"));
   assert.ok(
-    cardSource.includes(
-      'className="rounded-br-[6px] bg-primary px-3 py-1.5',
-    ),
+    /data-property-card-code[\s\S]*?className="[^"]*rounded-br-\[6px\] bg-primary px-3 py-1\.5/.test(cardSource),
   );
   assert.ok(
-    cardSource.includes(
-      'className="rounded-[6px] border-0 bg-primary px-2 py-1',
-    ),
+    /data-property-card-deal-type[\s\S]*?className="[^"]*rounded-\[6px\] border-0 bg-primary px-2 py-1/.test(cardSource),
   );
   assert.ok(cardSource.includes('"bg-zinc-900 text-white'));
   assert.ok(cardSource.includes('"bg-sky-950 text-white'));

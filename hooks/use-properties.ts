@@ -361,7 +361,9 @@ export function useCreateProperty(
   });
 }
 
-export function useUpdateProperty() {
+export function useUpdateProperty(
+  options: { showSuccessToast?: boolean } = {},
+) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const organizationId = useOrganizationId();
@@ -414,7 +416,9 @@ export function useUpdateProperty() {
           });
         }
       }
-      toast.success("Imóvel atualizado!");
+      if (options.showSuccessToast !== false) {
+        toast.success("Imóvel atualizado!");
+      }
     },
     onError: async (error, variables) => {
       if (isPropertyWorkspaceConflict(error)) {

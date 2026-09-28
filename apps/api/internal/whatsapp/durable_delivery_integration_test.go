@@ -646,6 +646,17 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, claimedOutbox[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.leads
+		set first_response_at = created_at + interval '10 seconds',
+		    first_response_seconds = 10,
+		    first_response_channel = 'whatsapp',
+		    first_response_is_automation = true,
+		    first_response_actor_user_id = null
+		where id = $1::uuid and organization_id = $2::uuid
+	`, leadID, organizationID); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
 		t.Fatalf("ProcessWhatsAppOutbox() returned error: %v", err)
@@ -667,12 +678,15 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if messageStatus != "sent" || messageDirection != "outbound" || outboxStatus != "sent" || providerMessageID != deterministicProviderMessageID(clientMessageID) {
 		t.Fatalf("delivery state = message:%s direction:%s outbox:%s provider:%s", messageStatus, messageDirection, outboxStatus, providerMessageID)
 	}
-	var lastContactRecorded, firstResponseRecorded bool
+	var lastContactRecorded, firstResponseRecorded, firstResponseIsAutomation bool
+	var firstResponseActor string
 	var sentTimelineCount int
 	if err := postgres.Pool().QueryRow(ctx, `
-		select last_contact_at is not null, first_response_at is not null
+		select last_contact_at is not null, first_response_at is not null,
+		       coalesce(first_response_is_automation, false),
+		       coalesce(first_response_actor_user_id::text, '')
 		from public.leads where id = $1::uuid and organization_id = $2::uuid
-	`, leadID, organizationID).Scan(&lastContactRecorded, &firstResponseRecorded); err != nil {
+	`, leadID, organizationID).Scan(&lastContactRecorded, &firstResponseRecorded, &firstResponseIsAutomation, &firstResponseActor); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -685,8 +699,8 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, organizationID, leadID, claimedOutbox[0].ID).Scan(&sentTimelineCount); err != nil {
 		t.Fatal(err)
 	}
-	if !lastContactRecorded || !firstResponseRecorded || sentTimelineCount != 1 {
-		t.Fatalf("provider acknowledgement facts = last_contact:%v first_response:%v timeline:%d", lastContactRecorded, firstResponseRecorded, sentTimelineCount)
+	if !lastContactRecorded || !firstResponseRecorded || firstResponseIsAutomation || firstResponseActor != tenantContext.UserID || sentTimelineCount != 1 {
+		t.Fatalf("provider acknowledgement facts = last_contact:%v first_response:%v automatic:%v actor:%s timeline:%d", lastContactRecorded, firstResponseRecorded, firstResponseIsAutomation, firstResponseActor, sentTimelineCount)
 	}
 
 	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "durable outbound", ClientMessageID: clientMessageID, ExpectedLeadID: leadID}); err != nil {

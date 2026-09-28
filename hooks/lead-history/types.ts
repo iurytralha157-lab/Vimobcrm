@@ -50,6 +50,7 @@ export type DistributionLogRow = {
   round_robin_id?: string | null;
   assigned_user_id?: string | null;
   reason?: string | null;
+  metadata?: HistoryMetadata | null;
   created_at: string;
   queue?: { id: string; name?: string | null } | null;
   assigned_user?: HistoryActor | null;
@@ -112,6 +113,11 @@ export type LeadHistoryLead = {
   assigned_at?: string | null;
   created_at: string;
   assigned_user?: HistoryActor | null;
+  first_response_at?: string | null;
+  first_response_seconds?: number | null;
+  first_response_channel?: string | null;
+  first_response_is_automation?: boolean | null;
+  first_response_actor?: HistoryActor | null;
 };
 
 export type LeadHistoryRaw = {

@@ -107,7 +107,6 @@ export function PropertySectionTabs({
     <Tabs value={activeSection} className="min-w-0">
       <div
         className="app-responsive-tab-list min-w-0 flex-1"
-        data-collapse="compact"
       >
         <TabsList
           aria-label="Seções de imóveis"
@@ -123,7 +122,7 @@ export function PropertySectionTabs({
                 value={section.value}
                 asChild
                 data-responsive-tab
-                className="mx-0 h-6 shrink-0 gap-1 rounded-[6px] px-2.5 text-[10px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none sm:text-[12px]"
+                className="mx-0 h-6 shrink-0 gap-1 rounded-[6px] px-2.5 text-[11px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none sm:text-[12px]"
               >
                 <Link
                   href={section.href}

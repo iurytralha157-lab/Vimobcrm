@@ -562,6 +562,27 @@ func (repo Repository) CreatePropertyAsset(ctx context.Context, tenantContext te
 	if err := lockWorkspaceProperty(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
 		return nil, err
 	}
+	// Every canonical asset creation locks the property first. Resolve a stale
+	// client order while holding that lock so concurrent uploads cannot both
+	// claim the same position for this asset type.
+	var requestedOrderOccupied bool
+	var highestOrder int
+	err = tx.QueryRow(ctx, `
+		select coalesce(bool_or(asset.sort_order = $4::integer), false),
+		       coalesce(max(asset.sort_order), -1)::integer
+		from public.property_assets as asset
+		where asset.organization_id = $1::uuid
+		  and asset.property_id = $2::uuid
+		  and asset.asset_type = $3
+		  and `+activePropertyAssetSQL("asset")+`
+	`, tenantContext.OrganizationID, propertyID, input.AssetType, input.SortOrder).Scan(&requestedOrderOccupied, &highestOrder)
+	if err != nil {
+		return nil, err
+	}
+	input.SortOrder, err = resolveCreatePropertyAssetSortOrder(input.SortOrder, requestedOrderOccupied, highestOrder)
+	if err != nil {
+		return nil, err
+	}
 	if input.AssetType == "photo" {
 		_, hasPrimary, err := ensurePropertyPhotoAssetCapacity(
 			ctx,
@@ -645,6 +666,17 @@ func (repo Repository) CreatePropertyAsset(ctx context.Context, tenantContext te
 		return nil, err
 	}
 	return item, nil
+}
+
+func resolveCreatePropertyAssetSortOrder(requested int, occupied bool, highest int) (int, error) {
+	if !occupied {
+		return requested, nil
+	}
+	const maxDatabaseSortOrder = 1<<31 - 1
+	if highest >= maxDatabaseSortOrder {
+		return 0, fmt.Errorf("%w: no available sort_order", ErrInvalidInput)
+	}
+	return highest + 1, nil
 }
 
 func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext tenant.Context, propertyID string, assetID string, input UpdatePropertyAssetInput) (map[string]any, error) {

@@ -5,6 +5,9 @@ import { AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAttentionPolicies, useAttentionSettings } from '@/hooks/attention'
 import { useStageOperationalRules } from '@/hooks/cadences'
+import { stageOperationalRulesErrorMessage } from '@/hooks/cadences/use-stage-operational-rules'
+import { useUserPermissions } from '@/hooks/use-user-permissions'
+import { isLocalReadOnlyMode } from '@/lib/local-read-only'
 import { cn } from '@/lib/utils'
 
 import { RulesEditor } from './stage-operational-rules/RulesEditor'
@@ -21,15 +24,18 @@ export function StageOperationalRules({
   stageName,
   canEdit,
 }: StageOperationalRulesProps) {
+  const { hasPermission } = useUserPermissions()
+  const canViewAttention = hasPermission('attention_view')
   const rulesQuery = useStageOperationalRules(stageId)
-  const attentionSettingsQuery = useAttentionSettings()
-  const attentionPoliciesQuery = useAttentionPolicies()
+  const attentionSettingsQuery = useAttentionSettings({ enabled: canViewAttention })
+  const attentionPoliciesQuery = useAttentionPolicies({ enabled: canViewAttention })
+  const localReadOnly = isLocalReadOnlyMode()
 
   if (rulesQuery.isPending) {
     return <RulesSkeleton />
   }
 
-  if (rulesQuery.isError || !rulesQuery.data) {
+  if (!rulesQuery.data) {
     return (
       <div
         role="alert"
@@ -39,7 +45,7 @@ export function StageOperationalRules({
           <AlertCircle className="h-4 w-4" strokeWidth={1.5} />
         </div>
         <p className="mt-3 text-sm font-light text-[var(--app-text-primary)]">
-          Não foi possível carregar as regras desta etapa.
+          {stageOperationalRulesErrorMessage(rulesQuery.error, 'Não foi possível carregar as regras desta etapa.')}
         </p>
         <p className="mt-1 max-w-sm text-xs font-light leading-[18px] text-[var(--app-text-tertiary)]">
           Nada foi alterado. Verifique a conexão com a API e tente novamente.
@@ -63,22 +69,36 @@ export function StageOperationalRules({
   }
 
   return (
-    <RulesEditor
-      key={`${stageId}:${rulesQuery.data.revision}`}
-      initialRules={rulesQuery.data}
-      stageName={stageName}
-      canEdit={canEdit}
-      globalAttention={{
-        engineMode: attentionSettingsQuery.data?.engineMode,
-        notificationsEnabled: attentionSettingsQuery.data?.notificationsEnabled,
-        isLoading: attentionSettingsQuery.isPending,
-        isError: attentionSettingsQuery.isError,
-      }}
-      attentionPolicies={{
-        policies: attentionPoliciesQuery.data ?? [],
-        isLoading: attentionPoliciesQuery.isPending,
-        isError: attentionPoliciesQuery.isError,
-      }}
-    />
+    <>
+      {localReadOnly && canEdit && (
+        <p role="status" className="mb-3 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-[var(--app-text-secondary)]">
+          Ambiente local de consulta: a edição de cadências está bloqueada.
+        </p>
+      )}
+      <RulesEditor
+        key={stageId}
+        initialRules={rulesQuery.data}
+        stageName={stageName}
+        canEdit={canEdit && !localReadOnly}
+        onReloadCurrent={async () => {
+          const result = await rulesQuery.refetch()
+          if (result.isError || !result.data) {
+            throw result.error || new Error('Não foi possível carregar a versão atual.')
+          }
+          return result.data
+        }}
+        globalAttention={{
+          engineMode: canViewAttention ? attentionSettingsQuery.data?.engineMode : undefined,
+          notificationsEnabled: canViewAttention ? attentionSettingsQuery.data?.notificationsEnabled : undefined,
+          isLoading: canViewAttention && attentionSettingsQuery.isPending,
+          isError: !canViewAttention || attentionSettingsQuery.isError,
+        }}
+        attentionPolicies={{
+          policies: canViewAttention ? attentionPoliciesQuery.data ?? [] : [],
+          isLoading: canViewAttention && attentionPoliciesQuery.isPending,
+          isError: !canViewAttention || attentionPoliciesQuery.isError,
+        }}
+      />
+    </>
   )
 }

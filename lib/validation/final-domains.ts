@@ -465,6 +465,7 @@ export const dashboardDateRangeSchema = z.object({
 export const dashboardFiltersSchema = z.object({
   dateRange: dashboardDateRangeSchema.nullable().optional(),
   granularity: z.enum(['hour', 'day', 'week', 'month']).nullable().optional(),
+  pipelineId: dashboardOptionalUuidFilterSchema,
   teamId: dashboardOptionalUuidFilterSchema,
   userId: dashboardOptionalUserFilterSchema,
   source: dashboardOptionalTextFilterSchema(180),
@@ -523,6 +524,9 @@ export const apiDashboardLostDealSchema = z.object({
 
 export const apiDashboardStatsSchema = z.object({
   totalLeads: nonNegativeIntegerSchema,
+  uniqueLeads: nonNegativeIntegerSchema.optional(),
+  reentries: nonNegativeIntegerSchema.optional(),
+  totalEntries: nonNegativeIntegerSchema.optional(),
   leadsInProgress: nonNegativeIntegerSchema,
   leadsClosed: nonNegativeIntegerSchema,
   leadsLost: nonNegativeIntegerSchema,
@@ -550,7 +554,29 @@ export const apiDashboardStatsSchema = z.object({
   overdueReceivables: dashboardNonNegativeNumberSchema,
   overduePayables: dashboardNonNegativeNumberSchema,
   paidCommissions: dashboardNonNegativeNumberSchema,
-}).passthrough()
+}).passthrough().superRefine((stats, context) => {
+  const entryFields = [stats.uniqueLeads, stats.reentries, stats.totalEntries]
+  const presentCount = entryFields.filter((value) => value !== undefined).length
+  if (presentCount !== 0 && presentCount !== 3) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['totalEntries'],
+      message: 'entry counters must be provided together',
+    })
+  } else if (presentCount === 3 && stats.totalEntries !== stats.uniqueLeads! + stats.reentries!) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['totalEntries'],
+      message: 'totalEntries must equal uniqueLeads plus reentries',
+    })
+  }
+}).transform((stats) => ({
+  ...stats,
+  uniqueLeads: stats.uniqueLeads ?? stats.totalLeads,
+  reentries: stats.reentries ?? 0,
+  totalEntries: stats.totalEntries ?? stats.totalLeads,
+  entryBreakdownAvailable: stats.uniqueLeads !== undefined,
+}))
 export const apiDashboardFunnelSchema = z.array(z.object({
   name: dashboardTextSchema(300),
   value: nonNegativeIntegerSchema,
@@ -608,6 +634,8 @@ const apiDashboardFirstContactBrokerSchema = z.object({
   name: dashboardTextSchema(300),
   avatarUrl: z.string().trim().max(2_048).nullable(),
   leadCount: nonNegativeIntegerSchema,
+  receivedLeads: nonNegativeIntegerSchema,
+  handledLeads: nonNegativeIntegerSchema,
   contactedLeads: nonNegativeIntegerSchema,
   averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
   redistributedAway: nonNegativeIntegerSchema,
@@ -630,6 +658,20 @@ export const apiDashboardFirstContactSchema = z.object({
   brokers: z.array(apiDashboardFirstContactBrokerSchema),
   sources: z.array(apiDashboardFirstContactSourceSchema),
 }).passthrough()
+export const apiDashboardFirstContactLeadPageSchema = z.object({
+  total: nonNegativeIntegerSchema,
+  items: z.array(z.object({
+    id: uuidSchema,
+    name: dashboardTextSchema(300),
+    source: dashboardTextSchema(180),
+    createdAt: dashboardTimestampSchema,
+    respondedAt: dashboardTimestampSchema,
+    responseSeconds: nonNegativeIntegerSchema,
+    currentOwner: dashboardTextSchema(300).nullable(),
+  }).passthrough()),
+  hasMore: z.boolean(),
+}).passthrough()
+export const apiDashboardFirstContactLeadPageResponseSchema = apiEnvelopeSchema(apiDashboardFirstContactLeadPageSchema)
 export const apiDashboardUpcomingTasksSchema = z.array(z.object({
   id: uuidSchema,
   title: dashboardTextSchema(500),

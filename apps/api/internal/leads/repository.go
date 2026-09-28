@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,7 +208,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 			return ListResponse{}, err
 		}
 		total = rowTotal
-		leads = append(leads, lead)
+		leads = append(leads, withLeadOperationCapability(tenantContext, lead))
 	}
 
 	if err := rows.Err(); err != nil {
@@ -256,7 +257,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 	}
 	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &lead)
 
-	return lead, nil
+	return withLeadOperationCapability(tenantContext, lead), nil
 }
 
 func (repo Repository) GetSensitiveProfile(ctx context.Context, tenantContext tenant.Context, leadID string) (SensitiveLeadProfile, error) {
@@ -748,6 +749,15 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 	if !canOperateLeadSnapshot(tenantContext, current) {
 		return moveStageResult{}, tenant.ErrOrganizationAccessDenied
 	}
+	if input.ExpectedStageID.Set {
+		expectedStageID := ""
+		if input.ExpectedStageID.Value != nil {
+			expectedStageID = *input.ExpectedStageID.Value
+		}
+		if current.StageID != expectedStageID {
+			return moveStageResult{}, ErrLeadStageChanged
+		}
+	}
 
 	resolvedDestination, err := repo.resolveMoveStageDestination(ctx, tx, tenantContext.OrganizationID, input.StageID)
 	if err != nil {
@@ -967,7 +977,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 	return updatedLead, nil
 }
 
-func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext tenant.Context, leadID string) (RoundRobinResult, error) {
+func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext tenant.Context, leadID string, expectedUnassigned bool) (RoundRobinResult, error) {
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
 		return RoundRobinResult{}, ErrLeadNotFound
@@ -997,12 +1007,65 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		PipelineID: current.PipelineID,
 		StageID:    current.StageID,
 	}
+	if expectedUnassigned {
+		if current.AssignedUserID != "" {
+			result.Success = false
+			result.AssignedUserID = current.AssignedUserID
+			result.Error = "already_assigned"
+			return result, nil
+		}
+		queueID, err := repo.pendingLeadDistributionQueue(ctx, tx, tenantContext.OrganizationID, current)
+		if err != nil {
+			return RoundRobinResult{}, err
+		}
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return RoundRobinResult{}, err
+		}
+		distributionResult, err := distribution.Distribute(ctx, tx, distribution.Request{
+			OrganizationID:     tenantContext.OrganizationID,
+			LeadID:             current.ID,
+			IdempotencyKey:     distribution.StableKey("pipeline-unassigned-retry", current.ID, fmt.Sprintf("%x", nonce)),
+			RoundRobinID:       queueID,
+			RoundRobinResolved: true,
+			PreserveAssignee:   false,
+			OccurredAt:         time.Now().UTC(),
+		})
+		if err != nil {
+			return RoundRobinResult{}, err
+		}
+		// The canonical queue can contain members from several teams. A leader
+		// operating an unassigned team lead must not move it outside that team.
+		// Rolling back also discards the canonical log and assignment together.
+		if !retryPreservesLeadTeam(tenantContext, current, distributionResult) {
+			return RoundRobinResult{}, tenant.ErrOrganizationAccessDenied
+		}
+		result.Success = distributionResult.Success
+		result.RoundRobinUsed = distributionResult.RoundRobinID != nil
+		if distributionResult.RoundRobinID != nil {
+			result.RoundRobinID = *distributionResult.RoundRobinID
+		}
+		if distributionResult.AssignedUserID != nil {
+			result.AssignedUserID = *distributionResult.AssignedUserID
+		}
+		if distributionResult.PipelineID != nil {
+			result.PipelineID = *distributionResult.PipelineID
+		}
+		if distributionResult.StageID != nil {
+			result.StageID = *distributionResult.StageID
+		}
+		if !distributionResult.Success {
+			result.Error = distributionResult.Reason
+		}
+		return result, tx.Commit(ctx)
+	}
 
 	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current.PipelineID, current.TeamID)
 	if err != nil {
 		return RoundRobinResult{}, err
 	}
 	if reason != "" {
+		result.Success = false
 		result.Error = reason
 		return result, tx.Commit(ctx)
 	}
@@ -1062,6 +1125,73 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	result.RoundRobinID = selection.RoundRobinID
 	result.RoundRobinUsed = true
 	return result, nil
+}
+
+func retryPreservesLeadTeam(tenantContext tenant.Context, current leadSnapshot, result distribution.Result) bool {
+	if !result.Success || leadscope.CanViewAll(tenantContext) {
+		return true
+	}
+	return result.TeamID != nil && current.TeamID != "" && strings.EqualFold(*result.TeamID, current.TeamID)
+}
+
+// pendingLeadDistributionQueue keeps a card retry on the queue that most
+// recently failed. The immutable intake queue is a fallback for older leads;
+// an unknown queue is deliberately left unresolved so the canonical distributor
+// records no_matching_queue instead of picking an unrelated active queue.
+func (repo Repository) pendingLeadDistributionQueue(ctx context.Context, queryer leadTeamQueryer, organizationID string, current leadSnapshot) (*string, error) {
+	var eventType, reason, queueID string
+	err := queryer.QueryRow(ctx, `
+		select event_type,
+		       coalesce(metadata->>'reason', ''),
+		       coalesce(nullif(metadata->>'queue_id', ''), nullif(metadata->>'distribution_queue_id', ''), '')
+		from public.lead_timeline_events
+		where organization_id = $1::uuid
+		  and lead_id = $2::uuid
+		  and event_type in ('lead_distribution_pending', 'lead_assigned')
+		order by created_at desc, id desc
+		limit 1
+	`, organizationID, current.ID).Scan(&eventType, &reason, &queueID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil && eventType == "lead_distribution_pending" {
+		if reason != "no_available_members" {
+			return nil, nil
+		}
+		if normalized, ok := normalizeUUID(queueID); ok {
+			return &normalized, nil
+		}
+		return nil, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Older distribution paths recorded only a round-robin log.
+		err = queryer.QueryRow(ctx, `
+			select coalesce(reason, ''), coalesce(round_robin_id::text, '')
+			from public.round_robin_logs
+			where organization_id = $1::uuid
+			  and lead_id = $2::uuid
+			order by created_at desc, id desc
+			limit 1
+		`, organizationID, current.ID).Scan(&reason, &queueID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			if reason == "no_matching_queue" {
+				return nil, nil
+			}
+			if reason == "no_available_members" {
+				if normalized, ok := normalizeUUID(queueID); ok {
+					return &normalized, nil
+				}
+				return nil, nil
+			}
+		}
+	}
+	if normalized, ok := normalizeUUID(stringFromMap(current.Data, "origin_round_robin_id")); ok {
+		return &normalized, nil
+	}
+	return nil, nil
 }
 
 func isManagedWhatsAppMessageDistributionLead(data map[string]any) bool {
@@ -4747,6 +4877,10 @@ func leadSelectFields() string {
 		l.board_order_at,
 		l.last_contact_at,
 		l.next_follow_up_at,
+		l.first_response_at,
+		l.first_response_seconds,
+		l.first_response_channel,
+		l.first_response_is_automation,
 		l.whatsapp_avatar_url,
 		l.whatsapp_avatar_storage_path,
 		l.whatsapp_avatar_synced_at,
@@ -4783,7 +4917,10 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var trabalha, procuraFinanciamento pgtype.Bool
 	var cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel pgtype.Text
 	var rawMetadata []byte
-	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
+	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt, firstResponseAt pgtype.Timestamptz
+	var firstResponseSeconds pgtype.Int4
+	var firstResponseChannel pgtype.Text
+	var firstResponseIsAutomation pgtype.Bool
 	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath pgtype.Text
 	var whatsappAvatarSyncedAt pgtype.Timestamptz
 	var stageIDValue, stageName, stageColor, stageKey pgtype.Text
@@ -4834,6 +4971,10 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&boardOrderAt,
 		&lastContactAt,
 		&nextFollowUpAt,
+		&firstResponseAt,
+		&firstResponseSeconds,
+		&firstResponseChannel,
+		&firstResponseIsAutomation,
 		&legacyWhatsAppAvatarURL,
 		&whatsappAvatarStoragePath,
 		&whatsappAvatarSyncedAt,
@@ -4880,6 +5021,13 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.BoardOrderAt = timePtr(boardOrderAt)
 	lead.LastContactAt = timePtr(lastContactAt)
 	lead.NextFollowUpAt = timePtr(nextFollowUpAt)
+	lead.FirstResponseAt = timePtr(firstResponseAt)
+	if firstResponseSeconds.Valid {
+		seconds := int(firstResponseSeconds.Int32)
+		lead.FirstResponseSeconds = &seconds
+	}
+	lead.FirstResponseChannel = textPointer(firstResponseChannel)
+	lead.FirstResponseIsAutomation = boolPtr(firstResponseIsAutomation)
 	lead.WhatsAppAvatarURL = nil
 	lead.WhatsAppAvatarStoragePath = textPointer(whatsappAvatarStoragePath)
 	lead.WhatsAppAvatarSyncedAt = timePtr(whatsappAvatarSyncedAt)

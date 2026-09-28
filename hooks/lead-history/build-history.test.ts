@@ -68,6 +68,89 @@ test('deduplica pelo fingerprint, mantém o registro mais completo e respeita a 
   assert.equal(history[1]?.content, 'Novo → Contato');
 });
 
+test('prioriza a mudança de etapa da API e não atribui ao destinatário o registro isolado do gatilho', () => {
+  const history = buildLeadHistory({
+    activityEvents: [
+      {
+        id: 'trigger-duplicate',
+        type: 'stage_change',
+        content: 'Movido de "Novo" para "Contato"',
+        created_at: '2026-09-27T12:00:00.000Z',
+        user_id: 'recipient',
+        metadata: {
+          from_stage_id: 'stage-new', to_stage_id: 'stage-contact',
+          from_stage: 'Novo', to_stage: 'Contato', actor_id: 'recipient',
+        },
+      },
+      {
+        id: 'api-stage-move',
+        type: 'stage_change',
+        content: 'Lead "Maria" movido de etapa',
+        created_at: '2026-09-27T12:00:00.100Z',
+        user_id: 'manager',
+        metadata: {
+          from_stage_id: 'stage-new', to_stage_id: 'stage-contact',
+          from_stage: 'Novo', to_stage: 'Contato',
+          from_pipeline: 'pipeline-1', to_pipeline: 'pipeline-1',
+        },
+      },
+      {
+        id: 'trigger-only',
+        type: 'stage_change',
+        content: 'Movido de "Contato" para "Visita"',
+        created_at: '2026-09-27T12:10:00.000Z',
+        user_id: 'recipient',
+        metadata: {
+          from_stage_id: 'stage-contact', to_stage_id: 'stage-visit',
+          from_stage: 'Contato', to_stage: 'Visita', actor_id: 'recipient',
+        },
+      },
+    ],
+    users: [{ id: 'manager', name: 'Gestora Maria' }, { id: 'recipient', name: 'Ana Corretora' }],
+  }, 'lead-1', formatters);
+
+  assert.deepEqual(history.map(({ id }) => id), ['activity-api-stage-move', 'activity-trigger-only']);
+  assert.equal(history[0]?.actor?.name, 'Gestora Maria');
+  assert.equal(history[1]?.actor, null);
+  assert.equal(history[1]?.label, 'Movido: Contato → Visita');
+});
+
+test('deduplica a mesma transição na borda temporal sem ocultar outra mudança de etapa', () => {
+  const history = buildLeadHistory({
+    activityEvents: [
+      {
+        id: 'trigger-at-boundary', type: 'stage_change',
+        content: 'Movido de "Novo" para "Contato"',
+        created_at: '2026-09-27T12:00:01.999Z', user_id: 'recipient',
+        metadata: { from_stage_id: 'stage-new', to_stage_id: 'stage-contact', from_stage: 'Novo', to_stage: 'Contato' },
+      },
+      {
+        id: 'api-after-boundary', type: 'stage_change',
+        content: 'Lead "Maria" movido de etapa',
+        created_at: '2026-09-27T12:00:02.001Z', user_id: 'manager',
+        metadata: {
+          from_stage_id: 'stage-new', to_stage_id: 'stage-contact',
+          from_stage: 'Novo', to_stage: 'Contato', to_pipeline: 'pipeline-1',
+        },
+      },
+      {
+        id: 'separate-stage-move', type: 'stage_change',
+        content: 'Movido de "Contato" para "Qualificados"',
+        created_at: '2026-09-27T12:00:03.000Z', user_id: 'recipient',
+        metadata: {
+          from_stage_id: 'stage-contact', to_stage_id: 'stage-qualified',
+          from_stage: 'Contato', to_stage: 'Qualificados',
+        },
+      },
+    ],
+    users: [{ id: 'manager', name: 'Gestora Maria' }, { id: 'recipient', name: 'Ana Corretora' }],
+  }, 'lead-1', formatters);
+
+  assert.deepEqual(history.map(({ id }) => id), ['activity-api-after-boundary', 'activity-separate-stage-move']);
+  assert.equal(history[0]?.actor?.name, 'Gestora Maria');
+  assert.equal(history[1]?.actor, null);
+});
+
 test('preserva o nome do participante no evento de entrada no atendimento', () => {
   const raw: LeadHistoryRaw = {
     timelineEvents: [{
@@ -86,6 +169,213 @@ test('preserva o nome do participante no evento de entrada no atendimento', () =
   assert.equal(history[0]?.type, 'whatsapp_attendance_joined');
   assert.equal(history[0]?.label, 'Ana entrou no atendimento');
   assert.equal(history[0]?.content, undefined);
+});
+
+test('distribuição automática mostra o destinatário sem atribuir a ação a ele', () => {
+  const timestamp = '2026-09-27T12:00:00.000Z';
+  const history = buildLeadHistory({
+    timelineEvents: [{
+      id: 'queue-event',
+      event_type: 'lead_assigned',
+      user_id: 'recipient',
+      created_at: timestamp,
+      metadata: {
+        queue_id: 'queue-1',
+        queue_name: 'Fila Principal',
+        assigned_user_id: 'recipient',
+        assigned_user_name: 'Ana Corretora',
+        distribution_type: 'canonical_round_robin',
+      },
+    }],
+    activityEvents: [{
+      id: 'assignment-trigger',
+      type: 'assignee_changed',
+      user_id: 'recipient',
+      created_at: timestamp,
+      metadata: { to_user_id: 'recipient', to_user_name: 'Ana Corretora' },
+    }],
+    assignmentLogs: [{
+      id: 'assignment-log',
+      new_user_id: 'recipient',
+      reason: 'round_robin',
+      created_at: timestamp,
+    }],
+    users: [{ id: 'recipient', name: 'Ana Corretora' }],
+  }, 'lead-1', formatters);
+
+  assert.deepEqual(history.map(({ type }) => type), ['lead_assigned']);
+  assert.equal(history[0]?.actor, null);
+  assert.equal(history[0]?.isAutomation, true);
+  assert.equal(history[0]?.metadata?.assigned_user_name, 'Ana Corretora');
+});
+
+test('log da fila não transforma o destinatário em autor da distribuição', () => {
+  const history = buildLeadHistory({
+    distributionLogs: [{
+      id: 'queue-log',
+      round_robin_id: 'queue-1',
+      assigned_user_id: 'recipient',
+      assigned_user: { id: 'recipient', name: 'Ana Corretora' },
+      queue: { id: 'queue-1', name: 'Fila Principal' },
+      created_at: '2026-09-27T12:00:00.000Z',
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history[0]?.type, 'lead_assigned');
+  assert.equal(history[0]?.actor, null);
+  assert.equal(history[0]?.metadata?.to_user_name, 'Ana Corretora');
+});
+
+test('mostra falta de fila compatível uma vez, sem motivo técnico em inglês', () => {
+  const timestamp = '2026-09-27T12:00:00.000Z';
+  const history = buildLeadHistory({
+    timelineEvents: [{
+      id: 'pending-event',
+      event_type: 'lead_distribution_pending',
+      created_at: timestamp,
+      metadata: { reason: 'no_matching_queue', distribution_event_id: 'attempt-1' },
+    }],
+    distributionLogs: [{
+      id: 'pending-log',
+      round_robin_id: null,
+      assigned_user_id: null,
+      reason: 'no_matching_queue',
+      created_at: timestamp,
+      metadata: { distribution_event_id: 'attempt-1' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.label, 'Nenhuma fila de distribuição compatível');
+  assert.equal(history[0]?.content, undefined);
+  assert.equal(history[0]?.isAutomation, true);
+});
+
+test('preserva a fila original e uma única tentativa sem responsável disponível', () => {
+  const timestamp = '2026-09-27T12:00:00.000Z';
+  const history = buildLeadHistory({
+    timelineEvents: [{
+      id: 'pending-event',
+      event_type: 'lead_distribution_pending',
+      created_at: timestamp,
+      metadata: {
+        reason: 'no_available_members',
+        queue_id: 'queue-1',
+        queue_name: 'Fila original',
+        distribution_event_id: 'attempt-1',
+      },
+    }],
+    distributionLogs: [{
+      id: 'pending-log',
+      round_robin_id: 'queue-1',
+      assigned_user_id: null,
+      reason: 'no_available_members',
+      created_at: timestamp,
+      queue: { id: 'queue-1', name: 'Fila renomeada' },
+      metadata: { queue_name: 'Fila original', distribution_event_id: 'attempt-1' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history.length, 1);
+  assert.match(history[0]?.label || '', /Fila original.*nenhum responsável disponível/);
+  assert.equal(history[0]?.actor, null);
+  assert.equal(history[0]?.metadata?.reason, 'no_available_members');
+});
+
+test('transferência manual preserva o autor e o destinatário distintos', () => {
+  const history = buildLeadHistory({
+    assignmentLogs: [{
+      id: 'manual-transfer',
+      new_user_id: 'recipient',
+      created_by: 'manager',
+      reason: 'manual_transfer',
+      created_at: '2026-09-27T12:00:00.000Z',
+      actor: { id: 'manager', name: 'Gestora Maria' },
+      new_user: { id: 'recipient', name: 'Ana Corretora' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history[0]?.type, 'assignee_changed');
+  assert.equal(history[0]?.actor?.name, 'Gestora Maria');
+  assert.equal(history[0]?.metadata?.to_user_name, 'Ana Corretora');
+  assert.equal(history[0]?.isAutomation, false);
+});
+
+test('ordena pela ocorrência e mostra primeira resposta persistida sem duplicar evento', () => {
+  const raw: LeadHistoryRaw = {
+    lead: {
+      id: 'lead-1',
+      created_at: '2026-09-01T09:00:00.000Z',
+      first_response_at: '2026-09-01T09:03:00.000Z',
+      first_response_seconds: 180,
+      first_response_channel: 'whatsapp',
+      first_response_is_automation: false,
+      first_response_actor: { id: 'user-1', name: 'Ana' },
+    },
+    timelineEvents: [{
+      id: 'late-write',
+      event_type: 'whatsapp_message_sent',
+      created_at: '2026-09-01T09:10:00.000Z',
+      event_at: '2026-09-01T09:02:00.000Z',
+      metadata: {},
+    }],
+  };
+
+  const history = buildLeadHistory(raw, 'lead-1', formatters);
+  assert.deepEqual(history.map(({ type }) => type), [
+    'lead_created', 'whatsapp_message_sent', 'first_response',
+  ]);
+  assert.equal(history[1]?.timestamp, '2026-09-01T09:02:00.000Z');
+  assert.equal(history[2]?.content, 'Primeiro contato: RESPONSE 180');
+  assert.equal(history[2]?.actor?.name, 'Ana');
+
+  raw.timelineEvents?.push({
+    id: 'recorded-response',
+    event_type: 'first_response',
+    event_at: '2026-09-01T09:03:00.000Z',
+    metadata: { response_seconds: 180 },
+  });
+  assert.equal(buildLeadHistory(raw, 'lead-1', formatters).filter(({ type }) => type === 'first_response').length, 1);
+});
+
+test('rotula resposta automática herdada sem chamá-la de contato humano', () => {
+  const history = buildLeadHistory({
+    lead: {
+      id: 'lead-1',
+      created_at: '2026-09-01T09:00:00.000Z',
+      first_response_at: '2026-09-01T09:01:00.000Z',
+      first_response_seconds: 60,
+      first_response_is_automation: true,
+    },
+  }, 'lead-1', formatters);
+  const response = history.find(({ type }) => type === 'first_response');
+  assert.equal(response?.label, 'Primeira resposta automática');
+  assert.equal(response?.content, 'Resposta automática: RESPONSE 60');
+});
+
+test('histórico de auditoria não exibe valores protegidos nem campos técnicos', () => {
+  const history = buildLeadHistory({
+    auditLogs: [{
+      id: 'audit-redacted',
+      action: 'update',
+      created_at: '2026-09-01T10:00:00.000Z',
+      old_data: { name: '[valor protegido]', integration_secret: 'secret-old' },
+      new_data: { name: '[valor protegido]', integration_secret: 'secret-new' },
+    }],
+  }, 'lead-1', formatters);
+  const audit = history.find(({ id }) => id === 'audit-audit-redacted');
+  assert.equal(audit?.content, 'Nome atualizado');
+  assert.doesNotMatch(JSON.stringify(audit), /secret-new|secret-old/);
+});
+
+test('eventos técnicos sem tradução conhecida não aparecem em inglês', () => {
+  const history = buildLeadHistory({
+    timelineEvents: [
+      { id: 'assignment', event_type: 'assignment_changed', event_at: '2026-09-01T10:00:00Z' },
+      { id: 'unknown', event_type: 'external_provider_reconciled', event_at: '2026-09-01T10:01:00Z' },
+    ],
+  }, 'lead-1', formatters);
+  assert.deepEqual(history.map(({ label }) => label), ['Responsável alterado', 'Atividade registrada']);
 });
 
 test('expande respostas e criativo Meta sem repetir campos padrao', () => {

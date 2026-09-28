@@ -70,6 +70,7 @@ test('property media persistence limits concurrency and maps primary/internal ph
 
   assert.equal(maximumActive, 3)
   assert.equal(result.length, 5)
+  assert.equal(createInputs[0]?.is_primary, true)
   assert.equal(createInputs.find((input) => input.sort_order === 0)?.is_primary, true)
   assert.equal(createInputs.find((input) => input.sort_order === 2)?.visibility, 'internal')
 })

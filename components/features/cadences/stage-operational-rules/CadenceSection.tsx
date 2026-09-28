@@ -94,13 +94,13 @@ export function CadenceSection({
         <EmptyRuleState
           className="mt-4"
           icon={CircleOff}
-          title="Zero obrigações nesta etapa"
+          title="Cadência da etapa desativada"
           description={
             draft.cadence.tasks.length > 0
               ? draft.cadence.tasks.length === 1
-                ? '1 tarefa permanece guardada para quando a cadência for reativada.'
-                : `${draft.cadence.tasks.length} tarefas permanecem guardadas para quando a cadência for reativada.`
-              : 'Nenhuma tarefa será criada para o corretor enquanto a cadência estiver desativada.'
+                ? '1 tarefa fica guardada para reativação. Cadências individuais já iniciadas podem continuar nos leads.'
+                : `${draft.cadence.tasks.length} tarefas ficam guardadas para reativação. Cadências individuais já iniciadas podem continuar nos leads.`
+              : 'Nenhuma nova tarefa será criada. Cadências individuais já iniciadas podem continuar nos leads.'
           }
         />
       ) : (
@@ -301,13 +301,16 @@ function TaskCard({
             />
             <OptionalDurationField
               id={`task-warning-${task.clientKey}`}
-              label="Avisar antes do prazo"
+              label="Antecedência em Prioridades"
               minutes={task.warning_minutes}
               defaultMinutes={Math.min(30, Math.max(1, task.due_minutes - 1))}
               disabled={!canEdit || task.due_minutes <= 1}
               onChange={(minutes) => onUpdate({ warning_minutes: minutes })}
             />
           </div>
+          <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
+            O aviso aparece em Prioridades; não envia mensagem ou notificação externa.
+          </p>
 
           <div className="grid gap-2 sm:grid-cols-2">
             <ToggleRow

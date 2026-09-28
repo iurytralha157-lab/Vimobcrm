@@ -41,7 +41,6 @@ import {
 } from '@/components/features/pipelines/pipeline-screen';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSharedFilters } from '@/hooks/use-shared-filters';
-import { cn } from '@/lib/utils';
 import {
   useStages,
   useStagesWithLeads,
@@ -64,14 +63,19 @@ import {
   restorePipelineLeadSnapshot,
   type PendingPipelineMove,
 } from '@/lib/pipeline-board-cache';
+import {
+  handlePipelineSelectedLeadAccessFailure,
+  removeCachedPipelineLeadDetail,
+} from '@/lib/pipeline-selected-lead-access';
 import type { PipelineLead, PipelineQueryFilters, StageWithLeads } from '@/hooks/use-stages';
 import { useLoadMoreLeads } from '@/hooks/use-stages';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { useTags } from '@/hooks/use-tags';
 import { useAssignLeadRoundRobin } from '@/hooks/use-assign-lead-roundrobin';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { useCanEditCadences } from '@/hooks/use-can-edit-cadences';
+import { canManagePipeline } from '@/lib/access/pipeline-settings-access';
 import { useLeadVisibility } from '@/hooks/use-lead-visibility';
+import { useSelectedPipelineLeadAccess } from '@/hooks/pipelines';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
@@ -91,7 +95,7 @@ import { useStageAutomations } from '@/hooks/use-stage-automations';
 export default function Pipelines() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization, profile, tenantContext } = useAuth();
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const activeOrganizationId = activeOrganization.organizationId;
   const { hasPermission, isLoading: permissionLoading } = useUserPermissions();
@@ -103,6 +107,7 @@ export default function Pipelines() {
   const canViewWhatsApp =
     hasWhatsAppModule && (hasPermission('whatsapp_view') || canOperateWhatsApp);
   const [selectedLead, setSelectedLead] = useState<PipelineLead | null>(null);
+  const [selectedLeadAccessVersion, setSelectedLeadAccessVersion] = useState(0);
   const [editingLead, setEditingLead] = useState<PipelineLead | null>(null);
   const [lostReasonLead, setLostReasonLead] = useState<PipelineLead | null>(null);
   const [pendingLostMove, setPendingLostMove] = useState<DropResult | null>(null);
@@ -166,6 +171,7 @@ export default function Pipelines() {
     loadDynamicOptions: shouldLoadFilterOptions,
     pipelineId: selectedPipelineId,
     dateMode: 'origin',
+    scopeMetaOptionsToBoard: true,
   });
   const pipelineDateRange = sharedFilters.dateRange;
 
@@ -383,7 +389,7 @@ export default function Pipelines() {
     data: leadVisibility,
     isLoading: leadVisibilityLoading,
     isFetching: leadVisibilityFetching,
-    isLoadingError: leadVisibilityLoadingError,
+    isError: leadVisibilityError,
     refetch: refetchLeadVisibility,
   } = useLeadVisibility(profile?.id);
   const isDragDisabled = !canOperateLeads;
@@ -394,19 +400,47 @@ export default function Pipelines() {
     if (leadVisibility.userId) return [leadVisibility.userId];
     return [];
   }, [leadVisibility]);
+  const visibilityScopeKey = useMemo(() => JSON.stringify({
+    userId: profile?.id ?? null,
+    canViewAll: leadVisibility?.canViewAll ?? false,
+    visibleUserIds: [...(scopedVisibleUserIds ?? [])].sort(),
+    ledTeamIds: [...(tenantContext?.ledTeamIds ?? [])].sort(),
+  }), [profile?.id, leadVisibility?.canViewAll, scopedVisibleUserIds, tenantContext?.ledTeamIds]);
+  const previousLeadScopeRef = useRef<{
+    organizationId: string | null;
+    visibilityScopeKey: string;
+  } | null>(null);
+  useEffect(() => {
+    const previousScope = previousLeadScopeRef.current;
+    previousLeadScopeRef.current = {
+      organizationId: activeOrganizationId,
+      visibilityScopeKey,
+    };
+    if (!previousScope || (
+      previousScope.organizationId === activeOrganizationId &&
+      previousScope.visibilityScopeKey === visibilityScopeKey
+    )) return;
+    if (selectedLead?.id) {
+      const cachedOrganizationId = previousScope.organizationId || activeOrganizationId;
+      if (cachedOrganizationId) {
+        removeCachedPipelineLeadDetail(queryClient, cachedOrganizationId, selectedLead.id);
+      }
+    }
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setSelectedLead(null);
+      setEditingLead(null);
+      setLostReasonLead(null);
+      setPendingLostMove(null);
+    });
+    return () => { active = false; };
+  }, [activeOrganizationId, queryClient, selectedLead?.id, visibilityScopeKey]);
   const hasUserScope = Array.isArray(scopedVisibleUserIds);
   const isUnassignedFilter = filterUser === 'unassigned';
   const selectedFilterUserId = filterUser === 'all' || isUnassignedFilter
     ? undefined
     : (filterUser || undefined);
-  const effectivePipelineFilterUserIds = useMemo(() => {
-    if (isUnassignedFilter) return undefined;
-    if (!Array.isArray(selectedTeamUserIds)) return scopedVisibleUserIds;
-    if (!Array.isArray(scopedVisibleUserIds)) return selectedTeamUserIds;
-
-    const visibleUserIds = new Set(scopedVisibleUserIds);
-    return selectedTeamUserIds.filter((userId) => visibleUserIds.has(userId));
-  }, [isUnassignedFilter, scopedVisibleUserIds, selectedTeamUserIds]);
   const selectedFilterUserAllowed = useMemo(() => {
     if (!selectedFilterUserId) return true;
     if (hasUserScope && !scopedVisibleUserIds.includes(selectedFilterUserId)) return false;
@@ -435,6 +469,7 @@ export default function Pipelines() {
     isTeamScopeReady &&
     !permissionLoading &&
     !leadVisibilityLoading &&
+    !leadVisibilityError &&
     !!leadVisibility;
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const pipelineBoardFilters = useMemo<PipelineQueryFilters>(() => ({
@@ -448,9 +483,9 @@ export default function Pipelines() {
     filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
     filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
     filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
-    filterUserIds: effectivePipelineFilterUserIds,
     unassigned: isUnassignedFilter,
-    teamId: isUnassignedFilter ? sharedFilters.teamId || undefined : undefined,
+    teamId: sharedFilters.teamId || undefined,
+    visibilityScopeKey,
   }), [
     pipelineDateRange,
     filterTags,
@@ -461,9 +496,9 @@ export default function Pipelines() {
     filterAdSet,
     filterAd,
     filterSource,
-    effectivePipelineFilterUserIds,
     isUnassignedFilter,
     sharedFilters.teamId,
+    visibilityScopeKey,
   ]);
   const pipelineBoardQueryKey = useMemo(
     () => stageWithLeadsQueryKey({
@@ -487,19 +522,17 @@ export default function Pipelines() {
     () =>
       JSON.stringify({
         organizationId: activeOrganizationId,
-        canViewAll: leadVisibility?.canViewAll ?? false,
+        visibilityScopeKey,
         filterUserId: effectivePipelineFilterUser ?? null,
-        filterUserIds: effectivePipelineFilterUserIds ?? null,
         unassigned: isUnassignedFilter,
-        teamId: isUnassignedFilter ? sharedFilters.teamId : null,
+        teamId: sharedFilters.teamId ?? null,
       }),
     [
       activeOrganizationId,
       effectivePipelineFilterUser,
-      effectivePipelineFilterUserIds,
       isUnassignedFilter,
-      leadVisibility?.canViewAll,
       sharedFilters.teamId,
+      visibilityScopeKey,
     ],
   );
   const previousBoardScopeRef = useRef<{
@@ -554,7 +587,9 @@ export default function Pipelines() {
     isFetching: leadsFetching,
     isLoadingError: leadsLoadingError,
     isRefetchError: leadsRefetchError,
+    error: leadsError,
     isPlaceholderData: leadsPlaceholderData,
+    restoreError: boardRestoreError,
     refetch,
   } = useStagesWithLeads(
     selectedPipelineId || undefined,
@@ -562,8 +597,27 @@ export default function Pipelines() {
     pipelineBoardFilters,
     { enabled: shouldLoadPipelineLeads }
   );
+  const boardAccessRevoked = leadsRefetchError && leadsError instanceof VimobAPIError &&
+    (leadsError.status === 401 || leadsError.status === 403);
+
+  useEffect(() => {
+    if (!leadVisibilityError && !boardAccessRevoked) return;
+    if (activeOrganizationId && selectedLead?.id) {
+      removeCachedPipelineLeadDetail(queryClient, activeOrganizationId, selectedLead.id);
+    }
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setSelectedLead(null);
+      setEditingLead(null);
+      setLostReasonLead(null);
+      setPendingLostMove(null);
+    });
+    return () => { active = false; };
+  }, [activeOrganizationId, boardAccessRevoked, leadVisibilityError, queryClient, selectedLead?.id]);
 
   const stages = useMemo<StageWithLeads[]>(() => {
+    if (leadVisibilityError || boardAccessRevoked) return [];
     const canonicalStages = stagesWithLeads.length > 0
       ? stagesWithLeads
       : baseStages.filter((stage) => stage.is_active !== false).map(s => ({
@@ -583,6 +637,8 @@ export default function Pipelines() {
     stagesWithLeads,
     visualPendingMoves,
     pipelineBoardQueryKeyId,
+    leadVisibilityError,
+    boardAccessRevoked,
   ]);
 
   useEffect(() => {
@@ -617,12 +673,79 @@ export default function Pipelines() {
     };
   }, [pipelineBoardQueryKeyId, stagesWithLeads, visualPendingMoves]);
 
-  const shouldLoadLeadDialogResources = Boolean(selectedLead);
+  const selectedLeadAccess = useSelectedPipelineLeadAccess({
+    organizationId: activeOrganizationId,
+    leadId: selectedLead?.id,
+    selectionVersion: selectedLeadAccessVersion,
+    visibilityScopeKey,
+    enabled: Boolean(leadVisibility && !leadVisibilityError),
+  });
+  const authorizedSelectedLead = !leadVisibilityError && !boardAccessRevoked &&
+    selectedLeadAccess.isSuccess && !selectedLeadAccess.isError
+    ? selectedLead
+    : null;
+
+  useEffect(() => {
+    if (!selectedLead?.id || !activeOrganizationId) return;
+    const selectedLeadId = selectedLead.id;
+    const onLeadChanged = (event: Event) => {
+      const change = (event as CustomEvent<{
+        organizationId?: string;
+        leadId?: string | null;
+      }>).detail;
+      if (change?.organizationId !== activeOrganizationId) return;
+      if (change.leadId && change.leadId !== selectedLeadId) return;
+      void queryClient.invalidateQueries({
+        queryKey: ['pipeline-selected-lead-access', activeOrganizationId, selectedLeadId],
+        refetchType: 'active',
+      });
+    };
+    window.addEventListener('vimob:lead-realtime-change', onLeadChanged);
+    return () => window.removeEventListener('vimob:lead-realtime-change', onLeadChanged);
+  }, [activeOrganizationId, queryClient, selectedLead?.id]);
+
+  useEffect(() => {
+    if (!selectedLead || !activeOrganizationId || !selectedLeadAccess.isError) return;
+    const selectedLeadId = selectedLead.id;
+    const unavailable = selectedLeadAccess.error instanceof VimobAPIError &&
+      (selectedLeadAccess.error.status === 403 || selectedLeadAccess.error.status === 404);
+    const status = selectedLeadAccess.error instanceof VimobAPIError
+      ? selectedLeadAccess.error.status
+      : undefined;
+    if (unavailable) {
+      removeCachedPipelineLeadDetail(queryClient, activeOrganizationId, selectedLeadId);
+    }
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      handlePipelineSelectedLeadAccessFailure({
+        queryClient,
+        organizationId: activeOrganizationId,
+        leadId: selectedLeadId,
+        status,
+        closeDetail: () => {
+          setSelectedLead(null);
+          setEditingLead(null);
+        },
+      });
+      toast.warning(unavailable
+        ? 'Este lead não está mais disponível para você.'
+        : 'Não foi possível confirmar seu acesso a este lead. Abra novamente após atualizar a Pipeline.');
+    });
+    return () => { active = false; };
+  }, [activeOrganizationId, queryClient, selectedLead, selectedLeadAccess.error, selectedLeadAccess.isError]);
+
+  useEffect(() => {
+    if (!boardRestoreError) return;
+    toast.warning('Alguns leads adicionais não foram carregados. Atualize a Pipeline para tentar novamente.');
+  }, [boardRestoreError]);
+
+  const shouldLoadLeadDialogResources = Boolean(authorizedSelectedLead);
   const { data: users = [] } = useOrganizationUsers({ enabled: shouldLoadLeadDialogResources });
   const { data: allTags = [] } = useTags({ enabled: shouldLoadLeadDialogResources });
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
   const assignLeadRoundRobinMutate = assignLeadRoundRobin.mutate;
-  const canEditPipeline = useCanEditCadences();
+  const canEditPipeline = canManagePipeline(hasPermission);
   const canManageAttention = hasPermission('attention_view') && (
     hasPermission('pipeline_manage') || hasPermission('automations_manage')
   );
@@ -641,7 +764,8 @@ export default function Pipelines() {
   const isPipelineBoardTransitioning = shouldLoadPipelineLeads && (isInitialLeadsLoading || leadsPlaceholderData);
   const hasCriticalLoadError =
     (pipelinesLoadingError && pipelines.length === 0) ||
-    (leadVisibilityLoadingError && !leadVisibility) ||
+    leadVisibilityError ||
+    boardAccessRevoked ||
     (leadsLoadingError && stagesWithLeads.length === 0) ||
     Boolean(teamScopeError);
   const hasPipelineBoardError =
@@ -660,11 +784,13 @@ export default function Pipelines() {
   }, []);
 
   const handleOpenLead = useCallback((lead: PipelineLead | { id: string }) => {
+    setSelectedLeadAccessVersion((current) => current + 1);
     setSelectedLead(lead as PipelineLead);
   }, []);
 
   const handleAssignLeadNow = useCallback((leadId: string) => {
-    if (!canOperateLeads) {
+    const lead = findPipelineLeadLocation<PipelineLead, StageWithLeads>(stages, leadId)?.lead;
+    if (!canOperateLeads || lead?.can_operate !== true) {
       toast.error('Você não tem permissão para atribuir leads.');
       return;
     }
@@ -674,7 +800,7 @@ export default function Pipelines() {
     assignLeadRoundRobinMutate(leadId, {
       onSettled: () => assigningLeadIdsRef.current.delete(leadId),
     });
-  }, [assignLeadRoundRobinMutate, canOperateLeads]);
+  }, [assignLeadRoundRobinMutate, canOperateLeads, stages]);
 
   const enqueueLeadMovePersistence = useCallback((leadId: string, task: () => Promise<void>) => {
     const previousMove = movePersistenceByLeadRef.current.get(leadId) ?? Promise.resolve();
@@ -748,6 +874,7 @@ export default function Pipelines() {
         updatedLead.stage_id !== selectedLead.stage_id ||
         updatedLead.deal_status !== selectedLead.deal_status ||
         updatedLead.assigned_user_id !== selectedLead.assigned_user_id ||
+        updatedLead.can_operate !== selectedLead.can_operate ||
         updatedLead.name !== selectedLead.name ||
         getLeadTagsSignature(updatedLead) !== getLeadTagsSignature(selectedLead) ||
         updatedLead.updated_at !== selectedLead.updated_at;
@@ -837,6 +964,7 @@ export default function Pipelines() {
           if (formattedLead.pipeline_id) {
             setSelectedPipelineId(formattedLead.pipeline_id);
           }
+          setSelectedLeadAccessVersion((current) => current + 1);
           setSelectedLead(formattedLead);
           clearLeadParam();
         });
@@ -878,6 +1006,10 @@ export default function Pipelines() {
     const newStage = stages.find((stage) => stage.id === newStageId);
     const movedLead = sourceStage?.leads.find((lead) => lead.id === draggableId);
     if (!sourceStage || !newStage || !movedLead) {
+      isDraggingRef.current = false;
+      return;
+    }
+    if (movedLead.can_operate !== true) {
       isDraggingRef.current = false;
       return;
     }
@@ -1010,18 +1142,12 @@ export default function Pipelines() {
 
       const updateResult = await leadsAPI.moveLeadStage(draggableId, {
         stageId: newStageId,
+        expectedStageId: oldStageId,
         boardOrderAt: persistedBoardOrderAt,
         lostReason,
       }, realtimeOrganizationId);
 
       if (updateResult.error) throw updateResult.error;
-
-      if (!isLatestMoveForLead()) return;
-
-      // Any GET started before the transaction committed must not win after
-      // the mutation response. A fresh request after this point is safe.
-      await queryClient.cancelQueries({ queryKey, exact: true });
-      if (!isLatestMoveForLead()) return;
 
       const movedLeadFromRpc = updateResult.data as unknown as Partial<PipelineLead> | null;
       let confirmedMove = pendingMove;
@@ -1063,6 +1189,22 @@ export default function Pipelines() {
             shouldKeepLeadForDealStatusFilter(responseStatus, effectiveFilterDealStatus),
         };
       }
+
+      // A queued second move may already be visible. Its rollback must land on
+      // this confirmed stage, not on the snapshot from before the first move.
+      const previousConfirmedBoard = moveRollbackSnapshotByLeadRef.current.get(draggableId);
+      if (previousConfirmedBoard) {
+        moveRollbackSnapshotByLeadRef.current.set(
+          draggableId,
+          applyPendingPipelineMoves(previousConfirmedBoard, [confirmedMove]),
+        );
+      }
+      if (!isLatestMoveForLead()) return;
+
+      // Any GET started before the transaction committed must not win after
+      // the mutation response. A fresh request after this point is safe.
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      if (!isLatestMoveForLead()) return;
 
       registerPendingPipelineMove(queryKey, confirmedMove);
       setVisualPendingMoves((current) => {
@@ -1106,11 +1248,12 @@ export default function Pipelines() {
       if (!isLatestMoveForLead()) return;
 
       clearPendingPipelineMove(queryKey, draggableId, moveVersion);
+      const latestRollbackData = moveRollbackSnapshotByLeadRef.current.get(draggableId) ?? rollbackData;
       queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) =>
-        restorePipelineLeadSnapshot(current, rollbackData, draggableId),
+        restorePipelineLeadSnapshot(current, latestRollbackData, draggableId),
       );
       const rollbackLocation = findPipelineLeadLocation<PipelineLead, StageWithLeads>(
-        rollbackData,
+        latestRollbackData,
         draggableId,
       );
       setVisualPendingMoves((current) => {
@@ -1146,7 +1289,10 @@ export default function Pipelines() {
         setLostReasonLead(movedLead);
       } else {
         const rateLimitMessage = getClientRateLimitMessage(error);
-        toast.error(rateLimitMessage || 'Erro ao mover lead: ' + getPipelineErrorMessage(error));
+        const changedInAnotherSession = error instanceof VimobAPIError && error.code === 'lead_stage_changed';
+        toast.error(changedInAnotherSession
+          ? 'Este lead mudou de etapa em outra sessão. A Pipeline será atualizada.'
+          : rateLimitMessage || 'Erro ao mover lead: ' + getPipelineErrorMessage(error));
       }
       throw error;
     });
@@ -1186,6 +1332,10 @@ export default function Pipelines() {
       isDraggingRef.current = false;
       return;
     }
+    if (!canOperateLeads || movedLead.can_operate !== true) {
+      isDraggingRef.current = false;
+      return;
+    }
 
     if (isUnsafePartialStageDrop(destinationStage, destination.index, draggableId)) {
       isDraggingRef.current = false;
@@ -1208,7 +1358,7 @@ export default function Pipelines() {
     } catch {
       // executeLeadMove already restores the board and reports the error.
     }
-  }, [executeLeadMove, stageAutomations, stages]);
+  }, [canOperateLeads, executeLeadMove, stageAutomations, stages]);
 
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -1217,6 +1367,7 @@ export default function Pipelines() {
         refetchPipelines(),
         refetchLeadVisibility(),
         ...(sharedFilters.teamId ? [refetchTeams()] : []),
+        ...(shouldLoadFilterOptions ? [refetchLeadMetaFilters(), refetchTags()] : []),
         ...(selectedPipelineId ? [refetchBaseStages()] : []),
         ...(shouldLoadPipelineLeads ? [refetch()] : []),
       ]);
@@ -1233,9 +1384,48 @@ export default function Pipelines() {
       setIsRefreshing(false);
     }
   }, [
+    activeOrganizationId,
+    queryClient,
     refetch,
     refetchBaseStages,
     refetchLeadVisibility,
+    refetchLeadMetaFilters,
+    refetchPipelines,
+    refetchTags,
+    refetchTeams,
+    selectedPipelineId,
+    sharedFilters.teamId,
+    shouldLoadFilterOptions,
+    shouldLoadPipelineLeads,
+  ]);
+
+  useEffect(() => {
+    if (!activeOrganizationId || !selectedPipelineId) return;
+    let lastReconciliationAt = Date.now();
+    const reconcileVisibleBoard = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastReconciliationAt < 60_000) return;
+      lastReconciliationAt = now;
+      void Promise.allSettled([
+        refetchPipelines(),
+        refetchBaseStages(),
+        ...(sharedFilters.teamId ? [refetchTeams()] : []),
+        ...(shouldLoadPipelineLeads ? [refetch()] : []),
+      ]);
+    };
+    const intervalId = window.setInterval(reconcileVisibleBoard, 120_000);
+    window.addEventListener('focus', reconcileVisibleBoard);
+    document.addEventListener('visibilitychange', reconcileVisibleBoard);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', reconcileVisibleBoard);
+      document.removeEventListener('visibilitychange', reconcileVisibleBoard);
+    };
+  }, [
+    activeOrganizationId,
+    refetch,
+    refetchBaseStages,
     refetchPipelines,
     refetchTeams,
     selectedPipelineId,
@@ -1258,14 +1448,14 @@ export default function Pipelines() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetch]);
+  }, [activeOrganizationId, queryClient, refetch, selectedPipelineId]);
 
   const handleCriticalLoadRetry = useCallback(async () => {
     setIsRefreshing(true);
     try {
       const results = await Promise.all([
         ...(pipelinesLoadingError ? [refetchPipelines()] : []),
-        ...(leadVisibilityLoadingError ? [refetchLeadVisibility()] : []),
+        ...(leadVisibilityError ? [refetchLeadVisibility()] : []),
         ...(teamScopeError ? [refetchTeams()] : []),
         ...(selectedPipelineId && baseStages.length === 0 ? [refetchBaseStages()] : []),
         ...(shouldLoadPipelineLeads && leadsLoadingError ? [refetch()] : []),
@@ -1281,7 +1471,7 @@ export default function Pipelines() {
     }
   }, [
     baseStages.length,
-    leadVisibilityLoadingError,
+    leadVisibilityError,
     leadsLoadingError,
     pipelinesLoadingError,
     refetch,
@@ -1545,10 +1735,7 @@ export default function Pipelines() {
     <AppLayout title="Pipeline" disableMainScroll>
       <div
         data-tour="pipeline-overview"
-        className={cn(
-          'flex h-full flex-col overflow-hidden bg-transparent',
-          isMobile && 'pb-2',
-        )}
+        className="flex h-full flex-col overflow-hidden bg-transparent"
       >
         <PipelineToolbar
           pipelines={pipelines}
@@ -1669,10 +1856,11 @@ export default function Pipelines() {
           onCreatePipeline={() => setNewPipelineDialogOpen(true)}
         />
 
+
         <PipelineDialogs
-          selectedLead={selectedLead}
-          editingLead={editingLead}
-          lostReasonLead={lostReasonLead}
+          selectedLead={authorizedSelectedLead}
+          editingLead={authorizedSelectedLead ? editingLead : null}
+          lostReasonLead={leadVisibilityError || boardAccessRevoked ? null : lostReasonLead}
           lostReasonPending={lostReasonPending}
           stages={stages}
           allTags={allTags}

@@ -35,6 +35,10 @@ import {
 
 interface KPIData {
   totalLeads: number;
+  uniqueLeads: number;
+  reentries: number;
+  totalEntries: number;
+  entryBreakdownAvailable: boolean;
   openLeads?: number;
   lostLeads?: number;
   conversionRate: number;
@@ -58,26 +62,29 @@ interface KPIData {
   overdueReceivables?: number;
   overduePayables?: number;
   paidCommissions?: number;
-  scheduledVisits?: number;
-  propertyCount?: number;
-  siteVisits?: number;
+  scheduledVisits?: number | string;
+  propertyCount?: number | string;
+  siteVisits?: number | string;
 }
 
 interface KPICardsProps {
   data: KPIData;
   isLoading?: boolean;
   periodLabel?: string;
-  scheduledVisits?: number;
-  propertyCount?: number;
-  siteVisits?: number;
+  scheduledVisits?: number | string;
+  propertyCount?: number | string;
+  siteVisits?: number | string;
+  onLeadsClick?: () => void;
   onLostClick?: () => void;
   onWonClick?: () => void;
   onFirstContactClick?: () => void;
+  onVisitsClick?: () => void;
 }
 
 interface KPICardItemProps {
   title: string;
   value: string | number;
+  breakdown?: string;
   trend?: number;
   rate?: number;
   rateVariant?: "positive" | "negative" | "auto";
@@ -117,6 +124,7 @@ function formatValue(value: string | number, format: string): string {
 function KPICardItem({
   title,
   value,
+  breakdown,
   trend,
   rate,
   rateVariant = "positive",
@@ -205,6 +213,11 @@ function KPICardItem({
                     >
                       {formatValue(value, format)}
                     </p>
+                    {breakdown && (
+                      <p className="mt-1 text-[10px] font-light leading-tight text-[var(--app-text-tertiary)]">
+                        {breakdown}
+                      </p>
+                    )}
 
                     {hasTrend && (
                       <div className="flex items-center gap-1 mt-1">
@@ -275,9 +288,11 @@ export function KPICards({
   scheduledVisits,
   propertyCount,
   siteVisits,
+  onLeadsClick,
   onLostClick,
   onWonClick,
   onFirstContactClick,
+  onVisitsClick,
 }: KPICardsProps) {
   if (isLoading) {
     const topSkeletonTours = [
@@ -321,11 +336,18 @@ export function KPICards({
   const kpis: KPICardItemProps[] = [
     {
       title: "Leads",
-      value: data.totalLeads,
+      value: data.totalEntries,
+      breakdown: data.entryBreakdownAvailable
+        ? `${data.uniqueLeads.toLocaleString("pt-BR")} entradas iniciais + ${data.reentries.toLocaleString("pt-BR")} reentradas`
+        : undefined,
       icon: Users,
-      tooltip: `Total de leads captados - ${periodLabel}`,
+      tooltip: data.entryBreakdownAvailable
+        ? `Entradas no período: ${data.uniqueLeads.toLocaleString("pt-BR")} entradas iniciais + ${data.reentries.toLocaleString("pt-BR")} reentradas. Cada reentrada soma uma nova entrada, mesmo quando continua no mesmo card. ${periodLabel}.`
+        : `Leads únicos no período. A contagem de reentradas ainda não está disponível nesta versão da API. ${periodLabel}.`,
       format: "number",
       accentColor: "leads",
+      onClick: onLeadsClick,
+      interactive: Boolean(onLeadsClick),
       tourTarget: "dashboard-kpi-leads",
     },
     {
@@ -336,7 +358,7 @@ export function KPICards({
           ? ((data.openLeads ?? 0) / data.totalLeads) * 100
           : 0,
       icon: CircleDot,
-      tooltip: `Percentual de leads em aberto dentro do total do período - ${periodLabel}`,
+      tooltip: `Cards únicos do período que estão em aberto; percentual sobre os cards únicos. ${periodLabel}.`,
       format: "number",
       accentColor: "open",
       tourTarget: "dashboard-kpi-open",
@@ -350,7 +372,7 @@ export function KPICards({
           : 0,
       rateVariant: "negative",
       icon: XCircle,
-      tooltip: `Percentual de leads perdidos dentro do total do período - ${periodLabel}`,
+      tooltip: `Cards únicos do período que estão perdidos; percentual sobre os cards únicos. ${periodLabel}.`,
       format: "number",
       accentColor: "lost",
       onClick: onLostClick,
@@ -360,11 +382,11 @@ export function KPICards({
     {
       title: "Ganhos",
       value: data.closedLeads,
-      rate: data.conversionRate,
+      rate: data.totalLeads > 0 ? (data.closedLeads / data.totalLeads) * 100 : 0,
       rateVariant: "auto",
       rateLabel: "conversão",
       icon: Trophy,
-      tooltip: `Leads captados no período que estão ganhos - ${periodLabel}`,
+      tooltip: `Cards únicos do período que estão ganhos; conversão sobre os cards únicos. ${periodLabel}.`,
       format: "number",
       accentColor: "won",
       iconColor: "rgb(16, 185, 129)",
@@ -376,15 +398,12 @@ export function KPICards({
     {
       title: "Visitas",
       value: scheduledVisits ?? 0,
-      rate:
-        data.totalLeads > 0
-          ? ((scheduledVisits ?? 0) / data.totalLeads) * 100
-          : 0,
-      rateVariant: "auto",
       icon: CalendarCheck,
-      tooltip: `Visitas e reuniões criadas no período em relação ao total de leads - ${periodLabel}`,
+      tooltip: `Visitas e reuniões marcadas no período - ${periodLabel}. A data usada é a do agendamento, independente da entrada do lead.`,
       format: "number",
       accentColor: "visits",
+      onClick: onVisitsClick,
+      interactive: Boolean(onVisitsClick),
       tourTarget: "dashboard-kpi-visits",
     },
   ];
@@ -405,7 +424,7 @@ export function KPICards({
       title: "1º Contato",
       value: data.avgResponseTime,
       icon: Clock,
-      tooltip: "Média da primeira resposta humana registrada; leads sem medida válida ficam fora da média",
+      tooltip: "Média da primeira resposta humana registrada. Ao filtrar por usuário, considera quem respondeu; os demais indicadores usam o responsável atual do lead.",
       format: "time",
       accentColor: "response",
       onClick: onFirstContactClick,
@@ -427,7 +446,7 @@ export function KPICards({
       title: "Visitas no site",
       value: siteVisits ?? 0,
       icon: Eye,
-      tooltip: `Visitas ao site no período - ${periodLabel}`,
+      tooltip: `Sessões únicas no site no período - ${periodLabel}`,
       format: "number",
       accentColor: "site",
       tourTarget: "dashboard-kpi-site-visits",

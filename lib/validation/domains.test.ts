@@ -1705,6 +1705,9 @@ test("admin e dashboard rejeitam referencias inseguras", () => {
 test("dashboard valida os detalhes que a UI consome e preserva extensoes", () => {
   const stats = {
     totalLeads: 3,
+    uniqueLeads: 3,
+    reentries: 2,
+    totalEntries: 5,
     leadsInProgress: 1,
     leadsClosed: 1,
     leadsLost: 1,
@@ -1781,7 +1784,11 @@ test("dashboard valida os detalhes que a UI consome e preserva extensoes", () =>
   });
   assert.equal(result.success, true);
   if (result.success) {
-    assert.equal(result.data.data.futureStatsField, "preservado");
+    assert.equal(Reflect.get(result.data.data, "futureStatsField"), "preservado");
+    assert.equal(result.data.data.totalEntries, 5);
+    assert.equal(result.data.data.uniqueLeads, 3);
+    assert.equal(result.data.data.reentries, 2);
+    assert.equal(result.data.data.entryBreakdownAvailable, true);
     assert.equal(
       result.data.data.wonConversionBuckets[0].futureBucketField,
       true,
@@ -1791,6 +1798,30 @@ test("dashboard valida os detalhes que a UI consome e preserva extensoes", () =>
   assert.equal(
     apiDashboardStatsResponseSchema.safeParse({
       data: { ...stats, openLeads: undefined },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiDashboardStatsResponseSchema.safeParse({
+      data: { ...stats, totalEntries: 4 },
+    }).success,
+    false,
+  );
+  const legacyStats: Record<string, unknown> = { ...stats };
+  delete legacyStats.uniqueLeads;
+  delete legacyStats.reentries;
+  delete legacyStats.totalEntries;
+  const legacyResult = apiDashboardStatsResponseSchema.safeParse({ data: legacyStats });
+  assert.equal(legacyResult.success, true);
+  if (legacyResult.success) {
+    assert.equal(legacyResult.data.data.uniqueLeads, 3);
+    assert.equal(legacyResult.data.data.reentries, 0);
+    assert.equal(legacyResult.data.data.totalEntries, 3);
+    assert.equal(legacyResult.data.data.entryBreakdownAvailable, false);
+  }
+  assert.equal(
+    apiDashboardStatsResponseSchema.safeParse({
+      data: { ...legacyStats, reentries: 2 },
     }).success,
     false,
   );
@@ -2019,6 +2050,8 @@ test("dashboard valida média de contato e redistribuições por corretor e orig
         name: "Corretor",
         avatarUrl: null,
         leadCount: 3,
+        receivedLeads: 3,
+        handledLeads: 3,
         contactedLeads: 2,
         averageResponseSeconds: 350,
         redistributedAway: 2,

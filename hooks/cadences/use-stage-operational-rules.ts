@@ -11,6 +11,27 @@ import {
 import { VimobAPIError } from '@/lib/api/vimob-client'
 import { getNonEmptyErrorMessageOrFallback } from '@/lib/api/vimob-error'
 
+export function stageOperationalRulesErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof VimobAPIError)) {
+    return getNonEmptyErrorMessageOrFallback(error, fallback)
+  }
+
+  switch (error.code) {
+    case 'permission_denied':
+      return 'Seu perfil não tem permissão para acessar as regras desta etapa.'
+    case 'stage_attention_policy_conflict':
+      return 'Esta etapa já tem uma regra na Central de Atenção. Revise-a antes de salvar.'
+    case 'stage_operational_rules_changed':
+      return 'Outra pessoa alterou esta etapa. Recarregue as regras antes de salvar.'
+    case 'invalid_cadence_input':
+      return 'Revise os campos da cadência antes de salvar.'
+    case 'local_read_only':
+      return error.message
+    default:
+      return error.requestId ? `${fallback} Referência: ${error.requestId}.` : fallback
+  }
+}
+
 export const stageOperationalRulesQueryKey = (
   organizationId: string | undefined,
   stageId: string | undefined,
@@ -48,22 +69,15 @@ export function useUpdateStageOperationalRules(stageId?: string) {
       queryClient.invalidateQueries({ queryKey: ['home'] })
       toast.success('Regras da etapa salvas.')
     },
-    onError: async (error) => {
+    onError: (error) => {
       if (
         error instanceof VimobAPIError
         && error.code === 'stage_operational_rules_changed'
       ) {
-        await queryClient.refetchQueries({
-          queryKey: stageOperationalRulesQueryKey(organizationId, stageId),
-          type: 'active',
-        })
-        toast.error('Outra pessoa alterou esta etapa. Recarregamos a versão mais recente.')
+        toast.error('Outra pessoa alterou esta etapa. Seu rascunho foi preservado; carregue a versão atual para continuar.')
         return
       }
-      toast.error(getNonEmptyErrorMessageOrFallback(
-        error,
-        'Não foi possível salvar as regras desta etapa.',
-      ))
+      toast.error(stageOperationalRulesErrorMessage(error, 'Não foi possível salvar as regras desta etapa.'))
     },
   })
 }

@@ -523,6 +523,20 @@ func (repo Repository) buildPublicationView(
 	canManage bool,
 ) (PublicationView, error) {
 	checks, score, readinessState := evaluatePublicationReadiness(scope, source)
+	switch scope.Channel {
+	case SiteChannel:
+		if !tenantContext.HasModule("site") {
+			checks, score, readinessState = markPublicationModuleUnavailable(
+				checks, "site_module", "Módulo Site ativo", "Ative o módulo Site para esta organização.",
+			)
+		}
+	case GrupoOLXChannel:
+		if !tenantContext.HasModule("portals") {
+			checks, score, readinessState = markPublicationModuleUnavailable(
+				checks, "grupo_olx_module", "Módulo de portais ativo", "Ative o módulo de portais para esta organização.",
+			)
+		}
+	}
 	available := publicationScopeAvailable(scope, source, tenantContext)
 	previewURL := source.SitePublicURL
 	if scope.Channel == GrupoOLXChannel {

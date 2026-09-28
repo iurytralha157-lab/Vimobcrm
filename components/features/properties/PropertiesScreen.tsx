@@ -13,7 +13,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -110,8 +110,7 @@ const getPresetFilters = (preset: PropertyCatalogPreset): PropertyFilters => {
   return {};
 };
 
-const getAvailabilityValue = (filters: PropertyFilters) => {
-  if (filters.published_on_site === "false") return "private";
+const getStatusFilterValue = (filters: PropertyFilters) => {
   if (filters.status === "ativo" || filters.status === "active")
     return "available";
   if (filters.status === "reservado" || filters.status === "reserved")
@@ -121,6 +120,12 @@ const getAvailabilityValue = (filters: PropertyFilters) => {
     return "rented";
   if (filters.status === "inativo" || filters.status === "inactive")
     return "inactive";
+  return ALL_FILTER_VALUE;
+};
+
+const getSiteVisibilityValue = (filters: PropertyFilters) => {
+  if (filters.published_on_site === "true") return "published";
+  if (filters.published_on_site === "false") return "unpublished";
   return ALL_FILTER_VALUE;
 };
 
@@ -295,12 +300,11 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     setSelectedOwnerLabel("");
   };
 
-  const updateAvailabilityFilter = (value: string) => {
+  const updateStatusFilter = (value: string) => {
     setFilters((current) => {
       const next: PropertyFilters = {
         ...current,
         status: undefined,
-        published_on_site: undefined,
       };
 
       if (value === "available") next.status = "ativo";
@@ -308,10 +312,16 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       if (value === "sold") next.status = "vendido";
       if (value === "rented") next.status = "alugado";
       if (value === "inactive") next.status = "inativo";
-      if (value === "private") next.published_on_site = "false";
-
       return next;
     });
+  };
+
+  const updateSiteVisibilityFilter = (value: string) => {
+    setFilters((current) => ({
+      ...current,
+      published_on_site:
+        value === "published" ? "true" : value === "unpublished" ? "false" : undefined,
+    }));
   };
 
   const activeFilterCount =
@@ -319,7 +329,8 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       if (!value) return false;
       return getPresetFilters(preset)[key as keyof PropertyFilters] !== value;
     }).length + (search.trim() ? 1 : 0);
-  const availabilityValue = getAvailabilityValue(filters);
+  const statusFilterValue = getStatusFilterValue(filters);
+  const siteVisibilityValue = getSiteVisibilityValue(filters);
   const selectedResponsible = users.find(
     (user) => user.id === filters.responsavel_id,
   );
@@ -360,20 +371,24 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     : isLaunchCatalog
       ? "Buscar imóveis em lançamento"
       : "Buscar endereço, nome, bairro ou código";
-  const availabilityLabel =
-    availabilityValue === "available"
+  const statusFilterLabel =
+    statusFilterValue === "available"
       ? "Disponível"
-      : availabilityValue === "reserved"
+      : statusFilterValue === "reserved"
         ? "Reservado"
-        : availabilityValue === "sold"
+        : statusFilterValue === "sold"
           ? "Vendido"
-          : availabilityValue === "rented"
+          : statusFilterValue === "rented"
             ? "Alugado"
-            : availabilityValue === "inactive"
+            : statusFilterValue === "inactive"
               ? "Inativo"
-              : availabilityValue === "private"
-                ? "Privado / fora do site"
-                : "Disponibilidade";
+              : "Status comercial";
+  const siteVisibilityLabel =
+    siteVisibilityValue === "published"
+      ? "No site"
+      : siteVisibilityValue === "unpublished"
+        ? "Fora do site"
+        : "Publicação no site";
   const responsibleLabel = selectedResponsible
     ? getUserFilterLabel(selectedResponsible)
     : "Responsável";
@@ -414,7 +429,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     <aside
       data-tour="properties-filters-panel"
       aria-label="Filtros dos imóveis"
-      className="properties-filter-panel flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-0 shadow-none lg:h-fit lg:max-h-[calc(100dvh-96px)]"
+      className="properties-filter-panel flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-0 shadow-none"
     >
       <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
         <div className="min-w-0">
@@ -444,22 +459,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       </div>
 
       <div className="app-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        <div
-          data-tour="properties-filter-search"
-          className="relative hidden lg:block"
-        >
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={searchPlaceholder}
-            className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-9 pr-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0"
-          />
-          {isFilterUpdating && (
-            <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
-          )}
-        </div>
-
         <div className="grid grid-cols-1 gap-3">
           <div data-tour="properties-filter-modality">
             <Select
@@ -505,28 +504,51 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
 
           <div data-tour="properties-filter-availability">
             <Select
-              value={availabilityValue}
-              onValueChange={updateAvailabilityFilter}
+              value={statusFilterValue}
+              onValueChange={updateStatusFilter}
             >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
+              <SelectTrigger aria-label="Filtrar por status comercial" className="border-0 bg-[var(--app-surface-soft)]">
                 <span
                   className={cn(
                     "truncate",
-                    availabilityValue === ALL_FILTER_VALUE &&
+                    statusFilterValue === ALL_FILTER_VALUE &&
                       "text-muted-foreground",
                   )}
                 >
-                  {availabilityLabel}
+                  {statusFilterLabel}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
+                <SelectItem value={ALL_FILTER_VALUE}>Todos os status</SelectItem>
                 <SelectItem value="available">Disponível</SelectItem>
                 <SelectItem value="reserved">Reservado</SelectItem>
                 <SelectItem value="sold">Vendido</SelectItem>
                 <SelectItem value="rented">Alugado</SelectItem>
                 <SelectItem value="inactive">Inativo</SelectItem>
-                <SelectItem value="private">Privado / fora do site</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div data-tour="properties-filter-site-publication">
+            <Select
+              value={siteVisibilityValue}
+              onValueChange={updateSiteVisibilityFilter}
+            >
+              <SelectTrigger aria-label="Filtrar por publicação no site" className="border-0 bg-[var(--app-surface-soft)]">
+                <span
+                  className={cn(
+                    "truncate",
+                    siteVisibilityValue === ALL_FILTER_VALUE &&
+                      "text-muted-foreground",
+                  )}
+                >
+                  {siteVisibilityLabel}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
+                <SelectItem value="published">No site</SelectItem>
+                <SelectItem value="unpublished">Fora do site</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1044,16 +1066,30 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     <AppLayout title={pageTitle}>
       <div className="properties-screen animate-in space-y-3">
         <PropertySectionTabs activeSection={activeSection} />
-        <div className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
-          <div className="hidden lg:sticky lg:top-0 lg:block lg:self-start">
-            {filtersPanel}
+        {isLaunchCatalog && canCreateProperty && (
+          <div className="app-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[14px] font-normal">Estrutura do lançamento</p>
+              <p className="mt-1 text-[12px] text-[var(--app-text-secondary)]">
+                Organize empreendimentos, fases, torres, plantas e unidades. As fichas dos imóveis continuam nesta carteira.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push("/properties/developments")}
+              className="h-9 shrink-0"
+            >
+              <Building2 className="mr-2 h-4 w-4" aria-hidden="true" />
+              Gerenciar empreendimentos
+            </Button>
           </div>
-
-          <div className="min-w-0 space-y-3">
-            <div className="app-card flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
+        )}
+        <div className="min-w-0 space-y-3">
+            <div className="app-toolbar flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
               <div
                 data-tour="properties-filter-search"
-                className="relative min-w-0 flex-1 sm:max-w-[420px] lg:hidden"
+                className="relative w-full min-w-0 flex-1 sm:max-w-[420px]"
               >
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
                 <Input
@@ -1067,7 +1103,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                 )}
               </div>
 
-              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:justify-end">
+              <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
                 <span className="min-w-0 truncate text-[12px] font-light text-[var(--app-text-secondary)] sm:mr-auto sm:pl-1">
                   {isFilterUpdating
                     ? "Atualizando carteira..."
@@ -1078,7 +1114,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                   type="button"
                   variant="ghost"
                   onClick={() => setFiltersOpen(true)}
-                  className="h-9 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)] lg:hidden"
+                  className="h-8 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                   {activeFilterCount > 0
@@ -1089,7 +1125,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                   <Button
                     data-tour="properties-new-button"
                     onClick={() => router.push("/properties/new")}
-                    className="h-9 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                    className="h-8 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                   >
                     <Plus className="mr-1.5 h-3.5 w-3.5" />
                     {isMobile ? "Novo" : "Novo imóvel"}
@@ -1239,7 +1275,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                 </div>
               )}
             </div>
-          </div>
         </div>
 
         <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -1252,6 +1287,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                 : "w-[380px] rounded-l-[8px] sm:max-w-[380px]",
             )}
           >
+            <SheetTitle className="sr-only">Filtros dos imóveis</SheetTitle>
             {filtersPanel}
           </SheetContent>
         </Sheet>

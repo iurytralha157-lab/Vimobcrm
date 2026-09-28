@@ -7,6 +7,7 @@ import {
   getPublicEmailHref,
   getPublicMediaEmbedUrl,
   getPublicPhoneHref,
+  getSiteFooterLogoUrl,
   getThemeTokens,
   normalizePublicExternalUrl,
   normalizePublicImageUrl,
@@ -36,6 +37,15 @@ test("normaliza somente imagens e links públicos com protocolos seguros", () =>
   assert.equal(normalizePublicExternalUrl("instagram.com/vimob"), "https://instagram.com/vimob");
   assert.equal(normalizePublicExternalUrl("javascript:alert(1)"), null);
   assert.equal(normalizePublicExternalUrl("https://user:secret@example.com"), null);
+});
+
+test("logo do rodapé usa imagem própria e recorre à principal quando vazia ou inválida", () => {
+  const mainLogo = "https://cdn.example.com/main.png";
+  const footerLogo = "https://cdn.example.com/footer.png";
+  assert.equal(getSiteFooterLogoUrl({ logo_url: mainLogo, footer_logo_url: footerLogo }), footerLogo);
+  assert.equal(getSiteFooterLogoUrl({ logo_url: mainLogo, footer_logo_url: null }), mainLogo);
+  assert.equal(getSiteFooterLogoUrl({ logo_url: mainLogo, footer_logo_url: "javascript:alert(1)" }), mainLogo);
+  assert.equal(getSiteFooterLogoUrl({ logo_url: null, footer_logo_url: null }), "");
 });
 
 test("normaliza contatos sem permitir payload no href", () => {

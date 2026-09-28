@@ -6,12 +6,10 @@ import {
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
-import {
-  resolvePipelineDateModeForRange,
-  type PipelineDateMode,
-} from '@/lib/pipeline-date-mode'
+import type { PipelineDateMode } from '@/lib/pipeline-date-mode'
 import {
   buildPipelineBoardQuery,
+  buildPipelineLeadMetaFilterQuery,
   type PipelineBoardQueryFilters,
 } from '@/lib/pipeline-board-query'
 import { PIPELINE_READ_TIMEOUT_MS } from '@/lib/pipeline-reliability'
@@ -20,6 +18,7 @@ import { sanitizeLeadMetaFiltersEnvelope } from './pipeline-board-meta-filters'
 export type PipelineBoardLead = {
   id: string
   team_id: string | null
+  can_operate?: boolean
   [key: string]: unknown
 }
 
@@ -132,18 +131,19 @@ export async function getLeadMetaFilters(params: {
   dateMode?: PipelineDateMode
   pipelineId?: string | null
   filterPage?: string | null
+  entryMode?: boolean
+  scopeToBoard?: boolean
+  teamId?: string | null
+  userId?: string | null
+  dealStatus?: string | null
+  tagIds?: string[]
+  searchQuery?: string
   signal?: AbortSignal
 }) {
   const response = await vimobAPIRequest<LeadMetaFiltersEnvelope>('/v1/lead-meta-filters', {
     organizationId: params.organizationId,
     signal: params.signal,
-    query: {
-      pipelineId: params.pipelineId,
-      filterPage: params.filterPage,
-      dateFrom: params.dateRange?.from.toISOString(),
-      dateTo: params.dateRange?.to.toISOString(),
-      dateMode: resolvePipelineDateModeForRange(params.dateRange, params.dateMode),
-    },
+    query: buildPipelineLeadMetaFilterQuery(params),
     timeoutMs: PIPELINE_READ_TIMEOUT_MS,
     retry: false,
   })

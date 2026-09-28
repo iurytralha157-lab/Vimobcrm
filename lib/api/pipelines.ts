@@ -67,6 +67,8 @@ type StageOrderItem = {
   name: string
   color?: string | null
   stage_key?: string | null
+  isNew?: boolean
+  expectedUpdatedAt?: string
 }
 
 export const pipelinesAPI = {
@@ -160,6 +162,8 @@ export const pipelinesAPI = {
         name: stage.name,
         color: stage.color || undefined,
         stageKey: stage.stage_key || undefined,
+        isNew: stage.isNew || undefined,
+        expectedUpdatedAt: stage.expectedUpdatedAt,
       })),
     }, 'stages.reorder')
     const response = await vimobAPIRequest<APIListResponse<APIStage>>(`/v1/pipelines/${pipelineId}/stages/reorder`, {

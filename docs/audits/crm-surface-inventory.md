@@ -1,39 +1,39 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `02a7fc4e42e23f65a920b0bf739d3e470d99b8eb09e52f935247727f014b9f72`.
+O conteudo e deterministico para o digest `2331fee2afd6b2eaaf6079bee938575e4f954a5e107d842a39b39897462f49bd`.
 
 ## Denominadores
 
 | Superficie | Total |
 | --- | ---: |
 | Rotas de arquivo | 89 |
-| Telas renderizaveis (sem redirects) | 82 |
-| Aliases/redirects | 7 |
+| Telas renderizaveis (sem redirects) | 83 |
+| Aliases/redirects | 6 |
 | Rotas protegidas | 68 |
 | Rotas protegidas admin | 19 |
 | Rotas nao protegidas (publicas, site e auth) | 21 |
 | Rotas dinamicas | 17 |
-| Overlays unicos | 220 |
+| Overlays unicos | 222 |
 | Formularios HTML unicos | 50 |
-| CTAs internos unicos | 1332 |
-| Controles complementares de overlay/tab | 279 |
+| CTAs internos unicos | 1356 |
+| Controles complementares de overlay/tab | 282 |
 
-Overlays: `alertDialog` 61, `dialog` 81, `dropdownMenu` 30, `popover` 35, `sheet` 13.
+Overlays: `alertDialog` 61, `dialog` 83, `dropdownMenu` 30, `popover` 35, `sheet` 13.
 
-CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1226, `external` 6, `internal` 31, `internalDynamic` 75, `unknownDynamic` 45.
+CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1247, `external` 6, `internal` 31, `internalDynamic` 78, `unknownDynamic` 45.
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `e97a79d4673a34c202b1fb9e912e7bd03cabec2b8f2564350396e7072e98f81a`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `487b6a9c207b11563b8979ce014f6e2230c65c33dded08fff1c1e577d422cd15`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
 | Rotas renderizaveis e aliases | 89 |
-| Overlays alcancaveis | 213 |
+| Overlays alcancaveis | 215 |
 | Formularios alcancaveis | 50 |
-| CTAs internos alcancaveis | 1296 |
-| Controles complementares alcancaveis | 272 |
+| CTAs internos alcancaveis | 1320 |
+| Controles complementares alcancaveis | 275 |
 
 Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associadas, permitindo que um caso E2E declare exatamente o ID coberto sem criar uma segunda contagem.
 
@@ -42,11 +42,11 @@ Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associa
 | Verificacao | Denominador |
 | --- | ---: |
 | Acesso das rotas protegidas x ADM/Lider/Usuario | 204 |
-| Tela renderizavel x desktop/mobile | 164 |
-| Contrato dos aliases | 7 |
-| Overlays alcancaveis por implementacao | 213 |
+| Tela renderizavel x desktop/mobile | 166 |
+| Contrato dos aliases | 6 |
+| Overlays alcancaveis por implementacao | 215 |
 | Formularios alcancaveis por implementacao | 50 |
-| CTAs internos alcancaveis por implementacao | 1296 |
+| CTAs internos alcancaveis por implementacao | 1320 |
 | CTAs das telas de erro/infraestrutura | 2 |
 
 Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve ser informada por categoria e, para o corte de 90%, tambem como `aprovados / planejados` com todo P0/P1 obrigatoriamente aprovado.
@@ -146,7 +146,7 @@ Delegacoes `Button asChild` a revisar: nenhuma.
 | `route:35522dc528c9d332e37e` | `/properties/[id]` | protected | dinamica | `-` |
 | `route:91094461966c868a9eb2` | `/properties/[id]/edit` | protected | dinamica | `-` |
 | `route:45dda8f8a9e3d63b9136` | `/properties/condominiums` | protected | estatica | `-` |
-| `route:a99c5b8fb3821775c216` | `/properties/developments` | protected | alias | ``/properties/launches${nextSearch ? `?${nextSearch}` : ""}`` |
+| `route:79391f2b4051eb9a4d83` | `/properties/developments` | protected | estatica | `-` |
 | `route:4f43a8077b166d28f2aa` | `/properties/developments/[id]` | protected | dinamica | `-` |
 | `route:7c4b25c2f40b50272de0` | `/properties/launches` | protected | estatica | `-` |
 | `route:995ec62d517d53288b07` | `/properties/locations` | protected | estatica | `-` |

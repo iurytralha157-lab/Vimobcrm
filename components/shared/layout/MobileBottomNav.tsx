@@ -133,7 +133,7 @@ export function MobileBottomNav() {
         className="app-mobile-bottom-nav fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--app-border)] bg-[var(--app-sidebar)] pb-[env(safe-area-inset-bottom)]"
         aria-busy={navigationLoading}
       >
-        <div className="flex items-end justify-around px-1 h-16 py-[4px] pb-[10px]">
+        <div className="flex h-16 items-end justify-around px-1 py-2">
           {tabs.map((tab, index) => {
             if (tab === 'loading') {
               return (

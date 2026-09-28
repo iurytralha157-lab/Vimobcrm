@@ -7,6 +7,8 @@ import {
   getTenantPermissions,
   isTenantContextForOrganization,
 } from "@/lib/access/tenant-navigation";
+import { createTenantQueryAccessSignature } from "@/lib/access/tenant-query-cache";
+import { stageAutomationsQueryKey } from "@/lib/stage-automations-query-key";
 import { toast } from "sonner";
 
 // UI type normalized from the current DB contract: trigger_type + config jsonb.
@@ -88,9 +90,18 @@ function normalizeAutomation(row: StageAutomationRow): StageAutomation {
 }
 
 export function useStageAutomations(stageId?: string) {
-  const { activeOrganization, tenantContext } = useAuth();
+  const {
+    activeOrganization,
+    tenantContext,
+    user,
+    profile,
+    isSuperAdmin,
+    impersonating,
+  } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
+  const currentTenantContext = hasCurrentTenantContext ? tenantContext : null;
+  const currentUserId = user?.id ?? profile?.id;
   const enabledModules = hasCurrentTenantContext && tenantContext
     ? getTenantEnabledModules(tenantContext)
     : [];
@@ -100,11 +111,23 @@ export function useStageAutomations(stageId?: string) {
   const canViewStageAutomations =
     enabledModules.includes("automations") &&
     (permissions.includes("*") ||
-      permissions.includes("automations_view") ||
-      permissions.includes("automations_manage"));
+      permissions.includes("automations_view"));
+  const accessSignature = createTenantQueryAccessSignature({
+    userId: currentUserId,
+    organizationId,
+    memberRole: currentTenantContext?.memberRole,
+    permissions: currentTenantContext?.permissions,
+    enabledModules: currentTenantContext?.enabledModules,
+    isTeamLeader: currentTenantContext?.isTeamLeader,
+    ledTeamIds: currentTenantContext?.ledTeamIds,
+    ledUserIds: currentTenantContext?.ledUserIds,
+    ledPipelineIds: currentTenantContext?.ledPipelineIds,
+    isSuperAdmin: currentTenantContext?.isSuperAdmin ?? isSuperAdmin,
+    impersonatedOrganizationId: impersonating?.orgId,
+  });
 
   return useQuery({
-    queryKey: ["stage-automations", stageId, organizationId],
+    queryKey: stageAutomationsQueryKey(stageId, organizationId, currentUserId, accessSignature),
     queryFn: async () => {
       if (!organizationId) return [];
       const data = await stageConfigAPI.listStageAutomations({ stageId, organizationId });

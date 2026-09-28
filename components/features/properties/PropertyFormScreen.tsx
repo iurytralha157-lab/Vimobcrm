@@ -85,6 +85,7 @@ import {
   persistStagedPropertyPhotos,
 } from "@/lib/api/property-media";
 import { propertyWorkspaceAPI } from "@/lib/api/property-workspace";
+import { propertiesAPI } from "@/lib/api/properties";
 import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { releaseStagedPropertyPhotos } from "@/lib/property-media-draft";
@@ -111,6 +112,10 @@ import {
   type PropertyOwnership,
 } from "./property-form/property-form-model";
 import { propertyToFormData } from "./property-form/property-form-mapping";
+import {
+  applyCepAddressToLocation,
+  readBackPropertyLocation,
+} from "./property-form/property-cep-location";
 import {
   arePropertySnapshotsEqualOutsideMedia,
   resolvePropertyFormRefetch,
@@ -396,7 +401,7 @@ export default function PropertyForm() {
   const { data: users = [] } = useUsers();
   const createPropertyType = useCreatePropertyType();
   const createProperty = useCreateProperty({ showSuccessToast: false });
-  const updateProperty = useUpdateProperty();
+  const updateProperty = useUpdateProperty({ showSuccessToast: false });
   const createFeature = useCreatePropertyFeature();
   const createProximity = useCreatePropertyProximity();
   const createCity = useCreateCity();
@@ -504,7 +509,7 @@ export default function PropertyForm() {
     }));
   };
 
-  const lookupCep = async (rawCep: string) => {
+  const lookupCep = async (rawCep: string, force = false) => {
     const cep = onlyCepDigits(rawCep);
     if (cep.length !== 8) {
       cepLookupSequenceRef.current += 1;
@@ -514,7 +519,7 @@ export default function PropertyForm() {
       setIsCepLoading(false);
       return;
     }
-    if (lastCepLookupRef.current === cep) return;
+    if (!force && lastCepLookupRef.current === cep) return;
 
     cepLookupAbortRef.current?.abort();
     const controller = new AbortController();
@@ -524,13 +529,22 @@ export default function PropertyForm() {
     lastCepLookupRef.current = cep;
     setIsCepLoading(true);
     try {
-      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+      const res = await fetch(`/api/properties/cep?cep=${cep}`, {
         signal: controller.signal,
       });
+      if (res.status === 404) {
+        if (
+          !controller.signal.aborted &&
+          requestSequence === cepLookupSequenceRef.current
+        ) {
+          lastCepLookupRef.current = "";
+          toast.error("CEP não encontrado.");
+        }
+        return;
+      }
       if (!res.ok) throw new Error("cep_lookup_failed");
 
       const data = (await res.json()) as {
-        erro?: boolean;
         logradouro?: string;
         bairro?: string;
         localidade?: string;
@@ -544,11 +558,6 @@ export default function PropertyForm() {
         return;
       }
 
-      if (data.erro) {
-        toast.error("CEP não encontrado.");
-        return;
-      }
-
       const matchedCity = cities.find(
         (city) =>
           normalize(city.name) === normalize(data.localidade || "") &&
@@ -556,29 +565,29 @@ export default function PropertyForm() {
             !city.uf ||
             city.uf.toUpperCase() === data.uf.toUpperCase()),
       );
-      const matchedNeighborhood = neighborhoods.find(
-        (neighborhood) =>
-          normalize(neighborhood.name) === normalize(data.bairro || "") &&
-          (!matchedCity ||
-            !neighborhood.city_id ||
-            neighborhood.city_id === matchedCity.id),
+      const matchedNeighborhood = matchedCity
+        ? neighborhoods.find(
+            (neighborhood) =>
+              normalize(neighborhood.name) === normalize(data.bairro || "") &&
+              neighborhood.city_id === matchedCity.id,
+          )
+        : undefined;
+      if (!data.localidade || !data.uf) throw new Error("cep_incomplete_location");
+      setFormData((prev) =>
+        applyCepAddressToLocation(
+          prev,
+          {
+            logradouro: data.logradouro || "",
+            bairro: data.bairro || "",
+            localidade: data.localidade || "",
+            uf: data.uf || "",
+          },
+          { cityId: matchedCity?.id, neighborhoodId: matchedNeighborhood?.id },
+        ),
       );
-      const cepHasCity = Boolean(data.localidade);
-      const cepHasNeighborhood = Boolean(data.bairro);
-
-      setFormData((prev) => ({
-        ...prev,
-        endereco: data.logradouro || prev.endereco,
-        bairro: data.bairro || prev.bairro,
-        cidade: data.localidade || prev.cidade,
-        uf: data.uf || prev.uf,
-        city_id: matchedCity?.id || (cepHasCity ? "" : prev.city_id),
-        neighborhood_id:
-          matchedNeighborhood?.id ||
-          (cepHasNeighborhood ? "" : prev.neighborhood_id),
-        condominium_id:
-          cepHasCity || cepHasNeighborhood ? "" : prev.condominium_id,
-      }));
+      if (!data.bairro) {
+        toast.info("O CEP não informou um bairro. Preencha o bairro manualmente.");
+      }
     } catch {
       if (
         controller.signal.aborted ||
@@ -769,6 +778,14 @@ export default function PropertyForm() {
     });
   };
 
+  const navigateAfterSave = (savedPropertyId: string) => {
+    router.push(
+      activeTab === "publication"
+        ? `/properties/${savedPropertyId}?tab=publication`
+        : "/properties",
+    );
+  };
+
   const persistCreatedPropertyMedia = async (
     created: CreatedPropertyForMediaRetry,
     isRetry: boolean,
@@ -824,7 +841,7 @@ export default function PropertyForm() {
         // is unavailable.
       }
       toast.success("Imóvel e fotos cadastrados com sucesso!");
-      router.push("/properties");
+      navigateAfterSave(created.id);
     } catch (error: unknown) {
       const rollbackIncomplete =
         error instanceof PropertyMediaPersistenceError && error.rollbackIncomplete;
@@ -846,12 +863,16 @@ export default function PropertyForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitInFlightRef.current) return;
+    if (isCepLoading) {
+      toast.error("Aguarde a consulta do CEP antes de salvar o imóvel.");
+      return;
+    }
     submitInFlightRef.current = true;
     try {
       const createdForRetry = createdPropertyForMediaRetryRef.current;
       if (!isEditing && createdForRetry) {
         if (createdPropertyMediaCompleteRef.current) {
-          router.push("/properties");
+          navigateAfterSave(createdForRetry.id);
           return;
         }
         await persistCreatedPropertyMedia(createdForRetry, true);
@@ -897,6 +918,10 @@ export default function PropertyForm() {
 
       try {
         if (isEditing && propertyId && property) {
+          if (!activeOrganizationId) {
+            toast.error("Organização do imóvel não identificada para confirmar o endereço.");
+            return;
+          }
           const expectedUpdatedAt = hydratedPropertyUpdatedAtRef.current;
           if (!expectedUpdatedAt) {
             toast.error(
@@ -909,11 +934,41 @@ export default function PropertyForm() {
             title: propertyData.title ?? undefined,
             expected_updated_at: expectedUpdatedAt,
           });
-          await updateProperty.mutateAsync({
+          const patchedProperty = await updateProperty.mutateAsync({
             id: propertyId,
             ...updateInput,
             expected_updated_at: expectedUpdatedAt,
           });
+          hydratedPropertyUpdatedAtRef.current = patchedProperty.updated_at;
+          hydratedPropertySnapshotRef.current =
+            patchedProperty as unknown as Record<string, unknown>;
+          let savedProperty;
+          let locationMatches = false;
+          try {
+            ({ savedProperty, matches: locationMatches } =
+              await readBackPropertyLocation(formData, async () => {
+                const { data } = await propertiesAPI.getProperty(
+                  propertyId,
+                  activeOrganizationId,
+                );
+                return data;
+              }));
+          } catch {
+            toast.error(
+              "A alteração foi enviada, mas não foi possível confirmar o endereço gravado. Mantenha esta edição aberta e confira antes de publicar.",
+            );
+            return;
+          }
+          if (!locationMatches) {
+            hydratedPropertyUpdatedAtRef.current = savedProperty.updated_at;
+            hydratedPropertySnapshotRef.current =
+              savedProperty as unknown as Record<string, unknown>;
+            toast.error(
+              "O imóvel foi salvo, mas o endereço não permaneceu gravado. Revise o bairro, cidade e UF antes de publicar.",
+            );
+            return;
+          }
+          toast.success("Imóvel atualizado!");
         } else {
           const createdProperty = await createProperty.mutateAsync(propertyData);
           const organizationId =
@@ -942,7 +997,7 @@ export default function PropertyForm() {
         markPropertyFormPristine();
         setHasConcurrencyConflict(false);
         clearDraft(draftKey);
-        router.push("/properties");
+        if (propertyId) navigateAfterSave(propertyId);
       } catch (error) {
         if (isPropertyWorkspaceConflict(error)) {
           setHasConcurrencyConflict(true);
@@ -1487,17 +1542,14 @@ export default function PropertyForm() {
           onValueChange={setActiveTab}
           className="flex-1 min-h-0 flex flex-col gap-3"
         >
-          <div className="flex min-w-0 flex-shrink-0 items-center gap-2">
-            <div
-              data-collapse="compact"
-              className="app-responsive-tab-list property-form-tabs-icon-only min-w-0 flex-1"
-            >
+          <div className="flex min-w-0 flex-shrink-0 flex-col gap-2 lg:flex-row lg:items-center">
+            <div className="app-responsive-tab-list property-form-tabs-icon-only min-w-0 w-full lg:flex-1">
               <TooltipProvider delayDuration={0} skipDelayDuration={0}>
                 <TabsList
                   data-tour="property-form-tabs"
                   data-responsive-tab-scroll
                   aria-label="Etapas do formulário do imóvel"
-                  className="inline-flex h-8 w-fit max-w-full justify-start overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 text-[var(--app-text-secondary)] shadow-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="inline-flex h-9 w-full justify-start overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 text-[var(--app-text-secondary)] shadow-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   {tabs.map((tab) => {
                     const Icon = tab.icon;
@@ -1520,11 +1572,11 @@ export default function PropertyForm() {
                             aria-label={tab.label}
                             className={propertyFormTabTriggerClass}
                           >
-                            <Icon aria-hidden="true" className="h-3 w-3" />
+                            <Icon aria-hidden="true" className="h-4 w-4" />
                             {tabHasIssue && (
                               <span
                                 data-responsive-tab-badge
-                                className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+                                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
                               />
                             )}
                           </TabsTrigger>
@@ -1542,12 +1594,12 @@ export default function PropertyForm() {
                 </TabsList>
               </TooltipProvider>
             </div>
-            <div className="ml-auto grid w-auto flex-shrink-0 grid-cols-2 items-center gap-2 sm:flex">
+            <div className="grid w-full flex-shrink-0 grid-cols-2 items-center gap-2 sm:flex sm:justify-end lg:ml-auto lg:w-auto">
               <Button
                 type="button"
                 variant="ghost"
                 disabled={createProperty.isPending || isPersistingMedia}
-                className="h-9 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-foreground shadow-none hover:bg-[var(--app-surface-hover)]"
+                className="h-9 min-w-0 whitespace-nowrap rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-foreground shadow-none hover:bg-[var(--app-surface-hover)]"
                 onClick={() => {
                   if (!confirmFormNavigation()) return;
                   releaseStagedPropertyPhotos([
@@ -1563,11 +1615,12 @@ export default function PropertyForm() {
               <Button
                 data-tour="property-save-button"
                 type="submit"
-                className="h-9 min-w-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                className="h-9 min-w-0 whitespace-nowrap rounded-[6px] bg-primary px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
                 disabled={
                   createProperty.isPending ||
                   updateProperty.isPending ||
                   isPersistingMedia ||
+                  isCepLoading ||
                   hasConcurrencyConflict ||
                   !canEdit
                 }

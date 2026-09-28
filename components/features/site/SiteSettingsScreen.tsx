@@ -5,7 +5,7 @@
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
-import { useOrganizationSite, useCreateOrganizationSite, useUpdateOrganizationSite, type OrganizationSite } from "@/hooks/use-organization-site";
+import { useOrganizationSite, useCreateOrganizationSite, useUpdateOrganizationSite, useUpdateSiteFooterLogo, type OrganizationSite } from "@/hooks/use-organization-site";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -201,6 +201,7 @@ export default function SiteSettings() {
   } = useOrganizationSite();
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
+  const updateFooterLogo = useUpdateSiteFooterLogo();
   const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin =
@@ -626,6 +627,9 @@ export default function SiteSettings() {
                   onOpenDomainGuide={() => setGeneralView('domain-guide')}
                   onUploadLogo={async (url) => {
                     await updateSite.mutateAsync({ logo_url: url || null });
+                  }}
+                  onUploadFooterLogo={async (url) => {
+                    await updateFooterLogo.mutateAsync(url);
                   }}
                   onUploadFavicon={async (url) => {
                     await updateSite.mutateAsync({ favicon_url: url || null });

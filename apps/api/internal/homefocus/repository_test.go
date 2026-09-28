@@ -60,12 +60,28 @@ func TestResolveScopeMatchesAttentionVisibility(t *testing.T) {
 		t.Fatalf("organization scope = %q %#v, %v", mode, userIDs, err)
 	}
 
+	manager := tenant.Context{
+		UserID:      "manager-1",
+		MemberRole:  "manager",
+		Permissions: []string{permissions.LeadViewAll},
+	}
+	mode, userIDs, err = resolveScope(manager, "organization")
+	if err != nil || mode != "organization" || len(userIDs) != 0 {
+		t.Fatalf("manager organization scope = %q %#v, %v", mode, userIDs, err)
+	}
+	if _, _, err := resolveScope(leader, "organization"); err == nil {
+		t.Fatal("team leader received organization scope")
+	}
+
 	regular := tenant.Context{
 		UserID:      "user-1",
 		Permissions: []string{permissions.LeadViewOwn},
 	}
 	if _, _, err := resolveScope(regular, "team"); err == nil {
 		t.Fatal("regular user received team scope")
+	}
+	if _, _, err := resolveScope(regular, "organization"); err == nil {
+		t.Fatal("regular user received organization scope")
 	}
 }
 

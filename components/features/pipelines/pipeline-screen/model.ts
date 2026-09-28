@@ -2,6 +2,7 @@ import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
 import type { StageAutomation } from '@/hooks/use-stage-automations';
 import type { PendingPipelineMove } from '@/lib/pipeline-board-cache';
 import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
+import { getLeadDisplayValue } from '@/lib/lead-display-value';
 export { getErrorObjectMessage as getPipelineErrorMessage } from '@/lib/api/vimob-error';
 export { formatCompactBRLCurrency as formatCompactCurrency } from '@/lib/utils/formatting';
 
@@ -129,18 +130,7 @@ export function buildStageValueMap(stages: StageWithLeads[]) {
     for (const lead of stage.leads || []) {
       if (!lead) continue;
 
-      const interestValue = Number(lead.valor_interesse || 0);
-      const propertyPrice =
-        lead.interest_property && typeof lead.interest_property === 'object'
-          ? Number(lead.interest_property.preco || 0)
-          : 0;
-      const leadValue =
-        Number.isFinite(interestValue) && interestValue > 0
-          ? interestValue
-          : Number.isFinite(propertyPrice) && propertyPrice > 0
-            ? propertyPrice
-            : 0;
-      totalValue += leadValue;
+      totalValue += getLeadDisplayValue(lead);
     }
 
     if (totalValue > 0) map.set(stage.id, { totalValue });

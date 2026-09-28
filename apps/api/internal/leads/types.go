@@ -29,6 +29,7 @@ var (
 	ErrLeadPhoneConflict          = errors.New("lead phone already exists")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
 	ErrLeadNotFound               = errors.New("lead not found")
+	ErrLeadStageChanged           = errors.New("lead stage changed since it was loaded")
 	ErrNoLeadChanges              = errors.New("no lead changes provided")
 	ErrTagAlreadyExists           = errors.New("tag already exists on lead")
 	ErrLeadSourceAlreadyExists    = errors.New("lead source already exists")
@@ -36,41 +37,46 @@ var (
 )
 
 type Lead struct {
-	ID                   string       `json:"id"`
-	OrganizationID       string       `json:"organizationId"`
-	Name                 string       `json:"name"`
-	Email                string       `json:"email,omitempty"`
-	Phone                string       `json:"phone,omitempty"`
-	Source               string       `json:"source"`
-	Status               string       `json:"status"`
-	DealStatus           string       `json:"dealStatus"`
-	LostReason           string       `json:"lostReason,omitempty"`
-	Priority             string       `json:"priority"`
-	Message              string       `json:"message,omitempty"`
-	PropertyCode         string       `json:"propertyCode,omitempty"`
-	PropertyID           string       `json:"propertyId,omitempty"`
-	InterestPropertyID   string       `json:"interestPropertyId,omitempty"`
-	PipelineID           string       `json:"pipelineId,omitempty"`
-	StageID              string       `json:"stageId,omitempty"`
-	AssignedUserID       string       `json:"assignedUserId,omitempty"`
-	TeamID               string       `json:"teamId,omitempty"`
-	InterestValue        string       `json:"interestValue,omitempty"`
-	CommissionPercentage string       `json:"commissionPercentage,omitempty"`
-	Feedback             string       `json:"feedback,omitempty"`
-	FinalidadeCompra     string       `json:"finalidadeCompra,omitempty"`
-	Trabalha             *bool        `json:"trabalha,omitempty"`
-	ProcuraFinanciamento *bool        `json:"procuraFinanciamento,omitempty"`
-	IsOwnResource        *bool        `json:"isOwnResource,omitempty"`
-	ReentryCount         int          `json:"reentryCount"`
-	Stage                *Stage       `json:"stage,omitempty"`
-	Assignee             *Assignee    `json:"assignee,omitempty"`
-	CreatedAt            time.Time    `json:"createdAt"`
-	UpdatedAt            time.Time    `json:"updatedAt"`
-	StageEnteredAt       *time.Time   `json:"stageEnteredAt,omitempty"`
-	BoardOrderAt         *time.Time   `json:"boardOrderAt,omitempty"`
-	LastContactAt        *time.Time   `json:"lastContactAt,omitempty"`
-	NextFollowUpAt       *time.Time   `json:"nextFollowUpAt,omitempty"`
-	AdditionalFields     LeadMetadata `json:"additionalFields,omitempty"`
+	ID                        string       `json:"id"`
+	OrganizationID            string       `json:"organizationId"`
+	Name                      string       `json:"name"`
+	Email                     string       `json:"email,omitempty"`
+	Phone                     string       `json:"phone,omitempty"`
+	Source                    string       `json:"source"`
+	Status                    string       `json:"status"`
+	DealStatus                string       `json:"dealStatus"`
+	LostReason                string       `json:"lostReason,omitempty"`
+	Priority                  string       `json:"priority"`
+	Message                   string       `json:"message,omitempty"`
+	PropertyCode              string       `json:"propertyCode,omitempty"`
+	PropertyID                string       `json:"propertyId,omitempty"`
+	InterestPropertyID        string       `json:"interestPropertyId,omitempty"`
+	PipelineID                string       `json:"pipelineId,omitempty"`
+	StageID                   string       `json:"stageId,omitempty"`
+	AssignedUserID            string       `json:"assignedUserId,omitempty"`
+	TeamID                    string       `json:"teamId,omitempty"`
+	CanOperate                *bool        `json:"canOperate,omitempty"`
+	InterestValue             string       `json:"interestValue,omitempty"`
+	CommissionPercentage      string       `json:"commissionPercentage,omitempty"`
+	Feedback                  string       `json:"feedback,omitempty"`
+	FinalidadeCompra          string       `json:"finalidadeCompra,omitempty"`
+	Trabalha                  *bool        `json:"trabalha,omitempty"`
+	ProcuraFinanciamento      *bool        `json:"procuraFinanciamento,omitempty"`
+	IsOwnResource             *bool        `json:"isOwnResource,omitempty"`
+	ReentryCount              int          `json:"reentryCount"`
+	Stage                     *Stage       `json:"stage,omitempty"`
+	Assignee                  *Assignee    `json:"assignee,omitempty"`
+	CreatedAt                 time.Time    `json:"createdAt"`
+	UpdatedAt                 time.Time    `json:"updatedAt"`
+	StageEnteredAt            *time.Time   `json:"stageEnteredAt,omitempty"`
+	BoardOrderAt              *time.Time   `json:"boardOrderAt,omitempty"`
+	LastContactAt             *time.Time   `json:"lastContactAt,omitempty"`
+	NextFollowUpAt            *time.Time   `json:"nextFollowUpAt,omitempty"`
+	FirstResponseAt           *time.Time   `json:"firstResponseAt,omitempty"`
+	FirstResponseSeconds      *int         `json:"firstResponseSeconds,omitempty"`
+	FirstResponseChannel      *string      `json:"firstResponseChannel,omitempty"`
+	FirstResponseIsAutomation *bool        `json:"firstResponseIsAutomation,omitempty"`
+	AdditionalFields          LeadMetadata `json:"additionalFields,omitempty"`
 
 	WhatsAppAvatarURL         *string    `json:"whatsappAvatarUrl,omitempty"`
 	WhatsAppAvatarSyncedAt    *time.Time `json:"whatsappAvatarSyncedAt,omitempty"`
@@ -287,21 +293,23 @@ type tagInput struct {
 }
 
 type MoveStageRequest struct {
-	StageID       string     `json:"stageId"`
-	IsOwnResource *bool      `json:"isOwnResource,omitempty"`
-	BoardOrderAt  *time.Time `json:"boardOrderAt,omitempty"`
-	LostReason    *string    `json:"lostReason,omitempty"`
+	StageID         string      `json:"stageId"`
+	ExpectedStageID patchString `json:"expectedStageId,omitempty"`
+	IsOwnResource   *bool       `json:"isOwnResource,omitempty"`
+	BoardOrderAt    *time.Time  `json:"boardOrderAt,omitempty"`
+	LostReason      *string     `json:"lostReason,omitempty"`
 	// StageEnteredAt is kept temporarily for compatibility with older clients
 	// that used this field as the visual Kanban order.
 	StageEnteredAt *time.Time `json:"stageEnteredAt,omitempty"`
 }
 
 type moveStageInput struct {
-	StageID        string
-	IsOwnResource  *bool
-	BoardOrderAt   *time.Time
-	StageEnteredAt *time.Time
-	LostReason     *string
+	StageID         string
+	ExpectedStageID patchString
+	IsOwnResource   *bool
+	BoardOrderAt    *time.Time
+	StageEnteredAt  *time.Time
+	LostReason      *string
 }
 
 type moveStageResult struct {
@@ -326,6 +334,10 @@ type RoundRobinResult struct {
 	RoundRobinUsed bool   `json:"roundRobinUsed"`
 	RoundRobinID   string `json:"roundRobinId,omitempty"`
 	Error          string `json:"error,omitempty"`
+}
+
+type RedistributeRoundRobinRequest struct {
+	ExpectedUnassigned bool `json:"expectedUnassigned"`
 }
 
 func (field *patchString) UnmarshalJSON(data []byte) error {
@@ -629,6 +641,13 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 	if !ok {
 		return moveStageInput{}, fmt.Errorf("%w: stageId is invalid", ErrInvalidInput)
 	}
+	if request.ExpectedStageID.Set && request.ExpectedStageID.Value != nil {
+		expectedStageID, valid := normalizeUUID(*request.ExpectedStageID.Value)
+		if !valid {
+			return moveStageInput{}, fmt.Errorf("%w: expectedStageId is invalid", ErrInvalidInput)
+		}
+		request.ExpectedStageID.Value = &expectedStageID
+	}
 
 	if request.StageEnteredAt != nil && request.StageEnteredAt.IsZero() {
 		return moveStageInput{}, fmt.Errorf("%w: stageEnteredAt is invalid", ErrInvalidInput)
@@ -649,11 +668,12 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 	}
 
 	return moveStageInput{
-		StageID:        stageID,
-		IsOwnResource:  request.IsOwnResource,
-		BoardOrderAt:   request.BoardOrderAt,
-		StageEnteredAt: request.StageEnteredAt,
-		LostReason:     lostReason,
+		StageID:         stageID,
+		ExpectedStageID: request.ExpectedStageID,
+		IsOwnResource:   request.IsOwnResource,
+		BoardOrderAt:    request.BoardOrderAt,
+		StageEnteredAt:  request.StageEnteredAt,
+		LostReason:      lostReason,
 	}, nil
 }
 

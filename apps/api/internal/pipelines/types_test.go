@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUpdateStageRequestPreservesQualifiedPatchPresence(t *testing.T) {
@@ -31,6 +32,31 @@ func TestUpdateStageRequestPreservesQualifiedPatchPresence(t *testing.T) {
 			}
 			if got := *input.IsQualified.Value; got != testCase.want {
 				t.Fatalf("isQualified = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestReorderStagesRequestRequiresVersionForExistingRows(t *testing.T) {
+	stageID := "11111111-1111-4111-8111-111111111111"
+	updatedAt := time.Date(2026, 9, 27, 12, 30, 0, 0, time.UTC)
+	for _, testCase := range []struct {
+		name    string
+		item    StageOrderItem
+		wantErr bool
+	}{
+		{name: "existing without version", item: StageOrderItem{ID: stageID, Name: "Contato"}, wantErr: true},
+		{name: "existing with version", item: StageOrderItem{ID: stageID, Name: "Contato", ExpectedUpdatedAt: &updatedAt}},
+		{name: "new without version", item: StageOrderItem{ID: stageID, Name: "Contato", IsNew: true}},
+		{name: "new with version", item: StageOrderItem{ID: stageID, Name: "Contato", IsNew: true, ExpectedUpdatedAt: &updatedAt}, wantErr: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := (ReorderStagesRequest{Stages: []StageOrderItem{testCase.item}}).Validate()
+			if (err != nil) != testCase.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr = %v", err, testCase.wantErr)
+			}
+			if testCase.wantErr && !errors.Is(err, ErrInvalidInput) && !errors.Is(err, ErrStagesChanged) {
+				t.Fatalf("Validate() error = %v, want invalid input or stage conflict", err)
 			}
 		})
 	}

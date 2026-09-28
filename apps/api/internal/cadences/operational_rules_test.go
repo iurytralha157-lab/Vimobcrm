@@ -98,6 +98,39 @@ func TestNormalizeOperationalRulesRejectsUnsafeOrAmbiguousRules(t *testing.T) {
 	}
 }
 
+func TestLegacyOperationalTaskPositionsNormalizeOnlyReadModel(t *testing.T) {
+	tasks := []OperationalCadenceTask{
+		{Position: 0, Title: "Primeira"},
+		{Position: 0, Title: "Segunda"},
+		{Position: 1, Title: "Terceira"},
+	}
+	normalizeLegacyOperationalTaskPositions(tasks)
+	for index, task := range tasks {
+		if task.Position != index {
+			t.Fatalf("task %q moved or retained duplicate position: %#v", task.Title, tasks)
+		}
+	}
+
+	request := validOperationalRulesRequest()
+	request.Cadence.Tasks = []OperationalCadenceTask{
+		{Position: 0, Type: "call", Title: "Primeira", DueMinutes: 60},
+		{Position: 0, Type: "message", Title: "Segunda", DueMinutes: 120},
+	}
+	if _, err := normalizeOperationalRulesRequest(testStageID, request); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("write must still reject duplicate positions, got %v", err)
+	}
+	normalizeLegacyOperationalTaskPositions(request.Cadence.Tasks)
+	if _, err := normalizeOperationalRulesRequest(testStageID, request); err != nil {
+		t.Fatalf("normalized read model should be safe to save: %v", err)
+	}
+
+	sparse := []OperationalCadenceTask{{Position: 3}, {Position: 9}}
+	normalizeLegacyOperationalTaskPositions(sparse)
+	if sparse[0].Position != 3 || sparse[1].Position != 9 {
+		t.Fatalf("valid sparse positions should not change: %#v", sparse)
+	}
+}
+
 func validOperationalRulesRequest() OperationalRulesRequest {
 	return OperationalRulesRequest{
 		StageID:    testStageID,

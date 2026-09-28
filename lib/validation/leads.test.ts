@@ -3,6 +3,7 @@ import test from 'node:test'
 import { mergePreservingDefinedFields } from '../merge-preserving-defined'
 import {
   apiLeadListResponseSchema,
+  apiLeadResponseSchema,
   apiLeadSensitiveProfileResponseSchema,
   leadCreateInputSchema,
   leadCustomSourceNameSchema,
@@ -21,6 +22,35 @@ import {
 
 const ID = '11111111-1111-4111-8111-111111111111'
 const ORG_ID = '22222222-2222-4222-8222-222222222222'
+
+test('contrato de leitura do lead preserva primeiro contato persistido', () => {
+  const payload = {
+    data: {
+      id: ID,
+      organizationId: ORG_ID,
+      name: 'Lead de teste',
+      source: 'manual',
+      status: 'new',
+      dealStatus: 'open',
+      priority: 'normal',
+      reentryCount: 0,
+      createdAt: '2026-07-15T19:06:00Z',
+      updatedAt: '2026-07-29T08:30:15Z',
+      firstResponseAt: '2026-07-29T08:30:15Z',
+      firstResponseSeconds: 1171455,
+      firstResponseChannel: 'phone',
+      firstResponseIsAutomation: false,
+    },
+  }
+  const parsed = apiLeadResponseSchema.parse(payload)
+  assert.equal(parsed.data.firstResponseAt, payload.data.firstResponseAt)
+  assert.equal(parsed.data.firstResponseSeconds, 1171455)
+  assert.equal(parsed.data.firstResponseChannel, 'phone')
+  assert.equal(parsed.data.firstResponseIsAutomation, false)
+  assert.equal(apiLeadResponseSchema.safeParse({
+    data: { ...payload.data, firstResponseSeconds: -1 },
+  }).success, false)
+})
 
 test('normaliza e limita o nome de uma origem criada pelo usuario', () => {
   assert.equal(
@@ -293,6 +323,19 @@ test('valida a ordem visual separada do relogio da etapa', () => {
   assert.equal(leadMoveStageInputSchema.safeParse({
     stageId: ID,
     stageEnteredAt: '2026-07-12T15:30:00Z',
+  }).success, false)
+})
+
+test('envia a etapa de origem para rejeitar um movimento baseado em estado antigo', () => {
+  const result = leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    expectedStageId: ID,
+  })
+  assert.equal(result.success, true)
+  if (result.success) assert.equal(result.data.expectedStageId, ID)
+  assert.equal(leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    expectedStageId: 'etapa-invalida',
   }).success, false)
 })
 

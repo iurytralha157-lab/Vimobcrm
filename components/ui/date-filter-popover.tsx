@@ -176,7 +176,7 @@ export function DateFilterPopover({
                 {/* Apply button */}
                 <Button
                   size="sm"
-                  className="h-9 w-full rounded-[6px] font-medium"
+                  className="h-9 w-full rounded-[6px] font-light"
                   disabled={!tempDateRange.from || !tempDateRange.to}
                   onClick={handleApplyCustomDate}
                 >
@@ -187,7 +187,7 @@ export function DateFilterPopover({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[10px] font-medium text-[var(--app-text-tertiary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
+                    className="h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
                     onClick={handleClearDate}
                   >
                     Limpar período
@@ -243,14 +243,14 @@ export function DateFilterPopover({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 border-0 bg-primary/10 text-xs font-bold uppercase tracking-tight text-primary shadow-none hover:bg-primary/15 hover:text-primary"
+                  className="h-8 border-0 bg-[var(--app-surface-soft)] text-xs font-light uppercase tracking-tight text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
                   onClick={() => setTempDateRange({})}
                 >
                   Limpar
                 </Button>
                 <Button
                   size="sm"
-                  className="h-8 text-xs font-bold uppercase tracking-tight bg-primary hover:bg-primary/90"
+                  className="h-8 text-xs font-light uppercase tracking-tight bg-primary hover:bg-primary/90"
                   disabled={!tempDateRange.from || !tempDateRange.to}
                   onClick={handleApplyCustomDate}
                 >

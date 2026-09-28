@@ -58,6 +58,22 @@ func TestSanitizeSitePayloadValidatesPublicAddress(t *testing.T) {
 	}
 }
 
+func TestSanitizeSitePayloadPreservesOptionalFooterLogo(t *testing.T) {
+	url := "https://cdn.example.com/footer.png"
+	payload, err := sanitizeSitePayload(map[string]any{"footer_logo_url": " " + url + " "})
+	if err != nil {
+		t.Fatalf("sanitize footer logo: %v", err)
+	}
+	if payload["footer_logo_url"] != url {
+		t.Fatalf("footer logo was not preserved: %#v", payload)
+	}
+
+	payload, err = sanitizeSitePayload(map[string]any{"footer_logo_url": nil})
+	if err != nil || payload["footer_logo_url"] != nil {
+		t.Fatalf("footer logo removal must remain null: %#v, %v", payload, err)
+	}
+}
+
 func TestEnrichTrackingLocationFromInfrastructureHeaders(t *testing.T) {
 	request := PublicTrackingRequest{}
 	header := http.Header{

@@ -10,10 +10,11 @@ import { Pencil, Trash2, Zap, Clock, Bell, User, Trophy, XCircle, Circle } from 
 interface AutomationsListProps {
   stageId: string;
   pipelineId?: string;
+  canEdit?: boolean;
   onEdit?: (automation: StageAutomation) => void;
 }
 
-export function AutomationsList({ stageId, onEdit }: AutomationsListProps) {
+export function AutomationsList({ stageId, canEdit = false, onEdit }: AutomationsListProps) {
   const { data: automations, isLoading } = useStageAutomations(stageId);
   const { data: users } = useOrganizationUsers();
   const deleteAutomation = useDeleteStageAutomation();
@@ -87,7 +88,7 @@ export function AutomationsList({ stageId, onEdit }: AutomationsListProps) {
       <div className="text-center py-8 text-muted-foreground">
         <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
         <p>Nenhuma automação configurada</p>
-        <p className="text-sm">Adicione uma automação para este estágio</p>
+        {canEdit && <p className="text-sm">Adicione uma automação para este estágio</p>}
       </div>
     );
   }
@@ -113,7 +114,7 @@ export function AutomationsList({ stageId, onEdit }: AutomationsListProps) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 shrink-0">
+              {canEdit && <div className="flex items-center gap-1 shrink-0">
                 <Switch
                   checked={automation.is_active ?? true}
                   onCheckedChange={(checked) =>
@@ -160,7 +161,7 @@ export function AutomationsList({ stageId, onEdit }: AutomationsListProps) {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-              </div>
+              </div>}
             </div>
           </CardContent>
         </Card>

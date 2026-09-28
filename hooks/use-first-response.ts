@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { leadsAPI } from '@/lib/api/leads';
 
 interface RecordFirstResponseParams {
@@ -14,6 +14,7 @@ interface RecordFirstResponseParams {
  * Chama a edge function calculate-first-response.
  */
 export function useRecordFirstResponse() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (params: RecordFirstResponseParams) => {
       return leadsAPI.recordFirstResponse(params.leadId, {
@@ -23,6 +24,13 @@ export function useRecordFirstResponse() {
         isAutomation: params.isAutomation,
       });
     },
+    onSuccess: (result, params) => {
+      if (result.recorded !== true) return;
+      void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', params.leadId] });
+      void queryClient.invalidateQueries({ queryKey: ['lead'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-first-contact'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-first-contact-leads'] });
+    },
   });
 }
 
@@ -31,44 +39,32 @@ interface CheckAndRecordParams {
   organizationId: string;
   channel: 'whatsapp' | 'phone' | 'email';
   actorUserId: string | null;
-  firstResponseAt?: string | null; // Se já existe, não faz nada
+  firstResponseAt?: string | null;
+  firstResponseIsAutomation?: boolean | null;
 }
 
 /**
- * Hook que verifica se já existe first_response_at antes de registrar.
- * Garante idempotência - não sobrescreve registro existente.
+ * A API decide de forma atômica se é a primeira resposta humana. Uma resposta
+ * automática anterior não impede o primeiro contato feito pelo corretor.
  */
 export function useRecordFirstResponseOnAction() {
   const recordMutation = useRecordFirstResponse();
 
   const recordFirstResponse = async (params: CheckAndRecordParams) => {
-    // Se já tem first_response_at, não faz nada
-    if (params.firstResponseAt) {
-      console.log('Lead já tem first_response_at, pulando registro');
+    if (params.firstResponseAt && !params.firstResponseIsAutomation) {
       return null;
     }
 
-    // Se não tem organizationId, não pode registrar
     if (!params.organizationId) {
-      console.warn('organizationId não fornecido, pulando registro de first response');
-      return null;
+      throw new Error('Organização indisponível para registrar o primeiro contato.');
     }
 
-    try {
-      const result = await recordMutation.mutateAsync({
-        leadId: params.leadId,
-        organizationId: params.organizationId,
-        channel: params.channel,
-        actorUserId: params.actorUserId,
-      });
-
-      console.log('First response registrado:', result);
-      return result;
-    } catch (error) {
-      // Não bloqueia a ação do usuário se der erro
-      console.error('Erro ao registrar first response (não bloqueante):', error);
-      return null;
-    }
+    return recordMutation.mutateAsync({
+      leadId: params.leadId,
+      organizationId: params.organizationId,
+      channel: params.channel,
+      actorUserId: params.actorUserId,
+    });
   };
 
   return {

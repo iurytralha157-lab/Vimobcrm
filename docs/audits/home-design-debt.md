@@ -6,15 +6,15 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 540
+- Arquivos analisados: 544
 - Arquivos com achados: 43
-- Achados: 114
+- Achados: 115
 - Arquivos protegidos/mistos com achados: 42
-- Achados alcançáveis pelo CRM protegido: 113
-- Distribuição por superfície: protected-only 103, protected-and-public 10, public-only 1, infraestrutura 0
+- Achados alcançáveis pelo CRM protegido: 114
+- Distribuição por superfície: protected-only 104, protected-and-public 10, public-only 1, infraestrutura 0
 - P1: 56
 - P2: 13
-- P3: 45
+- P3: 46
 
 ## Regras
 
@@ -27,7 +27,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P1 | Cor hardcoded | 33 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 4 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
-| P3 | Caixa alta/tracking | 45 | Preferir texto natural em 10–12px e peso 300. |
+| P3 | Caixa alta/tracking | 46 | Preferir texto natural em 10–12px e peso 300. |
 | P2 | Blur no painel | 0 | O overlay pode escurecer; o painel deve usar superfície sólida. |
 
 ## Arquivos prioritários
@@ -66,13 +66,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/whatsapp/conversations/ConversationListItem.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/contacts/contacts-screen/ContactsOverlays.tsx` | 2 | 1 | medium-shadow: 1 |
 | `components/features/whatsapp/message-bubble/MessageReactions.tsx` | 2 | 1 | medium-shadow: 1 |
 | `components/features/admin/AdminNotificationSettingsContent.tsx` | 1 | 1 | uppercase-tracking: 1 |
-| `components/features/dashboard/LeadDistributionSection.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/marketing/MarketingMediaGallery.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/marketing/MarketingPaidTable.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/round-robin/DistributionQueueEditorScreen.tsx` | 1 | 1 | uppercase-tracking: 1 |
@@ -114,13 +114,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/whatsapp/conversations/ConversationListItem.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/contacts/contacts-screen/ContactsOverlays.tsx` | 2 | 1 | medium-shadow: 1 |
 | `components/features/whatsapp/message-bubble/MessageReactions.tsx` | 2 | 1 | medium-shadow: 1 |
 | `components/features/admin/AdminNotificationSettingsContent.tsx` | 1 | 1 | uppercase-tracking: 1 |
-| `components/features/dashboard/LeadDistributionSection.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/marketing/MarketingMediaGallery.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/marketing/MarketingPaidTable.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/round-robin/DistributionQueueEditorScreen.tsx` | 1 | 1 | uppercase-tracking: 1 |

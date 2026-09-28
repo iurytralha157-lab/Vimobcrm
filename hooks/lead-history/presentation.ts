@@ -189,7 +189,7 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       if (metadata?.entry_type === 'manual_reentry') return 'Lead reentrou';
       if (metadata?.webhook_name) return `Lead reentrou via webhook "${metadata.webhook_name}"`;
       if (metadata?.source === 'whatsapp') return 'Lead reentrou via WhatsApp';
-      return `Lead reentrou via ${metadata?.source || 'sistema'}`;
+      return `Lead reentrou via ${sourceLabel(metadataString(metadata?.source)) || 'sistema'}`;
     }
     case 'status_change': {
       const from =
@@ -244,18 +244,22 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     case 'meeting_held':
       return 'Reunião realizada';
     default: {
-      if (metadata?.is_automation) return `Ação automática (${type})`;
+      if (metadata?.is_automation) return 'Ação automática registrada';
       const translations: Record<string, string> = {
         'call_made': 'Ligação realizada',
         'message_sent': 'Mensagem enviada',
         'contact_made': 'Contato realizado',
         'prospecting_report': 'Relatório de prospecção',
+        'message_received': 'Mensagem recebida',
+        'assignment_changed': 'Responsável alterado',
+        'lead_stage_changed': 'Etapa alterada',
+        'lost_lead_recovered': 'Lead recuperado',
         'agenda_created': 'Atividade agendada',
         'agenda_rescheduled': 'Atividade remarcada',
         'agenda_completed': 'Atividade concluída',
         'agenda_cancelled': 'Atividade cancelada'
       };
-      return translations[type] || type.replace(/_/g, ' ');
+      return translations[type] || 'Atividade registrada';
     }
   }
 }
@@ -269,7 +273,7 @@ export function buildContent(
     case 'first_response': {
       const secs = metadata?.response_seconds;
       if (secs !== undefined && secs !== null) {
-        return `Primeiro contato: ${formatters.formatResponseTime(Number(secs))}`;
+        return `${metadata?.is_automation ? 'Resposta automática' : 'Primeiro contato'}: ${formatters.formatResponseTime(Number(secs))}`;
       }
       return undefined;
     }

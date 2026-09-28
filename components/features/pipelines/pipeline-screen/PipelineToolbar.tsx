@@ -157,7 +157,7 @@ export function PipelineToolbar({
   onCreateLead,
 }: PipelineToolbarProps) {
   return (
-    <div className={cn('flex flex-col gap-2 px-2 pt-2', isMobile ? 'mb-2' : 'mb-4')}>
+    <div className={cn('flex flex-col gap-2 px-2', isMobile ? 'mb-2 pt-2' : 'mb-3')}>
       <div className="flex flex-row items-center justify-between gap-2 lg:gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex h-10 min-w-0 items-center overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-1 text-[var(--app-text-primary)] shadow-none">
@@ -179,12 +179,12 @@ export function PipelineToolbar({
                 align="start"
                 sideOffset={8}
                 collisionPadding={12}
-                className="app-header-popover w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)]"
+                className="app-header-popover w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2 text-[var(--app-text-primary)]"
               >
-                <p className="px-3 pb-1.5 pt-3 text-[10px] font-light text-muted-foreground">
+                <p className="px-2.5 pb-2 pt-1 text-[10px] font-light text-muted-foreground">
                   Suas pipelines
                 </p>
-                <div className="pipeline-selector-scroll max-h-[320px] overflow-y-auto px-1 pb-1">
+                <div className="pipeline-selector-scroll max-h-[320px] space-y-1 overflow-y-auto">
                   {pipelines.map((pipeline) => (
                     <div
                       key={pipeline.id}
@@ -194,14 +194,16 @@ export function PipelineToolbar({
                       <DropdownMenuItem
                         onSelect={() => onSelectPipeline(pipeline.id)}
                         className={cn(
-                          'flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2 py-2 text-[12px] font-light text-muted-foreground outline-none hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)] focus:text-foreground',
+                          'flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2.5 py-0 text-[12px] font-light text-muted-foreground outline-none hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)] focus:text-foreground',
                           pipeline.id === selectedPipelineId &&
                             'bg-[var(--app-surface-soft)] font-normal text-primary focus:text-primary',
                         )}
                       >
-                        <span className="min-w-0 flex-1 truncate">{pipeline.name}</span>
+                        <span className={cn('min-w-0 flex-1 truncate', pipeline.id === selectedPipelineId && 'text-primary')}>
+                          {pipeline.name}
+                        </span>
                         {pipeline.id === selectedPipelineId && (
-                          <Check className="h-3.5 w-3.5 shrink-0" />
+                          <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
                         )}
                       </DropdownMenuItem>
                       {canEditPipeline && (
@@ -225,12 +227,12 @@ export function PipelineToolbar({
                 </div>
                 {canEditPipeline && (
                   <>
-                    <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
+                    <DropdownMenuSeparator className="mx-1 my-2 bg-[var(--app-border)]" />
                     <DropdownMenuItem
                       onClick={onRequestNewPipeline}
-                      className="cursor-pointer rounded-[6px] bg-primary/10 py-2 text-[12px] font-light text-primary hover:bg-primary/15 focus:bg-primary/15 focus:text-primary"
+                      className="h-9 cursor-pointer gap-2 rounded-[6px] bg-primary/10 px-2.5 py-0 text-[12px] font-light text-primary hover:bg-primary/15 focus:bg-primary/15 focus:text-primary"
                     >
-                      <Plus className="mr-2 h-4 w-4" />
+                      <Plus className="h-4 w-4" />
                       Nova Pipeline
                     </DropdownMenuItem>
                   </>
@@ -355,7 +357,7 @@ export function PipelineToolbar({
               }}
               tourPrefix="pipeline"
               mobileIconOnly
-              triggerClassName="!text-[10px] !font-light !leading-[15px]"
+              triggerClassName="bg-[var(--app-surface-soft)] text-[10px] font-light hover:bg-[var(--app-surface-hover)]"
             />
           </div>
 
@@ -363,11 +365,11 @@ export function PipelineToolbar({
             <Button
               data-tour="pipeline-new-lead"
               size="sm"
-              className="h-8 rounded-[6px] bg-primary/50 px-4 text-[12px] font-light text-white shadow-none transition-colors hover:bg-primary focus-visible:ring-1 focus-visible:ring-primary/40"
+              className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
               onClick={onCreateLead}
             >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Novo Lead
+              <Plus className="h-4 w-4" />
+              <span>Novo Lead</span>
             </Button>
           )}
         </div>

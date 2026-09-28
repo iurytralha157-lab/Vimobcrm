@@ -679,6 +679,63 @@ func TestOwnershipPrimarySplitAndExternalAssetLifecycleAgainstDatabase(t *testin
 	if firstAssetID == "" || secondAssetID == "" || secondAssetInitialVersion == "" {
 		t.Fatalf("asset response omitted identity/version: first=%#v second=%#v", firstAsset, secondAsset)
 	}
+	// Both clients requested the default document position while the photo type
+	// already occupied that same number. The property lock must serialize the
+	// document inserts and keep their resulting positions distinct.
+	type documentCreateResult struct {
+		asset map[string]any
+		err   error
+	}
+	createStart := make(chan struct{})
+	createdDocuments := make(chan documentCreateResult, 2)
+	for index := 0; index < 2; index++ {
+		documentURL := fmt.Sprintf("https://cdn.example.test/properties/%s/document-%d.pdf", propertyID, index)
+		go func() {
+			<-createStart
+			asset, createErr := repository.CreatePropertyAsset(ctx, manager, propertyID, CreatePropertyAssetInput{
+				AssetType: "document", Visibility: "internal", ExternalURL: &documentURL,
+				SortOrder: 0, Metadata: map[string]any{"source": "concurrent-order"},
+			})
+			createdDocuments <- documentCreateResult{asset: asset, err: createErr}
+		}()
+	}
+	close(createStart)
+	documents := make([]map[string]any, 0, 3)
+	documentOrders := make(map[int]bool)
+	for index := 0; index < 2; index++ {
+		result := <-createdDocuments
+		if result.err != nil {
+			t.Fatalf("concurrent document create returned error: %v", result.err)
+		}
+		order := workspaceInt(result.asset, "sort_order")
+		if documentOrders[order] {
+			t.Fatalf("concurrent documents received duplicate sort_order %d", order)
+		}
+		documentOrders[order] = true
+		documents = append(documents, result.asset)
+	}
+	if !documentOrders[0] || !documentOrders[1] {
+		t.Fatalf("concurrent document orders = %#v, want 0 and 1", documentOrders)
+	}
+	freeDocumentURL := fmt.Sprintf("https://cdn.example.test/properties/%s/document-free.pdf", propertyID)
+	freeDocument, err := repository.CreatePropertyAsset(ctx, manager, propertyID, CreatePropertyAssetInput{
+		AssetType: "document", Visibility: "internal", ExternalURL: &freeDocumentURL,
+		SortOrder: 5, Metadata: map[string]any{"source": "free-order"},
+	})
+	if err != nil {
+		t.Fatalf("free document position create returned error: %v", err)
+	}
+	if order := workspaceInt(freeDocument, "sort_order"); order != 5 {
+		t.Fatalf("free document sort_order = %d, want requested 5", order)
+	}
+	documents = append(documents, freeDocument)
+	for _, document := range documents {
+		if _, err := repository.DeletePropertyAsset(ctx, manager, propertyID, workspaceString(document, "id"), DeletePropertyAssetInput{
+			ExpectedUpdatedAt: workspaceString(document, "updated_at"),
+		}); err != nil {
+			t.Fatalf("document order probe cleanup returned error: %v", err)
+		}
+	}
 
 	primaryAssets, err := repository.SetPrimaryPropertyAsset(ctx, manager, propertyID, secondAssetID, SetPrimaryPropertyAssetInput{
 		ExpectedUpdatedAt: secondAssetInitialVersion,

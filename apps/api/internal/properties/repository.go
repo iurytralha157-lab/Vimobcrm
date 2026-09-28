@@ -104,7 +104,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		addFilter("coalesce(p.aceita_financiamento, false) = $%d::boolean", *filter.AcceptsFinancing)
 	}
 	if filter.PublishedOnSite != nil {
-		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
+		addFilter(propertyPublishedOnSiteSQL("p", "site_publication")+" = $%d::boolean", *filter.PublishedOnSite)
 	}
 	if filter.OwnerID != "" {
 		addFilter(propertyOwnerFilterClause(), filter.OwnerID)
@@ -204,7 +204,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'is_featured', p.is_featured,
 				'destaque', p.destaque,
 				'super_destaque', p.super_destaque,
-				'published_on_site', p.published_on_site,
+				'published_on_site', `+propertyPublishedOnSiteSQL("p", "site_publication")+`,
 				'created_at', p.created_at,
 				'updated_at', p.updated_at,
 				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
@@ -231,6 +231,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		from public.properties p
 		join public.organizations property_organization
 		  on property_organization.id = p.organization_id
+		`+propertySitePublicationJoinSQL("p", "site_publication")+`
 		left join lateral (
 			select true as has_photo
 			from public.property_assets as any_photo
@@ -344,7 +345,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		addFilter("coalesce(p.aceita_financiamento, false) = $%d::boolean", *filter.AcceptsFinancing)
 	}
 	if filter.PublishedOnSite != nil {
-		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
+		addFilter(propertyPublishedOnSiteSQL("p", "site_publication")+" = $%d::boolean", *filter.PublishedOnSite)
 	}
 	if filter.OwnerID != "" {
 		addFilter(propertyOwnerFilterClause(), filter.OwnerID)
@@ -411,8 +412,9 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 			select
 				coalesce(nullif(lower(trim(p.status)), ''), 'active') as status,
 				`+propertyDealTypeSQL("p")+` as deal_type,
-				p.published_on_site
+				`+propertyPublishedOnSiteSQL("p", "site_publication")+` as published_on_site
 			from public.properties p
+			`+propertySitePublicationJoinSQL("p", "site_publication")+`
 			where `+strings.Join(where, " and ")+`
 		)
 		select
@@ -750,6 +752,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 	property, err := scanProperty(repo.db.Pool().QueryRow(ctx, `
 		select (
 			to_jsonb(p) || jsonb_build_object(
+				'published_on_site', `+propertyPublishedOnSiteSQL("p", "site_publication")+`,
 				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
 				'_property_owner_contact_visibility', coalesce(property_organization.property_owner_contact_visibility, 'hidden')
 			)
@@ -757,6 +760,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 		from public.properties p
 		join public.organizations property_organization
 		  on property_organization.id = p.organization_id
+		`+propertySitePublicationJoinSQL("p", "site_publication")+`
 		where `+strings.Join(where, " and ")+`
 		limit 1
 	`, args...))

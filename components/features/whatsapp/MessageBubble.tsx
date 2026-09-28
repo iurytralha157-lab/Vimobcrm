@@ -37,6 +37,7 @@ export interface MessageBubbleProps {
   conversationRemoteJid?: string | null;
   conversationSessionId?: string | null;
   compact?: boolean;
+  plainHistory?: boolean;
   reactionPickerPosition?: "inside" | "outside";
   reactions: GroupedWhatsAppReaction[];
   onReact?: (emoji: string) => unknown | Promise<unknown>;
@@ -63,6 +64,7 @@ const comparableMessageBubbleProps = [
   "conversationRemoteJid",
   "conversationSessionId",
   "compact",
+  "plainHistory",
   "reactionPickerPosition",
   "isReacting",
 ] as const satisfies readonly (keyof MessageBubbleProps)[];
@@ -102,6 +104,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationRemoteJid,
   conversationSessionId,
   compact = false,
+  plainHistory = false,
   reactionPickerPosition = "inside",
   reactions = [],
   onReact,
@@ -117,6 +120,7 @@ export const MessageBubble = memo(function MessageBubble({
   const audioAvatarInitial = audioAvatarName.charAt(0).toUpperCase() || (fromMe ? "V" : "C");
   const isMediaMessage = mediaKind !== "text" && mediaKind !== "reaction" && mediaKind !== "deleted";
   const isDeletedMessage = mediaKind === "deleted";
+  const isContentUnavailable = plainHistory && mediaKind === "text" && !safeContent.trim();
   const showInsideReactionPicker = reactionPickerPosition === "inside" && Boolean(onReact) && !isDeletedMessage;
   const showOutsideReactionPicker = reactionPickerPosition === "outside" && Boolean(onReact) && !isDeletedMessage;
 
@@ -152,7 +156,7 @@ export const MessageBubble = memo(function MessageBubble({
           "relative overflow-visible rounded-[8px] border-0 shadow-none transition-colors duration-200",
           fromMe
             ? "rounded-tr-[4px] bg-primary text-primary-foreground"
-            : "rounded-tl-[4px] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)]",
+            : cn("rounded-tl-[4px] text-[var(--app-text-primary)]", plainHistory ? "bg-[var(--lead-history-message-bg)]" : "bg-[var(--app-surface-soft)]"),
           (mediaKind === "image" || mediaKind === "video") && !content ? "p-[3px]" : "px-3 py-2",
         )}>
           {isMediaMessage && (
@@ -211,7 +215,10 @@ export const MessageBubble = memo(function MessageBubble({
                     <span>Esta mensagem foi apagada</span>
                   </div>
                 )}
-                {safeContent && mediaKind === "text" && (
+                {isContentUnavailable && (
+                  <span className="text-[11px] italic opacity-75">Conteúdo indisponível</span>
+                )}
+                {!isContentUnavailable && safeContent && mediaKind === "text" && (
                   <MessageText
                     content={safeContent}
                     fromMe={fromMe}

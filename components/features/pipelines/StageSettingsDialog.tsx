@@ -13,6 +13,13 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { AlertCircle, Loader2, Lock, Plus, Target, Trophy } from 'lucide-react';
 import { useCanEditCadences } from '@/hooks/use-can-edit-cadences';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import {
+  canManagePipeline,
+  canManageStageAutomations,
+  canViewStageAutomations,
+} from '@/lib/access/pipeline-settings-access';
 import { useUpdateStage } from '@/hooks/use-stages';
 import { toast } from 'sonner';
 import { AutomationForm } from '@/components/features/automations/AutomationForm';
@@ -51,7 +58,13 @@ export function StageSettingsDialog({
   const [isQualified, setIsQualified] = useState(stage?.is_qualified || false);
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
-  const canEdit = useCanEditCadences();
+  const { hasPermission } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
+  const canEditPipeline = canManagePipeline(hasPermission);
+  const canEditRules = useCanEditCadences();
+  const hasAutomationsModule = hasModule('automations');
+  const canViewAutomations = canViewStageAutomations(hasPermission, hasAutomationsModule);
+  const canEditAutomations = canManageStageAutomations(hasPermission, hasAutomationsModule);
 
   // Automation state
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
@@ -65,7 +78,7 @@ export function StageSettingsDialog({
       : stage?.is_active === false
         ? 'Ative esta coluna antes de usá-la como etapa de qualificação.'
         : null;
-  const canToggleQualification = canEdit && (!qualificationRestriction || isQualified);
+  const canToggleQualification = canEditPipeline && (!qualificationRestriction || isQualified);
 
   // Update local state when stage changes
   /* eslint-disable react-hooks/set-state-in-effect -- Keeps editable draft fields in sync with the selected stage. */
@@ -79,7 +92,7 @@ export function StageSettingsDialog({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSaveGeneral = async () => {
-    if (!stage || !canEdit || isSaving || saveInFlightRef.current) return;
+    if (!stage || !canEditPipeline || isSaving || saveInFlightRef.current) return;
     const normalizedName = name.trim();
     if (normalizedName.length < 2) {
       toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
@@ -131,7 +144,7 @@ export function StageSettingsDialog({
 
           {/* General Settings Tab */}
           <TabsContent value="general" className="space-y-4">
-            {!canEdit && (
+            {!canEditPipeline && (
               <Badge variant="secondary" className="gap-1 mb-4">
                 <Lock className="h-3 w-3" />
                 Somente visualização
@@ -144,14 +157,14 @@ export function StageSettingsDialog({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Nome do estágio"
-                disabled={!canEdit}
+                disabled={!canEditPipeline}
                 className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
               />
             </div>
 
             <div className="space-y-2">
               <Label>Cor da coluna</Label>
-              {canEdit ? (
+              {canEditPipeline ? (
                 <StageColorPicker value={color} onChange={setColor} />
               ) : (
                 <div className="flex items-center gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-2">
@@ -242,7 +255,7 @@ export function StageSettingsDialog({
               </div>
             </section>
 
-            {canEdit && (
+            {canEditPipeline && (
               <div className="flex gap-2 pt-4">
                 <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isSaving}>
                   Cancelar
@@ -264,18 +277,18 @@ export function StageSettingsDialog({
             <StageOperationalRules
               stageId={stage.id}
               stageName={stage.name}
-              canEdit={canEdit}
+              canEdit={canEditRules}
             />
           </TabsContent>
 
           {/* Automations Tab */}
           <TabsContent value="automations" className="space-y-4">
-            {!canEdit ? (
+            {!canViewAutomations ? (
               <div className="text-center py-8 text-muted-foreground text-sm">
                 <Lock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>Você não tem permissão para editar automações</p>
+                <p>Você não tem acesso às automações desta organização</p>
               </div>
-            ) : automationFormOpen || editingAutomation ? (
+            ) : canEditAutomations && (automationFormOpen || editingAutomation) ? (
               <div className="rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-4">
                 <h4 className="font-medium mb-4">
                   {editingAutomation ? 'Editar Automação' : 'Nova Automação'}
@@ -298,19 +311,22 @@ export function StageSettingsDialog({
               <>
                 <div className="flex items-center justify-between">
                   <Label className="text-base">Automações do Estágio</Label>
-                  <Button
-                    size="sm"
-                    onClick={() => setAutomationFormOpen(true)}
-                    className="bg-primary hover:bg-primary/90"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Adicionar
-                  </Button>
+                  {canEditAutomations && (
+                    <Button
+                      size="sm"
+                      onClick={() => setAutomationFormOpen(true)}
+                      className="bg-primary hover:bg-primary/90"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Adicionar
+                    </Button>
+                  )}
                 </div>
                 <AutomationsList
                   stageId={stage.id}
                   pipelineId={stage.pipeline_id || ''}
-                  onEdit={(automation) => setEditingAutomation(automation)}
+                  canEdit={canEditAutomations}
+                  onEdit={canEditAutomations ? (automation) => setEditingAutomation(automation) : undefined}
                 />
               </>
             )}

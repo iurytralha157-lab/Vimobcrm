@@ -8,9 +8,23 @@ import {
   buildPipelineStageRestorePlans,
   createPipelinePaginationStorageKey,
   getPipelineLeadPageCursor,
+  hasMorePipelineStageLeadsAfterPage,
   mergePipelineStageLoadedCounts,
   parsePipelineStageLoadedCounts,
 } from './pipeline-pagination-state';
+
+test('uma pagina vazia ou sem progresso encerra paginacao apesar de total antigo', () => {
+  const baseline = { totalCount: 48, loadedCount: 12, requestedCount: 12 };
+  assert.equal(hasMorePipelineStageLeadsAfterPage({
+    ...baseline, receivedCount: 0, addedCount: 0,
+  }), false);
+  assert.equal(hasMorePipelineStageLeadsAfterPage({
+    ...baseline, receivedCount: 12, addedCount: 0,
+  }), false);
+  assert.equal(hasMorePipelineStageLeadsAfterPage({
+    ...baseline, receivedCount: 12, addedCount: 12,
+  }), true);
+});
 
 test('cursor da coluna usa board_sort_at antes dos campos legados', () => {
   assert.deepEqual(

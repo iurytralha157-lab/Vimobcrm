@@ -48,6 +48,7 @@ import {
   useCreatePropertyOwnership,
   useEndPropertyOwnership,
   useMovePropertyKey,
+  usePropertyPublications,
   usePropertyWorkspace,
   useUpdatePropertyOwnership,
   useUpsertPropertyOffer,
@@ -91,6 +92,7 @@ import {
   PropertyWorkspaceTechnicalSection,
 } from "./detail/PropertyWorkspaceSections";
 import { PropertyPublicationCenter } from "./publication";
+import { getSitePublicationState } from "./publication/site-publication-state";
 
 const OFFER_LABELS: Record<PropertyOfferType, string> = {
   sale: "Venda",
@@ -255,6 +257,10 @@ export function PropertyWorkspaceScreen({
   const movementMutation = useMovePropertyKey(propertyId);
   const normalizedResourcesAvailable =
     workspaceQuery.data?.meta.normalized_resources_available ?? true;
+  const sitePublicationQuery = usePropertyPublications(
+    propertyId,
+    normalizedResourcesAvailable,
+  );
   const createOwnershipMutation = useCreatePropertyOwnership(propertyId);
   const updateOwnershipMutation = useUpdatePropertyOwnership(propertyId);
   const endOwnershipMutation = useEndPropertyOwnership(propertyId);
@@ -375,7 +381,14 @@ export function PropertyWorkspaceScreen({
     property.title ||
     `${property.tipo_de_imovel || property.tipo || "Imóvel"} em ${property.bairro || property.cidade || "localização não informada"}`;
   const propertyStatus = property.status || "Sem status";
-  const published = Boolean(property.published_on_site ?? property.anunciar);
+  const sitePublication = sitePublicationQuery.data?.data.publications.find(
+    (publication) => publication.channel === "site",
+  );
+  const sitePublicationState = getSitePublicationState(
+    sitePublication,
+    Boolean(property.published_on_site ?? property.anunciar),
+    !normalizedResourcesAvailable || sitePublicationQuery.isSuccess,
+  );
   const normalizedStatus = normalizeStatus(property.status);
   const isSold = normalizedStatus === "vendido" || normalizedStatus === "sold";
   const isReserved =
@@ -413,9 +426,13 @@ export function PropertyWorkspaceScreen({
     "lancamento",
   ].includes(dealType);
   const isPubliclyAvailable =
-    published && !isPrivateStatus && !isUnavailable && !isInactive;
+    sitePublicationState.canOpenPublicSite &&
+    !isPrivateStatus &&
+    !isUnavailable &&
+    !isInactive;
   const propertySiteUrl = isPubliclyAvailable
-    ? buildPropertySiteUrl(property.code, siteInfoQuery.data)
+    ? sitePublication?.public_url ||
+      buildPropertySiteUrl(property.code, siteInfoQuery.data)
     : null;
   const today = localDateISO();
   const developmentLink = workspace.development_link;
@@ -757,13 +774,17 @@ export function PropertyWorkspaceScreen({
                       <Badge
                         className={cn(
                           "rounded-[4px] border-0 text-[10px] font-light shadow-none",
-                          published
+                          sitePublicationState.tone === "success"
                             ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "bg-primary/10 text-primary hover:bg-primary/10",
+                            : sitePublicationState.tone === "error"
+                              ? "bg-destructive/10 text-destructive hover:bg-destructive/10"
+                              : sitePublicationState.tone === "pending"
+                                ? "bg-warning/10 text-warning hover:bg-warning/10"
+                                : "bg-primary/10 text-primary hover:bg-primary/10",
                         )}
                       >
-                        {published && <Globe2 className="mr-1 h-3 w-3" />}
-                        {published ? "Publicado no site" : "Fora do site"}
+                        {sitePublicationState.canOpenPublicSite && <Globe2 className="mr-1 h-3 w-3" />}
+                        {sitePublicationState.label}
                       </Badge>
                     </div>
                   </div>
@@ -1142,7 +1163,11 @@ export function PropertyWorkspaceScreen({
 
             <TabsContent value="publication" className="space-y-6">
               {normalizedResourcesAvailable ? (
-                <PropertyPublicationCenter propertyId={property.id} />
+                <PropertyPublicationCenter
+                  propertyId={property.id}
+                  assets={orderedAssets}
+                  hasAssetPhotos={Boolean(response.meta.has_asset_photos)}
+                />
               ) : (
                 <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
                   <CardContent className="p-5">

@@ -602,6 +602,18 @@
     {
       "file": "20260924142938_align_lead_visibility_with_active_broker_teams.sql",
       "sha256": "48bf675c8b92da7edc2137086dee376e2cd05f4841a71ba0d162611ce2274a18"
+    },
+    {
+      "file": "20260925161307_add_public_site_footer_logo.sql",
+      "sha256": "4b75557205af16b7ddb8c1bf36c78d576a004c52fd8d72d0729b7d52d367d35e"
+    },
+    {
+      "file": "20260926232717_restrict_assigned_lead_reads_to_active_assignee_team.sql",
+      "sha256": "80642021c4e530bdd4425a12009e071c8073a56fbb31d5e0110a37dd4de8695b"
+    },
+    {
+      "file": "20260928031110_preserve_manual_property_location.sql",
+      "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
     }
   ]
 }

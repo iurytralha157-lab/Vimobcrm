@@ -204,6 +204,18 @@ func TestLostReasonRequiredUsesStableMoveStageContract(t *testing.T) {
 	}
 }
 
+func TestStaleMoveUsesConflictContract(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/leads/11111111-1111-4111-8111-111111111111/move-stage", nil)
+	response := httptest.NewRecorder()
+	writeLeadError(response, request, ErrLeadStageChanged)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	if !strings.Contains(response.Body.String(), `"code":"lead_stage_changed"`) {
+		t.Fatalf("unexpected response: %s", response.Body.String())
+	}
+}
+
 func TestLinkedDevelopmentPropertyConsistencyViolationUsesLeadConflictContract(t *testing.T) {
 	for _, constraintName := range []string{
 		"property_development_unit_status_sync",

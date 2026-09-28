@@ -1,5 +1,5 @@
-import { dedupeActivityEvents } from './activity-deduplication';
-import { auditContent, auditEventType, auditVisibleKeys } from './audit';
+import { dedupeActivityEvents, isStageChangeTriggerActivity } from './activity-deduplication';
+import { auditContent, auditEventType, auditVisibleKeys, visibleAuditData } from './audit';
 import { extractMetaCreative, extractMetaFormAnswers, extractWebhookFormAnswers } from './forms';
 import { asMetadata, metadataRecord, metadataString, metadataNumber } from './metadata';
 import {
@@ -16,6 +16,12 @@ import type {
   LeadHistoryRaw,
   UnifiedHistoryEvent,
 } from './types';
+
+function unavailableDistributionLabel(queueName: string | null) {
+  return queueName
+    ? `Tentativa de distribuição via "${queueName}": nenhum responsável disponível`
+    : 'Tentativa de distribuição: nenhum responsável disponível';
+}
 
 export function buildLeadHistory(
   raw: LeadHistoryRaw,
@@ -75,8 +81,18 @@ export function buildLeadHistory(
   // Build unified events from timeline
   const timelineMapped: UnifiedHistoryEvent[] = timelineEvents.map((event) => {
     const meta = asMetadata(event.metadata);
+    const distributionFailureReason = metadataString(meta.reason);
+    const isPendingDistribution = (event.event_type === 'lead_assigned' || event.event_type === 'lead_distribution_pending')
+      && (distributionFailureReason === 'no_available_members' || distributionFailureReason === 'no_matching_queue')
+      && !metadataString(meta.assigned_user_id)
+      && !metadataString(meta.to_user_id);
+    const distributionQueueName = metadataString(meta.distribution_queue_name) || metadataString(meta.queue_name);
     const actorId = event.user_id || event.actor_user_id;
-    const actor = actorId ? (userMap.get(actorId) || null) : null;
+    // Queue distribution persists the recipient in user_id, not the initiator.
+    const isQueueDistribution = event.event_type === 'lead_assigned'
+      && Boolean(metadataString(meta.queue_id) || metadataString(meta.distribution_queue_id)
+        || metadataString(meta.distribution_type) === 'canonical_round_robin');
+    const actor = !isQueueDistribution && !isPendingDistribution && actorId ? (userMap.get(actorId) || null) : null;
     const responseSeconds = metadataNumber(meta.response_seconds);
     const isAttendanceJoin = event.event_type === 'whatsapp_attendance_joined';
 
@@ -85,14 +101,18 @@ export function buildLeadHistory(
       type: event.event_type,
       label: isAttendanceJoin
         ? event.title?.trim() || `${actor?.name || 'Usuário'} entrou no atendimento`
-        : buildLabel(event.event_type, meta),
-      content: isAttendanceJoin ? undefined : buildContent(event.event_type, meta, formatters),
-      timestamp: event.created_at || event.event_at || new Date().toISOString(),
+        : isPendingDistribution
+          ? distributionFailureReason === 'no_available_members'
+            ? unavailableDistributionLabel(distributionQueueName)
+            : 'Nenhuma fila de distribuição compatível'
+          : buildLabel(event.event_type, meta),
+      content: isAttendanceJoin || isPendingDistribution ? undefined : buildContent(event.event_type, meta, formatters),
+      timestamp: event.event_at || event.created_at || new Date().toISOString(),
       actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url } : null,
       source: 'timeline' as const,
       metadata: meta,
       channel: event.channel || metadataString(meta.channel),
-      isAutomation: event.is_automation || false,
+      isAutomation: isQueueDistribution || isPendingDistribution || Boolean(event.is_automation),
       sourceOrigin: metadataString(meta.source) || metadataString(meta.source_label),
       webhookName: metadataString(meta.webhook_name) || metadataString(meta.form_name),
       firstResponseSeconds: event.event_type === 'first_response' ? responseSeconds : null,
@@ -120,6 +140,22 @@ export function buildLeadHistory(
   // Build unified events from activities (with deduplication)
   const activityMapped: UnifiedHistoryEvent[] = dedupedActivityEvents
     .filter((activity) => {
+      if (activity.type === 'assignee_changed') {
+        const targetId = metadataString(asMetadata(activity.metadata).to_user_id);
+        const activityTime = new Date(activity.created_at).getTime();
+        // The lead update trigger attributes automatic moves to the recipient
+        // when there is no auth user. The queue record is the authoritative event.
+        if (targetId && Number.isFinite(activityTime)) {
+          const sameQueueAssignment = timelineMapped.some((event) => {
+            const metadata = asMetadata(event.metadata);
+            return event.type === 'lead_assigned' && event.isAutomation
+              && (metadataString(metadata.assigned_user_id) || metadataString(metadata.to_user_id)) === targetId
+              && Math.abs(new Date(event.timestamp).getTime() - activityTime) <= 5_000;
+          }) || distributionLogs.some((log) => log.assigned_user_id === targetId
+            && Math.abs(new Date(log.created_at).getTime() - activityTime) <= 5_000);
+          if (sameQueueAssignment) return false;
+        }
+      }
       // Always include activity-only types
       if (ACTIVITY_ONLY_TYPES.has(activity.type)) return true;
       if (activity.type === 'lead_reentry' && asMetadata(activity.metadata).entry_type === 'manual_reentry') return true;
@@ -133,7 +169,9 @@ export function buildLeadHistory(
       const meta = asMetadata(activity.metadata);
       const actorId = activity.user_id;
       const actorFromQuery = activity.user;
-      const actor = actorFromQuery || (actorId ? userMap.get(actorId) || null : null);
+      const actor = isStageChangeTriggerActivity(activity)
+        ? null
+        : actorFromQuery || (actorId ? userMap.get(actorId) || null : null);
 
       return {
         id: `activity-${activity.id}`,
@@ -370,17 +408,39 @@ export function buildLeadHistory(
       if (!log.round_robin_id && !log.assigned_user_id && !log.reason) return false;
       const hasTimelineQueue = timelineEvents.some((event) => {
         const meta = asMetadata(event.metadata);
-        return event.event_type === 'lead_assigned'
-          && (meta.distribution_queue_id === log.round_robin_id || meta.queue_id === log.round_robin_id);
+        const timelineQueue = metadataString(meta.distribution_queue_id) || metadataString(meta.queue_id) || null;
+        const sameQueue = timelineQueue === (log.round_robin_id || null);
+        if (!sameQueue) return false;
+        if (log.reason === 'no_available_members' || log.reason === 'no_matching_queue') {
+          const logMetadata = asMetadata(log.metadata);
+          const logEventId = metadataString(logMetadata.distribution_event_id);
+          const timelineEventId = metadataString(meta.distribution_event_id);
+          const eventTime = new Date(event.created_at || event.event_at || '').getTime();
+          const logTime = new Date(log.created_at).getTime();
+          return (event.event_type === 'lead_assigned' || event.event_type === 'lead_distribution_pending')
+            && metadataString(meta.reason) === log.reason
+            && (logEventId && timelineEventId
+              ? logEventId === timelineEventId
+              : Number.isFinite(eventTime) && Number.isFinite(logTime) && Math.abs(eventTime - logTime) <= 5_000);
+        }
+        return event.event_type === 'lead_assigned';
       });
       return !hasTimelineQueue;
     })
     .map((log) => {
-      const queueName = log.queue?.name || null;
+      const logMetadata = asMetadata(log.metadata);
+      const queueName = metadataString(logMetadata.queue_name) || log.queue?.name || null;
       const assignedUser = log.assigned_user || (log.assigned_user_id ? userMap.get(log.assigned_user_id) : null);
       const assignedName = assignedUser?.name || null;
       const success = !!log.assigned_user_id;
       const reason = log.reason || null;
+      const failureLabel = reason === 'no_available_members'
+        ? unavailableDistributionLabel(queueName)
+        : reason === 'no_matching_queue'
+          ? 'Nenhuma fila de distribuição compatível'
+        : queueName
+          ? `Fila "${queueName}" sem distribuição`
+          : 'Sem fila de distribuição compatível';
       const metadata: HistoryMetadata = {
         queue_id: log.round_robin_id,
         distribution_queue_id: log.round_robin_id,
@@ -397,14 +457,10 @@ export function buildLeadHistory(
       return {
         id: `distribution-${log.id}`,
         type: 'lead_assigned',
-        label: success
-          ? buildLabel('lead_assigned', metadata)
-          : queueName
-            ? `Fila "${queueName}" sem distribuição`
-            : 'Sem fila de distribuição compatível',
-        content: success ? undefined : reason || undefined,
+        label: success ? buildLabel('lead_assigned', metadata) : failureLabel,
+        content: success || reason === 'no_available_members' || reason === 'no_matching_queue' ? undefined : reason || undefined,
         timestamp: log.created_at,
-        actor: assignedUser ? { id: assignedUser.id, name: assignedUser.name, avatar_url: assignedUser.avatar_url || null } : null,
+        actor: null,
         source: 'timeline' as const,
         metadata,
         channel: null,
@@ -414,9 +470,10 @@ export function buildLeadHistory(
 
   const assignmentMapped: UnifiedHistoryEvent[] = assignmentLogs
     .filter((log) => {
-      return !distributionMapped.some((event) => {
+      if (log.reason === 'manual_transfer') return true;
+      return ![...timelineMapped.filter((event) => event.type === 'lead_assigned' && event.isAutomation), ...distributionMapped].some((event) => {
         const meta = asMetadata(event.metadata);
-        const sameUser = metadataString(meta.to_user_id) === log.new_user_id;
+        const sameUser = (metadataString(meta.to_user_id) || metadataString(meta.assigned_user_id)) === log.new_user_id;
         const sameReason = metadataString(meta.reason) === log.reason || metadataString(meta.queue_id) === metadataString(log.reason);
         const distance = Math.abs(new Date(event.timestamp).getTime() - new Date(log.created_at).getTime());
         return sameUser && (sameReason || distance < 5000);
@@ -461,6 +518,30 @@ export function buildLeadHistory(
     });
 
   const fallbackEvents: UnifiedHistoryEvent[] = [];
+
+  // Older WhatsApp acknowledgements persisted the metric without a dedicated
+  // first_response timeline row. Show the recorded fact once, from the lead.
+  if (lead?.first_response_at && !timelineTypesPresent.has('first_response')
+    && !activityTypesPresent.has('first_response')) {
+    const metadata: HistoryMetadata = {
+      channel: lead.first_response_channel,
+      response_seconds: lead.first_response_seconds,
+      is_automation: lead.first_response_is_automation,
+    };
+    fallbackEvents.push({
+      id: `lead-fallback-first-response-${lead.id}`,
+      type: 'first_response',
+      label: lead.first_response_is_automation ? 'Primeira resposta automática' : 'Primeiro contato',
+      content: buildContent('first_response', metadata, formatters),
+      timestamp: lead.first_response_at,
+      actor: lead.first_response_actor || null,
+      source: 'activity',
+      metadata,
+      channel: lead.first_response_channel,
+      isAutomation: Boolean(lead.first_response_is_automation),
+      firstResponseSeconds: lead.first_response_seconds ?? null,
+    });
+  }
   const hasLeadCreated = timelineTypesPresent.has('lead_created') || activityTypesPresent.has('lead_created');
   if (lead && !hasLeadCreated) {
     const label = sourceLabel(lead.source);
@@ -524,8 +605,8 @@ export function buildLeadHistory(
     })
     .map(({ audit, keys }) => {
       const eventType = auditEventType(audit.action, keys);
-      const oldData = asMetadata(audit.old_data);
-      const newData = asMetadata(audit.new_data);
+      const oldData = visibleAuditData(asMetadata(audit.old_data));
+      const newData = visibleAuditData(asMetadata(audit.new_data));
       const toUserId = metadataString(newData.assigned_user_id);
       const fromUserId = metadataString(oldData.assigned_user_id);
       const toUser = toUserId ? userMap.get(toUserId) : null;

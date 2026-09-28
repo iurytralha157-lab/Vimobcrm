@@ -516,6 +516,7 @@ export function SharedFilters({
               variant="outline"
               size="sm"
               aria-expanded={filtersOpen}
+              aria-label={filtersOpen ? "Fechar filtros avançados" : "Abrir filtros avançados"}
               data-tour={
                 tourPrefix ? `${tourPrefix}-advanced-filters` : undefined
               }

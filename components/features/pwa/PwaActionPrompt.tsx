@@ -66,7 +66,7 @@ export function PwaActionPrompt({
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 rounded-[6px]"
+            className="h-9 w-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
             onClick={onDismiss}
             disabled={dismissDisabled}
             aria-label={`Fechar ${ariaLabel.toLowerCase()}`}

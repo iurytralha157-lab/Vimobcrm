@@ -807,7 +807,7 @@ func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext
 		if err != nil {
 			return nil, err
 		}
-		leads = append(leads, lead)
+		leads = append(leads, withPipelineLeadOperationCapability(tenantContext, lead))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -883,7 +883,7 @@ func (repo Repository) listInitialPipelineBoardLeadsByStage(ctx context.Context,
 			continue
 		}
 		stageID := *lead.StageID
-		leadsByStage[stageID] = append(leadsByStage[stageID], lead)
+		leadsByStage[stageID] = append(leadsByStage[stageID], withPipelineLeadOperationCapability(tenantContext, lead))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1009,21 +1009,14 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
 		}
-		args = append(args, teamID)
-		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
-			or (
-				nullif(to_jsonb(l)->>'team_id', '') is null
-				and exists (
-					select 1 from public.team_members tm
-					where tm.organization_id = l.organization_id
-					  and tm.team_id = $%d::uuid
-					  and tm.user_id = l.assigned_user_id
-					  and tm.is_active = true
-				)
-			)
-		)`, index, index))
+		// Pipeline, Contacts and Dashboard must use the same selected-team
+		// cohort. The lead's team_id records queue provenance, which may differ
+		// from the current assignee's team after redistribution.
+		if filter.Unassigned {
+			add("l.team_id = $%d::uuid", teamID)
+		} else {
+			add(currentAssigneeTeamFilterSQL, teamID)
+		}
 	}
 	if filter.Unassigned {
 		where = append(where, "l.assigned_user_id is null")
@@ -1188,7 +1181,9 @@ func pipelineBoardLeadSelectFields(propertyVisibility string) string {
 		` + interestPropertyID + ` as interest_property_id,
 		l.first_response_at,
 		l.first_response_seconds,
-		l.first_response_is_automation`
+		l.first_response_is_automation,
+		l.sla_status,
+		l.sla_seconds_elapsed`
 }
 
 func pipelineBoardVisiblePropertyIDSQL(column string, propertyVisibility string) string {
@@ -1230,7 +1225,9 @@ func pipelineBoardLeadColumnFields() string {
 		interest_property_id,
 		first_response_at,
 		first_response_seconds,
-		first_response_is_automation`
+		first_response_is_automation,
+		sla_status,
+		sla_seconds_elapsed`
 }
 
 func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int64, error) {
@@ -1238,9 +1235,9 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	var total int64
 	var phone, email, source, stageID, assignedUserID, teamID, pipelineID, message, organizationID pgtype.Text
 	var lastEntryAt, stageEnteredAt, boardOrderAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
-	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath, dealStatus, propertyID, lostReason, interestPropertyID pgtype.Text
+	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath, dealStatus, propertyID, lostReason, interestPropertyID, slaStatus pgtype.Text
 	var interestValue pgtype.Float8
-	var firstResponseSeconds pgtype.Int4
+	var firstResponseSeconds, slaSecondsElapsed pgtype.Int4
 	var firstResponseIsAutomation pgtype.Bool
 
 	dest := []any{
@@ -1273,6 +1270,8 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&firstResponseAt,
 		&firstResponseSeconds,
 		&firstResponseIsAutomation,
+		&slaStatus,
+		&slaSecondsElapsed,
 	}
 	if withTotal {
 		dest = append([]any{&total}, dest...)
@@ -1304,6 +1303,8 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	lead.FirstResponseAt = pipelineTimePtr(firstResponseAt)
 	lead.FirstResponseSeconds = pipelineIntPtr(firstResponseSeconds)
 	lead.FirstResponseIsAutomation = pipelineBoolPtr(firstResponseIsAutomation)
+	lead.SLAStatus = pipelineTextPtr(slaStatus)
+	lead.SLASecondsElapsed = pipelineIntPtr(slaSecondsElapsed)
 	if interestValue.Valid {
 		value := interestValue.Float64
 		lead.InterestValue = &value

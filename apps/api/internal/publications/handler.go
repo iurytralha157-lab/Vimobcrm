@@ -223,7 +223,7 @@ func writePublicationError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrPublicationNotReady):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "publication_not_ready", err.Error())
 	case errors.Is(err, ErrSiteUnavailable):
-		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "site_unavailable", "The organization site is not active.")
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "site_unavailable", "The organization site or Site module is not active.")
 	case errors.Is(err, ErrGrupoOLXUnavailable):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "grupo_olx_unavailable", "The Grupo OLX integration is not active and ready.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

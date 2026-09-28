@@ -79,7 +79,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
       <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* Desktop sidebar fixa */}
         {!isMobile && (
-          <div className="flex-shrink-0">
+          <div className="hidden flex-shrink-0 md:block">
             <AppSidebar />
           </div>
         )}
@@ -95,7 +95,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
           <main className={cn(
             "min-h-0 min-w-0 flex-1",
             disableMainScroll ? "overflow-hidden relative px-5 md:px-6 pt-2 md:pt-3 pb-3" : "overflow-y-auto overflow-x-hidden px-5 md:px-6 pt-2 md:pt-3 pb-6",
-            isMobile && "pb-20"
+            isMobile && "pb-[calc(4rem_+_1px_+_env(safe-area-inset-bottom))]"
           )}>
             {children}
           </main>
