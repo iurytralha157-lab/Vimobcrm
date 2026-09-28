@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -15,6 +16,7 @@ type attendanceScope struct {
 	LeadID         string
 	BindingID      string
 	ActorName      string
+	CanSend        bool
 }
 
 func (repo Repository) GetConversationAttendance(
@@ -136,7 +138,7 @@ func lockAttendanceScope(
 	tenantContext tenant.Context,
 	conversationID string,
 	input attendanceInput,
-	requireOwner bool,
+	requireSendAccess bool,
 	requireConnected bool,
 	lockRows bool,
 ) (attendanceScope, error) {
@@ -162,17 +164,19 @@ func lockAttendanceScope(
 	}
 
 	var lockedSessionID string
+	var sessionConnected, sessionOwned bool
 	err := tx.QueryRow(ctx, `
-		select ws.id::text
+		select ws.id::text, ws.status = 'connected', coalesce(ws.owner_user_id = $3::uuid, false)
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (not $4::boolean or ws.owner_user_id = $3::uuid)
-		  and (not $5::boolean or ws.status = 'connected')
-	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireOwner, requireConnected).Scan(&lockedSessionID)
+		  and (not $4::boolean or ws.status = 'connected')
+	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireConnected).Scan(
+		&lockedSessionID, &sessionConnected, &sessionOwned,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrSessionNotFound
 	}
@@ -199,18 +203,22 @@ func lockAttendanceScope(
 
 	visibilityArgs := append(baseConversationArgs(tenantContext), scope.LeadID)
 	var lockedLeadID string
+	var leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select l.id::text
+		select l.id::text, coalesce(l.assigned_user_id = $2::uuid, false)
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-	`+leadLock, visibilityArgs...).Scan(&lockedLeadID)
+	`+leadLock, visibilityArgs...).Scan(&lockedLeadID, &leadAssigned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return attendanceScope{}, err
+	}
+	if requireSendAccess && !sessionOwned && !leadAssigned {
+		return attendanceScope{}, ErrSessionNotFound
 	}
 
 	err = tx.QueryRow(ctx, `
@@ -235,12 +243,20 @@ func lockAttendanceScope(
 		where user_row.id = $1::uuid
 		  and user_row.organization_id = $2::uuid
 		  and coalesce(user_row.is_active, false) = true
+		  and exists (
+		    select 1 from public.organization_members member
+		    where member.organization_id = user_row.organization_id
+		      and member.user_id = user_row.id
+		      and coalesce(member.is_active, true) = true
+		      and member.deleted_at is null
+		  )
 	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return attendanceScope{}, ErrConversationNotFound
 		}
 		return attendanceScope{}, err
 	}
+	scope.CanSend = sessionConnected && (sessionOwned || leadAssigned) && tenantContext.HasPermission(permissions.WhatsAppOperate)
 	return scope, nil
 }
 
@@ -305,7 +321,7 @@ func loadAttendanceResponse(
 	}
 	defer rows.Close()
 
-	response := AttendanceResponse{Entries: []AttendanceEntry{}}
+	response := AttendanceResponse{Entries: []AttendanceEntry{}, CanSend: scope.CanSend}
 	for rows.Next() {
 		entry, err := scanAttendanceEntry(rows)
 		if err != nil {

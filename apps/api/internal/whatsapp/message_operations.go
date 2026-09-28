@@ -169,7 +169,8 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	// joined FOR UPDATE lets the executor choose the opposite order and can
 	// deadlock with signed native ingress, which necessarily resolves a session
 	// before it can identify the conversation.
-	if err := lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID); err != nil {
+	sessionOwned, err := lockConversationSendSession(ctx, tx, tenantContext, session.ID)
+	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			return SendMessageResponse{}, ErrConversationNotFound
 		}
@@ -203,7 +204,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if err != nil {
 		return SendMessageResponse{}, err
 	}
-	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID)
+	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID, sessionOwned)
 	var lockedLeadVisible bool
 	err = tx.QueryRow(ctx, `
 		select true
@@ -211,6 +212,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		  and ($6::boolean or l.assigned_user_id = $2::uuid)
 		for share of l
 	`, visibilityArgs...).Scan(&lockedLeadVisible)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -822,7 +824,7 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		}
 	}
 
-	session, err := repo.getCanSendSession(ctx, tenantContext, conversationSessionID)
+	session, err := repo.getConversationSendSession(ctx, tenantContext, conversation)
 	if err != nil {
 		return Session{}, err
 	}
@@ -830,6 +832,47 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		return Session{}, fmt.Errorf("%w: WhatsApp desta conversa esta desconectado.", ErrInvalidInput)
 	}
 	return session, nil
+}
+
+// A delegated send is limited to the existing physical conversation and its
+// currently assigned lead. General session operations continue to require the
+// owner via getCanSendSession.
+func (repo Repository) getConversationSendSession(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Session, error) {
+	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
+		select `+sessionSelectFields()+`
+		from public.whatsapp_sessions ws
+		join public.whatsapp_conversations wc
+		  on wc.organization_id = ws.organization_id
+		 and wc.session_id = ws.id
+		join public.leads l
+		  on l.organization_id = wc.organization_id
+		 and l.id = wc.lead_id
+		join public.users actor
+		  on actor.id = $5::uuid
+		 and actor.organization_id = ws.organization_id
+		 and coalesce(actor.is_active, false) = true
+		join public.organization_members member
+		  on member.organization_id = actor.organization_id
+		 and member.user_id = actor.id
+		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
+		left join public.users owner on owner.id = ws.owner_user_id
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and wc.id = $3::uuid
+		  and wc.lead_id = $4::uuid
+		  and wc.deleted_at is null
+		  and ws.is_active is not false
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and ws.provider = 'evolution_go'
+		  and (ws.owner_user_id = $5::uuid or l.assigned_user_id = $5::uuid)
+		limit 1
+	`, tenantContext.OrganizationID, conversation.SessionID, conversation.ID,
+		pointerValue(conversation.LeadID), tenantContext.UserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	return session, err
 }
 
 func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenantContext tenant.Context, purpose string) (Session, error) {

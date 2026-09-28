@@ -84,7 +84,7 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 		"and wc.lead_id = $4::uuid",
 		"and wc.lead_id = $%d::uuid",
 		"and wc.lead_id is null",
-		"lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID)",
+		"lockConversationSendSession(ctx, tx, tenantContext, session.ID)",
 		"for update of wc",
 	} {
 		if !strings.Contains(messageSource, fragment) {
@@ -100,7 +100,7 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 		t.Fatal("unable to isolate SendMessage")
 	}
 	sendSource := messageSource[sendStart:sendEnd]
-	sendSessionLock := strings.Index(sendSource, "lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID)")
+	sendSessionLock := strings.Index(sendSource, "lockConversationSendSession(ctx, tx, tenantContext, session.ID)")
 	sendConversationLock := strings.Index(sendSource, "for update of wc")
 	if sendSessionLock < 0 || sendConversationLock < 0 || sendSessionLock >= sendConversationLock {
 		t.Fatal("SendMessage must lock session before conversation")

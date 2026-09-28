@@ -261,6 +261,7 @@ type AttendanceEntry struct {
 
 type AttendanceResponse struct {
 	Joined       bool              `json:"joined"`
+	CanSend      bool              `json:"canSend"`
 	CurrentEntry *AttendanceEntry  `json:"currentEntry"`
 	Entries      []AttendanceEntry `json:"entries"`
 	Created      bool              `json:"created"`

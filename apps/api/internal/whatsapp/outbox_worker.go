@@ -878,7 +878,6 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			join public.whatsapp_sessions as session
 			  on session.organization_id = attendance.organization_id
 			 and session.id = attendance.session_id
-			 and session.owner_user_id = attendance.user_id
 			 and session.provider = 'evolution_go'
 			 and coalesce(session.is_active, true) = true
 			 and coalesce(session.status, '') not in ('deleted', 'disabled')
@@ -890,11 +889,28 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			  on member.organization_id = attendance.organization_id
 			 and member.user_id = attendance.user_id
 			 and coalesce(member.is_active, true) = true
+			 and member.deleted_at is null
+			join public.leads as current_lead
+			  on current_lead.organization_id = message.organization_id
+			 and current_lead.id = message.lead_id
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
 			  and message.session_id = $3::uuid
 			  and message.conversation_id = $4::uuid
 			  and message.capture_state = 'captured'
+			  and (
+			    (
+			      session.owner_user_id = attendance.user_id
+			      and (message.sender_user_id is null or message.sender_user_id = attendance.user_id)
+			      and (message.metadata->>'attendance_entry_id' is null
+			           or message.metadata->>'attendance_entry_id' = attendance.id::text)
+			    )
+			    or (
+			      current_lead.assigned_user_id = attendance.user_id
+			      and message.sender_user_id = attendance.user_id
+			      and message.metadata->>'attendance_entry_id' = attendance.id::text
+			    )
+			  )
 		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
 	return attended, err

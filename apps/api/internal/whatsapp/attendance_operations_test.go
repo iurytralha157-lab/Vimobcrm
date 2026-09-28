@@ -396,7 +396,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
+func TestAttendanceReadReportsExactSendCapabilityWithoutSessionOwnership(t *testing.T) {
 	raw, err := os.ReadFile("attendance_operations.go")
 	if err != nil {
 		t.Fatalf("read attendance repository: %v", err)
@@ -409,11 +409,16 @@ func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
 	}
 	if !strings.Contains(source,
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)") {
-		t.Fatal("attendance POST must continue requiring session ownership and a connected session")
+		t.Fatal("attendance POST must require exact send access and a connected session")
 	}
-	if !strings.Contains(source,
-		"and (not $4::boolean or ws.owner_user_id = $3::uuid)") {
-		t.Fatal("session ownership must be conditional so managers can read attendance for visible cards")
+	for _, token := range []string{
+		"scope.CanSend = sessionConnected && (sessionOwned || leadAssigned)",
+		"if requireSendAccess && !sessionOwned && !leadAssigned",
+		"l.assigned_user_id = $2::uuid",
+	} {
+		if !strings.Contains(source, token) {
+			t.Fatalf("attendance capability is missing %q", token)
+		}
 	}
 	if !strings.Contains(source, "IsoLevel:   pgx.RepeatableRead") ||
 		!strings.Contains(source, "AccessMode: pgx.ReadOnly") {
