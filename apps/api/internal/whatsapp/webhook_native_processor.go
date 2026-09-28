@@ -695,6 +695,18 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		if len(messages) == 0 {
 			return true, nil
 		}
+		if snapshotRow, ok := nativeNonLeadUnavailableViewOnceCandidate(item, payload, messages); ok {
+			verified, verifyErr := repo.nonLeadUnavailableViewOnceLedgerMatches(ctx, item, messages[0], snapshotRow)
+			if verifyErr != nil {
+				return true, verifyErr
+			}
+			if verified {
+				// The provider supplied no recoverable content. The ingress-owned
+				// snapshot and its durable ledger both prove there was no lead
+				// binding. Keep the payload in the inbox as a processed control.
+				return true, nil
+			}
+		}
 		for _, message := range messages {
 			// Unsupported protocol shapes remain in the durable inbox and can
 			// never fall back to Edge. Campaign referrals supported by the native
@@ -804,6 +816,146 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		wakeWhatsAppMediaWorker()
 	}
 	return true, nil
+}
+
+// An unavailable view-once notification has no message body to recover. Only
+// the exact observed envelope, with one unlinked v1 routing snapshot, may be
+// acknowledged as a non-lead control. A lead-bound or future mixed envelope
+// stays on the existing retry path with its original payload intact.
+func nativeNonLeadUnavailableViewOnceCandidate(
+	item pendingEvolutionWebhook,
+	payload map[string]any,
+	messages []nativeEvolutionMessage,
+) (map[string]any, bool) {
+	if len(messages) != 1 || len(payload) != 5 ||
+		!strings.EqualFold(strings.TrimSpace(nativeEvolutionEventName(payload, item.EventType)), "message") {
+		return nil, false
+	}
+	for key := range payload {
+		switch key {
+		case "__vimob_ingress", "data", "event", "instanceId", "instanceName":
+		default:
+			return nil, false
+		}
+	}
+	if _, ok := payload["event"].(string); !ok {
+		return nil, false
+	}
+	for _, key := range []string{"instanceId", "instanceName"} {
+		if _, ok := payload[key].(string); !ok {
+			return nil, false
+		}
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok || len(data) != 4 {
+		return nil, false
+	}
+	unavailable, unavailableOK := data["IsUnavailable"].(bool)
+	unavailableType, typeOK := data["UnavailableType"].(string)
+	if !unavailableOK || !unavailable || !typeOK || unavailableType != "view_once" {
+		return nil, false
+	}
+	for key := range data {
+		switch key {
+		case "DecryptFailMode", "Info", "IsUnavailable", "UnavailableType":
+		default:
+			return nil, false
+		}
+	}
+	info, ok := data["Info"].(map[string]any)
+	if !ok || len(info) == 0 {
+		return nil, false
+	}
+	fromMe, fromMeOK := info["IsFromMe"].(bool)
+	isGroup, groupOK := info["IsGroup"].(bool)
+	if !fromMeOK || fromMe || !groupOK || isGroup {
+		return nil, false
+	}
+	for key := range info {
+		switch key {
+		case "AddressingMode", "BroadcastListOwner", "BroadcastRecipients",
+			"Category", "Chat", "DeviceSentMeta", "Edit", "ID", "IsFromMe",
+			"IsGroup", "MediaType", "MsgBotInfo", "MsgMetaInfo", "Multicast",
+			"PushName", "RecipientAlt", "Sender", "SenderAlt", "ServerID",
+			"Timestamp", "Type", "VerifiedName":
+		default:
+			return nil, false
+		}
+	}
+	message := messages[0]
+	if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" ||
+		message.FromMe || message.IsGroup || message.IsReaction || message.IsDeletion ||
+		message.UnsupportedMessage || message.HasCampaignSignal ||
+		message.MessageType != "text" || strings.TrimSpace(message.Content) != "" ||
+		message.MediaURL != "" || message.MediaBase64 != "" {
+		return nil, false
+	}
+	ingress := mapFromAny(payload[evolutionWebhookRoutingMetaKey])
+	envelope := mapFromAny(ingress["routing_snapshot"])
+	rows := nativeObjectList(envelope["messages"])
+	routingKey, routingKeyOK := ingress["routing_key"].(string)
+	if len(ingress) != 2 || len(envelope) != 2 || len(rows) != 1 ||
+		!routingKeyOK || strings.TrimSpace(routingKey) == "" {
+		return nil, false
+	}
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(item.Payload,
+		nativeEvolutionSession{ID: item.SessionID, OrganizationID: item.OrganizationID}, message)
+	if err != nil || snapshot == nil || snapshot.State != "unlinked" ||
+		snapshot.TargetMode != "snapshot" || snapshot.ContextKind != "organic" ||
+		snapshot.ContextProof != "" || snapshot.EventLeadID != "" ||
+		snapshot.CurrentLeadID != "" || snapshot.ConversationID != "" ||
+		snapshot.ActiveBindingID != "" || snapshot.RuleID != "" ||
+		snapshot.OriginRoundRobinID != "" || snapshot.QuarantineReason != "" ||
+		snapshot.BindingEligible || snapshot.ManagedMessageDistribution ||
+		snapshot.ManagedProviderEventPending || snapshot.ManagedProviderEventHandled ||
+		snapshot.RoutingKey != routingKey {
+		return nil, false
+	}
+	row := rows[0]
+	for _, field := range []string{
+		"event_lead_id", "current_lead_id", "conversation_id", "active_binding_id",
+		"rule_id", "origin_round_robin_id", "quarantine_reason", "context_proof",
+	} {
+		if _, present := row[field]; !present {
+			return nil, false
+		}
+	}
+	return row, true
+}
+
+func (repo Repository) nonLeadUnavailableViewOnceLedgerMatches(
+	ctx context.Context,
+	item pendingEvolutionWebhook,
+	message nativeEvolutionMessage,
+	snapshotRow map[string]any,
+) (bool, error) {
+	encoded, err := json.Marshal(snapshotRow)
+	if err != nil {
+		return false, err
+	}
+	var matches bool
+	err = repo.db.Pool().QueryRow(ctx, `
+		select count(*) = 1
+		from public.whatsapp_webhook_inbox as inbox
+		join public.whatsapp_webhook_routing_snapshots as route
+		  on route.organization_id = inbox.organization_id
+		 and route.session_id = inbox.session_id
+		 and route.inbox_event_key = inbox.event_key
+		where inbox.id = $1::uuid
+		  and inbox.organization_id = $2::uuid
+		  and inbox.session_id = $3::uuid
+		  and inbox.processing_lane = $4
+		  and route.provider_message_id = $5
+		  and route.snapshot = $6::jsonb
+		  and route.processing_lane = inbox.processing_lane
+		  and route.target_mode = 'snapshot'
+		  and route.binding_eligible = false
+		  and route.snapshot->>'state' = 'unlinked'
+		  and route.snapshot->>'event_lead_id' is null
+		  and route.snapshot->>'current_lead_id' is null
+	`, item.ID, item.OrganizationID, item.SessionID, item.ProcessingLane,
+		message.ProviderMessageID, string(encoded)).Scan(&matches)
+	return matches, err
 }
 
 func nativeIsReadSelfOnlyReceipt(payload map[string]any, event string) bool {

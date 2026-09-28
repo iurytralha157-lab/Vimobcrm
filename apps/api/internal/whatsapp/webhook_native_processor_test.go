@@ -62,6 +62,95 @@ func nativeRoutingSnapshotTestPayload(t *testing.T, rows ...map[string]any) []by
 	return payload
 }
 
+func TestNativeNonLeadUnavailableViewOnceCandidate(t *testing.T) {
+	build := func() map[string]any {
+		row := nativeRoutingSnapshotTestRow("provider-unavailable", 1)
+		row["processing_lane"] = "backlog"
+		row["state"] = "unlinked"
+		row["conversation_id"] = nil
+		row["event_lead_id"] = nil
+		row["current_lead_id"] = nil
+		row["active_binding_id"] = nil
+		row["binding_eligible"] = false
+		return map[string]any{
+			"event": "Message", "instanceId": "instance", "instanceName": "instance",
+			"data": map[string]any{
+				"DecryptFailMode": nil, "IsUnavailable": true,
+				"UnavailableType": "view_once",
+				"Info": map[string]any{
+					"ID": "provider-unavailable", "Chat": "5511999991111@s.whatsapp.net",
+					"Sender": "5511999991111@s.whatsapp.net", "IsFromMe": false,
+					"IsGroup": false, "Type": "media", "Timestamp": "2026-09-28T00:00:00Z",
+				},
+			},
+			evolutionWebhookRoutingMetaKey: map[string]any{
+				"routing_key":      "phone:5511999991111",
+				"routing_snapshot": map[string]any{"version": 1, "messages": []any{row}},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+		want   bool
+	}{
+		{name: "single unlinked unavailable view once", want: true},
+		{name: "lead-bound snapshot", mutate: func(p map[string]any) {
+			row := p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_snapshot"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			row["event_lead_id"] = "44444444-4444-4444-8444-444444444444"
+			row["current_lead_id"] = "44444444-4444-4444-8444-444444444444"
+			row["state"] = "bound"
+		}, want: false},
+		{name: "mixed message body", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["message"] = map[string]any{"conversation": "lead text"}
+		}, want: false},
+		{name: "group", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["Info"].(map[string]any)["IsGroup"] = true
+		}, want: false},
+		{name: "future unavailable type", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["UnavailableType"] = "new_type"
+		}, want: false},
+		{name: "non scalar unavailable marker", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["IsUnavailable"] = []any{true}
+		}, want: false},
+		{name: "non scalar ingress route", mutate: func(p map[string]any) {
+			p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_key"] = []any{"phone"}
+		}, want: false},
+		{name: "unexpected envelope field", mutate: func(p map[string]any) {
+			p["messages"] = []any{map[string]any{"body": "lead text"}}
+		}, want: false},
+		{name: "provider message identity mismatch", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["Info"].(map[string]any)["ID"] = "other-provider-message"
+		}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := build()
+			if test.mutate != nil {
+				test.mutate(payload)
+			}
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := decodeNativeEvolutionPayload(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := pendingEvolutionWebhook{
+				OrganizationID: "11111111-1111-4111-8111-111111111111",
+				SessionID:      "22222222-2222-4222-8222-222222222222",
+				EventType:      "message", ProcessingLane: "backlog", Payload: raw,
+			}
+			messages := extractNativeEvolutionMessages(decoded)
+			_, got := nativeNonLeadUnavailableViewOnceCandidate(item, decoded, messages)
+			if got != test.want {
+				t.Fatalf("candidate = %t, want %t (parsed messages: %d)", got, test.want, len(messages))
+			}
+		})
+	}
+}
+
 func TestNativeIngressRoutingSnapshotRequiresCompleteImmutableManagedContext(t *testing.T) {
 	session := nativeEvolutionSession{
 		ID:             "22222222-2222-4222-8222-222222222222",
