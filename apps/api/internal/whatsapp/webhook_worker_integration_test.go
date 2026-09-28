@@ -472,4 +472,66 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	if len(claimedAfterBacklogRetry) != 1 || claimedAfterBacklogRetry[0].ID != backlogPendingA {
 		t.Fatalf("post-retry backlog claim = %#v, want %s", claimedAfterBacklogRetry, backlogPendingA)
 	}
+
+	// An older backlog message that is the proven predecessor of a live route
+	// must be claimable even while an unrelated live route on that session is
+	// ready. A backlog head without that dependency retains live priority.
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	insertRouteEvent := func(sessionID, eventKey, route, lane, snapshots string, createdAgo string) string {
+		t.Helper()
+		var id string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_webhook_inbox (
+				organization_id, session_id, event_key, event_type, provider,
+				payload, processing_lane, status, attempts, next_attempt_at, created_at
+			) values (
+				$1::uuid, $2::uuid, $3, 'message', 'evolution_go',
+				jsonb_build_object('__vimob_ingress', jsonb_build_object(
+					'routing_key', $4::text,
+					'routing_snapshot', jsonb_build_object(
+						'version', 1, 'messages', $6::jsonb
+					)
+				)),
+				$5, 'pending', 0, now() - interval '1 minute', now() - $7::interval
+			)
+			returning id::text
+		`, organizationID, sessionID, eventKey, route, lane, snapshots, createdAgo).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	rootEventKey := suffix + "-backlog-parent"
+	rootID := insertRouteEvent(sessionA, rootEventKey, "jid:dependent-contact", evolutionWebhookLaneBacklog,
+		`[{"provider_message_id":"parent-provider","binding_eligible":true}]`, "3 minutes")
+	insertRouteEvent(sessionA, suffix+"-live-child", "jid:dependent-contact", evolutionWebhookLaneLive,
+		fmt.Sprintf(`[{"provider_message_id":"child-provider","binding_eligible":true,"predecessor_inbox_event_key":%q,"predecessor_provider_message_id":"parent-provider"}]`, rootEventKey),
+		"2 minutes")
+	insertRouteEvent(sessionA, suffix+"-live-unrelated", "jid:other-contact", evolutionWebhookLaneLive,
+		`[]`, "1 minute")
+
+	dependentRoot, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim proven backlog predecessor: %v", err)
+	}
+	if len(dependentRoot) != 1 || dependentRoot[0].ID != rootID {
+		t.Fatalf("proven backlog predecessor claim = %#v, want root %s", dependentRoot, rootID)
+	}
+
+	insertRouteEvent(sessionB, suffix+"-backlog-unrelated", "jid:unrelated-backlog", evolutionWebhookLaneBacklog,
+		`[{"provider_message_id":"unrelated-backlog-provider","binding_eligible":true}]`, "3 minutes")
+	insertRouteEvent(sessionB, suffix+"-live-ready", "jid:unrelated-live", evolutionWebhookLaneLive,
+		`[]`, "1 minute")
+	blockedBacklog, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim backlog without live dependency: %v", err)
+	}
+	if len(blockedBacklog) != 0 {
+		t.Fatalf("backlog without predecessor relation bypassed live priority: %#v", blockedBacklog)
+	}
 }
