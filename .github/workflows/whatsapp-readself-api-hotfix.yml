@@ -1,0 +1,41 @@
+name: WhatsApp ReadSelf API hotfix
+
+on:
+  push:
+    branches:
+      - codex/whatsapp-readself-hotfix
+
+permissions:
+  contents: read
+
+jobs:
+  api-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+      - name: Test WhatsApp processor
+        working-directory: apps/api
+        run: go test ./internal/whatsapp -count=1
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          build-args: VIMOB_RELEASE_SHA=${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/vimob-crm-api:${{ github.sha }}
