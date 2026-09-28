@@ -519,6 +519,21 @@ const nativeNonManagedLeadReentryUpsertQuery = `
 	returning existing_entry.id::text
 `
 
+const nativeNonManagedLeadTouchQuery = `
+	update public.leads
+	set last_contact_at = greatest(coalesce(last_contact_at, $3::timestamptz), $3::timestamptz),
+	    -- The CTWA creation contract binds its original provider proof to this lead.
+	    -- Keep a later reentry's attribution in the inbound log and entry ledger.
+	    metadata = coalesce(metadata, '{}'::jsonb) || case
+	      when btrim(coalesce(metadata->>'whatsapp_lead_creation_contract', ''))
+	        in ('ctwa_ad_v1', 'ctwa_ad_v2')
+	        then $4::jsonb - 'whatsapp_attribution'
+	      else $4::jsonb
+	    end,
+	    updated_at = now()
+	where organization_id = $1::uuid and id = $2::uuid
+`
+
 func applyNativeInboundBusinessEffects(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -592,13 +607,8 @@ func applyNativeInboundBusinessEffects(
 			leadMetadata["whatsapp_attribution"] = attribution
 		}
 		metadataPatch := jsonb(leadMetadata)
-		if _, err := tx.Exec(ctx, `
-			update public.leads
-			set last_contact_at = greatest(coalesce(last_contact_at, $3::timestamptz), $3::timestamptz),
-			    metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb,
-			    updated_at = now()
-			where organization_id = $1::uuid and id = $2::uuid
-		`, session.OrganizationID, conversation.LeadID, message.SentAt, metadataPatch); err != nil {
+		if _, err := tx.Exec(ctx, nativeNonManagedLeadTouchQuery,
+			session.OrganizationID, conversation.LeadID, message.SentAt, metadataPatch); err != nil {
 			return err
 		}
 	}
