@@ -4818,6 +4818,13 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 	if err != nil {
 		return err
 	}
+	// The SQL deferral validates the full v1 status-only envelope and the
+	// worker lease. Synthetic deferred replays have no live inbox payload and
+	// retain the existing retry behavior when their target is still absent.
+	partialLiveReceipt := item.ProcessingLane == "live" &&
+		item.EventType == "receipt" && item.ID != "" && len(item.Payload) > 0 &&
+		len(statuses) == 1 &&
+		(statuses[0].Status == "read" || statuses[0].Status == "delivered")
 	receiptMessageIDs := make([]string, 0)
 	for _, receipt := range statuses {
 		receiptMessageIDs = append(receiptMessageIDs, receipt.MessageIDs...)
@@ -4925,6 +4932,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 				tx,
 				session.OrganizationID,
 				notificationReceipt,
+				partialLiveReceipt,
 			)
 			if err != nil {
 				return err
@@ -4941,6 +4949,23 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 		if len(missing) > 0 {
+			if partialLiveReceipt {
+				var deferred int
+				if err := tx.QueryRow(ctx, `
+					select private.defer_partial_v1_live_receipt_ids(
+					  $1::uuid,$2::uuid,$3::uuid,$4::jsonb,
+					  $5,$6::timestamptz,$7::text[],$8
+					)
+				`, item.ID, session.OrganizationID, session.ID,
+					string(item.Payload), receipt.Status, receipt.OccurredAt,
+					uniqueStrings(missing...), whatsappWebhookWorkerID).Scan(&deferred); err != nil {
+					return err
+				}
+				if deferred != len(uniqueStrings(missing...)) {
+					return fmt.Errorf("partial live receipt deferral count mismatch")
+				}
+				continue
+			}
 			return fmt.Errorf("message status target not found yet: count=%d", len(missing))
 		}
 	}
@@ -4957,6 +4982,7 @@ func reconcileNativeNotificationWhatsAppReceipt(
 	tx pgx.Tx,
 	organizationID string,
 	receipt nativeEvolutionStatus,
+	ignoreNotFound bool,
 ) (map[string]bool, error) {
 	matched := map[string]bool{}
 	status := strings.ToLower(strings.TrimSpace(receipt.Status))
@@ -4988,6 +5014,9 @@ func reconcileNativeNotificationWhatsAppReceipt(
 			return nil, fmt.Errorf("decode notification WhatsApp receipt outcome: %w", err)
 		}
 		reconciled, err := nativeNotificationReceiptOutcomeMatched(result.Outcome)
+		if ignoreNotFound && errors.Is(err, errNativeNotificationReceiptTargetNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("notification WhatsApp receipt: %w", err)
 		}

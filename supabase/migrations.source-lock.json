@@ -714,6 +714,10 @@
     {
       "file": "20260928183200_quarantine_two_stale_session_controls.sql",
       "sha256": "1d14025b7036d36a377d38cd2c028f5aa88ac0af26b063a82af5e62e1af7d736"
+    },
+    {
+      "file": "20260928183605_defer_partial_live_receipt_ids.sql",
+      "sha256": "9711e66af986cf5193daef844616bba14dffe27dd605fa609aa2b774a715cc9c"
     }
   ]
 }

@@ -160,7 +160,8 @@ func (repo Repository) reconcileDeferredReceipts(ctx context.Context, limit int)
 
 	resolved, unexpected := 0, 0
 	for _, item := range items {
-		if item.status != "read" || item.providerMessageID == "" || item.occurredAt.IsZero() {
+		if (item.status != "read" && item.status != "delivered") ||
+			item.providerMessageID == "" || item.occurredAt.IsZero() {
 			unexpected++
 			continue
 		}

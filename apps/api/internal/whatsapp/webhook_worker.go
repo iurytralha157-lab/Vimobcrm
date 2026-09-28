@@ -632,6 +632,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 				statsMu.Lock()
 				windowStats.logAndReset(logger, config, liveConcurrency, backlogConcurrency)
 				statsMu.Unlock()
+				handler.repo.logEvolutionWebhookQueueHealth(ctx, logger)
 				if err := handler.repo.RecoverStaleWebhookInbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox recovery failed", "error", err)
 				}

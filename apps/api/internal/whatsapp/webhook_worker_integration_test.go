@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -719,6 +720,184 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 		where id = $1::uuid
 	`, matchedReceiptID); err != nil {
 		t.Fatal(err)
+	}
+	// One missing provider ID must not undo the status of an existing ID.
+	// The missing ID is kept separately and reconciled after its target arrives.
+	partialTargetID := suffix + "-partial-target"
+	partialMissingID := suffix + "-partial-late"
+	partialOtherMissingID := suffix + "-partial-other-late"
+	var partialMessageID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, session_id, conversation_id, message_id,
+			provider_message_id, from_me, direction, content, message_type, status
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4, $4,
+			true, 'outbound', 'partial receipt test', 'text', 'sent'
+		) returning id::text
+	`, organizationID, sessionB, matchedConversationID, partialTargetID).Scan(&partialMessageID); err != nil {
+		t.Fatal(err)
+	}
+	partialOccurredAt := time.Now().UTC().Truncate(time.Microsecond)
+	partialPayload := fmt.Sprintf(`{
+		"__vimob_ingress":{"routing_key":"receipt:%s","routing_snapshot":{"version":1,"messages":[]}},
+		"event":"Receipt","state":"Delivered","instanceId":"test","instanceName":"test",
+		"data":{"AddressingMode":"pn","MessageSender":"","Type":"",
+			"Sender":"","MessageIDs":[%q,%q,%q],"Chat":"","Timestamp":%q,
+			"SenderAlt":"","RecipientAlt":"","BroadcastListOwner":"",
+			"IsFromMe":false,"IsGroup":false,"BroadcastRecipients":null}
+	}`, suffix, partialTargetID, partialMissingID, partialOtherMissingID,
+		partialOccurredAt.Format(time.RFC3339Nano))
+	var partialInboxID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, locked_at, locked_by,
+			provider_occurred_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'receipt', 'evolution_go',
+			$4::jsonb, 'live', 'processing', 1, now(), $5, $6::timestamptz
+		) returning id::text
+	`, organizationID, sessionB, suffix+"-partial-live-receipt", partialPayload,
+		whatsappWebhookWorkerID, partialOccurredAt).Scan(&partialInboxID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = postgres.Pool().Exec(cleanupCtx, `
+			delete from private.whatsapp_deferred_receipt_ledger where inbox_id = $1::uuid
+		`, partialInboxID)
+		_, _ = postgres.Pool().Exec(cleanupCtx, `
+			delete from private.whatsapp_v1_partial_live_receipt_audit where inbox_id = $1::uuid
+		`, partialInboxID)
+	})
+	partialItem := pendingEvolutionWebhook{
+		ID: partialInboxID, OrganizationID: organizationID,
+		SessionID: sessionB, EventType: "receipt",
+		ProcessingLane: "live", Payload: []byte(partialPayload),
+	}
+	badPartialItem := partialItem
+	badPartialItem.Payload = []byte(strings.Replace(partialPayload,
+		`"event":"Receipt"`, `"message":{"content":"lead data"},"event":"Receipt"`, 1))
+	if handled, err := repo.processEvolutionWebhookNative(ctx, badPartialItem); !handled || err == nil {
+		t.Fatalf("mixed live receipt must fail closed = handled:%v err:%v", handled, err)
+	}
+	var unchangedStatus string
+	var prematureAudit, prematureLedger int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select status from public.whatsapp_messages where id = $1::uuid
+	`, partialMessageID).Scan(&unchangedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select (select count(*)::integer from private.whatsapp_v1_partial_live_receipt_audit
+		        where inbox_id = $1::uuid),
+		       (select count(*)::integer from private.whatsapp_deferred_receipt_ledger
+		        where inbox_id = $1::uuid)
+	`, partialInboxID).Scan(&prematureAudit, &prematureLedger); err != nil {
+		t.Fatal(err)
+	}
+	if unchangedStatus != "sent" || prematureAudit != 0 || prematureLedger != 0 {
+		t.Fatalf("mixed receipt leaked a partial status = %q audit:%d ledger:%d",
+			unchangedStatus, prematureAudit, prematureLedger)
+	}
+	if handled, err := repo.processEvolutionWebhookNative(ctx, partialItem); err != nil || !handled {
+		t.Fatalf("partial live receipt = handled:%v err:%v", handled, err)
+	}
+	var appliedStatus, deferredStatus, auditHash string
+	var deferredCount, totalDeferred, auditedMissingCount int
+	var auditIncludesMatched bool
+	if err := postgres.Pool().QueryRow(ctx, `
+		select status from public.whatsapp_messages where id = $1::uuid
+	`, partialMessageID).Scan(&appliedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(receipt_status), '')
+		from private.whatsapp_deferred_receipt_ledger
+		where inbox_id = $1::uuid and provider_message_id in ($2, $3)
+	`, partialInboxID, partialMissingID, partialOtherMissingID).Scan(&deferredCount, &deferredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select payload_sha256,
+		       jsonb_array_length(initially_missing_ids),
+		       initially_missing_ids ? $3
+		from private.whatsapp_v1_partial_live_receipt_audit
+		where inbox_id = $1::uuid and original_inbox -> 'payload' = $2::jsonb
+	`, partialInboxID, partialPayload, partialTargetID).Scan(
+		&auditHash, &auditedMissingCount, &auditIncludesMatched,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer from private.whatsapp_deferred_receipt_ledger
+		where inbox_id = $1::uuid
+	`, partialInboxID).Scan(&totalDeferred); err != nil {
+		t.Fatal(err)
+	}
+	if appliedStatus != "delivered" || deferredCount != 2 || totalDeferred != 2 ||
+		deferredStatus != "delivered" || len(auditHash) != 64 ||
+		auditedMissingCount != 2 || auditIncludesMatched {
+		t.Fatalf("partial receipt status = applied:%q deferred:%d/%d/%q audit:%d/%d/%v",
+			appliedStatus, deferredCount, totalDeferred, deferredStatus,
+			len(auditHash), auditedMissingCount, auditIncludesMatched)
+	}
+	if err := repo.markEvolutionWebhookProcessed(ctx, partialItem); err != nil {
+		t.Fatalf("complete partial receipt after durable deferral: %v", err)
+	}
+	var partialInboxStatus string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select status from public.whatsapp_webhook_inbox where id = $1::uuid
+	`, partialInboxID).Scan(&partialInboxStatus); err != nil {
+		t.Fatal(err)
+	}
+	if partialInboxStatus != "processed" {
+		t.Fatalf("partial receipt inbox status = %q, want processed", partialInboxStatus)
+	}
+	var lateMessageID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, session_id, conversation_id, message_id,
+			provider_message_id, from_me, direction, content, message_type, status
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4, $4,
+			true, 'outbound', 'late receipt target', 'text', 'sent'
+		) returning id::text
+	`, organizationID, sessionB, matchedConversationID, partialMissingID).Scan(&lateMessageID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update private.whatsapp_deferred_receipt_ledger
+		set next_reconcile_at = now() - interval '1 second'
+		where inbox_id = $1::uuid
+	`, partialInboxID); err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := repo.reconcileDeferredReceipts(ctx, 4); err != nil || resolved != 1 {
+		t.Fatalf("late partial receipt = resolved:%d err:%v", resolved, err)
+	}
+	var lateStatus, deferredState, otherDeferredState string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select message.status, ledger.state
+		from public.whatsapp_messages as message
+		join private.whatsapp_deferred_receipt_ledger as ledger
+		  on ledger.inbox_id = $2::uuid and ledger.provider_message_id = $3
+		where message.id = $1::uuid
+	`, lateMessageID, partialInboxID, partialMissingID).Scan(&lateStatus, &deferredState); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select state from private.whatsapp_deferred_receipt_ledger
+		where inbox_id = $1::uuid and provider_message_id = $2
+	`, partialInboxID, partialOtherMissingID).Scan(&otherDeferredState); err != nil {
+		t.Fatal(err)
+	}
+	if lateStatus != "delivered" || deferredState != "resolved" ||
+		otherDeferredState != "deferred" {
+		t.Fatalf("late partial receipt status = %q/%q/%q",
+			lateStatus, deferredState, otherDeferredState)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.whatsapp_webhook_inbox (
