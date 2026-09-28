@@ -791,7 +791,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const canOperateWhatsApp = hasWhatsAppModule && hasPermission('whatsapp_operate');
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const shouldLoadComposerData = canViewWhatsApp && !readOnly;
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
+  const { data: sessions = [], isLoading: loadingSessions, isSuccess: ownedSessionsLoaded } = useAccessibleSessions({
     enabled: shouldLoadComposerData,
   });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
@@ -853,8 +853,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     [conversation, hasLeadPhone, leadId, leadPhone],
   );
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
-    [messageInputConversation, sessions],
+    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions, ownedSessionsLoaded),
+    [messageInputConversation, sessions, ownedSessionsLoaded],
   );
   const contactSession = sessions.find((session) => session.id === whatsappMessageInputState.sendSessionId);
   const canSaveLeadContact = Boolean(!readOnly && canOperateWhatsApp && hasLeadPhone

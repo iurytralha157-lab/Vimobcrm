@@ -400,6 +400,7 @@ export function FloatingChat() {
   const {
     data: sessions,
     isLoading: loadingSessions,
+    isSuccess: ownedSessionsLoaded,
     isError: sessionsFailed,
     refetch: refetchSessions,
   } = useAccessibleSessions({ enabled: shouldLoadFloatingChatData });
@@ -514,6 +515,7 @@ export function FloatingChat() {
     activeConversation,
     selectedSessionId,
     sessions,
+    ownedSessionsLoaded,
   );
   const activeAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (

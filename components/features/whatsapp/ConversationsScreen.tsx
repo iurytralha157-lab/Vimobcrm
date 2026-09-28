@@ -204,6 +204,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const {
     data: sessions,
     isLoading: loadingSessions,
+    isSuccess: ownedSessionsLoaded,
   } = useAccessibleSessions();
   const canViewCallHistory = hasModule("whatsapp")
     && (hasPermission("whatsapp_view") || canOperateWhatsApp)
@@ -759,8 +760,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [conversations, metaConversations, activePlatform, trimmedSearchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
-    [selectedConversation, selectedSessionId, sessions],
+    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded),
+    [selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded],
   );
   const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (
