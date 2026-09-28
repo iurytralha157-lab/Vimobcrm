@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "b46fe4b4f0079c3daac72a0714acb3931d3842707aecad4b38f0b65621defa3c",
+  "sourceDigestSha256": "b8ca9e28b1545f0845d52a242dc7eb4ff2cf5098140e1784915961739ec3edf0",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
