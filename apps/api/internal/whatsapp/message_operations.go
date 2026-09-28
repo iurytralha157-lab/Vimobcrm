@@ -1036,7 +1036,10 @@ func (repo Repository) findConversationForLead(ctx context.Context, tenantContex
 		  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.lead_id = $5::uuid
-		order by wc.last_message_at desc nulls last, wc.created_at desc
+		-- A newly started conversation has no message yet. Keep that explicit
+		-- choice ahead of an older, disconnected conversation for this lead.
+		order by greatest(wc.created_at, coalesce(wc.last_message_at, wc.created_at)) desc,
+		         wc.created_at desc
 		limit 1
 	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {

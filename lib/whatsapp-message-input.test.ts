@@ -268,6 +268,25 @@ test('removed connection explains why its historical conversation cannot send', 
   })
 })
 
+test('disconnected connection explains a denied attendance before generic authorization', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+    session: {
+      id: '40000000-0000-4000-8000-000000000001',
+      status: 'disconnected',
+      provider: 'evolution_go',
+    },
+  }
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, [], true, false), {
+    disabled: true,
+    placeholder: 'Conexão desconectada. Reconecte ou inicie uma nova conversa.',
+  })
+})
+
 test('new conversation draft may use the explicitly selected session', () => {
   const result = getWhatsAppSendSessionId(
     { session_id: null },

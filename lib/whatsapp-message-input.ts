@@ -255,6 +255,14 @@ export function getWhatsAppMessageInputState(
     };
   }
 
+  if (conversation.id && conversation.session_id && canSendFixedSession === false
+    && getConversationSession(conversation, sessions)?.status === "disconnected") {
+    return {
+      disabled: true,
+      placeholder: "Conexão desconectada. Reconecte ou inicie uma nova conversa.",
+    };
+  }
+
   if (conversation.id && canSendFixedSession === false) {
     return {
       disabled: true,

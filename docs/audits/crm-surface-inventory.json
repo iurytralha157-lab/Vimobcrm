@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "c30283752189c2c178bd0b0eb11059b6bc683255802c84acb34c4fee65518e3d",
+  "sourceDigestSha256": "b46fe4b4f0079c3daac72a0714acb3931d3842707aecad4b38f0b65621defa3c",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1054,10 +1054,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:cbbdb76fe6658acbee7f",
+          "id": "overlay:91cda0c42f913e462331",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 173,
+          "line": 192,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -1108,10 +1108,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:da98298c263b564e9515",
+          "id": "overlay:c02011dd44485438fca3",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1240,
+          "line": 1387,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -1162,10 +1162,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:a34dda714279ec857f84",
+          "id": "overlay:e7fb9075abb064781152",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1793,
+          "line": 1972,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -9912,10 +9912,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6c8710263a5271c6117f",
+          "id": "cta:511e1d55ae5840950f82",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 175,
+          "line": 194,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9967,10 +9967,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:16b36ebdacf3fc25ab26",
+          "id": "cta:59be40120d517ce38df5",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 238,
+          "line": 257,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -10022,10 +10022,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:591fcfe6bb55e82847de",
+          "id": "cta:3a7b4b2ac43012671f03",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1262,
+          "line": 1411,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -10077,10 +10077,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:dec1eadca55e16444230",
+          "id": "cta:2393710831a276395b0d",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1319,
+          "line": 1468,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10132,10 +10132,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:70ad4f4d3de63c0f45f5",
+          "id": "cta:aa789131e0eed48b07cd",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1367,
+          "line": 1516,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10187,10 +10187,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8ffc55414cf8ae96cc65",
+          "id": "cta:baaccfd0cfd49ea92b32",
           "column": 21,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1409,
+          "line": 1558,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10242,10 +10242,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e3fc78aafdf602e4efae",
+          "id": "cta:5dd93c3a50df44c63268",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1427,
+          "line": 1576,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10297,10 +10297,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7ddfc3954cd17df4db06",
+          "id": "cta:f1d1627c9081b40437c5",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1530,
+          "line": 1679,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10352,10 +10352,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cb1b5dd63243180c897f",
+          "id": "cta:cb61eacaa7ac21f9d329",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1558,
+          "line": 1707,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10407,10 +10407,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:256eb12c61905dc7f411",
+          "id": "cta:bd8073f87945d0011a2c",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1617,
+          "line": 1766,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10462,10 +10462,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8698743196ef950e691f",
+          "id": "cta:c8e0628466dd7c03c22e",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1651,
+          "line": 1800,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10517,10 +10517,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:cdb23c4d9af3848d011f",
+          "id": "cta:de0b254a84f076c74fb7",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1655,
+          "line": 1804,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10572,10 +10572,120 @@
           "tag": "button"
         },
         {
-          "id": "cta:92ead7d8b49ad48ce938",
+          "id": "cta:a77005f4c86d874f7964",
+          "column": 13,
+          "file": "components/features/chat/FloatingChat.tsx",
+          "line": 1827,
+          "owner": "renderMessageInput",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:6be9b921e144d778647c",
+          "column": 13,
+          "file": "components/features/chat/FloatingChat.tsx",
+          "line": 1835,
+          "owner": "renderMessageInput",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:86e7eb23df13fd2814eb",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1697,
+          "line": 1876,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10627,10 +10737,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a7f543e77eb56a087251",
+          "id": "cta:53b91a33b69711915b36",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1715,
+          "line": 1894,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10682,10 +10792,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f6c85c40cdd28e708c4",
+          "id": "cta:1ab9c78b48e80c660fb2",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1760,
+          "line": 1939,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -30891,10 +31001,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:67d4f8c6c900c3ae660d",
+          "id": "control:770f42f8e4a8274cb59c",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1807,
+          "line": 1986,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -30946,10 +31056,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:660fa1d9452f4a041044",
+          "id": "control:fe4ed4401c5153be1136",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1808,
+          "line": 1987,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -35371,7 +35481,7 @@
         }
       ]
     },
-    "digestSha256": "870153f8c436a7291ab4db06365f10a12e08e47f2b4b543455311e54ee034d2f"
+    "digestSha256": "111aa4fbd9e651683abd8d2fe9882871678adad4d05214ba0a46ac19d1812f32"
   },
   "routes": [
     {
@@ -45263,9 +45373,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1410,
+      "ctasAll": 1412,
       "ctasByKind": {
-        "actionButton": 1253,
+        "actionButton": 1255,
         "external": 6,
         "internal": 31,
         "internalDynamic": 75,
@@ -45274,8 +45384,8 @@
       "forms": 51,
       "formsRouteReachable": 51,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1359,
-      "internalCtasRouteReachable": 1323,
+      "internalCtas": 1361,
+      "internalCtasRouteReachable": 1325,
       "overlays": 225,
       "overlaysByKind": {
         "alertDialog": 61,
@@ -45303,7 +45413,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 51,
-    "routeReachableInternalCtaImplementations": 1323,
+    "routeReachableInternalCtaImplementations": 1325,
     "routeReachableOverlayImplementations": 218,
     "routeReachableSupplementalOverlayAndTabControls": 277
   },
