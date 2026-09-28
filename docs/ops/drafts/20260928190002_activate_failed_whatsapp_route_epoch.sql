@@ -54,7 +54,7 @@ where inbox.status = 'dead' and inbox.provider = 'evolution_go'
 
 do $backfill$
 declare
-  v_expected integer := 25; -- Reconfirm via READ ONLY preflight before PROD.
+  v_expected integer := 26; -- Reconfirm via READ ONLY preflight before PROD.
   v_actual integer;
   v_inserted integer;
   v_ambiguous integer;
