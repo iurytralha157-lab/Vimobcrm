@@ -622,6 +622,34 @@
     {
       "file": "20260928054500_defer_unmatched_whatsapp_receipts.sql",
       "sha256": "06435e8b49580c42b14495d588dd5f90adefc5d37ecb033b1c6fc3d191e6725f"
+    },
+    {
+      "file": "20260928135607_terminalize_frozen_legacy_receipt_controls.sql",
+      "sha256": "902071d66b1f9ee1a91105bb8a0a247c88de576b17d1653e18838ad42f277da2"
+    },
+    {
+      "file": "20260928140707_quarantine_frozen_legacy_message_ingress.sql",
+      "sha256": "3dd3fb49ced5d95ddeef16383a9349466da6eb8e0134f445617c3d161367b06f"
+    },
+    {
+      "file": "20260928140755_terminalize_unmatched_v1_receipt_backlog.sql",
+      "sha256": "feac111ab5c9b408c3a51c54a9c226a8918dcbf578b2245d95689a657e5f82e5"
+    },
+    {
+      "file": "20260928141221_terminalize_unsupported_v1_message_heads.sql",
+      "sha256": "bd8b477fed502cde51b3ef66ccd159cab30cebb55f10fa894d9966308e70bdbb"
+    },
+    {
+      "file": "20260928144217_process_v1_readself_noop_receipts.sql",
+      "sha256": "d418fe4564eecbd2b7ce392f2a1b44fe5c69ce6e24674994d672d2308ea9a364"
+    },
+    {
+      "file": "20260928145359_archive_deleted_session_v1_ingress_for_historical_recovery.sql",
+      "sha256": "7a4e075aa2121a4a78556157996a3d8fbf4ac96be241dd6376d2ffed87d62aec"
+    },
+    {
+      "file": "20260928150351_requeue_live_message_schema_roots.sql",
+      "sha256": "4547f679a33bdee8bd0d37acf534c69f52fcebd51733254b0cab17ad89e1d9b6"
     }
   ]
 }
