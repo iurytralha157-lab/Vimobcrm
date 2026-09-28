@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { getAssetPreviewSource } from './property-asset-preview.ts'
+const previewPath = './property-asset-preview.ts'
+const { getAssetPreviewSource } = await import(previewPath)
 
 test('fotos protegidas usam apenas a URL assinada do visualizador autorizado', () => {
   assert.equal(getAssetPreviewSource({

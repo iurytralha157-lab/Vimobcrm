@@ -276,6 +276,16 @@ func TestSitePublicationSourceCapturesTenantScopedCondominiumName(t *testing.T) 
 	}
 }
 
+func TestSitePublicationSourceRequiresPublicDescription(t *testing.T) {
+	query := sitePublicPropertySQL("p")
+	if !strings.Contains(query, "'descricao', nullif(btrim(p.descricao_site), '')") {
+		t.Fatal("site source must use the public site description")
+	}
+	if strings.Contains(query, "nullif(p.descricao, '')") {
+		t.Fatal("internal CRM description must not become public publication content")
+	}
+}
+
 func TestGrupoOLXReadinessAndSnapshotUseCanonicalAccountConfiguration(t *testing.T) {
 	source := readyGrupoOLXPublicationSource()
 	checks, score, state := evaluateGrupoOLXReadiness(source)
@@ -561,6 +571,7 @@ func TestSiteReadinessRequiresMainPublicationFields(t *testing.T) {
 		{"neighborhood missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "bairro") }},
 		{"city missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "cidade") }},
 		{"state missing after postal lookup", "location", func(source *publicationSource) { delete(source.Property, "estado") }},
+		{"public description missing", "description", func(source *publicationSource) { delete(source.Property, "descricao") }},
 		{"area missing", "area", func(source *publicationSource) { delete(source.Property, "area_construida") }},
 		{"state incomplete", "location", func(source *publicationSource) { source.Property["estado"] = "S" }},
 		{"invalid legacy photo", "photo", func(source *publicationSource) {

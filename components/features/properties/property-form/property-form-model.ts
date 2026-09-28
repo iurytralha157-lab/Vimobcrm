@@ -1,4 +1,5 @@
 import type { Property } from "@/hooks/use-properties";
+import { sitePublicationFormReadinessSchema } from "@/lib/validation/property-publications";
 import {
   getPropertyPhotoCount,
   PROPERTY_MEDIA_MAX_PHOTOS,
@@ -640,6 +641,66 @@ export function getPropertyValidationIssues(
         }
       : null,
   ].filter((issue): issue is ValidationIssue => Boolean(issue));
+}
+
+/** Checks the fields needed for a new Site publication, not for saving a draft. */
+export function getPropertyPublicationValidationIssues(
+  formData: PropertyFormData,
+  options: { isEditing?: boolean } = {},
+): ValidationIssue[] {
+  const { isRental, isSale } = getPropertyFormRules(formData);
+  const publicPhotos = getPropertyPhotoCount(
+    formData.fotos.filter(
+      (image) => !formData.hidden_site_image_urls.includes(image),
+    ),
+    formData.hidden_site_image_urls.includes(formData.imagem_principal)
+      ? ""
+      : formData.imagem_principal,
+  );
+  const result = sitePublicationFormReadinessSchema.safeParse({
+    title: formData.title,
+    propertyType: formData.tipo_de_imovel,
+    dealTypeSupported: isSupportedDealType(formData.tipo_de_negocio),
+    status: normalize(formData.status),
+    cep: formData.cep,
+    uf: formData.uf,
+    cidade: formData.cidade,
+    bairro: formData.bairro,
+    publicAddressVisibility: formData.public_address_visibility,
+    saleRequired: isSale,
+    salePrice: parseLocaleNumber(formData.preco) ?? 0,
+    rentalRequired: isRental,
+    rentalPrice: parseLocaleNumber(formData.valor_locacao) ?? 0,
+    area: Math.max(
+      parseLocaleNumber(formData.area_util) ?? 0,
+      parseLocaleNumber(formData.area_total) ?? 0,
+    ),
+    publicDescription: formData.descricao_site,
+    publicPhotoRequired: !options.isEditing,
+    publicPhotoCount: publicPhotos,
+  });
+  if (result.success) return [];
+
+  const issueByField: Record<string, ValidationIssue> = {
+    title: { label: "Título comercial", tab: "structure", fieldId: "property-title" },
+    propertyType: { label: "Tipo de imóvel", tab: "structure", fieldId: "property-type" },
+    dealTypeSupported: { label: "Modalidade válida", tab: "structure", fieldId: "property-deal-type" },
+    status: { label: "Status ativo", tab: "structure", fieldId: "property-status" },
+    cep: { label: "CEP válido com 8 dígitos", tab: "location", fieldId: "property-cep" },
+    uf: { label: "UF", tab: "location", fieldId: "property-state" },
+    cidade: { label: "Cidade", tab: "location", fieldId: formData.city_id ? "property-city-selector" : "property-city-manual" },
+    bairro: { label: "Bairro", tab: "location", fieldId: formData.neighborhood_id ? "property-neighborhood-selector" : "property-neighborhood-manual" },
+    publicAddressVisibility: { label: "Endereço público", tab: "location", fieldId: "property-address-visibility" },
+    salePrice: { label: "Preço de venda positivo", tab: "values", fieldId: "property-sale-price" },
+    rentalPrice: { label: "Preço de locação positivo", tab: "values", fieldId: "property-rental-price" },
+    area: { label: "Área útil ou total", tab: "characteristics", fieldId: "property-usable-area" },
+    publicDescription: { label: "Descrição pública no site", tab: "media", fieldId: "property-public-description" },
+    publicPhotoCount: { label: "Ao menos uma foto pública", tab: "media" },
+  };
+  return result.error.issues.flatMap((issue) => {
+    const field = String(issue.path[0] ?? "");
+    return issueByField[field] ? [issueByField[field]] : [];
+  });
 }
 
 export function buildPropertyMutationInput(

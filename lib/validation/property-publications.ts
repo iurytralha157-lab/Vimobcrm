@@ -2,6 +2,38 @@ import { z } from 'zod'
 
 import { uuidSchema } from './common'
 
+// Client-side preview of the Site gate. The API reevaluates the saved property
+// and its canonical media before accepting a publication command.
+export const sitePublicationFormReadinessSchema = z.object({
+  title: z.string().trim().min(1),
+  propertyType: z.string().trim().min(1),
+  dealTypeSupported: z.literal(true),
+  status: z.enum(['active', 'ativo', 'disponivel']),
+  cep: z.string().trim().regex(/^(?:\d{8}|\d{5}-\d{3})$/),
+  uf: z.string().trim().regex(/^[A-Za-z]{2}$/),
+  cidade: z.string().trim().min(1),
+  bairro: z.string().trim().min(1),
+  publicAddressVisibility: z.string().trim().min(1),
+  saleRequired: z.boolean(),
+  salePrice: z.number(),
+  rentalRequired: z.boolean(),
+  rentalPrice: z.number(),
+  area: z.number().positive(),
+  publicDescription: z.string().trim().min(1),
+  publicPhotoRequired: z.boolean(),
+  publicPhotoCount: z.number().int().nonnegative(),
+}).superRefine((input, context) => {
+  if (input.saleRequired && input.salePrice <= 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['salePrice'], message: 'Informe um preço de venda positivo.' })
+  }
+  if (input.rentalRequired && input.rentalPrice <= 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['rentalPrice'], message: 'Informe um preço de locação positivo.' })
+  }
+  if (input.publicPhotoRequired && input.publicPhotoCount === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['publicPhotoCount'], message: 'Adicione uma foto pública.' })
+  }
+})
+
 const publicationTimestampSchema = z.string().trim().datetime({ offset: true })
 const nullablePublicationTimestampSchema = publicationTimestampSchema.nullable()
 

@@ -86,6 +86,7 @@ import {
 } from "@/lib/api/property-media";
 import { propertyWorkspaceAPI } from "@/lib/api/property-workspace";
 import { propertiesAPI } from "@/lib/api/properties";
+import { requestAutomaticSitePublication } from "@/lib/api/property-auto-publication";
 import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { releaseStagedPropertyPhotos } from "@/lib/property-media-draft";
@@ -98,6 +99,7 @@ import {
   clearDraft,
   formatCep,
   getPropertyFormRules,
+  getPropertyPublicationValidationIssues,
   getPropertyValidationIssues,
   initialFormData,
   isSaleType,
@@ -116,6 +118,11 @@ import {
   applyCepAddressToLocation,
   readBackPropertyLocation,
 } from "./property-form/property-cep-location";
+import {
+  selectLocationCity,
+  selectLocationNeighborhood,
+  setManualLocationField,
+} from "./property-form/property-location-selection";
 import {
   arePropertySnapshotsEqualOutsideMedia,
   resolvePropertyFormRefetch,
@@ -250,6 +257,7 @@ export default function PropertyForm() {
   const [isPersistingMedia, setIsPersistingMedia] = useState(false);
   const [createdPropertyId, setCreatedPropertyId] = useState<string | null>(null);
   const [mediaUploadFailure, setMediaUploadFailure] = useState<string | null>(null);
+  const [publicationSaveFeedback, setPublicationSaveFeedback] = useState<string | null>(null);
   const createdPropertyForMediaRetryRef =
     useRef<CreatedPropertyForMediaRetry | null>(null);
   const createdPropertyMediaCompleteRef = useRef(false);
@@ -448,49 +456,45 @@ export default function PropertyForm() {
     field: K,
     value: PropertyFormData[K],
   ) => {
+    if (
+      field === "cep" || field === "uf" || field === "cidade" ||
+      field === "bairro" || field === "city_id" || field === "neighborhood_id"
+    ) {
+      setFormData((prev) => setManualLocationField(prev, field, String(value)));
+      return;
+    }
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const applyCity = (city: PropertyCity | null) => {
-    setFormData((prev) => ({
-      ...prev,
-      city_id: city?.id || "",
-      cidade: city?.name || prev.cidade,
-      uf: city?.uf || prev.uf,
-      neighborhood_id: city?.id === prev.city_id ? prev.neighborhood_id : "",
-      condominium_id: city?.id === prev.city_id ? prev.condominium_id : "",
-    }));
+    if (city) setFormData((prev) => selectLocationCity(prev, city));
   };
 
   const applyNeighborhood = (neighborhood: PropertyNeighborhood | null) => {
-    setFormData((prev) => ({
-      ...prev,
-      neighborhood_id: neighborhood?.id || "",
-      bairro: neighborhood?.name || prev.bairro,
-      city_id: neighborhood?.city?.id || prev.city_id,
-      cidade: neighborhood?.city?.name || prev.cidade,
-      uf: neighborhood?.city?.uf || prev.uf,
-      condominium_id:
-        neighborhood?.id === prev.neighborhood_id ? prev.condominium_id : "",
-    }));
+    if (neighborhood) {
+      setFormData((prev) => selectLocationNeighborhood(prev, neighborhood));
+    }
   };
 
   const applyCondominium = (condominium: PropertyCondominium | null) => {
-    setFormData((prev) => ({
-      ...prev,
-      condominium_id: condominium?.id || "",
-      city_id: condominium?.city?.id || prev.city_id,
-      neighborhood_id: condominium?.neighborhood?.id || prev.neighborhood_id,
-      cidade: condominium?.city?.name || prev.cidade,
-      uf: condominium?.city?.uf || prev.uf,
-      bairro: condominium?.neighborhood?.name || prev.bairro,
-      endereco: condominium?.address || prev.endereco,
-      cep: condominium?.cep ? formatCep(condominium.cep) : prev.cep,
-      condominio:
-        condominium?.default_condominium_fee != null
-          ? String(Math.round(Number(condominium.default_condominium_fee)))
-          : prev.condominio,
-    }));
+    setFormData((prev) => {
+      const cityChanged = Boolean(condominium?.city?.id && condominium.city.id !== prev.city_id);
+      return {
+        ...prev,
+        condominium_id: condominium?.id || "",
+        city_id: condominium?.city?.id || prev.city_id,
+        neighborhood_id: condominium?.neighborhood?.id || (cityChanged ? "" : prev.neighborhood_id),
+        cidade: condominium?.city?.name || prev.cidade,
+        uf: condominium?.city?.uf || prev.uf,
+        bairro: condominium?.neighborhood?.name || (cityChanged ? "" : prev.bairro),
+        endereco: condominium?.address || (cityChanged ? "" : prev.endereco),
+        cep: condominium?.cep ? formatCep(condominium.cep) : cityChanged ? "" : prev.cep,
+        condominio:
+          condominium?.default_condominium_fee != null
+            ? String(Math.round(Number(condominium.default_condominium_fee)))
+            : prev.condominio,
+      };
+    });
   };
 
   const applyOwner = (owner: PropertyOwner | null) => {
@@ -764,6 +768,7 @@ export default function PropertyForm() {
     isEditing,
     canEditOwnerDetails,
   });
+  const publicationValidationIssues = getPropertyPublicationValidationIssues(formData, { isEditing });
   const visibleValidationIssues = hasTriedSubmit ? validationIssues : [];
 
   const focusValidationIssue = (issue: (typeof validationIssues)[number]) => {
@@ -779,11 +784,49 @@ export default function PropertyForm() {
   };
 
   const navigateAfterSave = (savedPropertyId: string) => {
-    router.push(
-      activeTab === "publication"
-        ? `/properties/${savedPropertyId}?tab=publication`
-        : "/properties",
-    );
+    router.push(`/properties/${savedPropertyId}?tab=publication`);
+  };
+
+  const confirmSavedPropertyPublication = async (
+    organizationId: string,
+    savedPropertyId: string,
+  ) => {
+    setPublicationSaveFeedback(null);
+    try {
+      const outcome = await requestAutomaticSitePublication(organizationId, savedPropertyId);
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ["property-publications", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["properties"] }),
+        queryClient.invalidateQueries({ queryKey: ["properties-infinite"] }),
+      ]);
+      if (outcome.kind === "blocked") {
+        const reason = outcome.reasons.slice(0, 3).join(" ");
+        const message = `Imóvel salvo; esta versão não foi enviada ao Site. ${reason}`;
+        setPublicationSaveFeedback(message);
+        toast.error(message, { duration: 8000 });
+        const firstIssue = publicationValidationIssues[0];
+        if (outcome.fixableInForm && isEditing) {
+          if (firstIssue) focusValidationIssue(firstIssue);
+          else setActiveTab("publication");
+          return;
+        }
+        if (outcome.fixableInForm && !isEditing) {
+          router.replace(`/properties/${savedPropertyId}/edit`);
+          return;
+        }
+      } else if (outcome.kind === "already-published") {
+        toast.success("Imóvel salvo e versão atual publicada no site.");
+      } else if (outcome.kind === "processing") {
+        toast.info("Imóvel salvo. A publicação já está em processamento.");
+      } else {
+        toast.success("Imóvel salvo. Publicação enviada para processamento.");
+      }
+    } catch {
+      const message = "Imóvel salvo, mas não foi possível confirmar a solicitação de publicação. Confira o estado na Central.";
+      setPublicationSaveFeedback(message);
+      toast.error(message, { duration: 8000 });
+    }
+    navigateAfterSave(savedPropertyId);
   };
 
   const persistCreatedPropertyMedia = async (
@@ -840,8 +883,26 @@ export default function PropertyForm() {
         // The saved property and photos remain authoritative if browser storage
         // is unavailable.
       }
-      toast.success("Imóvel e fotos cadastrados com sucesso!");
-      navigateAfterSave(created.id);
+      try {
+        const { matches } = await readBackPropertyLocation(formData, async () => {
+          const { data } = await propertiesAPI.getProperty(created.id, created.organizationId);
+          return data;
+        });
+        if (!matches) {
+          const message = "Imóvel e fotos salvos, mas bairro, cidade ou UF não permaneceram gravados. Corrija o endereço antes de publicar.";
+          setPublicationSaveFeedback(message);
+          toast.error(message, { duration: 8000 });
+          router.replace(`/properties/${created.id}/edit`);
+          return;
+        }
+      } catch {
+        const message = "Imóvel e fotos salvos, mas não foi possível confirmar o endereço. A publicação não foi solicitada.";
+        setPublicationSaveFeedback(message);
+        toast.error(message, { duration: 8000 });
+        navigateAfterSave(created.id);
+        return;
+      }
+      await confirmSavedPropertyPublication(created.organizationId, created.id);
     } catch (error: unknown) {
       const rollbackIncomplete =
         error instanceof PropertyMediaPersistenceError && error.rollbackIncomplete;
@@ -872,7 +933,7 @@ export default function PropertyForm() {
       const createdForRetry = createdPropertyForMediaRetryRef.current;
       if (!isEditing && createdForRetry) {
         if (createdPropertyMediaCompleteRef.current) {
-          navigateAfterSave(createdForRetry.id);
+          await confirmSavedPropertyPublication(createdForRetry.organizationId, createdForRetry.id);
           return;
         }
         await persistCreatedPropertyMedia(createdForRetry, true);
@@ -968,7 +1029,15 @@ export default function PropertyForm() {
             );
             return;
           }
-          toast.success("Imóvel atualizado!");
+          markPropertyFormPristine();
+          setHasConcurrencyConflict(false);
+          try {
+            clearDraft(draftKey);
+          } catch {
+            // Browser storage is optional after the saved property was confirmed.
+          }
+          await confirmSavedPropertyPublication(activeOrganizationId, propertyId);
+          return;
         } else {
           const createdProperty = await createProperty.mutateAsync(propertyData);
           const organizationId =
@@ -994,10 +1063,6 @@ export default function PropertyForm() {
           await persistCreatedPropertyMedia(createdForMedia, false);
           return;
         }
-        markPropertyFormPristine();
-        setHasConcurrencyConflict(false);
-        clearDraft(draftKey);
-        if (propertyId) navigateAfterSave(propertyId);
       } catch (error) {
         if (isPropertyWorkspaceConflict(error)) {
           setHasConcurrencyConflict(true);
@@ -1499,6 +1564,26 @@ export default function PropertyForm() {
               )}
               Recarregar dados atualizados
             </Button>
+          </div>
+        )}
+
+        {publicationSaveFeedback && (
+          <div
+            role="alert"
+            data-testid="property-save-publication-feedback"
+            className="app-card-soft flex flex-col gap-2 border-0 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span>{publicationSaveFeedback}</span>
+            {propertyId && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => router.push(`/properties/${propertyId}?tab=publication`)}
+              >
+                Ver estado na Central
+              </Button>
+            )}
           </div>
         )}
 

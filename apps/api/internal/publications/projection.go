@@ -682,7 +682,7 @@ func sitePublicPropertySQL(alias string) string {
 		'id', ` + alias + `.id::text,
 		'codigo', coalesce(` + alias + `.code, ` + alias + `.id::text),
 		'titulo', ` + alias + `.title,
-		'descricao', coalesce(nullif(` + alias + `.descricao_site, ''), nullif(` + alias + `.descricao, '')),
+		'descricao', nullif(btrim(` + alias + `.descricao_site), ''),
 		'tipo_imovel', ` + alias + `.tipo,
 		'finalidade', ` + alias + `.finalidade,
 		'tipo_de_negocio', ` + alias + `.tipo_de_negocio,

@@ -84,8 +84,9 @@ export function MediaSection() {
           </p>
         </div>
         <div className="space-y-2">
-          <Label>Descrição pública no site</Label>
+          <Label htmlFor="property-public-description">Descrição pública no site</Label>
           <Textarea
+            id="property-public-description"
             value={formData.descricao_site}
             onChange={(e) => set("descricao_site", e.target.value)}
             placeholder="Texto comercial que será exibido no site público..."

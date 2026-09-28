@@ -301,7 +301,7 @@ func (repo Repository) processPublishJob(ctx context.Context, workerID string, j
 			publicationWorkerLoadFailurePermanent(err), err,
 		)
 	}
-	if publication.DesiredState != DesiredPublished || publication.CurrentVersion != *job.Version {
+	if !publishJobIsCurrent(*publication, job) {
 		return supersedeClaim(ctx, tx, workerID, job, "superseded", "A newer publication request replaced this job.")
 	}
 	checks, _, readinessState := evaluatePublicationReadiness(scope, source)
@@ -379,6 +379,12 @@ func (repo Repository) processPublishJob(ctx context.Context, workerID string, j
 		return ErrPublicationConflict
 	}
 	return tx.Commit(ctx)
+}
+
+func publishJobIsCurrent(publication publicationRecord, job pendingJob) bool {
+	return job.Version != nil &&
+		publication.DesiredState == DesiredPublished &&
+		publication.CurrentVersion == *job.Version
 }
 
 func (repo Repository) processUnpublishJob(ctx context.Context, workerID string, job pendingJob) error {

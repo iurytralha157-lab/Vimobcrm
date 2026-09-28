@@ -11,6 +11,7 @@ const {
   buildPropertyMutationInput,
   formatCurrencyDisplay,
   getPropertyFormRules,
+  getPropertyPublicationValidationIssues,
   getPropertyValidationIssues,
   initialFormData,
   isSupportedDealType,
@@ -36,6 +37,20 @@ function validSaleForm(
     fotos: ["https://cdn.example/main.jpg"],
     ...overrides,
   };
+}
+
+function publishableSaleForm(
+  overrides: Partial<PropertyFormData> = {},
+): PropertyFormData {
+  return validSaleForm({
+    cep: "01001-000",
+    uf: "SP",
+    cidade: "São Paulo",
+    bairro: "Sé",
+    area_util: "82",
+    descricao_site: "Apartamento central com fácil acesso ao metrô.",
+    ...overrides,
+  });
 }
 
 test("normaliza moeda brasileira sem alterar a precisão aceita pelo formulário", () => {
@@ -239,6 +254,67 @@ test("payload preserva conversões financeiras e limpa termos incompatíveis", (
   assert.equal(rentalPayload.aceita_permuta, false);
   assert.equal(rentalPayload.metadata?.rent_adjustment_index, "IPCA");
   assert.equal(rentalPayload.metadata?.financing_mode, "nao");
+});
+
+test("publicação exige bairro, cidade e CEP persistíveis, inclusive com catálogo selecionado", () => {
+  assert.deepEqual(getPropertyPublicationValidationIssues(publishableSaleForm()), []);
+
+  for (const [overrides, missingLabel] of [
+    [{ bairro: "", neighborhood_id: "00000000-0000-4000-8000-000000000001" }, "Bairro"],
+    [{ cidade: "", city_id: "00000000-0000-4000-8000-000000000002" }, "Cidade"],
+    [{ cep: "" }, "CEP válido com 8 dígitos"],
+    [{ cep: "01001-0" }, "CEP válido com 8 dígitos"],
+    [{ uf: "" }, "UF"],
+  ] as const) {
+    const issues = getPropertyPublicationValidationIssues(
+      publishableSaleForm(overrides),
+    );
+    assert.equal(
+      issues.find((issue: ValidationIssue) => issue.label === missingLabel)?.tab,
+      "location",
+      missingLabel,
+    );
+  }
+
+  const manualCity = getPropertyPublicationValidationIssues(
+    publishableSaleForm({ cidade: "" }),
+  ).find((issue: ValidationIssue) => issue.label === "Cidade");
+  assert.equal(manualCity?.fieldId, "property-city-manual");
+  const manualNeighborhood = getPropertyPublicationValidationIssues(
+    publishableSaleForm({ bairro: "" }),
+  ).find((issue: ValidationIssue) => issue.label === "Bairro");
+  assert.equal(manualNeighborhood?.fieldId, "property-neighborhood-manual");
+});
+
+test("publicação exige descrição pública, preço, área e foto pública", () => {
+  const incomplete = publishableSaleForm({
+    descricao: "Texto interno que não pode ir ao site.",
+    descricao_site: "",
+    preco: "0",
+    area_util: "0",
+    area_total: "",
+    hidden_site_image_urls: ["https://cdn.example/main.jpg"],
+  });
+  const labels = getPropertyPublicationValidationIssues(incomplete).map(
+    (issue: ValidationIssue) => issue.label,
+  );
+  for (const label of [
+    "Descrição pública no site",
+    "Preço de venda positivo",
+    "Área útil ou total",
+    "Ao menos uma foto pública",
+  ]) {
+    assert.ok(labels.includes(label), label);
+  }
+
+  assert.equal(
+    getPropertyPublicationValidationIssues(
+      publishableSaleForm({ fotos: [], imagem_principal: "" }),
+      { isEditing: true },
+    ).some((issue: ValidationIssue) => issue.tab === "media"),
+    false,
+    "o servidor verifica a biblioteca canônica de fotos durante a edição",
+  );
 });
 
 test("payload preserva zero em campos inteiros válidos", () => {

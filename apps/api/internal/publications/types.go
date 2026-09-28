@@ -95,7 +95,8 @@ type WorkerConfig struct {
 }
 
 type PublishInput struct {
-	ExpectedPropertyUpdatedAt string `json:"expected_property_updated_at"`
+	ExpectedPropertyUpdatedAt    string          `json:"expected_property_updated_at"`
+	ExpectedPublicationUpdatedAt json.RawMessage `json:"expected_publication_updated_at"`
 }
 
 type PublicationRevisionInput struct {
@@ -103,7 +104,33 @@ type PublicationRevisionInput struct {
 }
 
 func (input PublishInput) Validate() error {
-	return validateRequiredTimestamp(input.ExpectedPropertyUpdatedAt, "expected_property_updated_at")
+	if err := validateRequiredTimestamp(input.ExpectedPropertyUpdatedAt, "expected_property_updated_at"); err != nil {
+		return err
+	}
+	_, err := input.publicationRevision()
+	return err
+}
+
+// nil means an older caller did not send the publication revision. An empty
+// value means the caller observed no canonical publication row; a timestamp
+// means the caller observed that exact row revision.
+func (input PublishInput) publicationRevision() (*string, error) {
+	if len(input.ExpectedPublicationUpdatedAt) == 0 {
+		return nil, nil
+	}
+	if strings.TrimSpace(string(input.ExpectedPublicationUpdatedAt)) == "null" {
+		empty := ""
+		return &empty, nil
+	}
+	var revision string
+	if err := json.Unmarshal(input.ExpectedPublicationUpdatedAt, &revision); err != nil {
+		return nil, fmt.Errorf("%w: expected_publication_updated_at is invalid", ErrInvalidInput)
+	}
+	if err := validateRequiredTimestamp(revision, "expected_publication_updated_at"); err != nil {
+		return nil, err
+	}
+	revision = strings.TrimSpace(revision)
+	return &revision, nil
 }
 
 func (input PublicationRevisionInput) Validate() error {
@@ -356,14 +383,18 @@ func normalizeIdempotencyKey(value string) (string, error) {
 	return value, nil
 }
 
-func canonicalRequestHash(scope publicationScope, action string, propertyID string, expectedRevision string) string {
-	payload, _ := json.Marshal(map[string]string{
+func canonicalRequestHash(scope publicationScope, action string, propertyID string, expectedRevision string, expectedPublicationRevision ...string) string {
+	request := map[string]string{
 		"action":            strings.TrimSpace(action),
 		"channel":           strings.TrimSpace(scope.Channel),
 		"account_key":       strings.TrimSpace(scope.AccountKey),
 		"property_id":       strings.TrimSpace(propertyID),
 		"expected_revision": strings.TrimSpace(expectedRevision),
-	})
+	}
+	if len(expectedPublicationRevision) > 0 {
+		request["expected_publication_revision"] = strings.TrimSpace(expectedPublicationRevision[0])
+	}
+	payload, _ := json.Marshal(request)
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }

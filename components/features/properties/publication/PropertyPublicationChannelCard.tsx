@@ -37,6 +37,7 @@ import type { PropertyChannelPublication } from '@/lib/validation'
 
 import { PropertyPublicationHistory } from './PropertyPublicationHistory'
 import { PropertyPublicationPreview } from './PropertyPublicationPreview'
+import { publicationIsBusy, publicationPublishBlockReason, publicationUnavailableReason } from './publication-action'
 
 type PublicationAction = 'publish' | 'unpublish' | 'retry'
 
@@ -68,8 +69,6 @@ const DESIRED_STATE_LABELS: Record<PropertyChannelPublication['desired_state'], 
   paused: 'Manter pausado',
   unpublished: 'Manter fora do ar',
 }
-
-const TRANSIENT_STATES = new Set(['queued', 'publishing', 'pausing', 'unpublishing'])
 
 function observedStateLabel(publication: PropertyChannelPublication) {
   if (publication.channel === 'grupo_olx' && publication.observed_state === 'published') {
@@ -121,13 +120,13 @@ export function PropertyPublicationChannelCard({
 }: PropertyPublicationChannelCardProps) {
   const isSiteChannel = publication.channel === 'site'
   const isGrupoOLXChannel = publication.channel === 'grupo_olx'
-  const isTransient = TRANSIENT_STATES.has(publication.observed_state)
-    || publication.recent_jobs.some((job) => ['pending', 'processing', 'retry'].includes(job.status))
+  const isTransient = publicationIsBusy(publication)
   const unresolvedChecks = publication.checks.filter((check) => !check.resolved)
   const blockingChecks = unresolvedChecks.filter((check) => (check.severity ?? 'error') === 'error')
   const warningChecks = unresolvedChecks.filter((check) => check.severity === 'warning')
   const resolvedChecks = publication.checks.filter((check) => check.resolved)
-  const publishDisabled = Boolean(pendingAction || isTransient || !publication.available)
+  const publishDisabled = Boolean(pendingAction || !publication.capabilities.can_publish || !publication.available || isTransient)
+  const publishBlockReason = publicationPublishBlockReason(publication)
   // A retirada que falhou deve continuar recuperável mesmo se o canal ficar
   // indisponível; o backend expõe can_retry exatamente para essa drenagem.
   const retryDisabled = Boolean(pendingAction || isTransient)
@@ -170,7 +169,7 @@ export function PropertyPublicationChannelCard({
           <div role="status" className="flex flex-col gap-2 rounded-[7px] bg-warning/10 px-3 py-2.5 text-[11px] font-light text-warning sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 items-start gap-2">
               <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span>Canal indisponível. Conclua a configuração antes de solicitar a publicação.</span>
+              <span>{publicationUnavailableReason(publication)}</span>
             </div>
             {isGrupoOLXChannel && (
               <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-[11px] font-light text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]">
@@ -307,7 +306,7 @@ export function PropertyPublicationChannelCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          {canManage && publication.capabilities.can_publish && (
+          {canManage && (
             <Button
               type="button"
               size="sm"
@@ -320,7 +319,9 @@ export function PropertyPublicationChannelCard({
                 : <Send className="mr-1.5 h-3.5 w-3.5" />}
               {isGrupoOLXChannel
                 ? publication.observed_state === 'published' ? 'Atualizar no XML' : 'Disponibilizar no XML'
-                : publication.observed_state === 'published' ? 'Publicar atualização' : 'Publicar'}
+                : publication.observed_state === 'published'
+                  ? publication.is_outdated ? 'Publicar atualização' : 'Publicado e atualizado'
+                  : 'Publicar'}
             </Button>
           )}
 
@@ -393,6 +394,13 @@ export function PropertyPublicationChannelCard({
             </p>
           )}
         </div>
+
+        {canManage && publishBlockReason && (
+          <p role="status" className="flex items-start gap-1.5 text-[11px] font-light text-[var(--app-text-secondary)]">
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {publishBlockReason}
+          </p>
+        )}
 
         <details className="rounded-[7px] bg-[var(--app-surface-soft)] px-3 py-2.5">
           <summary className="cursor-pointer select-none text-[11px] font-normal text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30">

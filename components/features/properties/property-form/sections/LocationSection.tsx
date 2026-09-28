@@ -68,6 +68,9 @@ export function LocationSection() {
         <CardTitle className="text-[14px] font-normal">
           Localização do Imóvel
         </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          CEP, UF, cidade e bairro precisam estar preenchidos e gravados para publicar no Site.
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,.9fr)_minmax(240px,1fr)_140px]">
@@ -98,7 +101,7 @@ export function LocationSection() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="property-cep">CEP</Label>
+            <Label htmlFor="property-cep">CEP <RequiredMark /></Label>
             <div className="relative">
               <Input
                 id="property-cep"
@@ -156,7 +159,7 @@ export function LocationSection() {
         </div>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[84px_minmax(230px,1.2fr)_minmax(220px,1.1fr)_minmax(220px,1.15fr)]">
           <div className="space-y-2">
-            <Label htmlFor="property-state">UF</Label>
+            <Label htmlFor="property-state">UF <RequiredMark /></Label>
             <Input
               id="property-state"
               maxLength={2}
@@ -169,7 +172,7 @@ export function LocationSection() {
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Label htmlFor="property-city-selector">Cidade</Label>
+              <Label htmlFor="property-city-selector">Cidade <RequiredMark /></Label>
               {canManagePropertyCatalogs && (
                 <Button
                   type="button"
@@ -267,7 +270,7 @@ export function LocationSection() {
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Label htmlFor="property-neighborhood-selector">Bairro</Label>
+              <Label htmlFor="property-neighborhood-selector">Bairro <RequiredMark /></Label>
               {canManagePropertyCatalogs && (
                 <Button
                   type="button"

@@ -83,42 +83,50 @@ func (repo Repository) Publish(ctx context.Context, tenantContext tenant.Context
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionPublish, input.ExpectedPropertyUpdatedAt, idempotencyKey)
+	expectedPublicationRevision, err := input.publicationRevision()
+	if err != nil {
+		return commandResult{}, err
+	}
+	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionPublish, input.ExpectedPropertyUpdatedAt, expectedPublicationRevision, idempotencyKey)
 }
 
 func (repo Repository) Unpublish(ctx context.Context, tenantContext tenant.Context, propertyID string, input PublicationRevisionInput, idempotencyKey string) (commandResult, error) {
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionUnpublish, input.ExpectedPublicationUpdatedAt, idempotencyKey)
+	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionUnpublish, input.ExpectedPublicationUpdatedAt, nil, idempotencyKey)
 }
 
 func (repo Repository) Retry(ctx context.Context, tenantContext tenant.Context, propertyID string, input PublicationRevisionInput, idempotencyKey string) (commandResult, error) {
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionRevalidate, input.ExpectedPublicationUpdatedAt, idempotencyKey)
+	return repo.executeCommand(ctx, tenantContext, propertyID, SiteChannel, ActionRevalidate, input.ExpectedPublicationUpdatedAt, nil, idempotencyKey)
 }
 
 func (repo Repository) PublishGrupoOLX(ctx context.Context, tenantContext tenant.Context, propertyID string, input PublishInput, idempotencyKey string) (commandResult, error) {
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionPublish, input.ExpectedPropertyUpdatedAt, idempotencyKey)
+	expectedPublicationRevision, err := input.publicationRevision()
+	if err != nil {
+		return commandResult{}, err
+	}
+	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionPublish, input.ExpectedPropertyUpdatedAt, expectedPublicationRevision, idempotencyKey)
 }
 
 func (repo Repository) UnpublishGrupoOLX(ctx context.Context, tenantContext tenant.Context, propertyID string, input PublicationRevisionInput, idempotencyKey string) (commandResult, error) {
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionUnpublish, input.ExpectedPublicationUpdatedAt, idempotencyKey)
+	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionUnpublish, input.ExpectedPublicationUpdatedAt, nil, idempotencyKey)
 }
 
 func (repo Repository) RetryGrupoOLX(ctx context.Context, tenantContext tenant.Context, propertyID string, input PublicationRevisionInput, idempotencyKey string) (commandResult, error) {
 	if err := input.Validate(); err != nil {
 		return commandResult{}, err
 	}
-	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionRevalidate, input.ExpectedPublicationUpdatedAt, idempotencyKey)
+	return repo.executeCommand(ctx, tenantContext, propertyID, GrupoOLXChannel, ActionRevalidate, input.ExpectedPublicationUpdatedAt, nil, idempotencyKey)
 }
 
 func (repo Repository) ResolvePublicMedia(ctx context.Context, publicationID string, version int64, assetID string) (string, error) {
@@ -201,6 +209,7 @@ func (repo Repository) executeCommand(
 	channel string,
 	action string,
 	expectedRevision string,
+	expectedPublicationRevision *string,
 	idempotencyKey string,
 ) (commandResult, error) {
 	if !tenantContext.HasPermission(permissions.PropertyManage) || !tenantContext.HasModule("properties") {
@@ -230,6 +239,9 @@ func (repo Repository) executeCommand(
 		return commandResult{}, err
 	}
 	requestHash := canonicalRequestHash(scope, action, propertyID, expectedRevision)
+	if expectedPublicationRevision != nil {
+		requestHash = canonicalRequestHash(scope, action, propertyID, expectedRevision, *expectedPublicationRevision)
+	}
 
 	if existingHash, found, findErr := findExistingCommand(ctx, tx, tenantContext.OrganizationID, idempotencyKey); findErr != nil {
 		return commandResult{}, findErr
@@ -272,6 +284,32 @@ func (repo Repository) executeCommand(
 		}
 		if err := ensureGrupoOLXListingIDAvailable(ctx, tx, tenantContext.OrganizationID, propertyID, scope, providerListingID); err != nil {
 			return commandResult{}, err
+		}
+		// The form can retry its automatic Site publication after a lost response.
+		// Keep the canonical version and job when the same saved property source
+		// was already requested, even if the retry uses a new idempotency key.
+		if scope.Channel == SiteChannel && publication != nil && publication.DesiredState == DesiredPublished && publication.CurrentVersion > 0 {
+			currentVersion, versionErr := repo.getVersion(ctx, tx, publication.ID, publication.CurrentVersion)
+			if versionErr != nil {
+				return commandResult{}, versionErr
+			}
+			current, comparisonErr := sitePublishRequestCurrent(*publication, currentVersion, source, repo.config.PublicBaseURL)
+			if comparisonErr != nil {
+				return commandResult{}, comparisonErr
+			}
+			if current {
+				response, overviewErr := repo.getOverviewWithQueryer(ctx, tx, tenantContext, propertyID)
+				if overviewErr != nil {
+					return commandResult{}, overviewErr
+				}
+				if err := tx.Commit(ctx); err != nil {
+					return commandResult{}, err
+				}
+				return commandResult{Response: response}, nil
+			}
+		}
+		if !publishPublicationRevisionMatches(publication, expectedPublicationRevision) {
+			return commandResult{}, ErrPublicationConflict
 		}
 		if publication == nil {
 			publication, err = repo.createPublication(ctx, tx, tenantContext, propertyID, scope, providerListingID)
@@ -374,6 +412,41 @@ func (repo Repository) executeCommand(
 	}
 	wakePublicationWorker()
 	return commandResult{Response: response}, nil
+}
+
+func sitePublishRequestCurrent(publication publicationRecord, version versionRecord, source publicationSource, publicBaseURL string) (bool, error) {
+	if publication.DesiredState != DesiredPublished ||
+		publication.CurrentVersion < 1 ||
+		publication.CurrentVersion != version.Version ||
+		!version.SourcePropertyUpdatedAt.Equal(source.UpdatedAt) ||
+		strings.TrimSpace(pointerText(publication.LastErrorCode)) != "" {
+		return false, nil
+	}
+	switch publication.ObservedState {
+	case ObservedQueued, ObservedPublishing:
+	case ObservedPublished:
+		if publication.PublishedVersion == nil || *publication.PublishedVersion != publication.CurrentVersion {
+			return false, nil
+		}
+	default:
+		return false, nil
+	}
+	snapshot := buildSiteSnapshot(source, publicBaseURL, publication.ID, version.Version)
+	hash, err := siteSnapshotHash(snapshot)
+	if err != nil {
+		return false, err
+	}
+	return hash == version.PayloadHash, nil
+}
+
+func publishPublicationRevisionMatches(publication *publicationRecord, expectedRevision *string) bool {
+	if expectedRevision == nil {
+		return true // Legacy callers did not supply this additional revision.
+	}
+	if *expectedRevision == "" {
+		return publication == nil
+	}
+	return publication != nil && timestampMatchesRevision(publication.UpdatedAt, *expectedRevision)
 }
 
 func publicationScopeForChannel(channel string, source publicationSource) (publicationScope, error) {

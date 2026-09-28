@@ -5,14 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { TabsContent } from "@/components/ui/tabs";
-import { Globe, Lock } from "lucide-react";
+import { Globe } from "lucide-react";
 import { togglePanelClass } from "../PropertyFormFields";
 import { usePropertyFormSections } from "../PropertyFormSectionsContext";
+import { getPropertyPublicationValidationIssues } from "../property-form-model";
 
 export function PublicationSection() {
   const {
     formData, set, isEditing, propertyId, router, canManagePropertyCatalogs
   } = usePropertyFormSections();
+  const publicationIssues = getPropertyPublicationValidationIssues(formData, { isEditing });
 
   return (
   <TabsContent value="publication">
@@ -33,21 +35,23 @@ export function PublicationSection() {
           >
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                {isEditing ? (
-                  <Globe aria-hidden="true" className="h-4 w-4" />
-                ) : (
-                  <Lock aria-hidden="true" className="h-4 w-4" />
-                )}
+                <Globe aria-hidden="true" className="h-4 w-4" />
               </span>
               <div>
                 <p className="text-sm font-medium">
-                  Publicação centralizada na Ficha 360
+                  Publicação automática ao salvar
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {isEditing
-                    ? "Salvar este formulário atualiza os dados do imóvel. Confira o estado real, as pendências e o link público na Central de Publicação."
-                    : "O novo imóvel será salvo fora do site. Depois do cadastro, publique com segurança pela Central de Publicação da Ficha 360."}
+                    ? "Ao salvar, o sistema verifica os dados gravados e solicita a publicação ou atualização no Site automaticamente. A Central mostra quando a versão estiver no ar."
+                    : "Ao cadastrar e concluir o envio das fotos, o sistema verifica os dados gravados e solicita a publicação no Site automaticamente. A Central mostra o andamento."}
                 </p>
+                {publicationIssues.length > 0 && (
+                  <p data-testid="property-publication-required-fields" className="mt-2 text-xs leading-5 text-primary">
+                    Para publicar, preencha: {publicationIssues.slice(0, 5).map((issue) => issue.label).join(", ")}
+                    {publicationIssues.length > 5 ? ` e mais ${publicationIssues.length - 5}` : ""}.
+                  </p>
+                )}
               </div>
             </div>
             {isEditing && propertyId && canManagePropertyCatalogs && (

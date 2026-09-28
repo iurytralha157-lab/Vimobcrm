@@ -386,20 +386,30 @@ export function PipelineBoard({
                           <button
                             type="button"
                             aria-label="Ver coluna anterior"
-                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
-                            onClick={() => onMobileStageNavigation('previous')}
+                            className="flex h-14 w-14 shrink-0 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              onMobileStageNavigation('previous')
+                            }}
                             disabled={!hasPreviousMobileStage}
                           >
-                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                            <ChevronLeft className="h-5 w-5" aria-hidden="true" />
                           </button>
                           <button
                             type="button"
                             aria-label="Ver próxima coluna"
-                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
-                            onClick={() => onMobileStageNavigation('next')}
+                            className="flex h-14 w-14 shrink-0 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              onMobileStageNavigation('next')
+                            }}
                             disabled={!hasNextMobileStage}
                           >
-                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                            <ChevronRight className="h-5 w-5" aria-hidden="true" />
                           </button>
                         </>
                       )}
