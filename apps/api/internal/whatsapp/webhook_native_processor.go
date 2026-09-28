@@ -903,7 +903,7 @@ func nativeNonLeadUnavailableViewOnceCandidate(
 	if err != nil || snapshot == nil || snapshot.State != "unlinked" ||
 		snapshot.TargetMode != "snapshot" || snapshot.ContextKind != "organic" ||
 		snapshot.ContextProof != "" || snapshot.EventLeadID != "" ||
-		snapshot.CurrentLeadID != "" || snapshot.ConversationID != "" ||
+		snapshot.CurrentLeadID != "" ||
 		snapshot.ActiveBindingID != "" || snapshot.RuleID != "" ||
 		snapshot.OriginRoundRobinID != "" || snapshot.QuarantineReason != "" ||
 		snapshot.BindingEligible || snapshot.ManagedMessageDistribution ||
@@ -953,6 +953,29 @@ func (repo Repository) nonLeadUnavailableViewOnceLedgerMatches(
 		  and route.snapshot->>'state' = 'unlinked'
 		  and route.snapshot->>'event_lead_id' is null
 		  and route.snapshot->>'current_lead_id' is null
+		  and not exists (
+		    select 1 from public.whatsapp_messages as message
+		    where message.organization_id = inbox.organization_id
+		      and message.session_id = inbox.session_id
+		      and message.lead_id is not null
+		      and (message.provider_message_id = route.provider_message_id
+		        or (message.provider_message_id is null and message.message_id = route.provider_message_id))
+		  )
+		  and (
+		    route.snapshot->>'conversation_id' is null
+		    or exists (
+		      select 1 from public.whatsapp_conversations as conversation
+		      where conversation.id = (route.snapshot->>'conversation_id')::uuid
+		        and conversation.organization_id = inbox.organization_id
+		        and conversation.session_id = inbox.session_id
+		        and conversation.lead_id is null
+		        and not exists (
+		          select 1 from public.whatsapp_conversation_lead_bindings as binding
+		          where binding.conversation_id = conversation.id
+		            and binding.active_to is null
+		        )
+		    )
+		  )
 	`, item.ID, item.OrganizationID, item.SessionID, item.ProcessingLane,
 		message.ProviderMessageID, string(encoded)).Scan(&matches)
 	return matches, err

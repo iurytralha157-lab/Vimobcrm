@@ -95,6 +95,10 @@ func TestNativeNonLeadUnavailableViewOnceCandidate(t *testing.T) {
 		want   bool
 	}{
 		{name: "single unlinked unavailable view once", want: true},
+		{name: "unlinked conversation requires live ledger check", mutate: func(p map[string]any) {
+			row := p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_snapshot"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			row["conversation_id"] = "33333333-3333-4333-8333-333333333333"
+		}, want: true},
 		{name: "lead-bound snapshot", mutate: func(p map[string]any) {
 			row := p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_snapshot"].(map[string]any)["messages"].([]any)[0].(map[string]any)
 			row["event_lead_id"] = "44444444-4444-4444-8444-444444444444"
