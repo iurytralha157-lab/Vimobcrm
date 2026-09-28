@@ -694,6 +694,10 @@
     {
       "file": "20260928173418_barrier_mixed_forwarded_album_route.sql",
       "sha256": "d8d6b4c03adf869e03e72950418d1e187cdcd6af5097e5a203d7fb4bf4514a74"
+    },
+    {
+      "file": "20260928174939_quarantine_bound_protocol_route39.sql",
+      "sha256": "e22f0a861ea60fb86c8689ea7c2cc6081c67c6cdf7fbe2e7e5f64e6cc0b9cc7a"
     }
   ]
 }
