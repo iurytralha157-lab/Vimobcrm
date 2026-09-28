@@ -690,6 +690,10 @@
     {
       "file": "20260928171331_barrier_invalidated_whatsapp_v1_routes.sql",
       "sha256": "2c777d7f86974f1a22f2e4ff59fc882464a4dc6eb94a294fd9c960066a62b1f2"
+    },
+    {
+      "file": "20260928173418_barrier_mixed_forwarded_album_route.sql",
+      "sha256": "d8d6b4c03adf869e03e72950418d1e187cdcd6af5097e5a203d7fb4bf4514a74"
     }
   ]
 }
