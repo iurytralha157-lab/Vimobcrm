@@ -485,6 +485,28 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 				if _, err := handler.repo.CleanupExpiredWebhookInbox(ctx, 10000); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox cleanup failed", "error", err)
 				}
+				if config.OrphanReceiptSweepEnabled {
+					quarantined, err := handler.repo.sweepOrphanReceiptHeads(ctx, maxOrphanReceiptSweepPerMinute)
+					if err != nil && !errors.Is(err, context.Canceled) {
+						logger.Error("whatsapp orphan receipt classification failed", "error", err)
+					} else if quarantined > 0 {
+						logger.Info("whatsapp orphan receipts quarantined", "count", quarantined)
+					}
+					resolved, err := handler.repo.reconcileDeferredOrphanReceipts(ctx, maxOrphanReceiptSweepPerMinute)
+					if err != nil && !errors.Is(err, context.Canceled) {
+						logger.Error("whatsapp orphan receipt reconciliation failed", "error", err)
+					} else if resolved > 0 {
+						logger.Info("whatsapp orphan receipts reconciled", "count", resolved)
+					}
+					deferredExpired, resolvedExpired, err := handler.repo.cleanupExpiredOrphanReceipts(ctx)
+					if err != nil && !errors.Is(err, context.Canceled) {
+						logger.Error("whatsapp orphan receipt ledger cleanup failed", "error", err)
+					} else if deferredExpired > 0 {
+						logger.Error("unresolved WhatsApp orphan receipts expired", "count", deferredExpired)
+					} else if resolvedExpired > 0 {
+						logger.Info("resolved WhatsApp orphan receipt ledger expired", "count", resolvedExpired)
+					}
+				}
 			}
 		}
 	}()
@@ -1322,6 +1344,10 @@ func evolutionWebhookContainsMarker(eventType string, markers []string) bool {
 }
 
 func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pendingEvolutionWebhook, cause error) error {
+	lastError := cause.Error()
+	if errors.Is(cause, errNativeNotificationReceiptTargetNotFound) {
+		lastError = "notification_receipt_target_not_found"
+	}
 	status := "retry"
 	if item.Attempts >= item.MaxAttempts {
 		status = "dead"
@@ -1341,7 +1367,7 @@ func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pend
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $4
-	`, item.ID, status, cause.Error(), whatsappWebhookWorkerID)
+	`, item.ID, status, lastError, whatsappWebhookWorkerID)
 	return err
 }
 

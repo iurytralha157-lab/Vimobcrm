@@ -182,6 +182,7 @@ type WhatsAppConfig struct {
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
 	WebhookWorkerConcurrency      int
+	OrphanReceiptSweepEnabled     bool
 	MediaWorkerEnabled            bool
 	MediaWorkerInterval           time.Duration
 	MediaWorkerLease              time.Duration
@@ -320,6 +321,7 @@ func Load() (Config, error) {
 			WebhookWorkerInterval:         parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
 			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 10)),
 			WebhookWorkerConcurrency:      int(parseInt("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY", 4)),
+			OrphanReceiptSweepEnabled:     parseBool("WHATSAPP_ORPHAN_RECEIPT_SWEEP_ENABLED", false),
 			MediaWorkerEnabled:            parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
 			MediaWorkerInterval:           parseDuration("WHATSAPP_MEDIA_WORKER_INTERVAL", 2*time.Second),
 			MediaWorkerLease:              parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),

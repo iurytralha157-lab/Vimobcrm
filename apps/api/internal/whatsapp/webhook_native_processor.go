@@ -343,6 +343,7 @@ const nativeLegacyNonManagedConversationRecoveryQuery = `
 `
 
 var errNativeWebhookMessageLikeUnsupported = errors.New("native WhatsApp processor rejected an unsupported message-like event")
+var errNativeNotificationReceiptTargetNotFound = errors.New("notification_receipt_target_not_found")
 var errNativeEvolutionLeadPhoneAmbiguous = errors.New("native WhatsApp lead phone matches multiple leads")
 var errNativeEvolutionAliasLeadAmbiguous = errors.New("native WhatsApp identity aliases match multiple leads")
 var errNativeEvolutionScopedLeadMissing = errors.New("scoped WhatsApp conversation lead was not found in organization")
@@ -2895,7 +2896,7 @@ func ensureNativeEvolutionConversation(
 
 	if conversationMissing {
 		contactName := firstNonEmpty(message.ContactName, message.ContactPhone, message.RemoteJID)
-			err = tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			insert into public.whatsapp_conversations (
 				organization_id, session_id, lead_id, assigned_user_id, remote_jid,
 				contact_phone, contact_name, is_group, unread_count, metadata
@@ -4988,7 +4989,7 @@ func reconcileNativeNotificationWhatsAppReceipt(
 		}
 		reconciled, err := nativeNotificationReceiptOutcomeMatched(result.Outcome)
 		if err != nil {
-			return nil, fmt.Errorf("notification WhatsApp receipt %s: %w", messageID, err)
+			return nil, fmt.Errorf("notification WhatsApp receipt: %w", err)
 		}
 		if reconciled {
 			matched[messageID] = true
@@ -5001,7 +5002,9 @@ func nativeNotificationReceiptOutcomeMatched(outcome string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
 	case "applied", "already_applied", "stale":
 		return true, nil
-	case "not_found", "ambiguous", "invalid_status":
+	case "not_found":
+		return false, errNativeNotificationReceiptTargetNotFound
+	case "ambiguous", "invalid_status":
 		return false, fmt.Errorf("reconciliation rejected outcome %q", outcome)
 	default:
 		return false, fmt.Errorf("unexpected reconciliation outcome %q", outcome)

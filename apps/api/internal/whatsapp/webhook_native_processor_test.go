@@ -1339,6 +1339,9 @@ func TestNativeMessageStatusIsMonotonic(t *testing.T) {
 }
 
 func TestNativeNotificationReceiptOutcomesFailClosed(t *testing.T) {
+	if matched, err := nativeNotificationReceiptOutcomeMatched("not_found"); matched || !errors.Is(err, errNativeNotificationReceiptTargetNotFound) {
+		t.Fatalf("not_found = matched:%v error:%v, want typed target-not-found", matched, err)
+	}
 	for _, outcome := range []string{"applied", "already_applied", "stale"} {
 		matched, err := nativeNotificationReceiptOutcomeMatched(outcome)
 		if err != nil || !matched {

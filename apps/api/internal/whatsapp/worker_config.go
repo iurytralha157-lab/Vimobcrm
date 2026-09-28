@@ -35,6 +35,7 @@ type WorkerConfig struct {
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
 	WebhookWorkerConcurrency      int
+	OrphanReceiptSweepEnabled     bool
 	MediaWorkerEnabled            bool
 	MediaWorkerInterval           time.Duration
 	MediaWorkerLease              time.Duration

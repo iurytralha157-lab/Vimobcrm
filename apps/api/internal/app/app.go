@@ -359,6 +359,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
 		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
 		WebhookWorkerConcurrency:      cfg.WhatsApp.WebhookWorkerConcurrency,
+		OrphanReceiptSweepEnabled:     cfg.WhatsApp.OrphanReceiptSweepEnabled,
 		MediaWorkerEnabled:            cfg.WhatsApp.MediaWorkerEnabled,
 		MediaWorkerInterval:           cfg.WhatsApp.MediaWorkerInterval,
 		MediaWorkerLease:              cfg.WhatsApp.MediaWorkerLease,
