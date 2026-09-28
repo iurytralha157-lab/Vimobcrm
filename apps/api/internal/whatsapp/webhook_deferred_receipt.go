@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -204,5 +205,16 @@ func (repo Repository) cleanupDeferredReceiptLedger(ctx context.Context) (int, i
 		select deferred_overdue,resolved_expired
 		from private.cleanup_deferred_whatsapp_receipts(1000)
 	`).Scan(&deferredOverdue, &resolvedExpired)
+	if err != nil {
+		return deferredOverdue, resolvedExpired, err
+	}
+	var partialExpired int
+	err = repo.db.Pool().QueryRow(ctx, `
+		select private.expire_unmatched_partial_live_receipt_ids(1000)
+	`).Scan(&partialExpired)
+	if err == nil && partialExpired > 0 {
+		slog.Info("whatsapp partial live receipt pointers expired without targets",
+			"count", partialExpired)
+	}
 	return deferredOverdue, resolvedExpired, err
 }

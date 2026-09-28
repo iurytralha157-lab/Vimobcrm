@@ -343,6 +343,7 @@ const nativeLegacyNonManagedConversationRecoveryQuery = `
 `
 
 var errNativeWebhookMessageLikeUnsupported = errors.New("native WhatsApp processor rejected an unsupported message-like event")
+var errNativeWebhookUnsupported = errors.New("native WhatsApp processor does not support this event")
 var errNativeNotificationReceiptTargetNotFound = errors.New("notification_receipt_target_not_found")
 var errNativeEvolutionLeadPhoneAmbiguous = errors.New("native WhatsApp lead phone matches multiple leads")
 var errNativeEvolutionAliasLeadAmbiguous = errors.New("native WhatsApp identity aliases match multiple leads")
@@ -396,6 +397,23 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 		}
 		return tx.Commit(ctx)
 	}
+	if payload, decodeErr := decodeNativeEvolutionPayload(item.Payload); decodeErr == nil &&
+		exactPairSuccessControl(payload, item.EventType) {
+		session, err := repo.evolutionWebhookSession(ctx, item.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.ID != item.SessionID || session.OrganizationID != item.OrganizationID ||
+			evolutionWebhookSessionInactive(session) {
+			return errWebhookSessionMismatch
+		}
+		if session.Status == "connected" {
+			// Preserve the signed raw inbox until normal retention, but do not
+			// promote a timestamp-free pairing pulse over current session state.
+			return nil
+		}
+		return errPairSuccessAwaitingAuthoritativeConnection
+	}
 	// History-sync control envelopes are not CRM messages. A provider version
 	// can still emit one during reconnect even when the session subscription is
 	// live-only; acknowledge it here so it cannot consume retries or reach Edge.
@@ -441,7 +459,7 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 		}
 		return repo.forwardEvolutionWebhook(ctx, item)
 	}
-	return errors.New("native WhatsApp processor does not support this event")
+	return errNativeWebhookUnsupported
 }
 
 func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {

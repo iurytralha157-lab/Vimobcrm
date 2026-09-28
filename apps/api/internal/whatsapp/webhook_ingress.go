@@ -296,6 +296,21 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	// mixed batch, persist only its direct members so a lead is not discarded
 	// together with group traffic.
 	envelope.Payload = filteredItem.Payload
+	// Preserve the entire direct-only callback for unsplittable mixed recovery.
+	// Group payloads stay out of the permanent lead recovery ledger.
+	originalPayload := append([]byte(nil), envelope.Payload...)
+	if session.Status == "connected" {
+		if payload, decodeErr := decodeNativeEvolutionPayload(envelope.Payload); decodeErr == nil &&
+			exactPairSuccessControl(payload, envelope.EventType) {
+			// A timestamp-free pairing pulse cannot supersede a newer session
+			// identity. The connected session is already authoritative, and this
+			// scalar ID must not create a lead routing snapshot or queue item.
+			return evolutionWebhookReceipt{
+				ID: eventKey, SessionID: session.ID, EventType: envelope.EventType,
+				Status: "processed", Inline: true,
+			}, nil
+		}
+	}
 	inlineState, err := evolutionWebhookInlineSessionState(envelope)
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
@@ -315,6 +330,15 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
+	if duplicate, err := repo.failedRouteMixedEnvelopeAlreadyReceived(
+		ctx, session, envelope, originalPayload); err != nil {
+		return evolutionWebhookReceipt{}, err
+	} else if duplicate {
+		return evolutionWebhookReceipt{
+			ID: eventKey, SessionID: session.ID, EventType: envelope.EventType,
+			Status: "dead", Duplicate: true, Inline: true,
+		}, nil
+	}
 	parts, err := prepareEvolutionWebhookDurableParts(envelope)
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
@@ -328,10 +352,46 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		return evolutionWebhookReceipt{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if failedRouteHasUnsplitMultipleDirectMessages(parts) {
+		// The direct-only wrapper stays durable as one private receipt. No
+		// member ledger is captured, so reverse provider order cannot deadlock
+		// two routes or let one member become a DEAD predecessor for another.
+		return repo.persistFailedRouteMixedEnvelope(
+			ctx, tx, session, envelope, originalPayload, failedRouteMixedUnsplitReason)
+	}
+	if _, err := tx.Exec(ctx, `savepoint before_failed_route_capture`); err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
 
 	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts)
 	if err != nil {
 		return evolutionWebhookReceipt{}, fmt.Errorf("capture Evolution webhook routing provenance: %w", err)
+	}
+	isolationReason := failedRouteMixedIsolationReason(parts,
+		evolutionWebhookProcessorModeForSession(
+			repo.functions.webhookProcessorMode,
+			repo.functions.webhookRolloutSessionIDs, session.ID))
+	if isolationReason != "" {
+		// This rolls back ALL tentative member ledgers. The whole callback then
+		// receives one private durable receipt in this same transaction.
+		if _, err := tx.Exec(ctx, `rollback to savepoint before_failed_route_capture`); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		return repo.persistFailedRouteMixedEnvelope(ctx, tx, session, envelope, originalPayload, isolationReason)
+	}
+	if err := lockFailedRouteMixedEventKey(ctx, tx, session, eventKey); err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	if duplicate, err := failedRouteMixedEnvelopeReceipt(ctx, tx, session, envelope, originalPayload); err != nil {
+		return evolutionWebhookReceipt{}, err
+	} else if duplicate {
+		if err := tx.Rollback(ctx); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		return evolutionWebhookReceipt{
+			ID: eventKey, SessionID: session.ID, EventType: envelope.EventType,
+			Status: "dead", Duplicate: true, Inline: true,
+		}, nil
 	}
 
 	// Insert the original event key first. Besides preserving the public receipt
@@ -687,7 +747,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 		ID:             session.ID,
 		OrganizationID: session.OrganizationID,
 	}
-	for index := range result {
+	for _, index := range evolutionWebhookCaptureOrder(result) {
 		decoded, err := decodeNativeEvolutionPayload(result[index].Payload)
 		if err != nil {
 			return nil, err

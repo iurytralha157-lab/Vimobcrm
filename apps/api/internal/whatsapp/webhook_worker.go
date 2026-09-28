@@ -62,6 +62,7 @@ const claimEvolutionWebhooksQuery = `
 			      wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			      ''
 			    ) = '1'
+			    and not private.whatsapp_failed_route_inbox_is_held(wi.id)
 			    -- A future retry still blocks later events on its own routing key
 			    -- through the older-row guard, but cannot hide another due route.
 			    and wi.next_attempt_at <= now()
@@ -108,6 +109,7 @@ const claimEvolutionWebhooksQuery = `
 			      where older.session_id = wi.session_id
 			        and older.processing_lane = wi.processing_lane
 			        and older.status in ('pending', 'retry')
+			        and not private.whatsapp_failed_route_older_is_held_for_new(older.id, wi.id)
 			        and older.attempts < older.max_attempts
 			        and coalesce(
 			          older.payload #>> '{__vimob_ingress,routing_snapshot,version}',
@@ -147,6 +149,7 @@ const claimEvolutionWebhooksQuery = `
 			      where live_due.session_id = ws.id
 			        and live_due.processing_lane = 'live'
 			        and live_due.status in ('pending', 'retry')
+			        and not private.whatsapp_failed_route_inbox_is_held(live_due.id)
 			        and live_due.attempts < live_due.max_attempts
 			        and coalesce(
 			          live_due.payload #>> '{__vimob_ingress,routing_snapshot,version}',
@@ -251,6 +254,7 @@ const claimEvolutionWebhooksQuery = `
 			          and live_dependent.processing_lane = 'live'
 			          and live_dependent.event_type = 'message'
 			          and live_dependent.status in ('pending', 'retry')
+			          and not private.whatsapp_failed_route_inbox_is_held(live_dependent.id)
 			          and live_dependent.attempts < live_dependent.max_attempts
 			          and live_dependent.next_attempt_at <= now()
 			          and live_dependent.created_at > head.created_at
@@ -295,6 +299,9 @@ const claimEvolutionWebhooksQuery = `
 			            where older_live.session_id = live_dependent.session_id
 			              and older_live.processing_lane = 'live'
 			              and older_live.status in ('pending', 'retry')
+			              and not private.whatsapp_failed_route_older_is_held_for_new(
+			                older_live.id, live_dependent.id
+			              )
 			              and older_live.attempts < older_live.max_attempts
 			              and coalesce(
 			                older_live.payload #>> '{__vimob_ingress,routing_snapshot,version}', ''
@@ -356,6 +363,7 @@ const claimEvolutionWebhooksQuery = `
 			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			    ''
 			  ) = '1'
+			  and not private.whatsapp_failed_route_inbox_is_held(wi.id)
 			  and wi.next_attempt_at <= now()
 			  and not exists (
 			    select 1
@@ -426,6 +434,7 @@ const claimEvolutionWebhooksQuery = `
 			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			    ''
 			  ) = '1'
+			  and not private.whatsapp_failed_route_inbox_is_held(wi.id)
 			  and wi.next_attempt_at <= now()
 			  and not exists (
 			    select 1
@@ -635,6 +644,12 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 				handler.repo.logEvolutionWebhookQueueHealth(ctx, logger)
 				if err := handler.repo.RecoverStaleWebhookInbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox recovery failed", "error", err)
+				}
+				if err := handler.repo.reconcileFailedRouteCandidates(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("whatsapp failed route candidate reconciliation failed", "error", err)
+				}
+				if err := handler.repo.quarantineDueFailedWhatsAppEpochs(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("whatsapp failed route epoch reconciliation failed", "error", err)
 				}
 				if _, err := handler.repo.CleanupExpiredWebhookInbox(ctx, 10000); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox cleanup failed", "error", err)
@@ -1616,22 +1631,28 @@ func evolutionWebhookContainsMarker(eventType string, markers []string) bool {
 }
 
 func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pendingEvolutionWebhook, cause error) error {
-	lastError := cause.Error()
-	if errors.Is(cause, errNativeNotificationReceiptTargetNotFound) {
-		lastError = "notification_receipt_target_not_found"
-	}
+	lastError := failedWebhookLastError(cause)
 	status := "retry"
-	if item.Attempts >= item.MaxAttempts {
+	unsupported := isDeterministicUnsupportedWebhook(cause)
+	if unsupported || item.Attempts >= item.MaxAttempts {
 		status = "dead"
 	}
 	_, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_webhook_inbox
 		set status = $2,
+		    attempts = case when $5::boolean then max_attempts else attempts end,
 		    next_attempt_at = case
 		      when $2 = 'retry' then now() + make_interval(secs => least(300, (power(2, least(attempts, 8)))::int))
 		      else next_attempt_at
 		    end,
 		    dead_lettered_at = case when $2 = 'dead' then now() else dead_lettered_at end,
+		    expires_at = case when $5::boolean
+		      and provider = 'evolution_go' and event_type = 'message'
+		      and payload #>> '{__vimob_ingress,routing_snapshot,version}' = '1'
+		      and (case when jsonb_typeof(payload #> '{__vimob_ingress,routing_snapshot,messages}') = 'array'
+		        then jsonb_array_length(payload #> '{__vimob_ingress,routing_snapshot,messages}')
+		        else -1 end) = 1
+		      then 'infinity'::timestamptz else expires_at end,
 		    locked_at = null,
 		    locked_by = null,
 		    last_error = left($3, 4000),
@@ -1639,7 +1660,7 @@ func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pend
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $4
-	`, item.ID, status, lastError, whatsappWebhookWorkerID)
+	`, item.ID, status, lastError, whatsappWebhookWorkerID, unsupported)
 	return err
 }
 

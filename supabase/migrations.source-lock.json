@@ -718,6 +718,18 @@
     {
       "file": "20260928183605_defer_partial_live_receipt_ids.sql",
       "sha256": "9711e66af986cf5193daef844616bba14dffe27dd605fa609aa2b774a715cc9c"
+    },
+    {
+      "file": "20260928190000_hold_failed_whatsapp_route_epoch.sql",
+      "sha256": "b5033d7e401019118ee101a45a1a9f8041982043afaf2ed9eea9af2c15724e49"
+    },
+    {
+      "file": "20260928191200_expire_unmatched_partial_live_receipt_ids.sql",
+      "sha256": "31fa5885998d5b9d5193d0f19581597340af0770881271746e5551a6a1ad971b"
+    },
+    {
+      "file": "20260928191300_indexable_whatsapp_receipt_delivery_lookup.sql",
+      "sha256": "73e82103fdf8621b769145ed71efab2eb7f36bafa3abc19881e6c66282fd270f"
     }
   ]
 }

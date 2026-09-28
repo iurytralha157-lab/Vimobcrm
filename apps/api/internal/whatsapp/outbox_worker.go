@@ -1234,13 +1234,12 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 	}
 	defer tx.Rollback(ctx)
 	// A missing rollout index must fail quickly instead of turning every fast
-	// lane claim into a long scan over the durable outbox.
-	if _, err := tx.Exec(ctx, `set local statement_timeout = '5s'`); err != nil {
-		return nil, err
-	}
-
-	rows, err := tx.Query(
-		ctx,
+	// lane claim into a long scan over the durable outbox. Send the timeout and
+	// claim together while retaining the transaction until every row is decoded;
+	// a scan or cancellation error must roll back the lease.
+	batchQueries := &pgx.Batch{}
+	batchQueries.Queue(`set local statement_timeout = '5s'`)
+	batchQueries.Queue(
 		whatsappOutboxClaimQueryForLane(lane),
 		batch,
 		whatsappOutboxWorkerID,
@@ -1249,10 +1248,16 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		whatsappOutboxMediaOrderingGrace.Milliseconds(),
 		randomHex(16),
 	)
-	if err != nil {
+	batchResults := tx.SendBatch(ctx, batchQueries)
+	if _, err := batchResults.Exec(); err != nil {
+		_ = batchResults.Close()
 		return nil, err
 	}
-	defer rows.Close()
+	rows, err := batchResults.Query()
+	if err != nil {
+		_ = batchResults.Close()
+		return nil, err
+	}
 
 	items := make([]pendingWhatsAppOutbox, 0, batch)
 	for rows.Next() {
@@ -1273,6 +1278,8 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 			&item.LastError,
 			&item.CreatedAt,
 		); err != nil {
+			rows.Close()
+			_ = batchResults.Close()
 			return nil, err
 		}
 		item.Payload = map[string]any{}
@@ -1281,7 +1288,12 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		}
 		items = append(items, item)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
+		_ = batchResults.Close()
+		return nil, err
+	}
+	if err := batchResults.Close(); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
