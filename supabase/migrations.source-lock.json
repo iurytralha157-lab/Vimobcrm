@@ -698,6 +698,18 @@
     {
       "file": "20260928174939_quarantine_bound_protocol_route39.sql",
       "sha256": "e22f0a861ea60fb86c8689ea7c2cc6081c67c6cdf7fbe2e7e5f64e6cc0b9cc7a"
+    },
+    {
+      "file": "20260928175817_guard_legacy_whatsapp_provider_tombstone.sql",
+      "sha256": "8159713b6980b69f2f37da7a5557eee23f2cd2219595ece4016935a84a442983"
+    },
+    {
+      "file": "20260928180136_barrier_legacy_route60.sql",
+      "sha256": "1a6d282a94c0aeba2fb17e9e0d39351d6296f3239485903f5875ff9f3fbbcb7b"
+    },
+    {
+      "file": "20260928182500_quarantine_stalled_v1_live_receipt_head.sql",
+      "sha256": "d63f57586054e234cd45fde40264aa694b5dac23e7003ba9e91202d5eb1301fc"
     }
   ]
 }
