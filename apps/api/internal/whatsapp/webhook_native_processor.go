@@ -2895,12 +2895,20 @@ func ensureNativeEvolutionConversation(
 
 	if conversationMissing {
 		contactName := firstNonEmpty(message.ContactName, message.ContactPhone, message.RemoteJID)
-		err = tx.QueryRow(ctx, `
+			err = tx.QueryRow(ctx, `
 			insert into public.whatsapp_conversations (
 				organization_id, session_id, lead_id, assigned_user_id, remote_jid,
 				contact_phone, contact_name, is_group, unread_count, metadata
 			) values (
-				$1::uuid, $2::uuid, null, nullif($3, '')::uuid, $4,
+				$1::uuid, $2::uuid, null, case when exists (
+				  select 1 from public.users app_user
+				  join public.organization_members member
+				    on member.user_id = app_user.id and member.organization_id = $1::uuid
+				  where app_user.id = nullif($3, '')::uuid
+				    and coalesce(app_user.is_active, false) = true
+				    and coalesce(member.is_active, false) = true
+				    and member.deleted_at is null
+				) then nullif($3, '')::uuid else null end, $4,
 				nullif($5, ''), nullif($6, ''), $7, 0, '{"source":"evolution_go_native"}'::jsonb
 			)
 			on conflict (session_id, remote_jid)
@@ -3172,7 +3180,15 @@ func reconcileNativeEvolutionConversationIdentity(
 			set remote_jid = $4,
 			    contact_phone = coalesce(nullif($5, ''), contact_phone),
 			    contact_name = coalesce(nullif(contact_name, ''), nullif($6, ''), nullif($5, '')),
-			    assigned_user_id = coalesce(assigned_user_id, nullif($7, '')::uuid),
+			    assigned_user_id = coalesce(assigned_user_id, case when exists (
+			      select 1 from public.users app_user
+			      join public.organization_members member
+			        on member.user_id = app_user.id and member.organization_id = $1::uuid
+			      where app_user.id = nullif($7, '')::uuid
+			        and coalesce(app_user.is_active, false) = true
+			        and coalesce(member.is_active, false) = true
+			        and member.deleted_at is null
+			    ) then nullif($7, '')::uuid else null end),
 			    deleted_at = null,
 			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
 			      'promoted_from_remote_jid', $8,

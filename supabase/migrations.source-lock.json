@@ -614,6 +614,10 @@
     {
       "file": "20260927115810_whatsapp_calls_contacts.sql",
       "sha256": "580faaff372eb89a9e99be846012f160d70bfffbbb66a70177c21c75ed1ef711"
+    },
+    {
+      "file": "20260928025500_preserve_whatsapp_lead_binding_when_assignee_inactive.sql",
+      "sha256": "eac30261bbbe0769bb7ed692579efcbba958014ca55360bf881c7829e0ca0fd3"
     }
   ]
 }
