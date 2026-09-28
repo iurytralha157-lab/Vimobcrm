@@ -178,6 +178,28 @@ test('authorized persisted conversation keeps its own session', () => {
   assert.equal(result, '40000000-0000-4000-8000-000000000001')
 })
 
+test('persisted conversation never switches to another connected WhatsApp', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+  }
+  const sessions = [
+    { id: conversation.session_id, status: 'disconnected', provider: 'evolution_go' },
+    { id: '40000000-0000-4000-8000-000000000002', status: 'connected', provider: 'evolution_go' },
+    { id: '40000000-0000-4000-8000-000000000003', status: 'connected', provider: 'evolution_go' },
+  ]
+
+  assert.equal(getWhatsAppSendSessionId(conversation, 'all', sessions), conversation.session_id)
+  assert.equal(getWhatsAppSendSessionId(conversation, null, sessions), conversation.session_id)
+  assert.equal(getWhatsAppSendSessionId(conversation, sessions[1].id, sessions), undefined)
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, sessions[1].id, sessions), {
+    disabled: true,
+    placeholder: 'Esta conversa pertence a outro WhatsApp. Selecione a conexão da conversa.',
+  })
+})
+
 test('new conversation draft may use the explicitly selected session', () => {
   const result = getWhatsAppSendSessionId(
     { session_id: null },
@@ -278,9 +300,10 @@ test('nao escolhe uma conta arbitraria quando ha varias integracoes desconectada
   assert.equal(state.sendSessionId, undefined)
 })
 
-test('exige selecao quando ha varias integracoes conectadas e a conversa antiga esta offline', () => {
+test('conversa antiga offline preserva a propria conexao para validacao do backend', () => {
   const state = getWhatsAppMessageInputState(
     {
+      id: 'conversation-old',
       lead_id: 'lead-1',
       session_id: 'session-old',
       contact_phone: '5511999999999',
@@ -299,6 +322,6 @@ test('exige selecao quando ha varias integracoes conectadas e a conversa antiga 
     ],
   )
 
-  assert.equal(state.disabled, true)
-  assert.equal(state.sendSessionId, undefined)
+  assert.equal(state.disabled, false)
+  assert.equal(state.sendSessionId, 'session-old')
 })

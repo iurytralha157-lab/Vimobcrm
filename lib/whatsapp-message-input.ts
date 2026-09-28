@@ -168,10 +168,13 @@ export function getWhatsAppSendSessionId(
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
 ) {
-  // A persisted conversation without a trusted session is historical-only.
-  // Never redirect it through another connected account.
-  if (conversation?.id && !conversation.session_id) {
-    return undefined;
+  // A persisted conversation is bound to its session. A list filter and other
+  // connected accounts cannot change the account used for this conversation.
+  if (conversation?.id) {
+    if (!conversation.session_id) return undefined;
+    if (selectedSessionId && selectedSessionId !== "all"
+      && selectedSessionId !== conversation.session_id) return undefined;
+    return conversation.session_id;
   }
 
   if (selectedSessionId && selectedSessionId !== "all") {
@@ -238,6 +241,14 @@ export function getWhatsAppMessageInputState(
 			placeholder: "Histórico deste card (somente leitura)",
 		};
 	}
+
+  if (conversation.id && conversation.session_id && selectedSessionId
+    && selectedSessionId !== "all" && selectedSessionId !== conversation.session_id) {
+    return {
+      disabled: true,
+      placeholder: "Esta conversa pertence a outro WhatsApp. Selecione a conexão da conversa.",
+    };
+  }
 
   const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
   if (!sendSessionId) {
