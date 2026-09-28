@@ -260,7 +260,18 @@ func (repo Repository) superviseClaimedSessions(
 				if err := repo.superviseSession(ctx, session, time.Now().UTC(), recoverySessionIDs, claimToken); err != nil && !errors.Is(err, context.Canceled) {
 					failures.Add(1)
 					stage, code, durationMillis := supervisorFailureMetrics(err)
-					logger.Warn("whatsapp session supervision skipped", "session_id", session.ID, "stage", stage, "error_code", code, "stage_duration_ms", durationMillis)
+					pool := repo.db.Pool().Stat()
+					logger.Warn("whatsapp session supervision skipped",
+						"session_id", session.ID,
+						"stage", stage,
+						"error_code", code,
+						"stage_duration_ms", durationMillis,
+						"db_pool_max", pool.MaxConns(),
+						"db_pool_acquired", pool.AcquiredConns(),
+						"db_pool_idle", pool.IdleConns(),
+						"db_pool_empty_acquire_count", pool.EmptyAcquireCount(),
+						"db_pool_canceled_acquire_count", pool.CanceledAcquireCount(),
+					)
 				}
 			}
 		}()
