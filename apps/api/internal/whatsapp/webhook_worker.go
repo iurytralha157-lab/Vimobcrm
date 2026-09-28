@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
@@ -55,7 +56,9 @@ const claimEvolutionWebhooksQuery = `
 			      wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			      ''
 			    ) = '1'
-			    and ($4 <> 'live' or wi.next_attempt_at <= now())
+			    -- A future retry still blocks later events on its own routing key
+			    -- through the older-row guard, but cannot hide another due route.
+			    and wi.next_attempt_at <= now()
 			    and not exists (
 			      select 1
 			      from pg_catalog.jsonb_array_elements(
@@ -554,6 +557,11 @@ type evolutionWebhookWorkerWindowStats struct {
 	liveClaimed           int
 	backlogClaimed        int
 	errors                int
+	claimTimeouts         int
+	claimDuration         time.Duration
+	maxClaimDuration      time.Duration
+	drainDuration         time.Duration
+	maxDrainDuration      time.Duration
 	oldestLiveClaimAge    time.Duration
 	oldestBacklogClaimAge time.Duration
 	maxBatchDuration      time.Duration
@@ -565,6 +573,19 @@ func (stats *evolutionWebhookWorkerWindowStats) observe(batch evolutionWebhookBa
 	stats.backlogClaimed += batch.BacklogClaimed
 	if err != nil {
 		stats.errors++
+	}
+	if batch.ClaimTimedOut {
+		stats.claimTimeouts++
+	}
+	stats.claimDuration += batch.ClaimDuration
+	if batch.ClaimDuration > stats.maxClaimDuration {
+		stats.maxClaimDuration = batch.ClaimDuration
+	}
+	if batch.Claimed() > 0 {
+		stats.drainDuration += batch.DrainDuration
+		if batch.DrainDuration > stats.maxDrainDuration {
+			stats.maxDrainDuration = batch.DrainDuration
+		}
 	}
 	if batch.OldestLiveClaimAge > stats.oldestLiveClaimAge {
 		stats.oldestLiveClaimAge = batch.OldestLiveClaimAge
@@ -584,6 +605,14 @@ func (stats *evolutionWebhookWorkerWindowStats) logAndReset(
 	backlogConcurrency int,
 ) {
 	window := time.Since(stats.startedAt)
+	averageClaim := time.Duration(0)
+	averageDrain := time.Duration(0)
+	if stats.batches > 0 {
+		averageClaim = stats.claimDuration / time.Duration(stats.batches)
+	}
+	if claimed := stats.liveClaimed + stats.backlogClaimed; claimed > 0 {
+		averageDrain = stats.drainDuration / time.Duration(claimed)
+	}
 	logger.Info(
 		"whatsapp webhook worker throughput",
 		"worker_id", whatsappWebhookWorkerID,
@@ -592,6 +621,11 @@ func (stats *evolutionWebhookWorkerWindowStats) logAndReset(
 		"live_claimed", stats.liveClaimed,
 		"backlog_claimed", stats.backlogClaimed,
 		"errors", stats.errors,
+		"claim_timeouts", stats.claimTimeouts,
+		"average_claim_ms", averageClaim.Milliseconds(),
+		"max_claim_ms", stats.maxClaimDuration.Milliseconds(),
+		"average_drain_per_claim_ms", averageDrain.Milliseconds(),
+		"max_drain_ms", stats.maxDrainDuration.Milliseconds(),
 		"oldest_live_claim_age_ms", stats.oldestLiveClaimAge.Milliseconds(),
 		"oldest_backlog_claim_age_ms", stats.oldestBacklogClaimAge.Milliseconds(),
 		"max_batch_duration_ms", stats.maxBatchDuration.Milliseconds(),
@@ -647,6 +681,9 @@ type evolutionWebhookBatchStats struct {
 	Cursors               evolutionWebhookLaneCursors
 	LiveClaimed           int
 	BacklogClaimed        int
+	ClaimDuration         time.Duration
+	ClaimTimedOut         bool
+	DrainDuration         time.Duration
 	OldestLiveClaimAge    time.Duration
 	OldestBacklogClaimAge time.Duration
 }
@@ -681,9 +718,11 @@ func (repo Repository) processWebhookInboxLaneBatch(
 	concurrency int,
 	afterSessionID string,
 ) (evolutionWebhookBatchStats, string, error) {
+	claimStartedAt := time.Now()
 	items, nextSessionID, err := repo.claimEvolutionWebhooksForLane(ctx, lane, batch, afterSessionID)
+	claimDuration := time.Since(claimStartedAt)
 	if err != nil {
-		return evolutionWebhookBatchStats{}, afterSessionID, err
+		return evolutionWebhookBatchStats{ClaimDuration: claimDuration, ClaimTimedOut: isEvolutionWebhookClaimTimeout(err)}, afterSessionID, err
 	}
 	cursors := evolutionWebhookLaneCursors{}
 	switch lane {
@@ -695,13 +734,24 @@ func (repo Repository) processWebhookInboxLaneBatch(
 		return evolutionWebhookBatchStats{}, afterSessionID, fmt.Errorf("unsupported WhatsApp webhook processing lane %q", lane)
 	}
 	stats := summarizeEvolutionWebhookBatch(items, cursors, time.Now())
+	stats.ClaimDuration = claimDuration
+	drainStartedAt := time.Now()
 	err = drainEvolutionWebhookBatch(
 		ctx,
 		items,
 		normalizeWebhookWorkerConcurrency(concurrency),
 		repo.processClaimedEvolutionWebhook,
 	)
+	stats.DrainDuration = time.Since(drainStartedAt)
 	return stats, nextSessionID, err
+}
+
+func isEvolutionWebhookClaimTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "57014" && strings.Contains(strings.ToLower(pgErr.Message), "statement timeout")
 }
 
 func summarizeEvolutionWebhookBatch(items []pendingEvolutionWebhook, cursors evolutionWebhookLaneCursors, now time.Time) evolutionWebhookBatchStats {

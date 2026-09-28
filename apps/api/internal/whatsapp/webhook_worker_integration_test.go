@@ -387,4 +387,89 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	if len(claimedAfterRetry) != 1 || claimedAfterRetry[0].ID != newerSameConversationID {
 		t.Fatalf("post-retry claim = %#v, want newer same-conversation message %s", claimedAfterRetry, newerSameConversationID)
 	}
+
+	// A deferred backlog retry remains a FIFO barrier for its routing key,
+	// while a due event for another contact on this session can be claimed.
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	insertBacklog := func(eventKey, route, status, nextAttempt, createdAgo string) string {
+		t.Helper()
+		var id string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_webhook_inbox (
+				organization_id, session_id, event_key, event_type, payload,
+				processing_lane, status, attempts, next_attempt_at, created_at
+			) values (
+				$1::uuid, $2::uuid, $3, 'message',
+				jsonb_build_object('__vimob_ingress', jsonb_build_object(
+					'routing_key', $4::text,
+					'routing_snapshot', jsonb_build_object('version', '1', 'messages', '[]'::jsonb)
+				)),
+				'backlog', $5, case when $5 = 'retry' then 1 else 0 end,
+				now() + $6::interval, now() - $7::interval
+			)
+			returning id::text
+		`, organizationID, sessionA, eventKey, route, status, nextAttempt, createdAgo).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	backlogRetryA := insertBacklog(suffix+"-backlog-retry-a", "jid:contact-a", "retry", "5 minutes", "3 minutes")
+	backlogPendingA := insertBacklog(suffix+"-backlog-pending-a", "jid:contact-a", "pending", "-1 minute", "2 minutes")
+	backlogPendingB := insertBacklog(suffix+"-backlog-pending-b", "jid:contact-b", "pending", "-1 minute", "1 minute")
+
+	independent, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim independent backlog route past deferred retry: %v", err)
+	}
+	if len(independent) != 1 || independent[0].ID != backlogPendingB {
+		t.Fatalf("backlog route bypass = %#v, want independent contact B %s", independent, backlogPendingB)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where id = $1::uuid
+	`, backlogPendingB); err != nil {
+		t.Fatal(err)
+	}
+	blockedSameRoute, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim while same-route backlog retry deferred: %v", err)
+	}
+	if len(blockedSameRoute) != 0 {
+		t.Fatalf("same-route backlog claim = %#v, want no event before retry is due", blockedSameRoute)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set next_attempt_at = now() - interval '1 second'
+		where id = $1::uuid
+	`, backlogRetryA); err != nil {
+		t.Fatal(err)
+	}
+	claimedBacklogRetry, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim due backlog retry: %v", err)
+	}
+	if len(claimedBacklogRetry) != 1 || claimedBacklogRetry[0].ID != backlogRetryA {
+		t.Fatalf("backlog FIFO = %#v, want retry %s before newer same-route %s", claimedBacklogRetry, backlogRetryA, backlogPendingA)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where id = $1::uuid
+	`, backlogRetryA); err != nil {
+		t.Fatal(err)
+	}
+	claimedAfterBacklogRetry, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim same-route backlog event after retry: %v", err)
+	}
+	if len(claimedAfterBacklogRetry) != 1 || claimedAfterBacklogRetry[0].ID != backlogPendingA {
+		t.Fatalf("post-retry backlog claim = %#v, want %s", claimedAfterBacklogRetry, backlogPendingA)
+	}
 }

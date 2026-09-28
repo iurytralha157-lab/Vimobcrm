@@ -1,9 +1,12 @@
 package whatsapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestEvolutionWebhookProcessedRetention(t *testing.T) {
@@ -46,7 +51,7 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"wi.processing_lane = $4",
 		"wi.payload #>> '{__vimob_ingress,routing_snapshot,version}'",
 		") = '1'",
-		"and ($4 <> 'live' or wi.next_attempt_at <= now())",
+		"and wi.next_attempt_at <= now()",
 		"older.processing_lane = wi.processing_lane",
 		"older.payload #>> '{__vimob_ingress,routing_snapshot,version}'",
 		"(older.created_at, older.id) < (wi.created_at, wi.id)",
@@ -90,8 +95,13 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	if got := strings.Count(normalized, "{__vimob_ingress,routing_snapshot,version}"); got < 5 {
 		t.Fatalf("immutable routing snapshot claim gates = %d, want every candidate/race/claim pass", got)
 	}
-	if strings.Contains(normalized, "wi.processing_lane = 'backlog' or wi.next_attempt_at <= now()") {
-		t.Fatal("backlog must retain strict FIFO and may not bypass a deferred head")
+	if strings.Contains(normalized, "$4 <> 'live' or wi.next_attempt_at <= now()") {
+		t.Fatal("a deferred backlog retry must not hide a due event on another routing key")
+	}
+	if !strings.Contains(normalized, "older.status in ('pending', 'retry')") ||
+		!strings.Contains(normalized, "older.processing_lane = wi.processing_lane") ||
+		!strings.Contains(normalized, "(older.created_at, older.id) < (wi.created_at, wi.id)") {
+		t.Fatal("a deferred retry must still block later events on the same routing key")
 	}
 	if strings.Contains(normalized, "media_jobs") {
 		t.Fatal("inbox claiming must not depend on media job completion; queued media cannot block subsequent live text")
@@ -113,6 +123,56 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	}
 	if shouldWrapEvolutionWebhookLaneClaim("", 0) || shouldWrapEvolutionWebhookLaneClaim("cursor", 1) {
 		t.Fatal("an initial or successful cursor segment must not wrap")
+	}
+}
+
+func TestEvolutionWebhookClaimTimeoutClassification(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "context deadline", err: context.DeadlineExceeded, want: true},
+		{name: "database statement timeout", err: &pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}, want: true},
+		{name: "user cancellation", err: &pgconn.PgError{Code: "57014", Message: "canceling statement due to user request"}},
+		{name: "other database error", err: &pgconn.PgError{Code: "40001", Message: "serialization failure"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isEvolutionWebhookClaimTimeout(test.err); got != test.want {
+				t.Fatalf("isEvolutionWebhookClaimTimeout(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+func TestEvolutionWebhookWorkerLogsClaimAndDrainSeparately(t *testing.T) {
+	stats := evolutionWebhookWorkerWindowStats{startedAt: time.Now().Add(-time.Second)}
+	stats.observe(evolutionWebhookBatchStats{
+		LiveClaimed: 1, ClaimDuration: 100 * time.Millisecond, DrainDuration: 300 * time.Millisecond,
+	}, 400*time.Millisecond, nil)
+	stats.observe(evolutionWebhookBatchStats{
+		ClaimDuration: 5 * time.Second, ClaimTimedOut: true,
+	}, 5*time.Second, context.DeadlineExceeded)
+
+	var output bytes.Buffer
+	stats.logAndReset(slog.New(slog.NewJSONHandler(&output, nil)), WorkerConfig{}, 1, 1)
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]float64{
+		"claim_timeouts":             1,
+		"average_claim_ms":           2550,
+		"max_claim_ms":               5000,
+		"average_drain_per_claim_ms": 300,
+		"max_drain_ms":               300,
+	} {
+		if got, ok := entry[key].(float64); !ok || got != want {
+			t.Errorf("worker metric %s = %v, want %v", key, entry[key], want)
+		}
+	}
+	if stats.batches != 0 || stats.claimTimeouts != 0 {
+		t.Fatal("worker metrics window was not reset after logging")
 	}
 }
 
