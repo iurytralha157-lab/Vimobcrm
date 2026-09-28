@@ -650,6 +650,18 @@
     {
       "file": "20260928150351_requeue_live_message_schema_roots.sql",
       "sha256": "4547f679a33bdee8bd0d37acf534c69f52fcebd51733254b0cab17ad89e1d9b6"
+    },
+    {
+      "file": "20260928151720_requeue_v1_contact_card_roots.sql",
+      "sha256": "19df70058dd68e0ca8e955b7c8678e015486bdf4582c9f5ec1d3e725544f330d"
+    },
+    {
+      "file": "20260928152532_quarantine_v1_unlinked_nonlead_messages.sql",
+      "sha256": "903b247e74e772ce8383c8e7fb05a67cb958dd502db9c3b79dc67ec5e87b76fa"
+    },
+    {
+      "file": "20260928153411_requeue_v1_business_contract_roots.sql",
+      "sha256": "0e2512990ad5f8a71a3b3e462ed25db10da21147868493320974b0594db72e99"
     }
   ]
 }
