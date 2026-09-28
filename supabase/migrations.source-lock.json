@@ -682,6 +682,10 @@
     {
       "file": "20260928163412_quarantine_redundant_frozen_v0_connected_controls.sql",
       "sha256": "b6d726019a22cec032f4140705dfa132bb2de225a781af913ec503beed6704c9"
+    },
+    {
+      "file": "20260928164110_quarantine_blank_id_v1_delivered_receipts.sql",
+      "sha256": "d4b23d9dda555d0264abe84c207aa4cd93d2ff86c6fb374adba0ec21b42f9bfe"
     }
   ]
 }
