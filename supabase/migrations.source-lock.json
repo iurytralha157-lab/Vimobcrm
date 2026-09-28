@@ -666,6 +666,22 @@
     {
       "file": "20260928160316_recover_v1_opaque_lead_roots.sql",
       "sha256": "fece36314f33a7f5cb01a1cb4ef266ab1b5d0478c109bb32a4fed1ba0b4c6b60"
+    },
+    {
+      "file": "20260928162114_quarantine_unroutable_buttonclick_ingress.sql",
+      "sha256": "ed891a00baaabd05b0530b71ea63dcdf4ce14b2721dcc1c01cafaa7a84b7e7cf"
+    },
+    {
+      "file": "20260928162408_quarantine_deleted_session_v0_controls.sql",
+      "sha256": "62406ac9a134f05b99bc015ddcd3a96482a027d7878c53b0ad6d0a6319778b1b"
+    },
+    {
+      "file": "20260928163043_quarantine_redundant_v1_session_controls.sql",
+      "sha256": "29a9d7cbeb880193a00faac7ca0940a7ad0c9735b9772e73492727825190a1a6"
+    },
+    {
+      "file": "20260928163412_quarantine_redundant_frozen_v0_connected_controls.sql",
+      "sha256": "b6d726019a22cec032f4140705dfa132bb2de225a781af913ec503beed6704c9"
     }
   ]
 }
