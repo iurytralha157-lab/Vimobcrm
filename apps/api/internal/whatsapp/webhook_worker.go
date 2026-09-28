@@ -310,10 +310,36 @@ const claimEvolutionWebhooksQuery = `
 			                ), '__session__') = head.routing_key
 			              )
 			          )
+					      )
+					    )
+			    -- Exact v1 status-only receipts carry no message content. Native
+			    -- processing resolves canonical targets under the session lock and
+			    -- applies monotonic delivery/read state. Let these old controls clear
+			    -- without waiting for an unrelated live route, but never outrun a
+			    -- live session control.
+			    or (
+			      head.event_type = 'receipt'
+			      and head.provider = 'evolution_go'
+			      and head.routing_key = '__session__'
+			      and head.created_at < now() - interval '10 minutes'
+			      and private.is_v1_status_only_receipt(head.payload)
+			      and not exists (
+			        select 1 from public.whatsapp_webhook_inbox live_session_control
+			        where live_session_control.session_id = ws.id
+			          and live_session_control.processing_lane = 'live'
+			          and live_session_control.status in ('pending', 'retry')
+			          and live_session_control.attempts < live_session_control.max_attempts
+			          and live_session_control.next_attempt_at <= now()
+			          and coalesce(
+			            live_session_control.payload #>> '{__vimob_ingress,routing_snapshot,version}', ''
+			          ) = '1'
+			          and coalesce(nullif(
+			            live_session_control.payload #>> '{__vimob_ingress,routing_key}', ''
+			          ), '__session__') = '__session__'
 			      )
 			    )
 			  )
-			order by ws.id
+			  order by ws.id
 			limit $1
 			for no key update of ws skip locked
 		),

@@ -597,4 +597,147 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	if len(blockedByControl) != 0 {
 		t.Fatalf("backlog bypassed live session control: %#v", blockedByControl)
 	}
+
+	// An exact status-only v1 backlog receipt may run while an unrelated live
+	// message is due. A matched receipt must still use native reconciliation;
+	// an envelope containing message content must retain live priority.
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	makeReceiptPayload := func(providerID string) string {
+		return fmt.Sprintf(`{
+		"__vimob_ingress":{"routing_key":"__session__","routing_snapshot":{"version":1,"messages":[]}},
+		"event":"Receipt","state":"Read","instanceId":"test","instanceName":"test",
+		"data":{"AddressingMode":"pn","MessageSender":"","Type":"read",
+			"Sender":"","MessageIDs":[%q],"Chat":"","Timestamp":"1",
+			"SenderAlt":"","RecipientAlt":"","BroadcastListOwner":"",
+			"IsFromMe":true,"IsGroup":false,"BroadcastRecipients":null}
+	}`, providerID)
+	}
+	receiptPayload := makeReceiptPayload(suffix + "-unmatched-receipt")
+	var safeReceiptID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, next_attempt_at, created_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'receipt', 'evolution_go',
+			$4::jsonb, 'backlog', 'pending', 0,
+			now() - interval '15 minutes', now() - interval '15 minutes'
+		) returning id::text
+	`, organizationID, sessionB, suffix+"-safe-backlog-receipt", receiptPayload).Scan(&safeReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, next_attempt_at, created_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'message', 'evolution_go',
+			'{"__vimob_ingress":{"routing_key":"jid:unrelated-live","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
+			'live', 'pending', 0, now() - interval '1 minute', now() - interval '1 minute'
+		)
+	`, organizationID, sessionB, suffix+"-unrelated-live"); err != nil {
+		t.Fatal(err)
+	}
+	claimedReceipt, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim targetless status-only backlog receipt: %v", err)
+	}
+	if len(claimedReceipt) != 1 || claimedReceipt[0].ID != safeReceiptID {
+		t.Fatalf("status-only backlog claim = %#v, want receipt %s", claimedReceipt, safeReceiptID)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where id = $1::uuid
+	`, safeReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	matchedProviderID := suffix + "-matched-provider"
+	var matchedConversationID, matchedMessageRowID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, remote_jid, contact_name
+		) values ($1::uuid, $2::uuid, $3, $3)
+		returning id::text
+	`, organizationID, sessionB, suffix+"@s.whatsapp.net").Scan(&matchedConversationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, session_id, conversation_id, message_id,
+			provider_message_id, from_me, direction, content, message_type, status
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4, $4,
+			true, 'outbound', 'canary', 'text', 'sent'
+		) returning id::text
+	`, organizationID, sessionB, matchedConversationID, matchedProviderID).Scan(&matchedMessageRowID); err != nil {
+		t.Fatal(err)
+	}
+	var matchedReceiptID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, next_attempt_at, created_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'receipt', 'evolution_go',
+			$4::jsonb, 'backlog', 'pending', 0,
+			now() - interval '14 minutes', now() - interval '14 minutes'
+		) returning id::text
+	`, organizationID, sessionB, suffix+"-matched-backlog-receipt",
+		makeReceiptPayload(matchedProviderID)).Scan(&matchedReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	claimedMatched, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim matched status-only backlog receipt: %v", err)
+	}
+	if len(claimedMatched) != 1 || claimedMatched[0].ID != matchedReceiptID {
+		t.Fatalf("matched status-only backlog claim = %#v, want receipt %s", claimedMatched, matchedReceiptID)
+	}
+	processedMatched, err := repo.processEvolutionWebhookNative(ctx, claimedMatched[0])
+	if err != nil || !processedMatched {
+		t.Fatalf("native matched receipt processed = %v, err = %v", processedMatched, err)
+	}
+	var matchedStatus string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select status from public.whatsapp_messages where id = $1::uuid
+	`, matchedMessageRowID).Scan(&matchedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if matchedStatus != "read" {
+		t.Fatalf("matched receipt status = %q, want read", matchedStatus)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where id = $1::uuid
+	`, matchedReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, next_attempt_at, created_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'receipt', 'evolution_go',
+			$4::jsonb || '{"message":{"conversation":"lead content"}}'::jsonb,
+			'backlog', 'pending', 0,
+			now() - interval '14 minutes', now() - interval '14 minutes'
+		)
+	`, organizationID, sessionB, suffix+"-mixed-backlog-receipt", receiptPayload); err != nil {
+		t.Fatal(err)
+	}
+	blockedMixedReceipt, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim mixed receipt while live is due: %v", err)
+	}
+	if len(blockedMixedReceipt) != 0 {
+		t.Fatalf("mixed receipt bypassed live priority: %#v", blockedMixedReceipt)
+	}
 }
