@@ -533,6 +533,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		usersHandler:             usersHandler,
 		webhooksHandler:          webhooksHandler,
 		whatsappHandler:          whatsappHandler,
+		webhookWorkerHandler:     webhookWorkerHandler,
 	})
 	handler := httpserver.Chain(
 		mux,

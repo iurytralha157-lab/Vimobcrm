@@ -26,8 +26,8 @@ func NewHandler(repo Repository) Handler {
 	}
 }
 
-// WithWorkerRepository returns a handler copy for a dedicated background lane.
-// HTTP requests and the outbound outbox keep their original repository.
+// WithWorkerRepository returns a handler copy for the inbound webhook lane.
+// Webhook ingress and processing share that repository; sends keep the original.
 func (handler Handler) WithWorkerRepository(repo Repository) Handler {
 	handler.repo = repo
 	return handler

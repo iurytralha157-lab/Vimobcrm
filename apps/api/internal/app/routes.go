@@ -83,6 +83,7 @@ type routeDependencies struct {
 	usersHandler             users.Handler
 	webhooksHandler          webhooks.Handler
 	whatsappHandler          whatsapp.Handler
+	webhookWorkerHandler     whatsapp.Handler
 }
 
 func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
@@ -125,6 +126,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	usersHandler := dependencies.usersHandler
 	webhooksHandler := dependencies.webhooksHandler
 	whatsappHandler := dependencies.whatsappHandler
+	webhookWorkerHandler := dependencies.webhookWorkerHandler
 
 	withAuth := func(handler http.Handler) http.Handler {
 		return httpserver.RequireAuth(authVerifier, handler)
@@ -421,8 +423,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/automation-media", withModulePermission("automations", permissions.AutomationsView, http.HandlerFunc(automationsHandler.ListMedia)))
 	mux.Handle("POST /v1/automation-media", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.UploadMedia)))
 	mux.Handle("DELETE /v1/automation-media", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.DeleteMedia)))
-	mux.HandleFunc("GET /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
-	mux.HandleFunc("POST /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
+	mux.HandleFunc("GET /v1/whatsapp/webhook/evolution-go", webhookWorkerHandler.EvolutionGoWebhook)
+	mux.HandleFunc("POST /v1/whatsapp/webhook/evolution-go", webhookWorkerHandler.EvolutionGoWebhook)
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))
 	mux.Handle("POST /v1/public/api/leads", http.HandlerFunc(publicAPIHandler.CreateLead))
 	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
