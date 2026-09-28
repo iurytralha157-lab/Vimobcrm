@@ -277,6 +277,7 @@ export type WhatsAppAttendanceEntry = {
   userName: string
   sessionId: string
   joinedAt: string
+  entrySource: string
 }
 
 export type WhatsAppAttendanceState = {

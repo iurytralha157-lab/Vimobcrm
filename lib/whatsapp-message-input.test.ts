@@ -261,8 +261,11 @@ test('removed connection explains why its historical conversation cannot send', 
     placeholder: 'Conexão removida. Inicie uma nova conversa.',
   })
   assert.equal(getWhatsAppSendSessionId(conversation, null, otherConnectedSession), conversation.session_id)
-  // A fresh attendance capability is authoritative over a stale nested status.
-  assert.equal(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, true).disabled, false)
+  // A cached attendance capability must not enable a removed connection.
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, true), {
+    disabled: true,
+    placeholder: 'Conexão removida. Inicie uma nova conversa.',
+  })
 })
 
 test('new conversation draft may use the explicitly selected session', () => {

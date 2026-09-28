@@ -156,6 +156,7 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
 			},
 			entries: [{
 				id: ID,
@@ -163,6 +164,7 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
 			}],
 			created: true,
 		},

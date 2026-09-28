@@ -248,8 +248,7 @@ export function getWhatsAppMessageInputState(
   // different account must start a new conversation instead of silently
   // sending through the old chat's identity.
   if (conversation.id && conversation.session_id
-    && getConversationSession(conversation, sessions)?.status === "deleted"
-    && canSendFixedSession !== true) {
+    && getConversationSession(conversation, sessions)?.status === "deleted") {
     return {
       disabled: true,
       placeholder: "Conexão removida. Inicie uma nova conversa.",
