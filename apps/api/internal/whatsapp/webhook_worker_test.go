@@ -149,9 +149,17 @@ func TestEvolutionWebhookWorkerLogsClaimAndDrainSeparately(t *testing.T) {
 	stats := evolutionWebhookWorkerWindowStats{startedAt: time.Now().Add(-time.Second)}
 	stats.observe(evolutionWebhookBatchStats{
 		LiveClaimed: 1, ClaimDuration: 100 * time.Millisecond, DrainDuration: 300 * time.Millisecond,
+		ClaimStages: evolutionWebhookClaimStages{
+			BeginPool: 10 * time.Millisecond, Set: 5 * time.Millisecond,
+			Query: 70 * time.Millisecond, Commit: 5 * time.Millisecond, QueryCalls: 2, Wraps: 1,
+		},
 	}, 400*time.Millisecond, nil)
 	stats.observe(evolutionWebhookBatchStats{
 		ClaimDuration: 5 * time.Second, ClaimTimedOut: true,
+		ClaimStages: evolutionWebhookClaimStages{
+			BeginPool: 100 * time.Millisecond, Set: 100 * time.Millisecond,
+			Query: 4800 * time.Millisecond, QueryCalls: 1,
+		},
 	}, 5*time.Second, context.DeadlineExceeded)
 
 	var output bytes.Buffer
@@ -161,11 +169,21 @@ func TestEvolutionWebhookWorkerLogsClaimAndDrainSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]float64{
-		"claim_timeouts":             1,
-		"average_claim_ms":           2550,
-		"max_claim_ms":               5000,
-		"average_drain_per_claim_ms": 300,
-		"max_drain_ms":               300,
+		"claim_timeouts":                1,
+		"average_claim_ms":              2550,
+		"max_claim_ms":                  5000,
+		"average_drain_per_claim_ms":    300,
+		"max_drain_ms":                  300,
+		"claim_query_calls":             3,
+		"claim_wraps":                   1,
+		"average_begin_pool_ms":         55,
+		"max_begin_pool_ms":             100,
+		"average_set_ms":                52,
+		"average_query_ms":              2435,
+		"average_query_call_ms":         1623,
+		"max_query_ms":                  4800,
+		"average_commit_ms":             2,
+		"average_unattributed_claim_ms": 5,
 	} {
 		if got, ok := entry[key].(float64); !ok || got != want {
 			t.Errorf("worker metric %s = %v, want %v", key, entry[key], want)

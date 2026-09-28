@@ -743,6 +743,9 @@ type evolutionWebhookWorkerWindowStats struct {
 	oldestLiveClaimAge    time.Duration
 	oldestBacklogClaimAge time.Duration
 	maxBatchDuration      time.Duration
+	claimStages           evolutionWebhookClaimStages
+	maxClaimStages        evolutionWebhookClaimStages
+	emptyClaims           int
 }
 
 func (stats *evolutionWebhookWorkerWindowStats) observe(batch evolutionWebhookBatchStats, duration time.Duration, err error) {
@@ -756,6 +759,11 @@ func (stats *evolutionWebhookWorkerWindowStats) observe(batch evolutionWebhookBa
 		stats.claimTimeouts++
 	}
 	stats.claimDuration += batch.ClaimDuration
+	stats.claimStages.add(batch.ClaimStages)
+	stats.maxClaimStages.max(batch.ClaimStages)
+	if batch.Claimed() == 0 && err == nil {
+		stats.emptyClaims++
+	}
 	if batch.ClaimDuration > stats.maxClaimDuration {
 		stats.maxClaimDuration = batch.ClaimDuration
 	}
@@ -791,6 +799,10 @@ func (stats *evolutionWebhookWorkerWindowStats) logAndReset(
 	if claimed := stats.liveClaimed + stats.backlogClaimed; claimed > 0 {
 		averageDrain = stats.drainDuration / time.Duration(claimed)
 	}
+	unattributedClaim := stats.claimDuration - stats.claimStages.BeginPool - stats.claimStages.Set - stats.claimStages.Query - stats.claimStages.Commit
+	if unattributedClaim < 0 {
+		unattributedClaim = 0
+	}
 	logger.Info(
 		"whatsapp webhook worker throughput",
 		"worker_id", whatsappWebhookWorkerID,
@@ -802,6 +814,19 @@ func (stats *evolutionWebhookWorkerWindowStats) logAndReset(
 		"claim_timeouts", stats.claimTimeouts,
 		"average_claim_ms", averageClaim.Milliseconds(),
 		"max_claim_ms", stats.maxClaimDuration.Milliseconds(),
+		"empty_claims", stats.emptyClaims,
+		"claim_query_calls", stats.claimStages.QueryCalls,
+		"claim_wraps", stats.claimStages.Wraps,
+		"average_begin_pool_ms", averageWebhookClaimStage(stats.claimStages.BeginPool, stats.batches).Milliseconds(),
+		"max_begin_pool_ms", stats.maxClaimStages.BeginPool.Milliseconds(),
+		"average_set_ms", averageWebhookClaimStage(stats.claimStages.Set, stats.batches).Milliseconds(),
+		"max_set_ms", stats.maxClaimStages.Set.Milliseconds(),
+		"average_query_ms", averageWebhookClaimStage(stats.claimStages.Query, stats.batches).Milliseconds(),
+		"average_query_call_ms", averageWebhookClaimStage(stats.claimStages.Query, stats.claimStages.QueryCalls).Milliseconds(),
+		"max_query_ms", stats.maxClaimStages.Query.Milliseconds(),
+		"average_commit_ms", averageWebhookClaimStage(stats.claimStages.Commit, stats.batches).Milliseconds(),
+		"max_commit_ms", stats.maxClaimStages.Commit.Milliseconds(),
+		"average_unattributed_claim_ms", averageWebhookClaimStage(unattributedClaim, stats.batches).Milliseconds(),
 		"average_drain_per_claim_ms", averageDrain.Milliseconds(),
 		"max_drain_ms", stats.maxDrainDuration.Milliseconds(),
 		"oldest_live_claim_age_ms", stats.oldestLiveClaimAge.Milliseconds(),
@@ -814,6 +839,46 @@ func (stats *evolutionWebhookWorkerWindowStats) logAndReset(
 		"backlog_concurrency", backlogConcurrency,
 	)
 	*stats = evolutionWebhookWorkerWindowStats{startedAt: time.Now()}
+}
+
+func averageWebhookClaimStage(total time.Duration, batches int) time.Duration {
+	if batches == 0 {
+		return 0
+	}
+	return total / time.Duration(batches)
+}
+
+type evolutionWebhookClaimStages struct {
+	BeginPool  time.Duration
+	Set        time.Duration
+	Query      time.Duration
+	Commit     time.Duration
+	QueryCalls int
+	Wraps      int
+}
+
+func (stages *evolutionWebhookClaimStages) add(other evolutionWebhookClaimStages) {
+	stages.BeginPool += other.BeginPool
+	stages.Set += other.Set
+	stages.Query += other.Query
+	stages.Commit += other.Commit
+	stages.QueryCalls += other.QueryCalls
+	stages.Wraps += other.Wraps
+}
+
+func (stages *evolutionWebhookClaimStages) max(other evolutionWebhookClaimStages) {
+	if other.BeginPool > stages.BeginPool {
+		stages.BeginPool = other.BeginPool
+	}
+	if other.Set > stages.Set {
+		stages.Set = other.Set
+	}
+	if other.Query > stages.Query {
+		stages.Query = other.Query
+	}
+	if other.Commit > stages.Commit {
+		stages.Commit = other.Commit
+	}
 }
 
 func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int) (int64, error) {
@@ -860,6 +925,7 @@ type evolutionWebhookBatchStats struct {
 	LiveClaimed           int
 	BacklogClaimed        int
 	ClaimDuration         time.Duration
+	ClaimStages           evolutionWebhookClaimStages
 	ClaimTimedOut         bool
 	DrainDuration         time.Duration
 	OldestLiveClaimAge    time.Duration
@@ -897,10 +963,10 @@ func (repo Repository) processWebhookInboxLaneBatch(
 	afterSessionID string,
 ) (evolutionWebhookBatchStats, string, error) {
 	claimStartedAt := time.Now()
-	items, nextSessionID, err := repo.claimEvolutionWebhooksForLane(ctx, lane, batch, afterSessionID)
+	items, nextSessionID, claimStages, err := repo.claimEvolutionWebhooksForLaneMeasured(ctx, lane, batch, afterSessionID)
 	claimDuration := time.Since(claimStartedAt)
 	if err != nil {
-		return evolutionWebhookBatchStats{ClaimDuration: claimDuration, ClaimTimedOut: isEvolutionWebhookClaimTimeout(err)}, afterSessionID, err
+		return evolutionWebhookBatchStats{ClaimDuration: claimDuration, ClaimStages: claimStages, ClaimTimedOut: isEvolutionWebhookClaimTimeout(err)}, afterSessionID, err
 	}
 	cursors := evolutionWebhookLaneCursors{}
 	switch lane {
@@ -913,6 +979,7 @@ func (repo Repository) processWebhookInboxLaneBatch(
 	}
 	stats := summarizeEvolutionWebhookBatch(items, cursors, time.Now())
 	stats.ClaimDuration = claimDuration
+	stats.ClaimStages = claimStages
 	drainStartedAt := time.Now()
 	err = drainEvolutionWebhookBatch(
 		ctx,
@@ -1084,28 +1151,47 @@ func (repo Repository) claimEvolutionWebhooksForLane(
 	batch int,
 	afterSessionID string,
 ) ([]pendingEvolutionWebhook, string, error) {
+	items, cursor, _, err := repo.claimEvolutionWebhooksForLaneMeasured(ctx, lane, batch, afterSessionID)
+	return items, cursor, err
+}
+
+func (repo Repository) claimEvolutionWebhooksForLaneMeasured(
+	ctx context.Context,
+	lane string,
+	batch int,
+	afterSessionID string,
+) ([]pendingEvolutionWebhook, string, evolutionWebhookClaimStages, error) {
+	var stages evolutionWebhookClaimStages
 	batch = normalizeWorkerBatch(batch, defaultWhatsAppWebhookWorkerBatch)
 	if lane != evolutionWebhookLaneLive && lane != evolutionWebhookLaneBacklog {
-		return nil, afterSessionID, fmt.Errorf("unsupported WhatsApp webhook processing lane %q", lane)
+		return nil, afterSessionID, stages, fmt.Errorf("unsupported WhatsApp webhook processing lane %q", lane)
 	}
+	stageStartedAt := time.Now()
 	tx, err := repo.db.Pool().Begin(ctx)
+	stages.BeginPool = time.Since(stageStartedAt)
 	if err != nil {
-		return nil, afterSessionID, err
+		return nil, afterSessionID, stages, err
 	}
 	defer tx.Rollback(ctx)
 	// A missing/invalid rollout index must fail this claim quickly instead of
 	// turning the large durable inbox into a long-running sequential scan.
+	stageStartedAt = time.Now()
 	if _, err := tx.Exec(ctx, `set local statement_timeout = '5s'`); err != nil {
-		return nil, afterSessionID, err
+		stages.Set = time.Since(stageStartedAt)
+		return nil, afterSessionID, stages, err
 	}
-	items, err := claimEvolutionWebhooksInLane(ctx, tx, batch, afterSessionID, lane)
+	stages.Set = time.Since(stageStartedAt)
+	items, err := claimEvolutionWebhooksInLaneObserved(ctx, tx, batch, afterSessionID, lane, &stages)
 	if err != nil {
-		return nil, afterSessionID, err
+		return nil, afterSessionID, stages, err
 	}
+	stageStartedAt = time.Now()
 	if err := tx.Commit(ctx); err != nil {
-		return nil, afterSessionID, err
+		stages.Commit = time.Since(stageStartedAt)
+		return nil, afterSessionID, stages, err
 	}
-	return items, laneLastSessionID(items, afterSessionID), nil
+	stages.Commit = time.Since(stageStartedAt)
+	return items, laneLastSessionID(items, afterSessionID), stages, nil
 }
 
 func (repo Repository) claimEvolutionWebhooksForWorker(
@@ -1183,14 +1269,28 @@ func claimEvolutionWebhooksInLane(
 	afterSessionID string,
 	lane string,
 ) ([]pendingEvolutionWebhook, error) {
-	items, err := claimEvolutionWebhooksInLaneSegment(ctx, tx, batch, afterSessionID, lane)
+	return claimEvolutionWebhooksInLaneObserved(ctx, tx, batch, afterSessionID, lane, nil)
+}
+
+func claimEvolutionWebhooksInLaneObserved(
+	ctx context.Context,
+	tx pgx.Tx,
+	batch int,
+	afterSessionID string,
+	lane string,
+	stages *evolutionWebhookClaimStages,
+) ([]pendingEvolutionWebhook, error) {
+	items, err := claimEvolutionWebhooksInLaneSegmentObserved(ctx, tx, batch, afterSessionID, lane, stages)
 	if err != nil || !shouldWrapEvolutionWebhookLaneClaim(afterSessionID, len(items)) {
 		return items, err
 	}
 	// The cursor is monotonic inside one UUID segment. Wrap exactly once only
 	// after that segment is empty; never CASE-sort every session and never loop
 	// forever when the lane has no runnable head.
-	return claimEvolutionWebhooksInLaneSegment(ctx, tx, batch, "", lane)
+	if stages != nil {
+		stages.Wraps++
+	}
+	return claimEvolutionWebhooksInLaneSegmentObserved(ctx, tx, batch, "", lane, stages)
 }
 
 func shouldWrapEvolutionWebhookLaneClaim(afterSessionID string, claimed int) bool {
@@ -1204,11 +1304,27 @@ func claimEvolutionWebhooksInLaneSegment(
 	afterSessionID string,
 	lane string,
 ) ([]pendingEvolutionWebhook, error) {
+	return claimEvolutionWebhooksInLaneSegmentObserved(ctx, tx, batch, afterSessionID, lane, nil)
+}
+
+func claimEvolutionWebhooksInLaneSegmentObserved(
+	ctx context.Context,
+	tx pgx.Tx,
+	batch int,
+	afterSessionID string,
+	lane string,
+	stages *evolutionWebhookClaimStages,
+) ([]pendingEvolutionWebhook, error) {
 	if batch <= 0 {
 		return nil, nil
 	}
 	if lane != evolutionWebhookLaneLive && lane != evolutionWebhookLaneBacklog {
 		return nil, fmt.Errorf("unsupported WhatsApp webhook processing lane %q", lane)
+	}
+	queryStartedAt := time.Now()
+	if stages != nil {
+		stages.QueryCalls++
+		defer func() { stages.Query += time.Since(queryStartedAt) }()
 	}
 	rows, err := tx.Query(ctx, claimEvolutionWebhooksQuery, batch, whatsappWebhookWorkerID, afterSessionID, lane)
 	if err != nil {
