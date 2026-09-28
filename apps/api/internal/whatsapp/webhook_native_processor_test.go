@@ -1200,6 +1200,131 @@ func TestNativeNotificationReceiptOutcomesFailClosed(t *testing.T) {
 	}
 }
 
+func TestNativeReadSelfReceiptIsAcknowledgedWithoutDeliveryProjection(t *testing.T) {
+	ids := make([]any, 258)
+	for index := range ids {
+		ids[index] = "opaque-provider-message"
+	}
+	payload := map[string]any{
+		"event":        "Receipt",
+		"state":        "ReadSelf",
+		"instanceId":   "test-instance",
+		"instanceName": "test-session",
+		"__vimob_ingress": map[string]any{
+			"routing_key": evolutionWebhookSessionRoute,
+			"routing_snapshot": map[string]any{
+				"version":  float64(1),
+				"messages": []any{},
+			},
+		},
+		"data": map[string]any{
+			"Type":                "read-self",
+			"MessageIDs":          ids,
+			"IsGroup":             false,
+			"IsFromMe":            false,
+			"AddressingMode":      "pn",
+			"BroadcastListOwner":  "",
+			"BroadcastRecipients": nil,
+			"Chat":                "opaque-chat",
+			"MessageSender":       "opaque-sender",
+			"RecipientAlt":        "",
+			"Sender":              "opaque-sender",
+			"SenderAlt":           "",
+			"Timestamp":           "2026-09-21T12:00:00Z",
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses := extractNativeEvolutionStatuses(payload); len(statuses) != 0 {
+		t.Fatalf("ReadSelf became a delivery status: %#v", statuses)
+	}
+	item := pendingEvolutionWebhook{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		SessionID:      "22222222-2222-4222-8222-222222222222",
+		EventType:      "receipt",
+		Payload:        encoded,
+	}
+	// No database or Edge client is installed: an accidental status projection
+	// or fallback would fail this dispatch. The durable inbox keeps the raw row.
+	repo := Repository{functions: functionsClient{
+		webhookProcessorMode:     webhookProcessorNative,
+		webhookRolloutSessionIDs: []string{"*"},
+	}}
+	if err := repo.dispatchEvolutionWebhook(context.Background(), item); err != nil {
+		t.Fatalf("ReadSelf receipt was not acknowledged: %v", err)
+	}
+	if !nativeIsReadSelfOnlyReceipt(payload, "receipt") {
+		t.Fatal("exact ReadSelf receipt was not recognized")
+	}
+}
+
+func TestNativeReadSelfReceiptDoesNotHideMixedOrAmbiguousStatuses(t *testing.T) {
+	base := func() map[string]any {
+		return map[string]any{
+			"event":        "Receipt",
+			"state":        "ReadSelf",
+			"instanceId":   "test-instance",
+			"instanceName": "test-session",
+			"__vimob_ingress": map[string]any{
+				"routing_key":      evolutionWebhookSessionRoute,
+				"routing_snapshot": map[string]any{"version": float64(1), "messages": []any{}},
+			},
+			"data": map[string]any{
+				"Type":                "read-self",
+				"MessageIDs":          []any{"self-id"},
+				"IsGroup":             false,
+				"IsFromMe":            false,
+				"AddressingMode":      "pn",
+				"BroadcastListOwner":  "",
+				"BroadcastRecipients": nil,
+				"Chat":                "opaque-chat",
+				"MessageSender":       "opaque-sender",
+				"RecipientAlt":        "",
+				"Sender":              "opaque-sender",
+				"SenderAlt":           "",
+				"Timestamp":           "2026-09-21T12:00:00Z",
+			},
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"missing IDs", func(payload map[string]any) { delete(payload["data"].(map[string]any), "MessageIDs") }},
+		{"unknown type", func(payload map[string]any) { payload["data"].(map[string]any)["Type"] = "unknown" }},
+		{"unknown state", func(payload map[string]any) { payload["state"] = "unknown" }},
+		{"mixed nested receipt", func(payload map[string]any) {
+			payload["data"].(map[string]any)["receipts"] = []any{map[string]any{"messageId": "outbound-id", "type": "delivered"}}
+		}},
+		{"mixed message", func(payload map[string]any) {
+			payload["data"].(map[string]any)["messages"] = []any{map[string]any{"Info": map[string]any{"ID": "lead-id"}}}
+		}},
+		{"unknown lead field", func(payload map[string]any) {
+			payload["data"].(map[string]any)["text"] = "lead content"
+		}},
+		{"nonempty message snapshot", func(payload map[string]any) {
+			payload["__vimob_ingress"].(map[string]any)["routing_snapshot"].(map[string]any)["messages"] = []any{map[string]any{"provider_message_id": "lead-id"}}
+		}},
+		{"group", func(payload map[string]any) { payload["data"].(map[string]any)["IsGroup"] = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := base()
+			test.mutate(payload)
+			if nativeIsReadSelfOnlyReceipt(payload, "receipt") {
+				t.Fatal("ambiguous receipt was acknowledged as ReadSelf-only")
+			}
+		})
+	}
+	mixed := base()
+	mixed["data"].(map[string]any)["receipts"] = []any{map[string]any{"messageId": "outbound-id", "type": "delivered"}}
+	statuses := extractNativeEvolutionStatuses(mixed)
+	if len(statuses) != 1 || statuses[0].Status != "delivered" {
+		t.Fatalf("mixed actionable delivery receipt was lost: %#v", statuses)
+	}
+}
+
 func TestNativeNotificationReceiptUsesExactServiceRPC(t *testing.T) {
 	raw, err := os.ReadFile("webhook_native_processor.go")
 	if err != nil {

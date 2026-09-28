@@ -676,6 +676,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	if nativeIsStatusEvent(event) {
 		statuses := extractNativeEvolutionStatuses(payload)
 		if len(statuses) == 0 {
+			// read-self acknowledges that this account read an incoming message
+			// on another device. It is not proof that a lead read an outbound
+			// message. Keep the durable inbox receipt, but do not retry it or
+			// project it onto message/outbox delivery state.
+			if nativeIsReadSelfOnlyReceipt(payload, event) {
+				return true, nil
+			}
 			return false, nil
 		}
 		return true, repo.processNativeEvolutionStatuses(ctx, item, statuses)
@@ -797,6 +804,88 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		wakeWhatsAppMediaWorker()
 	}
 	return true, nil
+}
+
+func nativeIsReadSelfOnlyReceipt(payload map[string]any, event string) bool {
+	providerEvent, eventIsString := payload["event"].(string)
+	state, stateIsString := payload["state"].(string)
+	if !eventIsString || !stateIsString ||
+		!strings.EqualFold(strings.TrimSpace(event), "receipt") ||
+		!strings.EqualFold(strings.TrimSpace(providerEvent), "receipt") ||
+		!strings.EqualFold(strings.TrimSpace(state), "ReadSelf") {
+		return false
+	}
+	data, dataIsObject := payload["data"].(map[string]any)
+	if !dataIsObject || len(payload) != 6 || len(data) != 13 {
+		return false
+	}
+	// This is the exact provider Receipt envelope observed in the canary. A
+	// future shape is held for review instead of discarding a mixed message.
+	for key := range payload {
+		switch key {
+		case "__vimob_ingress", "data", "event", "instanceId", "instanceName", "state":
+		default:
+			return false
+		}
+	}
+	for key := range data {
+		switch key {
+		case "AddressingMode", "BroadcastListOwner", "BroadcastRecipients",
+			"Chat", "IsFromMe", "IsGroup", "MessageIDs", "MessageSender",
+			"RecipientAlt", "Sender", "SenderAlt", "Timestamp", "Type":
+		default:
+			return false
+		}
+	}
+	receiptType, typeIsString := data["Type"].(string)
+	if !typeIsString || !strings.EqualFold(strings.TrimSpace(receiptType), "read-self") {
+		return false
+	}
+	for _, field := range []string{"instanceId", "instanceName"} {
+		if _, ok := payload[field].(string); !ok {
+			return false
+		}
+	}
+	for _, field := range []string{
+		"AddressingMode", "BroadcastListOwner", "Chat", "MessageSender",
+		"RecipientAlt", "Sender", "SenderAlt", "Timestamp",
+	} {
+		if _, ok := data[field].(string); !ok {
+			return false
+		}
+	}
+	if data["BroadcastRecipients"] != nil {
+		return false
+	}
+	if _, ok := data["IsFromMe"].(bool); !ok {
+		return false
+	}
+	if isGroup, ok := data["IsGroup"].(bool); !ok || isGroup {
+		return false
+	}
+	ingress, ok := payload["__vimob_ingress"].(map[string]any)
+	if !ok || len(ingress) != 2 || ingress["routing_key"] != evolutionWebhookSessionRoute {
+		return false
+	}
+	snapshot, ok := ingress["routing_snapshot"].(map[string]any)
+	if !ok || len(snapshot) != 2 || snapshot["version"] != float64(1) {
+		return false
+	}
+	messages, ok := snapshot["messages"].([]any)
+	if !ok || len(messages) != 0 {
+		return false
+	}
+	ids, ok := data["MessageIDs"].([]any)
+	if !ok || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		value, ok := id.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func nativeEvolutionMessagesContainMedia(messages []nativeEvolutionMessage) bool {
