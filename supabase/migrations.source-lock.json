@@ -662,6 +662,10 @@
     {
       "file": "20260928153411_requeue_v1_business_contract_roots.sql",
       "sha256": "0e2512990ad5f8a71a3b3e462ed25db10da21147868493320974b0594db72e99"
+    },
+    {
+      "file": "20260928160316_recover_v1_opaque_lead_roots.sql",
+      "sha256": "fece36314f33a7f5cb01a1cb4ef266ab1b5d0478c109bb32a4fed1ba0b4c6b60"
     }
   ]
 }
