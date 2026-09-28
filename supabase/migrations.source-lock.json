@@ -686,6 +686,10 @@
     {
       "file": "20260928164110_quarantine_blank_id_v1_delivered_receipts.sql",
       "sha256": "d4b23d9dda555d0264abe84c207aa4cd93d2ff86c6fb374adba0ec21b42f9bfe"
+    },
+    {
+      "file": "20260928171331_barrier_invalidated_whatsapp_v1_routes.sql",
+      "sha256": "2c777d7f86974f1a22f2e4ff59fc882464a4dc6eb94a294fd9c960066a62b1f2"
     }
   ]
 }
