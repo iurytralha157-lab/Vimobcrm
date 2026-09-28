@@ -608,34 +608,10 @@ func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int
 	if limit < 1 || limit > 10000 {
 		limit = 1000
 	}
-	result, err := repo.db.Pool().Exec(ctx, `
-		with expired as (
-			select id
-			from public.whatsapp_webhook_inbox
-			where expires_at < now()
-			  and (
-			    status = 'processed'
-			    or (
-			      status = 'dead'
-			      and not (
-			        strpos(lower(btrim(event_type)), 'message') > 0
-			        and strpos(lower(btrim(event_type)), 'receipt') = 0
-			        and strpos(lower(btrim(event_type)), 'ack') = 0
-			        and strpos(lower(btrim(event_type)), 'status') = 0
-			      )
-			    )
-			  )
-			order by expires_at, id
-			limit $1
-			for update skip locked
-		)
-		delete from public.whatsapp_webhook_inbox inbox
-		using expired
-		where inbox.id = expired.id
-	`, limit)
-	if err != nil {
-		return 0, err
-	}
+	// Inbox payload deletion needs the exact nonlead-control classifier, the
+	// frozen-row ledger check, and a seven-day terminal age. The separately
+	// reviewed private SQL cleanup owns those predicates and its cron cutover.
+	// This minute worker only retains the independent routing-provenance sweep.
 	provenanceLimit := limit
 	if provenanceLimit > 250 {
 		provenanceLimit = 250
@@ -644,9 +620,9 @@ func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int
 	if err := repo.db.Pool().QueryRow(ctx, `
 		select private.cleanup_whatsapp_webhook_routing_provenance($1)::bigint
 	`, provenanceLimit).Scan(&deletedProvenance); err != nil {
-		return result.RowsAffected(), err
+		return 0, err
 	}
-	return result.RowsAffected(), nil
+	return 0, nil
 }
 
 func (repo Repository) ProcessWebhookInbox(ctx context.Context) error {
