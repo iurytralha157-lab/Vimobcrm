@@ -66,6 +66,7 @@ import {
   analyticsQuerySchema,
   apiDashboardStatsResponseSchema,
   apiDashboardLeadDistributionResponseSchema,
+  apiDashboardCampaignsResponseSchema,
   apiDashboardFirstContactResponseSchema,
   apiDashboardTopBrokersResponseSchema,
   dashboardDateRangeSchema,
@@ -2034,6 +2035,34 @@ test("dashboard valida a distribuição não vazia por corretor e equipe", () =>
   assert.equal(
     dashboardFiltersSchema.safeParse({ userId: "unassigned" }).success,
     true,
+  );
+});
+
+test("dashboard aceita todas as campanhas, nomes externos longos e contagens separadas", () => {
+  const longName = "Campanha ".repeat(180);
+  const valid = {
+    data: {
+      campaigns: [
+        { key: "id:123", campaignId: "123", name: longName, leadCount: 2, entryCount: 3 },
+        { key: "text:outra", campaignId: null, name: "Outra", leadCount: 1, entryCount: 1 },
+      ],
+      unattributed: { leadCount: 4, entryCount: 5 },
+    },
+  };
+  const parsed = apiDashboardCampaignsResponseSchema.parse(valid);
+  assert.equal(parsed.data.campaigns[0].name, longName.trim());
+  assert.equal(parsed.data.unattributed.leadCount, 4);
+  assert.equal(
+    apiDashboardCampaignsResponseSchema.safeParse({
+      data: { ...valid.data, campaigns: [{ ...valid.data.campaigns[0], leadCount: -1 }] },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiDashboardCampaignsResponseSchema.safeParse({
+      data: { ...valid.data, unattributed: { leadCount: 1 } },
+    }).success,
+    false,
   );
 });
 

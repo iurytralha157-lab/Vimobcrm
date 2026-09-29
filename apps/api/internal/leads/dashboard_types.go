@@ -125,6 +125,24 @@ type SourceDataPoint struct {
 	RawSource string `json:"rawSource"`
 }
 
+type DashboardCampaignPoint struct {
+	Key        string  `json:"key"`
+	CampaignID *string `json:"campaignId"`
+	Name       string  `json:"name"`
+	LeadCount  int64   `json:"leadCount"`
+	EntryCount int64   `json:"entryCount"`
+}
+
+type DashboardCampaignCount struct {
+	LeadCount  int64 `json:"leadCount"`
+	EntryCount int64 `json:"entryCount"`
+}
+
+type DashboardCampaigns struct {
+	Campaigns    []DashboardCampaignPoint `json:"campaigns"`
+	Unattributed DashboardCampaignCount   `json:"unattributed"`
+}
+
 type TopBroker struct {
 	ID               string  `json:"id"`
 	Name             string  `json:"name"`

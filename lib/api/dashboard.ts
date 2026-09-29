@@ -1,6 +1,8 @@
 import {
   apiDashboardDealsEvolutionSchema,
   apiDashboardDealsEvolutionResponseSchema,
+  apiDashboardCampaignsSchema,
+  apiDashboardCampaignsResponseSchema,
   apiDashboardExtraCountsSchema,
   apiDashboardExtraCountsResponseSchema,
   apiDashboardFirstContactSchema,
@@ -56,6 +58,7 @@ export type DashboardFunnelPoint = z.infer<typeof apiDashboardFunnelSchema>[numb
 export type DashboardSourcePoint = z.infer<typeof apiDashboardSourceSchema>[number]
 export type DashboardTopBrokersResponse = z.infer<typeof apiDashboardTopBrokersSchema>
 export type DashboardLeadDistributionResponse = z.infer<typeof apiDashboardLeadDistributionSchema>
+export type DashboardCampaignsResponse = z.infer<typeof apiDashboardCampaignsSchema>
 export type DashboardFirstContactResponse = z.infer<typeof apiDashboardFirstContactSchema>
 export type DashboardFirstContactLeadPageResponse = z.infer<typeof apiDashboardFirstContactLeadPageSchema>
 export type DashboardUpcomingTask = z.infer<typeof apiDashboardUpcomingTasksSchema>[number]
@@ -164,6 +167,28 @@ export async function getDashboardLeadDistribution(params: DashboardRequestConte
     'dashboard.lead-distribution',
   )
 
+  return validated.data
+}
+
+export async function getDashboardCampaigns(params: DashboardRequestContext & {
+  filters?: DashboardAPIFilters
+}) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.campaigns')
+  const filters = parseDomainInput(
+    dashboardFiltersSchema,
+    normalizeDashboardFilters(params.filters),
+    'dashboard.campaigns',
+  )
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/campaigns', {
+    organizationId,
+    query: buildDashboardQuery(filters),
+    signal: params.signal,
+  })
+  const validated = validateDomainResponse(
+    apiDashboardCampaignsResponseSchema,
+    response,
+    'dashboard.campaigns',
+  )
   return validated.data
 }
 

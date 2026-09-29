@@ -627,6 +627,18 @@ export const apiDashboardLeadDistributionSchema = z.object({
     })
   }
 })
+const apiDashboardCampaignCountSchema = z.object({
+  leadCount: nonNegativeIntegerSchema,
+  entryCount: nonNegativeIntegerSchema,
+}).passthrough()
+export const apiDashboardCampaignsSchema = z.object({
+  campaigns: z.array(apiDashboardCampaignCountSchema.extend({
+    key: z.string().trim().min(1),
+    campaignId: z.string().trim().min(1).nullable(),
+    name: z.string().trim().min(1),
+  })),
+  unattributed: apiDashboardCampaignCountSchema,
+}).passthrough()
 // A pessoa pode participar de várias equipes ativas; cada equipe inclui seus leads.
 // A soma das equipes, portanto, não precisa coincidir com o total único de leads.
 const apiDashboardFirstContactBrokerSchema = z.object({
@@ -704,6 +716,7 @@ export const apiDashboardFunnelResponseSchema = apiEnvelopeSchema(apiDashboardFu
 export const apiDashboardSourceResponseSchema = apiEnvelopeSchema(apiDashboardSourceSchema)
 export const apiDashboardTopBrokersResponseSchema = apiEnvelopeSchema(apiDashboardTopBrokersSchema)
 export const apiDashboardLeadDistributionResponseSchema = apiEnvelopeSchema(apiDashboardLeadDistributionSchema)
+export const apiDashboardCampaignsResponseSchema = apiEnvelopeSchema(apiDashboardCampaignsSchema)
 export const apiDashboardFirstContactResponseSchema = apiEnvelopeSchema(apiDashboardFirstContactSchema)
 export const apiDashboardUpcomingTasksResponseSchema = apiEnvelopeSchema(apiDashboardUpcomingTasksSchema)
 export const apiDashboardDealsEvolutionResponseSchema = apiEnvelopeSchema(apiDashboardDealsEvolutionSchema)

@@ -41,6 +41,7 @@ import { SalesFunnelWithPipeline } from "@/components/features/dashboard/SalesFu
 import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolutionChart";
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
 import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
+import { CampaignLeadsChart } from "@/components/features/dashboard/CampaignLeadsChart";
 import { FirstContactDialog } from "@/components/features/dashboard/FirstContactDialog";
 import { DashboardLeadEntriesDialog } from "@/components/features/dashboard/DashboardLeadEntriesDialog";
 import { DashboardVisitsDialog } from "@/components/features/dashboard/DashboardVisitsDialog";
@@ -651,6 +652,8 @@ export default function Dashboard() {
                 </div>
               </div>
             ) : null}
+
+            <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
           </div>
         ) : (
           <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
@@ -773,6 +776,8 @@ export default function Dashboard() {
                 />
               </>
             ) : null}
+
+            <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
           </div>
         )}
       </div>

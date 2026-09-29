@@ -500,6 +500,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardSourcesResponse"
+  /v1/dashboard/campaigns:
+    get:
+      summary: Get visible leads by attributed campaign
+      description: >-
+        Groups all campaigns with initial arrivals or countable reentries in
+        the selected period, without truncation. Each campaign counts a lead
+        once even when it has multiple arrivals there; the same lead may count
+        in multiple campaigns. The separate unattributed count covers arrivals
+        without a campaign. Attribution, source, page and ad filters apply to
+        each arrival; current card ownership, team, pipeline, status, tags and
+        visibility apply to the lead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Campaign counts for the selected dashboard cohort.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardCampaignsResponse"
   /v1/dashboard/top-brokers:
     get:
       summary: Get top brokers from visible closed leads
@@ -15345,6 +15379,55 @@ components:
         rawSource:
           type: string
           description: Empty for an entry without recorded source in countEntries mode.
+    DashboardCampaignsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardCampaigns"
+    DashboardCampaigns:
+      type: object
+      required: [campaigns, unattributed]
+      properties:
+        campaigns:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardCampaignPoint"
+        unattributed:
+          $ref: "#/components/schemas/DashboardCampaignCount"
+    DashboardCampaignPoint:
+      type: object
+      required: [key, campaignId, name, leadCount, entryCount]
+      properties:
+        key:
+          type: string
+          description: Stable prefixed campaign ID or text fallback.
+        campaignId:
+          type: [string, "null"]
+          description: Provider campaign ID, when recorded.
+        name:
+          type: string
+          description: >-
+            Recorded campaign name, UTM campaign or provider ID. If an ID has
+            multiple recorded names, the lexically greatest name is used.
+        leadCount:
+          type: integer
+          format: int64
+          description: Distinct leads with an attributed arrival in this campaign.
+        entryCount:
+          type: integer
+          format: int64
+          description: Initial arrivals and countable reentries in this campaign.
+    DashboardCampaignCount:
+      type: object
+      required: [leadCount, entryCount]
+      properties:
+        leadCount:
+          type: integer
+          format: int64
+        entryCount:
+          type: integer
+          format: int64
     DashboardTopBrokersResponse:
       type: object
       required: [data]
