@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "067006af266479d225929cce3c474afececd69d447588b23f1f9c0653fe666c5",
+  "sourceDigestSha256": "ff8d7e24d56145ffe8a1842ee2a3bf8165bbe7f7d0b53b7a19b08352e6f5d859",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1238,10 +1238,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:15482bf2cce722832f53",
+          "id": "overlay:f3a2f21fcdbe57e22274",
           "column": 7,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 270,
+          "line": 271,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -1249,10 +1249,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:c4633742e48f7d5547aa",
+          "id": "overlay:3cdc8aca6a68b0e543fb",
           "column": 7,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 303,
+          "line": 304,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -1694,10 +1694,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:7277416c77f14b406fdc",
+          "id": "overlay:19e625fc964ae13e571c",
           "column": 5,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 817,
+          "line": 819,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -2011,10 +2011,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:da2caee1609d7aa3be18",
+          "id": "overlay:2cd28df929c6579b3d17",
           "column": 7,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 236,
+          "line": 237,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -2022,10 +2022,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f78e9f2ada7df8e6e75d",
+          "id": "overlay:aefbd59446e7e957a541",
           "column": 7,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 292,
+          "line": 293,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -2033,10 +2033,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:b290e7854b2321444476",
+          "id": "overlay:42e819b79c7d8fce0b71",
           "column": 7,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 414,
+          "line": 415,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -4784,10 +4784,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:447a6efae011bd8a4f21",
+          "id": "form:84254918827463e5dd9f",
           "column": 9,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 869,
+          "line": 871,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -4851,10 +4851,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:756ddd834f318ecfc415",
+          "id": "form:9b0dc4d537a7219b07f0",
           "column": 11,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 252,
+          "line": 253,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -4863,10 +4863,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:ba148a82758f41a2ccc0",
+          "id": "form:4dd370c5cd40b3afbb30",
           "column": 11,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 308,
+          "line": 309,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -13959,10 +13959,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:91122bd7dbfdef0ef222",
+          "id": "cta:1e46545e200504c32c41",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 858,
+          "line": 860,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14014,10 +14014,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:122b42f08087cd28bdb5",
+          "id": "cta:ee945202ef5c2b716f1e",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 986,
+          "line": 988,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14069,10 +14069,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ac6c76431345e696d381",
+          "id": "cta:d2a235528c2d144d2833",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1094,
+          "line": 1096,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14124,10 +14124,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:44ca26e1de90af45e048",
+          "id": "cta:e581a846b701e0a4da19",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1141,
+          "line": 1144,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14179,10 +14179,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4b412884d2f51b26a645",
+          "id": "cta:96a637cdbf805a52ae3c",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1175,
+          "line": 1178,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14234,10 +14234,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:85905288b45c963ad3cf",
+          "id": "cta:83e88beea3f3dccd9045",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1348,
+          "line": 1351,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14289,10 +14289,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f563e57e5053cc394ec0",
+          "id": "cta:610069b0067b807f3074",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1352,
+          "line": 1355,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14344,10 +14344,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6a330fb186f3dad76637",
+          "id": "cta:0ce5165a279b52046cd3",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1371,
+          "line": 1374,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -16147,10 +16147,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:df78a4c92ab5a03e7d58",
+          "id": "cta:23bb6f99b91afb57aab7",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 268,
+          "line": 269,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -16159,10 +16159,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f4dffd67c4b51797ea6e",
+          "id": "cta:af9f23caa6ae6e52a8c9",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 277,
+          "line": 278,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -16171,10 +16171,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:eb0c346f7f79ec572821",
+          "id": "cta:1e3a96d58fd45734c875",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 364,
+          "line": 365,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -16183,10 +16183,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:69aa52814455f3091d34",
+          "id": "cta:00ec5cfa450d0c7b9d1a",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 373,
+          "line": 374,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -30425,10 +30425,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:e73bdd75431f43070e64",
+          "id": "control:2c89203779eaa90a219e",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 283,
+          "line": 284,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -30437,10 +30437,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:634c8d632314bb8827fa",
+          "id": "control:17d3df3ddefee3a9d506",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 286,
+          "line": 287,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -30449,10 +30449,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:26219e8640d1d8ae81e9",
+          "id": "control:177abd62dff38860b544",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 318,
+          "line": 319,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -30461,10 +30461,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:87e153ec751c249c8741",
+          "id": "control:5f987f6f7fb08cd0c09f",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 321,
+          "line": 322,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -31358,116 +31358,6 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:42355d413d94ca9f4b0f",
-          "column": 19,
-          "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 874,
-          "owner": "CreateLeadDialog",
-          "routes": [
-            "/agenda",
-            "/automations",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/site",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help/[slug]",
-            "/inicio",
-            "/marketing",
-            "/notifications",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/rentals",
-            "/properties/settings",
-            "/settings",
-            "/settings/integrations/meta",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/suporte",
-            "/suporte/[slug]"
-          ],
-          "kind": "TabsTrigger",
-          "tag": "TabsTrigger"
-        },
-        {
-          "id": "control:e83c05963ffddbb7db18",
-          "column": 19,
-          "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 875,
-          "owner": "CreateLeadDialog",
-          "routes": [
-            "/agenda",
-            "/automations",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/site",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help/[slug]",
-            "/inicio",
-            "/marketing",
-            "/notifications",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/rentals",
-            "/properties/settings",
-            "/settings",
-            "/settings/integrations/meta",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/suporte",
-            "/suporte/[slug]"
-          ],
-          "kind": "TabsTrigger",
-          "tag": "TabsTrigger"
-        },
-        {
           "id": "control:2fdde85a24b32677287d",
           "column": 19,
           "file": "components/features/leads/CreateLeadDialog.tsx",
@@ -31523,10 +31413,120 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:1cdba737cf29bdae0c22",
-          "column": 35,
+          "id": "control:fa9d2551578888924069",
+          "column": 19,
           "file": "components/features/leads/CreateLeadDialog.tsx",
           "line": 877,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "TabsTrigger",
+          "tag": "TabsTrigger"
+        },
+        {
+          "id": "control:3fa07b7219ed646d80d1",
+          "column": 19,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 878,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "TabsTrigger",
+          "tag": "TabsTrigger"
+        },
+        {
+          "id": "control:cd00e28964c8c4cf544d",
+          "column": 35,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 879,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -31764,10 +31764,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:b4986f0cf1a495a76786",
+          "id": "control:d439674017116ea99832",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 429,
+          "line": 430,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -31776,10 +31776,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:e2700199878f8e4bf8c0",
+          "id": "control:2a346789b817e2ed1062",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 435,
+          "line": 436,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -34710,7 +34710,7 @@
         }
       ]
     },
-    "digestSha256": "bc11d1d7cd64948009caf9a3bfa6d4cddb5d98193fb828abaeb83fa96ef50d51"
+    "digestSha256": "4e077c5534e1da0f3da444189f33d9296a46e223ec9d910dead28dfeee5f0895"
   },
   "routes": [
     {

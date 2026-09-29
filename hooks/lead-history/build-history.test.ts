@@ -15,8 +15,8 @@ test('preserva o contrato de query e cache do hook publico', () => {
   const source = readFileSync('hooks/use-lead-history.ts', 'utf8');
 
   assert.match(source, /queryKey:\s*\['lead-history-v2', leadId\]/);
-  assert.match(source, /getLeadHistoryRaw<LeadHistoryRaw>\(leadId\)/);
-  assert.match(source, /enabled:\s*!!leadId/);
+  assert.match(source, /getLeadHistoryRaw<LeadHistoryRaw>\(leadId, organizationId\)/);
+  assert.match(source, /enabled:\s*!!leadId && !!organizationId/);
   assert.match(source, /staleTime:\s*60_000/);
   assert.match(source, /gcTime:\s*10 \* 60_000/);
   assert.match(source, /refetchOnWindowFocus:\s*false/);

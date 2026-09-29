@@ -174,7 +174,7 @@ export function LeadDetailDialog({
   } = useLeadDetailPipelineCache();
 
   const leadId = leadProp?.id ?? null;
-  const fullLeadQuery = useLead(leadId);
+  const fullLeadQuery = useLead(leadId, { freshOnMount: true });
   const leadHistoryQuery = useLeadHistory(leadId);
   const [lostReasonLocal, setLostReasonLocal] = useState(lead?.lost_reason || '');
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);

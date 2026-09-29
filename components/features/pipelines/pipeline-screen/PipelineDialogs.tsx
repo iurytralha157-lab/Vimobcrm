@@ -184,6 +184,7 @@ export function PipelineDialogs({
           onClose={onCloseSelectedLead}
         >
           <LeadDetailDialog
+            key={selectedLead.id}
             lead={selectedLead}
             stages={stages}
             onClose={onCloseSelectedLead}

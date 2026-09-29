@@ -168,6 +168,16 @@ test('valida origens junto das opcoes meta do mesmo conjunto visivel', () => {
   }).success, false)
 })
 
+test('preserva todas as origens quando a organizacao tem mais de 500 opcoes', () => {
+  const sources = Array.from({ length: 545 }, (_, index) => `origem-${index}`)
+  const result = leadMetaFiltersResponseSchema.safeParse({
+    data: { sources, campaigns: [], adsets: [], ads: [] },
+  })
+
+  assert.equal(result.success, true)
+  if (result.success) assert.deepEqual(result.data.data.sources, sources)
+})
+
 test('preserva isQualified no patch e na resposta de etapa', () => {
   const patchResult = stageUpdateInputSchema.safeParse({ isQualified: false })
   assert.equal(patchResult.success, true)

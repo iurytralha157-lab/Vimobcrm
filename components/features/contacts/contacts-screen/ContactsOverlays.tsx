@@ -242,6 +242,7 @@ export function ContactsOverlays({
 
       {selectedContactId && selectedLead && (
         <LeadDetailDialog
+          key={selectedLead.id}
           lead={selectedLead}
           stages={stages}
           onClose={onCloseSelectedLead}
