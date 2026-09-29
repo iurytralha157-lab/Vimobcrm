@@ -129,8 +129,11 @@ export function CreateLeadDialog({
   const canViewProperties =
     hasPropertiesModule &&
     (hasPermission('property_view') || hasPermission('property_manage'));
+  const [activeTab, setActiveTab] = useState('basic');
   const { data: pipelines = [] } = usePipelines();
-  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties && open });
+  const { data: properties = [], isLoading: propertiesLoading } = useProperties(undefined, {}, {
+    enabled: canViewProperties && open && activeTab === 'interest',
+  });
   const createLead = useCreateLead();
   const updateLead = useUpdateLead();
   const isEditMode = Boolean(leadSummary?.id);
@@ -152,7 +155,6 @@ export function CreateLeadDialog({
   }, [isEditMode, leadSummary, persistedLead]);
 
   // Form state
-  const [activeTab, setActiveTab] = useState('basic');
   const [draftRestored, setDraftRestored] = useState(false);
 
   const draftKey = !isEditMode && activeOrganization.organizationId
@@ -1122,6 +1124,7 @@ export function CreateLeadDialog({
                       }))}
                       selectedPropertyId={null}
                       disabled={!canViewProperties}
+                      isLoading={propertiesLoading}
                       onSelect={(property) => {
                         setFormData((previous) => {
                           if (previous.interest_property_ids.includes(property.id)) return previous;

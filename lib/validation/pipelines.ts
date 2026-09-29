@@ -155,7 +155,7 @@ export const pipelineStageCountsResponseSchema = apiEnvelopeSchema(
 )
 const metaOptionSchema = z.object({ id: z.string().min(1), name: z.string() }).passthrough()
 export const leadMetaFiltersResponseSchema = apiEnvelopeSchema(z.object({
-  sources: z.array(z.string().trim().min(1).max(180)).max(500),
+  sources: z.array(z.string().trim().min(1).max(180)),
   pages: z.array(metaOptionSchema).optional().default([]),
   campaigns: z.array(metaOptionSchema),
   adsets: z.array(metaOptionSchema.extend({ campaignId: z.string().min(1) })),

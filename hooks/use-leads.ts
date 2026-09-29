@@ -172,7 +172,7 @@ export function useLeads(filters?: {
   });
 }
 
-export function useLead(id: string | null) {
+export function useLead(id: string | null, options: { freshOnMount?: boolean } = {}) {
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
 
@@ -187,6 +187,7 @@ export function useLead(id: string | null) {
       return data as Lead;
     },
     enabled: !!id && !!organizationId,
+    ...(options.freshOnMount ? { refetchOnMount: 'always' as const } : {}),
   });
 }
 

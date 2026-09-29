@@ -34,9 +34,10 @@ type LeadMetaResponse = {
 }
 
 export const leadMetaAPI = {
-  async get(leadId: string) {
+  async get(leadId: string, organizationId: string) {
     const id = parseDomainInput(entityIdSchema, leadId, 'lead-meta.get.id')
     const response = await vimobAPIRequest<LeadMetaResponse>('/v1/lead-meta', {
+      organizationId,
       query: { leadId: id },
     })
     validateDomainResponse(apiLeadMetaResponseSchema, response, 'lead-meta.get')
