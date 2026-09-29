@@ -193,7 +193,7 @@ function DistributionBars({
               ? "w-[76px] sm:w-[100px]"
               : spreadBrokers
                 ? "w-[70px] sm:w-[92px]"
-                : "w-[56px] sm:w-[60px]";
+                : "min-w-[64px] flex-1 sm:min-w-[72px]";
   const brokerBarWidthClass = rows.length <= 2
     ? "w-full max-w-[176px]"
     : rows.length === 3
@@ -208,7 +208,7 @@ function DistributionBars({
               ? "w-[68px] sm:w-[88px]"
               : spreadBrokers
                 ? "w-[62px] sm:w-[80px]"
-                : "w-9";
+                : "min-w-[44px] w-[78%] max-w-[88px]";
   const teamColumnWidthClass = rows.length === 1
     ? "min-w-[132px] flex-1"
     : rows.length === 2
