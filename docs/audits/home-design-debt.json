@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ca93acb52dc5fd1990f2e1314293a2591a712755f31d40f5604926a5b41d5ea6",
-  "surfaceInventoryDigestSha256": "067006af266479d225929cce3c474afececd69d447588b23f1f9c0653fe666c5",
+  "sourceDigestSha256": "7e9d91abbfdac05bc4afbd1c486231d218be014dbdbd11a57a2b7348a3725327",
+  "surfaceInventoryDigestSha256": "6a0613f5d1c5d6c73d0e2c98f2a21dfe3ec696d51d36874641c8918dd5c0f4d9",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 544,
+    "filesScanned": 548,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -805,7 +805,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 194,
+      "line": 215,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -814,7 +814,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1607,
+      "line": 1772,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1714,7 +1714,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 225,
+      "line": 261,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",

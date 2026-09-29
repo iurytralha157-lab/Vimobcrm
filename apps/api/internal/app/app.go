@@ -50,10 +50,11 @@ import (
 )
 
 type App struct {
-	handler  http.Handler
-	db       *dbpkg.Postgres
-	auth     *authpkg.Verifier
-	realtime *realtime.Hub
+	handler         http.Handler
+	db              *dbpkg.Postgres
+	webhookWorkerDB *dbpkg.Postgres
+	auth            *authpkg.Verifier
+	realtime        *realtime.Hub
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -84,9 +85,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
-	if _, err := backgroundWorkers.RunWithError(func() error {
-		return realtimeHub.Start(ctx)
-	}); err != nil {
+	// SSE delivery needs the durable tailer even on API replicas that do not
+	// own background jobs. Retention pruning remains with worker-enabled replicas.
+	if err := realtimeHub.StartWithPrune(ctx, cfg.BackgroundWorkersEnabled); err != nil {
 		postgres.Close()
 		authVerifier.Close()
 		return nil, err
@@ -203,8 +204,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: leads.EvolutionGoConfig{
-			APIURL: cfg.EvolutionGo.APIURL,
-			APIKey: cfg.EvolutionGo.APIKey,
+			APIURL:                    cfg.EvolutionGo.APIURL,
+			APIKey:                    cfg.EvolutionGo.APIKey,
+			CallMediaHMACSecret:       cfg.EvolutionGo.CallMediaHMACSecret,
+			ImageDigest:               cfg.EvolutionGo.ImageDigest,
+			CanaryAPIURL:              cfg.EvolutionGo.CanaryAPIURL,
+			CanaryAPIKey:              cfg.EvolutionGo.CanaryAPIKey,
+			CanaryCallMediaHMACSecret: cfg.EvolutionGo.CanaryCallMediaHMACSecret,
+			CanaryImageDigest:         cfg.EvolutionGo.CanaryImageDigest,
+			CanarySessionIDs:          cfg.EvolutionGo.CanarySessionIDs,
 		},
 		Email: leads.EmailConfig{
 			ResendAPIKey:   cfg.Email.ResendAPIKey,
@@ -321,41 +329,75 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		})
 	})
 	automationsHandler := automations.NewHandler(automationsRepository)
-	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
+	whatsappRepository := whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
-			APIURL:                   cfg.EvolutionGo.APIURL,
-			APIKey:                   cfg.EvolutionGo.APIKey,
-			ImageDigest:              cfg.EvolutionGo.ImageDigest,
-			WebhookURL:               cfg.EvolutionGo.WebhookURL,
-			BackendWebhookURL:        cfg.EvolutionGo.BackendWebhookURL,
-			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
-			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
+			APIURL:                    cfg.EvolutionGo.APIURL,
+			APIKey:                    cfg.EvolutionGo.APIKey,
+			CallMediaHMACSecret:       cfg.EvolutionGo.CallMediaHMACSecret,
+			ImageDigest:               cfg.EvolutionGo.ImageDigest,
+			CanaryAPIURL:              cfg.EvolutionGo.CanaryAPIURL,
+			CanaryAPIKey:              cfg.EvolutionGo.CanaryAPIKey,
+			CanaryCallMediaHMACSecret: cfg.EvolutionGo.CanaryCallMediaHMACSecret,
+			CanaryImageDigest:         cfg.EvolutionGo.CanaryImageDigest,
+			CanarySessionIDs:          cfg.EvolutionGo.CanarySessionIDs,
+			WebhookURL:                cfg.EvolutionGo.WebhookURL,
+			BackendWebhookURL:         cfg.EvolutionGo.BackendWebhookURL,
+			WebhookProcessorMode:      cfg.EvolutionGo.WebhookProcessorMode,
+			WebhookRolloutSessionIDs:  cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
-		AIWorkerEnabled:               cfg.WhatsApp.AIWorkerEnabled,
-		AIWorkerInterval:              cfg.WhatsApp.AIWorkerInterval,
-		AIFollowUpWorkerEnabled:       cfg.WhatsApp.AIFollowUpWorkerEnabled,
-		AIFollowUpWorkerInterval:      cfg.WhatsApp.AIFollowUpWorkerInterval,
-		OutboxWorkerEnabled:           cfg.WhatsApp.OutboxWorkerEnabled,
-		OutboxWorkerInterval:          cfg.WhatsApp.OutboxWorkerInterval,
-		OutboxWorkerBatch:             cfg.WhatsApp.OutboxWorkerBatch,
-		OutboxWorkerConcurrency:       cfg.WhatsApp.OutboxWorkerConcurrency,
-		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
-		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
-		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
-		WebhookWorkerConcurrency:      cfg.WhatsApp.WebhookWorkerConcurrency,
-		MediaWorkerEnabled:            cfg.WhatsApp.MediaWorkerEnabled,
-		MediaWorkerInterval:           cfg.WhatsApp.MediaWorkerInterval,
-		MediaWorkerLease:              cfg.WhatsApp.MediaWorkerLease,
-		MediaWorkerConcurrency:        cfg.WhatsApp.MediaWorkerConcurrency,
-		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
-		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
-		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
-		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
-		SessionSupervisorRecoveryIDs:  cfg.WhatsApp.SessionSupervisorRecoveryIDs,
+	}, realtimeHub)
+	whatsappHandler := whatsapp.NewHandler(whatsappRepository).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
+		AIWorkerEnabled:                 cfg.WhatsApp.AIWorkerEnabled,
+		AIWorkerInterval:                cfg.WhatsApp.AIWorkerInterval,
+		AIFollowUpWorkerEnabled:         cfg.WhatsApp.AIFollowUpWorkerEnabled,
+		AIFollowUpWorkerInterval:        cfg.WhatsApp.AIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:             cfg.WhatsApp.OutboxWorkerEnabled,
+		OutboxWorkerInterval:            cfg.WhatsApp.OutboxWorkerInterval,
+		OutboxWorkerBatch:               cfg.WhatsApp.OutboxWorkerBatch,
+		OutboxWorkerConcurrency:         cfg.WhatsApp.OutboxWorkerConcurrency,
+		WebhookWorkerEnabled:            cfg.WhatsApp.WebhookWorkerEnabled,
+		WebhookWorkerInterval:           cfg.WhatsApp.WebhookWorkerInterval,
+		WebhookWorkerBatch:              cfg.WhatsApp.WebhookWorkerBatch,
+		WebhookWorkerConcurrency:        cfg.WhatsApp.WebhookWorkerConcurrency,
+		DeferredReceiptSweepEnabled:     cfg.WhatsApp.DeferredReceiptSweepEnabled,
+		DeferredReceiptReconcileEnabled: cfg.WhatsApp.DeferredReceiptReconcileEnabled,
+		MediaWorkerEnabled:              cfg.WhatsApp.MediaWorkerEnabled,
+		MediaWorkerInterval:             cfg.WhatsApp.MediaWorkerInterval,
+		MediaWorkerLease:                cfg.WhatsApp.MediaWorkerLease,
+		MediaWorkerConcurrency:          cfg.WhatsApp.MediaWorkerConcurrency,
+		SessionSupervisorEnabled:        cfg.WhatsApp.SessionSupervisorEnabled,
+		SessionSupervisorInitialDelay:   cfg.WhatsApp.SessionSupervisorInitialDelay,
+		SessionSupervisorInterval:       cfg.WhatsApp.SessionSupervisorInterval,
+		SessionSupervisorBatch:          cfg.WhatsApp.SessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:    cfg.WhatsApp.SessionSupervisorRecoveryIDs,
 	})
+	webhookWorkerHandler := whatsappHandler
+	var webhookWorkerDB *dbpkg.Postgres
+	if cfg.BackgroundWorkersEnabled && cfg.WhatsApp.WebhookWorkerEnabled {
+		workerDBConfig := cfg.Database
+		workerDBConfig.MinConns = 0
+		workerDBConfig.MaxConns = cfg.WhatsApp.WebhookWorkerDBMaxConns
+		if workerDBConfig.MaxConns == 0 {
+			workerDBConfig.MaxConns = 8
+			if int32(cfg.WhatsApp.WebhookWorkerConcurrency) > workerDBConfig.MaxConns {
+				workerDBConfig.MaxConns = int32(cfg.WhatsApp.WebhookWorkerConcurrency)
+			}
+		}
+		webhookWorkerDB, err = dbpkg.NewPostgres(ctx, workerDBConfig)
+		if err != nil {
+			realtimeHub.Close()
+			postgres.Close()
+			authVerifier.Close()
+			return nil, err
+		}
+		webhookWorkerRepository := whatsappRepository.WithWorkerDatabase(
+			webhookWorkerDB,
+			gamification.NewRepository(webhookWorkerDB),
+		)
+		webhookWorkerHandler = whatsappHandler.WithWorkerRepository(webhookWorkerRepository)
+	}
 	whatsappRuntimeStats = whatsappHandler.RuntimeStats
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAIWorker(ctx, logger)
@@ -364,11 +406,25 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		whatsappHandler.StartOutboxWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
-		whatsappHandler.StartWebhookWorker(ctx, logger)
+		webhookWorkerHandler.StartWebhookWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
 	})
+	callRecordingWorkers := newBackgroundWorkerStartup(cfg.BackgroundWorkersEnabled || cfg.CallRecordingOnlyWorkerEnabled)
+	if _, err := callRecordingWorkers.RunWithError(func() error {
+		return whatsappHandler.StartCallRecordingWorker(
+			ctx, logger, !cfg.BackgroundWorkersEnabled, cfg.EvolutionGo.CanarySessionIDs,
+		)
+	}); err != nil {
+		realtimeHub.Close()
+		if webhookWorkerDB != nil {
+			webhookWorkerDB.Close()
+		}
+		postgres.Close()
+		authVerifier.Close()
+		return nil, err
+	}
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)
 	})
@@ -477,6 +533,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		usersHandler:             usersHandler,
 		webhooksHandler:          webhooksHandler,
 		whatsappHandler:          whatsappHandler,
+		webhookWorkerHandler:     webhookWorkerHandler,
 	})
 	handler := httpserver.Chain(
 		mux,
@@ -487,10 +544,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	)
 
 	return &App{
-		handler:  handler,
-		db:       postgres,
-		auth:     authVerifier,
-		realtime: realtimeHub,
+		handler:         handler,
+		db:              postgres,
+		webhookWorkerDB: webhookWorkerDB,
+		auth:            authVerifier,
+		realtime:        realtimeHub,
 	}, nil
 }
 
@@ -511,6 +569,10 @@ func (app *App) Handler() http.Handler {
 func (app *App) Close() {
 	if app.realtime != nil {
 		app.realtime.Close()
+	}
+
+	if app.webhookWorkerDB != nil {
+		app.webhookWorkerDB.Close()
 	}
 
 	if app.db != nil {

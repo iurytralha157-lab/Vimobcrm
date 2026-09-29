@@ -65,11 +65,17 @@ import {
   getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   preserveWhatsAppConversationCardSnapshot,
   updateWhatsAppConversationDraft,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from "@/lib/whatsapp-message-input";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
+import { runWhatsAppSendAttempt } from "@/lib/whatsapp-send-attempt";
+import {
+  getWhatsAppReplacementCandidateDecision,
+  getWhatsAppReplacementPlan,
+} from "@/lib/whatsapp-replacement-flow";
 import { canReactToWhatsAppMessage, groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -134,6 +140,21 @@ type FloatingConversationFiltersProps = {
 type FloatingTimelineItem =
   | { kind: "message"; id: string; timestamp: string; message: WhatsAppMessage }
   | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry };
+
+type ReplacementStart = {
+  sourceConversationId: string;
+  sourceSessionId: string | null;
+  leadId: string;
+  phone: string;
+  tenantKey: string;
+};
+
+type PendingSessionStart = {
+  phone: string;
+  leadName?: string;
+  leadId?: string;
+  replacement?: ReplacementStart;
+};
 
 function FloatingConversationFilters({
   sessions,
@@ -292,7 +313,7 @@ export function FloatingChat() {
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const [showSessionSelector, setShowSessionSelector] = useState(false);
-  const [pendingStartData, setPendingStartData] = useState<{phone: string, leadName?: string, leadId?: string} | null>(null);
+  const [pendingStartData, setPendingStartData] = useState<PendingSessionStart | null>(null);
   const [isStartingConversation, setIsStartingConversation] = useState(false);
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<WhatsAppConversation | null>(null);
   const pathname = usePathname();
@@ -306,6 +327,10 @@ export function FloatingChat() {
   const lastMessagesConversationIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
   const navigationNonceRef = useRef(0);
+  const sendTextAttemptLock = useRef(false);
+  const replacementAttemptLock = useRef(false);
+  const activeConversationRef = useRef(activeConversation);
+  const activeTenantKeyRef = useRef(activeTenantKey);
   const pendingStartKeyRef = useRef<string | null>(null);
   const pendingConversationLinkRef = useRef<{ conversationId: string; leadId: string } | null>(null);
   const chatSurfaceRef = useRef<HTMLDivElement>(null);
@@ -319,6 +344,11 @@ export function FloatingChat() {
     && canViewWhatsApp
     && !isPresenceOpen
     && pathname !== "/crm/conversas";
+
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+    activeTenantKeyRef.current = activeTenantKey;
+  }, [activeConversation, activeTenantKey]);
 
   useEffect(() => {
     const wasChatVisible = wasChatVisibleRef.current;
@@ -400,9 +430,14 @@ export function FloatingChat() {
   const {
     data: sessions,
     isLoading: loadingSessions,
+    isSuccess: ownedSessionsLoaded,
     isError: sessionsFailed,
     refetch: refetchSessions,
   } = useAccessibleSessions({ enabled: shouldLoadFloatingChatData });
+  const replacementPlan = getWhatsAppReplacementPlan(activeConversation, sessions);
+  const replacementSessions = (sessions || []).filter((session) =>
+    replacementPlan?.connectedSessionIds.includes(session.id),
+  );
   const accessibleSessionIds = useMemo(
     () => sessions?.map((session) => session.id) || [],
     [sessions],
@@ -510,7 +545,7 @@ export function FloatingChat() {
   const hasWhatsAppAccess = Boolean(sessions?.length);
   const router = useRouter();
   const isReadOnlyMode = !canMutateActiveConversation;
-  const whatsappMessageInputState = getWhatsAppMessageInputState(
+  const activeAttendanceSessionId = getWhatsAppSendSessionId(
     activeConversation,
     selectedSessionId,
     sessions,
@@ -520,28 +555,38 @@ export function FloatingChat() {
       !activeConversationId
       || !activeConversationLeadId
       || activeConversation?.historical_lead_view
-      || !whatsappMessageInputState.sendSessionId
+      || !activeAttendanceSessionId
     ) {
       return null;
     }
     return {
       conversationId: activeConversationId,
       expectedLeadId: activeConversationLeadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
+      sendSessionId: activeAttendanceSessionId,
     };
   }, [
     activeConversation?.historical_lead_view,
     activeConversationId,
     activeConversationLeadId,
-    whatsappMessageInputState.sendSessionId,
+    activeAttendanceSessionId,
   ]);
   const attendanceGate = useWhatsAppAttendanceGate(activeAttendanceTarget, {
     enabled: chatVisible && Boolean(activeAttendanceTarget),
-    identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
+    identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${activeAttendanceSessionId || "none"}`,
   });
+  const whatsappMessageInputState = getWhatsAppMessageInputState(
+    activeConversation,
+    selectedSessionId,
+    sessions,
+    ownedSessionsLoaded,
+    attendanceGate.attendance?.canSend,
+  );
   const messageInputDisabled = attendanceGate.isResolving
     || isReadOnlyMode
     || whatsappMessageInputState.disabled;
+  const messageInputPlaceholder = isReadOnlyMode && !whatsappMessageInputState.disabled
+    ? "Você tem acesso somente à leitura desta conversa"
+    : whatsappMessageInputState.placeholder;
   const floatingTimelineItems = useMemo<FloatingTimelineItem[]>(() => [
     ...visibleMessages.map((message): FloatingTimelineItem => ({
       kind: "message",
@@ -801,11 +846,127 @@ export function FloatingChat() {
   }, [activeConversationReadTarget, canManageActiveConversation, markConversationAsRead]);
 
   const handleSessionSelect = (session: WhatsAppSession) => {
+    const pending = pendingStartData;
     setShowSessionSelector(false);
-    if (pendingStartData) {
-      handleStartConversationWithSession(pendingStartData.phone, session.id, pendingStartData.leadName, pendingStartData.leadId);
-      setPendingStartData(null);
+    setPendingStartData(null);
+    if (pending?.replacement) {
+      void handleStartReplacementConversation(pending.replacement, session.id);
+    } else if (pending) {
+      void handleStartConversationWithSession(pending.phone, session.id, pending.leadName, pending.leadId);
     }
+  };
+
+  const isCurrentReplacementSource = (request: ReplacementStart) => {
+    const current = activeConversationRef.current;
+    return activeTenantKeyRef.current === request.tenantKey
+      && current?.id === request.sourceConversationId
+      && current.session_id === request.sourceSessionId
+      && (current.lead_id || current.lead?.id) === request.leadId;
+  };
+
+  async function handleStartReplacementConversation(request: ReplacementStart, sessionId: string) {
+    if (replacementAttemptLock.current || !isCurrentReplacementSource(request)) return;
+    const currentPlan = getWhatsAppReplacementPlan(activeConversationRef.current, sessions);
+    if (!currentPlan?.connectedSessionIds.includes(sessionId) || currentPlan.phone !== request.phone) {
+      toast({
+        title: "Conexão indisponível",
+        description: "Atualize a lista de WhatsApps e escolha uma conexão ativa para este lead.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    replacementAttemptLock.current = true;
+    setIsStartingConversation(true);
+    let startMutationFailed = false;
+    try {
+      // This explicit path deliberately skips the lead's historical fallback.
+      // Never transfer a physical chat already linked to another lead here.
+      const existing = await findConversation.mutateAsync({ phone: request.phone, sessionId });
+      if (!isCurrentReplacementSource(request)) return;
+      const candidate = getWhatsAppReplacementCandidateDecision(existing, {
+        leadId: request.leadId,
+        phone: request.phone,
+        sourceConversationId: request.sourceConversationId,
+        sessionId,
+      });
+      if (candidate.action === "blocked") {
+        throw new Error(candidate.reason === "another-lead"
+          ? "Este WhatsApp já tem uma conversa vinculada a outro lead com este número. Escolha outra conexão ou revise o vínculo."
+          : "Não foi possível confirmar o telefone e a conexão para este lead. Revise o contato antes de continuar.");
+      }
+
+      let conversationId = candidate.action === "open" ? candidate.conversationId : null;
+      if (!conversationId) {
+        try {
+          const started = await startConversation.mutateAsync({
+            phone: request.phone,
+            sessionId,
+            leadId: request.leadId,
+            expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
+          });
+          conversationId = started.id;
+        } catch (error) {
+          startMutationFailed = true;
+          throw error;
+        }
+      }
+      if (conversationId === request.sourceConversationId) {
+        throw new Error("A conversa antiga não pode ser reutilizada para este atendimento.");
+      }
+
+      // Read back the exact lead/session binding. The reply from /start alone
+      // is insufficient to switch a historical card into a writable chat.
+      const verified = await whatsappAPI.getConversation(
+        conversationId,
+        request.leadId,
+        activeOrganization.organizationId,
+      );
+      if (verified.lead_id !== request.leadId
+        || verified.session_id !== sessionId
+        || verified.historical_lead_view
+        || normalizePhoneToE164(verified.contact_phone) !== request.phone) {
+        throw new Error("A nova conversa não foi confirmada para este lead e WhatsApp.");
+      }
+      if (!isCurrentReplacementSource(request)) return;
+      setSelectedSessionId("all");
+      openConversation(verified);
+    } catch (error) {
+      // useStartConversation already reports its own mutation failure.
+      if (!startMutationFailed) {
+        toast({
+          title: "Não foi possível iniciar nova conversa",
+          description: getWhatsAppStartErrorMessage(error),
+          variant: "destructive",
+        });
+      }
+    } finally {
+      replacementAttemptLock.current = false;
+      setIsStartingConversation(false);
+    }
+  }
+
+  const handleStartNewConversationFromReadOnly = () => {
+    if (!replacementPlan?.phone || !canOperateWhatsApp || !ownedSessionsLoaded || isStartingConversation) return;
+    if (replacementSessions.length === 0) return;
+    const request: ReplacementStart = {
+      sourceConversationId: replacementPlan.sourceConversationId,
+      sourceSessionId: replacementPlan.sourceSessionId,
+      leadId: replacementPlan.leadId,
+      phone: replacementPlan.phone,
+      tenantKey: activeTenantKey,
+    };
+    if (replacementSessions.length === 1) {
+      void handleStartReplacementConversation(request, replacementSessions[0].id);
+      return;
+    }
+    setPendingStartData({
+      phone: request.phone,
+      leadId: request.leadId,
+      leadName: activeConversation?.lead?.name || activeConversation?.contact_name || undefined,
+      replacement: request,
+    });
+    setShowSessionSelector(true);
   };
 
   const handleStartConversation = async (phone: string, leadName?: string, leadId?: string) => {
@@ -1033,35 +1194,37 @@ export function FloatingChat() {
   };
 
   const handleSendMessage = async () => {
-    const textToSend = messageText.trim();
-    if (!canMutateActiveConversation || !textToSend || !activeConversation) return;
-    if (sendMessage.isPending) return;
-    if (whatsappMessageInputState.disabled || isReadOnlyMode) {
-      toast({
-        title: "Mensagem nao enviada",
-        description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const joined = await attendanceGate.ensureJoined();
-    if (!joined) return;
-
-    // O rascunho só é limpo depois que a entrada no atendimento foi confirmada.
-    setMessageText("");
-
-    try {
-      await sendMessage.mutateAsync({
-        conversation: activeConversation,
-        text: textToSend,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch (error) {
-      if (getWhatsAppSendFailureStatus(error) !== "confirming") {
-        setMessageText((current) => current || textToSend);
+    await runWhatsAppSendAttempt(sendTextAttemptLock, async () => {
+      const textToSend = messageText.trim();
+      if (!canMutateActiveConversation || !textToSend || !activeConversation) return;
+      if (sendMessage.isPending) return;
+      if (whatsappMessageInputState.disabled || isReadOnlyMode) {
+        toast({
+          title: "Mensagem nao enviada",
+          description: messageInputPlaceholder,
+          variant: "destructive",
+        });
+        return;
       }
-    }
+
+      const joined = await attendanceGate.ensureJoined();
+      if (!joined) return;
+
+      // O rascunho só é limpo depois que a entrada no atendimento foi confirmada.
+      setMessageText("");
+
+      try {
+        await sendMessage.mutateAsync({
+          conversation: activeConversation,
+          text: textToSend,
+          sendSessionId: whatsappMessageInputState.sendSessionId,
+        });
+      } catch (error) {
+        if (getWhatsAppSendFailureStatus(error) !== "confirming") {
+          setMessageText((current) => current || textToSend);
+        }
+      }
+    });
   };
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
@@ -1234,7 +1397,9 @@ export function FloatingChat() {
             Escolher Instância WhatsApp
           </DialogTitle>
           <DialogDescription>
-            Selecione qual instância usar para enviar mensagem para{" "}
+            {pendingStartData?.replacement
+              ? "Escolha um WhatsApp conectado para iniciar uma nova conversa com "
+              : "Selecione qual instância usar para enviar mensagem para "}
             <span className="font-medium text-foreground">
               {pendingStartData?.leadName || pendingStartData?.phone}
             </span>
@@ -1242,7 +1407,7 @@ export function FloatingChat() {
         </DialogHeader>
 
         <div className="space-y-2 mt-4">
-          {connectedSessions.map(session => (
+          {(pendingStartData?.replacement ? replacementSessions : connectedSessions).map(session => (
             <Button
               key={session.id}
               variant="outline"
@@ -1624,7 +1789,7 @@ export function FloatingChat() {
         onChange={setMessageText}
         onSend={handleSendMessage}
         onKeyDown={handleKeyPress}
-        placeholder={isReadOnlyMode ? "Somente leitura" : whatsappMessageInputState.placeholder}
+        placeholder={messageInputPlaceholder}
         disabled={messageInputDisabled}
         isSending={sendMessage.isPending}
         multiline
@@ -1649,6 +1814,36 @@ export function FloatingChat() {
           />
         }
       />
+      {replacementPlan && canOperateWhatsApp && (
+        <div className="mt-2 space-y-2 rounded-[7px] bg-[var(--app-surface-soft)] px-3 py-2.5 text-[11px] text-[var(--app-text-secondary)]">
+          <p>
+            {replacementPlan.reason === "historical"
+              ? "Este é o histórico de outro atendimento deste lead. Para conversar novamente, escolha outro WhatsApp conectado."
+              : "A conexão deste atendimento está indisponível. Para continuar, inicie uma conversa por outro WhatsApp conectado."}
+          </p>
+          {!replacementPlan.phone ? (
+            <p>Confira o telefone do lead antes de iniciar uma nova conversa.</p>
+          ) : sessionsFailed ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => void refetchSessions()}>
+              Atualizar conexões
+            </Button>
+          ) : !ownedSessionsLoaded ? (
+            <p>Verificando seus WhatsApps conectados...</p>
+          ) : replacementSessions.length === 0 ? (
+            <p>Nenhum outro WhatsApp conectado na sua conta. Conecte uma conta em Integrações para iniciar uma nova conversa.</p>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isStartingConversation}
+              onClick={handleStartNewConversationFromReadOnly}
+            >
+              {isStartingConversation ? "Abrindo conversa..." : "Iniciar nova conversa"}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
     );
   };

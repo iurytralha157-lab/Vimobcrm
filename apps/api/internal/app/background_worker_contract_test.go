@@ -14,7 +14,7 @@ type sourceRange struct {
 	end   token.Pos
 }
 
-func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
+func TestAppBackgroundWorkerStartsUseGlobalGateWhileRealtimeStaysAvailable(t *testing.T) {
 	fileSet := token.NewFileSet()
 	file, err := parser.ParseFile(fileSet, "app.go", nil, parser.AllErrors)
 	if err != nil {
@@ -28,7 +28,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 			return true
 		}
 		key, ok := selectorKey(call.Fun)
-		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError") {
+		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError" && key != "callRecordingWorkers.RunWithError") {
 			return true
 		}
 		for _, argument := range call.Args {
@@ -41,7 +41,6 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 	})
 
 	expected := map[string]int{
-		"realtimeHub.Start":                                       1,
 		"billingReconciler.Start":                                 1,
 		"attentionRepository.StartWorker":                         1,
 		"gamificationRepository.StartWorker":                      1,
@@ -53,8 +52,9 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"automationsRepository.StartRuntimeWorker":                1,
 		"whatsappHandler.StartAIWorker":                           1,
 		"whatsappHandler.StartOutboxWorker":                       1,
-		"whatsappHandler.StartWebhookWorker":                      1,
+		"webhookWorkerHandler.StartWebhookWorker":                 1,
 		"whatsappHandler.StartMediaWorker":                        1,
+		"whatsappHandler.StartCallRecordingWorker":                1,
 		"whatsappHandler.StartSessionSupervisor":                  1,
 		"metaHandler.StartWebhookWorker":                          1,
 		"metaHandler.StartConversionFeedbackWorker":               1,
@@ -62,6 +62,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"webhooksRepository.StartDeliveryWorker":                  1,
 	}
 	actual := make(map[string]int, len(expected))
+	realtimeStarts := 0
 
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -71,6 +72,40 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		key, ok := selectorKey(call.Fun)
 		if !ok || !strings.HasPrefix(selectorMethod(call.Fun), "Start") {
 			return true
+		}
+		if key == "realtimeHub.StartWithPrune" {
+			realtimeStarts++
+			if positionInsideAny(call.Pos(), gateRanges) {
+				t.Error("durable realtime startup must not be enclosed by the background-worker gate")
+			}
+			if len(call.Args) != 2 {
+				t.Errorf("realtime startup has %d arguments, want context and worker-owner flag", len(call.Args))
+			} else if ownerFlag, ok := selectorKey(call.Args[1]); !ok || ownerFlag != "cfg.BackgroundWorkersEnabled" {
+				t.Error("realtime retention pruning must follow cfg.BackgroundWorkersEnabled")
+			}
+			return true
+		}
+		if key == "realtimeHub.Start" {
+			t.Error("unconditional realtime startup would run retention pruning on a worker-disabled replica")
+			return true
+		}
+		if key == "whatsappHandler.StartCallRecordingWorker" {
+			if len(call.Args) != 4 {
+				t.Errorf("call recording startup has %d arguments, want context, logger, mode and session allowlist", len(call.Args))
+			} else {
+				mode, ok := call.Args[2].(*ast.UnaryExpr)
+				if !ok || mode.Op != token.NOT {
+					t.Error("recording-only mode must be the inverse of the global worker flag")
+				} else if flag, ok := selectorKey(mode.X); !ok || flag != "cfg.BackgroundWorkersEnabled" {
+					t.Error("recording-only mode must be the inverse of cfg.BackgroundWorkersEnabled")
+				}
+				allowlist, ok := call.Args[3].(*ast.SelectorExpr)
+				if !ok || allowlist.Sel.Name != "CanarySessionIDs" {
+					t.Error("recording-only worker must receive EVOLUTION_GO_CANARY_SESSION_IDS")
+				} else if source, ok := selectorKey(allowlist.X); !ok || source != "cfg.EvolutionGo" {
+					t.Error("recording-only worker must receive cfg.EvolutionGo.CanarySessionIDs")
+				}
+			}
 		}
 
 		actual[key]++
@@ -84,6 +119,9 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		if got := actual[key]; got != want {
 			t.Errorf("%s startup calls = %d, want %d", key, got, want)
 		}
+	}
+	if realtimeStarts != 1 {
+		t.Errorf("realtime startup calls = %d, want 1", realtimeStarts)
 	}
 }
 

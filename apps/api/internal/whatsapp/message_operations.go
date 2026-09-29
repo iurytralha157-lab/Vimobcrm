@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -169,7 +170,8 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	// joined FOR UPDATE lets the executor choose the opposite order and can
 	// deadlock with signed native ingress, which necessarily resolves a session
 	// before it can identify the conversation.
-	if err := lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID); err != nil {
+	sessionOwned, err := lockConversationSendSession(ctx, tx, tenantContext, session.ID)
+	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			return SendMessageResponse{}, ErrConversationNotFound
 		}
@@ -204,20 +206,49 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		return SendMessageResponse{}, err
 	}
 	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID)
-	var lockedLeadVisible bool
+	var leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select true
+		select coalesce(l.assigned_user_id = $2::uuid, false)
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		for share of l
-	`, visibilityArgs...).Scan(&lockedLeadVisible)
+	`, visibilityArgs...).Scan(&leadAssigned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SendMessageResponse{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return SendMessageResponse{}, err
+	}
+	if !sessionOwned && !leadAssigned {
+		if !tenantContext.HasPermission(permissions.WhatsAppOperate) {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
+		var adminMember bool
+		err = tx.QueryRow(ctx, `
+			select true
+			from public.organization_members as member
+			join public.users as actor
+			  on actor.organization_id = member.organization_id
+			 and actor.id = member.user_id
+			 and coalesce(actor.is_active, false) = true
+			where member.organization_id = $1::uuid
+			  and member.user_id = $2::uuid
+			  and member.role in ('owner', 'admin')
+			  and coalesce(member.is_active, true) = true
+			  and member.deleted_at is null
+			for share of member
+		`, tenantContext.OrganizationID, tenantContext.UserID).Scan(&adminMember)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
+		if !adminMember {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
 	}
 	if lockedSessionID != session.ID || lockedRemoteJID != conversation.RemoteJID || lockedIsGroup != conversation.IsGroup {
 		return SendMessageResponse{}, fmt.Errorf("%w: identidade da conversa mudou; recarregue antes de enviar", ErrInvalidReference)
@@ -298,6 +329,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{
 		"delivery":            "outbox",
 		"attendance_entry_id": attendanceEntryID,
+		"internal_automation": input.InternalAutomation,
 		"whatsapp_attendance_capture": map[string]any{
 			"state":               "captured",
 			"attendance_entry_id": attendanceEntryID,
@@ -822,7 +854,7 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		}
 	}
 
-	session, err := repo.getCanSendSession(ctx, tenantContext, conversationSessionID)
+	session, err := repo.getConversationSendSession(ctx, tenantContext, conversation)
 	if err != nil {
 		return Session{}, err
 	}
@@ -830,6 +862,52 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		return Session{}, fmt.Errorf("%w: WhatsApp desta conversa esta desconectado.", ErrInvalidInput)
 	}
 	return session, nil
+}
+
+// A delegated send is limited to the existing physical conversation and its
+// currently assigned lead, or an active organization admin/owner viewing it.
+// General session operations continue to require getCanSendSession ownership.
+func (repo Repository) getConversationSendSession(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Session, error) {
+	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
+		select `+sessionSelectFields()+`
+		from public.whatsapp_sessions ws
+		join public.whatsapp_conversations wc
+		  on wc.organization_id = ws.organization_id
+		 and wc.session_id = ws.id
+		join public.leads l
+		  on l.organization_id = wc.organization_id
+		 and l.id = wc.lead_id
+		join public.users actor
+		  on actor.id = $5::uuid
+		 and actor.organization_id = ws.organization_id
+		 and coalesce(actor.is_active, false) = true
+		join public.organization_members member
+		  on member.organization_id = actor.organization_id
+		 and member.user_id = actor.id
+		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
+		left join public.users owner on owner.id = ws.owner_user_id
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and wc.id = $3::uuid
+		  and wc.lead_id = $4::uuid
+		  and wc.deleted_at is null
+		  and ws.is_active is not false
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and ws.provider = 'evolution_go'
+		  and (
+		    ws.owner_user_id = $5::uuid
+		    or l.assigned_user_id = $5::uuid
+		    or ($6::boolean and member.role in ('owner', 'admin'))
+		  )
+		limit 1
+	`, tenantContext.OrganizationID, conversation.SessionID, conversation.ID,
+		pointerValue(conversation.LeadID), tenantContext.UserID,
+		tenantContext.HasPermission(permissions.WhatsAppOperate)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	return session, err
 }
 
 func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenantContext tenant.Context, purpose string) (Session, error) {
@@ -958,7 +1036,10 @@ func (repo Repository) findConversationForLead(ctx context.Context, tenantContex
 		  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.lead_id = $5::uuid
-		order by wc.last_message_at desc nulls last, wc.created_at desc
+		-- A newly started conversation has no message yet. Keep that explicit
+		-- choice ahead of an older, disconnected conversation for this lead.
+		order by greatest(wc.created_at, coalesce(wc.last_message_at, wc.created_at)) desc,
+		         wc.created_at desc
 		limit 1
 	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {

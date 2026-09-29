@@ -9,7 +9,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestAdminSendOverrideRequiresCurrentOrganizationRoleAndOperatePermission(t *testing.T) {
+	tests := []struct {
+		name       string
+		memberRole string
+		context    tenant.Context
+		want       bool
+	}{
+		{"active admin", "admin", tenant.Context{MemberRole: "admin"}, true},
+		{"active owner", "owner", tenant.Context{MemberRole: "owner"}, true},
+		{"manager with operate grant", "manager", tenant.Context{MemberRole: "manager", Permissions: []string{permissions.WhatsAppOperate}}, false},
+		{"stale admin context after demotion", "user", tenant.Context{MemberRole: "admin"}, false},
+		{"global admin without organization operate", "admin", tenant.Context{MemberRole: "user", UserRole: "admin"}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := canAdminSendExistingConversation(test.memberRole, test.context); got != test.want {
+				t.Fatalf("override = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestAttendanceEventTimesFailClosedOnMissingAndFutureTimestamp(t *testing.T) {
 	accepted := time.Date(2026, 9, 23, 3, 0, 0, 0, time.UTC)
@@ -396,7 +421,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
+func TestAttendanceReadReportsExactSendCapabilityWithoutSessionOwnership(t *testing.T) {
 	raw, err := os.ReadFile("attendance_operations.go")
 	if err != nil {
 		t.Fatalf("read attendance repository: %v", err)
@@ -409,11 +434,18 @@ func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
 	}
 	if !strings.Contains(source,
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)") {
-		t.Fatal("attendance POST must continue requiring session ownership and a connected session")
+		t.Fatal("attendance POST must require exact send access and a connected session")
 	}
-	if !strings.Contains(source,
-		"and (not $4::boolean or ws.owner_user_id = $3::uuid)") {
-		t.Fatal("session ownership must be conditional so managers can read attendance for visible cards")
+	for _, token := range []string{
+		"scope.CanSend = sessionConnected && (sessionOwned || leadAssigned || adminCanSend)",
+		"if requireSendAccess && !sessionOwned && !leadAssigned && !adminCanSend",
+		"member.role",
+		"coalesce(member.is_active, true) = true",
+		"l.assigned_user_id = $2::uuid",
+	} {
+		if !strings.Contains(source, token) {
+			t.Fatalf("attendance capability is missing %q", token)
+		}
 	}
 	if !strings.Contains(source, "IsoLevel:   pgx.RepeatableRead") ||
 		!strings.Contains(source, "AccessMode: pgx.ReadOnly") {

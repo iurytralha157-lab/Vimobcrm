@@ -1,0 +1,22 @@
+-- Run separately after free-space/preflight review; CONCURRENTLY cannot run
+-- inside the transactional migration chain. Check pg_index after a timeout.
+set lock_timeout = '250ms';
+set statement_timeout = '3min';
+set maintenance_work_mem = '64MB';
+set max_parallel_maintenance_workers = 1;
+
+create index concurrently if not exists
+  whatsapp_webhook_inbox_failed_route_active_idx
+on public.whatsapp_webhook_inbox (
+  organization_id,
+  session_id,
+  (payload #>> '{__vimob_ingress,routing_snapshot,messages,0,routing_key}'),
+  created_at,
+  id
+)
+where status in ('pending','retry','processing');
+
+reset statement_timeout;
+reset lock_timeout;
+reset maintenance_work_mem;
+reset max_parallel_maintenance_workers;

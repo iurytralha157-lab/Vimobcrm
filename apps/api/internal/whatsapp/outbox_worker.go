@@ -426,6 +426,7 @@ func recordWhatsAppOutboxClaim(lane whatsappOutboxLane, createdAt time.Time) {
 	if age < 0 {
 		age = 0
 	}
+	recordOutboxTiming(lane, outboxTimingQueueWait, age, false)
 	ageMillis := uint64(age / time.Millisecond)
 	for current := metrics.maxClaimAgeMillis.Load(); ageMillis > current; current = metrics.maxClaimAgeMillis.Load() {
 		if metrics.maxClaimAgeMillis.CompareAndSwap(current, ageMillis) {
@@ -457,9 +458,11 @@ func snapshotWhatsAppOutboxLaneMetrics(lane whatsappOutboxLane) whatsappOutboxLa
 	}
 }
 
-func logWhatsAppOutboxMinute(logger *slog.Logger) {
+func logWhatsAppOutboxMinute(logger *slog.Logger, poolPressure outboxPoolPressure) {
 	fast := snapshotWhatsAppOutboxLaneMetrics(whatsappOutboxLaneFast)
 	media := snapshotWhatsAppOutboxLaneMetrics(whatsappOutboxLaneMedia)
+	fastTiming := snapshotOutboxTiming(whatsappOutboxLaneFast)
+	mediaTiming := snapshotOutboxTiming(whatsappOutboxLaneMedia)
 	logger.Info(
 		"whatsapp outbox minute",
 		"fast_claimed", fast.Claimed,
@@ -467,11 +470,14 @@ func logWhatsAppOutboxMinute(logger *slog.Logger) {
 		"fast_delivery_failures", fast.DeliveryFailures,
 		"fast_worker_errors", fast.WorkerErrors,
 		"fast_max_claim_age_ms", fast.MaxClaimAgeMillis,
+		"fast_timing", fastTiming,
 		"media_claimed", media.Claimed,
 		"media_sent", media.Sent,
 		"media_delivery_failures", media.DeliveryFailures,
 		"media_worker_errors", media.WorkerErrors,
 		"media_max_claim_age_ms", media.MaxClaimAgeMillis,
+		"media_timing", mediaTiming,
+		"main_db_pool", poolPressure,
 	)
 }
 
@@ -528,6 +534,7 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 	go func() {
 		recoveryTicker := time.NewTicker(time.Minute)
 		cleanupTicker := time.NewTicker(time.Hour)
+		poolCounters := readOutboxPoolCounters(handler.repo.db.Pool())
 		defer recoveryTicker.Stop()
 		defer cleanupTicker.Stop()
 		if err := handler.repo.RecoverStaleWhatsAppOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -538,7 +545,7 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 			case <-ctx.Done():
 				return
 			case <-recoveryTicker.C:
-				logWhatsAppOutboxMinute(logger)
+				logWhatsAppOutboxMinute(logger, snapshotOutboxPoolPressure(handler.repo.db.Pool(), &poolCounters))
 				if err := handler.repo.RecoverStaleWhatsAppOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp outbox recovery failed", "error", err)
 				}
@@ -682,6 +689,17 @@ func tryWrapWhatsAppOutboxCursor(cursor *string, wrapped *bool) bool {
 }
 
 func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, lane whatsappOutboxLane) error {
+	preProviderStartedAt := time.Now()
+	preProviderRecorded := false
+	if !whatsappOutboxAwaitingFinalization(item.LastError) {
+		defer func() {
+			if !preProviderRecorded {
+				// A guard, lease, storage, or DB failure stopped this attempt before
+				// the provider boundary. Include its durable error handling time.
+				recordOutboxTiming(lane, outboxTimingPreProvider, time.Since(preProviderStartedAt), true)
+			}
+		}()
+	}
 	leaseOwned, err := repo.renewWhatsAppOutboxLease(ctx, item)
 	if err != nil {
 		return err
@@ -698,9 +716,14 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 			cause := fmt.Errorf("%w: accepted outbox row has no provider message id", ErrProviderOutcomeUnknown)
 			return repo.failWhatsAppOutbox(ctx, item, cause, false, true)
 		}
+		finalizationStartedAt := time.Now()
 		if err := repo.completeWhatsAppOutbox(ctx, item, item.ProviderMessageID); err != nil {
-			return repo.deferWhatsAppOutboxFinalization(ctx, item, err)
+			deferredErr := repo.deferWhatsAppOutboxFinalization(ctx, item, err)
+			recordOutboxFinalizationTiming(lane, time.Since(finalizationStartedAt), true,
+				errors.Is(deferredErr, errWhatsAppOutboxFinalizationPending), false)
+			return deferredErr
 		}
+		recordOutboxFinalizationTiming(lane, time.Since(finalizationStartedAt), false, false, false)
 		recordWhatsAppOutboxSent(lane)
 		return nil
 	}
@@ -758,6 +781,8 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 	if err != nil {
 		return err
 	}
+	recordOutboxTiming(lane, outboxTimingPreProvider, time.Since(preProviderStartedAt), false)
+	preProviderRecorded = true
 
 	var providerResult map[string]any
 	providerCallErr, leaseErr := superviseWhatsAppOutboxLease(
@@ -767,11 +792,13 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 			return repo.renewWhatsAppOutboxLease(heartbeatCtx, item)
 		},
 		func(providerCtx context.Context) error {
+			providerStartedAt := time.Now()
 			var sendErr error
 			providerResult, sendErr = repo.functions.invokeEvolution(providerCtx, action, map[string]any{
 				"session_id": item.SessionID,
 				"body":       body,
 			})
+			recordOutboxTiming(lane, outboxTimingProviderCall, time.Since(providerStartedAt), sendErr != nil)
 			return sendErr
 		},
 	)
@@ -814,6 +841,7 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		providerID = expectedProviderID
 	}
 	providerWebhookAlreadyFinalized := false
+	finalizationStartedAt := time.Now()
 	finalizationErr := finalizeAcceptedWhatsAppOutbox(
 		func() error {
 			alreadyFinalized, err := repo.markWhatsAppOutboxProviderAccepted(ctx, item, providerID)
@@ -839,6 +867,9 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 			return repo.deferWhatsAppOutboxFinalization(ctx, item, cause)
 		},
 	)
+	recordOutboxFinalizationTiming(lane, time.Since(finalizationStartedAt), finalizationErr != nil,
+		errors.Is(finalizationErr, errWhatsAppOutboxFinalizationPending),
+		errors.Is(finalizationErr, ErrProviderOutcomeUnknown))
 	if errors.Is(finalizationErr, ErrProviderOutcomeUnknown) {
 		recordWhatsAppOutboxDeliveryFailure(lane)
 		return errors.Join(finalizationErr, repo.failWhatsAppOutbox(ctx, item, finalizationErr, false, true))
@@ -878,7 +909,6 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			join public.whatsapp_sessions as session
 			  on session.organization_id = attendance.organization_id
 			 and session.id = attendance.session_id
-			 and session.owner_user_id = attendance.user_id
 			 and session.provider = 'evolution_go'
 			 and coalesce(session.is_active, true) = true
 			 and coalesce(session.status, '') not in ('deleted', 'disabled')
@@ -890,11 +920,39 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			  on member.organization_id = attendance.organization_id
 			 and member.user_id = attendance.user_id
 			 and coalesce(member.is_active, true) = true
+			 and member.deleted_at is null
+			join public.leads as current_lead
+			  on current_lead.organization_id = message.organization_id
+			 and current_lead.id = message.lead_id
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
 			  and message.session_id = $3::uuid
 			  and message.conversation_id = $4::uuid
 			  and message.capture_state = 'captured'
+			  and (
+			    (
+			      session.owner_user_id = attendance.user_id
+			      and (message.sender_user_id is null or message.sender_user_id = attendance.user_id)
+			      and (message.metadata->>'attendance_entry_id' is null
+			           or message.metadata->>'attendance_entry_id' = attendance.id::text)
+			    )
+			    or (
+			      current_lead.assigned_user_id = attendance.user_id
+			      and (
+			        message.sender_user_id = attendance.user_id
+			        or (
+			          message.metadata->>'internal_automation' = 'true'
+			          and message.sender_user_id = session.owner_user_id
+			        )
+			      )
+			      and message.metadata->>'attendance_entry_id' = attendance.id::text
+			    )
+			    or (
+			      member.role in ('owner', 'admin')
+			      and message.sender_user_id = attendance.user_id
+			      and message.metadata->>'attendance_entry_id' = attendance.id::text
+			    )
+			  )
 		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
 	return attended, err
@@ -1176,13 +1234,12 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 	}
 	defer tx.Rollback(ctx)
 	// A missing rollout index must fail quickly instead of turning every fast
-	// lane claim into a long scan over the durable outbox.
-	if _, err := tx.Exec(ctx, `set local statement_timeout = '5s'`); err != nil {
-		return nil, err
-	}
-
-	rows, err := tx.Query(
-		ctx,
+	// lane claim into a long scan over the durable outbox. Send the timeout and
+	// claim together while retaining the transaction until every row is decoded;
+	// a scan or cancellation error must roll back the lease.
+	batchQueries := &pgx.Batch{}
+	batchQueries.Queue(`set local statement_timeout = '5s'`)
+	batchQueries.Queue(
 		whatsappOutboxClaimQueryForLane(lane),
 		batch,
 		whatsappOutboxWorkerID,
@@ -1191,10 +1248,16 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		whatsappOutboxMediaOrderingGrace.Milliseconds(),
 		randomHex(16),
 	)
-	if err != nil {
+	batchResults := tx.SendBatch(ctx, batchQueries)
+	if _, err := batchResults.Exec(); err != nil {
+		_ = batchResults.Close()
 		return nil, err
 	}
-	defer rows.Close()
+	rows, err := batchResults.Query()
+	if err != nil {
+		_ = batchResults.Close()
+		return nil, err
+	}
 
 	items := make([]pendingWhatsAppOutbox, 0, batch)
 	for rows.Next() {
@@ -1215,6 +1278,8 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 			&item.LastError,
 			&item.CreatedAt,
 		); err != nil {
+			rows.Close()
+			_ = batchResults.Close()
 			return nil, err
 		}
 		item.Payload = map[string]any{}
@@ -1223,7 +1288,12 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		}
 		items = append(items, item)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
+		_ = batchResults.Close()
+		return nil, err
+	}
+	if err := batchResults.Close(); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

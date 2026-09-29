@@ -124,8 +124,8 @@ func TestDurableHubFansOutAcrossTwoReplicas(t *testing.T) {
 	if err := replicaA.Start(ctx); err != nil {
 		t.Fatalf("start replica A: %v", err)
 	}
-	if err := replicaB.Start(ctx); err != nil {
-		t.Fatalf("start replica B: %v", err)
+	if err := replicaB.StartWithPrune(ctx, false); err != nil {
+		t.Fatalf("start worker-disabled replica B tailer: %v", err)
 	}
 	defer replicaA.Close()
 	defer replicaB.Close()

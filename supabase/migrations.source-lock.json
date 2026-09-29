@@ -612,8 +612,128 @@
       "sha256": "80642021c4e530bdd4425a12009e071c8073a56fbb31d5e0110a37dd4de8695b"
     },
     {
+      "file": "20260927115810_whatsapp_calls_contacts.sql",
+      "sha256": "580faaff372eb89a9e99be846012f160d70bfffbbb66a70177c21c75ed1ef711"
+    },
+    {
+      "file": "20260928025500_preserve_whatsapp_lead_binding_when_assignee_inactive.sql",
+      "sha256": "eac30261bbbe0769bb7ed692579efcbba958014ca55360bf881c7829e0ca0fd3"
+    },
+    {
       "file": "20260928031110_preserve_manual_property_location.sql",
       "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
+    },
+    {
+      "file": "20260928054500_defer_unmatched_whatsapp_receipts.sql",
+      "sha256": "06435e8b49580c42b14495d588dd5f90adefc5d37ecb033b1c6fc3d191e6725f"
+    },
+    {
+      "file": "20260928135607_terminalize_frozen_legacy_receipt_controls.sql",
+      "sha256": "902071d66b1f9ee1a91105bb8a0a247c88de576b17d1653e18838ad42f277da2"
+    },
+    {
+      "file": "20260928140707_quarantine_frozen_legacy_message_ingress.sql",
+      "sha256": "3dd3fb49ced5d95ddeef16383a9349466da6eb8e0134f445617c3d161367b06f"
+    },
+    {
+      "file": "20260928140755_terminalize_unmatched_v1_receipt_backlog.sql",
+      "sha256": "feac111ab5c9b408c3a51c54a9c226a8918dcbf578b2245d95689a657e5f82e5"
+    },
+    {
+      "file": "20260928141221_terminalize_unsupported_v1_message_heads.sql",
+      "sha256": "bd8b477fed502cde51b3ef66ccd159cab30cebb55f10fa894d9966308e70bdbb"
+    },
+    {
+      "file": "20260928144217_process_v1_readself_noop_receipts.sql",
+      "sha256": "d418fe4564eecbd2b7ce392f2a1b44fe5c69ce6e24674994d672d2308ea9a364"
+    },
+    {
+      "file": "20260928145359_archive_deleted_session_v1_ingress_for_historical_recovery.sql",
+      "sha256": "7a4e075aa2121a4a78556157996a3d8fbf4ac96be241dd6376d2ffed87d62aec"
+    },
+    {
+      "file": "20260928150351_requeue_live_message_schema_roots.sql",
+      "sha256": "4547f679a33bdee8bd0d37acf534c69f52fcebd51733254b0cab17ad89e1d9b6"
+    },
+    {
+      "file": "20260928151720_requeue_v1_contact_card_roots.sql",
+      "sha256": "19df70058dd68e0ca8e955b7c8678e015486bdf4582c9f5ec1d3e725544f330d"
+    },
+    {
+      "file": "20260928152532_quarantine_v1_unlinked_nonlead_messages.sql",
+      "sha256": "903b247e74e772ce8383c8e7fb05a67cb958dd502db9c3b79dc67ec5e87b76fa"
+    },
+    {
+      "file": "20260928153411_requeue_v1_business_contract_roots.sql",
+      "sha256": "0e2512990ad5f8a71a3b3e462ed25db10da21147868493320974b0594db72e99"
+    },
+    {
+      "file": "20260928160316_recover_v1_opaque_lead_roots.sql",
+      "sha256": "fece36314f33a7f5cb01a1cb4ef266ab1b5d0478c109bb32a4fed1ba0b4c6b60"
+    },
+    {
+      "file": "20260928162114_quarantine_unroutable_buttonclick_ingress.sql",
+      "sha256": "ed891a00baaabd05b0530b71ea63dcdf4ce14b2721dcc1c01cafaa7a84b7e7cf"
+    },
+    {
+      "file": "20260928162408_quarantine_deleted_session_v0_controls.sql",
+      "sha256": "62406ac9a134f05b99bc015ddcd3a96482a027d7878c53b0ad6d0a6319778b1b"
+    },
+    {
+      "file": "20260928163043_quarantine_redundant_v1_session_controls.sql",
+      "sha256": "29a9d7cbeb880193a00faac7ca0940a7ad0c9735b9772e73492727825190a1a6"
+    },
+    {
+      "file": "20260928163412_quarantine_redundant_frozen_v0_connected_controls.sql",
+      "sha256": "b6d726019a22cec032f4140705dfa132bb2de225a781af913ec503beed6704c9"
+    },
+    {
+      "file": "20260928164110_quarantine_blank_id_v1_delivered_receipts.sql",
+      "sha256": "d4b23d9dda555d0264abe84c207aa4cd93d2ff86c6fb374adba0ec21b42f9bfe"
+    },
+    {
+      "file": "20260928171331_barrier_invalidated_whatsapp_v1_routes.sql",
+      "sha256": "2c777d7f86974f1a22f2e4ff59fc882464a4dc6eb94a294fd9c960066a62b1f2"
+    },
+    {
+      "file": "20260928173418_barrier_mixed_forwarded_album_route.sql",
+      "sha256": "d8d6b4c03adf869e03e72950418d1e187cdcd6af5097e5a203d7fb4bf4514a74"
+    },
+    {
+      "file": "20260928174939_quarantine_bound_protocol_route39.sql",
+      "sha256": "e22f0a861ea60fb86c8689ea7c2cc6081c67c6cdf7fbe2e7e5f64e6cc0b9cc7a"
+    },
+    {
+      "file": "20260928175817_guard_legacy_whatsapp_provider_tombstone.sql",
+      "sha256": "8159713b6980b69f2f37da7a5557eee23f2cd2219595ece4016935a84a442983"
+    },
+    {
+      "file": "20260928180136_barrier_legacy_route60.sql",
+      "sha256": "1a6d282a94c0aeba2fb17e9e0d39351d6296f3239485903f5875ff9f3fbbcb7b"
+    },
+    {
+      "file": "20260928182500_quarantine_stalled_v1_live_receipt_head.sql",
+      "sha256": "d63f57586054e234cd45fde40264aa694b5dac23e7003ba9e91202d5eb1301fc"
+    },
+    {
+      "file": "20260928183200_quarantine_two_stale_session_controls.sql",
+      "sha256": "1d14025b7036d36a377d38cd2c028f5aa88ac0af26b063a82af5e62e1af7d736"
+    },
+    {
+      "file": "20260928183605_defer_partial_live_receipt_ids.sql",
+      "sha256": "9711e66af986cf5193daef844616bba14dffe27dd605fa609aa2b774a715cc9c"
+    },
+    {
+      "file": "20260928190000_hold_failed_whatsapp_route_epoch.sql",
+      "sha256": "b5033d7e401019118ee101a45a1a9f8041982043afaf2ed9eea9af2c15724e49"
+    },
+    {
+      "file": "20260928191200_expire_unmatched_partial_live_receipt_ids.sql",
+      "sha256": "31fa5885998d5b9d5193d0f19581597340af0770881271746e5551a6a1ad971b"
+    },
+    {
+      "file": "20260928191300_indexable_whatsapp_receipt_delivery_lookup.sql",
+      "sha256": "73e82103fdf8621b769145ed71efab2eb7f36bafa3abc19881e6c66282fd270f"
     }
   ]
 }

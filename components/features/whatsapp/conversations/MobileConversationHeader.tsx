@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, MoreVertical, Trash2, User, Users } from "lucide-react";
+import { Archive, ArrowLeft, MoreVertical, Phone, Trash2, User, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,6 +21,8 @@ type MobileConversationHeaderProps = {
   onBack: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onWhatsAppCall?: () => void;
+  onSaveWhatsAppContact?: () => void;
 };
 
 export function MobileConversationHeader({
@@ -30,6 +32,8 @@ export function MobileConversationHeader({
   onBack,
   onArchive,
   onDelete,
+  onWhatsAppCall,
+  onSaveWhatsAppContact,
 }: MobileConversationHeaderProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3">
@@ -61,6 +65,17 @@ export function MobileConversationHeader({
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
+        {canOperateWhatsApp && !conversation.is_group && onWhatsAppCall && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onWhatsAppCall}
+            aria-label="Ligar pelo WhatsApp"
+          >
+            <Phone className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )}
         {selectedLeadId && (
           <Button variant="ghost" size="sm" className="h-8 text-xs px-2" asChild>
             <Link href={`/crm/pipelines?lead=${selectedLeadId}`} aria-label="Abrir lead no pipeline">
@@ -76,6 +91,14 @@ export function MobileConversationHeader({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="bg-popover">
+              {onSaveWhatsAppContact && (
+                <>
+                  <DropdownMenuItem onClick={onSaveWhatsAppContact}>
+                    <UserPlus className="w-4 h-4 mr-2" /> Salvar no WhatsApp
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={onArchive}>
                 <Archive className="w-4 h-4 mr-2" />
                 {conversation.archived_at ? "Desarquivar" : "Arquivar"}

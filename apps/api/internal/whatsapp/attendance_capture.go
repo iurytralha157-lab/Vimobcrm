@@ -110,7 +110,6 @@ func currentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, conv
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor
@@ -121,12 +120,23 @@ func currentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, conv
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
 		  and entry.user_id = $6::uuid
+		  and (
+		    session.owner_user_id = entry.user_id
+		    or exists (
+		      select 1 from public.leads assigned_lead
+		      where assigned_lead.organization_id = entry.organization_id
+		        and assigned_lead.id = entry.lead_id
+		        and assigned_lead.assigned_user_id = entry.user_id
+		    )
+		    or member.role in ('owner', 'admin')
+		  )
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID, userID).Scan(&entryID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -156,7 +166,6 @@ func eventAttendanceEntry(
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor
@@ -167,11 +176,22 @@ func eventAttendanceEntry(
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
+		  and (
+		    session.owner_user_id = entry.user_id
+		    or exists (
+		      select 1 from public.leads assigned_lead
+		      where assigned_lead.organization_id = entry.organization_id
+		        and assigned_lead.id = entry.lead_id
+		        and assigned_lead.assigned_user_id = entry.user_id
+		    )
+		    or member.role in ('owner', 'admin')
+		  )
 		  and (
 		    (
 		      entry.entry_source = 'manual'
@@ -224,7 +244,6 @@ func anyCurrentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, c
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor
@@ -235,11 +254,22 @@ func anyCurrentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, c
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
+		  and (
+		    session.owner_user_id = entry.user_id
+		    or exists (
+		      select 1 from public.leads assigned_lead
+		      where assigned_lead.organization_id = entry.organization_id
+		        and assigned_lead.id = entry.lead_id
+		        and assigned_lead.assigned_user_id = entry.user_id
+		    )
+		    or member.role in ('owner', 'admin')
+		  )
 		order by entry.joined_at, entry.id
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID).Scan(&entryID)

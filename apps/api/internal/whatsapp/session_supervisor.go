@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -39,6 +40,45 @@ const (
 var whatsappSessionSupervisorPermit = make(chan struct{}, 1)
 
 type evolutionRecoveryOutcome uint8
+
+// Keep provider response bodies and session credentials out of operational
+// logs. Unwrap preserves retry/error classification inside the supervisor.
+type supervisorStageFailure struct {
+	stage   string
+	elapsed time.Duration
+	cause   error
+}
+
+func (failure *supervisorStageFailure) Error() string {
+	return "WhatsApp session supervision stage failed"
+}
+
+func (failure *supervisorStageFailure) Unwrap() error {
+	return failure.cause
+}
+
+func supervisorFailureMetrics(err error) (string, string, int64) {
+	stage := "cycle"
+	elapsedMillis := int64(0)
+	var stageFailure *supervisorStageFailure
+	if errors.As(err, &stageFailure) {
+		stage = stageFailure.stage
+		elapsedMillis = stageFailure.elapsed.Milliseconds()
+	}
+	code := "internal_error"
+	var postgresError *pgconn.PgError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		code = "timeout"
+	case errors.Is(err, ErrProviderOutcomeUnknown):
+		code = "provider_outcome_unknown"
+	case errors.Is(err, ErrProviderFailed):
+		code = "provider_failed"
+	case errors.As(err, &postgresError):
+		code = "postgres_" + postgresError.Code
+	}
+	return stage, code, elapsedMillis
+}
 
 const (
 	evolutionRecoveryWaiting evolutionRecoveryOutcome = iota
@@ -82,7 +122,8 @@ func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.
 				return
 			case <-timer.C:
 				if err := handler.repo.superviseActiveSessionsWithLimit(ctx, logger, config.SessionSupervisorBatch, config.SessionSupervisorInterval, config.SessionSupervisorRecoveryIDs); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("whatsapp session supervisor failed", "error", err)
+					stage, code, durationMillis := supervisorFailureMetrics(err)
+					logger.Error("whatsapp session supervisor failed", "stage", stage, "error_code", code, "stage_duration_ms", durationMillis)
 				}
 				cycle++
 				timer.Reset(jitteredSupervisorScheduleDelay(config.SessionSupervisorInterval, scheduleSeed, cycle))
@@ -218,7 +259,19 @@ func (repo Repository) superviseClaimedSessions(
 				session := sessions[index]
 				if err := repo.superviseSession(ctx, session, time.Now().UTC(), recoverySessionIDs, claimToken); err != nil && !errors.Is(err, context.Canceled) {
 					failures.Add(1)
-					logger.Warn("whatsapp session supervision skipped", "session_id", session.ID, "error", err)
+					stage, code, durationMillis := supervisorFailureMetrics(err)
+					pool := repo.db.Pool().Stat()
+					logger.Warn("whatsapp session supervision skipped",
+						"session_id", session.ID,
+						"stage", stage,
+						"error_code", code,
+						"stage_duration_ms", durationMillis,
+						"db_pool_max", pool.MaxConns(),
+						"db_pool_acquired", pool.AcquiredConns(),
+						"db_pool_idle", pool.IdleConns(),
+						"db_pool_empty_acquire_count", pool.EmptyAcquireCount(),
+						"db_pool_canceled_acquire_count", pool.CanceledAcquireCount(),
+					)
 				}
 			}
 		}()
@@ -238,12 +291,13 @@ func supervisorWorkerCount(sessionCount int) int {
 }
 
 func (repo Repository) superviseSession(ctx context.Context, session Session, now time.Time, recoverySessionIDs []string, claimToken string) error {
+	lockStartedAt := time.Now()
 	lockContext, cancelLock := context.WithTimeout(ctx, whatsappSessionSupervisorProbeLockWait)
 	unlock, locked, err := repo.acquireWhatsAppSessionProbeLock(lockContext, session.ID, false)
 	cancelLock()
 	if err != nil {
 		repo.releaseSessionSupervisorClaimWithoutCancellation(ctx, session.ID, claimToken)
-		return err
+		return &supervisorStageFailure{stage: "probe_lock", elapsed: time.Since(lockStartedAt), cause: err}
 	}
 	if !locked {
 		repo.releaseSessionSupervisorClaimWithoutCancellation(ctx, session.ID, claimToken)
@@ -254,7 +308,18 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 	return repo.superviseSessionLocked(ctx, session, now, recoverySessionIDs, claimToken)
 }
 
-func (repo Repository) superviseSessionLocked(ctx context.Context, session Session, now time.Time, recoverySessionIDs []string, claimToken string) error {
+func (repo Repository) superviseSessionLocked(ctx context.Context, session Session, now time.Time, recoverySessionIDs []string, claimToken string) (returnErr error) {
+	stage := "load_session"
+	stageStartedAt := time.Now()
+	setStage := func(next string) {
+		stage = next
+		stageStartedAt = time.Now()
+	}
+	defer func() {
+		if returnErr != nil {
+			returnErr = &supervisorStageFailure{stage: stage, elapsed: time.Since(stageStartedAt), cause: returnErr}
+		}
+	}()
 	currentSession, ok, err := repo.getSupervisorSession(ctx, session.OrganizationID, session.ID, claimToken)
 	if err != nil {
 		repo.releaseSessionSupervisorClaimWithoutCancellation(ctx, session.ID, claimToken)
@@ -303,6 +368,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		)
 	}
 
+	setStage("instance_status")
 	statusResult, err := repo.invokeEvolutionSupervisorRead(ctx, "instance.status", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": instanceKey,
@@ -316,6 +382,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		observationErr := fmt.Errorf("%w: Evolution Go connection status is unavailable", ErrProviderOutcomeUnknown)
 		return errors.Join(observationErr, repo.recordSessionProbeFailure(ctx, session, claimToken, observationErr, 0))
 	}
+	setStage("persist_status")
 	applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, observedStatus, statusResult, claimToken, !instanceMissing)
 	if err != nil {
 		return err
@@ -343,6 +410,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 	}
 
 	if observedStatus == "disconnected" && session.LastConnectedAt != nil && sessionIDAllowlistAllows(recoverySessionIDs, session.ID) && autoReconnectRetryDue(settings, now) {
+		setStage("recovery")
 		outcome, err := repo.recoverSession(ctx, session, instanceKey, token, claimToken)
 		if err != nil {
 			if outcome == evolutionRecoveryAttempted {
@@ -374,6 +442,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 			return nil
 		}
 		session = currentSession
+		setStage("recovery_status")
 		statusResult, err = repo.invokeEvolutionSupervisorRead(ctx, "instance.status", map[string]any{
 			"session_id":  session.ID,
 			"instance_id": instanceKey,
@@ -390,6 +459,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 			verificationErr := fmt.Errorf("%w: Evolution Go post-recovery status is unavailable", ErrProviderOutcomeUnknown)
 			return errors.Join(verificationErr, repo.recordSessionRecoveryFailure(ctx, session, now))
 		}
+		setStage("persist_recovery_status")
 		applied, updateErr := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, status, statusResult, claimToken, !missing)
 		if updateErr != nil {
 			return updateErr
@@ -425,6 +495,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		observedStatus,
 	)
 	if shouldConnect {
+		setStage("instance_connect")
 		_, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 			"session_id":  session.ID,
 			"instance_id": instanceKey,
@@ -449,6 +520,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 	}
 
 	if observedStatus == "connected" && notificationSafeSettingsDue(repo.functions.webhookRolloutSessionIDs, session.ID, settings) {
+		setStage("advanced_settings")
 		result, err := repo.functions.invokeEvolution(ctx, "instance.advancedSettings", map[string]any{
 			"session_id":  session.ID,
 			"instance_id": instanceKey,
@@ -464,6 +536,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		settingsPatch["notification_safe_settings_version"] = settings["notification_safe_settings_version"]
 	}
 
+	setStage("persist_settings")
 	return repo.patchSessionSettings(ctx, session.OrganizationID, session.ID, settingsPatch, settingsRemoveKeys)
 }
 

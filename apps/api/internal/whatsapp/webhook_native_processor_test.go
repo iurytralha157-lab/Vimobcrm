@@ -62,6 +62,99 @@ func nativeRoutingSnapshotTestPayload(t *testing.T, rows ...map[string]any) []by
 	return payload
 }
 
+func TestNativeNonLeadUnavailableViewOnceCandidate(t *testing.T) {
+	build := func() map[string]any {
+		row := nativeRoutingSnapshotTestRow("provider-unavailable", 1)
+		row["processing_lane"] = "backlog"
+		row["state"] = "unlinked"
+		row["conversation_id"] = nil
+		row["event_lead_id"] = nil
+		row["current_lead_id"] = nil
+		row["active_binding_id"] = nil
+		row["binding_eligible"] = false
+		return map[string]any{
+			"event": "Message", "instanceId": "instance", "instanceName": "instance",
+			"data": map[string]any{
+				"DecryptFailMode": nil, "IsUnavailable": true,
+				"UnavailableType": "view_once",
+				"Info": map[string]any{
+					"ID": "provider-unavailable", "Chat": "5511999991111@s.whatsapp.net",
+					"Sender": "5511999991111@s.whatsapp.net", "IsFromMe": false,
+					"IsGroup": false, "Type": "media", "Timestamp": "2026-09-28T00:00:00Z",
+				},
+			},
+			evolutionWebhookRoutingMetaKey: map[string]any{
+				"routing_key":      "phone:5511999991111",
+				"routing_snapshot": map[string]any{"version": 1, "messages": []any{row}},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+		want   bool
+	}{
+		{name: "single unlinked unavailable view once", want: true},
+		{name: "unlinked conversation requires live ledger check", mutate: func(p map[string]any) {
+			row := p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_snapshot"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			row["conversation_id"] = "33333333-3333-4333-8333-333333333333"
+		}, want: true},
+		{name: "lead-bound snapshot", mutate: func(p map[string]any) {
+			row := p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_snapshot"].(map[string]any)["messages"].([]any)[0].(map[string]any)
+			row["event_lead_id"] = "44444444-4444-4444-8444-444444444444"
+			row["current_lead_id"] = "44444444-4444-4444-8444-444444444444"
+			row["state"] = "bound"
+		}, want: false},
+		{name: "mixed message body", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["message"] = map[string]any{"conversation": "lead text"}
+		}, want: false},
+		{name: "group", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["Info"].(map[string]any)["IsGroup"] = true
+		}, want: false},
+		{name: "future unavailable type", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["UnavailableType"] = "new_type"
+		}, want: false},
+		{name: "non scalar unavailable marker", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["IsUnavailable"] = []any{true}
+		}, want: false},
+		{name: "non scalar ingress route", mutate: func(p map[string]any) {
+			p[evolutionWebhookRoutingMetaKey].(map[string]any)["routing_key"] = []any{"phone"}
+		}, want: false},
+		{name: "unexpected envelope field", mutate: func(p map[string]any) {
+			p["messages"] = []any{map[string]any{"body": "lead text"}}
+		}, want: false},
+		{name: "provider message identity mismatch", mutate: func(p map[string]any) {
+			p["data"].(map[string]any)["Info"].(map[string]any)["ID"] = "other-provider-message"
+		}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := build()
+			if test.mutate != nil {
+				test.mutate(payload)
+			}
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := decodeNativeEvolutionPayload(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := pendingEvolutionWebhook{
+				OrganizationID: "11111111-1111-4111-8111-111111111111",
+				SessionID:      "22222222-2222-4222-8222-222222222222",
+				EventType:      "message", ProcessingLane: "backlog", Payload: raw,
+			}
+			messages := extractNativeEvolutionMessages(decoded)
+			_, got := nativeNonLeadUnavailableViewOnceCandidate(item, decoded, messages)
+			if got != test.want {
+				t.Fatalf("candidate = %t, want %t (parsed messages: %d)", got, test.want, len(messages))
+			}
+		})
+	}
+}
+
 func TestNativeIngressRoutingSnapshotRequiresCompleteImmutableManagedContext(t *testing.T) {
 	session := nativeEvolutionSession{
 		ID:             "22222222-2222-4222-8222-222222222222",
@@ -151,6 +244,107 @@ func TestNativeDeletedSnapshotLeadBecomesTerminalNeutralEvidence(t *testing.T) {
 	if !strings.Contains(source, `errors.Is(err, errNativeEvolutionScopedLeadMissing)`) ||
 		!strings.Contains(source, `quarantineReason = "whatsapp_ingress_snapshot_lead_deleted"`) {
 		t.Fatalf("native processor does not terminally neutralize a deleted snapshot lead\n%s", source)
+	}
+}
+
+func TestNativeContactCardPreservesProviderVCard(t *testing.T) {
+	vcard := "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Maria Exemplo\r\nTEL:+15555550100\r\nEND:VCARD"
+	raw := map[string]any{
+		"Info": map[string]any{
+			"ID":        "synthetic-contact-card",
+			"Sender":    "15555550101@s.whatsapp.net",
+			"Timestamp": float64(1_725_000_000),
+		},
+		"Message": map[string]any{
+			"contactMessage": map[string]any{
+				"displayName": "Maria Exemplo",
+				"vcard":       vcard,
+			},
+		},
+	}
+	message, ok := normalizeNativeEvolutionMessage(raw)
+	if !ok || message.MessageType != "contact" || message.Content != "Maria Exemplo" ||
+		message.ContactCardDisplayName != "Maria Exemplo" || message.ContactCardVCard != vcard {
+		t.Fatalf("contact card was not preserved: type=%q content=%q ok=%v", message.MessageType, message.Content, ok)
+	}
+	card, ok := nativeEvolutionMessageMetadata(message)["whatsapp_contact_card"].(map[string]any)
+	if !ok || card["display_name"] != "Maria Exemplo" || card["vcard"] != vcard {
+		t.Fatal("canonical metadata lost the provider's vCard")
+	}
+	if nativeIsMediaType(message.MessageType) || nativeEvolutionPreview(message) != "Maria Exemplo" {
+		t.Fatal("contact card must remain a non-media message with provider-supplied preview")
+	}
+
+	for _, invalid := range []map[string]any{
+		{"displayName": "Maria Exemplo", "vcard": ""},
+		{"displayName": "", "vcard": vcard},
+		{"displayName": "Maria Exemplo", "vcard": "not a vCard"},
+	} {
+		raw["Message"] = map[string]any{"contactMessage": invalid}
+		partial, parsed := normalizeNativeEvolutionMessage(raw)
+		if !parsed || partial.Content != "" || partial.ContactCardVCard != "" {
+			t.Fatal("partial or invalid contact card must stay unsupported")
+		}
+	}
+}
+
+func TestNativeOpaqueMessageShapesRemainUnsupported(t *testing.T) {
+	for _, block := range []map[string]any{
+		{"albumMessage": map[string]any{"expectedImageCount": float64(2)}},
+		{"secretEncryptedMessage": map[string]any{"encPayload": "synthetic-ciphertext"}},
+	} {
+		message, ok := normalizeNativeEvolutionMessage(map[string]any{
+			"Info": map[string]any{
+				"ID":        "synthetic-opaque",
+				"Sender":    "15555550101@s.whatsapp.net",
+				"Timestamp": float64(1_725_000_000),
+			},
+			"Message": block,
+		})
+		if !ok || message.Content != "" || message.ContactCardVCard != "" {
+			t.Fatal("opaque provider shape must not be represented as recovered content")
+		}
+	}
+}
+
+func TestNativeTemplateMessageUsesExplicitBodyText(t *testing.T) {
+	for _, template := range []map[string]any{
+		{
+			"Format": map[string]any{
+				"InteractiveMessageTemplate": map[string]any{
+					"body": map[string]any{"text": "Entrega em quatro minutos"},
+				},
+			},
+		},
+		{
+			"hydratedTemplate": map[string]any{
+				"hydratedContentText": "Entrega em quatro minutos",
+			},
+		},
+	} {
+		message, ok := normalizeNativeEvolutionMessage(map[string]any{
+			"Info": map[string]any{
+				"ID":        "synthetic-template",
+				"Sender":    "15555550101@s.whatsapp.net",
+				"Timestamp": float64(1_725_000_000),
+			},
+			"Message": map[string]any{"templateMessage": template},
+		})
+		if !ok || message.MessageType != "text" || message.Content != "Entrega em quatro minutos" {
+			t.Fatalf("explicit template body not preserved: type=%q content=%q ok=%v", message.MessageType, message.Content, ok)
+		}
+	}
+
+	message, ok := normalizeNativeEvolutionMessage(map[string]any{
+		"Info": map[string]any{
+			"ID":        "synthetic-template-without-body",
+			"Sender":    "15555550101@s.whatsapp.net",
+			"Timestamp": float64(1_725_000_000),
+		},
+		"Message": map[string]any{"templateMessage": map[string]any{"templateID": "only-id"}},
+	})
+	if !ok || message.Content != "" {
+		t.Fatal("template identifier alone must remain unsupported")
 	}
 }
 
@@ -1186,6 +1380,9 @@ func TestNativeMessageStatusIsMonotonic(t *testing.T) {
 }
 
 func TestNativeNotificationReceiptOutcomesFailClosed(t *testing.T) {
+	if matched, err := nativeNotificationReceiptOutcomeMatched("not_found"); matched || !errors.Is(err, errNativeNotificationReceiptTargetNotFound) {
+		t.Fatalf("not_found = matched:%v error:%v, want typed target-not-found", matched, err)
+	}
 	for _, outcome := range []string{"applied", "already_applied", "stale"} {
 		matched, err := nativeNotificationReceiptOutcomeMatched(outcome)
 		if err != nil || !matched {
@@ -1197,6 +1394,131 @@ func TestNativeNotificationReceiptOutcomesFailClosed(t *testing.T) {
 		if matched, err := nativeNotificationReceiptOutcomeMatched(outcome); err == nil || matched {
 			t.Fatalf("outcome %q = matched:%v error:%v, want fail-closed error", outcome, matched, err)
 		}
+	}
+}
+
+func TestNativeReadSelfReceiptIsAcknowledgedWithoutDeliveryProjection(t *testing.T) {
+	ids := make([]any, 258)
+	for index := range ids {
+		ids[index] = "opaque-provider-message"
+	}
+	payload := map[string]any{
+		"event":        "Receipt",
+		"state":        "ReadSelf",
+		"instanceId":   "test-instance",
+		"instanceName": "test-session",
+		"__vimob_ingress": map[string]any{
+			"routing_key": evolutionWebhookSessionRoute,
+			"routing_snapshot": map[string]any{
+				"version":  float64(1),
+				"messages": []any{},
+			},
+		},
+		"data": map[string]any{
+			"Type":                "read-self",
+			"MessageIDs":          ids,
+			"IsGroup":             false,
+			"IsFromMe":            false,
+			"AddressingMode":      "pn",
+			"BroadcastListOwner":  "",
+			"BroadcastRecipients": nil,
+			"Chat":                "opaque-chat",
+			"MessageSender":       "opaque-sender",
+			"RecipientAlt":        "",
+			"Sender":              "opaque-sender",
+			"SenderAlt":           "",
+			"Timestamp":           "2026-09-21T12:00:00Z",
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses := extractNativeEvolutionStatuses(payload); len(statuses) != 0 {
+		t.Fatalf("ReadSelf became a delivery status: %#v", statuses)
+	}
+	item := pendingEvolutionWebhook{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		SessionID:      "22222222-2222-4222-8222-222222222222",
+		EventType:      "receipt",
+		Payload:        encoded,
+	}
+	// No database or Edge client is installed: an accidental status projection
+	// or fallback would fail this dispatch. The durable inbox keeps the raw row.
+	repo := Repository{functions: functionsClient{
+		webhookProcessorMode:     webhookProcessorNative,
+		webhookRolloutSessionIDs: []string{"*"},
+	}}
+	if err := repo.dispatchEvolutionWebhook(context.Background(), item); err != nil {
+		t.Fatalf("ReadSelf receipt was not acknowledged: %v", err)
+	}
+	if !nativeIsReadSelfOnlyReceipt(payload, "receipt") {
+		t.Fatal("exact ReadSelf receipt was not recognized")
+	}
+}
+
+func TestNativeReadSelfReceiptDoesNotHideMixedOrAmbiguousStatuses(t *testing.T) {
+	base := func() map[string]any {
+		return map[string]any{
+			"event":        "Receipt",
+			"state":        "ReadSelf",
+			"instanceId":   "test-instance",
+			"instanceName": "test-session",
+			"__vimob_ingress": map[string]any{
+				"routing_key":      evolutionWebhookSessionRoute,
+				"routing_snapshot": map[string]any{"version": float64(1), "messages": []any{}},
+			},
+			"data": map[string]any{
+				"Type":                "read-self",
+				"MessageIDs":          []any{"self-id"},
+				"IsGroup":             false,
+				"IsFromMe":            false,
+				"AddressingMode":      "pn",
+				"BroadcastListOwner":  "",
+				"BroadcastRecipients": nil,
+				"Chat":                "opaque-chat",
+				"MessageSender":       "opaque-sender",
+				"RecipientAlt":        "",
+				"Sender":              "opaque-sender",
+				"SenderAlt":           "",
+				"Timestamp":           "2026-09-21T12:00:00Z",
+			},
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"missing IDs", func(payload map[string]any) { delete(payload["data"].(map[string]any), "MessageIDs") }},
+		{"unknown type", func(payload map[string]any) { payload["data"].(map[string]any)["Type"] = "unknown" }},
+		{"unknown state", func(payload map[string]any) { payload["state"] = "unknown" }},
+		{"mixed nested receipt", func(payload map[string]any) {
+			payload["data"].(map[string]any)["receipts"] = []any{map[string]any{"messageId": "outbound-id", "type": "delivered"}}
+		}},
+		{"mixed message", func(payload map[string]any) {
+			payload["data"].(map[string]any)["messages"] = []any{map[string]any{"Info": map[string]any{"ID": "lead-id"}}}
+		}},
+		{"unknown lead field", func(payload map[string]any) {
+			payload["data"].(map[string]any)["text"] = "lead content"
+		}},
+		{"nonempty message snapshot", func(payload map[string]any) {
+			payload["__vimob_ingress"].(map[string]any)["routing_snapshot"].(map[string]any)["messages"] = []any{map[string]any{"provider_message_id": "lead-id"}}
+		}},
+		{"group", func(payload map[string]any) { payload["data"].(map[string]any)["IsGroup"] = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := base()
+			test.mutate(payload)
+			if nativeIsReadSelfOnlyReceipt(payload, "receipt") {
+				t.Fatal("ambiguous receipt was acknowledged as ReadSelf-only")
+			}
+		})
+	}
+	mixed := base()
+	mixed["data"].(map[string]any)["receipts"] = []any{map[string]any{"messageId": "outbound-id", "type": "delivered"}}
+	statuses := extractNativeEvolutionStatuses(mixed)
+	if len(statuses) != 1 || statuses[0].Status != "delivered" {
+		t.Fatalf("mixed actionable delivery receipt was lost: %#v", statuses)
 	}
 }
 

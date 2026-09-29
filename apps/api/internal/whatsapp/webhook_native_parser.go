@@ -23,6 +23,8 @@ type nativeEvolutionMessage struct {
 	SenderName                         string
 	Content                            string
 	MessageType                        string
+	ContactCardDisplayName             string
+	ContactCardVCard                   string
 	FromMe                             bool
 	IsGroup                            bool
 	SentAt                             time.Time
@@ -223,6 +225,37 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		firstString(mediaBlock, "caption", "Caption"),
 		firstString(raw, "text", "body", "content", "caption", "buttonText", "button_text", "buttonId", "button_id"),
 	)
+	if mediaType == "" && content == "" {
+		// Evolution wraps some inbound text in a template. Keep only its
+		// explicit text body; a template identifier alone has no message text.
+		templateText := stripNullBytes(strings.TrimSpace(firstString(messageNode,
+			"templateMessage.Format.InteractiveMessageTemplate.body.text",
+			"templateMessage.hydratedTemplate.hydratedContentText",
+			"TemplateMessage.Format.InteractiveMessageTemplate.body.text",
+			"TemplateMessage.hydratedTemplate.hydratedContentText",
+		)))
+		if templateText != "" && len(templateText) <= 32*1024 {
+			content = templateText
+		}
+	}
+	contactCardDisplayName := ""
+	contactCardVCard := ""
+	if mediaType == "" && content == "" {
+		// A provider contact card contains lead data, but is not an ordinary
+		// text body. Preserve the exact vCard in canonical message metadata and
+		// show only the provider's display name as the message content.
+		card := nativeFirstMap(messageNode, "contactMessage", "ContactMessage")
+		name := stripNullBytes(firstString(card, "displayName", "DisplayName"))
+		vcard := stripNullBytes(firstString(card, "vcard", "Vcard", "vCard"))
+		if name != "" && len(name) <= 512 && len(vcard) <= 256*1024 &&
+			strings.HasPrefix(strings.TrimSpace(vcard), "BEGIN:VCARD") &&
+			strings.HasSuffix(strings.TrimSpace(vcard), "END:VCARD") {
+			mediaType = "contact"
+			content = name
+			contactCardDisplayName = name
+			contactCardVCard = vcard
+		}
+	}
 	if mediaType == "" {
 		mediaType = "text"
 	}
@@ -361,6 +394,8 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		SenderName:                         firstNonEmpty(firstString(info, "PushName", "pushName"), firstString(raw, "pushName", "senderName", "notifyName")),
 		Content:                            stripNullBytes(content),
 		MessageType:                        mediaType,
+		ContactCardDisplayName:             contactCardDisplayName,
+		ContactCardVCard:                   contactCardVCard,
 		FromMe:                             fromMe,
 		IsGroup:                            identity.IsGroup,
 		SentAt:                             sentAt.UTC(),

@@ -26,6 +26,13 @@ func NewHandler(repo Repository) Handler {
 	}
 }
 
+// WithWorkerRepository returns a handler copy for the inbound webhook lane.
+// Webhook ingress and processing share that repository; sends keep the original.
+func (handler Handler) WithWorkerRepository(repo Repository) Handler {
+	handler.repo = repo
+	return handler
+}
+
 func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
 	handler.workerConfig = config.normalized()
 	return handler
@@ -1056,6 +1063,12 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Confirme o início do atendimento antes de enviar mensagens por este WhatsApp.")
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
+	case errors.Is(err, ErrCallNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_call_not_found", "WhatsApp call was not found.")
+	case errors.Is(err, ErrCallAlreadyClaimed):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_call_already_claimed", "Esta ligação já está sendo atendida.")
+	case errors.Is(err, ErrProviderOutcomeUnknown):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_provider_outcome_unknown", "Não foi possível confirmar o resultado no WhatsApp. Atualize o histórico antes de tentar novamente.")
 	case errors.Is(err, ErrProviderFailed):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_provider_failed", "WhatsApp provider request failed. Please try again.")
 	case errors.Is(err, ErrFeatureUnavailable):

@@ -168,10 +168,13 @@ export function getWhatsAppSendSessionId(
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
 ) {
-  // A persisted conversation without a trusted session is historical-only.
-  // Never redirect it through another connected account.
-  if (conversation?.id && !conversation.session_id) {
-    return undefined;
+  // A persisted conversation is bound to its session. A list filter and other
+  // connected accounts cannot change the account used for this conversation.
+  if (conversation?.id) {
+    if (!conversation.session_id) return undefined;
+    if (selectedSessionId && selectedSessionId !== "all"
+      && selectedSessionId !== conversation.session_id) return undefined;
+    return conversation.session_id;
   }
 
   if (selectedSessionId && selectedSessionId !== "all") {
@@ -217,6 +220,8 @@ export function getWhatsAppMessageInputState(
   conversation?: MessageInputConversation | null,
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
+  ownedSessionsLoaded = false,
+  canSendFixedSession?: boolean,
 ): WhatsAppMessageInputState {
   if (!conversation) {
     return {
@@ -238,6 +243,52 @@ export function getWhatsAppMessageInputState(
 			placeholder: "Histórico deste card (somente leitura)",
 		};
 	}
+
+  // A removed physical connection cannot carry this conversation again. A
+  // different account must start a new conversation instead of silently
+  // sending through the old chat's identity.
+  if (conversation.id && conversation.session_id
+    && getConversationSession(conversation, sessions)?.status === "deleted") {
+    return {
+      disabled: true,
+      placeholder: "Conexão removida. Inicie uma nova conversa.",
+    };
+  }
+
+  if (conversation.id && conversation.session_id && canSendFixedSession === false
+    && getConversationSession(conversation, sessions)?.status === "disconnected") {
+    return {
+      disabled: true,
+      placeholder: "Conexão desconectada. Reconecte ou inicie uma nova conversa.",
+    };
+  }
+
+  if (conversation.id && canSendFixedSession === false) {
+    return {
+      disabled: true,
+      placeholder: "Você não pode enviar por esta conexão neste atendimento",
+    };
+  }
+
+  // GET /sessions lists owned accounts. A fixed conversation can also be
+  // operated by its current assignee, but only when the exact attendance GET
+  // has confirmed that capability for this user, lead and session.
+  if (ownedSessionsLoaded && conversation.id && conversation.session_id
+    && !findSessionById(sessions, conversation.session_id)
+    && canSendFixedSession !== true) {
+    return {
+      disabled: true,
+      placeholder: "Você não tem acesso à conexão desta conversa",
+    };
+  }
+
+  if (conversation.id && conversation.session_id && selectedSessionId
+    && selectedSessionId !== "all" && selectedSessionId !== conversation.session_id) {
+    return {
+      disabled: true,
+      placeholder: "Esta conversa pertence a outro WhatsApp. Selecione a conexão da conversa.",
+    };
+  }
 
   const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
   if (!sendSessionId) {

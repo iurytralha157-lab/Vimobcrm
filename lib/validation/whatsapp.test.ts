@@ -149,12 +149,14 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
 		data: {
 			joined: true,
+			canSend: true,
 			currentEntry: {
 				id: ID,
 				userId: USER_ID,
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
 			},
 			entries: [{
 				id: ID,
@@ -162,10 +164,14 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
 			}],
 			created: true,
 		},
 	}).success, true)
+	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+		data: { joined: false, canSend: 'yes', currentEntry: null, entries: [] },
+	}).success, false)
 })
 
 test('valida lista de sessoes e cota', () => {

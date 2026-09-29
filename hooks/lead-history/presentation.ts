@@ -68,6 +68,7 @@ export const TIMELINE_AUTHORITY_TYPES = new Set([
   'whatsapp_message_sent',
   'whatsapp_message_received',
   'call_initiated',
+  'whatsapp_call',
   'note_created',
   'tag_added',
   'tag_removed',
@@ -119,6 +120,18 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       return 'Mensagem recebida (WhatsApp)';
     case 'call_initiated':
       return 'Ligação iniciada';
+    case 'whatsapp_call': {
+      const direction = metadataString(metadata?.direction);
+      const state = metadataString(metadata?.state);
+      const prefix = direction === 'incoming' ? 'Ligação recebida' : 'Ligação realizada';
+      if (state === 'rejected') return `${prefix} pelo WhatsApp: recusada`;
+      if (state === 'failed') return `${prefix} pelo WhatsApp: falhou`;
+      if (state === 'outcome_unknown') return `${prefix} pelo WhatsApp: resultado incerto`;
+      if (state === 'end_pending' || state === 'reject_pending') return `${prefix} pelo WhatsApp: confirmação pendente`;
+      if (state === 'active') return `${prefix} pelo WhatsApp: em andamento`;
+      if (state === 'ended') return `${prefix} pelo WhatsApp: encerrada`;
+      return `${prefix} pelo WhatsApp`;
+    }
     case 'note_created':
     case 'note':
       return 'Nota adicionada';
@@ -270,6 +283,13 @@ export function buildContent(
   formatters: LeadHistoryFormatters,
 ): string | undefined {
   switch (type) {
+    case 'whatsapp_call': {
+      const recordingStatus = metadataString(metadata?.recording_status);
+      if (recordingStatus === 'ready') return 'Gravação disponível';
+      if (recordingStatus === 'partial') return 'Gravação parcial';
+      if (recordingStatus === 'failed') return 'Gravação indisponível';
+      return undefined;
+    }
     case 'first_response': {
       const secs = metadata?.response_seconds;
       if (secs !== undefined && secs !== null) {

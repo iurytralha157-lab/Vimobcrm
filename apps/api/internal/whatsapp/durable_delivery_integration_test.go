@@ -1584,8 +1584,8 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CleanupExpiredWebhookInbox() returned error: %v", err)
 	}
-	if deletedInboxRows != 1 {
-		t.Fatalf("CleanupExpiredWebhookInbox() deleted %d rows, want 1", deletedInboxRows)
+	if deletedInboxRows != 0 {
+		t.Fatalf("CleanupExpiredWebhookInbox() deleted %d rows, want 0; inbox retention is delegated", deletedInboxRows)
 	}
 	var inboxStillExists bool
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -1595,8 +1595,8 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, firstReceipt.ID).Scan(&inboxStillExists); err != nil {
 		t.Fatal(err)
 	}
-	if inboxStillExists {
-		t.Fatal("expired processed webhook inbox row still exists after cleanup")
+	if !inboxStillExists {
+		t.Fatal("processed webhook inbox row was deleted without nonlead proof")
 	}
 
 	var deadMessageInboxID, deadReceiptInboxID, deadMessageStatusInboxID, deadMessageAckInboxID string
@@ -1652,8 +1652,8 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CleanupExpiredWebhookInbox() dead-letter error: %v", err)
 	}
-	if deletedInboxRows != 3 {
-		t.Fatalf("CleanupExpiredWebhookInbox() deleted %d dead rows, want receipt/status/ack", deletedInboxRows)
+	if deletedInboxRows != 0 {
+		t.Fatalf("CleanupExpiredWebhookInbox() deleted %d dead rows, want 0; inbox retention is delegated", deletedInboxRows)
 	}
 	var deadMessageExists, deadReceiptExists, deadMessageStatusExists, deadMessageAckExists bool
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -1670,9 +1670,9 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if !deadMessageExists || deadReceiptExists || deadMessageStatusExists || deadMessageAckExists {
+	if !deadMessageExists || !deadReceiptExists || !deadMessageStatusExists || !deadMessageAckExists {
 		t.Fatalf(
-			"dead cleanup preservation = message:%v receipt:%v message_status:%v message_ack:%v, want true/false/false/false",
+			"dead cleanup preservation = message:%v receipt:%v message_status:%v message_ack:%v, want all true",
 			deadMessageExists,
 			deadReceiptExists,
 			deadMessageStatusExists,

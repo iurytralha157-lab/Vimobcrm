@@ -178,6 +178,115 @@ test('authorized persisted conversation keeps its own session', () => {
   assert.equal(result, '40000000-0000-4000-8000-000000000001')
 })
 
+test('lead history does not offer sending through an account absent from the loaded owned-session list', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+  }
+  const ownedSessions = [{
+    id: '40000000-0000-4000-8000-000000000002',
+    status: 'connected',
+    provider: 'evolution_go',
+  }]
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, ownedSessions, true), {
+    disabled: true,
+    placeholder: 'Você não tem acesso à conexão desta conversa',
+  })
+  // A failed or pending session fetch is inconclusive; the API still owns the
+  // authorization decision until an owned-session inventory has loaded.
+  assert.equal(getWhatsAppMessageInputState(conversation, null, ownedSessions).disabled, false)
+  assert.equal(getWhatsAppMessageInputState(conversation, null, [
+    { id: conversation.session_id, status: 'connected', provider: 'evolution_go' },
+  ], true).disabled, false)
+
+  // Exact server capability allows the current lead assignee to operate the
+  // persisted session, while an explicit denial also blocks an owned account.
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, ownedSessions, true, true), {
+    disabled: false,
+    placeholder: 'Digite sua mensagem...',
+    sendSessionId: conversation.session_id,
+  })
+  assert.equal(getWhatsAppMessageInputState(conversation, null, [
+    { id: conversation.session_id, status: 'connected', provider: 'evolution_go' },
+  ], true, false).disabled, true)
+  assert.equal(getWhatsAppMessageInputState(conversation, ownedSessions[0].id, ownedSessions, true, true).disabled, true)
+  assert.equal(getWhatsAppMessageInputState({ ...conversation, historical_lead_view: true }, null, ownedSessions, true, true).disabled, true)
+})
+
+test('persisted conversation never switches to another connected WhatsApp', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+  }
+  const sessions = [
+    { id: conversation.session_id, status: 'disconnected', provider: 'evolution_go' },
+    { id: '40000000-0000-4000-8000-000000000002', status: 'connected', provider: 'evolution_go' },
+    { id: '40000000-0000-4000-8000-000000000003', status: 'connected', provider: 'evolution_go' },
+  ]
+
+  assert.equal(getWhatsAppSendSessionId(conversation, 'all', sessions), conversation.session_id)
+  assert.equal(getWhatsAppSendSessionId(conversation, null, sessions), conversation.session_id)
+  assert.equal(getWhatsAppSendSessionId(conversation, sessions[1].id, sessions), undefined)
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, sessions[1].id, sessions), {
+    disabled: true,
+    placeholder: 'Esta conversa pertence a outro WhatsApp. Selecione a conexão da conversa.',
+  })
+})
+
+test('removed connection explains why its historical conversation cannot send', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+    session: {
+      id: '40000000-0000-4000-8000-000000000001',
+      status: 'deleted',
+      provider: 'evolution_go',
+    },
+  }
+  const otherConnectedSession = [{
+    id: '40000000-0000-4000-8000-000000000002',
+    status: 'connected',
+    provider: 'evolution_go',
+  }]
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, false), {
+    disabled: true,
+    placeholder: 'Conexão removida. Inicie uma nova conversa.',
+  })
+  assert.equal(getWhatsAppSendSessionId(conversation, null, otherConnectedSession), conversation.session_id)
+  // A cached attendance capability must not enable a removed connection.
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, true), {
+    disabled: true,
+    placeholder: 'Conexão removida. Inicie uma nova conversa.',
+  })
+})
+
+test('disconnected connection explains a denied attendance before generic authorization', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+    session: {
+      id: '40000000-0000-4000-8000-000000000001',
+      status: 'disconnected',
+      provider: 'evolution_go',
+    },
+  }
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, [], true, false), {
+    disabled: true,
+    placeholder: 'Conexão desconectada. Reconecte ou inicie uma nova conversa.',
+  })
+})
+
 test('new conversation draft may use the explicitly selected session', () => {
   const result = getWhatsAppSendSessionId(
     { session_id: null },
@@ -278,9 +387,10 @@ test('nao escolhe uma conta arbitraria quando ha varias integracoes desconectada
   assert.equal(state.sendSessionId, undefined)
 })
 
-test('exige selecao quando ha varias integracoes conectadas e a conversa antiga esta offline', () => {
+test('conversa antiga offline preserva a propria conexao para validacao do backend', () => {
   const state = getWhatsAppMessageInputState(
     {
+      id: 'conversation-old',
       lead_id: 'lead-1',
       session_id: 'session-old',
       contact_phone: '5511999999999',
@@ -299,6 +409,6 @@ test('exige selecao quando ha varias integracoes conectadas e a conversa antiga 
     ],
   )
 
-  assert.equal(state.disabled, true)
-  assert.equal(state.sendSessionId, undefined)
+  assert.equal(state.disabled, false)
+  assert.equal(state.sendSessionId, 'session-old')
 })

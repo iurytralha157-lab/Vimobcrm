@@ -1,5 +1,5 @@
 import { useMemo, useState, type RefObject, type UIEventHandler } from "react";
-import { ArrowDown, Loader2, MessageSquare } from "lucide-react";
+import { ArrowDown, Loader2, MessageSquare, Phone, Volume2 } from "lucide-react";
 
 import { DateSeparator, shouldShowDateSeparator } from "@/components/features/whatsapp/DateSeparator";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import type { WhatsAppAttendanceEntry } from "@/lib/api/whatsapp";
+import type { WhatsAppCall } from "@/lib/validation/whatsapp-calls";
 import { canReactToWhatsAppMessage, type GroupedWhatsAppReaction } from "@/lib/whatsapp-reactions";
 import { cn } from "@/lib/utils";
 
@@ -41,11 +42,25 @@ type ConversationMessagesProps = {
   onReact: (message: WhatsAppMessage, emoji: string) => Promise<unknown>;
   reactingMessageId?: string | null;
   attendanceEntries?: WhatsAppAttendanceEntry[];
+  calls?: WhatsAppCall[];
+  onPlayCallRecording?: (callId: string) => void;
 };
 
 type ConversationTimelineItem =
   | { kind: "message"; id: string; timestamp: string; message: DisplayMessage }
-  | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry };
+  | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry }
+  | { kind: "call"; id: string; timestamp: string; call: WhatsAppCall };
+
+function callLabel(call: WhatsAppCall) {
+  const direction = call.direction === "incoming" ? "recebida" : "realizada";
+  if (call.state === "active") return `Ligação ${direction} em andamento`;
+  if (call.state === "incoming" || call.state === "ringing") return `Ligação ${direction} tocando`;
+  if (call.state === "rejected") return "Ligação recusada";
+  if (call.state === "failed") return "Ligação não concluída";
+  if (call.state === "ended") return `Ligação ${direction} encerrada`;
+  if (call.state === "outcome_unknown") return "Estado da ligação em confirmação";
+  return `Ligação ${direction}`;
+}
 
 export function ConversationMessages({
   layout,
@@ -69,6 +84,8 @@ export function ConversationMessages({
   onReact,
   reactingMessageId,
   attendanceEntries = [],
+  calls = [],
+  onPlayCallRecording,
 }: ConversationMessagesProps) {
   const isMobile = layout === "mobile";
   const [scrollState, setScrollState] = useState({
@@ -94,10 +111,16 @@ export function ConversationMessages({
         timestamp: entry.joinedAt,
         entry,
       })),
+      ...calls.map((call): ConversationTimelineItem => ({
+        kind: "call",
+        id: `call-${call.id}`,
+        timestamp: call.offered_at || call.created_at,
+        call,
+      })),
     ].sort((left, right) => (
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
     ));
-  }, [activePlatform, attendanceEntries, messages]);
+  }, [activePlatform, attendanceEntries, calls, messages]);
 
   const handleScrollCapture: UIEventHandler<HTMLDivElement> = (event) => {
     const target = event.currentTarget.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")
@@ -171,7 +194,20 @@ export function ConversationMessages({
             return (
               <div key={item.id}>
                 {showSeparator && <DateSeparator date={new Date(item.timestamp)} />}
-                {item.kind === "attendance" ? (
+                {item.kind === "call" ? (
+                  <div className="flex justify-center px-2">
+                    <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-[6px] bg-[var(--app-surface)] px-3 py-1.5 text-[11px] text-[var(--app-text-secondary)]">
+                      <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{callLabel(item.call)}</span>
+                      {onPlayCallRecording && ["ready", "partial"].includes(item.call.recording_status) && (
+                        <button type="button" className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                          onClick={() => onPlayCallRecording(item.call.id)}>
+                          <Volume2 className="h-3.5 w-3.5" aria-hidden="true" /> Ouvir gravação
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : item.kind === "attendance" ? (
                   <AttendanceTimelineEvents entries={[item.entry]} />
                 ) : (
                   <MessageErrorBoundary messageId={item.message.id}>

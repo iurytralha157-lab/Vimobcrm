@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(131);
+select plan(138);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -3525,6 +3525,210 @@ select ok(
     ) as deleted_lead_replay
   ),
   'provider replay remains idempotent after the original lead is hard-deleted'
+);
+
+-- A private route epoch cutoff excludes only historical predecessor snapshots.
+-- Capture still freezes the current lead for the first new provider event, and
+-- normal ordering resumes among events accepted after the cutoff.
+create temporary table queue_scope_barrier_results (
+  label text primary key,
+  result jsonb not null
+) on commit drop;
+
+insert into queue_scope_barrier_results (label, result)
+values (
+  'old',
+  private.capture_whatsapp_webhook_routing_snapshot(
+    'd1200000-0000-4000-8000-000000000001',
+    'd1500000-0000-4000-8000-000000000001',
+    'barrier-test-old', 'barrier-test-k1', 'live',
+    'phone:551188881043', true,
+    array['551188881043@s.whatsapp.net'], '551188881043',
+    'contextual_intake', 'canonical_intake_v1:test',
+    false, false, false, null, null,
+    'd1400000-0000-4000-8000-000000000043'
+  )
+);
+
+insert into private.whatsapp_invalidated_route_barriers (
+  organization_id, session_id, routing_key, cutoff_ingress_sequence,
+  root_inbox_id, root_provider_message_id, conversation_id,
+  lead_id_at_barrier, active_binding_id_at_barrier,
+  active_rows_quarantined
+)
+select organization_id, session_id, routing_key, ingress_sequence,
+  'd1ff0000-0000-4000-8000-000000000001', provider_message_id,
+  'd1600000-0000-4000-8000-000000000030',
+  'd1400000-0000-4000-8000-000000000043',
+  'd1ff0000-0000-4000-8000-000000000002', 1
+from public.whatsapp_webhook_routing_snapshots
+where provider_message_id = 'barrier-test-old';
+
+insert into queue_scope_barrier_results (label, result)
+values (
+  'new',
+  private.capture_whatsapp_webhook_routing_snapshot(
+    'd1200000-0000-4000-8000-000000000001',
+    'd1500000-0000-4000-8000-000000000001',
+    'barrier-test-new', 'barrier-test-k2', 'live',
+    'phone:551188881043', true,
+    array['551188881043@s.whatsapp.net'], '551188881043',
+    'organic', null, false, false, false, null, null, null
+  )
+);
+
+select ok(
+  (select result->>'predecessor_provider_message_id' is null
+     and result->>'target_mode' = 'snapshot'
+     and result->>'event_lead_id' = 'd1400000-0000-4000-8000-000000000043'
+   from queue_scope_barrier_results where label = 'new'),
+  'first provider event after a route barrier freezes the current lead without inheriting the old chain'
+);
+
+select is(
+  private.capture_whatsapp_webhook_routing_snapshot(
+    'd1200000-0000-4000-8000-000000000001',
+    'd1500000-0000-4000-8000-000000000001',
+    'barrier-test-old', 'barrier-test-replay', 'live',
+    'phone:551188881043', true,
+    array['551188881043@s.whatsapp.net'], '551188881043',
+    'organic', null, false, false, false, null, null, null
+  ),
+  (select result from queue_scope_barrier_results where label = 'old'),
+  'a replay before the barrier keeps its immutable original route snapshot'
+);
+
+insert into public.whatsapp_webhook_inbox (
+  organization_id, session_id, event_key, event_type, payload,
+  processing_lane, status
+)
+select
+  'd1200000-0000-4000-8000-000000000001',
+  'd1500000-0000-4000-8000-000000000001',
+  'barrier-test-replay-new-key', 'message',
+  jsonb_build_object(
+    'event', 'Message',
+    'data', jsonb_build_object('messages', jsonb_build_array(
+      jsonb_build_object('Info', jsonb_build_object('ID', 'barrier-test-old'))
+    )),
+    '__vimob_ingress', jsonb_build_object(
+      'routing_key', '__session__',
+      'routing_snapshot', jsonb_build_object(
+        'version', 1,
+        'messages', jsonb_build_array(result)
+      )
+    )
+  ),
+  'live', 'pending'
+from queue_scope_barrier_results where label = 'old';
+
+select ok(
+  (select status = 'dead'
+     and attempts = max_attempts
+     and expires_at = 'infinity'::timestamptz
+     and last_error = 'invalidated_route_provider_replay_raw_preserved:v1'
+   from public.whatsapp_webhook_inbox
+   where event_key = 'barrier-test-replay-new-key'),
+  'old provider replay with collapsed scheduling key is terminal before worker claim'
+);
+
+select ok(
+  (select audit.original_inbox -> 'payload' = inbox.payload
+     and audit.payload_sha256 = private.canonical_jsonb_sha256(inbox.payload)
+     and audit.reason = 'invalidated_v1_provider_replay_raw_preserved:v1'
+   from public.whatsapp_webhook_inbox as inbox
+   join private.whatsapp_invalidated_route_raw_audit as audit
+     on audit.inbox_id = inbox.id
+   where inbox.event_key = 'barrier-test-replay-new-key')
+  and not exists (
+    select 1 from public.whatsapp_webhook_routing_outcomes
+    where provider_message_id = 'barrier-test-old'
+  ),
+  'old provider replay keeps full raw audit without inventing a route outcome'
+);
+
+-- The original inbox can be removed by retention while its immutable route
+-- ledger remains. A same-key provider replay must also stay out of the queue.
+insert into public.whatsapp_webhook_inbox (
+  organization_id, session_id, event_key, event_type, payload,
+  processing_lane, status
+)
+select
+  'd1200000-0000-4000-8000-000000000001',
+  'd1500000-0000-4000-8000-000000000001',
+  'barrier-test-k1', 'message',
+  jsonb_build_object(
+    'event', 'Message',
+    'data', jsonb_build_object('Info', jsonb_build_object('ID', 'barrier-test-old')),
+    '__vimob_ingress', jsonb_build_object(
+      'routing_key', 'phone:551188881043',
+      'routing_snapshot', jsonb_build_object(
+        'version', 1,
+        'messages', jsonb_build_array(result)
+      )
+    )
+  ),
+  'live', 'pending'
+from queue_scope_barrier_results where label = 'old';
+
+select ok(
+  (select inbox.status = 'dead'
+     and audit.original_inbox -> 'payload' = inbox.payload
+   from public.whatsapp_webhook_inbox as inbox
+   join private.whatsapp_invalidated_route_raw_audit as audit
+     on audit.inbox_id = inbox.id
+   where inbox.event_key = 'barrier-test-k1'),
+  'same-key old provider replay after prior inbox retention is also terminal and audited'
+);
+
+select throws_ok(
+  $$
+    insert into public.whatsapp_webhook_inbox (
+      organization_id, session_id, event_key, event_type, payload,
+      processing_lane, status
+    )
+    select
+      'd1200000-0000-4000-8000-000000000001',
+      'd1500000-0000-4000-8000-000000000001',
+      'barrier-test-mixed-replay', 'message',
+      jsonb_build_object(
+        'event', 'Message',
+        'data', jsonb_build_object('messages', jsonb_build_array(
+          jsonb_build_object('Info', jsonb_build_object('ID', 'barrier-test-old')),
+          jsonb_build_object('Info', jsonb_build_object('ID', 'barrier-test-new'))
+        )),
+        '__vimob_ingress', jsonb_build_object(
+          'routing_key', '__session__',
+          'routing_snapshot', jsonb_build_object(
+            'version', 1,
+            'messages', jsonb_build_array(old_route.result, new_route.result)
+          )
+        )
+      ),
+      'live', 'pending'
+    from queue_scope_barrier_results as old_route
+    cross join queue_scope_barrier_results as new_route
+    where old_route.label = 'old' and new_route.label = 'new'
+  $$,
+  '23514',
+  'invalidated_route_mixed_provider_replay_requires_isolation',
+  'unsplittable mixed replay rolls back before any inbox item reaches workers'
+);
+
+select ok(
+  (select result->>'predecessor_provider_message_id' = 'barrier-test-new'
+     and result->>'target_mode' = 'inherit_predecessor'
+   from (
+     select private.capture_whatsapp_webhook_routing_snapshot(
+       'd1200000-0000-4000-8000-000000000001',
+       'd1500000-0000-4000-8000-000000000001',
+       'barrier-test-newer', 'barrier-test-k3', 'live',
+       'phone:551188881043', true,
+       array['551188881043@s.whatsapp.net'], '551188881043',
+       'organic', null, false, false, false, null, null, null
+     ) as result
+   ) as newer),
+  'post-barrier provider events form a new ordered chain'
 );
 
 select * from finish();

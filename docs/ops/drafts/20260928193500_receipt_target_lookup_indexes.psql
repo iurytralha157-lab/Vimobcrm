@@ -1,0 +1,47 @@
+-- Online indexes for private.v1_receipt_any_id_has_delivery_target.
+-- Run with psql -v ON_ERROR_STOP=1 outside a transaction. This is an
+-- operational prerequisite for large status-only receipt batches; it changes
+-- no receipts, messages, leads, or queue state.
+-- Inspect pg_index.indisvalid after any timeout before attempting a retry.
+
+set lock_timeout = '2s';
+set statement_timeout = '60s';
+set maintenance_work_mem = '64MB';
+set max_parallel_maintenance_workers = 1;
+
+create index concurrently if not exists
+  notification_deliveries_wa_org_provider_message_idx
+on private.notification_deliveries (organization_id, provider_message_id)
+where channel = 'whatsapp';
+
+create index concurrently if not exists
+  notification_deliveries_wa_org_expected_message_idx
+on private.notification_deliveries
+  (organization_id, (metadata ->> 'expected_message_id'))
+where channel = 'whatsapp';
+
+create index concurrently if not exists
+  notifications_org_wa_expected_message_idx
+on public.notifications
+  (organization_id, (metadata #>> '{dispatch,whatsapp,expected_message_id}'));
+
+do $verify$
+declare
+  v_valid_count integer;
+begin
+  select count(*) into v_valid_count
+  from pg_catalog.pg_class as index_rel
+  join pg_catalog.pg_index as index_state on index_state.indexrelid = index_rel.oid
+  join pg_catalog.pg_namespace as namespace on namespace.oid = index_rel.relnamespace
+  where (namespace.nspname, index_rel.relname) in (
+    ('private','notification_deliveries_wa_org_provider_message_idx'),
+    ('private','notification_deliveries_wa_org_expected_message_idx'),
+    ('public','notifications_org_wa_expected_message_idx')
+  )
+    and index_state.indisvalid
+    and index_state.indisready;
+  if v_valid_count <> 3 then
+    raise exception 'receipt_target_lookup_indexes_not_all_valid:%', v_valid_count;
+  end if;
+end;
+$verify$;

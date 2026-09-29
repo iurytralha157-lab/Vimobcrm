@@ -13,6 +13,8 @@ import {
   whatsappQueryKeys,
   type WhatsAppQueryScope,
 } from "@/lib/whatsapp-query-cache";
+import { describeWhatsAppAttendanceFailure } from "@/lib/whatsapp-attendance-error";
+import { getWhatsAppAttendanceGateDecision } from "@/lib/whatsapp-attendance-gate-decision";
 
 export type WhatsAppAttendanceTarget = {
   conversationId: string;
@@ -175,9 +177,12 @@ export function useWhatsAppAttendanceGate(
   const requestIdentityKey = options.identityKey ?? targetKey ?? "none";
   const requestIdentityRef = useRef(requestIdentityKey);
 
-  const settlePendingRequest = useCallback((joined: boolean) => {
+  const settlePendingRequest = useCallback((
+    joined: boolean,
+    expected?: PendingAttendanceRequest,
+  ) => {
     const pending = pendingRequestRef.current;
-    if (!pending) return;
+    if (!pending || (expected && pending !== expected)) return;
     pendingRequestRef.current = null;
     setDialogOpen(false);
     pending.resolve(joined);
@@ -187,7 +192,7 @@ export function useWhatsAppAttendanceGate(
     requestIdentityRef.current = requestIdentityKey;
     const pending = pendingRequestRef.current;
     if (pending && pending.identityKey !== requestIdentityKey) {
-      settlePendingRequest(false);
+      settlePendingRequest(false, pending);
     }
   }, [requestIdentityKey, settlePendingRequest]);
 
@@ -233,11 +238,20 @@ export function useWhatsAppAttendanceGate(
             attendance,
           );
           if (requestIdentityRef.current !== operationIdentityKey) return false;
-          if (attendance.joined) return true;
-        } catch {
+          const decision = getWhatsAppAttendanceGateDecision(attendance);
+          if (decision === 'blocked') {
+            toast({
+              title: "Mensagem não enviada",
+              description: "Seu usuário não pode enviar por esta conexão neste atendimento.",
+              variant: "destructive",
+            });
+            return false;
+          }
+          if (decision === 'send') return true;
+        } catch (error) {
           toast({
             title: "Não foi possível verificar o atendimento",
-            description: "Atualize a conversa e tente novamente antes de enviar a mensagem.",
+            description: describeWhatsAppAttendanceFailure(error),
             variant: "destructive",
           });
           return false;
@@ -284,7 +298,7 @@ export function useWhatsAppAttendanceGate(
     const pending = pendingRequestRef.current;
     if (!pending || joinAttendance.isPending) return;
     if (pending.identityKey !== requestIdentityRef.current) {
-      settlePendingRequest(false);
+      settlePendingRequest(false, pending);
       return;
     }
 
@@ -296,7 +310,7 @@ export function useWhatsAppAttendanceGate(
       pending.target = resolvedTarget;
       pending.prepareTarget = undefined;
       if (pending.identityKey !== requestIdentityRef.current) {
-        settlePendingRequest(false);
+        settlePendingRequest(false, pending);
         return;
       }
       const attendance = await joinAttendance.mutateAsync(resolvedTarget);
@@ -304,20 +318,19 @@ export function useWhatsAppAttendanceGate(
         throw new Error("A entrada no atendimento não foi confirmada.");
       }
       if (pending.identityKey !== requestIdentityRef.current) {
-        settlePendingRequest(false);
+        settlePendingRequest(false, pending);
         return;
       }
       setLastJoinedState({
         targetKey: attendanceTargetKey(resolvedTarget)!,
         attendance,
       });
-      settlePendingRequest(true);
+      settlePendingRequest(true, pending);
     } catch (error) {
+      settlePendingRequest(false, pending);
       toast({
         title: "Não foi possível entrar no atendimento",
-        description: error instanceof Error && error.message.length < 180
-          ? error.message
-          : "Tente novamente antes de enviar a mensagem.",
+        description: describeWhatsAppAttendanceFailure(error),
         variant: "destructive",
       });
     }

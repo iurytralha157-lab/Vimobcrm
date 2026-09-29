@@ -23,27 +23,29 @@ const (
 )
 
 type WorkerConfig struct {
-	AIWorkerEnabled               bool
-	AIWorkerInterval              time.Duration
-	AIFollowUpWorkerEnabled       bool
-	AIFollowUpWorkerInterval      time.Duration
-	OutboxWorkerEnabled           bool
-	OutboxWorkerInterval          time.Duration
-	OutboxWorkerBatch             int
-	OutboxWorkerConcurrency       int
-	WebhookWorkerEnabled          bool
-	WebhookWorkerInterval         time.Duration
-	WebhookWorkerBatch            int
-	WebhookWorkerConcurrency      int
-	MediaWorkerEnabled            bool
-	MediaWorkerInterval           time.Duration
-	MediaWorkerLease              time.Duration
-	MediaWorkerConcurrency        int
-	SessionSupervisorEnabled      bool
-	SessionSupervisorInitialDelay time.Duration
-	SessionSupervisorInterval     time.Duration
-	SessionSupervisorBatch        int
-	SessionSupervisorRecoveryIDs  []string
+	AIWorkerEnabled                 bool
+	AIWorkerInterval                time.Duration
+	AIFollowUpWorkerEnabled         bool
+	AIFollowUpWorkerInterval        time.Duration
+	OutboxWorkerEnabled             bool
+	OutboxWorkerInterval            time.Duration
+	OutboxWorkerBatch               int
+	OutboxWorkerConcurrency         int
+	WebhookWorkerEnabled            bool
+	WebhookWorkerInterval           time.Duration
+	WebhookWorkerBatch              int
+	WebhookWorkerConcurrency        int
+	DeferredReceiptSweepEnabled     bool
+	DeferredReceiptReconcileEnabled bool
+	MediaWorkerEnabled              bool
+	MediaWorkerInterval             time.Duration
+	MediaWorkerLease                time.Duration
+	MediaWorkerConcurrency          int
+	SessionSupervisorEnabled        bool
+	SessionSupervisorInitialDelay   time.Duration
+	SessionSupervisorInterval       time.Duration
+	SessionSupervisorBatch          int
+	SessionSupervisorRecoveryIDs    []string
 }
 
 func DefaultWorkerConfig() WorkerConfig {

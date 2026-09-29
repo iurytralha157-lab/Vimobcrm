@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, Loader2, MessageCircle, Paperclip, RefreshCw, Timer } from 'lucide-react';
+import { Bot, Loader2, MessageCircle, Paperclip, Phone, RefreshCw, Timer, UserPlus, Volume2 } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
 import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
 import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
+import { SaveWhatsAppContactDialog, WhatsAppRecordingDialog } from '@/components/features/whatsapp/calls';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
@@ -25,14 +26,19 @@ import { useLeadMessages } from '@/hooks/use-lead-messages';
 import { useStartConversation } from '@/hooks/use-start-conversation';
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from '@/hooks/use-whatsapp-attendance';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWhatsAppCallContext } from '@/contexts/WhatsAppCallContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
+import { whatsappCallsAPI } from '@/lib/api/whatsapp-calls';
+import { isWhatsAppSessionFeatureEnabled } from '@/lib/whatsapp-call-capabilities';
 import {
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from '@/lib/whatsapp-message-input';
+import { runWhatsAppSendAttempt } from '@/lib/whatsapp-send-attempt';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
 import {
   blobToBase64,
@@ -650,7 +656,11 @@ function getManualTransfer(event: UnifiedHistoryEvent) {
   return { recipient, actor };
 }
 
-function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plainHistory: boolean }) {
+function EventBubble({ event, plainHistory, onPlayCallRecording }: {
+  event: UnifiedHistoryEvent;
+  plainHistory: boolean;
+  onPlayCallRecording?: (callId: string) => void;
+}) {
   const pendingDistribution = getPendingDistribution(event);
   if (pendingDistribution) {
     return (
@@ -717,6 +727,10 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
   const toneClass = getEventTone(event, plainHistory);
   const isSolidTone = toneClass.includes('!text-white');
   const isFirstResponse = event.type === 'first_response';
+  const recordingCallId = event.type === 'whatsapp_call'
+    && ['ready', 'partial'].includes(String(event.metadata?.recording_status || ''))
+    ? metadataText(event.metadata?.whatsapp_call_id)
+    : null;
 
   if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     const metadata = event.metadata || {};
@@ -836,6 +850,15 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
           {detail}
         </div>
       )}
+      {recordingCallId && onPlayCallRecording && (
+        <button
+          type="button"
+          className="mt-1 inline-flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] underline-offset-2 hover:underline"
+          onClick={() => onPlayCallRecording(recordingCallId)}
+        >
+          <Volume2 className="h-3 w-3" /> Ouvir gravação
+        </button>
+      )}
     </div>
   );
 
@@ -881,14 +904,19 @@ function FeedbackBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; p
 
 export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest, readOnly = false }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
+  const [recordingCallId, setRecordingCallId] = useState<string | null>(null);
+  const [saveContactOpen, setSaveContactOpen] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
   const [composerHighlighted, setComposerHighlighted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendTextAttemptLock = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastHandledComposerRequestRef = useRef<number | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const lastThreadItemIdRef = useRef<string | null>(null);
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, user } = useAuth();
+  const callContext = useWhatsAppCallContext();
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasWhatsAppModule = hasModule('whatsapp');
@@ -901,7 +929,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     refetch: refetchHistory,
   } = useLeadHistory(leadId);
   const shouldLoadComposerData = canViewWhatsApp && !readOnly;
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
+  const { data: sessions = [], isLoading: loadingSessions, isSuccess: ownedSessionsLoaded } = useAccessibleSessions({
     enabled: shouldLoadComposerData,
   });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
@@ -963,28 +991,42 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         : null),
     [conversation, hasLeadPhone, leadId, leadPhone],
   );
+  const attendanceSessionId = getWhatsAppSendSessionId(conversation, null, sessions);
+  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
+    if (!conversation?.id || !attendanceSessionId) return null;
+    return {
+      conversationId: conversation.id,
+      expectedLeadId: leadId,
+      sendSessionId: attendanceSessionId,
+    };
+  }, [conversation, leadId, attendanceSessionId]);
+  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
+    enabled: canViewWhatsApp && Boolean(attendanceTarget),
+    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${attendanceSessionId || "none"}`,
+  });
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
-    [messageInputConversation, sessions],
+    () => getWhatsAppMessageInputState(
+      messageInputConversation,
+      null,
+      sessions,
+      ownedSessionsLoaded,
+      attendanceGate.attendance?.canSend,
+    ),
+    [messageInputConversation, sessions, ownedSessionsLoaded, attendanceGate.attendance?.canSend],
   );
+  const contactSession = sessions.find((session) => session.id === whatsappMessageInputState.sendSessionId);
+  const canSaveLeadContact = Boolean(!readOnly && canOperateWhatsApp && hasLeadPhone
+    && isWhatsAppSessionFeatureEnabled(contactSession, 'whatsapp_contact_save_enabled', user?.id || null));
+  const conversationSession = sessions.find((session) => session.id === conversation?.session_id);
+  const canCallLeadConversation = Boolean(!readOnly && canOperateWhatsApp && conversation?.id
+    && conversation.remote_jid && !conversation.is_group
+    && isWhatsAppSessionFeatureEnabled(conversationSession, 'whatsapp_calls_enabled', user?.id || null));
   const canSendMessage = Boolean(
     canOperateWhatsApp &&
       hasLeadPhone &&
       !leadHasNoWhatsApp &&
       !whatsappMessageInputState.disabled,
   );
-  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
-    if (!conversation?.id || !whatsappMessageInputState.sendSessionId) return null;
-    return {
-      conversationId: conversation.id,
-      expectedLeadId: leadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
-    };
-  }, [conversation, leadId, whatsappMessageInputState.sendSessionId]);
-  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
-    enabled: canViewWhatsApp && Boolean(attendanceTarget),
-    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${whatsappMessageInputState.sendSessionId || "none"}`,
-  });
   const isSendingMessage = sendMessage.isPending
     || startConversation.isPending
     || attendanceGate.isResolving;
@@ -1156,21 +1198,37 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   };
 
   const handleSend = async () => {
-    const content = text.trim();
-    if (!content || !canSendMessage || isSendingMessage) return;
+    await runWhatsAppSendAttempt(sendTextAttemptLock, async () => {
+      const content = text.trim();
+      if (!content || !canSendMessage || isSendingMessage) return;
 
+      try {
+        const targetConversation = await ensureConversationAndAttendanceForSend();
+        if (!targetConversation) return;
+
+        setText('');
+        await sendMessage.mutateAsync({
+          conversation: targetConversation,
+          text: content,
+          sendSessionId: whatsappMessageInputState.sendSessionId,
+        });
+      } catch {
+        setText(content);
+      }
+    });
+  };
+
+  const handleSaveLeadContact = async () => {
+    if (!canSaveLeadContact || !contactSession || !activeOrganization.organizationId) return;
+    setSavingContact(true);
     try {
-      const targetConversation = await ensureConversationAndAttendanceForSend();
-      if (!targetConversation) return;
-
-      setText('');
-      await sendMessage.mutateAsync({
-        conversation: targetConversation,
-        text: content,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch {
-      setText(content);
+      await whatsappCallsAPI.saveLeadContact(contactSession.id, leadId, activeOrganization.organizationId);
+      setSaveContactOpen(false);
+      toast.success('Contato salvo no WhatsApp', { description: 'Confira a sincronização no celular vinculado.' });
+    } catch (error) {
+      toast.error('Contato não salvo', { description: error instanceof Error ? error.message : 'Tente novamente.' });
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -1303,6 +1361,19 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
   return (
     <>
+      <WhatsAppRecordingDialog
+        callId={recordingCallId}
+        onOpenChange={(open) => { if (!open) setRecordingCallId(null); }}
+      />
+      {saveContactOpen && <SaveWhatsAppContactDialog
+        open={saveContactOpen}
+        onOpenChange={setSaveContactOpen}
+        contactName={leadName}
+        contactPhone={leadPhone || ''}
+        leadLinked
+        busy={savingContact}
+        onSave={handleSaveLeadContact}
+      />}
       <EnterAttendanceDialog
         {...attendanceGate.dialogProps}
         contactName={leadName}
@@ -1374,7 +1445,11 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                   isFeedbackEvent(item.event) ? (
                     <FeedbackBubble event={item.event} plainHistory={readOnly} />
                   ) : (
-                    <EventBubble event={item.event} plainHistory={readOnly} />
+                    <EventBubble
+                      event={item.event}
+                      plainHistory={readOnly}
+                      onPlayCallRecording={canViewWhatsApp ? setRecordingCallId : undefined}
+                    />
                   )
                 ) : (
                   <MessageErrorBoundary messageId={item.message.id}>
@@ -1422,6 +1497,26 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         </div>
 
         {!readOnly && canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
+          {(canCallLeadConversation || canSaveLeadContact) && <div className="mb-2 flex flex-wrap gap-1">
+          {canCallLeadConversation && conversation && (
+            <button
+              type="button"
+              onClick={() => void callContext.openForConversation(conversation.id, leadName)}
+              className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+            >
+              <Phone className="h-3.5 w-3.5" /> Ligar pelo WhatsApp
+            </button>
+          )}
+          {canSaveLeadContact && (
+            <button
+              type="button"
+              onClick={() => setSaveContactOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+            >
+              <UserPlus className="h-3.5 w-3.5" /> Salvar contato no WhatsApp
+            </button>
+          )}
+          </div>}
           <input
             ref={fileInputRef}
             type="file"

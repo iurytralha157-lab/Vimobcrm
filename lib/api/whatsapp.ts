@@ -277,10 +277,12 @@ export type WhatsAppAttendanceEntry = {
   userName: string
   sessionId: string
   joinedAt: string
+  entrySource: string
 }
 
 export type WhatsAppAttendanceState = {
   joined: boolean
+  canSend?: boolean
   currentEntry: WhatsAppAttendanceEntry | null
   entries: WhatsAppAttendanceEntry[]
   created?: boolean

@@ -343,6 +343,8 @@ const nativeLegacyNonManagedConversationRecoveryQuery = `
 `
 
 var errNativeWebhookMessageLikeUnsupported = errors.New("native WhatsApp processor rejected an unsupported message-like event")
+var errNativeWebhookUnsupported = errors.New("native WhatsApp processor does not support this event")
+var errNativeNotificationReceiptTargetNotFound = errors.New("notification_receipt_target_not_found")
 var errNativeEvolutionLeadPhoneAmbiguous = errors.New("native WhatsApp lead phone matches multiple leads")
 var errNativeEvolutionAliasLeadAmbiguous = errors.New("native WhatsApp identity aliases match multiple leads")
 var errNativeEvolutionScopedLeadMissing = errors.New("scoped WhatsApp conversation lead was not found in organization")
@@ -360,7 +362,58 @@ func normalizeEvolutionWebhookProcessorMode(value string) string {
 	}
 }
 
+func callWebhookRetrySession(item pendingEvolutionWebhook, session evolutionWebhookSession) (evolutionWebhookSession, error) {
+	if session.ID != item.SessionID || session.OrganizationID != item.OrganizationID ||
+		(strings.TrimSpace(session.InstanceID) == "" && strings.TrimSpace(session.InstanceName) == "") {
+		return evolutionWebhookSession{}, errWebhookSessionMismatch
+	}
+	return session, nil
+}
+
 func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendingEvolutionWebhook) error {
+	// Canonical calls are handled before the Edge/native message cutover. The
+	// normal path projects them inline at durable ingress; this is the retry
+	// path for rows accepted by an older API replica during a rolling deploy.
+	if evolutionCallEventKind(item.EventType) != "" {
+		session, err := repo.evolutionWebhookSession(ctx, item.SessionID)
+		if err != nil {
+			return err
+		}
+		session, err = callWebhookRetrySession(item, session)
+		if err != nil {
+			return err
+		}
+		tx, err := repo.db.Pool().Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		handled, err := repo.applyEvolutionCallWebhook(ctx, tx, session, item.EventType, item.Payload)
+		if err != nil {
+			return err
+		}
+		if !handled {
+			return errors.New("canonical Evolution call event was not handled")
+		}
+		return tx.Commit(ctx)
+	}
+	if payload, decodeErr := decodeNativeEvolutionPayload(item.Payload); decodeErr == nil &&
+		exactPairSuccessControl(payload, item.EventType) {
+		session, err := repo.evolutionWebhookSession(ctx, item.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.ID != item.SessionID || session.OrganizationID != item.OrganizationID ||
+			evolutionWebhookSessionInactive(session) {
+			return errWebhookSessionMismatch
+		}
+		if session.Status == "connected" {
+			// Preserve the signed raw inbox until normal retention, but do not
+			// promote a timestamp-free pairing pulse over current session state.
+			return nil
+		}
+		return errPairSuccessAwaitingAuthoritativeConnection
+	}
 	// History-sync control envelopes are not CRM messages. A provider version
 	// can still emit one during reconnect even when the session subscription is
 	// live-only; acknowledge it here so it cannot consume retries or reach Edge.
@@ -406,7 +459,7 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 		}
 		return repo.forwardEvolutionWebhook(ctx, item)
 	}
-	return errors.New("native WhatsApp processor does not support this event")
+	return errNativeWebhookUnsupported
 }
 
 func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
@@ -642,6 +695,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	if nativeIsStatusEvent(event) {
 		statuses := extractNativeEvolutionStatuses(payload)
 		if len(statuses) == 0 {
+			// read-self acknowledges that this account read an incoming message
+			// on another device. It is not proof that a lead read an outbound
+			// message. Keep the durable inbox receipt, but do not retry it or
+			// project it onto message/outbox delivery state.
+			if nativeIsReadSelfOnlyReceipt(payload, event) {
+				return true, nil
+			}
 			return false, nil
 		}
 		return true, repo.processNativeEvolutionStatuses(ctx, item, statuses)
@@ -653,6 +713,18 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		messages = withoutNativeEvolutionGroupMessages(messages)
 		if len(messages) == 0 {
 			return true, nil
+		}
+		if snapshotRow, ok := nativeNonLeadUnavailableViewOnceCandidate(item, payload, messages); ok {
+			verified, verifyErr := repo.nonLeadUnavailableViewOnceLedgerMatches(ctx, item, messages[0], snapshotRow)
+			if verifyErr != nil {
+				return true, verifyErr
+			}
+			if verified {
+				// The provider supplied no recoverable content. The ingress-owned
+				// snapshot and its durable ledger both prove there was no lead
+				// binding. Keep the payload in the inbox as a processed control.
+				return true, nil
+			}
 		}
 		for _, message := range messages {
 			// Unsupported protocol shapes remain in the durable inbox and can
@@ -763,6 +835,251 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		wakeWhatsAppMediaWorker()
 	}
 	return true, nil
+}
+
+// An unavailable view-once notification has no message body to recover. Only
+// the exact observed envelope, with one unlinked v1 routing snapshot, may be
+// acknowledged as a non-lead control. A lead-bound or future mixed envelope
+// stays on the existing retry path with its original payload intact.
+func nativeNonLeadUnavailableViewOnceCandidate(
+	item pendingEvolutionWebhook,
+	payload map[string]any,
+	messages []nativeEvolutionMessage,
+) (map[string]any, bool) {
+	if len(messages) != 1 || len(payload) != 5 ||
+		!strings.EqualFold(strings.TrimSpace(nativeEvolutionEventName(payload, item.EventType)), "message") {
+		return nil, false
+	}
+	for key := range payload {
+		switch key {
+		case "__vimob_ingress", "data", "event", "instanceId", "instanceName":
+		default:
+			return nil, false
+		}
+	}
+	if _, ok := payload["event"].(string); !ok {
+		return nil, false
+	}
+	for _, key := range []string{"instanceId", "instanceName"} {
+		if _, ok := payload[key].(string); !ok {
+			return nil, false
+		}
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok || len(data) != 4 {
+		return nil, false
+	}
+	unavailable, unavailableOK := data["IsUnavailable"].(bool)
+	unavailableType, typeOK := data["UnavailableType"].(string)
+	if !unavailableOK || !unavailable || !typeOK || unavailableType != "view_once" {
+		return nil, false
+	}
+	for key := range data {
+		switch key {
+		case "DecryptFailMode", "Info", "IsUnavailable", "UnavailableType":
+		default:
+			return nil, false
+		}
+	}
+	info, ok := data["Info"].(map[string]any)
+	if !ok || len(info) == 0 {
+		return nil, false
+	}
+	fromMe, fromMeOK := info["IsFromMe"].(bool)
+	isGroup, groupOK := info["IsGroup"].(bool)
+	if !fromMeOK || fromMe || !groupOK || isGroup {
+		return nil, false
+	}
+	for key := range info {
+		switch key {
+		case "AddressingMode", "BroadcastListOwner", "BroadcastRecipients",
+			"Category", "Chat", "DeviceSentMeta", "Edit", "ID", "IsFromMe",
+			"IsGroup", "MediaType", "MsgBotInfo", "MsgMetaInfo", "Multicast",
+			"PushName", "RecipientAlt", "Sender", "SenderAlt", "ServerID",
+			"Timestamp", "Type", "VerifiedName":
+		default:
+			return nil, false
+		}
+	}
+	message := messages[0]
+	if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" ||
+		message.FromMe || message.IsGroup || message.IsReaction || message.IsDeletion ||
+		message.UnsupportedMessage || message.HasCampaignSignal ||
+		message.MessageType != "text" || strings.TrimSpace(message.Content) != "" ||
+		message.MediaURL != "" || message.MediaBase64 != "" {
+		return nil, false
+	}
+	ingress := mapFromAny(payload[evolutionWebhookRoutingMetaKey])
+	envelope := mapFromAny(ingress["routing_snapshot"])
+	rows := nativeObjectList(envelope["messages"])
+	routingKey, routingKeyOK := ingress["routing_key"].(string)
+	if len(ingress) != 2 || len(envelope) != 2 || len(rows) != 1 ||
+		!routingKeyOK || strings.TrimSpace(routingKey) == "" {
+		return nil, false
+	}
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(item.Payload,
+		nativeEvolutionSession{ID: item.SessionID, OrganizationID: item.OrganizationID}, message)
+	if err != nil || snapshot == nil || snapshot.State != "unlinked" ||
+		snapshot.TargetMode != "snapshot" || snapshot.ContextKind != "organic" ||
+		snapshot.ContextProof != "" || snapshot.EventLeadID != "" ||
+		snapshot.CurrentLeadID != "" ||
+		snapshot.ActiveBindingID != "" || snapshot.RuleID != "" ||
+		snapshot.OriginRoundRobinID != "" || snapshot.QuarantineReason != "" ||
+		snapshot.BindingEligible || snapshot.ManagedMessageDistribution ||
+		snapshot.ManagedProviderEventPending || snapshot.ManagedProviderEventHandled ||
+		snapshot.RoutingKey != routingKey {
+		return nil, false
+	}
+	row := rows[0]
+	for _, field := range []string{
+		"event_lead_id", "current_lead_id", "conversation_id", "active_binding_id",
+		"rule_id", "origin_round_robin_id", "quarantine_reason", "context_proof",
+	} {
+		if _, present := row[field]; !present {
+			return nil, false
+		}
+	}
+	return row, true
+}
+
+func (repo Repository) nonLeadUnavailableViewOnceLedgerMatches(
+	ctx context.Context,
+	item pendingEvolutionWebhook,
+	message nativeEvolutionMessage,
+	snapshotRow map[string]any,
+) (bool, error) {
+	encoded, err := json.Marshal(snapshotRow)
+	if err != nil {
+		return false, err
+	}
+	var matches bool
+	err = repo.db.Pool().QueryRow(ctx, `
+		select count(*) = 1
+		from public.whatsapp_webhook_inbox as inbox
+		join public.whatsapp_webhook_routing_snapshots as route
+		  on route.organization_id = inbox.organization_id
+		 and route.session_id = inbox.session_id
+		 and route.inbox_event_key = inbox.event_key
+		where inbox.id = $1::uuid
+		  and inbox.organization_id = $2::uuid
+		  and inbox.session_id = $3::uuid
+		  and inbox.processing_lane = $4
+		  and route.provider_message_id = $5
+		  and route.snapshot = $6::jsonb
+		  and route.processing_lane = inbox.processing_lane
+		  and route.target_mode = 'snapshot'
+		  and route.binding_eligible = false
+		  and route.snapshot->>'state' = 'unlinked'
+		  and route.snapshot->>'event_lead_id' is null
+		  and route.snapshot->>'current_lead_id' is null
+		  and not exists (
+		    select 1 from public.whatsapp_messages as message
+		    where message.organization_id = inbox.organization_id
+		      and message.session_id = inbox.session_id
+		      and message.lead_id is not null
+		      and (message.provider_message_id = route.provider_message_id
+		        or (message.provider_message_id is null and message.message_id = route.provider_message_id))
+		  )
+		  and (
+		    route.snapshot->>'conversation_id' is null
+		    or exists (
+		      select 1 from public.whatsapp_conversations as conversation
+		      where conversation.id = (route.snapshot->>'conversation_id')::uuid
+		        and conversation.organization_id = inbox.organization_id
+		        and conversation.session_id = inbox.session_id
+		        and conversation.lead_id is null
+		        and not exists (
+		          select 1 from public.whatsapp_conversation_lead_bindings as binding
+		          where binding.conversation_id = conversation.id
+		            and binding.active_to is null
+		        )
+		    )
+		  )
+	`, item.ID, item.OrganizationID, item.SessionID, item.ProcessingLane,
+		message.ProviderMessageID, string(encoded)).Scan(&matches)
+	return matches, err
+}
+
+func nativeIsReadSelfOnlyReceipt(payload map[string]any, event string) bool {
+	providerEvent, eventIsString := payload["event"].(string)
+	state, stateIsString := payload["state"].(string)
+	if !eventIsString || !stateIsString ||
+		!strings.EqualFold(strings.TrimSpace(event), "receipt") ||
+		!strings.EqualFold(strings.TrimSpace(providerEvent), "receipt") ||
+		!strings.EqualFold(strings.TrimSpace(state), "ReadSelf") {
+		return false
+	}
+	data, dataIsObject := payload["data"].(map[string]any)
+	if !dataIsObject || len(payload) != 6 || len(data) != 13 {
+		return false
+	}
+	// This is the exact provider Receipt envelope observed in the canary. A
+	// future shape is held for review instead of discarding a mixed message.
+	for key := range payload {
+		switch key {
+		case "__vimob_ingress", "data", "event", "instanceId", "instanceName", "state":
+		default:
+			return false
+		}
+	}
+	for key := range data {
+		switch key {
+		case "AddressingMode", "BroadcastListOwner", "BroadcastRecipients",
+			"Chat", "IsFromMe", "IsGroup", "MessageIDs", "MessageSender",
+			"RecipientAlt", "Sender", "SenderAlt", "Timestamp", "Type":
+		default:
+			return false
+		}
+	}
+	receiptType, typeIsString := data["Type"].(string)
+	if !typeIsString || !strings.EqualFold(strings.TrimSpace(receiptType), "read-self") {
+		return false
+	}
+	for _, field := range []string{"instanceId", "instanceName"} {
+		if _, ok := payload[field].(string); !ok {
+			return false
+		}
+	}
+	for _, field := range []string{
+		"AddressingMode", "BroadcastListOwner", "Chat", "MessageSender",
+		"RecipientAlt", "Sender", "SenderAlt", "Timestamp",
+	} {
+		if _, ok := data[field].(string); !ok {
+			return false
+		}
+	}
+	if data["BroadcastRecipients"] != nil {
+		return false
+	}
+	if _, ok := data["IsFromMe"].(bool); !ok {
+		return false
+	}
+	if isGroup, ok := data["IsGroup"].(bool); !ok || isGroup {
+		return false
+	}
+	ingress, ok := payload["__vimob_ingress"].(map[string]any)
+	if !ok || len(ingress) != 2 || ingress["routing_key"] != evolutionWebhookSessionRoute {
+		return false
+	}
+	snapshot, ok := ingress["routing_snapshot"].(map[string]any)
+	if !ok || len(snapshot) != 2 || snapshot["version"] != float64(1) {
+		return false
+	}
+	messages, ok := snapshot["messages"].([]any)
+	if !ok || len(messages) != 0 {
+		return false
+	}
+	ids, ok := data["MessageIDs"].([]any)
+	if !ok || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		value, ok := id.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func nativeEvolutionMessagesContainMedia(messages []nativeEvolutionMessage) bool {
@@ -2626,7 +2943,15 @@ func ensureNativeEvolutionConversation(
 				organization_id, session_id, lead_id, assigned_user_id, remote_jid,
 				contact_phone, contact_name, is_group, unread_count, metadata
 			) values (
-				$1::uuid, $2::uuid, null, nullif($3, '')::uuid, $4,
+				$1::uuid, $2::uuid, null, case when exists (
+				  select 1 from public.users app_user
+				  join public.organization_members member
+				    on member.user_id = app_user.id and member.organization_id = $1::uuid
+				  where app_user.id = nullif($3, '')::uuid
+				    and coalesce(app_user.is_active, false) = true
+				    and coalesce(member.is_active, false) = true
+				    and member.deleted_at is null
+				) then nullif($3, '')::uuid else null end, $4,
 				nullif($5, ''), nullif($6, ''), $7, 0, '{"source":"evolution_go_native"}'::jsonb
 			)
 			on conflict (session_id, remote_jid)
@@ -2898,7 +3223,15 @@ func reconcileNativeEvolutionConversationIdentity(
 			set remote_jid = $4,
 			    contact_phone = coalesce(nullif($5, ''), contact_phone),
 			    contact_name = coalesce(nullif(contact_name, ''), nullif($6, ''), nullif($5, '')),
-			    assigned_user_id = coalesce(assigned_user_id, nullif($7, '')::uuid),
+			    assigned_user_id = coalesce(assigned_user_id, case when exists (
+			      select 1 from public.users app_user
+			      join public.organization_members member
+			        on member.user_id = app_user.id and member.organization_id = $1::uuid
+			      where app_user.id = nullif($7, '')::uuid
+			        and coalesce(app_user.is_active, false) = true
+			        and coalesce(member.is_active, false) = true
+			        and member.deleted_at is null
+			    ) then nullif($7, '')::uuid else null end),
 			    deleted_at = null,
 			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
 			      'promoted_from_remote_jid', $8,
@@ -3998,6 +4331,12 @@ func nativeEvolutionMessageMetadata(message nativeEvolutionMessage, conversation
 		"whatsapp_attribution": nativeCampaignAttribution(message),
 		"whatsapp_referral":    nativeCampaignReferralSnapshot(message),
 	}
+	if message.MessageType == "contact" && message.ContactCardVCard != "" {
+		metadata["whatsapp_contact_card"] = map[string]any{
+			"display_name": message.ContactCardDisplayName,
+			"vcard":        message.ContactCardVCard,
+		}
+	}
 	if conversation.LeadResolutionQuarantineReason != "" {
 		metadata["lead_resolution_quarantine"] = map[string]any{
 			"reason":      conversation.LeadResolutionQuarantineReason,
@@ -4521,6 +4860,13 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 	if err != nil {
 		return err
 	}
+	// The SQL deferral validates the full v1 status-only envelope and the
+	// worker lease. Synthetic deferred replays have no live inbox payload and
+	// retain the existing retry behavior when their target is still absent.
+	partialLiveReceipt := item.ProcessingLane == "live" &&
+		item.EventType == "receipt" && item.ID != "" && len(item.Payload) > 0 &&
+		len(statuses) == 1 &&
+		(statuses[0].Status == "read" || statuses[0].Status == "delivered")
 	receiptMessageIDs := make([]string, 0)
 	for _, receipt := range statuses {
 		receiptMessageIDs = append(receiptMessageIDs, receipt.MessageIDs...)
@@ -4628,6 +4974,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 				tx,
 				session.OrganizationID,
 				notificationReceipt,
+				partialLiveReceipt,
 			)
 			if err != nil {
 				return err
@@ -4644,7 +4991,24 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("message status target not found yet: %s", strings.Join(missing, ","))
+			if partialLiveReceipt {
+				var deferred int
+				if err := tx.QueryRow(ctx, `
+					select private.defer_partial_v1_live_receipt_ids(
+					  $1::uuid,$2::uuid,$3::uuid,$4::jsonb,
+					  $5,$6::timestamptz,$7::text[],$8
+					)
+				`, item.ID, session.OrganizationID, session.ID,
+					string(item.Payload), receipt.Status, receipt.OccurredAt,
+					uniqueStrings(missing...), whatsappWebhookWorkerID).Scan(&deferred); err != nil {
+					return err
+				}
+				if deferred != len(uniqueStrings(missing...)) {
+					return fmt.Errorf("partial live receipt deferral count mismatch")
+				}
+				continue
+			}
+			return fmt.Errorf("message status target not found yet: count=%d", len(missing))
 		}
 	}
 	for _, outboxID := range failedOutboxIDs {
@@ -4660,6 +5024,7 @@ func reconcileNativeNotificationWhatsAppReceipt(
 	tx pgx.Tx,
 	organizationID string,
 	receipt nativeEvolutionStatus,
+	ignoreNotFound bool,
 ) (map[string]bool, error) {
 	matched := map[string]bool{}
 	status := strings.ToLower(strings.TrimSpace(receipt.Status))
@@ -4691,8 +5056,11 @@ func reconcileNativeNotificationWhatsAppReceipt(
 			return nil, fmt.Errorf("decode notification WhatsApp receipt outcome: %w", err)
 		}
 		reconciled, err := nativeNotificationReceiptOutcomeMatched(result.Outcome)
+		if ignoreNotFound && errors.Is(err, errNativeNotificationReceiptTargetNotFound) {
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("notification WhatsApp receipt %s: %w", messageID, err)
+			return nil, fmt.Errorf("notification WhatsApp receipt: %w", err)
 		}
 		if reconciled {
 			matched[messageID] = true
@@ -4705,7 +5073,9 @@ func nativeNotificationReceiptOutcomeMatched(outcome string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
 	case "applied", "already_applied", "stale":
 		return true, nil
-	case "not_found", "ambiguous", "invalid_status":
+	case "not_found":
+		return false, errNativeNotificationReceiptTargetNotFound
+	case "ambiguous", "invalid_status":
 		return false, fmt.Errorf("reconciliation rejected outcome %q", outcome)
 	default:
 		return false, fmt.Errorf("unexpected reconciliation outcome %q", outcome)

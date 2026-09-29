@@ -96,6 +96,12 @@ func newHub(store EventStore, logger *slog.Logger) *Hub {
 }
 
 func (hub *Hub) Start(ctx context.Context) error {
+	return hub.StartWithPrune(ctx, true)
+}
+
+// StartWithPrune always starts durable fanout. Retention pruning is optional
+// so read-serving API replicas can keep SSE live without running global jobs.
+func (hub *Hub) StartWithPrune(ctx context.Context, pruneEnabled bool) error {
 	if hub == nil || hub.store == nil {
 		return nil
 	}
@@ -119,7 +125,9 @@ func (hub *Hub) Start(ctx context.Context) error {
 	}
 
 	go hub.tailLoop(tailerCtx, cursor)
-	go hub.pruneLoop(tailerCtx)
+	if pruneEnabled {
+		go hub.pruneLoop(tailerCtx)
+	}
 	return nil
 }
 

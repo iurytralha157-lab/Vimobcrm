@@ -1,0 +1,223 @@
+diff --git a/Dockerfile b/Dockerfile
+index ddecb12..1407daf 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -22,7 +22,7 @@ ARG VERSION=dev
+ RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o server ./cmd/evolution-go
+ 
+ FROM build AS test
+-RUN CGO_ENABLED=1 go test github.com/purpshell/meowcaller/... ./pkg/config ./pkg/whatsmeow/service ./pkg/call/... ./pkg/contact/... ./pkg/routes ./cmd/evolution-go
++RUN CGO_ENABLED=1 go test github.com/purpshell/meowcaller/... ./pkg/config ./pkg/middleware ./pkg/whatsmeow/service ./pkg/call/... ./pkg/contact/... ./pkg/routes ./cmd/evolution-go
+ 
+ FROM alpine:3.19.1 AS final
+ 
+diff --git a/cmd/evolution-go/main.go b/cmd/evolution-go/main.go
+index c264dee..23beb01 100644
+--- a/cmd/evolution-go/main.go
++++ b/cmd/evolution-go/main.go
+@@ -229,7 +229,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
+ 	passkey_handler.RegisterRoutes(r, whatsmeowService)
+ 
+ 	routes.NewRouter(
+-		auth_middleware.NewMiddleware(config, instanceService),
++		auth_middleware.NewMiddleware(runtimeCtx, instanceService),
+ 		instance_handler.NewInstanceHandler(instanceService, config),
+ 		user_handler.NewUserHandler(userService),
+ 		send_handler.NewSendHandler(sendMessageService),
+@@ -255,8 +255,8 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
+ 		token := c.Query("token")
+ 		instanceId := c.Query("instanceId")
+ 
+-		if token != config.GlobalApiKey {
+-			logger.LogError("Token inválido: %s", token)
++		if !auth_middleware.ValidAdminToken(runtimeCtx, token) {
++			logger.LogError("Token inválido para WebSocket")
+ 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token inválido"})
+ 			return
+ 		}
+diff --git a/pkg/config/config.go b/pkg/config/config.go
+index 3e53bcd..3767617 100644
+--- a/pkg/config/config.go
++++ b/pkg/config/config.go
+@@ -252,8 +252,10 @@ func Load() *Config {
+ 	databaseSaveMessages := os.Getenv(config_env.DATABASE_SAVE_MESSAGES)
+ 	panicIfEmpty(config_env.DATABASE_SAVE_MESSAGES, databaseSaveMessages)
+ 
+-	globalApiKey := os.Getenv(config_env.GLOBAL_API_KEY)
+-	panicIfEmpty(config_env.GLOBAL_API_KEY, globalApiKey)
++	globalApiKey := strings.TrimSpace(os.Getenv(config_env.GLOBAL_API_KEY))
++	if !hasLicenseBootstrapCredential(globalApiKey, os.Getenv("EVOLUTION_OPERATOR_EMAIL")) {
++		logger.LogFatal("[CONFIG] configure GLOBAL_API_KEY or EVOLUTION_OPERATOR_EMAIL to activate Evolution Go")
++	}
+ 
+ 	clientName := os.Getenv(config_env.CLIENT_NAME)
+ 
+@@ -453,6 +455,10 @@ func loadMinioConfig(config *Config) {
+ 	config.MinioRegion = minioRegion
+ }
+ 
++func hasLicenseBootstrapCredential(globalAPIKey, operatorEmail string) bool {
++	return strings.TrimSpace(globalAPIKey) != "" || strings.TrimSpace(operatorEmail) != ""
++}
++
+ func panicIfEmpty(key, value string) {
+ 	if value == "" {
+ 		if os.Getenv("DEBUG_ENABLED") != "1" {
+diff --git a/pkg/config/license_bootstrap_test.go b/pkg/config/license_bootstrap_test.go
+new file mode 100644
+index 0000000..9a07f5a
+--- /dev/null
++++ b/pkg/config/license_bootstrap_test.go
+@@ -0,0 +1,35 @@
++package config
++
++import "testing"
++
++func TestLoadAllowsOperatorEmailWithoutGlobalAPIKey(t *testing.T) {
++	t.Setenv("POSTGRES_USERS_DB", "postgres://unused:unused@localhost/unused")
++	t.Setenv("DATABASE_SAVE_MESSAGES", "false")
++	t.Setenv("GLOBAL_API_KEY", "")
++	t.Setenv("EVOLUTION_OPERATOR_EMAIL", "operator@example.com")
++	t.Setenv("AMQP_URL", "")
++	t.Setenv("MINIO_ENABLED", "false")
++
++	cfg := Load()
++	if cfg.GlobalApiKey != "" {
++		t.Fatalf("GLOBAL_API_KEY = %q, want empty for auto-activation", cfg.GlobalApiKey)
++	}
++}
++
++func TestLicenseBootstrapRequiresKeyOrOperatorEmail(t *testing.T) {
++	for _, tc := range []struct {
++		name, globalAPIKey, operatorEmail string
++		want                              bool
++	}{
++		{name: "missing both", want: false},
++		{name: "whitespace only", globalAPIKey: "  ", operatorEmail: "  ", want: false},
++		{name: "existing key", globalAPIKey: "license-key", want: true},
++		{name: "registered operator", operatorEmail: " operator@example.com ", want: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := hasLicenseBootstrapCredential(tc.globalAPIKey, tc.operatorEmail); got != tc.want {
++				t.Fatalf("hasLicenseBootstrapCredential() = %v, want %v", got, tc.want)
++			}
++		})
++	}
++}
+diff --git a/pkg/middleware/auth_middleware.go b/pkg/middleware/auth_middleware.go
+index 0a8e967..9c7eec6 100644
+--- a/pkg/middleware/auth_middleware.go
++++ b/pkg/middleware/auth_middleware.go
+@@ -1,9 +1,9 @@
+ package auth_middleware
+ 
+ import (
++	"crypto/subtle"
+ 	"net/http"
+ 
+-	"github.com/evolution-foundation/evolution-go/pkg/config"
+ 	instance_service "github.com/evolution-foundation/evolution-go/pkg/instance/service"
+ 	"github.com/gin-gonic/gin"
+ )
+@@ -13,11 +13,24 @@ type Middleware interface {
+ 	AuthAdmin(ctx *gin.Context)
+ }
+ 
++type LicenseState interface {
++	IsActive() bool
++	APIKey() string
++}
++
+ type middleware struct {
+-	config          *config.Config
++	license         LicenseState
+ 	instanceService instance_service.InstanceService
+ }
+ 
++func ValidAdminToken(license LicenseState, token string) bool {
++	if license == nil || !license.IsActive() || token == "" {
++		return false
++	}
++	key := license.APIKey()
++	return key != "" && len(token) == len(key) && subtle.ConstantTimeCompare([]byte(token), []byte(key)) == 1
++}
++
+ func (m middleware) Auth(ctx *gin.Context) {
+ 	token := ctx.GetHeader("apikey")
+ 	if token == "" {
+@@ -43,7 +56,7 @@ func (m middleware) AuthAdmin(ctx *gin.Context) {
+ 		return
+ 	}
+ 
+-	if token != m.config.GlobalApiKey {
++	if !ValidAdminToken(m.license, token) {
+ 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authorized"})
+ 		return
+ 	}
+@@ -51,6 +64,6 @@ func (m middleware) AuthAdmin(ctx *gin.Context) {
+ 	ctx.Next()
+ }
+ 
+-func NewMiddleware(config *config.Config, instanceService instance_service.InstanceService) *middleware {
+-	return &middleware{config: config, instanceService: instanceService}
++func NewMiddleware(license LicenseState, instanceService instance_service.InstanceService) *middleware {
++	return &middleware{license: license, instanceService: instanceService}
+ }
+diff --git a/pkg/middleware/auth_middleware_test.go b/pkg/middleware/auth_middleware_test.go
+new file mode 100644
+index 0000000..1999b2d
+--- /dev/null
++++ b/pkg/middleware/auth_middleware_test.go
+@@ -0,0 +1,52 @@
++package auth_middleware
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++)
++
++type testLicenseState struct {
++	active bool
++	key    string
++}
++
++func (l testLicenseState) IsActive() bool { return l.active }
++func (l testLicenseState) APIKey() string { return l.key }
++
++func TestAdminTokenRequiresActiveLicenseAndNonEmptyKey(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, tc := range []struct {
++		name    string
++		license testLicenseState
++		token   string
++		want    int
++	}{
++		{name: "valid active key", license: testLicenseState{true, "canary-key"}, token: "canary-key", want: http.StatusOK},
++		{name: "wrong key of same length", license: testLicenseState{true, "canary-key"}, token: "canary-kex", want: http.StatusUnauthorized},
++		{name: "short prefix", license: testLicenseState{true, "canary-key"}, token: "canary-ke", want: http.StatusUnauthorized},
++		{name: "empty token", license: testLicenseState{true, "canary-key"}, want: http.StatusUnauthorized},
++		{name: "empty license key", license: testLicenseState{true, ""}, token: "canary-key", want: http.StatusUnauthorized},
++		{name: "inactive license", license: testLicenseState{false, "canary-key"}, token: "canary-key", want: http.StatusUnauthorized},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := ValidAdminToken(tc.license, tc.token); got != (tc.want == http.StatusOK) {
++				t.Fatalf("ValidAdminToken() = %v, want %v", got, tc.want == http.StatusOK)
++			}
++
++			router := gin.New()
++			router.GET("/admin", NewMiddleware(tc.license, nil).AuthAdmin, func(ctx *gin.Context) {
++				ctx.Status(http.StatusOK)
++			})
++			request := httptest.NewRequest(http.MethodGet, "/admin", nil)
++			request.Header.Set("apikey", tc.token)
++			response := httptest.NewRecorder()
++			router.ServeHTTP(response, request)
++			if response.Code != tc.want {
++				t.Fatalf("AuthAdmin status = %d, want %d", response.Code, tc.want)
++			}
++		})
++	}
++}

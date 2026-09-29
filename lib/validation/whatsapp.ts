@@ -67,10 +67,12 @@ export const whatsAppAttendanceEntrySchema = z.object({
 	userName: z.string().trim().min(1),
 	sessionId: uuidSchema,
 	joinedAt: timestampSchema,
+	entrySource: z.string().trim().min(1),
 }).strict()
 
 export const whatsAppAttendanceStateSchema = z.object({
 	joined: z.boolean(),
+	canSend: z.boolean().optional(),
 	currentEntry: whatsAppAttendanceEntrySchema.nullable(),
 	entries: z.array(whatsAppAttendanceEntrySchema),
 	created: z.boolean().optional(),
