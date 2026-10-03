@@ -89,14 +89,14 @@ const claimWhatsAppOutboxQueryTemplate = `
 			  )
 			  and (
 				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
+				or not exists (
 					select 1
 					from public.whatsapp_sessions as delivery_session
 					where delivery_session.id = queued.session_id
 					  and delivery_session.organization_id = queued.organization_id
 					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
 					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
+					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
 				)
 			  )
 			  and exists (
@@ -148,14 +148,14 @@ const claimWhatsAppOutboxQueryTemplate = `
 			  )
 			  and (
 				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
+				or not exists (
 					select 1
 					from public.whatsapp_sessions as delivery_session
 					where delivery_session.id = queued.session_id
 					  and delivery_session.organization_id = queued.organization_id
 					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
 					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
+					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
 				)
 			  )
 			  and exists (
@@ -196,14 +196,14 @@ const claimWhatsAppOutboxQueryTemplate = `
 			  )
 			  and (
 				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
+				or not exists (
 					select 1
 					from public.whatsapp_sessions as delivery_session
 					where delivery_session.id = queued.session_id
 					  and delivery_session.organization_id = queued.organization_id
 					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
 					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
+					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
 				)
 			  )
 			  and exists (
@@ -1179,7 +1179,6 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		batch,
 		whatsappOutboxWorkerID,
 		afterConversationID,
-		string(lane),
 		randomHex(16),
 	)
 	if err != nil {
@@ -1672,11 +1671,15 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 
 func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, cause error, permanent bool, outcomeUnknown bool) error {
 	status := "retry"
+	lastError := cause.Error()
 	if outcomeUnknown {
 		// A timeout or broken response can happen after WhatsApp accepted the
 		// stanza. Evolution Go documents the custom message ID but does not
 		// guarantee exactly-once delivery, so automatic resend is unsafe.
 		status = "dead"
+		// The database reconciliation trigger requires this exact marker before
+		// a late signed provider acknowledgement may heal the dead row.
+		lastError = whatsappOutboxProviderUnknownMarker
 	} else if permanent {
 		status = "failed"
 	} else if item.Attempts >= item.MaxAttempts {
@@ -1704,7 +1707,7 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $4
-	`, item.ID, status, cause.Error(), item.LeaseToken)
+	`, item.ID, status, lastError, item.LeaseToken)
 	if err != nil {
 		return err
 	}

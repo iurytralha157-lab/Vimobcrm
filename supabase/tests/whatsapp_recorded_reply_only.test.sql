@@ -77,7 +77,13 @@ values (
   'recorded-reply-test@example.test',
   'admin',
   true
-);
+)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values (
@@ -85,7 +91,10 @@ values (
   'ba000000-0000-4000-8000-000000000001',
   'admin',
   true
-);
+)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.leads (id, organization_id, assigned_user_id, name, phone, source)
 values (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -13,9 +14,18 @@ import (
 )
 
 func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.T) {
-	databaseURL := os.Getenv("WHATSAPP_TEST_DATABASE_URL")
+	databaseURL := strings.TrimSpace(os.Getenv("WHATSAPP_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
+	}
+	target, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatalf("parse WHATSAPP_TEST_DATABASE_URL: %v", err)
+	}
+	switch strings.ToLower(target.Hostname()) {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		t.Fatalf("WHATSAPP_TEST_DATABASE_URL must use a loopback host, got %q", target.Hostname())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -34,8 +44,14 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		if _, err := postgres.Pool().Exec(cleanupCtx, `
+			update public.users set organization_id = null where id = $1::uuid;
+			delete from public.organizations where id = $2::uuid;
+			delete from public.users where id = $1::uuid;
+			delete from auth.users where id = $1::uuid
+		`, userID, organizationID); err != nil {
+			t.Errorf("cleanup outbox conversation fence fixture: %v", err)
+		}
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -58,12 +74,22 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +159,8 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, '5511999990101@s.whatsapp.net', 'text',
-			'{"action":"send.text"}'::jsonb, 'processing', now(), $6
+			'{"action":"send.text","body":{"number":"5511999990101","text":"pending projection"}}'::jsonb,
+			'processing', now(), $6
 		)
 		returning id::text
 	`, organizationID, sessionID, pendingConversationID, pendingMessageID, clientMessageID, leaseToken).Scan(&outboxID); err != nil {
@@ -170,7 +197,7 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	`, outboxID).Scan(&outboxStatus, &outboxLockedBy, &outboxProviderID); err != nil {
 		t.Fatal(err)
 	}
-	if outboxStatus != "processing" || outboxLockedBy != leaseToken || outboxProviderID != "" {
+	if outboxStatus != "processing" || outboxLockedBy != leaseToken || outboxProviderID != deterministicProviderMessageID(clientMessageID) {
 		t.Fatalf("outbox mutated after collision: status=%q locked_by=%q provider_id=%q", outboxStatus, outboxLockedBy, outboxProviderID)
 	}
 
@@ -200,9 +227,18 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 }
 
 func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t *testing.T) {
-	databaseURL := os.Getenv("WHATSAPP_TEST_DATABASE_URL")
+	databaseURL := strings.TrimSpace(os.Getenv("WHATSAPP_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
+	}
+	target, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatalf("parse WHATSAPP_TEST_DATABASE_URL: %v", err)
+	}
+	switch strings.ToLower(target.Hostname()) {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		t.Fatalf("WHATSAPP_TEST_DATABASE_URL must use a loopback host, got %q", target.Hostname())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -221,8 +257,14 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		if _, err := postgres.Pool().Exec(cleanupCtx, `
+			update public.users set organization_id = null where id = $1::uuid;
+			delete from public.organizations where id = $2::uuid;
+			delete from public.users where id = $1::uuid;
+			delete from auth.users where id = $1::uuid
+		`, userID, organizationID); err != nil {
+			t.Errorf("cleanup outbox lanes fixture: %v", err)
+		}
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -245,12 +287,22 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -357,12 +409,12 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 			insert into public.whatsapp_outbox (
 				organization_id, session_id, conversation_id, message_id,
 				client_message_id, recipient_jid, message_type, payload,
-				provider_message_id, status, next_attempt_at, created_at
+				status, next_attempt_at, created_at
 			) values (
 				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 				$5, '5511999990000@s.whatsapp.net', $6,
 				jsonb_build_object('action', $7, 'body', jsonb_build_object('number', '5511999990000')),
-				$5, 'pending', now() - $8::interval, now() - $8::interval
+				'pending', now() - $8::interval, now() - $8::interval
 			)
 			returning id::text
 		`, organizationID, sessionID, conversationID, messageID, clientID, messageType, action, age).Scan(&outboxID); err != nil {

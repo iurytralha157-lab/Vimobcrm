@@ -18,14 +18,15 @@ select has_trigger(
 
 select results_eq(
   $$
-    select column_name::text
+    select column_name::text collate "C"
     from information_schema.columns
     where table_schema = 'public'
       and table_name = 'whatsapp_attendance_entries'
     order by ordinal_position
   $$,
   $$
-    values
+    select expected.column_name collate "C"
+    from (values
       ('id'::text),
       ('organization_id'::text),
       ('conversation_id'::text),
@@ -41,6 +42,7 @@ select results_eq(
       ('bootstrap_ingress_sequence'::text),
       ('bootstrap_provider_occurred_at'::text),
       ('bootstrap_inbox_created_at'::text)
+    ) as expected(column_name)
   $$,
   'the attendance ledger exposes manual and verified CTWA bootstrap fields'
 );
@@ -540,24 +542,7 @@ with managed_auto_reply_state as (
     pg_catalog.to_regprocedure(
       'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'
     ) as function_oid,
-    count(trigger_state.oid) as related_trigger_count,
-    count(trigger_state.oid) filter (
-      where trigger_state.tgenabled in ('O', 'A')
-        and (
-          (
-            trigger_state.tgname = 'trg_reserve_managed_whatsapp_distribution_auto_reply'
-            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
-              'private.reserve_managed_whatsapp_distribution_auto_reply_from_entry()'
-            )::oid
-          )
-          or (
-            trigger_state.tgname = 'trg_enqueue_managed_whatsapp_auto_reply'
-            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
-              'private.enqueue_managed_whatsapp_auto_reply_from_entry()'
-            )::oid
-          )
-        )
-    ) as valid_trigger_count
+    count(trigger_state.oid) as related_trigger_count
   from pg_catalog.pg_trigger as trigger_state
   where trigger_state.tgrelid = 'public.lead_entry_events'::regclass
     and trigger_state.tgname in (
@@ -567,28 +552,21 @@ with managed_auto_reply_state as (
     and not trigger_state.tgisinternal
 )
 select ok(
-  (
-    function_oid is null
-    and related_trigger_count = 0
-  )
-  or (
-    function_oid is not null
-    and related_trigger_count = 2
-    and valid_trigger_count = 2
-    and position(
-      $$whatsapp_attendance_required$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
-    and position(
-      $$attended_message.capture_state = 'captured'$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
-    and position(
-      $$'captured',$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
-  ),
-  'managed auto-reply stays absent or requires exact attendance before enqueue'
+  function_oid is not null
+  and related_trigger_count = 0
+  and pg_catalog.to_regprocedure(
+    'private.reserve_managed_whatsapp_distribution_auto_reply_from_entry()'
+  ) is null
+  and pg_catalog.to_regprocedure(
+    'private.enqueue_managed_whatsapp_auto_reply_from_entry()'
+  ) is null
+  and public.enqueue_managed_whatsapp_distribution_auto_reply(
+    null, null, null, null
+  ) = '{"handled":true,"queued":false,"reason":"distribution_auto_reply_disabled"}'::jsonb
+  and pg_catalog.has_function_privilege('service_role', function_oid, 'execute')
+  and not pg_catalog.has_function_privilege('authenticated', function_oid, 'execute')
+  and not pg_catalog.has_function_privilege('anon', function_oid, 'execute'),
+  'managed distribution auto-reply is disabled while the old RPC remains a backend-only no-op'
 )
 from managed_auto_reply_state;
 
@@ -857,9 +835,9 @@ select ok(
         and attribute.attnum > 0
         and not attribute.attisdropped
     )
-  ) like '%NULL means legacy-visible history%'
+  ) like '%NULL/legacy is prior history%recorded preserves received history independently of send consent%'
   ,
-  'the ledger and NULL-as-legacy capture semantics are documented in schema comments'
+  'the ledger and received-history capture semantics are documented in schema comments'
 );
 
 select * from finish();

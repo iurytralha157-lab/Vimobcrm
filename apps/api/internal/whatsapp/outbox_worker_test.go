@@ -453,7 +453,8 @@ func TestOutboxClaimSkipsOfflineProviderWorkButKeepsLocalFinalizationEligible(t 
 		"delivery_session.provider",
 		"delivery_session.is_active",
 		"delivery_session.status",
-		"queued.last_error = '" + whatsappOutboxProviderAcceptedMarker + "' or exists",
+		"queued.last_error = '" + whatsappOutboxProviderAcceptedMarker + "' or not exists",
+		"not in ('connected', 'deleted')",
 	} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("offline-safe outbox claim is missing %q", required)

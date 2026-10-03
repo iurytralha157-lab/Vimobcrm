@@ -53,22 +53,36 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 			raw_app_meta_data, raw_user_meta_data, created_at, updated_at
 		) values ($1::uuid, 'authenticated', 'authenticated', $2, '', now(), '{}'::jsonb, '{}'::jsonb, now(), now());
 		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $3::uuid, 'Sharing Recipient', $2, 'user', true);
+		values ($1::uuid, $3::uuid, 'Sharing Recipient', $2, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active;
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($3::uuid, $1::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, recipientID, recipientEmail, fixture.organizationID); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `
-			delete from public.team_members where organization_id = $1::uuid;
-			delete from public.teams where organization_id = $1::uuid;
-			delete from public.organization_members where organization_id = $1::uuid and user_id = $2::uuid;
+		// Deleting the test organization first cascades its lead activity and
+		// attendance rows, which can still reference the recipient after transfer.
+		_, err := pool.Exec(cleanupCtx, `
+			update public.users set organization_id = null where organization_id = $1::uuid;
+			delete from public.organizations where id = $1::uuid;
 			delete from public.users where id = $2::uuid;
 			delete from auth.users where id = $2::uuid
 		`, fixture.organizationID, recipientID)
+		if err != nil {
+			t.Errorf("cleanup sharing recipient fixture: %v", err)
+		}
 	}()
 
 	repo := NewRepository(postgres, nil, StorageConfig{})

@@ -18,12 +18,21 @@ values ('f7320000-0000-4000-8000-000000000001', 'Sharing Revocation Test', 'shar
 insert into public.users (id, organization_id, name, email, role, is_active)
 values
   ('f7310000-0000-4000-8000-000000000001', 'f7320000-0000-4000-8000-000000000001', 'Sharing Owner', 'sharing-owner@example.test', 'admin', true),
-  ('f7310000-0000-4000-8000-000000000002', 'f7320000-0000-4000-8000-000000000001', 'Sharing Recipient', 'sharing-recipient@example.test', 'user', true);
+  ('f7310000-0000-4000-8000-000000000002', 'f7320000-0000-4000-8000-000000000001', 'Sharing Recipient', 'sharing-recipient@example.test', 'user', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values
   ('f7320000-0000-4000-8000-000000000001', 'f7310000-0000-4000-8000-000000000001', 'admin', true),
-  ('f7320000-0000-4000-8000-000000000001', 'f7310000-0000-4000-8000-000000000002', 'user', true);
+  ('f7320000-0000-4000-8000-000000000001', 'f7310000-0000-4000-8000-000000000002', 'user', true)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.teams (id, organization_id, name, is_active)
 values ('f7330000-0000-4000-8000-000000000001', 'f7320000-0000-4000-8000-000000000001', 'Sharing Team', true);
@@ -38,8 +47,8 @@ insert into public.whatsapp_sessions (
 )
 values ('f7340000-0000-4000-8000-000000000001', 'f7320000-0000-4000-8000-000000000001', 'f7310000-0000-4000-8000-000000000001', 'sharing-revocation-test', 'evolution_go', 'connected');
 
-select col_is('public', 'whatsapp_session_access', 'grant_scope', 'text', 'grant authority is recorded');
-select col_is('public', 'whatsapp_session_access', 'grant_team_id', 'uuid', 'team authority records its team');
+select col_type_is('public', 'whatsapp_session_access', 'grant_scope', 'text', 'grant authority is recorded');
+select col_type_is('public', 'whatsapp_session_access', 'grant_team_id', 'uuid', 'team authority records its team');
 
 insert into public.whatsapp_session_access (
   session_id, user_id, organization_id, granted_by,
