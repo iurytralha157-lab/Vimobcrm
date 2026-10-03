@@ -27,21 +27,22 @@ import {
   matchesWhatsAppMessagesQueryKey,
   isWhatsAppInboxWakePayload,
   mergeWhatsAppMessagesWithLocalState,
+  removeRevokedWhatsAppSession,
   WHATSAPP_MESSAGES_RECONCILE_EVENT,
   whatsappInboxTopic,
   whatsappQueryKeys,
   type WhatsAppQueryScope,
 } from "@/lib/whatsapp-query-cache";
 import { WHATSAPP_UNLINKED_LEAD_SNAPSHOT } from "@/lib/whatsapp-message-input";
+import { isWhatsAppAccessRevokedError } from "@/lib/whatsapp-access-error";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import type { WhatsAppSessionList } from "@/hooks/use-whatsapp-sessions";
 
-const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const WHATSAPP_SEND_RECONCILE_DELAYS_MS = [4_000, 15_000] as const;
 const WHATSAPP_UNCERTAIN_SEND_RECONCILE_DELAYS_MS = [0, 4_000, 15_000, 60_000] as const;
 const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
-const lastWhatsAppSendByUser = new Map<string, number>();
 const realtimeDiagnosticReportedAt = new Map<string, number>();
 const scheduledMessageReconciliations = new Map<string, ReturnType<typeof setTimeout>>();
 const WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS = 60_000;
@@ -715,16 +716,6 @@ export function useSendWhatsAppMessage() {
       }
 	  const expectedLeadId = requireConversationLeadId(conversation);
 
-      const rateLimitUserId = profile?.id || "anonymous";
-      const now = Date.now();
-      const lastSendAt = lastWhatsAppSendByUser.get(rateLimitUserId) || 0;
-
-      if (now - lastSendAt < WHATSAPP_SEND_COOLDOWN_MS) {
-        throw new Error("RATE_LIMIT_LOCAL");
-      }
-
-      lastWhatsAppSendByUser.set(rateLimitUserId, now);
-
       return whatsappAPI.sendMessage(
         conversation.id,
         {
@@ -942,6 +933,19 @@ export function useSendWhatsAppMessage() {
       const errorMessage = error.message || "";
       const leadId = getConversationLeadId(variables.conversation);
       const failureStatus = getWhatsAppSendFailureStatus(error);
+      const accessRevoked = isWhatsAppAccessRevokedError(error);
+
+      if (accessRevoked) {
+        const revokedSessionId = variables.sendSessionId || variables.conversation.session_id;
+        if (revokedSessionId) {
+          queryClient.setQueryData<WhatsAppSessionList>(
+            whatsappQueryKeys.sessions(scope),
+            (sessions) => removeRevokedWhatsAppSession(sessions, revokedSessionId),
+          );
+        }
+        void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessionsScope(scope) });
+        void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+      }
 
       if (context?.optimisticId) {
         const updateFailedMessage = (msg: WhatsAppMessage) =>
@@ -1016,13 +1020,15 @@ export function useSendWhatsAppMessage() {
       }
 
       const normalizedErrorMessage = errorMessage.toLowerCase();
-      const isRateLimited = normalizedErrorMessage.includes("rate_limit_local") ||
-                            normalizedErrorMessage.includes("rate_limit_exceeded") ||
+      const isRateLimited = normalizedErrorMessage.includes("rate_limit_exceeded") ||
                             normalizedErrorMessage.includes("muitas requisi");
       const isDisconnected = normalizedErrorMessage.includes("whatsapp_disconnected") ||
                              normalizedErrorMessage.includes("desconectad") ||
                              normalizedErrorMessage.includes("qr code") ||
                              normalizedErrorMessage.includes("not connected");
+      if (isDisconnected) {
+        void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessionsScope(scope) });
+      }
       const isNumberNotExists = normalizedErrorMessage.includes("nao possui whatsapp") ||
                                 normalizedErrorMessage.includes("nao esta registrado") ||
                                 normalizedErrorMessage.includes("not exist") ||
@@ -1031,7 +1037,10 @@ export function useSendWhatsAppMessage() {
       let title = "Erro ao enviar mensagem";
       let description = errorMessage;
 
-      if (isDisconnected) {
+       if (accessRevoked) {
+         title = "Acesso ao WhatsApp encerrado";
+         description = "Você não tem mais acesso a este número. Inicie uma nova conversa pelo seu WhatsApp ou conecte um número.";
+       } else if (isDisconnected) {
         title = "WhatsApp Desconectado";
         description = "Vá em Configurações > WhatsApp e escaneie o QR Code novamente.";
       } else if (isNumberNotExists) {

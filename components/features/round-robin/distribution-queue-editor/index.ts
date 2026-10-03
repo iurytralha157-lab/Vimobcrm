@@ -4,4 +4,3 @@ export { DistributionQueueConditionValueEditor } from "./DistributionQueueCondit
 export { DistributionQueueMembersSection } from "./DistributionQueueMembersSection";
 export { DistributionQueueRedistributionSection } from "./DistributionQueueRedistributionSection";
 export { DistributionQueueRulesSection } from "./DistributionQueueRulesSection";
-export { DistributionQueueWhatsAppAutoReplySection } from "./DistributionQueueWhatsAppAutoReplySection";

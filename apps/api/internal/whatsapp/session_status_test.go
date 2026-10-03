@@ -309,13 +309,14 @@ func TestSessionStatusCapabilitiesStayOwnerScopedAndAdminOnlyForNotifications(t 
 			ownerUserID: sessionStatusTestUserID,
 		},
 		{
-			name: "member without manage permission has view-only capability",
+			name: "member without manage permission can manage own session",
 			context: tenant.Context{
 				UserID:     sessionStatusTestUserID,
 				MemberRole: "user",
 			},
 			ownerUserID:        sessionStatusTestUserID,
 			supportsManagement: true,
+			wantManage:         true,
 		},
 	}
 

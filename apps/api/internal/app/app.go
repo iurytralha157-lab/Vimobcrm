@@ -54,6 +54,7 @@ type App struct {
 	db       *dbpkg.Postgres
 	auth     *authpkg.Verifier
 	realtime *realtime.Hub
+	whatsapp whatsapp.Handler
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -491,6 +492,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db:       postgres,
 		auth:     authVerifier,
 		realtime: realtimeHub,
+		whatsapp: whatsappHandler,
 	}, nil
 }
 
@@ -514,6 +516,7 @@ func (app *App) Close() {
 	}
 
 	if app.db != nil {
+		app.whatsapp.Close()
 		app.db.Close()
 	}
 

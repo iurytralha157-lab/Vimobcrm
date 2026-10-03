@@ -55,7 +55,10 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and ws.status = 'connected'
-		  and ws.owner_user_id = $2::uuid
+		  and (
+		    ws.owner_user_id = $2::uuid
+		    or (l.assigned_user_id = $2::uuid and ` + sessionGrantExistsSQL("ws", "$2::uuid", true) + `)
+		  )
 		  and ` + leadVisibilitySQL(canViewOwn) + `
 		for update of wm, wc, l`
 }
@@ -165,6 +168,11 @@ func (repo Repository) ReactToMessage(
 	if attendanceEntryID == "" {
 		return ReactToMessageResponse{}, ErrAttendanceRequired
 	}
+	accessGrantID, err := outboundSessionAccessGrantID(ctx, tx,
+		tenantContext.OrganizationID, target.SessionID, tenantContext.UserID)
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
 
 	actorJID, validActorJID := canonicalWhatsAppSelfJID(target.SessionPhone)
 	if !validActorJID {
@@ -194,6 +202,7 @@ func (repo Repository) ReactToMessage(
 			  'delivery', 'outbox',
 			  'intent', 'reaction',
 			  'attendance_entry_id', $13::uuid,
+			  'session_access_grant_id', nullif($14::text, ''),
 			  'whatsapp_attendance_capture', jsonb_build_object(
 			    'state', 'captured', 'attendance_entry_id', $13::uuid
 			  )
@@ -205,7 +214,7 @@ func (repo Repository) ReactToMessage(
 		returning id::text
 	`, tenantContext.OrganizationID, target.ConversationID, target.SessionID, target.LeadID,
 		tenantContext.UserID, providerRequestID, input.ClientReactionID, input.Emoji,
-		target.ProviderMessageID, actorJID, senderName, target.RemoteJID, attendanceEntryID).Scan(&reactionRowID)
+		target.ProviderMessageID, actorJID, senderName, target.RemoteJID, attendanceEntryID, accessGrantID).Scan(&reactionRowID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, existingErr := scanMessage(tx.QueryRow(ctx, `
 			select `+messageSelectFields()+`

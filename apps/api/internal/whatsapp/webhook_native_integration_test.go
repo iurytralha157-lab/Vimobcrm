@@ -174,6 +174,189 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if messageCount != 1 || messageLeadID != leadID || direction != "inbound" || unreadAfter != unreadBefore+1 {
 		t.Fatalf("native replay state = count:%d lead:%s direction:%s unread:%d->%d", messageCount, messageLeadID, direction, unreadBefore, unreadAfter)
 	}
+	var suppressedState, suppressedContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(capture_state, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-text-1'
+	`, organizationID, sessionID).Scan(&suppressedState, &suppressedContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedState != "suppressed" || suppressedContent != "" {
+		t.Fatalf("disabled inbound recording = state:%q content:%q", suppressedState, suppressedContent)
+	}
+
+	// Enable one test number only after the original row was stored. A signed
+	// duplicate must not reveal its formerly suppressed content.
+	repo.functions.inboundRecordingSessionIDs = []string{sessionID}
+	replayAfterEnable := item("messages.upsert", "message_text.json")
+	replayAfterEnable.ID = "77777777-7777-4777-8777-777777777777"
+	replayAfterEnable.CreatedAt = time.Now().UTC()
+	if handled, err := repo.processEvolutionWebhookNative(ctx, replayAfterEnable); err != nil || !handled {
+		t.Fatalf("suppressed replay after opt-in = handled:%v error:%v", handled, err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(capture_state, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-text-1'
+	`, organizationID, sessionID).Scan(&suppressedState, &suppressedContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedState != "suppressed" || suppressedContent != "" {
+		t.Fatalf("persisted suppression changed on retry = state:%q content:%q", suppressedState, suppressedContent)
+	}
+
+	newInbound := replayAfterEnable
+	newInbound.ID = "88888888-8888-4888-8888-888888888888"
+	newInbound.Payload = []byte(strings.ReplaceAll(string(newInbound.Payload), "provider-inbound-text-1", "provider-inbound-recorded-1"))
+	for attempt := 0; attempt < 2; attempt++ {
+		if handled, err := repo.processEvolutionWebhookNative(ctx, newInbound); err != nil || !handled {
+			t.Fatalf("recorded inbound attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		}
+	}
+	var recordedRows int
+	var recordedState, recordedContent, recordedMetadataState string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(capture_state), ''),
+		       coalesce(max(content), ''),
+		       coalesce(max(metadata #>> '{whatsapp_attendance_capture,state}'), '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-recorded-1'
+	`, organizationID, sessionID).Scan(&recordedRows, &recordedState, &recordedContent, &recordedMetadataState); err != nil {
+		t.Fatal(err)
+	}
+	if recordedRows != 1 || recordedState != "recorded" || recordedContent != "Mensagem recebida pelo backend" || recordedMetadataState != "recorded" {
+		t.Fatalf("recorded inbound retry = rows:%d state:%q content:%q metadata:%q", recordedRows, recordedState, recordedContent, recordedMetadataState)
+	}
+	var nonleadConversationID, eventualLeadID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, assigned_user_id, remote_jid, contact_phone, unread_count
+		) values ($1::uuid, $2::uuid, $3::uuid, '5511999992222@s.whatsapp.net', '5511999992222', 0)
+		returning id::text
+	`, organizationID, sessionID, userID).Scan(&nonleadConversationID); err != nil {
+		t.Fatal(err)
+	}
+	nonleadMessage := nativeEvolutionMessage{
+		ProviderMessageID: "provider-nonlead-recorded-1",
+		RemoteJID:         "5511999992222@s.whatsapp.net",
+		ContactPhone:      "5511999992222",
+		Content:           "Histórico antes do cadastro",
+		MessageType:       "text",
+		SentAt:            time.Now().UTC(),
+	}
+	nonleadSession := nativeEvolutionSession{OrganizationID: organizationID, ID: sessionID}
+	nonleadConversation := nativeEvolutionConversation{ID: nonleadConversationID, RemoteJID: nonleadMessage.RemoteJID}
+	firstTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, firstTx, nonleadSession, nonleadConversation, nonleadMessage, "recorded", ""); err != nil || !inserted {
+		_ = firstTx.Rollback(ctx)
+		t.Fatalf("prelead recorded insert = inserted:%v error:%v", inserted, err)
+	}
+	suppressedPreleadMessage := nonleadMessage
+	suppressedPreleadMessage.ProviderMessageID = "provider-nonlead-suppressed-1"
+	suppressedPreleadMessage.Content = "Conteúdo que deve permanecer oculto"
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, firstTx, nonleadSession, nonleadConversation, suppressedPreleadMessage, "suppressed", ""); err != nil || !inserted {
+		_ = firstTx.Rollback(ctx)
+		t.Fatalf("prelead suppressed insert = inserted:%v error:%v", inserted, err)
+	}
+	if err := firstTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.leads (organization_id, assigned_user_id, name, phone, source)
+		values ($1::uuid, $2::uuid, 'Contato registrado depois', '5511999992222', 'manual')
+		returning id::text
+	`, organizationID, userID).Scan(&eventualLeadID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding($1::uuid, $2::uuid, $3::uuid, null)
+	`, organizationID, nonleadConversationID, eventualLeadID); err != nil {
+		t.Fatal(err)
+	}
+	nonleadConversation.LeadID = eventualLeadID
+	nonleadConversation.MessageLeadID = eventualLeadID
+	replayTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, replayTx, nonleadSession, nonleadConversation, nonleadMessage, "recorded", ""); err != nil || inserted {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("prelead replay after registration = inserted:%v error:%v", inserted, err)
+	}
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, replayTx, nonleadSession, nonleadConversation, suppressedPreleadMessage, "recorded", ""); err != nil || inserted {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("suppressed prelead retry after opt-in = inserted:%v error:%v", inserted, err)
+	}
+	if err := replayTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var preleadCapture, preleadLeadID, preleadContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-nonlead-recorded-1'
+	`, organizationID, sessionID).Scan(&preleadCapture, &preleadLeadID, &preleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if preleadCapture != "recorded" || preleadLeadID != "" || preleadContent != nonleadMessage.Content {
+		t.Fatalf("prelead recorded history changed on retry = state:%q lead:%q content:%q", preleadCapture, preleadLeadID, preleadContent)
+	}
+	var suppressedPreleadCapture, suppressedPreleadLeadID, suppressedPreleadContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = $3
+	`, organizationID, sessionID, suppressedPreleadMessage.ProviderMessageID).Scan(&suppressedPreleadCapture, &suppressedPreleadLeadID, &suppressedPreleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedPreleadCapture != "suppressed" || suppressedPreleadLeadID != "" || suppressedPreleadContent != "" {
+		t.Fatalf("suppressed prelead history revived on retry = state:%q lead:%q content:%q", suppressedPreleadCapture, suppressedPreleadLeadID, suppressedPreleadContent)
+	}
+	preleadReplay := item("messages.upsert", "message_text.json")
+	preleadReplay.ID = "99999999-9999-4999-8999-999999999999"
+	preleadReplay.CreatedAt = time.Now().UTC()
+	preleadReplay.Payload = []byte(strings.ReplaceAll(
+		strings.ReplaceAll(string(preleadReplay.Payload), "provider-inbound-text-1", nonleadMessage.ProviderMessageID),
+		"5511999991111", "5511999992222",
+	))
+	if handled, err := repo.processEvolutionWebhookNative(ctx, preleadReplay); err != nil || !handled {
+		t.Fatalf("prelead webhook retry after registration = handled:%v error:%v", handled, err)
+	}
+	var preleadLogRows, preleadPhoneLeadRows int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer from public.whatsapp_inbound_logs
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and match_details->>'message_id' = $3
+	`, organizationID, sessionID, nonleadMessage.ProviderMessageID).Scan(&preleadLogRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer from public.leads
+		where organization_id = $1::uuid and phone = '5511999992222'
+	`, organizationID).Scan(&preleadPhoneLeadRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = $3
+	`, organizationID, sessionID, nonleadMessage.ProviderMessageID).Scan(&preleadCapture, &preleadLeadID, &preleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if preleadLogRows != 0 || preleadPhoneLeadRows != 1 || preleadCapture != "recorded" || preleadLeadID != "" || preleadContent != nonleadMessage.Content {
+		t.Fatalf("prelead webhook retry changed original event = logs:%d leads:%d state:%q lead:%q content:%q", preleadLogRows, preleadPhoneLeadRows, preleadCapture, preleadLeadID, preleadContent)
+	}
+	repo.functions.inboundRecordingSessionIDs = nil
 
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.whatsapp_sessions set phone_number = 'André Rocha' where id = $1::uuid

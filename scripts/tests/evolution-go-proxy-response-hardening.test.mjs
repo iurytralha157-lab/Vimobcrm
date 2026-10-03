@@ -17,7 +17,7 @@ test("status and QR responses omit provider diagnostics and internal identifiers
   const source = await readFile(edgePath, "utf8");
   const statusStart = source.indexOf('if (action === "instance.status")');
   const qrStart = source.indexOf('if (action === "instance.qr")', statusStart);
-  const sendStart = source.indexOf("// Only the private worker", qrStart);
+  const sendStart = source.indexOf("const allowProviderMessageId =", qrStart);
 
   assert.ok(statusStart >= 0);
   assert.ok(qrStart > statusStart);

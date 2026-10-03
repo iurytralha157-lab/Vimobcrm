@@ -614,6 +614,22 @@
     {
       "file": "20260928031110_preserve_manual_property_location.sql",
       "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
+    },
+    {
+      "file": "20261002220000_prepare_whatsapp_recorded_inbound_capture.sql",
+      "sha256": "d65051e8b71edc7f1268cd4ba95fb57c76f2606dbb55272a7424134e24668696"
+    },
+    {
+      "file": "20261002221000_separate_recorded_inbound_reply_signal.sql",
+      "sha256": "2c47132fba0a8a8731760a7240fa1523dd3a6a4a4dcc013ec2dd7fb8f44bcfe5"
+    },
+    {
+      "file": "20261002231521_enforce_whatsapp_session_sharing_scope.sql",
+      "sha256": "03340f166ad8445f0eae4b21aa59c83af8a1d7fc3dcb3e05328966b630c27439"
+    },
+    {
+      "file": "20261003005313_disable_managed_whatsapp_distribution_auto_reply.sql",
+      "sha256": "295b8d0535fb11f948d9af8bbb9052708d94ecf3d262e94dc0e83babb5d2be87"
     }
   ]
 }

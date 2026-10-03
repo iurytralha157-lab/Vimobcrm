@@ -34,14 +34,15 @@ export function getWhatsAppIntegrationAccess(
     isSuperAdmin: input.isSuperAdmin,
     memberRole: input.memberRole,
   });
-  const canManageOwnSessions =
-    isOrganizationAdmin || input.hasManagePermission;
+  // Every member of an organization with WhatsApp can connect and manage
+  // their own number. Sharing a number has its own owner/role guard.
+  const canManageOwnSessions = true;
 
   return {
     canViewStatuses:
       isOrganizationAdmin ||
       input.hasViewPermission ||
-      canManageOwnSessions,
+      input.hasManagePermission,
     canManageOwnSessions,
     canSetNotificationSender: isOrganizationAdmin,
   };

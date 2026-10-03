@@ -27,6 +27,17 @@ func (repo Repository) GetConversationAttendance(
 	if !ok {
 		return AttendanceResponse{}, ErrConversationNotFound
 	}
+	// Establish conversation/lead visibility before returning a distinct
+	// revoked-access error. A guessed session ID must not become an oracle.
+	conversation, err := repo.GetConversation(ctx, tenantContext, conversationID)
+	if err != nil {
+		return AttendanceResponse{}, repo.revokedConversationErrorIfAssigned(
+			ctx, tenantContext, conversationID, input.SendSessionID, input.ExpectedLeadID, err,
+		)
+	}
+	if conversation.SessionID != input.SendSessionID || pointerValue(conversation.LeadID) != input.ExpectedLeadID {
+		return AttendanceResponse{}, ErrConversationNotFound
+	}
 
 	// This endpoint runs whenever the chat is opened. A stable read-only
 	// snapshot keeps the scope and ledger mutually consistent without making
@@ -40,8 +51,11 @@ func (repo Repository) GetConversationAttendance(
 	}
 	defer tx.Rollback(ctx)
 
-	scope, err := lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, false, false, false)
+	scope, err := lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, false, false)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return AttendanceResponse{}, repo.revokedSessionErrorIfShared(ctx, tenantContext, input.SendSessionID)
+		}
 		return AttendanceResponse{}, err
 	}
 	response, err := loadAttendanceResponse(ctx, tx, tenantContext, scope)
@@ -64,6 +78,15 @@ func (repo Repository) JoinConversationAttendance(
 	if !ok {
 		return AttendanceResponse{}, ErrConversationNotFound
 	}
+	conversation, err := repo.GetConversation(ctx, tenantContext, conversationID)
+	if err != nil {
+		return AttendanceResponse{}, repo.revokedConversationErrorIfAssigned(
+			ctx, tenantContext, conversationID, input.SendSessionID, input.ExpectedLeadID, err,
+		)
+	}
+	if conversation.SessionID != input.SendSessionID || pointerValue(conversation.LeadID) != input.ExpectedLeadID {
+		return AttendanceResponse{}, ErrConversationNotFound
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -73,6 +96,9 @@ func (repo Repository) JoinConversationAttendance(
 
 	scope, err := lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return AttendanceResponse{}, repo.revokedSessionErrorIfShared(ctx, tenantContext, input.SendSessionID)
+		}
 		return AttendanceResponse{}, err
 	}
 
@@ -161,18 +187,18 @@ func lockAttendanceScope(
 		bindingLock = " for share of binding"
 	}
 
-	var lockedSessionID string
+	var lockedSessionID, lockedOwnerUserID string
 	err := tx.QueryRow(ctx, `
-		select ws.id::text
+		select ws.id::text, ws.owner_user_id::text
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (not $4::boolean or ws.owner_user_id = $3::uuid)
+		  and (not $4::boolean or ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
 		  and (not $5::boolean or ws.status = 'connected')
-	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireOwner, requireConnected).Scan(&lockedSessionID)
+	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireOwner, requireConnected).Scan(&lockedSessionID, &lockedOwnerUserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrSessionNotFound
 	}
@@ -197,7 +223,8 @@ func lockAttendanceScope(
 		return attendanceScope{}, err
 	}
 
-	visibilityArgs := append(baseConversationArgs(tenantContext), scope.LeadID)
+	visibilityArgs := append(baseConversationArgs(tenantContext), scope.LeadID,
+		requireOwner && lockedOwnerUserID != tenantContext.UserID)
 	var lockedLeadID string
 	err = tx.QueryRow(ctx, `
 		select l.id::text
@@ -205,6 +232,7 @@ func lockAttendanceScope(
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		  and (not $6::boolean or l.assigned_user_id = $2::uuid)
 	`+leadLock, visibilityArgs...).Scan(&lockedLeadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrConversationNotFound
@@ -233,8 +261,14 @@ func lockAttendanceScope(
 		select left(coalesce(nullif(btrim(user_row.name), ''), nullif(btrim(user_row.email), ''), 'Usuario'), 180)
 		from public.users as user_row
 		where user_row.id = $1::uuid
-		  and user_row.organization_id = $2::uuid
 		  and coalesce(user_row.is_active, false) = true
+		  and exists (
+		    select 1 from public.organization_members member
+		    where member.organization_id = $2::uuid
+		      and member.user_id = user_row.id
+		      and coalesce(member.is_active, false) = true
+		      and member.deleted_at is null
+		  )
 	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return attendanceScope{}, ErrConversationNotFound

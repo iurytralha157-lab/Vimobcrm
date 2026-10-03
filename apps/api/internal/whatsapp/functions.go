@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type functionsClient struct {
 	evolutionBackendWebhookURL string
 	webhookProcessorMode       string
 	webhookRolloutSessionIDs   []string
+	inboundRecordingSessionIDs []string
 	db                         *dbpkg.Postgres
 	httpClient                 *http.Client
 	runtimeStats               *whatsappRuntimeCounters
@@ -41,6 +43,9 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
 		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
 		webhookRolloutSessionIDs:   canonicalWhatsAppSessionScope(config.EvolutionGo.WebhookRolloutSessionIDs),
+		// An explicit session scope is required before received history can use
+		// the independent "recorded" state. Empty or unknown values are off.
+		inboundRecordingSessionIDs: canonicalWhatsAppSessionScope(strings.Split(os.Getenv("WHATSAPP_INBOUND_RECORDING_SESSION_IDS"), ",")),
 		db:                         db,
 		httpClient:                 newEvolutionHTTPClient(),
 		runtimeStats:               &whatsappRuntimeCounters{},

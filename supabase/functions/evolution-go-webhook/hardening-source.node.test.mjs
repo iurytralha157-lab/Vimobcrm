@@ -162,6 +162,84 @@ test("suppressed attendance rows are redacted before the first canonical insert"
   );
 });
 
+test("received history is enabled only for named sessions and never rehydrates a suppressed retry", () => {
+  const resolverStart = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
+  const resolverEnd = source.indexOf("async function findStoredMessage(", resolverStart);
+  const resolver = source.slice(resolverStart, resolverEnd);
+  const persisted = resolver.indexOf("const persistedState = persistedWhatsAppMessageCaptureState(storedMessage)");
+  const flag = resolver.indexOf("const recordInbound = inboundRecordingEnabledForSession(session)");
+  const inbox = resolver.indexOf('const { data: inbox');
+  const leadless = resolver.indexOf('reason: "inbound_contact_history"');
+
+  assert.match(source, /Deno\.env\.get\("WHATSAPP_INBOUND_RECORDING_SESSION_IDS"\) \|\| ""/);
+  assert.match(source, /function inboundRecordingEnabledForSession\(session: JsonRecord\)/);
+  assert.ok(persisted > 0 && flag > persisted && leadless > inbox);
+  assert.match(resolver, /if \(!eventBindingIsCurrent \|\| !conversation\?\.id/);
+  assert.match(resolver, /!ingress\?\.inboxEventKey/);
+  assert.match(resolver, /captureState: attendanceEntryId \? "captured" : \(recordInbound \? "recorded" : "suppressed"\)/);
+  assert.match(source, /eventBindingIsCurrent && !leadResolutionQuarantineReason/);
+});
+
+test("recorded history cannot newly trigger AI or managed lead plaintext projection", () => {
+  const handleStart = source.indexOf("async function handleMessages(");
+  const handleEnd = source.indexOf("function statusFromProvider(", handleStart);
+  const handle = source.slice(handleStart, handleEnd);
+  assert.equal((handle.match(/captureDecision\.captureState === "captured"/g) || []).length, 2);
+  assert.match(handle, /processManagedWhatsAppLeadEntry\([\s\S]*?captureDecision\.captureState !== "captured"/);
+  assert.match(handle, /if \(!captureSuppressed\) \{[\s\S]*?updateConversationAfterMessage/);
+});
+
+test("a recorded pre-lead retry cannot acquire a later lead or rewrite its ingress log", () => {
+  const insertStart = source.indexOf("async function insertMessage(");
+  const insertEnd = source.indexOf("async function completeStoredMessageEffects(", insertStart);
+  const insert = source.slice(insertStart, insertEnd);
+  const logStart = source.indexOf("async function logInbound(");
+  const logEnd = source.indexOf("async function triggerAutoReply(", logStart);
+  const log = source.slice(logStart, logEnd);
+  const handleStart = source.indexOf("async function handleMessages(");
+  const handleEnd = source.indexOf("function statusFromProvider(", handleStart);
+  const handle = source.slice(handleStart, handleEnd);
+  const transportStart = source.indexOf("async function reconcileHandledWhatsAppMessageTransport(");
+  const transportEnd = source.indexOf("function normalizeMessage(", transportStart);
+  const transport = source.slice(transportStart, transportEnd);
+
+  assert.match(insert, /existingCaptureState === "recorded" && !existingLeadId && eventLeadId/);
+  assert.match(insert, /return \{ inserted: false, message: existing \};/);
+  assert.match(insert, /const persistedLeadId = existingCaptureState === "recorded" \|\| existingCaptureState === "suppressed"/);
+  assert.equal((insert.match(/lead_id: persistedLeadId/g) || []).length, 2);
+  assert.doesNotMatch(insert, /lead_id: existingLeadId \|\| eventLeadId/);
+  assert.match(log, /if \(existingLeadId !== eventLeadId\)/);
+  assert.doesNotMatch(log, /lead_id: existingLeadId \|\| eventLeadId/);
+  const historicalReplay = handle.indexOf('persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "recorded"');
+  const mediaRecovery = handle.indexOf("const mediaReady = await reconcileHandledWhatsAppMessageTransport(", historicalReplay);
+  const completed = handle.indexOf("await completeStoredMessageEffects(session, storedBeforeProcessing", historicalReplay);
+  const providerBindingLookup = handle.indexOf("await findWhatsAppProviderEventBinding(session, message)");
+  const leadResolution = handle.indexOf("lead = await ensureLead(");
+  const ingressLog = handle.indexOf("await logInbound(", historicalReplay);
+  assert.ok(historicalReplay > 0 && mediaRecovery > historicalReplay && completed > mediaRecovery);
+  assert.ok(completed < providerBindingLookup && providerBindingLookup < leadResolution && leadResolution < ingressLog);
+  assert.match(handle.slice(historicalReplay, providerBindingLookup), /if \(optionalUuid\(recordedConversation\.lead_id\)\)[\s\S]*?processed \+= 1;\s*continue;/);
+  assert.match(transport, /await findMessageByProviderIdentity\([\s\S]*?existing\.id !== expectedMessage\.id/);
+  assert.match(transport, /optionalUuid\(existing\.conversation_id\) !== optionalUuid\(expectedMessage\.conversation_id\)/);
+  assert.match(transport, /optionalUuid\(existing\.lead_id\) !== optionalUuid\(expectedMessage\.lead_id\)/);
+  assert.match(transport, /\.eq\("conversation_id", existing\.conversation_id\)[\s\S]*?\.eq\("from_me", false\)/);
+  assert.match(transport, /updateQuery\.is\("lead_id", null\)/);
+  assert.match(transport, /media_status: "pending"[\s\S]*?return false;/);
+  assert.match(handle.slice(historicalReplay, providerBindingLookup), /if \(!mediaReady\) \{\s*throw new Error\("whatsapp_recorded_prelead_media_pending"\);\s*\}[\s\S]*?await completeStoredMessageEffects/);
+});
+
+test("new recorded media keeps its delivery retryable until Storage is ready", () => {
+  const handleStart = source.indexOf("async function handleMessages(");
+  const handleEnd = source.indexOf("function statusFromProvider(", handleStart);
+  const handle = source.slice(handleStart, handleEnd);
+  const finalMediaGuard = handle.lastIndexOf('persistedWhatsAppMessageCaptureState(result.message) === "recorded"');
+  const completedLedger = handle.lastIndexOf("await completeStoredMessageEffects(");
+  const completedDelivery = handle.lastIndexOf("await completeEvolutionMessageDelivery(");
+  assert.ok(finalMediaGuard > 0 && finalMediaGuard < completedLedger && completedLedger < completedDelivery);
+  assert.match(handle.slice(finalMediaGuard, completedLedger), /result\.message\.media_status !== "ready" \|\| !normalizeText\(result\.message\.media_storage_path\)\.trim\(\)/);
+  assert.match(handle.slice(finalMediaGuard, completedLedger), /throw new Error\("whatsapp_recorded_media_pending"\)/);
+});
+
 test("attendance uses only a valid original provider occurrence timestamp", () => {
   const normalizeStart = source.indexOf("function normalizeMessage(");
   const normalizeEnd = source.indexOf("function previewForMessage(", normalizeStart);
@@ -226,7 +304,7 @@ test("attendance capture follows the current active session owner", () => {
   assert.ok(currentSession > 0 && currentSession < bootstrap && bootstrap < attendance);
   assert.match(resolver, /\.select\("owner_user_id, is_active, provider, status"\)/);
   assert.match(resolver, /resolveActiveSessionOwner\(\{ \.\.\.session, \.\.\.currentSession \}\)/);
-  assert.match(resolver, /reason: "current_session_owner_inactive_or_missing"/);
+  assert.match(resolver, /: "current_session_owner_inactive_or_missing"/);
   assert.match(resolver, /\.eq\("user_id", attendanceOwnerId\)/);
   assert.doesNotMatch(resolver, /currentSession\.status\s*===\s*"connected"/);
 });

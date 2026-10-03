@@ -63,6 +63,9 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	if err != nil {
 		return Conversation{}, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
 	}
+	if session.OwnerUserID != tenantContext.UserID && leadContact.AssignedUserID != tenantContext.UserID {
+		return Conversation{}, ErrConversationNotFound
+	}
 	identity := leadContact.Identity
 	cleanPhone := identity.ContactPhone
 	remoteJID := identity.RemoteJID
@@ -124,6 +127,12 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		return Conversation{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID); err != nil {
+		if errors.Is(err, ErrSessionNotFound) && session.OwnerUserID != tenantContext.UserID {
+			return Conversation{}, ErrSessionAccessRevoked
+		}
+		return Conversation{}, err
+	}
 
 	var newID string
 	err = tx.QueryRow(ctx, `
@@ -163,6 +172,9 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	lockedLeadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
 	if err != nil {
 		return Conversation{}, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
+	}
+	if session.OwnerUserID != tenantContext.UserID && lockedLeadContact.AssignedUserID != tenantContext.UserID {
+		return Conversation{}, ErrConversationNotFound
 	}
 	if lockedLeadContact.Identity.RemoteJID != remoteJID || lockedLeadContact.Identity.ContactPhone != cleanPhone {
 		return Conversation{}, ErrConversationBindingChanged
@@ -214,18 +226,18 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 	// The session is the outer lock for every mutation that touches both
 	// resources. Send/reaction/read and native ingress use the same
 	// session -> conversation -> lead/dependent-row order.
-	var sessionExists bool
+	var sessionOwnerID string
 	err = tx.QueryRow(ctx, `
-		select true
+		select ws.owner_user_id::text
 		from public.whatsapp_sessions ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
-		  and ws.owner_user_id = $3::uuid
+		  and (ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and ws.status = 'connected'
 		for share of ws
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&sessionExists)
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&sessionOwnerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", accessibleLeadContact{}, false, ErrSessionNotFound
 	}
@@ -255,6 +267,9 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		if leadErr != nil {
 			return "", accessibleLeadContact{}, false, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", leadErr)
 		}
+		if sessionOwnerID != tenantContext.UserID && leadContact.AssignedUserID != tenantContext.UserID {
+			return "", accessibleLeadContact{}, false, ErrConversationNotFound
+		}
 		return "", leadContact, false, nil
 	}
 	if err != nil {
@@ -268,6 +283,9 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 	leadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
 	if err != nil {
 		return "", accessibleLeadContact{}, false, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
+	}
+	if sessionOwnerID != tenantContext.UserID && leadContact.AssignedUserID != tenantContext.UserID {
+		return "", accessibleLeadContact{}, false, ErrConversationNotFound
 	}
 	identity := leadContact.Identity
 	aliases := identity.RemoteAliases()

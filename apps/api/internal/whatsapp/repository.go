@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
@@ -105,6 +106,8 @@ type GamificationRecorder interface {
 
 type Repository struct {
 	db                   *dbpkg.Postgres
+	outboxSendFencePool  *pgxpool.Pool
+	outboxSendFenceError error
 	storage              storageClient
 	functions            functionsClient
 	webhookSchemaGate    *evolutionWebhookSchemaGate
@@ -122,13 +125,29 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		publisher = publishers[0]
 	}
 
-	return Repository{
+	repo := Repository{
 		db:                   db,
 		storage:              newStorageClient(storageConfig),
 		functions:            newFunctionsClient(storageConfig, db),
 		webhookSchemaGate:    &evolutionWebhookSchemaGate{},
 		gamificationRecorder: gamificationRecorder,
 		leadPublisher:        publisher,
+	}
+	if db != nil && db.Pool() != nil {
+		// Shared outbound sends hold a grant row lock during provider I/O. Use a
+		// separate, bounded pool so these transactions cannot exhaust the API's
+		// ordinary query pool or deadlock its lease heartbeat and finalization.
+		poolConfig := db.Pool().Config()
+		poolConfig.MinConns = 0
+		poolConfig.MaxConns = 5 // four fast workers and one media worker by default
+		repo.outboxSendFencePool, repo.outboxSendFenceError = pgxpool.NewWithConfig(context.Background(), poolConfig)
+	}
+	return repo
+}
+
+func (repo Repository) Close() {
+	if repo.outboxSendFencePool != nil {
+		repo.outboxSendFencePool.Close()
 	}
 }
 
@@ -142,7 +161,7 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ws.provider = 'evolution_go'
-		  and ws.owner_user_id = $2::uuid
+		  and (ws.owner_user_id = $2::uuid or `+sessionGrantExistsSQL("ws", "$2::uuid", false)+`)
 		order by ws.created_at desc, ws.id desc
 	`, args...)
 	if err != nil {
@@ -155,6 +174,15 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 		session, err := scanSession(rows)
 		if err != nil {
 			return nil, err
+		}
+		if session.OwnerUserID != tenantContext.UserID {
+			// Shared users need the number and connection state, not provider
+			// identifiers or owner-only advanced settings.
+			session.InstanceID = nil
+			session.AdvancedSettings = nil
+			if session.Owner != nil {
+				session.Owner.Email = ""
+			}
 		}
 		sessions = append(sessions, session)
 	}
@@ -202,7 +230,45 @@ func (repo Repository) ListSessionAccess(ctx context.Context, tenantContext tena
 		return nil, err
 	}
 
-	return []SessionAccess{}, nil
+	rows, err := repo.db.Pool().Query(ctx, `
+		select access.id::text, access.session_id::text, access.user_id::text,
+		       access.access_mode, coalesce(access.can_view, false),
+		       access.can_read, coalesce(access.can_send, false),
+		       access.only_leads_access, access.granted_by::text,
+		       access.grant_scope, access.grant_team_id::text,
+		       access.created_at,
+		       recipient.id::text,
+		       coalesce(recipient.name, ''), coalesce(recipient.email, '')
+		from public.whatsapp_session_access access
+		join public.users recipient on recipient.id = access.user_id
+		where access.organization_id = $1::uuid
+		  and access.session_id = $2::uuid
+		  and access.grant_scope in ('organization', 'team')
+		order by lower(coalesce(recipient.name, '')), access.user_id
+	`, tenantContext.OrganizationID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	accesses := []SessionAccess{}
+	for rows.Next() {
+		var access SessionAccess
+		var grantedBy, grantScope, grantTeamID pgtype.Text
+		var recipient AccessUser
+		if err := rows.Scan(&access.ID, &access.SessionID, &access.UserID,
+			&access.AccessMode, &access.CanView, &access.CanRead, &access.CanSend,
+			&access.OnlyLeadsAccess, &grantedBy, &grantScope, &grantTeamID,
+			&access.CreatedAt, &recipient.ID, &recipient.Name, &recipient.Email); err != nil {
+			return nil, err
+		}
+		access.GrantedBy = textPtr(grantedBy)
+		access.GrantScope = textPtr(grantScope)
+		access.GrantTeamID = textPtr(grantTeamID)
+		access.User = &recipient
+		accesses = append(accesses, access)
+	}
+	return accesses, rows.Err()
 }
 
 func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, input grantAccessInput) error {
@@ -210,11 +276,141 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 	if !ok {
 		return ErrSessionNotFound
 	}
-	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
+	if input.UserID == tenantContext.UserID || (!input.CanView && !input.CanSend) || (input.CanSend && !input.CanView) {
+		return ErrInvalidInput
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// The session fence is held through the grant write. Revocation and a
+	// concurrent send use the same session-first lock order.
+	var lockedSessionID string
+	err = tx.QueryRow(ctx, `
+		select ws.id::text
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.owner_user_id = $3::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		for share of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
 		return err
 	}
 
-	return fmt.Errorf("%w: compartilhamento de conexoes WhatsApp desativado por privacidade", ErrFeatureUnavailable)
+	// Resolve current database membership instead of cached permissions. A
+	// normal user may have WhatsAppManage for their own connection but cannot
+	// grant another person access to it.
+	var ownerRole string
+	err = tx.QueryRow(ctx, `
+		select lower(btrim(member.role))
+		from public.organization_members member
+		join public.users actor on actor.id = member.user_id
+		where member.organization_id = $1::uuid
+		  and member.user_id = $2::uuid
+		  and coalesce(member.is_active, false) = true
+		  and member.deleted_at is null
+		  and coalesce(actor.is_active, false) = true
+		for share of member, actor
+	`, tenantContext.OrganizationID, tenantContext.UserID).Scan(&ownerRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if err != nil {
+		return err
+	}
+	var recipientID string
+	err = tx.QueryRow(ctx, `
+		select recipient.id::text
+		from public.users recipient
+		join public.organization_members member
+		  on member.user_id = recipient.id
+		where member.organization_id = $1::uuid
+		  and recipient.id = $2::uuid
+		  and coalesce(recipient.is_active, false) = true
+		  and coalesce(member.is_active, false) = true
+		  and member.deleted_at is null
+		for share of recipient, member
+	`, tenantContext.OrganizationID, input.UserID).Scan(&recipientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidReference
+	}
+	if err != nil {
+		return err
+	}
+
+	grantScope := ""
+	var grantTeamID *string
+	if ownerRole == "owner" || ownerRole == "admin" || ownerRole == "manager" {
+		grantScope = "organization"
+	} else {
+		var teamID string
+		err = tx.QueryRow(ctx, `
+			select team.id::text
+			from public.teams team
+			join public.team_members leader
+			  on leader.organization_id = team.organization_id
+			 and leader.team_id = team.id
+			 and leader.user_id = $2::uuid
+			 and coalesce(leader.is_active, true) = true
+			 and coalesce(leader.is_leader, false) = true
+			join public.team_members member
+			  on member.organization_id = team.organization_id
+			 and member.team_id = team.id
+			 and member.user_id = $3::uuid
+			 and coalesce(member.is_active, true) = true
+			where team.organization_id = $1::uuid
+			  and coalesce(team.is_active, true) = true
+			order by team.id
+			limit 1
+			for share of team, leader, member
+		`, tenantContext.OrganizationID, tenantContext.UserID, input.UserID).Scan(&teamID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tenant.ErrOrganizationAccessDenied
+		}
+		if err != nil {
+			return err
+		}
+		grantScope = "team"
+		grantTeamID = &teamID
+	}
+
+	_, err = tx.Exec(ctx, `
+		insert into public.whatsapp_session_access (
+			organization_id, session_id, user_id, can_view, can_read,
+			can_send, only_leads_access, access_mode, granted_by,
+			grant_scope, grant_team_id
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::boolean, $4::boolean,
+			$5::boolean, true, 'assigned_leads_only', $6::uuid,
+			$7, $8::uuid
+		)
+		on conflict (session_id, user_id) do update set
+			id = gen_random_uuid(),
+			organization_id = excluded.organization_id,
+			can_view = excluded.can_view,
+			can_read = excluded.can_read,
+			can_send = excluded.can_send,
+			only_leads_access = true,
+			access_mode = 'assigned_leads_only',
+			granted_by = excluded.granted_by,
+			grant_scope = excluded.grant_scope,
+			grant_team_id = excluded.grant_team_id,
+			created_at = now()
+	`, tenantContext.OrganizationID, sessionID, input.UserID,
+		input.CanView, input.CanSend, tenantContext.UserID, grantScope, grantTeamID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, userID string) error {
@@ -226,17 +422,39 @@ func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext te
 	if !ok {
 		return ErrInvalidInput
 	}
-	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
 		return err
 	}
-
-	_, err := repo.db.Pool().Exec(ctx, `
+	defer tx.Rollback(ctx)
+	var lockedSessionID string
+	err = tx.QueryRow(ctx, `
+		select ws.id::text
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.owner_user_id = $3::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		for update of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 		delete from public.whatsapp_session_access
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
 		  and user_id = $3::uuid
 	`, tenantContext.OrganizationID, sessionID, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) ListConversations(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) ([]Conversation, error) {
@@ -570,12 +788,16 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 		return MessagePage{}, err
 	}
 
-	args := []any{tenantContext.OrganizationID, conversationID, filter.Limit}
+	args := append(baseConversationArgs(tenantContext), conversationID, filter.Limit)
 	where := []string{
 		"wm.organization_id = $1::uuid",
-		"wm.conversation_id = $2::uuid",
+		"wm.conversation_id = $5::uuid",
+		"wc.deleted_at is null",
 		"wm.capture_state is distinct from 'suppressed'",
-		conversationMessageLeadMatchSQL(),
+		// Repeat authorization in this statement so a concurrent rebind cannot
+		// reveal a new card between ensureCanViewConversationForLead and the read.
+		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
+		conversationReadableMessageLeadMatchSQL(),
 	}
 	if filter.ExpectedLeadID != "" {
 		// Repeat the active-card guard in the message statement. If a binding
@@ -611,9 +833,15 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 		join public.whatsapp_conversations wc
 		  on wc.id = wm.conversation_id
 		 and wc.organization_id = wm.organization_id
+		left join public.whatsapp_sessions ws
+		  on ws.id = wc.session_id
+		 and ws.organization_id = wc.organization_id
+		left join public.leads l
+		  on l.id = wc.lead_id
+		 and l.organization_id = wc.organization_id
 		where `+strings.Join(where, " and ")+`
 		order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
-		limit $3::integer
+		limit $6::integer
 	`, args...)
 	if err != nil {
 		return MessagePage{}, err
@@ -737,7 +965,7 @@ func (repo Repository) DeleteConversation(ctx context.Context, tenantContext ten
 	// Deleting a conversation removes it from the operational inbox. It is a
 	// privileged action: lead visibility alone is deliberately insufficient.
 	// Historical messages remain available through the lead history endpoint.
-	args := []any{tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext)}
+	args := []any{tenantContext.OrganizationID, conversationID, tenantContext.UserID}
 	expectedLeadPredicate := "wc.lead_id is null"
 	if expectedLeadID != unlinkedConversationLeadSnapshot {
 		args = append(args, expectedLeadID)
@@ -757,7 +985,7 @@ func (repo Repository) DeleteConversation(ctx context.Context, tenantContext ten
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (ws.owner_user_id = $3::uuid or $4::boolean)
+		  and ws.owner_user_id = $3::uuid
 	`, args...)
 	if err != nil {
 		return err
@@ -793,21 +1021,47 @@ func (repo Repository) LinkConversationToLead(
 	}
 	defer tx.Rollback(ctx)
 
-	canManageBinding := canManageWhatsApp(tenantContext)
+	// Lock the session first, then the conversation and lead. A generic
+	// WhatsAppManage permission does not grant access to somebody else's number.
+	sessionID, err := discoverConversationSessionID(ctx, tx, tenantContext.OrganizationID, conversationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConversationNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var sessionOwnerID string
+	err = tx.QueryRow(ctx, `
+		select ws.owner_user_id::text
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and (ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
+		for share of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&sessionOwnerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConversationNotFound
+	}
+	if err != nil {
+		return err
+	}
 	// This query only establishes the organization-scoped conversation lock.
 	// Supplying the four visibility arguments would leave $2-$4 unused and pgx
 	// rejects that parameter set before the binding CAS can execute.
 	lockArgs := []any{tenantContext.OrganizationID, conversationID}
 	var remoteJID, contactPhone string
 	var isGroup bool
-	var currentLeadID, sessionOwnerID pgtype.Text
+	var currentLeadID pgtype.Text
 	err = tx.QueryRow(ctx, `
 		select
 		  wc.remote_jid,
 		  coalesce(wc.contact_phone, ''),
 		  wc.is_group,
 		  wc.lead_id::text,
-		  ws.owner_user_id::text
+		  ws.id::text
 		from public.whatsapp_conversations wc
 		join public.whatsapp_sessions ws
 		  on ws.id = wc.session_id
@@ -819,7 +1073,7 @@ func (repo Repository) LinkConversationToLead(
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		for update of wc
-	`, lockArgs...).Scan(&remoteJID, &contactPhone, &isGroup, &currentLeadID, &sessionOwnerID)
+	`, lockArgs...).Scan(&remoteJID, &contactPhone, &isGroup, &currentLeadID, &sessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConversationNotFound
 	}
@@ -827,35 +1081,39 @@ func (repo Repository) LinkConversationToLead(
 		return err
 	}
 
-	if !canManageBinding {
-		if currentLeadID.Valid {
-			visibilityArgs := append(baseConversationArgs(tenantContext), currentLeadID.String)
-			var currentLeadVisible bool
-			err = tx.QueryRow(ctx, `
+	if currentLeadID.Valid {
+		visibilityArgs := append(baseConversationArgs(tenantContext), currentLeadID.String,
+			sessionOwnerID == tenantContext.UserID)
+		var currentLeadVisible bool
+		err = tx.QueryRow(ctx, `
 				select true
 				from public.leads as l
 				where l.organization_id = $1::uuid
 				  and l.id = $5::uuid
 				  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+				  and ($6::boolean or l.assigned_user_id = $2::uuid)
 				for share of l
 			`, visibilityArgs...).Scan(&currentLeadVisible)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrConversationNotFound
-			}
-			if err != nil {
-				return err
-			}
-			if !currentLeadVisible {
-				return ErrConversationNotFound
-			}
-		} else if !sessionOwnerID.Valid || sessionOwnerID.String != tenantContext.UserID {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConversationNotFound
 		}
+		if err != nil {
+			return err
+		}
+		if !currentLeadVisible {
+			return ErrConversationNotFound
+		}
+	} else if sessionOwnerID != tenantContext.UserID {
+		return ErrConversationNotFound
 	}
 
 	identity := newWhatsAppContactIdentity(contactPhone, remoteJID, isGroup)
-	if err := ensureAccessibleLeadMatchesIdentity(ctx, tx, tenantContext, leadID, identity); err != nil {
+	leadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, identity)
+	if err != nil {
 		return fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
+	}
+	if sessionOwnerID != tenantContext.UserID && leadContact.AssignedUserID != tenantContext.UserID {
+		return ErrConversationNotFound
 	}
 
 	if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
@@ -1105,10 +1363,10 @@ func (repo Repository) ensureCanEditConversation(ctx context.Context, tenantCont
 
 // ensureCanLinkConversation permits normal users to relink only conversations
 // they can already see. Unlinked inbox items stay quarantined from brokers and
-// can only be linked by the session owner or a WhatsApp administrator.
+// can only be linked by the session owner.
 func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) error {
 	var allowed bool
-	args := append(baseConversationArgs(tenantContext), canManageWhatsApp(tenantContext), conversationID)
+	args := append(baseConversationArgs(tenantContext), conversationID)
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
@@ -1117,7 +1375,7 @@ func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantCont
 			left join public.leads l on l.id = wc.lead_id
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
-			  and wc.id = $6::uuid
+			  and wc.id = $5::uuid
 			  and ws.id is not null
 			  and ws.organization_id = wc.organization_id
 			  and ws.provider = 'evolution_go'
@@ -1131,7 +1389,7 @@ func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantCont
 				)
 				or (
 					wc.lead_id is null
-					and (ws.owner_user_id = $2::uuid or $5::boolean)
+					and ws.owner_user_id = $2::uuid
 				)
 			  )
 		)
@@ -1652,6 +1910,13 @@ func conversationVisibilitySQL(canViewOwn bool) string {
 				and l.id is not null
 				and l.organization_id = wc.organization_id
 				and ` + leadVisibilitySQL(canViewOwn) + `
+				and (
+					ws.owner_user_id = $2::uuid
+					or (
+						l.assigned_user_id = $2::uuid
+						and ` + sessionGrantExistsSQL("ws", "$2::uuid", false) + `
+					)
+				)
 			)
 			or (
 				wc.lead_id is null
@@ -1686,6 +1951,16 @@ func messageMediaVisibilitySQL(canViewOwn bool) string {
 		)
 		or (
 			wm.lead_id is null
+			and exists (
+				select 1
+				from public.leads historical_lead
+				where historical_lead.organization_id = wm.organization_id
+				  and ` + recordedPreLeadBindingMatchSQL("historical_lead.id") + `
+				  and ` + leadscope.VisibilitySQL("historical_lead", "$3", "$2", "$4", canViewOwn) + `
+			)
+		)
+		or (
+			wm.lead_id is null
 			and wc.lead_id is null
 			and wc.deleted_at is null
 			and ws.id is not null
@@ -1704,11 +1979,52 @@ func conversationMessageLeadMatchSQL() string {
 	return "(wm.lead_id = wc.lead_id or (wm.lead_id is null and wc.lead_id is null))"
 }
 
-// Lead history uses only immutable message-level attribution. Legacy null rows
-// are backfilled from the binding ledger during cutover and are never inferred
-// from the conversation's current card at read time.
+// Only read paths bridge a newly recorded pre-lead message to the first
+// explicit card binding. Mutating paths keep the exact message-level match.
+func conversationReadableMessageLeadMatchSQL() string {
+	return "(" + conversationMessageLeadMatchSQL() + " or (wc.lead_id is not null and " + recordedPreLeadBindingMatchSQL("wc.lead_id") + "))"
+}
+
+// The first non-stale binding is the only card that may inherit history
+// recorded while this same conversation and session had no lead. Database
+// creation time proves the message existed before the binding; provider time
+// alone can be delayed or replayed. Legacy NULL and quarantine rows never
+// gain a card from the current mutable conversation state.
+func recordedPreLeadBindingMatchSQL(leadExpression string) string {
+	return `(
+		wm.lead_id is null
+		and wm.capture_state = 'recorded'
+		and wm.from_me = false
+		and wm.session_id is not null
+		and exists (
+			select 1
+			from public.whatsapp_conversation_lead_bindings first_binding
+			where first_binding.organization_id = wm.organization_id
+			  and first_binding.conversation_id = wm.conversation_id
+			  and first_binding.session_id = wm.session_id
+			  and first_binding.lead_id = ` + leadExpression + `
+			  and first_binding.previous_lead_id is null
+			  and first_binding.changed = true
+			  and first_binding.stale = false
+			  and wm.created_at < first_binding.active_from
+			  and first_binding.id = (
+				select earliest_binding.id
+				from public.whatsapp_conversation_lead_bindings earliest_binding
+				where earliest_binding.organization_id = wm.organization_id
+				  and earliest_binding.conversation_id = wm.conversation_id
+				  and earliest_binding.session_id = wm.session_id
+				  and earliest_binding.stale = false
+				order by earliest_binding.active_from asc, earliest_binding.id asc
+				limit 1
+			  )
+		)
+	)`
+}
+
+// Lead history keeps immutable message-level attribution and only the
+// provenance-backed pre-lead bridge above. It never uses the current card.
 func leadHistoryMessageLeadMatchSQL() string {
-	return "wm.lead_id = $5::uuid"
+	return "(wm.lead_id = $5::uuid or " + recordedPreLeadBindingMatchSQL("$5::uuid") + ")"
 }
 
 func leadVisibilitySQL(canViewOwn bool) string {

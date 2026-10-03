@@ -26,6 +26,16 @@ export type WhatsAppConversationSessionFilter = {
 
 export type WhatsAppResolvedSessionStatus = 'connected' | 'disconnected' | 'qr_ready'
 
+export function removeRevokedWhatsAppSession<T extends { id: string }, TMeta>(
+  sessions: (T[] & { meta?: TMeta }) | undefined,
+  sessionId: string,
+): (T[] & { meta?: TMeta }) | undefined {
+  if (!sessions?.some((session) => session.id === sessionId)) return sessions
+  const remaining = sessions.filter((session) => session.id !== sessionId) as T[] & { meta?: TMeta }
+  if ('meta' in sessions) remaining.meta = sessions.meta
+  return remaining
+}
+
 type WhatsAppConnectionStatusLike = {
   connected?: boolean | null
   status?: string | null

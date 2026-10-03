@@ -26,6 +26,10 @@ func NewHandler(repo Repository) Handler {
 	}
 }
 
+func (handler Handler) Close() {
+	handler.repo.Close()
+}
+
 func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
 	handler.workerConfig = config.normalized()
 	return handler
@@ -1048,6 +1052,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_whatsapp_reference", "One or more WhatsApp references do not belong to this organization.")
 	case errors.Is(err, ErrSessionNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_session_not_found", "WhatsApp session was not found.")
+	case errors.Is(err, ErrSessionAccessRevoked):
+		httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_access_revoked", "Você não tem mais acesso a este WhatsApp. Inicie uma nova conversa pelo seu número conectado.")
 	case errors.Is(err, ErrConversationNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_conversation_not_found", "WhatsApp conversation was not found.")
 	case errors.Is(err, ErrConversationBindingChanged):

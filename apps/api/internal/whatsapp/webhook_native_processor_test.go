@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func nativeRoutingSnapshotTestRow(providerMessageID string, ingressSequence int64) map[string]any {
@@ -42,6 +43,52 @@ func nativeRoutingSnapshotTestRow(providerMessageID string, ingressSequence int6
 		"predecessor_provider_message_id": nil,
 		"predecessor_inbox_event_key":     nil,
 		"predecessor_processing_lane":     nil,
+	}
+}
+
+func TestNativeInboundRecordingDoesNotGrantAttendanceOrReviveUnsafeEvents(t *testing.T) {
+	const sessionID = "22222222-2222-4222-8222-222222222222"
+	const leadID = "44444444-4444-4444-8444-444444444444"
+	baseItem := pendingEvolutionWebhook{ID: "11111111-1111-4111-8111-111111111111", SessionID: sessionID, CreatedAt: time.Now().UTC()}
+	baseConversation := nativeEvolutionConversation{LeadID: leadID, MessageLeadID: leadID}
+	baseMessage := nativeEvolutionMessage{ProviderMessageID: "inbound-1", Content: "Mensagem recebida", SentAt: baseItem.CreatedAt.Add(-time.Second)}
+	for _, test := range []struct {
+		name         string
+		item         pendingEvolutionWebhook
+		allowed      []string
+		conversation nativeEvolutionConversation
+		message      nativeEvolutionMessage
+		attendance   string
+		want         string
+	}{
+		{name: "disabled by default", item: baseItem, conversation: baseConversation, message: baseMessage, want: "suppressed"},
+		{name: "other session", item: baseItem, allowed: []string{"33333333-3333-4333-8333-333333333333"}, conversation: baseConversation, message: baseMessage, want: "suppressed"},
+		{name: "inbound lead", item: baseItem, allowed: []string{sessionID}, conversation: baseConversation, message: baseMessage, want: "recorded"},
+		{name: "inbound without lead", item: baseItem, allowed: []string{sessionID}, conversation: nativeEvolutionConversation{}, message: baseMessage, want: "recorded"},
+		{name: "no durable inbox id", item: pendingEvolutionWebhook{SessionID: sessionID, CreatedAt: baseItem.CreatedAt}, allowed: []string{sessionID}, conversation: baseConversation, message: baseMessage, want: "suppressed"},
+		{name: "no durable inbox time", item: pendingEvolutionWebhook{ID: baseItem.ID, SessionID: sessionID}, allowed: []string{sessionID}, conversation: baseConversation, message: baseMessage, want: "suppressed"},
+		{name: "missing provider time", item: baseItem, allowed: []string{sessionID}, conversation: baseConversation, message: func() nativeEvolutionMessage {
+			value := baseMessage
+			value.ProviderTimestampMissing = true
+			return value
+		}(), want: "suppressed"},
+		{name: "provider time after inbox", item: baseItem, allowed: []string{sessionID}, conversation: baseConversation, message: func() nativeEvolutionMessage {
+			value := baseMessage
+			value.SentAt = baseItem.CreatedAt.Add(time.Second)
+			return value
+		}(), want: "suppressed"},
+		{name: "outbound echo", item: baseItem, allowed: []string{sessionID}, conversation: baseConversation, message: nativeEvolutionMessage{FromMe: true}, want: "suppressed"},
+		{name: "group", item: baseItem, allowed: []string{sessionID}, conversation: baseConversation, message: nativeEvolutionMessage{IsGroup: true}, want: "suppressed"},
+		{name: "quarantined identity", item: baseItem, allowed: []string{sessionID}, conversation: nativeEvolutionConversation{LeadResolutionQuarantineReason: "identity_unresolved"}, message: baseMessage, want: "suppressed"},
+		{name: "historical binding", item: baseItem, allowed: []string{sessionID}, conversation: nativeEvolutionConversation{LeadID: leadID, MessageLeadID: leadID, HistoricalBindingReplay: true}, message: baseMessage, want: "suppressed"},
+		{name: "stale binding", item: baseItem, allowed: []string{sessionID}, conversation: nativeEvolutionConversation{LeadID: leadID, MessageLeadID: "55555555-5555-4555-8555-555555555555"}, message: baseMessage, want: "suppressed"},
+		{name: "existing attendance unchanged", item: baseItem, conversation: baseConversation, message: baseMessage, attendance: "66666666-6666-4666-8666-666666666666", want: "captured"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nativeEvolutionCaptureState(test.item, test.allowed, test.conversation, test.message, test.attendance); got != test.want {
+				t.Fatalf("capture state = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

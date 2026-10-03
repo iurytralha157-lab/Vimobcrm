@@ -199,7 +199,7 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	}
 }
 
-func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testing.T) {
+func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t *testing.T) {
 	databaseURL := os.Getenv("WHATSAPP_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
@@ -254,6 +254,21 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
+	insertLead := func(phone string) string {
+		t.Helper()
+		var leadID string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.leads (organization_id, assigned_user_id, name, phone, source)
+			values ($1::uuid, $2::uuid, $3, $4, 'whatsapp')
+			returning id::text
+		`, organizationID, userID, suffix, phone).Scan(&leadID); err != nil {
+			t.Fatal(err)
+		}
+		return leadID
+	}
+	leadA := insertLead("5511999990001")
+	leadB := insertLead("5511999990002")
+	leadC := insertLead("5511999990003")
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_sessions (
 			organization_id, owner_user_id, instance_name, instance_id,
@@ -287,6 +302,38 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 	`, organizationID, sessionID, userID, suffix+"-c").Scan(&conversationC); err != nil {
 		t.Fatal(err)
 	}
+	for _, fixture := range []struct{ conversationID, leadID string }{
+		{conversationA, leadA}, {conversationB, leadB}, {conversationC, leadC},
+	} {
+		if _, err := postgres.Pool().Exec(ctx, `
+			select public.activate_whatsapp_conversation_lead_binding(
+				$1::uuid, $2::uuid, $3::uuid, null
+			)
+		`, organizationID, fixture.conversationID, fixture.leadID); err != nil {
+			t.Fatal(err)
+		}
+		var attendanceID string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_attendance_entries (
+				organization_id, conversation_id, session_id, lead_id,
+				binding_id, user_id, actor_name_snapshot, joined_at,
+				ingress_sequence_cutoff
+			)
+			select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			       binding.id, $5::uuid, 'Outbox test actor',
+			       now() - interval '5 minutes', 0
+			from public.whatsapp_conversation_lead_bindings binding
+			where binding.organization_id = $1::uuid
+			  and binding.conversation_id = $2::uuid
+			  and binding.session_id = $3::uuid
+			  and binding.lead_id = $4::uuid
+			  and binding.active_to is null
+			  and binding.stale = false
+			returning id::text
+		`, organizationID, fixture.conversationID, sessionID, fixture.leadID, userID).Scan(&attendanceID); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	insertFixture := func(conversationID, clientID, messageType, action, age string) string {
 		t.Helper()
@@ -295,12 +342,12 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 			insert into public.whatsapp_messages (
 				organization_id, conversation_id, session_id, sender_user_id,
 				message_id, client_message_id, from_me, direction, content,
-				message_type, remote_jid, status, sent_at, metadata
+				message_type, remote_jid, status, sent_at, metadata, capture_state
 			) values (
 				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 				$5, $5, true, 'outbound', $5,
 				$6, '5511999990000@s.whatsapp.net', 'queued', now() - $7::interval,
-				'{"delivery":"outbox"}'::jsonb
+				'{"delivery":"outbox"}'::jsonb, 'captured'
 			)
 			returning id::text
 		`, organizationID, conversationID, sessionID, userID, clientID, messageType, age).Scan(&messageID); err != nil {
@@ -324,6 +371,7 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 		return outboxID
 	}
 
+	retryA := insertFixture(conversationA, suffix+"-a-retry", "text", "send.text", "4 minutes")
 	mediaA := insertFixture(conversationA, suffix+"-a-media", "image", "send.media", "3 minutes")
 	textA := insertFixture(conversationA, suffix+"-a-text", "text", "send.text", "2 minutes")
 	textASecond := insertFixture(conversationA, suffix+"-a-text-second", "text", "send.text", "90 seconds")
@@ -333,6 +381,13 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 		set status = 'retry', attempts = 1, next_attempt_at = now() + interval '10 minutes'
 		where id = $1::uuid
 	`, mediaA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_outbox
+		set status = 'retry', attempts = 1, next_attempt_at = now() + interval '10 minutes'
+		where id = $1::uuid
+	`, retryA); err != nil {
 		t.Fatal(err)
 	}
 
@@ -366,24 +421,35 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 		}
 	}
 	if !claimedFast[textA] || !claimedFast[textB] {
-		t.Fatalf("fast-lane IDs = %#v, want conversation A text %s to pass deferred media %s and conversation B text %s", claimedFast, textA, mediaA, textB)
+		t.Fatalf("fast-lane IDs = %#v, want conversation A text %s to pass deferred retry %s and media %s, and conversation B text %s", claimedFast, textA, retryA, mediaA, textB)
 	}
-	if claimedFast[textASecond] {
-		t.Fatalf("newer same-conversation text %s overtook fast-lane head %s", textASecond, textA)
+	var retryStatus string
+	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, retryA).Scan(&retryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retryStatus != "retry" {
+		t.Fatalf("older same-lane retry status = %q, want retry while newer text is processing", retryStatus)
 	}
 	var overtakingTextStatus string
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, textA).Scan(&overtakingTextStatus); err != nil {
 		t.Fatal(err)
 	}
 	if overtakingTextStatus != "processing" {
-		t.Fatalf("conversation A text status = %q, want processing after the bounded media grace", overtakingTextStatus)
+		t.Fatalf("conversation A text status = %q, want processing while older media is deferred", overtakingTextStatus)
+	}
+	parallelFast, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneFast)
+	if err != nil {
+		t.Fatalf("parallel fast-lane claim: %v", err)
+	}
+	if len(parallelFast) != 1 || parallelFast[0].ID != textASecond {
+		t.Fatalf("parallel fast-lane claim = %#v, want newer same-conversation text %s", parallelFast, textASecond)
 	}
 	var secondTextStatus string
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, textASecond).Scan(&secondTextStatus); err != nil {
 		t.Fatal(err)
 	}
-	if secondTextStatus != "pending" {
-		t.Fatalf("second conversation A text status = %q, want pending behind first text head", secondTextStatus)
+	if secondTextStatus != "processing" {
+		t.Fatalf("second conversation A text status = %q, want parallel processing", secondTextStatus)
 	}
 
 	media, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneMedia)
@@ -480,6 +546,14 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 	}
 
 	compatibilityID := insertFixture(conversationC, suffix+"-c-any", "text", "send.text", "1 minute")
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_messages
+		set metadata = metadata || '{"managed_whatsapp_distribution_auto_reply":true}'::jsonb
+		where organization_id = $1::uuid
+		  and client_message_id = $2
+	`, organizationID, suffix+"-c-any"); err != nil {
+		t.Fatal(err)
+	}
 	compatibilityClaim, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(
 		ctx,
 		1,
@@ -491,5 +565,20 @@ func TestClaimWhatsAppOutboxSeparatesMediaWithoutReorderingConversation(t *testi
 	}
 	if len(compatibilityClaim) != 1 || compatibilityClaim[0].ID != compatibilityID {
 		t.Fatalf("compatibility any-lane claim = %#v, want %s", compatibilityClaim, compatibilityID)
+	}
+	if !compatibilityClaim[0].ManagedDistributionAutoReply {
+		t.Fatal("legacy distribution auto-reply marker was not carried into the worker claim")
+	}
+	if err := repo.processClaimedWhatsAppOutbox(ctx, compatibilityClaim[0], whatsappOutboxLaneAny); err != nil {
+		t.Fatalf("disable queued legacy distribution reply: %v", err)
+	}
+	var blockedStatus string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select status from public.whatsapp_outbox where id = $1::uuid
+	`, compatibilityID).Scan(&blockedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if blockedStatus != "failed" {
+		t.Fatalf("legacy distribution auto-reply status = %q, want failed before provider call", blockedStatus)
 	}
 }

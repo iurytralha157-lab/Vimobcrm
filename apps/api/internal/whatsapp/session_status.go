@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -320,7 +319,7 @@ func (repo Repository) ListSessionStatuses(ctx context.Context, tenantContext te
 
 func sessionStatusCapabilitiesFor(tenantContext tenant.Context, ownerUserID string, supportsManagement bool) SessionStatusCapabilities {
 	isOwner := strings.EqualFold(strings.TrimSpace(ownerUserID), strings.TrimSpace(tenantContext.UserID))
-	canManage := supportsManagement && isOwner && tenantContext.HasPermission(permissions.WhatsAppManage)
+	canManage := supportsManagement && isOwner
 	return SessionStatusCapabilities{
 		CanManage:                canManage,
 		CanSetNotificationSender: canManage && tenantContext.HasRole("owner", "admin"),

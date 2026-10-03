@@ -49,13 +49,13 @@ export function EnterAttendanceDialog({
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <div className="space-y-2 text-xs leading-relaxed text-[var(--app-text-secondary)]">
               <p>
-                Ao confirmar, as mensagens enviadas e recebidas pelo WhatsApp selecionado,
-                a partir da sua entrada, serão registradas neste card e ficarão visíveis
-                para quem tem acesso ao lead.
+                Esta confirmação permite que você envie mensagens pelo WhatsApp selecionado
+                no CRM. Seus envios e sua participação no atendimento ficam registrados
+                neste card e visíveis para quem tem acesso ao lead.
               </p>
               <p className="font-medium text-[var(--app-text-primary)]">
-                Mensagens anteriores a esta entrada não serão acrescentadas ao histórico;
-                registros antigos do card permanecem.
+                Ela não limita o recebimento: mensagens recebidas antes da sua entrada
+                que já foram registradas continuam no histórico do card.
               </p>
             </div>
           </div>

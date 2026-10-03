@@ -351,7 +351,7 @@ func TestNormalizeManagedWhatsAppAutoReplySettingsKeepsOptInDisabled(t *testing.
 	}
 }
 
-func TestNormalizeManagedWhatsAppAutoReplySettingsDefaultsActivatedFields(t *testing.T) {
+func TestNormalizeManagedWhatsAppAutoReplySettingsDisablesLegacyOptIn(t *testing.T) {
 	t.Parallel()
 
 	settings, err := normalizeManagedWhatsAppAutoReplySettings(map[string]any{
@@ -359,6 +359,9 @@ func TestNormalizeManagedWhatsAppAutoReplySettingsDefaultsActivatedFields(t *tes
 	})
 	if err != nil {
 		t.Fatalf("normalize settings: %v", err)
+	}
+	if enabled, ok := settings[whatsAppDistributionAutoReplyEnabledKey].(bool); !ok || enabled {
+		t.Fatalf("legacy opt-in must be disabled: %#v", settings)
 	}
 	if settings[whatsAppDistributionAutoReplyMessageKey] != defaultWhatsAppDistributionAutoReply {
 		t.Fatalf("default message mismatch: %#v", settings)

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
+import { WhatsAppAccessLostNotice } from "@/components/features/whatsapp/WhatsAppAccessLostNotice";
+import { WhatsAppSessionDisconnectedNotice } from "@/components/features/whatsapp/WhatsAppSessionDisconnectedNotice";
 import {
   ConversationComposer,
   ConversationEmptyState,
@@ -28,6 +30,7 @@ import { normalizeSearchText } from "@/lib/search-text";
 import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { useFindConversationByPhone, useStartConversation } from "@/hooks/use-start-conversation";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import { useRouter } from "next/navigation";
@@ -42,11 +45,14 @@ import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import {
 	getWhatsAppConversationDraftKey,
+	createWhatsAppTextSendGuard,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
   preserveWhatsAppConversationCardSnapshot,
 	updateWhatsAppConversationDraft,
+	WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from "@/lib/whatsapp-message-input";
+import { getOwnConnectedWhatsAppSessions, isExactExistingLeadConversation } from "@/lib/access/whatsapp-session-sharing";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
@@ -118,6 +124,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
+  const [textSendGuard] = useState(createWhatsAppTextSendGuard);
   const selectedMessageDraftKey = useMemo(() => getWhatsAppConversationDraftKey({
     tenantKey: activeTenantKey,
     conversationId: selectedConversationId,
@@ -128,6 +135,9 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const messageText = selectedMessageDraftKey
     ? messageDrafts[selectedMessageDraftKey] ?? ""
     : "";
+  useLayoutEffect(() => {
+    textSendGuard.observeDraft(selectedMessageDraftKey, messageText);
+  }, [messageText, selectedMessageDraftKey, textSendGuard]);
   const setMessageText = useCallback((value: string | ((current: string) => string)) => {
     if (!selectedMessageDraftKey) return;
     setMessageDrafts((currentDrafts) => updateWhatsAppConversationDraft(
@@ -136,6 +146,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       value,
     ));
   }, [selectedMessageDraftKey]);
+  const handleMessageTextChange = useCallback((value: string) => {
+    textSendGuard.observeDraft(selectedMessageDraftKey, value);
+    setMessageText(value);
+  }, [selectedMessageDraftKey, setMessageText, textSendGuard]);
   const [hideGroups, setHideGroups] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("whatsapp-hide-groups") === "true";
@@ -196,7 +210,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const {
     data: sessions,
     isLoading: loadingSessions,
-  } = useAccessibleSessions();
+  } = useAccessibleSessions({ live: activePlatform === "whatsapp" && Boolean(selectedConversationId) });
 
   // Extract accessible session IDs for filtering
   const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
@@ -548,11 +562,23 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     if (activePlatform !== "whatsapp") return (messages || []) as DisplayMessage[];
     return ((messages || []) as DisplayMessage[]).filter((message) => message.message_type !== "reaction");
   }, [activePlatform, messages]);
+  const selectedWhatsAppSession = activePlatform === "whatsapp"
+    ? sessions?.find((session) => session.id === selectedConversation?.session_id)
+    : undefined;
+  const sessionDeliveryUnavailable = Boolean(selectedWhatsAppSession
+    && selectedWhatsAppSession.status !== "connected");
+  const hasUnconfirmedMessages = visibleMessages.some((message) =>
+    message.from_me
+    && message.session_id === selectedConversation?.session_id
+    && ["queued", "pending", "sending", "confirming"].includes(message.status || ""),
+  );
 
   // Keep text mutation state independent from base64/compression media work so
   // a slow audio/image/video request never disables the basic text composer.
   const sendTextMessage = useSendWhatsAppMessage();
   const sendMediaMessage = useSendWhatsAppMessage();
+  const startOwnConversation = useStartConversation();
+  const findOwnConversation = useFindConversationByPhone();
   const reactToMessage = useReactToWhatsAppMessage();
   const sendMetaMessage = useSendMetaMessage();
   const { mutate: markConversationAsRead } = useMarkConversationAsRead();
@@ -736,53 +762,135 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     enabled: activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
     identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
   });
-  const messageInputDisabled = attendanceGate.isResolving || !canOperateWhatsApp || (activePlatform === "whatsapp"
+  const accessLost = activePlatform === "whatsapp" && Boolean(whatsappMessageInputState.accessLost);
+  const ownConnectedSessions = getOwnConnectedWhatsAppSessions(sessions, currentUserId, activeOrganization.organizationId);
+  const messageInputDisabled = accessLost || attendanceGate.isResolving || !canOperateWhatsApp || (activePlatform === "whatsapp"
     ? whatsappMessageInputState.disabled
     : sendMetaMessage.isPending);
   const messageInputPlaceholder = activePlatform === "whatsapp"
-    ? whatsappMessageInputState.placeholder
+    ? accessLost
+      ? "Acesso a este WhatsApp encerrado"
+      : whatsappMessageInputState.placeholder
     : "Digite sua mensagem...";
 
+  const handleStartWithOwnSession = async (sessionId: string) => {
+    const leadId = selectedLeadId;
+    const organizationId = activeOrganization.organizationId;
+    if (!canMutateSelectedWhatsAppConversation || !selectedConversation || !leadId || !organizationId
+      || !ownConnectedSessions.some((session) => session.id === sessionId)) return;
+    const phone = normalizeWhatsAppContactPhoneToE164(
+      selectedConversation.contact_phone,
+      selectedConversation.remote_jid,
+    );
+    if (!phone) {
+      toast({ title: "Contato sem WhatsApp", description: "Este lead não tem um número válido para iniciar outra conversa.", variant: "destructive" });
+      return;
+    }
+    try {
+      const existing = await findOwnConversation.mutateAsync({ phone, sessionId });
+      const nextConversation = isExactExistingLeadConversation(existing, {
+        organizationId,
+        sessionId,
+        leadId,
+        phone,
+      })
+        ? existing
+        : await startOwnConversation.mutateAsync({
+          phone,
+          sessionId,
+          leadId,
+          leadName: selectedConversation.lead?.name || selectedConversation.contact_name || undefined,
+          expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
+        });
+      const nextDraftKey = getWhatsAppConversationDraftKey({
+        tenantKey: activeTenantKey,
+        conversationId: nextConversation.id,
+        expectedLeadId: leadId,
+      });
+      if (nextDraftKey && messageText) {
+        setMessageDrafts((drafts) => ({ ...drafts, [nextDraftKey]: drafts[nextDraftKey] || messageText }));
+      }
+      setSelectedSessionId(sessionId);
+      setSelectedConversation(nextConversation);
+    } catch (error) {
+      toast({
+        title: "Não foi possível iniciar pelo seu WhatsApp",
+        description: error instanceof Error ? error.message : "Tente novamente em instantes.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSendMessage = async () => {
-    if (!canOperateWhatsApp || !messageText.trim() || !selectedConversation) return;
-    if (activePlatform === "whatsapp" && sendTextMessage.isPending) return;
-    if (activePlatform === "whatsapp" && whatsappMessageInputState.disabled) {
+    if (!canOperateWhatsApp || !selectedConversation) return;
+    if (activePlatform === "whatsapp" && (accessLost || whatsappMessageInputState.disabled)) {
       toast({
         title: "Mensagem nao enviada",
-        description: whatsappMessageInputState.placeholder,
+        description: messageInputPlaceholder,
+        variant: "destructive",
+      });
+      return;
+    }
+    if (activePlatform === "whatsapp" && sessionDeliveryUnavailable) {
+      toast({
+        title: "WhatsApp sem conexão",
+        description: "Mensagem não enviada. Seu rascunho foi mantido; reconecte este número antes de enviar.",
         variant: "destructive",
       });
       return;
     }
 
-    const textToSend = messageText.trim();
-    const metaIdempotencyKey = activePlatform === 'whatsapp' ? null : createUUID();
-
-    try {
-      if (activePlatform === 'whatsapp') {
+    if (activePlatform === 'whatsapp') {
+      const intent = textSendGuard.begin();
+      if (!intent) return;
+      if (intent.draftKey !== selectedMessageDraftKey) {
+        textSendGuard.aborted(intent);
+        return;
+      }
+      try {
         const joined = await attendanceGate.ensureJoined();
-        if (!joined) return;
-        setMessageText("");
+        if (!joined) {
+          textSendGuard.aborted(intent);
+          return;
+        }
+        if (!textSendGuard.accepted(intent)) return;
+        setMessageDrafts((drafts) => updateWhatsAppConversationDraft(
+          drafts,
+          intent.draftKey,
+          (current) => current === intent.rawText ? '' : current,
+        ));
         await sendTextMessage.mutateAsync({
           conversation: selectedConversation,
-          text: textToSend,
+          text: intent.text,
           sendSessionId: whatsappMessageInputState.sendSessionId,
         });
-      } else {
-        setMessageText("");
-        await sendMetaMessage.mutateAsync({
-          conversationId: selectedConversation.id,
-          text: textToSend,
-          platform: selectedConversation.platform || 'instagram',
-          recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid,
-          idempotencyKey: metaIdempotencyKey!,
-        });
+      } catch (error) {
+        textSendGuard.aborted(intent);
+        if (getWhatsAppSendFailureStatus(error) !== 'confirming') {
+          textSendGuard.allowRetry(intent);
+          setMessageDrafts((drafts) => updateWhatsAppConversationDraft(
+            drafts,
+            intent.draftKey,
+            (current) => current || intent.rawText,
+          ));
+        }
       }
-    } catch (error) {
-      const failureStatus = getWhatsAppSendFailureStatus(error);
-      if (activePlatform !== "whatsapp" || failureStatus !== "confirming") {
-        setMessageText((current) => current || textToSend);
-      }
+      return;
+    }
+
+    const textToSend = messageText.trim();
+    if (!textToSend) return;
+    try {
+      setMessageText("");
+      await sendMetaMessage.mutateAsync({
+        conversationId: selectedConversation.id,
+        text: textToSend,
+        platform: selectedConversation.platform || 'instagram',
+        recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid,
+        idempotencyKey: createUUID(),
+      });
+    } catch {
+      setMessageText((current) => current || textToSend);
     }
   };
   const handleKeyPress = (e: React.KeyboardEvent<Element>) => {
@@ -794,13 +902,16 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
     if (!canOperateWhatsApp || activePlatform !== "whatsapp" || !selectedConversation) return false;
-    if (sendMediaMessage.isPending) return false;
-    if (whatsappMessageInputState.disabled) {
+    if (accessLost || whatsappMessageInputState.disabled) {
       toast({
         title: "Audio nao enviado",
-        description: whatsappMessageInputState.placeholder,
+        description: messageInputPlaceholder,
         variant: "destructive",
       });
+      return false;
+    }
+    if (sessionDeliveryUnavailable) {
+      toast({ title: "WhatsApp sem conexão", description: "Áudio não enviado. Reconecte este número antes de enviar.", variant: "destructive" });
       return false;
     }
 
@@ -818,20 +929,13 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       sendSessionId: whatsappMessageInputState.sendSessionId,
     });
 
-    toast({
-      title: "Áudio enviado",
-      description: "Sua mensagem de voz foi enviada"
-    });
+    toast({ title: "Áudio registrado", description: "Acompanhe o estado da mensagem para confirmar o envio." });
     return true;
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConversation) return;
-    if (sendMediaMessage.isPending) {
-      e.target.value = "";
-      return;
-    }
     if (file.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
       toast({
         title: "Arquivo muito grande",
@@ -841,15 +945,20 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       e.target.value = "";
       return;
     }
-    if (whatsappMessageInputState.disabled) {
+    if (accessLost || whatsappMessageInputState.disabled) {
       toast({
         title: "Arquivo nao enviado",
-        description: whatsappMessageInputState.placeholder,
+        description: messageInputPlaceholder,
         variant: "destructive",
       });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      return;
+    }
+    if (sessionDeliveryUnavailable) {
+      toast({ title: "WhatsApp sem conexão", description: "Arquivo não enviado. Reconecte este número antes de enviar.", variant: "destructive" });
+      e.target.value = "";
       return;
     }
     const joined = await attendanceGate.ensureJoined();
@@ -887,16 +996,9 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
         previewMediaUrl: `data:${processedFile.type || file.type || "application/octet-stream"};base64,${base64Content}`,
         sendSessionId: whatsappMessageInputState.sendSessionId,
       });
-      toast({
-        title: "Arquivo enviado",
-        description: "O arquivo foi enviado com sucesso"
-      });
+      toast({ title: "Arquivo registrado", description: "Acompanhe o estado da mensagem para confirmar o envio." });
     } catch {
-      toast({
-        title: "Erro ao enviar arquivo",
-        description: "Não foi possível enviar o arquivo",
-        variant: "destructive"
-      });
+      // A mutação já exibe a falha e mantém a mensagem no histórico local.
     }
 
     // Reset input
@@ -1101,17 +1203,28 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                   ? reactToMessage.variables?.targetMessage.id ?? null
                   : null}
               />
+              {sessionDeliveryUnavailable && !accessLost ? (
+                <WhatsAppSessionDisconnectedNotice hasUnconfirmedMessages={hasUnconfirmedMessages} />
+              ) : null}
+              {accessLost && selectedLeadId && !selectedConversation.is_group && canMutateSelectedWhatsAppConversation ? (
+                <WhatsAppAccessLostNotice
+                  ownConnectedSessions={ownConnectedSessions}
+                  isStarting={findOwnConversation.isPending || startOwnConversation.isPending}
+                  onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
+                  onConnect={() => router.push("/settings/integrations/whatsapp")}
+                />
+              ) : null}
               <ConversationComposer
                 layout="mobile"
                 fileInputRef={fileInputRef}
                 onFileSelect={handleFileSelect}
                 messageText={messageText}
-                onMessageTextChange={setMessageText}
+                onMessageTextChange={handleMessageTextChange}
                 onSendMessage={() => void handleSendMessage()}
                 onKeyDown={handleKeyPress}
                 placeholder={messageInputPlaceholder}
                 disabled={messageInputDisabled}
-                isSending={sendTextMessage.isPending}
+                isSending={activePlatform !== "whatsapp" && sendMetaMessage.isPending}
                 selectedLeadId={selectedLeadId}
                 canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
                 hasActiveAutomation={hasActiveLeadAutomation}
@@ -1321,17 +1434,28 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                   ? reactToMessage.variables?.targetMessage.id ?? null
                   : null}
               />
+              {sessionDeliveryUnavailable && !accessLost ? (
+                <WhatsAppSessionDisconnectedNotice hasUnconfirmedMessages={hasUnconfirmedMessages} />
+              ) : null}
+              {accessLost && selectedLeadId && !selectedConversation.is_group && canMutateSelectedWhatsAppConversation ? (
+                <WhatsAppAccessLostNotice
+                  ownConnectedSessions={ownConnectedSessions}
+                  isStarting={findOwnConversation.isPending || startOwnConversation.isPending}
+                  onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
+                  onConnect={() => router.push("/settings/integrations/whatsapp")}
+                />
+              ) : null}
               <ConversationComposer
                 layout="desktop"
                 fileInputRef={fileInputRef}
                 onFileSelect={handleFileSelect}
                 messageText={messageText}
-                onMessageTextChange={setMessageText}
+                onMessageTextChange={handleMessageTextChange}
                 onSendMessage={() => void handleSendMessage()}
                 onKeyDown={handleKeyPress}
                 placeholder={messageInputPlaceholder}
                 disabled={messageInputDisabled}
-                isSending={sendTextMessage.isPending}
+                isSending={activePlatform !== "whatsapp" && sendMetaMessage.isPending}
                 selectedLeadId={selectedLeadId}
                 canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
                 hasActiveAutomation={hasActiveLeadAutomation}

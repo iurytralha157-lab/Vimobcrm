@@ -105,3 +105,49 @@ func TestManagedWhatsAppDistributionAutoReplyMigrationContract(t *testing.T) {
 		t.Fatal("idempotent message tombstone lookup must run before mutable queue context")
 	}
 }
+
+func TestManagedWhatsAppDistributionAutoReplyRetirementMigrationContract(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate managed WhatsApp auto-reply retirement test")
+	}
+	migrationPath := filepath.Clean(filepath.Join(
+		filepath.Dir(sourceFile),
+		"..", "..", "..", "..",
+		"supabase", "migrations",
+		"20261003005313_disable_managed_whatsapp_distribution_auto_reply.sql",
+	))
+	raw, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read retirement migration: %v", err)
+	}
+	source := strings.ToLower(string(raw))
+	compact := strings.Join(strings.Fields(source), " ")
+	for _, required := range []string{
+		"create or replace function public.enqueue_managed_whatsapp_distribution_auto_reply(",
+		"'queued', false",
+		"'reason', 'distribution_auto_reply_disabled'",
+		"drop trigger if exists trg_reserve_managed_whatsapp_distribution_auto_reply on public.lead_entry_events",
+		"drop trigger if exists trg_enqueue_managed_whatsapp_auto_reply on public.lead_entry_events",
+		"drop function if exists private.reserve_managed_whatsapp_distribution_auto_reply_from_entry()",
+		"drop function if exists private.enqueue_managed_whatsapp_auto_reply_from_entry()",
+		"grant execute on function public.enqueue_managed_whatsapp_distribution_auto_reply( uuid, uuid, uuid, text ) to service_role",
+	} {
+		if !strings.Contains(compact, required) {
+			t.Fatalf("retirement migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"insert into public.whatsapp_messages",
+		"insert into public.whatsapp_outbox",
+		"update public.whatsapp_messages",
+		"delete from public.whatsapp_messages",
+		"update public.whatsapp_outbox",
+		"delete from public.whatsapp_outbox",
+		"update public.lead_entry_events",
+	} {
+		if strings.Contains(compact, forbidden) {
+			t.Fatalf("retirement migration must preserve historical rows: %q", forbidden)
+		}
+	}
+}

@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(53);
+select plan(54);
 
 select has_table(
   'public',
@@ -790,6 +790,18 @@ select is(
   ),
   8::bigint,
   'every message side-effect trigger fails closed for suppressed rows'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_constraint as constraint_state
+    where constraint_state.conrelid = 'public.whatsapp_messages'::regclass
+      and constraint_state.conname = 'whatsapp_messages_capture_state_check'
+      and pg_catalog.pg_get_constraintdef(constraint_state.oid, true)
+        like '%recorded%'
+  ),
+  'received history can use the independent recorded state'
 );
 
 select ok(

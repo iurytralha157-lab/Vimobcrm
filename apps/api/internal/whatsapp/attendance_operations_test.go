@@ -376,7 +376,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 
 	for _, required := range []string{
-		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, false, false, false)",
+		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, false, false)",
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)",
 		"ws.owner_user_id = $3::uuid",
 		"conversation.session_id = $3::uuid",
@@ -396,7 +396,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
+func TestAttendanceReadRequiresOwnerOrCurrentGrant(t *testing.T) {
 	raw, err := os.ReadFile("attendance_operations.go")
 	if err != nil {
 		t.Fatalf("read attendance repository: %v", err)
@@ -404,16 +404,16 @@ func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
 	source := string(raw)
 
 	if !strings.Contains(source,
-		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, false, false, false)") {
-		t.Fatal("attendance GET must validate the card without requiring WhatsApp session ownership")
+		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, false, false)") {
+		t.Fatal("attendance GET must require owner or current grant on the session")
 	}
 	if !strings.Contains(source,
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)") {
-		t.Fatal("attendance POST must continue requiring session ownership and a connected session")
+		t.Fatal("attendance POST must require owner or current grant and a connected session")
 	}
 	if !strings.Contains(source,
-		"and (not $4::boolean or ws.owner_user_id = $3::uuid)") {
-		t.Fatal("session ownership must be conditional so managers can read attendance for visible cards")
+		"sessionGrantExistsSQL(\"ws\", \"$3::uuid\", true)") {
+		t.Fatal("attendance must validate a current send grant for a shared number")
 	}
 	if !strings.Contains(source, "IsoLevel:   pgx.RepeatableRead") ||
 		!strings.Contains(source, "AccessMode: pgx.ReadOnly") {

@@ -482,6 +482,8 @@ export const whatsappAPI = {
       method: 'POST',
       organizationId,
       body,
+      // Updating a grant waits for any provider request already using it.
+      timeoutMs: 45_000,
     })
   },
 
@@ -489,6 +491,7 @@ export const whatsappAPI = {
     await vimobAPIRequest<null>(`/v1/whatsapp/sessions/${sessionId}/access/${userId}`, {
       method: 'DELETE',
       organizationId,
+      timeoutMs: 45_000,
     })
   },
 

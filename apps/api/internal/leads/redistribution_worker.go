@@ -288,15 +288,6 @@ func (repo Repository) processManagedWhatsAppInitialDistribution(
 	}
 	if distributionResult.Success && (!job.AllowAssignedRedistribution ||
 		(distributionResult.AssignedUserID != "" && !strings.EqualFold(distributionResult.AssignedUserID, job.CurrentAssignedUserID))) {
-		if err := repo.enqueueManagedWhatsAppDistributionAutoReply(
-			ctx,
-			store,
-			job,
-			distributionResult.AssignedUserID,
-			distributionResult.DistributionEventID,
-		); err != nil {
-			return err
-		}
 		return nil
 	}
 
@@ -908,75 +899,6 @@ func initialDistributionIdempotencyKey(source string, jobID string, attempt int)
 		prefix = "managed-whatsapp-pending"
 	}
 	return fmt.Sprintf("%s:%s:attempt_%d", prefix, jobID, attempt)
-}
-
-func (repo Repository) enqueueManagedWhatsAppDistributionAutoReply(
-	ctx context.Context,
-	store leadRedistributionQueryExecutor,
-	job redistributionJob,
-	assignedUserID string,
-	distributionEventID string,
-) error {
-	if job.AllowAssignedRedistribution {
-		return nil
-	}
-	if normalizeInitialDistributionSource(job.Source) != "whatsapp" {
-		return nil
-	}
-	entryEventID, ok := normalizeUUID(job.EntryEventID)
-	if !ok {
-		return nil
-	}
-	assignedUserID, ok = normalizeUUID(assignedUserID)
-	if !ok {
-		return nil
-	}
-	distributionEventID = strings.TrimSpace(distributionEventID)
-	if distributionEventID == "" {
-		return nil
-	}
-
-	const savepointName = "managed_whatsapp_distribution_auto_reply"
-	if _, err := store.Exec(ctx, "savepoint "+savepointName); err != nil {
-		// The acknowledgement is optional. If it cannot be isolated safely, skip
-		// it and leave the canonical lead distribution as the source of truth.
-		return nil
-	}
-
-	var rawResult []byte
-	if err := store.QueryRow(ctx, `
-		select public.enqueue_managed_whatsapp_distribution_auto_reply(
-			$1::uuid,
-			$2::uuid,
-			$3::uuid,
-			$4::text
-		)
-	`, job.OrganizationID, entryEventID, assignedUserID, distributionEventID).Scan(&rawResult); err != nil {
-		return rollbackManagedWhatsAppAutoReplySavepoint(ctx, store, savepointName)
-	}
-	if _, err := decodeJSONObject(rawResult); err != nil {
-		return rollbackManagedWhatsAppAutoReplySavepoint(ctx, store, savepointName)
-	}
-	if _, err := store.Exec(ctx, "release savepoint "+savepointName); err != nil {
-		return fmt.Errorf("release managed WhatsApp auto reply savepoint: %w", err)
-	}
-	return nil
-}
-
-func rollbackManagedWhatsAppAutoReplySavepoint(
-	ctx context.Context,
-	store leadRedistributionQueryExecutor,
-	savepointName string,
-) error {
-	_, rollbackErr := store.Exec(ctx, "rollback to savepoint "+savepointName)
-	_, releaseErr := store.Exec(ctx, "release savepoint "+savepointName)
-	if rollbackErr != nil {
-		return fmt.Errorf("rollback managed WhatsApp auto reply savepoint: %w", rollbackErr)
-	}
-	if releaseErr != nil {
-		return fmt.Errorf("release managed WhatsApp auto reply savepoint after rollback: %w", releaseErr)
-	}
-	return nil
 }
 
 func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, job redistributionJob, current leadSnapshot) (string, error) {

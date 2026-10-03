@@ -54,6 +54,7 @@ type AutomationEvent = {
   organization_id: string;
   event_type: string;
   lead_id: string;
+  aggregate_id?: string | null;
   entity_id?: string | null;
   conversation_id?: string | null;
   payload?: Record<string, any>;
@@ -159,7 +160,7 @@ function triggerMatches(config: Record<string, any>, event: AutomationEvent, cre
 
 async function processReplyAwareInboundMessage(client: SupabaseClient, event: AutomationEvent): Promise<void> {
   const payload = event.payload || {};
-  const messageID = String(payload.message_id || event.entity_id || "");
+  const messageID = String(payload.message_id || event.aggregate_id || event.entity_id || "");
   const occurredAt = String(payload.occurred_at || "");
   if (!UUID_RE.test(messageID) || !Number.isFinite(new Date(occurredAt).getTime())) return;
 
@@ -176,9 +177,31 @@ async function processReplyAwareInboundMessage(client: SupabaseClient, event: Au
   if (data?.ok === false) throw new Error(`inbound_message_processing_failed:${data?.status || "unknown"}`);
 }
 
-async function processEvent(client: SupabaseClient, event: AutomationEvent): Promise<number> {
+async function inboundMessageCaptureState(client: SupabaseClient, event: AutomationEvent): Promise<string | null> {
+  const messageID = String(event.payload?.message_id || event.aggregate_id || event.entity_id || "");
+  if (!UUID_RE.test(messageID)) throw new Error("inbound_message_id_missing");
+  const { data, error } = await client.from("whatsapp_messages")
+    .select("capture_state")
+    .eq("id", messageID)
+    .eq("organization_id", event.organization_id)
+    .eq("lead_id", event.lead_id)
+    .eq("conversation_id", event.conversation_id || event.payload?.conversation_id || "")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("inbound_message_capture_state_unavailable");
+  return data.capture_state;
+}
+
+export async function processEvent(client: SupabaseClient, event: AutomationEvent): Promise<number> {
   if (!(await moduleEnabled(client, event.organization_id))) return 0;
-  if (event.event_type === "message_received") await processReplyAwareInboundMessage(client, event);
+  if (event.event_type === "message_received") {
+    // Recorded history still counts as a reply to a waiting follow-up. It must
+    // never start a new automation merely because it was saved in the CRM.
+    const captureState = await inboundMessageCaptureState(client, event);
+    if (captureState === "suppressed") return 0;
+    await processReplyAwareInboundMessage(client, event);
+    if (captureState === "recorded") return 0;
+  }
   const { data: lead, error: leadError } = await client.from("leads")
     .select("id,assigned_user_id,last_contact_at,updated_at,created_at")
     .eq("id", event.lead_id).eq("organization_id", event.organization_id).maybeSingle();

@@ -2,6 +2,7 @@ import { useWhatsAppSessions } from "./use-whatsapp-sessions";
 
 type UseAccessibleSessionsOptions = {
   enabled?: boolean;
+  live?: boolean;
 };
 
 export function useAccessibleSessions(options: UseAccessibleSessionsOptions = {}) {

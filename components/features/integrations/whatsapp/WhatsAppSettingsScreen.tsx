@@ -88,10 +88,10 @@ export default function WhatsAppSettingsScreen() {
               title="Selecione uma organização"
               description="Escolha a organização cujas conexões WhatsApp você precisa acompanhar."
             />
-          ) : !access.canViewStatuses ? (
+          ) : !access.canViewStatuses && !access.canManageOwnSessions ? (
             <RestrictedState
               title="Acesso restrito"
-              description="O módulo WhatsApp e a permissão de visualização são necessários. Líderes veem somente os usuários das equipes sob sua responsabilidade."
+              description="O módulo WhatsApp precisa estar disponível para esta organização."
             />
           ) : (
             <>
@@ -99,7 +99,7 @@ export default function WhatsAppSettingsScreen() {
                 <WhatsAppIntegrationSettings />
               ) : null}
 
-              <WhatsAppSessionStatusPanel />
+              {access.canViewStatuses ? <WhatsAppSessionStatusPanel /> : null}
             </>
           )}
         </div>

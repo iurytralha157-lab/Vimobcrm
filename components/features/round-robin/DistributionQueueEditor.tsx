@@ -11,7 +11,6 @@ import {
   DistributionQueueMembersSection,
   DistributionQueueRedistributionSection,
   DistributionQueueRulesSection,
-  DistributionQueueWhatsAppAutoReplySection,
 } from "@/components/features/round-robin/distribution-queue-editor";
 import { createClientId } from "@/lib/client-id";
 import { Button } from "@/components/ui/button";
@@ -35,18 +34,13 @@ import {
   type QueueMemberDraft,
 } from "@/lib/round-robin/member-context";
 import {
-  DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
-  DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
   createEmptyDistributionQueueFormData,
   DISTRIBUTION_QUEUE_CONDITION_TYPES,
   findConflictingDistributionQueueMetaForm,
   getDistributionQueueEligibleUserIds,
   hasValidDistributionQueueCriteria,
   hydrateDistributionQueueFormData,
-  isValidWhatsAppDistributionAutoReplyDelay,
   MAX_DISTRIBUTION_QUEUE_AUTO_TAGS,
-  MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
-  MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH,
   normalizeDistributionQueueAutoTagIds,
   sanitizeDistributionQueueConditions,
   type DistributionQueueCondition,
@@ -724,50 +718,6 @@ export function DistributionQueueEditor({
     }
     const hasConfiguredWhatsAppMessageCondition =
       configuredWhatsAppMessageConditions.length > 0;
-    const whatsappAutoReplyEnabled =
-      hasConfiguredWhatsAppMessageCondition &&
-      formData.settings.whatsapp_distribution_auto_reply_enabled === true;
-    const rawWhatsAppAutoReplyMessage =
-      typeof formData.settings.whatsapp_distribution_auto_reply_message ===
-      "string"
-        ? formData.settings.whatsapp_distribution_auto_reply_message.trim()
-        : "";
-    const whatsappAutoReplyMessageLength = Array.from(
-      rawWhatsAppAutoReplyMessage,
-    ).length;
-    const rawWhatsAppAutoReplyDelay =
-      formData.settings.whatsapp_distribution_auto_reply_delay_seconds;
-    if (
-      whatsappAutoReplyEnabled &&
-      (whatsappAutoReplyMessageLength < 1 ||
-        whatsappAutoReplyMessageLength >
-          MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH)
-    ) {
-      toast.error(
-        `A resposta automática deve conter entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.`,
-      );
-      return;
-    }
-    if (
-      whatsappAutoReplyEnabled &&
-      !isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)
-    ) {
-      toast.error(
-        `O atraso da resposta automática deve ficar entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS} segundos.`,
-      );
-      return;
-    }
-    const whatsappAutoReplyMessage =
-      whatsappAutoReplyMessageLength >= 1 &&
-      whatsappAutoReplyMessageLength <=
-        MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH
-        ? rawWhatsAppAutoReplyMessage
-        : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY;
-    const whatsappAutoReplyDelay = isValidWhatsAppDistributionAutoReplyDelay(
-      rawWhatsAppAutoReplyDelay,
-    )
-      ? rawWhatsAppAutoReplyDelay
-      : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
     if (
       hasConfiguredWhatsAppMessageCondition &&
       formData.settings.require_checkin
@@ -844,10 +794,7 @@ export function DistributionQueueEditor({
       auto_tag_ids: normalizeDistributionQueueAutoTagIds(
         formData.settings.auto_tag_ids,
       ),
-      whatsapp_distribution_auto_reply_enabled:
-        sanitizedHasWhatsAppMessageCondition && whatsappAutoReplyEnabled,
-      whatsapp_distribution_auto_reply_message: whatsappAutoReplyMessage,
-      whatsapp_distribution_auto_reply_delay_seconds: whatsappAutoReplyDelay,
+      whatsapp_distribution_auto_reply_enabled: false,
     };
     const payload: DistributionQueueFormData = {
       ...formData,
@@ -1090,19 +1037,6 @@ export function DistributionQueueEditor({
               }
             />
 
-            {hasWhatsAppMessageCondition && (
-              <DistributionQueueWhatsAppAutoReplySection
-                open={openSections.includes("whatsapp-auto-reply")}
-                settings={formData.settings}
-                onToggle={() => toggleSection("whatsapp-auto-reply")}
-                onSettingsChange={(updates) =>
-                  setFormData((previous) => ({
-                    ...previous,
-                    settings: { ...previous.settings, ...updates },
-                  }))
-                }
-              />
-            )}
           </div>
         </div>
       </div>
