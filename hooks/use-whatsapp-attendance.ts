@@ -113,7 +113,7 @@ export function useJoinWhatsAppAttendance() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async (target: WhatsAppAttendanceTarget) => {
+    mutationFn: async (target: WhatsAppAttendanceTarget & { confirmedSharing?: boolean }) => {
       if (!scope.organizationId || !scope.userId) {
         throw new Error("Usuário não autenticado.");
       }
@@ -122,6 +122,7 @@ export function useJoinWhatsAppAttendance() {
         {
           expectedLeadId: target.expectedLeadId,
           sendSessionId: target.sendSessionId,
+          confirmedSharing: target.confirmedSharing ?? false,
         },
         scope.organizationId,
       );
@@ -148,9 +149,6 @@ export function useJoinWhatsAppAttendance() {
         }),
         queryClient.invalidateQueries({
           queryKey: whatsappQueryKeys.leadMessagesScope(scope),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ['lead-history-v2', target.expectedLeadId],
         }),
       ]);
     },
@@ -212,7 +210,31 @@ export function useWhatsAppAttendanceGate(
     }
 
     const operation = (async () => {
-      const requestedTarget = request.target === undefined ? target ?? null : request.target;
+      let requestedTarget = request.target === undefined ? target ?? null : request.target;
+
+      // A new conversation has no ID until it is prepared. Resolve it first
+      // so the API, not the absence of a target, decides whether a pop-up is
+      // actually required for this user, number and lead.
+      if (!requestedTarget && request.prepareTarget) {
+        setCheckingIdentityKey(operationIdentityKey);
+        try {
+          requestedTarget = await request.prepareTarget();
+          if (requestIdentityRef.current !== operationIdentityKey) return false;
+        } catch (error) {
+          toast({
+            title: "Conversa indisponível",
+            description: error instanceof Error && error.message.length < 180
+              ? error.message
+              : "Não foi possível preparar esta conversa para envio.",
+            variant: "destructive",
+          });
+          return false;
+        } finally {
+          setCheckingIdentityKey((current) => (
+            current === operationIdentityKey ? null : current
+          ));
+        }
+      }
 
       if (requestedTarget) {
         setCheckingIdentityKey(operationIdentityKey);
@@ -241,7 +263,12 @@ export function useWhatsAppAttendanceGate(
           );
           setAccessRevokedTarget(null);
           if (requestIdentityRef.current !== operationIdentityKey) return false;
-          if (attendance.joined) return true;
+          if (attendance.joined && !attendance.confirmationRequired) return true;
+          if (!attendance.confirmationRequired) {
+            const joined = await joinAttendance.mutateAsync(requestedTarget);
+            if (requestIdentityRef.current !== operationIdentityKey) return false;
+            return joined.joined && !joined.confirmationRequired;
+          }
         } catch (error) {
           if (isWhatsAppAccessRevokedError(error)) {
             setAccessRevokedTarget({
@@ -303,7 +330,7 @@ export function useWhatsAppAttendanceGate(
       }
     });
     return operation;
-  }, [queryClient, scope, target, toast]);
+  }, [joinAttendance, queryClient, scope, target, toast]);
 
   const confirmAttendance = useCallback(async () => {
     const pending = pendingRequestRef.current;
@@ -325,7 +352,10 @@ export function useWhatsAppAttendanceGate(
         settlePendingRequest(false);
         return;
       }
-      const attendance = await joinAttendance.mutateAsync(resolvedTarget);
+      const attendance = await joinAttendance.mutateAsync({
+        ...resolvedTarget,
+        confirmedSharing: true,
+      });
       if (!attendance.joined) {
         throw new Error("A entrada no atendimento não foi confirmada.");
       }

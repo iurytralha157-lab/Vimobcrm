@@ -460,8 +460,8 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 	if err != nil {
 		t.Fatalf("fast-lane claim: %v", err)
 	}
-	if len(fast) != 2 {
-		t.Fatalf("fast-lane claim = %#v, want both due text rows", fast)
+	if len(fast) != 3 {
+		t.Fatalf("fast-lane claim = %#v, want every due text row without one-per-conversation serialization", fast)
 	}
 	claimedFast := map[string]bool{}
 	claimedFastItems := map[string]pendingWhatsAppOutbox{}
@@ -472,8 +472,8 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 			t.Fatalf("claimed outbox %s has no lease token", item.ID)
 		}
 	}
-	if !claimedFast[textA] || !claimedFast[textB] {
-		t.Fatalf("fast-lane IDs = %#v, want conversation A text %s to pass deferred retry %s and media %s, and conversation B text %s", claimedFast, textA, retryA, mediaA, textB)
+	if !claimedFast[textA] || !claimedFast[textASecond] || !claimedFast[textB] {
+		t.Fatalf("fast-lane IDs = %#v, want both conversation A texts %s/%s to pass deferred retry %s and media %s, and conversation B text %s", claimedFast, textA, textASecond, retryA, mediaA, textB)
 	}
 	var retryStatus string
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, retryA).Scan(&retryStatus); err != nil {
@@ -489,12 +489,13 @@ func TestClaimWhatsAppOutboxLetsDueSendsPassProcessingAndDeferredPredecessors(t 
 	if overtakingTextStatus != "processing" {
 		t.Fatalf("conversation A text status = %q, want processing while older media is deferred", overtakingTextStatus)
 	}
+	textAThird := insertFixture(conversationA, suffix+"-a-text-third", "text", "send.text", "30 seconds")
 	parallelFast, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneFast)
 	if err != nil {
 		t.Fatalf("parallel fast-lane claim: %v", err)
 	}
-	if len(parallelFast) != 1 || parallelFast[0].ID != textASecond {
-		t.Fatalf("parallel fast-lane claim = %#v, want newer same-conversation text %s", parallelFast, textASecond)
+	if len(parallelFast) != 1 || parallelFast[0].ID != textAThird {
+		t.Fatalf("parallel fast-lane claim = %#v, want newer same-conversation text %s while the others are processing", parallelFast, textAThird)
 	}
 	var secondTextStatus string
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, textASecond).Scan(&secondTextStatus); err != nil {

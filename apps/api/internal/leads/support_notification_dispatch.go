@@ -212,6 +212,7 @@ func isPlatformTransactionalNotificationEvent(eventKey string) bool {
 	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
 	return eventKey == "onboarding_welcome" ||
 		eventKey == "onboarding_email_confirmation" ||
+		eventKey == "whatsapp_disconnected" ||
 		eventKey == "schedule_reminder" ||
 		eventKey == "appointment_reminder" ||
 		eventKey == "appointment_outcome_pending" ||

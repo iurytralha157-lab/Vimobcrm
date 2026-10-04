@@ -90,7 +90,7 @@ func TestProductionStacksExposeBoundedWhatsAppMediaWorker(t *testing.T) {
 	}
 }
 
-func TestProductionStacksExposeInboundRecordingCanary(t *testing.T) {
+func TestProductionStacksRequireExplicitInboundRecordingCanary(t *testing.T) {
 	for _, path := range []string{
 		"../../../../deploy/portainer-stack.yml",
 		"../../../../deploy/portainer-stack.build.yml",
@@ -100,7 +100,7 @@ func TestProductionStacksExposeInboundRecordingCanary(t *testing.T) {
 			t.Fatalf("read %s: %v", path, err)
 		}
 		if !strings.Contains(string(raw), `WHATSAPP_INBOUND_RECORDING_SESSION_IDS: ${WHATSAPP_INBOUND_RECORDING_SESSION_IDS:-}`) {
-			t.Fatalf("%s does not expose the disabled-by-default inbound recording canary", path)
+			t.Fatalf("%s must require explicit inbound recording scope until retention is active", path)
 		}
 	}
 
@@ -108,8 +108,9 @@ func TestProductionStacksExposeInboundRecordingCanary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "WHATSAPP_INBOUND_RECORDING_SESSION_IDS=") {
-		t.Fatal(".env.example does not describe the inbound recording canary")
+	if !strings.Contains(string(raw), "WHATSAPP_INBOUND_RECORDING_SESSION_IDS=") ||
+		strings.Contains(string(raw), "WHATSAPP_INBOUND_RECORDING_SESSION_IDS=*") {
+		t.Fatal(".env.example must require an explicit inbound recording canary")
 	}
 }
 

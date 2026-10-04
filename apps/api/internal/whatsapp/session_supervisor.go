@@ -268,9 +268,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 	defer repo.releaseSessionSupervisorClaimWithoutCancellation(ctx, session.ID, claimToken)
 
 	settings := ensureAutoReplyDefaults(cloneMap(session.AdvancedSettings))
-	if !sessionAutoReconnectEnabled(settings) {
-		return nil
-	}
+	autoReconnectEnabled := sessionAutoReconnectEnabled(settings)
 	settingsPatch := map[string]any{}
 	settingsRemoveKeys := []string{}
 
@@ -316,7 +314,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		observationErr := fmt.Errorf("%w: Evolution Go connection status is unavailable", ErrProviderOutcomeUnknown)
 		return errors.Join(observationErr, repo.recordSessionProbeFailure(ctx, session, claimToken, observationErr, 0))
 	}
-	applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, observedStatus, statusResult, claimToken, !instanceMissing)
+	applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, observedStatus, statusResult, claimToken, !instanceMissing, nil)
 	if err != nil {
 		return err
 	}
@@ -324,6 +322,11 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		// A webhook or another database actor changed the row after the probe
 		// started. Its newer state wins; never write or recover from this stale
 		// provider observation.
+		return nil
+	}
+	if !autoReconnectEnabled {
+		// Passive status monitoring still reports a disconnected number. The
+		// owner's choice only disables provider recovery and maintenance writes.
 		return nil
 	}
 	if instanceMissing {
@@ -390,7 +393,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 			verificationErr := fmt.Errorf("%w: Evolution Go post-recovery status is unavailable", ErrProviderOutcomeUnknown)
 			return errors.Join(verificationErr, repo.recordSessionRecoveryFailure(ctx, session, now))
 		}
-		applied, updateErr := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, status, statusResult, claimToken, !missing)
+		applied, updateErr := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, status, statusResult, claimToken, !missing, nil)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -477,7 +480,10 @@ func (repo Repository) getSupervisorSession(ctx context.Context, organizationID 
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') not in ('deleted', 'disabled')
-		  and lower(coalesce(ws.advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
+		  and (
+		    lower(coalesce(ws.advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
+		    or ws.status = 'connected'
+		  )
 		  and exists (
 		    select 1
 		    from private.whatsapp_session_supervisor_state supervisor_state
@@ -576,7 +582,7 @@ func (repo Repository) recoverSession(ctx context.Context, session Session, inst
 	if latestStatus != "disconnected" {
 		// The provider's own reconnect completed during the grace/recheck window.
 		// Do not restart a client that has just become connected or QR-ready.
-		applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, latestStatus, latestStatusResult, claimToken, true)
+		applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, latestStatus, latestStatusResult, claimToken, true, nil)
 		if err != nil {
 			return evolutionRecoveryWaiting, err
 		}
@@ -768,6 +774,64 @@ func evolutionConnectionObservation(result map[string]any) (status string, autho
 		return normalizedStatus, true, false
 	}
 	return "", false, false
+}
+
+// A LoggedOut callback without a provider timestamp is only a hint. Its place
+// in the inbox does not prove when the logout happened, so reconcile against a
+// fresh provider status before changing the CRM session. No database connection
+// is held across the provider request; the strict row-version check below
+// rejects a reconnect or lifecycle change that races the request.
+func (repo Repository) reconcileTimestampLessLoggedOut(ctx context.Context, item pendingEvolutionWebhook) (string, error) {
+	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
+		select `+sessionSelectFields()+`
+		from public.whatsapp_sessions ws
+		left join public.users owner on owner.id = ws.owner_user_id
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') not in ('deleted', 'disabled')
+		limit 1
+	`, item.OrganizationID, item.SessionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "loggedout_session_inactive", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	instanceKey := sessionEvolutionInstanceKey(session, session.AdvancedSettings)
+	token := strings.TrimSpace(stringFromMap(session.AdvancedSettings, "token"))
+	if instanceKey == "" || token == "" {
+		return "loggedout_probe_identity_missing", nil
+	}
+
+	result, err := repo.invokeEvolutionSupervisorRead(ctx, "instance.status", map[string]any{
+		"session_id":  session.ID,
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if err != nil {
+		// The independent supervisor will probe again. Never retry this unordered
+		// callback and never infer a disconnect from a transport failure.
+		return "loggedout_probe_unavailable", nil
+	}
+	status, authoritative, missing := evolutionConnectionObservation(result)
+	if !authoritative {
+		return "loggedout_probe_inconclusive", nil
+	}
+	applied, err := repo.updateSessionStatusFromProviderIfCurrent(
+		ctx, session, status, result, "", !missing, &session.UpdatedAt,
+	)
+	if err != nil {
+		return "", err
+	}
+	if !applied {
+		return "loggedout_session_changed_during_probe", nil
+	}
+	if status != "disconnected" {
+		return "loggedout_provider_" + status, nil
+	}
+	return "", nil
 }
 
 func isAuthoritativeEvolutionStatusDisconnect(message string) bool {
@@ -1207,7 +1271,7 @@ func (repo Repository) patchSessionSettings(ctx context.Context, organizationID 
 }
 
 func (repo Repository) updateSessionStatusFromProvider(ctx context.Context, session Session, normalizedStatus string, result map[string]any) error {
-	_, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true)
+	_, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true, nil)
 	return err
 }
 
@@ -1225,6 +1289,7 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 	result map[string]any,
 	claimToken string,
 	clearProbeFailure bool,
+	expectedUpdatedAt *time.Time,
 ) (bool, error) {
 	if normalizedStatus != "connected" && normalizedStatus != "qr_ready" && normalizedStatus != "disconnected" {
 		return false, nil
@@ -1239,6 +1304,10 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 	expectedWebhookAt := stringFromAny(session.AdvancedSettings["webhook_state_event_at_ms"])
 	expectedWebhookRank := stringFromAny(session.AdvancedSettings["webhook_state_event_rank"])
 	expectedWebhookKey := stringFromAny(session.AdvancedSettings["webhook_state_event_key"])
+	var expectedUpdatedAtValue any
+	if expectedUpdatedAt != nil {
+		expectedUpdatedAtValue = expectedUpdatedAt.UTC()
+	}
 	observedAtMillis := time.Now().UTC().UnixMilli()
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -1258,6 +1327,10 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 		  and coalesce(advanced_settings->>'webhook_state_event_at_ms', '') = $4::text
 		  and coalesce(advanced_settings->>'webhook_state_event_rank', '') = $5::text
 		  and coalesce(advanced_settings->>'webhook_state_event_key', '') = $6::text
+		  and ($8::timestamptz is null or (
+		    updated_at = $8::timestamptz
+		    and nullif(advanced_settings->>'lifecycle_operation', '') is null
+		  ))
 		  and (
 		    $7::text = ''
 		    or exists (
@@ -1270,7 +1343,7 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 		    )
 		  )
 		for update
-	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey, claimToken).Scan(&currentPhone)
+	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey, claimToken, expectedUpdatedAtValue).Scan(&currentPhone)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if claimToken != "" {
 			if _, err := tx.Exec(ctx, `

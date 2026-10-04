@@ -71,7 +71,7 @@ test("public-site lead producers share the canonical recipient dedupe key", () =
   );
 });
 
-for (const name of ["sla-checker", "session-health-check"]) {
+for (const name of ["sla-checker"]) {
   test(`${name} requires a durable queue acknowledgement`, () => {
     const source = functionSource(name);
     assert.match(source, /async function enqueueNotification\(/);
@@ -82,24 +82,22 @@ for (const name of ["sla-checker", "session-health-check"]) {
   });
 }
 
-test("recurring notification dedupe keys identify SLA cycles and disconnect episodes", () => {
+test("session health check records the status transition for the database notice", () => {
   const healthCheck = functionSource("session-health-check");
-  assert.match(
-    healthCheck,
-    /const disconnectEpisode = session\.updated_at \|\|\s*session\.last_connected_at \|\| session\.created_at;/,
+  const sessionsHook = projectSource("hooks/use-whatsapp-sessions.ts");
+  const producer = projectSource(
+    "supabase/migrations/20261003220000_whatsapp_disconnect_owner_notification.sql",
   );
-  assert.equal(
-    [...healthCheck.matchAll(/disconnect_episode:\s*disconnectEpisode/g)]
-      .length,
-    2,
-  );
-  assert.equal(
-    [...healthCheck.matchAll(
-      /dedupe_key:\s*`whatsapp_disconnected:[^`]*\$\{disconnectEpisode\}`/g,
-    )].length,
-    2,
-  );
+  assert.match(healthCheck, /updateData\.status = "disconnected";/);
+  assert.match(healthCheck, /if \(statusUpdateError\)/);
+  assert.doesNotMatch(healthCheck, /enqueueNotification\(/);
+  assert.doesNotMatch(sessionsHook, /whatsapp_disconnected:/);
+  assert.match(producer, /create trigger trg_notify_whatsapp_session_owner_disconnected/);
+  assert.match(producer, /'event_key', 'whatsapp_disconnected'/);
+  assert.match(producer, /v_dedupe_key := 'whatsapp_disconnected:'/);
+});
 
+test("recurring SLA notification dedupe keys identify their cycle", () => {
   const slaChecker = functionSource("sla-checker");
   assert.doesNotMatch(slaChecker, /now\.getHours\(\)/);
   assert.equal(
@@ -109,11 +107,6 @@ test("recurring notification dedupe keys identify SLA cycles and disconnect epis
     3,
   );
 
-  const sessionsHook = projectSource("hooks/use-whatsapp-sessions.ts");
-  assert.match(
-    sessionsHook,
-    /dedupeKey:\s*`whatsapp_disconnected:\$\{session\.id\}:\$\{session\.owner_user_id\}:\$\{session\.updated_at\}`/,
-  );
 });
 
 test("notification-service is a private adapter to the canonical producer", () => {

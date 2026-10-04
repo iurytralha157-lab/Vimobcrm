@@ -28,7 +28,14 @@ export function buildLeadHistory(
   leadId: string,
   formatters: LeadHistoryFormatters,
 ): UnifiedHistoryEvent[] {
-  const timelineEvents = raw.timelineEvents || [];
+  // Older attendance rows were written on entry, before a human message was
+  // confirmed. Show participation only after the provider-backed marker is set.
+  const timelineEvents = (raw.timelineEvents || []).filter((event) => {
+    if (event.event_type !== 'whatsapp_attendance_joined') return true;
+    const metadata = asMetadata(event.metadata);
+    return ['started', 'joined'].includes(metadataString(metadata.marker_kind) || '')
+      && Boolean(metadataString(metadata.marker_at));
+  });
   const activityEvents = raw.activityEvents || [];
   const entryEvents = raw.entryEvents || [];
   const lead = raw.lead || null;

@@ -177,7 +177,7 @@ func TestProviderReplayKeepsOriginalCardWithoutMutatingCurrentPreview(t *testing
 	for _, fragment := range []string{
 		"conversation.MessageLeadID = storedLeadID",
 		"conversation.HistoricalBindingReplay = storedLeadID != conversation.LeadID",
-		"set lead_id = case when capture_state in ('recorded', 'suppressed') then lead_id else coalesce(lead_id, nullif($15, '')::uuid) end",
+		"set provider_message_id = coalesce(provider_message_id, $4)",
 		"metadata = case when capture_state in ('suppressed', 'recorded') then coalesce(metadata, '{}'::jsonb)",
 		"eventBindingIsCurrent := !conversation.HistoricalBindingReplay",
 		"updated, err = updateNativeEvolutionConversation",
@@ -186,6 +186,11 @@ func TestProviderReplayKeepsOriginalCardWithoutMutatingCurrentPreview(t *testing
 		if !strings.Contains(native, fragment) {
 			t.Fatalf("native replay isolation contract is missing %q", fragment)
 		}
+	}
+	replayStart := strings.Index(native, "func insertNativeEvolutionMessage(")
+	replayEnd := strings.Index(native, "func redactSuppressedNativeMessage(")
+	if replayStart < 0 || replayEnd <= replayStart || strings.Contains(native[replayStart:replayEnd], "set lead_id") {
+		t.Fatal("native provider replay must not update lead_id or fire its context trigger")
 	}
 
 	edgePath := filepath.Clean(filepath.Join(
@@ -421,10 +426,11 @@ func TestNativeOutboundWebhookReconciliationTransfersOnlyExactDurableIdentity(t 
 		"canonical.client_message_id is null or canonical.client_message_id = $5",
 		"and canonical.provider_message_id = $6",
 		"and canonical.message_id = $6",
-		"and outbox.message_id = $7::uuid",
-		"and outbox.client_message_id = $8",
-		"and outbox.provider_message_id = $9",
-		"and outbox.last_error = $10",
+		"and outbox.conversation_id = $5::uuid",
+		"and outbox.message_id = $6::uuid",
+		"and outbox.client_message_id = $7",
+		"and outbox.provider_message_id = $8",
+		"and outbox.last_error = $9",
 		"if reconciled.RowsAffected() != 1",
 		"delete from public.whatsapp_messages as pending",
 	} {

@@ -122,6 +122,7 @@ export interface WhatsAppConversation {
   id: string
   session_id: string | null
   lead_id: string | null
+  nonlead_expires_at?: string | null
   remote_jid: string
   contact_name: string | null
   contact_phone: string | null
@@ -277,10 +278,14 @@ export type WhatsAppAttendanceEntry = {
   userName: string
   sessionId: string
   joinedAt: string
+  entrySource: 'manual' | 'implicit' | 'ctwa_auto'
+  markerAt?: string
+  markerKind?: 'started' | 'joined'
 }
 
 export type WhatsAppAttendanceState = {
   joined: boolean
+  confirmationRequired: boolean
   currentEntry: WhatsAppAttendanceEntry | null
   entries: WhatsAppAttendanceEntry[]
   created?: boolean
@@ -289,6 +294,7 @@ export type WhatsAppAttendanceState = {
 export type WhatsAppAttendanceRequest = {
   expectedLeadId: string
   sendSessionId: string
+  confirmedSharing?: boolean
 }
 
 export type ReactWhatsAppMessageInput = {

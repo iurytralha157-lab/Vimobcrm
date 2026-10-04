@@ -173,13 +173,10 @@ func TestOutboxClaimAllowsDueMessagesPastOlderWorkAndUsesExplicitCursorWrap(t *t
 	query := strings.ToLower(strings.Join(strings.Fields(claimWhatsAppOutboxQuery), " "))
 	for _, required := range []string{
 		"'00000000-0000-0000-0000-000000000000'::uuid",
-		"select distinct on (queued.conversation_id)",
+		"candidate_rows as materialized ( select queued.conversation_id, queued.id",
 		"queued.conversation_id > params.after_conversation_id",
 		"order by queued.conversation_id, queued.created_at, queued.id",
-		"from conversation_heads head join public.whatsapp_conversations wc on wc.id = head.conversation_id",
 		"queued.next_attempt_at <= now()",
-		"for no key update of wc skip locked",
-		"join public.whatsapp_outbox queued on queued.id = selected.event_id",
 		"for update of queued skip locked",
 		"message.metadata @> '{\"managed_whatsapp_distribution_auto_reply\":true}'::jsonb",
 		"current_message.lead_id = current_conversation.lead_id",
@@ -190,22 +187,25 @@ func TestOutboxClaimAllowsDueMessagesPastOlderWorkAndUsesExplicitCursorWrap(t *t
 			t.Fatalf("outbox claim is missing %q", required)
 		}
 	}
-	if got := strings.Count(query, "current_binding.active_to is null"); got != 3 {
-		t.Fatalf("outbox binding fence count = %d, want head, locked-row and claim rechecks", got)
+	if got := strings.Count(query, "current_binding.active_to is null"); got != 2 {
+		t.Fatalf("outbox binding fence count = %d, want row-selection and claim rechecks", got)
 	}
-	if strings.Contains(query, "where active.session_id") || strings.Contains(query, "for no key update of ws") {
-		t.Fatal("outbox claim must not let media in one conversation serialize every chat on the same WhatsApp session")
+	if strings.Contains(query, "select distinct on (queued.conversation_id)") ||
+		strings.Contains(query, "for no key update of wc") ||
+		strings.Contains(query, "where active.session_id") ||
+		strings.Contains(query, "for no key update of ws") {
+		t.Fatal("outbox claim must lock only its own message, without serializing a conversation or session")
 	}
 	if strings.Contains(query, "gen_random_uuid()") || strings.Contains(query, "claim_bucket") {
 		t.Fatal("outbox cursor must start at the beginning and wrap explicitly instead of randomizing or sorting every head")
 	}
-	headStart := strings.Index(query, "conversation_heads as (")
-	candidateStart := strings.Index(query, "candidate_conversations as materialized")
-	if headStart < 0 || candidateStart <= headStart {
-		t.Fatal("outbox claim must expose separate due-head and candidate stages")
+	candidateStart := strings.Index(query, "candidate_rows as materialized")
+	claimStart := strings.Index(query, "claimed as (")
+	if candidateStart < 0 || claimStart <= candidateStart {
+		t.Fatal("outbox claim must select and lock due message rows before updating their leases")
 	}
-	if !strings.Contains(query[headStart:candidateStart], "next_attempt_at <= now()") {
-		t.Fatal("due-head selection must let a newer operation bypass an older retry deadline")
+	if !strings.Contains(query[candidateStart:claimStart], "next_attempt_at <= now()") {
+		t.Fatal("due-row selection must let a newer operation bypass an older retry deadline")
 	}
 	if strings.Contains(query, "active.status = 'processing'") || strings.Contains(query, "older_media") || strings.Contains(query, "older_fast") {
 		t.Fatal("an older outbox operation must not block a newer due send")
@@ -267,11 +267,10 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 			}
 		}
 		for _, required := range []string{
-			"select distinct on (queued.conversation_id)",
+			"candidate_rows as materialized ( select queued.conversation_id, queued.id",
 			"queued.status in ('pending', 'retry')",
 			"queued.attempts < queued.max_attempts or queued.last_error = '" + whatsappOutboxProviderAcceptedMarker + "'",
 			"order by queued.conversation_id, queued.created_at, queued.id",
-			"for no key update of wc skip locked",
 			"for update of queued skip locked",
 			"coalesce(delivery_session.is_active, true)",
 		} {
@@ -460,11 +459,11 @@ func TestOutboxClaimSkipsOfflineProviderWorkButKeepsLocalFinalizationEligible(t 
 			t.Fatalf("offline-safe outbox claim is missing %q", required)
 		}
 	}
-	if got := strings.Count(query, "from public.whatsapp_sessions as delivery_session"); got != 3 {
-		t.Fatalf("session eligibility is rechecked %d times, want head, locked head, and final update", got)
+	if got := strings.Count(query, "from public.whatsapp_sessions as delivery_session"); got != 2 {
+		t.Fatalf("session eligibility is rechecked %d times, want candidate selection and final update", got)
 	}
-	if got := strings.Count(query, "coalesce(delivery_session.is_active, true)"); got != 3 {
-		t.Fatalf("legacy nullable active sessions are preserved in %d eligibility checks, want 3", got)
+	if got := strings.Count(query, "coalesce(delivery_session.is_active, true)"); got != 2 {
+		t.Fatalf("legacy nullable active sessions are preserved in %d eligibility checks, want 2", got)
 	}
 	if strings.Contains(query, "coalesce(delivery_session.is_active, false)") {
 		t.Fatal("outbox claim strands legacy sessions whose nullable is_active means active")

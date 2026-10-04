@@ -41,10 +41,12 @@ select results_eq(
       ('bootstrap_provider_message_id'::text),
       ('bootstrap_ingress_sequence'::text),
       ('bootstrap_provider_occurred_at'::text),
-      ('bootstrap_inbox_created_at'::text)
+      ('bootstrap_inbox_created_at'::text),
+      ('marker_at'::text),
+      ('marker_kind'::text)
     ) as expected(column_name)
   $$,
-  'the attendance ledger exposes manual and verified CTWA bootstrap fields'
+  'the attendance ledger exposes capture, verified CTWA bootstrap and post-send marker fields'
 );
 
 select col_type_is(
@@ -74,10 +76,12 @@ select ok(
         'bootstrap_provider_message_id',
         'bootstrap_ingress_sequence',
         'bootstrap_provider_occurred_at',
-        'bootstrap_inbox_created_at'
+        'bootstrap_inbox_created_at',
+        'marker_at',
+        'marker_kind'
       )
   ),
-  'every attendance identity and audit field is required; only bootstrap fields are nullable'
+  'every attendance identity and audit field is required; bootstrap and post-send marker fields are nullable'
 );
 
 select col_type_is(
@@ -824,7 +828,7 @@ select ok(
   obj_description(
     'public.whatsapp_attendance_entries'::regclass,
     'pg_class'
-  ) like '%Append-only backend ledger%'
+  ) like '%Backend attendance and capture ledger%'
   and col_description(
     'public.whatsapp_messages'::regclass,
     (

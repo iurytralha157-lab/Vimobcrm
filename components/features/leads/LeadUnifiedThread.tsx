@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Bot, Loader2, MessageCircle, Paperclip, RefreshCw, Timer } from 'lucide-react';
@@ -8,6 +10,10 @@ import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/wh
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
 import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
 import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
+import { WhatsAppAccessLostNotice } from '@/components/features/whatsapp/WhatsAppAccessLostNotice';
+import { WhatsAppSessionDisconnectedNotice } from '@/components/features/whatsapp/WhatsAppSessionDisconnectedNotice';
+import { WhatsAppSendOriginChoice } from '@/components/features/whatsapp/WhatsAppSendOriginChoice';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
@@ -22,18 +28,25 @@ import {
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
 import { useLeadMessages } from '@/hooks/use-lead-messages';
-import { useStartConversation } from '@/hooks/use-start-conversation';
+import { findInaccessibleLeadHistoryConversation } from '@/hooks/whatsapp-lead-recovery';
+import { useFindConversationByPhone, useStartConversation } from '@/hooks/use-start-conversation';
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from '@/hooks/use-whatsapp-attendance';
+import { useWhatsAppSendOriginChoice } from '@/hooks/use-whatsapp-send-origin-choice';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import {
+  createWhatsAppTextSendGuard,
   getWhatsAppMessageInputState,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from '@/lib/whatsapp-message-input';
+import { getWhatsAppSendFailureStatus } from '@/lib/whatsapp-query-cache';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
+import { getOwnConnectedWhatsAppSessions, isExactExistingLeadConversation } from '@/lib/access/whatsapp-session-sharing';
+import { normalizeWhatsAppContactPhoneToE164 } from '@/lib/phone-utils';
+import { resolveWhatsAppSendOriginPhone } from '@/lib/whatsapp-send-origin-phone';
 import {
   blobToBase64,
   compressOutboundImageFile,
@@ -880,15 +893,25 @@ function FeedbackBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; p
 }
 
 export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest, readOnly = false }: LeadUnifiedThreadProps) {
+  const router = useRouter();
   const [text, setText] = useState('');
+  const [selectedOwnConversation, setSelectedOwnConversation] = useState<{
+    organizationId: string;
+    leadId: string;
+    conversation: WhatsAppConversation;
+  } | null>(null);
+  const [textSendGuard] = useState(createWhatsAppTextSendGuard);
   const [composerHighlighted, setComposerHighlighted] = useState(false);
+  const [isResolvingOwnPhone, setIsResolvingOwnPhone] = useState(false);
+  const ownStartInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastHandledComposerRequestRef = useRef<number | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const lastThreadItemIdRef = useRef<string | null>(null);
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, profile, user } = useAuth();
+  const currentUserId = profile?.id || user?.id || null;
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasWhatsAppModule = hasModule('whatsapp');
@@ -901,8 +924,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     refetch: refetchHistory,
   } = useLeadHistory(leadId);
   const shouldLoadComposerData = canViewWhatsApp && !readOnly;
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
+  const { data: sessions = [], isLoading: loadingSessions, isError: sessionsFailed } = useAccessibleSessions({
     enabled: shouldLoadComposerData,
+    live: shouldLoadComposerData,
   });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
   const { data: conversations = [] } = useWhatsAppConversations(
@@ -917,11 +941,24 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   });
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
-    return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
-  }, [conversations, leadId]);
+    const matching = conversations.filter((item) => item.lead_id === leadId || item.lead?.id === leadId);
+    const hasOwnConnectedSession = sessions.some((session) => session.owner_user_id === currentUserId
+      && session.organization_id === activeOrganization.organizationId
+      && session.status === 'connected'
+      && session.provider === 'evolution_go');
+    if (hasOwnConnectedSession) {
+      const sharedEntry = matching.find((item) => !item.historical_lead_view && sessions.some((session) => session.id === item.session_id
+        && session.owner_user_id !== currentUserId
+        && session.status === 'connected'
+        && session.provider === 'evolution_go'));
+      if (sharedEntry) return sharedEntry;
+    }
+    return matching.find((item) => !item.historical_lead_view) || matching[0] || null;
+  }, [activeOrganization.organizationId, conversations, currentUserId, leadId, sessions]);
 
   const {
     data: messages = [],
+    historyConversations,
     isLoading: loadingMessages,
     isError: messagesError,
     refetch: refetchMessages,
@@ -932,6 +969,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const sendMessage = useSendWhatsAppMessage();
   const reactToMessage = useReactToWhatsAppMessage();
   const startConversation = useStartConversation();
+  const findConversation = useFindConversationByPhone();
 
   const reactionMessages = useMemo(
     () => messages.filter((message) => message.message_type === 'reaction'),
@@ -946,11 +984,56 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     [messages],
   );
 
-  const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''));
   const leadHasNoWhatsApp = whatsappVerified === false;
+  const ownConnectedSessions = getOwnConnectedWhatsAppSessions(
+    sessions,
+    currentUserId,
+    activeOrganization.organizationId,
+  );
+  const selectedSendConversation = useMemo<WhatsAppConversation | null>(() => {
+    const activeHistoryConversation = historyConversations.find((item) =>
+      (item.lead_id === leadId || item.lead?.id === leadId)
+      && !item.historical_lead_view
+      && Boolean(item.session_id)
+      && sessions.some((session) => session.id === item.session_id)) || null;
+    if (!selectedOwnConversation
+      || selectedOwnConversation.organizationId !== activeOrganization.organizationId
+      || selectedOwnConversation.leadId !== leadId) return conversation || activeHistoryConversation;
+    const refreshed = conversations.find((item) => item.id === selectedOwnConversation.conversation.id);
+    if (refreshed && (refreshed.lead_id !== leadId || refreshed.historical_lead_view)) {
+      return { ...selectedOwnConversation.conversation, historical_lead_view: true };
+    }
+    return refreshed || selectedOwnConversation.conversation;
+  }, [activeOrganization.organizationId, conversation, conversations, historyConversations, leadId, selectedOwnConversation, sessions]);
+  const inaccessibleHistoryConversation = useMemo(() => {
+    return findInaccessibleLeadHistoryConversation({
+      leadId,
+      conversations: historyConversations,
+      accessibleSessionIds,
+      hasSelectedConversation: Boolean(selectedSendConversation),
+      sessionsLoading: loadingSessions,
+    });
+  }, [accessibleSessionIds, historyConversations, leadId, loadingSessions, selectedSendConversation]);
+  const recoveryConversation = selectedSendConversation || inaccessibleHistoryConversation;
+  const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''))
+    || Boolean(normalizeWhatsAppContactPhoneToE164(
+      recoveryConversation?.contact_phone,
+      recoveryConversation?.remote_jid,
+    ));
+  const ownStartIdentity = JSON.stringify([
+    activeOrganization.organizationId,
+    currentUserId,
+    leadId,
+    recoveryConversation?.id,
+  ]);
+  const ownStartIdentityRef = useRef(ownStartIdentity);
+  useLayoutEffect(() => {
+    ownStartIdentityRef.current = ownStartIdentity;
+  }, [ownStartIdentity]);
   const messageInputConversation = useMemo(
     () =>
-      conversation ||
+      selectedSendConversation ||
+      inaccessibleHistoryConversation ||
       (hasLeadPhone
         ? {
             lead_id: leadId,
@@ -961,33 +1044,86 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             session: null,
           }
         : null),
-    [conversation, hasLeadPhone, leadId, leadPhone],
+    [selectedSendConversation, inaccessibleHistoryConversation, hasLeadPhone, leadId, leadPhone],
   );
   const whatsappMessageInputState = useMemo(
     () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
     [messageInputConversation, sessions],
   );
-  const canSendMessage = Boolean(
+  const accessLost = Boolean(whatsappMessageInputState.accessLost || inaccessibleHistoryConversation);
+  const selectedWhatsAppSession = sessions.find((session) =>
+    session.id === (whatsappMessageInputState.sendSessionId || selectedSendConversation?.session_id));
+  const sessionDeliveryUnavailable = Boolean(selectedSendConversation
+    && selectedWhatsAppSession
+    && selectedWhatsAppSession.status !== 'connected');
+  const hasUnconfirmedMessages = visibleMessages.some((message) =>
+    message.conversation_id === selectedSendConversation?.id
+    && message.from_me
+    && ['queued', 'pending', 'sending', 'confirming'].includes(message.status || ''),
+  );
+  const noConnectedSession = !selectedSendConversation
+    && !inaccessibleHistoryConversation
+    && !loadingSessions
+    && !sessionsFailed
+    && !sessions.some((session) => session.status === 'connected' && session.provider === 'evolution_go');
+  const messageDraftKey = JSON.stringify([
+    activeOrganization.organizationId || 'none',
+    currentUserId || 'anonymous',
+    leadId,
+    whatsappMessageInputState.sendSessionId || 'none',
+    normalizeWhatsAppContactPhoneToE164(
+      selectedSendConversation?.contact_phone || leadPhone,
+      selectedSendConversation?.remote_jid,
+    ) || 'none',
+  ]);
+  useLayoutEffect(() => {
+    textSendGuard.observeDraft(messageDraftKey, text);
+  }, [messageDraftKey, text, textSendGuard]);
+  const handleTextChange = (value: string) => {
+    textSendGuard.editDraft(messageDraftKey, value);
+    setText(value);
+  };
+  const canSendBeforeOriginChoice = Boolean(
     canOperateWhatsApp &&
       hasLeadPhone &&
       !leadHasNoWhatsApp &&
+      !loadingMessages &&
+      !messagesError &&
+      !sessionsFailed &&
+      !accessLost &&
+      !sessionDeliveryUnavailable &&
+      !noConnectedSession &&
       !whatsappMessageInputState.disabled,
   );
   const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
-    if (!conversation?.id || !whatsappMessageInputState.sendSessionId) return null;
+    if (!selectedSendConversation?.id || !whatsappMessageInputState.sendSessionId) return null;
     return {
-      conversationId: conversation.id,
+      conversationId: selectedSendConversation.id,
       expectedLeadId: leadId,
       sendSessionId: whatsappMessageInputState.sendSessionId,
     };
-  }, [conversation, leadId, whatsappMessageInputState.sendSessionId]);
+  }, [selectedSendConversation, leadId, whatsappMessageInputState.sendSessionId]);
   const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
     enabled: canViewWhatsApp && Boolean(attendanceTarget),
     identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${whatsappMessageInputState.sendSessionId || "none"}`,
   });
-  const isSendingMessage = sendMessage.isPending
-    || startConversation.isPending
-    || attendanceGate.isResolving;
+  const sendOriginChoice = useWhatsAppSendOriginChoice({
+    conversation: selectedSendConversation,
+    sessions,
+    currentUserId,
+    organizationId: activeOrganization.organizationId,
+    enabled: canOperateWhatsApp && canSendBeforeOriginChoice,
+    alreadySentOnEntry: attendanceGate.entries.some((entry) =>
+      entry.userId === currentUserId
+      && entry.sessionId === selectedSendConversation?.session_id
+      && Boolean(entry.markerAt)),
+  });
+  const canSendMessage = canSendBeforeOriginChoice;
+  const isPreparingMessage = startConversation.isPending
+    || findConversation.isPending
+    || isResolvingOwnPhone
+    || attendanceGate.isResolving
+    || sendOriginChoice.open;
   const inputPlaceholder = !hasWhatsAppModule
     ? 'Módulo de WhatsApp indisponível'
     : !canOperateWhatsApp
@@ -996,12 +1132,19 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       ? 'Lead sem telefone cadastrado'
       : leadHasNoWhatsApp
         ? 'Este lead não tem WhatsApp'
-        : !conversation && !whatsappMessageInputState.disabled
+        : accessLost
+          ? 'Acesso a este WhatsApp encerrado'
+          : sessionDeliveryUnavailable
+            ? 'WhatsApp sem conexão'
+            : noConnectedSession
+              ? 'Conecte seu WhatsApp para iniciar uma conversa'
+        : !selectedSendConversation && !whatsappMessageInputState.disabled
           ? 'Digite para iniciar a conversa com este lead'
           : whatsappMessageInputState.placeholder;
 
   useEffect(() => {
-    if (readOnly || !composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
+    if (readOnly || !composerRequest || loadingSessions || loadingMessages
+      || lastHandledComposerRequestRef.current === composerRequest.id) return;
     lastHandledComposerRequestRef.current = composerRequest.id;
 
     if (!canOperateWhatsApp) {
@@ -1025,6 +1168,27 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       return;
     }
 
+    if (messagesError || sessionsFailed) {
+      toast.error('Não foi possível verificar o WhatsApp', {
+        description: 'Atualize o histórico e as sessões antes de enviar.',
+      });
+      return;
+    }
+
+    if (accessLost) {
+      toast.error('Acesso ao WhatsApp encerrado', {
+        description: 'Escolha seu WhatsApp conectado para iniciar uma nova conversa ou conecte um número.',
+      });
+      return;
+    }
+
+    if (sessionDeliveryUnavailable || noConnectedSession) {
+      toast.error('WhatsApp sem conexão', {
+        description: 'Conecte seu WhatsApp para iniciar uma conversa com este lead.',
+      });
+      return;
+    }
+
     if (whatsappMessageInputState.disabled) {
       toast.error('WhatsApp não conectado', {
         description: whatsappMessageInputState.placeholder,
@@ -1044,7 +1208,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, readOnly, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
+  }, [accessLost, canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingMessages, loadingSessions, messagesError, noConnectedSession, readOnly, sessionDeliveryUnavailable, sessionsFailed, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
@@ -1120,7 +1284,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       throw new Error(inputPlaceholder);
     }
 
-    if (conversation) return conversation;
+    if (selectedSendConversation) return selectedSendConversation;
 
     return startConversation.mutateAsync({
       phone: leadPhone || '',
@@ -1132,7 +1296,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   };
 
   const ensureConversationAndAttendanceForSend = async () => {
-    let targetConversation = conversation;
+    let targetConversation = selectedSendConversation;
     const joined = await attendanceGate.ensureJoined({
       target: attendanceTarget,
       prepareTarget: targetConversation
@@ -1155,33 +1319,114 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     return joined ? targetConversation : null;
   };
 
-  const handleSend = async () => {
-    const content = text.trim();
-    if (!content || !canSendMessage || isSendingMessage) return;
-
+  const handleStartWithOwnSession = async (sessionId: string) => {
+    const organizationId = activeOrganization.organizationId;
+    if (!recoveryConversation || !organizationId || !canOperateWhatsApp
+      || ownStartInFlightRef.current
+      || !ownConnectedSessions.some((session) => session.id === sessionId && session.id !== recoveryConversation.session_id)) return;
+    const requestIdentity = ownStartIdentityRef.current;
+    ownStartInFlightRef.current = true;
+    setIsResolvingOwnPhone(true);
     try {
-      const targetConversation = await ensureConversationAndAttendanceForSend();
-      if (!targetConversation) return;
+      const phone = await resolveWhatsAppSendOriginPhone({
+        contactPhone: recoveryConversation.contact_phone,
+        remoteJid: recoveryConversation.remote_jid,
+        leadId,
+        organizationId,
+      });
+      if (!phone) {
+        toast.error('Lead sem WhatsApp válido');
+        return;
+      }
+      if (ownStartIdentityRef.current !== requestIdentity) return;
+      const existing = await findConversation.mutateAsync({ phone, sessionId });
+      if (ownStartIdentityRef.current !== requestIdentity) return;
+      const nextConversation = isExactExistingLeadConversation(existing, {
+        organizationId,
+        sessionId,
+        leadId,
+        phone,
+      })
+        ? existing
+        : await startConversation.mutateAsync({
+          phone,
+          sessionId,
+          leadId,
+          leadName,
+          expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
+        });
+      if (ownStartIdentityRef.current !== requestIdentity) return;
+      setSelectedOwnConversation({ organizationId, leadId, conversation: nextConversation });
+    } catch (error) {
+      toast.error('Não foi possível iniciar pelo seu WhatsApp', {
+        description: error instanceof Error ? error.message : 'Tente novamente em instantes.',
+      });
+    } finally {
+      ownStartInFlightRef.current = false;
+      setIsResolvingOwnPhone(false);
+    }
+  };
 
-      setText('');
+  const handleSend = async () => {
+    if (!canSendMessage || isPreparingMessage) return;
+    const intent = textSendGuard.begin();
+    if (!intent) return;
+    if (intent.draftKey !== messageDraftKey) {
+      textSendGuard.aborted(intent);
+      return;
+    }
+
+    let sendStarted = false;
+    try {
+      const origin = await sendOriginChoice.chooseForSend();
+      if (!origin) {
+        textSendGuard.aborted(intent);
+        return;
+      }
+      if (origin.kind === 'own') {
+        textSendGuard.aborted(intent);
+        await handleStartWithOwnSession(origin.sessionId);
+        return;
+      }
+      const targetConversation = await ensureConversationAndAttendanceForSend();
+      if (!targetConversation) {
+        textSendGuard.aborted(intent);
+        return;
+      }
+      if (!textSendGuard.accepted(intent)) return;
+      sendStarted = true;
+
+      setText((current) => current === intent.rawText ? '' : current);
       await sendMessage.mutateAsync({
         conversation: targetConversation,
-        text: content,
+        text: intent.text,
         sendSessionId: whatsappMessageInputState.sendSessionId,
       });
-    } catch {
-      setText(content);
+    } catch (error) {
+      textSendGuard.aborted(intent);
+      if (sendStarted
+        && getWhatsAppSendFailureStatus(error) !== 'confirming'
+        && textSendGuard.canRestore(intent)) {
+        textSendGuard.allowRetry(intent);
+        setText((current) => current || intent.rawText);
+      }
     }
   };
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!canSendMessage || isSendingMessage) {
+    if (!canSendMessage || isPreparingMessage) {
       toast.error('Áudio não enviado', {
         description: inputPlaceholder,
       });
       return false;
     }
 
+    const origin = await sendOriginChoice.chooseForSend();
+    if (!origin) return false;
+    if (origin.kind === 'own') {
+      await handleStartWithOwnSession(origin.sessionId);
+      return false;
+    }
     const targetConversation = await ensureConversationAndAttendanceForSend();
     if (!targetConversation) return false;
     await sendMessage.mutateAsync({
@@ -1201,7 +1446,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!canSendMessage || isSendingMessage) {
+    if (!canSendMessage || isPreparingMessage) {
       toast.error('Arquivo não enviado', {
         description: inputPlaceholder,
       });
@@ -1209,6 +1454,16 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       return;
     }
 
+    const origin = await sendOriginChoice.chooseForSend();
+    if (!origin) {
+      event.target.value = '';
+      return;
+    }
+    if (origin.kind === 'own') {
+      await handleStartWithOwnSession(origin.sessionId);
+      event.target.value = '';
+      return;
+    }
     const targetConversation = await ensureConversationAndAttendanceForSend();
     if (!targetConversation) {
       event.target.value = '';
@@ -1307,6 +1562,17 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         {...attendanceGate.dialogProps}
         contactName={leadName}
       />
+      {sendOriginChoice.entrySession ? (
+        <WhatsAppSendOriginChoice
+          open={sendOriginChoice.open}
+          entrySession={sendOriginChoice.entrySession}
+          ownSessions={sendOriginChoice.ownSessions}
+          isStarting={findConversation.isPending || startConversation.isPending || isResolvingOwnPhone}
+          onContinue={sendOriginChoice.continueWithEntry}
+          onStart={sendOriginChoice.startWithOwn}
+          onCancel={sendOriginChoice.cancel}
+        />
+      ) : null}
       <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
         <div ref={threadScrollRef} className={cn('lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3', readOnly && 'lead-thread-scroll-readable')}>
@@ -1398,8 +1664,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       leadId={leadId}
                       leadName={leadName}
                       contactAvatarUrl={leadAvatarUrl}
-                      conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
-                      conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
+                      conversationRemoteJid={item.message.remote_jid ?? conversation?.remote_jid ?? null}
+                      conversationSessionId={item.message.session_id ?? conversation?.session_id ?? null}
                       compact
                       plainHistory={readOnly}
                       reactionPickerPosition="outside"
@@ -1422,6 +1688,32 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         </div>
 
         {!readOnly && canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
+          {sessionDeliveryUnavailable && !accessLost ? (
+            <WhatsAppSessionDisconnectedNotice
+              hasUnconfirmedMessages={hasUnconfirmedMessages}
+              canStartWithOwnSession={Boolean(selectedSendConversation && !selectedSendConversation.is_group && canOperateWhatsApp)}
+              ownConnectedSessions={ownConnectedSessions.filter((session) => session.id !== selectedSendConversation?.session_id)}
+              isStarting={isPreparingMessage}
+              onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
+              onConnect={() => router.push('/settings/integrations/whatsapp')}
+            />
+          ) : null}
+          {accessLost && recoveryConversation && !recoveryConversation.is_group && canOperateWhatsApp ? (
+            <WhatsAppAccessLostNotice
+              ownConnectedSessions={ownConnectedSessions.filter((session) => session.id !== recoveryConversation.session_id)}
+              isStarting={isPreparingMessage}
+              onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
+              onConnect={() => router.push('/settings/integrations/whatsapp')}
+            />
+          ) : null}
+          {noConnectedSession && canOperateWhatsApp && hasLeadPhone && !leadHasNoWhatsApp ? (
+            <div role="status" className="space-y-2 border-t border-[var(--app-border)] bg-[var(--app-surface-soft)] px-3 py-2 text-xs">
+              <p>Conecte seu WhatsApp para iniciar uma conversa com este lead.</p>
+              <Button asChild size="sm" variant="outline">
+                <Link href="/settings/integrations/whatsapp">Conectar meu WhatsApp</Link>
+              </Button>
+            </div>
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -1432,7 +1724,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div className={cn('rounded-[8px] transition-shadow duration-300', composerHighlighted && 'ring-2 ring-primary/35 ring-offset-2 ring-offset-transparent')}>
             <MessageBox
               value={text}
-              onChange={setText}
+              onChange={handleTextChange}
               onSend={handleSend}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -1441,17 +1733,17 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                 }
               }}
               placeholder={inputPlaceholder}
-              disabled={!canSendMessage || isSendingMessage}
-              isSending={isSendingMessage}
+              disabled={!canSendMessage || isPreparingMessage}
+              isSending={isPreparingMessage}
               multiline
               inputRef={textareaRef}
               compact
-              showRightActionsWhenEmpty={!isSendingMessage}
+              showRightActionsWhenEmpty={!isPreparingMessage}
               leftActions={
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={!canSendMessage || isSendingMessage}
+                  disabled={!canSendMessage || isPreparingMessage}
                   title="Anexar mídia"
                 >
                   <Paperclip className="h-4 w-4" />
@@ -1460,7 +1752,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
               rightActions={
                 <AudioRecorderButton
                   onSend={handleSendAudio}
-                  disabled={!canSendMessage || isSendingMessage}
+                  disabled={!canSendMessage || isPreparingMessage}
                 />
               }
             />

@@ -630,6 +630,50 @@
     {
       "file": "20261003005313_disable_managed_whatsapp_distribution_auto_reply.sql",
       "sha256": "295b8d0535fb11f948d9af8bbb9052708d94ecf3d262e94dc0e83babb5d2be87"
+    },
+    {
+      "file": "20261003130825_whatsapp_attendance_confirmation_and_marker.sql",
+      "sha256": "ae01b526ef4cf22db1634bd3a5272006faa1361f2ca36938584aacad44816db7"
+    },
+    {
+      "file": "20261003210000_whatsapp_webhook_new_event_cutover.sql",
+      "sha256": "5f296f72a2db8247aadd5956490777dfe8f941afd6ae5a638dca1ae1f4149613"
+    },
+    {
+      "file": "20261003220000_whatsapp_disconnect_owner_notification.sql",
+      "sha256": "44aa8e074978a802ad1a469ca6d212a126b8da2992213fac8de203ebdc75ac4c"
+    },
+    {
+      "file": "20261003230000_whatsapp_nonlead_seven_day_retention.sql",
+      "sha256": "384fc25cd66e6af91dba74b7e1ca79116e575a8e4d3050a29a1d1a701ec42c20"
+    },
+    {
+      "file": "20261003231000_whatsapp_nonlead_physical_purge.sql",
+      "sha256": "5821c602337ffa54043b9d9c50272b6c5ae0d91ea0e371a4737eebdc5d50c256"
+    },
+    {
+      "file": "20261003232000_whatsapp_nonlead_media_gc_preparation.sql",
+      "sha256": "d7d26d18d5085e6e1288114df5f01d3aa59137d06f297855c258cee107a82b71"
+    },
+    {
+      "file": "20261003233000_whatsapp_ai_followup_occurrence_idempotency.sql",
+      "sha256": "5b03887e02cabf7c401b26205b4c5a61926dc4cb85da82cff48770c64bfd9eb8"
+    },
+    {
+      "file": "20261003234000_whatsapp_expired_ctwa_pre_dispatch.sql",
+      "sha256": "8a6ed28acc5899fcbb7e4a385235dcf1452a4b90ae32c963f2fc24cab0de21d8"
+    },
+    {
+      "file": "20261003234500_whatsapp_ctwa_recent_successor_cohort.sql",
+      "sha256": "38690b322d9306414436982392cbfec144548e5ed3af7241b8c0ff1cad0a56b9"
+    },
+    {
+      "file": "20261003235000_whatsapp_passive_session_disconnect_supervision.sql",
+      "sha256": "8ad0230a10c84163d111fb74bd11b1d135509b61f9a38067b1da69286cbcaf80"
+    },
+    {
+      "file": "20261003235500_whatsapp_legacy_media_repair_path_prepare.sql",
+      "sha256": "c3b904fc718867585d8fe267ead291c5cbe62152c08e7b759be8b84f7b580f7e"
     }
   ]
 }

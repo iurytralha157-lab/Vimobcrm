@@ -132,7 +132,7 @@ func TestNativeCTWAAutoAttendanceUsesTrustedRPCBeforeCapture(t *testing.T) {
 	source := string(capture)
 	for _, token := range []string{
 		"public.auto_enter_whatsapp_ctwa_attendance",
-		"entry.entry_source = 'manual'",
+		"entry.entry_source in ('manual', 'implicit')",
 		"entry.entry_source = 'ctwa_auto'",
 		"entry.bootstrap_provider_message_id = $9",
 		"entry.bootstrap_ingress_sequence = $8::bigint",
@@ -345,7 +345,7 @@ func TestAttendanceRequiredErrorUsesConflictContract(t *testing.T) {
 	}
 	body := recorder.Body.String()
 	if !strings.Contains(body, `"code":"whatsapp_attendance_required"`) ||
-		!strings.Contains(body, "Confirme o início do atendimento") {
+		!strings.Contains(body, "confirme o compartilhamento do histórico") {
 		t.Fatalf("unexpected attendance error response: %s", body)
 	}
 }
@@ -388,7 +388,8 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 		"on conflict (organization_id, conversation_id, binding_id, session_id, user_id)",
 		"'whatsapp_attendance_joined'",
 		"'attendance_entry_id'",
-		"'ingress_sequence_cutoff'",
+		"whatsapp_attendance_send_consents",
+		"recordConfirmedAttendanceMarker",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("attendance repository is missing contract token %q", required)

@@ -55,6 +55,7 @@ export interface WhatsAppConversation {
   id: string;
   session_id: string | null;
   lead_id: string | null;
+  nonlead_expires_at?: string | null;
   remote_jid: string;
   contact_name: string | null;
   contact_phone: string | null;
@@ -289,6 +290,16 @@ function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
     }
 
     if (batch.refreshMessages) {
+      // A provider-confirmed message can reveal the attendance marker. Refresh
+      // only active attendance snapshots for the affected card/conversation.
+      const attendancePrefix = whatsappQueryKeys.attendance(scope, null, null, null).slice(0, -3);
+      void queryClient.invalidateQueries({
+        predicate: (query) => attendancePrefix.every((part, index) => query.queryKey[index] === part)
+          && (batch.allMessages
+            || batch.conversationIds.includes(String(query.queryKey[attendancePrefix.length] ?? ""))
+            || batch.leadIds.includes(String(query.queryKey[attendancePrefix.length + 1] ?? ""))),
+        refetchType: "active",
+      });
       if (batch.allMessages) {
         void queryClient.invalidateQueries({
           queryKey: whatsappQueryKeys.messagesScope(scope),
@@ -324,6 +335,14 @@ function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
     }
 
     if (batch.refreshLeadMessages) {
+      if (batch.leadIds.length) {
+        const changedLeadIds = new Set(batch.leadIds);
+        void queryClient.invalidateQueries({
+          predicate: (query) => query.queryKey[0] === 'lead-history-v2'
+            && changedLeadIds.has(String(query.queryKey[1] ?? '')),
+          refetchType: 'active',
+        });
+      }
       if (batch.allLeadMessages) {
         void queryClient.invalidateQueries({
           queryKey: whatsappQueryKeys.leadMessagesScope(scope),
@@ -362,6 +381,13 @@ function reconcileWhatsAppMessageQueries(
   leadId?: string | null,
 ) {
   const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))];
+  const attendancePrefix = whatsappQueryKeys.attendance(scope, null, null, null).slice(0, -3);
+  void queryClient.invalidateQueries({
+    predicate: (query) => attendancePrefix.every((part, index) => query.queryKey[index] === part)
+      && (uniqueConversationIds.includes(String(query.queryKey[attendancePrefix.length] ?? ""))
+        || Boolean(leadId && query.queryKey[attendancePrefix.length + 1] === leadId)),
+    refetchType: "active",
+  });
   void queryClient.invalidateQueries({
     predicate: (query) => uniqueConversationIds.some((conversationId) =>
       matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
@@ -372,6 +398,10 @@ function reconcileWhatsAppMessageQueries(
   if (leadId) {
     void queryClient.invalidateQueries({
       queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId),
+      refetchType: "active",
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ['lead-history-v2', leadId],
       refetchType: "active",
     });
   }
@@ -1040,9 +1070,9 @@ export function useSendWhatsAppMessage() {
        if (accessRevoked) {
          title = "Acesso ao WhatsApp encerrado";
          description = "Você não tem mais acesso a este número. Inicie uma nova conversa pelo seu WhatsApp ou conecte um número.";
-       } else if (isDisconnected) {
-        title = "WhatsApp Desconectado";
-        description = "Vá em Configurações > WhatsApp e escaneie o QR Code novamente.";
+      } else if (isDisconnected) {
+        title = "WhatsApp desconectado";
+        description = "Mensagem não enviada. O rascunho foi mantido; reconecte este número ou inicie uma nova conversa pelo seu WhatsApp conectado.";
       } else if (isNumberNotExists) {
         title = "Contato sem WhatsApp";
         description = "Este número não está no WhatsApp. Tente ligar ou enviar SMS.";

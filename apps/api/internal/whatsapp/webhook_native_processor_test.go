@@ -1837,6 +1837,55 @@ func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
 	}
 }
 
+func TestEvolutionTechnicalCallbacksIgnoreOnlyEventsWithoutCustomerReply(t *testing.T) {
+	for _, fixture := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "ReadSelf is a technical receipt",
+			payload: `{"event":"ReadSelf","data":{"MessageIDs":["receipt-1"],"status":"read"}}`,
+			want:    "technical_read_self",
+		},
+		{
+			name:    "ButtonClick without a choice is technical",
+			payload: `{"event":"ButtonClick","data":{"messageId":"click-1","jid":"5511999991111@s.whatsapp.net","fromMe":false}}`,
+			want:    "technical_button_click",
+		},
+		{
+			name:    "our own ButtonClick is technical",
+			payload: `{"event":"ButtonClick","data":{"messageId":"click-2","jid":"5511999991111@s.whatsapp.net","buttonText":"Suporte","fromMe":true}}`,
+			want:    "technical_button_click",
+		},
+		{
+			name:    "customer ButtonClick text is a message even without provider time",
+			payload: `{"event":"ButtonClick","data":{"messageId":"click-3","jid":"5511999991111@s.whatsapp.net","buttonText":"Suporte tecnico","fromMe":false}}`,
+		},
+		{
+			name:    "customer ButtonClick id is a message",
+			payload: `{"event":"ButtonClick","data":{"messageId":"click-4","jid":"5511999991111@s.whatsapp.net","buttonId":"support","fromMe":false}}`,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			item := pendingEvolutionWebhook{Payload: []byte(fixture.payload)}
+			if got := evolutionWebhookTechnicalIgnoreReason(item); got != fixture.want {
+				t.Fatalf("technical ignore reason = %q, want %q", got, fixture.want)
+			}
+		})
+	}
+}
+
+func TestNativeLoggedOutCallbackOverridesStaleConnectedFlags(t *testing.T) {
+	status, recognized, _ := nativeEvolutionConnectionStatus(
+		map[string]any{"event": "loggedout", "data": map[string]any{"state": "connected", "LoggedIn": true}},
+		"loggedout",
+	)
+	if !recognized || status != "disconnected" {
+		t.Fatalf("loggedout status = %q, recognized = %v", status, recognized)
+	}
+}
+
 func decodeNativeFixture(t *testing.T, name string) map[string]any {
 	t.Helper()
 	raw := readNativeFixture(t, name)

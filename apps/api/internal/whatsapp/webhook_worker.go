@@ -18,7 +18,9 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
-var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-" + randomHex(8)
+// The database claim fence uses this prefix to reject older API images after
+// a session cutover, even if an old claim query races with the new release.
+var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-cutover1-ctwa2-" + randomHex(8)
 var whatsappWebhookLiveWorkerWake = newEvolutionWebhookWorkerSignal()
 var whatsappWebhookBacklogWorkerWake = newEvolutionWebhookWorkerSignal()
 
@@ -36,8 +38,12 @@ const claimEvolutionWebhooksQuery = `
 		with candidate_sessions as materialized (
 			select
 				ws.id as session_id,
-				head.id as event_id
+				head.id as event_id,
+				cutover.routing_epoch::text as routing_epoch,
+				cutover.cutoff_at
 			from public.whatsapp_sessions ws
+			left join private.whatsapp_webhook_session_cutovers cutover
+			  on cutover.session_id = ws.id
 			cross join lateral (
 			  select
 			    wi.id,
@@ -48,9 +54,17 @@ const claimEvolutionWebhooksQuery = `
 			    ) as routing_key
 			  from public.whatsapp_webhook_inbox wi
 			  where wi.session_id = ws.id
+			    and wi.created_at >= coalesce(cutover.cutoff_at, '-infinity'::timestamptz)
+			    and (cutover.routing_epoch is null or
+			      wi.payload #>> '{__vimob_ingress,cutover_epoch}' = cutover.routing_epoch::text)
 			    and wi.processing_lane = $4
 			    and wi.status in ('pending', 'retry')
 			    and wi.attempts < wi.max_attempts
+			    and private.whatsapp_ctwa_recent_successor_claimable(
+			      wi.organization_id, wi.session_id,
+			      coalesce(nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__'),
+			      wi.event_key
+			    )
 			    and coalesce(
 			      wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			      ''
@@ -97,6 +111,9 @@ const claimEvolutionWebhooksQuery = `
 			      select 1
 			      from public.whatsapp_webhook_inbox older
 			      where older.session_id = wi.session_id
+			        and older.created_at >= coalesce(cutover.cutoff_at, '-infinity'::timestamptz)
+			        and (cutover.routing_epoch is null or
+			          older.payload #>> '{__vimob_ingress,cutover_epoch}' = cutover.routing_epoch::text)
 			        and older.processing_lane = wi.processing_lane
 			        and older.status in ('pending', 'retry')
 			        and older.attempts < older.max_attempts
@@ -123,6 +140,9 @@ const claimEvolutionWebhooksQuery = `
 			    select 1
 			    from public.whatsapp_webhook_inbox active
 			    where active.session_id = ws.id
+			      and active.created_at >= coalesce(cutover.cutoff_at, '-infinity'::timestamptz)
+			      and (cutover.routing_epoch is null or
+			        active.payload #>> '{__vimob_ingress,cutover_epoch}' = cutover.routing_epoch::text)
 			      and active.status = 'processing'
 			      and (
 			        coalesce(nullif(active.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') = '__session__'
@@ -136,9 +156,17 @@ const claimEvolutionWebhooksQuery = `
 			      select 1
 			      from public.whatsapp_webhook_inbox live_due
 			      where live_due.session_id = ws.id
+			        and live_due.created_at >= coalesce(cutover.cutoff_at, '-infinity'::timestamptz)
+			        and (cutover.routing_epoch is null or
+			          live_due.payload #>> '{__vimob_ingress,cutover_epoch}' = cutover.routing_epoch::text)
 			        and live_due.processing_lane = 'live'
 			        and live_due.status in ('pending', 'retry')
 			        and live_due.attempts < live_due.max_attempts
+			        and private.whatsapp_ctwa_recent_successor_claimable(
+			          live_due.organization_id, live_due.session_id,
+			          coalesce(nullif(live_due.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__'),
+			          live_due.event_key
+			        )
 			        and coalesce(
 			          live_due.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			          ''
@@ -190,12 +218,22 @@ const claimEvolutionWebhooksQuery = `
 		locked_heads as materialized (
 			select
 				wi.id,
-				selected.session_id
+				selected.session_id,
+				selected.routing_epoch,
+				selected.cutoff_at
 			from candidate_sessions selected
 			join public.whatsapp_webhook_inbox wi on wi.id = selected.event_id
 			where wi.processing_lane = $4
+			  and wi.created_at >= coalesce(selected.cutoff_at, '-infinity'::timestamptz)
+			  and (selected.routing_epoch is null or
+			    wi.payload #>> '{__vimob_ingress,cutover_epoch}' = selected.routing_epoch)
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
+			  and private.whatsapp_ctwa_recent_successor_claimable(
+			    wi.organization_id, wi.session_id,
+			    coalesce(nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__'),
+			    wi.event_key
+			  )
 			  and coalesce(
 			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			    ''
@@ -242,6 +280,9 @@ const claimEvolutionWebhooksQuery = `
 			    select 1
 			    from public.whatsapp_webhook_inbox active
 			    where active.session_id = selected.session_id
+			      and active.created_at >= coalesce(selected.cutoff_at, '-infinity'::timestamptz)
+			      and (selected.routing_epoch is null or
+			        active.payload #>> '{__vimob_ingress,cutover_epoch}' = selected.routing_epoch)
 			      and active.id <> wi.id
 			      and active.status = 'processing'
 			      and (
@@ -263,9 +304,17 @@ const claimEvolutionWebhooksQuery = `
 			    updated_at = now()
 			from locked_heads c
 			where wi.id = c.id
+			  and wi.created_at >= coalesce(c.cutoff_at, '-infinity'::timestamptz)
+			  and (c.routing_epoch is null or
+			    wi.payload #>> '{__vimob_ingress,cutover_epoch}' = c.routing_epoch)
 			  and wi.processing_lane = $4
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
+			  and private.whatsapp_ctwa_recent_successor_claimable(
+			    wi.organization_id, wi.session_id,
+			    coalesce(nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__'),
+			    wi.event_key
+			  )
 			  and coalesce(
 			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
 			    ''
@@ -312,6 +361,9 @@ const claimEvolutionWebhooksQuery = `
 			    select 1
 			    from public.whatsapp_webhook_inbox active
 			    where active.session_id = wi.session_id
+			      and active.created_at >= coalesce(c.cutoff_at, '-infinity'::timestamptz)
+			      and (c.routing_epoch is null or
+			        active.payload #>> '{__vimob_ingress,cutover_epoch}' = c.routing_epoch)
 			      and active.id <> wi.id
 			      and active.status = 'processing'
 			      and (
@@ -759,10 +811,67 @@ func (repo Repository) processClaimedEvolutionWebhook(ctx context.Context, item 
 	if !leaseOwned {
 		return fmt.Errorf("whatsapp webhook lease %s is no longer owned by this worker", item.ID)
 	}
-	if err := repo.dispatchEvolutionWebhook(ctx, item); err != nil {
+	if evolutionWebhookNeedsLoggedOutProbe(item) {
+		// A callback without a provider clock may be a replay from before a
+		// reconnect. It never reaches the native or Edge callback handlers.
+		// Inconclusive provider reads are acknowledged so this session route
+		// cannot be held by repeated attempts; the supervisor checks it again.
+		disposition, err := repo.reconcileTimestampLessLoggedOut(ctx, item)
+		if err != nil {
+			return repo.markEvolutionWebhookFailed(ctx, item, err)
+		}
+		return repo.markEvolutionWebhookProcessedWithReason(ctx, item, disposition, true)
+	}
+	completedExpiredCTWA, err := repo.completeExpiredCTWABeforeDispatch(ctx, item)
+	if err != nil {
+		return repo.markEvolutionWebhookFailed(ctx, item, err)
+	}
+	if completedExpiredCTWA {
+		return nil
+	}
+	if err := repo.requireCTWARecentSuccessorOrder(ctx, item); err != nil {
+		return repo.markEvolutionWebhookFailed(ctx, item, err)
+	}
+	if err := repo.dispatchEvolutionWebhook(ctx, item); errors.Is(err, errWhatsAppNonleadExpiredInboxCompleted) {
+		// The native transaction deleted the isolated raw inbox row only after
+		// writing its provider tombstone and route outcome. Completing its old
+		// lease again would incorrectly report a worker failure.
+		return nil
+	} else if err != nil {
 		return repo.markEvolutionWebhookFailed(ctx, item, err)
 	}
 	return repo.markEvolutionWebhookProcessed(ctx, item)
+}
+
+// Defense after claim: the SQL selector already keeps exact cohort order
+// across lanes before consuming an attempt. Recheck before side effects.
+func (repo Repository) requireCTWARecentSuccessorOrder(
+	ctx context.Context, item pendingEvolutionWebhook,
+) error {
+	var unresolved bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+		  select 1
+		  from public.whatsapp_webhook_inbox as current_inbox
+		  where current_inbox.id = $1::uuid
+		    and current_inbox.organization_id = $2::uuid
+		    and current_inbox.session_id = $3::uuid
+		    and current_inbox.status = 'processing'
+		    and current_inbox.locked_by = $4
+		    and not private.whatsapp_ctwa_recent_successor_claimable(
+		      current_inbox.organization_id, current_inbox.session_id,
+		      coalesce(nullif(current_inbox.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__'),
+		      current_inbox.event_key
+		    )
+		)
+	`, item.ID, item.OrganizationID, item.SessionID, whatsappWebhookWorkerID).Scan(&unresolved)
+	if err != nil {
+		return fmt.Errorf("check CTWA successor route order: %w", err)
+	}
+	if unresolved {
+		return errors.New("CTWA successor predecessor on exact route is unresolved")
+	}
+	return nil
 }
 
 type evolutionWebhookSessionBatch struct {
@@ -1155,7 +1264,14 @@ func semanticPositiveCount(value any) bool {
 }
 
 func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, item pendingEvolutionWebhook) error {
+	return repo.markEvolutionWebhookProcessedWithReason(ctx, item, evolutionWebhookTechnicalIgnoreReason(item), false)
+}
+
+func (repo Repository) markEvolutionWebhookProcessedWithReason(ctx context.Context, item pendingEvolutionWebhook, ignoredReason string, retainControlEvent bool) error {
 	retentionSeconds := int64(evolutionWebhookProcessedRetention(item.EventType) / time.Second)
+	if ignoredReason != "" || retainControlEvent {
+		retentionSeconds = int64((7 * 24 * time.Hour) / time.Second)
+	}
 	var updated int
 	err := repo.db.Pool().QueryRow(ctx, `
 		with owned as materialized (
@@ -1253,6 +1369,7 @@ func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, item p
 		  set status = 'processed',
 		      processed_at = now(),
 		      expires_at = now() + ($3 * interval '1 second'),
+		      ignored_reason = nullif($4, ''),
 		      locked_at = null,
 		      locked_by = null,
 		      last_error = null,
@@ -1265,7 +1382,7 @@ func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, item p
 		  returning 1
 		)
 		select count(*)::integer from updated
-	`, item.ID, whatsappWebhookWorkerID, retentionSeconds).Scan(&updated)
+	`, item.ID, whatsappWebhookWorkerID, retentionSeconds, ignoredReason).Scan(&updated)
 	if err != nil {
 		return err
 	}
@@ -1320,32 +1437,78 @@ func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pend
 }
 
 func resetStaleEvolutionWebhookClaims(ctx context.Context, tx pgx.Tx) error {
+	// Serialize recovery with per-session cutover activation. The UPDATEs below
+	// get fresh READ COMMITTED snapshots after these locks are acquired, while an
+	// activation that starts later waits until this short transaction commits.
+	sessions, err := tx.Query(ctx, `
+		select id::text
+		from public.whatsapp_sessions
+		where provider = 'evolution_go'
+		order by id
+		for key share
+	`)
+	if err != nil {
+		return err
+	}
+	for sessions.Next() {
+		var sessionID string
+		if err := sessions.Scan(&sessionID); err != nil {
+			sessions.Close()
+			return err
+		}
+	}
+	if err := sessions.Err(); err != nil {
+		sessions.Close()
+		return err
+	}
+	sessions.Close()
+
 	if _, err := tx.Exec(ctx, `
-		update public.whatsapp_webhook_inbox
+		update public.whatsapp_webhook_inbox as inbox
 		set status = 'dead',
 		    dead_lettered_at = coalesce(dead_lettered_at, now()),
 		    locked_at = null,
 		    locked_by = null,
 		    last_error = coalesce(last_error, 'retry_exhausted'),
 		    updated_at = now()
-		where attempts >= max_attempts
+		where inbox.attempts >= inbox.max_attempts
 		  and (
-		    (status in ('pending', 'retry') and next_attempt_at <= now())
-		    or (status = 'processing' and locked_at < now() - interval '5 minutes')
+		    (inbox.status in ('pending', 'retry') and inbox.next_attempt_at <= now())
+		    or (inbox.status = 'processing' and inbox.locked_at < now() - interval '5 minutes')
+		  )
+		  and not exists (
+		    select 1
+		    from private.whatsapp_webhook_session_cutovers as cutover
+		    where cutover.session_id = inbox.session_id
+		      and (
+		        inbox.created_at < cutover.cutoff_at
+		        or inbox.payload #>> '{__vimob_ingress,cutover_epoch}'
+		          is distinct from cutover.routing_epoch::text
+		      )
 		  )
 	`); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `
-		update public.whatsapp_webhook_inbox
+	_, err = tx.Exec(ctx, `
+		update public.whatsapp_webhook_inbox as inbox
 		set status = 'retry',
 		    locked_at = null,
 		    locked_by = null,
 		    next_attempt_at = now(),
 		    updated_at = now()
-		where status = 'processing'
-		  and locked_at < now() - interval '5 minutes'
-		  and attempts < max_attempts
+		where inbox.status = 'processing'
+		  and inbox.locked_at < now() - interval '5 minutes'
+		  and inbox.attempts < inbox.max_attempts
+		  and not exists (
+		    select 1
+		    from private.whatsapp_webhook_session_cutovers as cutover
+		    where cutover.session_id = inbox.session_id
+		      and (
+		        inbox.created_at < cutover.cutoff_at
+		        or inbox.payload #>> '{__vimob_ingress,cutover_epoch}'
+		          is distinct from cutover.routing_epoch::text
+		      )
+		  )
 	`)
 	return err
 }

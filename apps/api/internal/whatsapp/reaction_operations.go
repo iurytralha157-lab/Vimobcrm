@@ -168,6 +168,10 @@ func (repo Repository) ReactToMessage(
 	if attendanceEntryID == "" {
 		return ReactToMessageResponse{}, ErrAttendanceRequired
 	}
+	if err := requireAttendanceSendConsent(ctx, tx, tenantContext,
+		target.ConversationID, target.LeadID, target.SessionID); err != nil {
+		return ReactToMessageResponse{}, err
+	}
 	accessGrantID, err := outboundSessionAccessGrantID(ctx, tx,
 		tenantContext.OrganizationID, target.SessionID, tenantContext.UserID)
 	if err != nil {

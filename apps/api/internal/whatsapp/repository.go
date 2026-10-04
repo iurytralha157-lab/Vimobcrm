@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
@@ -106,8 +105,6 @@ type GamificationRecorder interface {
 
 type Repository struct {
 	db                   *dbpkg.Postgres
-	outboxSendFencePool  *pgxpool.Pool
-	outboxSendFenceError error
 	storage              storageClient
 	functions            functionsClient
 	webhookSchemaGate    *evolutionWebhookSchemaGate
@@ -133,23 +130,10 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		gamificationRecorder: gamificationRecorder,
 		leadPublisher:        publisher,
 	}
-	if db != nil && db.Pool() != nil {
-		// Shared outbound sends hold a grant row lock during provider I/O. Use a
-		// separate, bounded pool so these transactions cannot exhaust the API's
-		// ordinary query pool or deadlock its lease heartbeat and finalization.
-		poolConfig := db.Pool().Config()
-		poolConfig.MinConns = 0
-		poolConfig.MaxConns = 5 // four fast workers and one media worker by default
-		repo.outboxSendFencePool, repo.outboxSendFenceError = pgxpool.NewWithConfig(context.Background(), poolConfig)
-	}
 	return repo
 }
 
-func (repo Repository) Close() {
-	if repo.outboxSendFencePool != nil {
-		repo.outboxSendFencePool.Close()
-	}
-}
+func (repo Repository) Close() {}
 
 func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Context) ([]Session, error) {
 	args := []any{tenantContext.OrganizationID, tenantContext.UserID}
@@ -871,10 +855,10 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	for index := len(descMessages) - 1; index >= 0; index-- {
 		messages = append(messages, descMessages[index])
 	}
-	if filter.IncludeMediaURLs {
-		if err := repo.hydrateMessageMediaURLs(ctx, tenantContext.OrganizationID, messages); err != nil {
-			return MessagePage{}, err
-		}
+	// Even when the caller opts out of signed URLs, a legacy media_url from
+	// the message row must not bypass an active nonlead retention deadline.
+	if err := repo.prepareMessageMediaURLs(ctx, tenantContext.OrganizationID, messages, filter.IncludeMediaURLs); err != nil {
+		return MessagePage{}, err
 	}
 
 	return MessagePage{Messages: messages, NextCursor: nextCursor}, nil
@@ -1069,6 +1053,17 @@ func (repo Repository) LinkConversationToLead(
 		where wc.organization_id = $1::uuid
 		  and wc.id = $2::uuid
 		  and wc.deleted_at is null
+		  and not exists (
+			select 1
+			from private.whatsapp_nonlead_retention_candidates as retention
+			where retention.conversation_id = wc.id
+			  and retention.organization_id = wc.organization_id
+			  and private.whatsapp_nonlead_retention_candidate_active(
+			    retention.organization_id, retention.session_id, retention.conversation_id
+			  )
+			  and retention.state in ('pending', 'purging')
+			  and retention.expires_at <= now()
+		  )
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
@@ -1137,9 +1132,10 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 	}
 
 	args := append(baseConversationArgs(tenantContext), messageID)
-	var storagePath, messageType, mediaStatus string
+	var conversationID, storagePath, messageType, mediaStatus string
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
+			wm.conversation_id::text,
 			coalesce(wm.media_storage_path, ''),
 			coalesce(wm.message_type, ''),
 			coalesce(wm.media_status, '')
@@ -1160,6 +1156,7 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 		  and `+messageMediaVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		limit 1
 	`, args...).Scan(
+		&conversationID,
 		&storagePath,
 		&messageType,
 		&mediaStatus,
@@ -1177,7 +1174,16 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 		return MessageMediaURL{}, ErrMessageNotFound
 	}
 
-	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, tenantContext.OrganizationID, storagePath)
+	access, err := repo.whatsAppNonLeadMediaAccess(ctx, tenantContext.OrganizationID, conversationID)
+	if err != nil {
+		return MessageMediaURL{}, err
+	}
+	if !access.allowed {
+		return MessageMediaURL{}, ErrMessageNotFound
+	}
+	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithDeadline(
+		ctx, tenantContext.OrganizationID, storagePath, access.deadline,
+	)
 	if err != nil {
 		return MessageMediaURL{}, err
 	}
@@ -1191,15 +1197,97 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 	}, nil
 }
 
-func (repo Repository) signedWhatsAppMessageMediaURL(ctx context.Context, organizationID string, objectPath string) (string, error) {
-	signedURL, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, organizationID, objectPath)
-	return signedURL, err
+type whatsAppNonLeadMediaAccess struct {
+	allowed  bool
+	deadline *time.Time
+}
+
+// A pending nonlead conversation cannot receive a newly signed URL that
+// remains valid beyond its original seven-day deadline. If retention is active
+// but its candidate is missing, fail closed instead of issuing a long-lived
+// Storage credential for an untracked conversation.
+func (repo Repository) whatsAppNonLeadMediaAccess(ctx context.Context, organizationID, conversationID string) (whatsAppNonLeadMediaAccess, error) {
+	var policyEnabled, leadLinked, isGroup bool
+	var candidateState string
+	var expiresAt pgtype.Timestamptz
+	err := repo.db.Pool().QueryRow(ctx, `
+		select private.whatsapp_nonlead_retention_candidate_active(
+		         conversation.organization_id, conversation.session_id, conversation.id
+		       ),
+		       (conversation.lead_id is not null or exists (
+		         select 1 from public.whatsapp_conversation_lead_bindings as binding
+		         where binding.conversation_id = conversation.id
+		           and binding.organization_id = conversation.organization_id
+		       )),
+		       coalesce(conversation.is_group, false),
+		       coalesce(candidate.state, ''), candidate.expires_at
+		from public.whatsapp_conversations as conversation
+		left join private.whatsapp_nonlead_retention_candidates as candidate
+		  on candidate.organization_id = conversation.organization_id
+		 and candidate.conversation_id = conversation.id
+		where conversation.organization_id = $1::uuid
+		  and conversation.id = $2::uuid
+		  and conversation.deleted_at is null
+	`, organizationID, conversationID).Scan(
+		&policyEnabled, &leadLinked, &isGroup, &candidateState, &expiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return whatsAppNonLeadMediaAccess{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return whatsAppNonLeadMediaAccess{}, err
+	}
+	if !policyEnabled {
+		return whatsAppNonLeadMediaAccess{allowed: true}, nil
+	}
+	if leadLinked || isGroup {
+		return whatsAppNonLeadMediaAccess{allowed: true}, nil
+	}
+	if candidateState == "pending" && expiresAt.Valid {
+		deadline := expiresAt.Time
+		if !time.Now().Before(deadline) {
+			return whatsAppNonLeadMediaAccess{}, nil
+		}
+		return whatsAppNonLeadMediaAccess{allowed: true, deadline: &deadline}, nil
+	}
+	if candidateState == "purging" || candidateState == "converted" {
+		return whatsAppNonLeadMediaAccess{}, nil
+	}
+	// An active policy without a pending candidate is unproven; fail closed.
+	return whatsAppNonLeadMediaAccess{}, nil
 }
 
 func (repo Repository) signedWhatsAppMessageMediaURLWithTTL(ctx context.Context, organizationID string, objectPath string) (string, int, error) {
+	return repo.signedWhatsAppMessageMediaURLWithDeadline(ctx, organizationID, objectPath, nil)
+}
+
+func (repo Repository) signedWhatsAppMessageMediaURLWithDeadline(ctx context.Context, organizationID string, objectPath string, deadline *time.Time) (string, int, error) {
 	objectPath = strings.TrimSpace(objectPath)
 	if objectPath == "" || !whatsappMediaPathBelongsToOrganization(objectPath, organizationID) {
 		return "", 0, ErrMessageNotFound
+	}
+	if deadline != nil {
+		// The Storage client can wait up to 20s. Reserve a little more than
+		// that before the CRM deadline so the provider-issued token cannot
+		// outlive the seven-day window while this request is in flight.
+		const signingSafetySeconds = 25
+		remaining := int(time.Until(*deadline).Seconds()) - signingSafetySeconds
+		if remaining < 1 {
+			return "", 0, ErrMessageNotFound
+		}
+		if remaining > whatsappMediaSignedURLTTLSeconds {
+			remaining = whatsappMediaSignedURLTTLSeconds
+		}
+		signedURL, err := repo.storage.signedURL(ctx, whatsappMediaBucket, objectPath, remaining)
+		if err != nil || signedURL == "" {
+			return signedURL, 0, err
+		}
+		if !time.Now().Before(*deadline) {
+			return "", 0, ErrMessageNotFound
+		}
+		// Bypass the path-only cache: the same deduplicated asset can also
+		// belong to a lead whose URL has the ordinary fifteen-minute TTL.
+		return signedURL, remaining, nil
 	}
 
 	if entry, ok := whatsappMediaSignedURLCache.Load(objectPath); ok {
@@ -1231,20 +1319,42 @@ func (repo Repository) signedWhatsAppMessageMediaURLWithTTL(ctx context.Context,
 }
 
 func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organizationID string, messages []Message) error {
+	return repo.prepareMessageMediaURLs(ctx, organizationID, messages, true)
+}
+
+func (repo Repository) prepareMessageMediaURLs(ctx context.Context, organizationID string, messages []Message, includeSignedURLs bool) error {
 	type pendingMediaURL struct {
-		index int
-		path  string
+		index    int
+		path     string
+		deadline *time.Time
 	}
 
 	pending := make([]pendingMediaURL, 0)
+	accessByConversation := make(map[string]whatsAppNonLeadMediaAccess)
 	for index := range messages {
-		if messages[index].MediaStoragePath == nil || *messages[index].MediaStoragePath == "" {
+		if messages[index].MediaURL == nil && (messages[index].MediaStoragePath == nil || *messages[index].MediaStoragePath == "") {
 			continue
 		}
-		if messages[index].MessageType == "text" || messages[index].MessageType == "reaction" {
+		access, known := accessByConversation[messages[index].ConversationID]
+		if !known {
+			var err error
+			access, err = repo.whatsAppNonLeadMediaAccess(ctx, organizationID, messages[index].ConversationID)
+			if err != nil {
+				return err
+			}
+			accessByConversation[messages[index].ConversationID] = access
+		}
+		if !access.allowed || access.deadline != nil {
+			// A stored media_url can be a public or already signed Storage URL.
+			// It must never be the fallback for an active nonlead retention cycle,
+			// including when signing fails or the caller requested lazy media.
+			messages[index].MediaURL = nil
+		}
+		if !access.allowed || !includeSignedURLs || messages[index].MediaStoragePath == nil ||
+			*messages[index].MediaStoragePath == "" ||
+			messages[index].MessageType == "text" || messages[index].MessageType == "reaction" {
 			continue
 		}
-
 		objectPath := *messages[index].MediaStoragePath
 		if !whatsappMediaPathBelongsToOrganization(objectPath, organizationID) {
 			// Never ask the service-role Storage client to sign an object outside
@@ -1252,7 +1362,7 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 			messages[index].MediaURL = nil
 			continue
 		}
-		pending = append(pending, pendingMediaURL{index: index, path: objectPath})
+		pending = append(pending, pendingMediaURL{index: index, path: objectPath, deadline: access.deadline})
 	}
 
 	if len(pending) == 0 {
@@ -1273,7 +1383,9 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 				return
 			}
 
-			signedURL, err := repo.signedWhatsAppMessageMediaURL(ctx, organizationID, item.path)
+			signedURL, _, err := repo.signedWhatsAppMessageMediaURLWithDeadline(
+				ctx, organizationID, item.path, item.deadline,
+			)
 			if err != nil || signedURL == "" {
 				return
 			}
@@ -1376,6 +1488,20 @@ func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantCont
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
 			  and wc.id = $5::uuid
+			  and (
+				wc.lead_id is not null
+				or not exists (
+					select 1
+					from private.whatsapp_nonlead_retention_candidates as retention
+					where retention.conversation_id = wc.id
+					  and retention.organization_id = wc.organization_id
+					  and private.whatsapp_nonlead_retention_candidate_active(
+					    retention.organization_id, retention.session_id, retention.conversation_id
+					  )
+					  and retention.state in ('pending', 'purging')
+					  and retention.expires_at <= now()
+				)
+			  )
 			  and ws.id is not null
 			  and ws.organization_id = wc.organization_id
 			  and ws.provider = 'evolution_go'
@@ -1501,6 +1627,17 @@ func conversationSelectFields() string {
 		wc.deleted_at,
 		wc.created_at,
 		wc.updated_at,
+		(
+			select candidate.expires_at
+			from private.whatsapp_nonlead_retention_candidates as candidate
+			where candidate.conversation_id = wc.id
+			  and candidate.organization_id = wc.organization_id
+			  and private.whatsapp_nonlead_retention_candidate_active(
+			    candidate.organization_id, candidate.session_id, candidate.conversation_id
+			  )
+			  and candidate.state = 'pending'
+			  and wc.lead_id is null
+		),
 		ws.id::text,
 		ws.instance_name,
 		ws.phone_number,
@@ -1574,6 +1711,7 @@ func leadHistoryConversationSelectFields() string {
 		wc.deleted_at,
 		coalesce(history.first_at, wc.created_at),
 		coalesce(history.message_at, wc.updated_at),
+		null::timestamptz,
 		ws.id::text,
 		ws.instance_name,
 		ws.phone_number,
@@ -1729,7 +1867,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	var conversation Conversation
 	var conversationSessionID pgtype.Text
 	var leadID, contactName, contactPhone, contactPicture, contactPresence, lastMessage pgtype.Text
-	var presenceUpdatedAt, lastMessageAt, archivedAt, deletedAt pgtype.Timestamptz
+	var presenceUpdatedAt, lastMessageAt, archivedAt, deletedAt, nonleadExpiresAt pgtype.Timestamptz
 	var sessionID, sessionInstanceName, sessionPhone, sessionStatus, sessionOrgID, sessionProvider pgtype.Text
 	var leadRefID, leadName, leadAvatar, leadPipelineID, leadStageID pgtype.Text
 	var leadAssigneeID, leadAssigneeName, leadAssigneeAvatar pgtype.Text
@@ -1754,6 +1892,7 @@ func scanConversation(row scanner) (Conversation, error) {
 		&deletedAt,
 		&conversation.CreatedAt,
 		&conversation.UpdatedAt,
+		&nonleadExpiresAt,
 		&sessionID,
 		&sessionInstanceName,
 		&sessionPhone,
@@ -1789,6 +1928,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	conversation.LastMessageAt = timePtr(lastMessageAt)
 	conversation.ArchivedAt = timePtr(archivedAt)
 	conversation.DeletedAt = timePtr(deletedAt)
+	conversation.NonleadExpiresAt = timePtr(nonleadExpiresAt)
 
 	if sessionID.Valid {
 		conversation.Session = &SessionLite{
@@ -1899,6 +2039,21 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 
 func conversationVisibilitySQL(canViewOwn bool) string {
 	return `(
+		(
+			wc.lead_id is not null
+			or not exists (
+				select 1
+				from private.whatsapp_nonlead_retention_candidates as retention
+				where retention.conversation_id = wc.id
+				  and retention.organization_id = wc.organization_id
+				  and private.whatsapp_nonlead_retention_candidate_active(
+				    retention.organization_id, retention.session_id, retention.conversation_id
+				  )
+				  and retention.state in ('pending', 'purging')
+				  and retention.expires_at <= now()
+			)
+		)
+		and
 		ws.id is not null
 		and ws.organization_id = wc.organization_id
 		and ws.provider = 'evolution_go'
@@ -1963,6 +2118,17 @@ func messageMediaVisibilitySQL(canViewOwn bool) string {
 			wm.lead_id is null
 			and wc.lead_id is null
 			and wc.deleted_at is null
+			and not exists (
+				select 1
+				from private.whatsapp_nonlead_retention_candidates as retention
+				where retention.conversation_id = wc.id
+				  and retention.organization_id = wc.organization_id
+				  and private.whatsapp_nonlead_retention_candidate_active(
+				    retention.organization_id, retention.session_id, retention.conversation_id
+				  )
+				  and retention.state in ('pending', 'purging')
+				  and retention.expires_at <= now()
+			)
 			and ws.id is not null
 			and ws.provider = 'evolution_go'
 			and coalesce(ws.is_active, true) = true

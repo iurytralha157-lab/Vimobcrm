@@ -217,11 +217,13 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 
 	mediaType, mediaBlock := nativeMediaBlock(messageNode, raw, info)
 	content := firstNonEmpty(
+		firstString(messageNode, "buttonText", "button_text", "buttonId", "button_id", "selectedDisplayText", "selectedButtonId"),
+		firstString(raw, "buttonText", "button_text", "buttonId", "button_id"),
 		firstString(messageNode, "conversation"),
 		firstString(messageNode, "Conversation"),
 		firstString(messageNode, "extendedTextMessage.text", "ExtendedTextMessage.Text"),
 		firstString(mediaBlock, "caption", "Caption"),
-		firstString(raw, "text", "body", "content", "caption", "buttonText", "button_text", "buttonId", "button_id"),
+		firstString(raw, "text", "body", "content", "caption"),
 	)
 	if mediaType == "" {
 		mediaType = "text"
@@ -946,7 +948,7 @@ func nativeCampaignPropertyCode(sourceURL string) string {
 }
 
 func nativeLooksLikeMessage(value map[string]any) bool {
-	for _, key := range []string{"key", "Key", "Info", "info", "message", "Message", "messageType", "text", "body", "content", "message_id", "messageId", "ID"} {
+	for _, key := range []string{"key", "Key", "Info", "info", "message", "Message", "messageType", "text", "body", "content", "buttonText", "button_text", "buttonId", "button_id", "message_id", "messageId", "ID"} {
 		if _, ok := value[key]; ok {
 			return true
 		}

@@ -100,6 +100,13 @@ export function createWhatsAppTextSendGuard() {
       if (current.draftKey === draftKey && current.text === text) return;
       current = { draftKey, text, revision: current.revision + 1 };
     },
+    editDraft(draftKey: string | null, text: string) {
+      // A user edit is authoritative even if it exactly matches a just-sent
+      // text. Only observeDraft suppresses a late React render of the old text.
+      awaitingClear = null;
+      if (current.draftKey === draftKey && current.text === text) return;
+      current = { draftKey, text, revision: current.revision + 1 };
+    },
     begin(): WhatsAppTextSendIntent | null {
       if (joining || !current.draftKey || !current.text.trim()) return null;
       joining = {
@@ -129,6 +136,11 @@ export function createWhatsAppTextSendGuard() {
       if (awaitingClear?.draftKey === intent.draftKey && awaitingClear.rawText === intent.rawText) {
         awaitingClear = null;
       }
+    },
+    canRestore(intent: WhatsAppTextSendIntent) {
+      return current.draftKey === intent.draftKey
+        && current.text === ''
+        && current.revision === intent.revision + 1;
     },
   };
 }

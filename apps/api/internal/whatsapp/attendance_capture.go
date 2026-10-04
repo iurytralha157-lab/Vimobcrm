@@ -192,7 +192,7 @@ func eventAttendanceEntry(
 		  )
 		  and (
 		    (
-		      entry.entry_source = 'manual'
+		      entry.entry_source in ('manual', 'implicit')
 		      and entry.joined_at <= $6::timestamptz
 		      and entry.joined_at <= $7::timestamptz
 		      and ($8::bigint = 0 or entry.ingress_sequence_cutoff < $8::bigint)

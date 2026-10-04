@@ -37,7 +37,7 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
-		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, routingepoch, cutoffat, nonleadretentionactive)",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",
 		"clock_timestamp()",
@@ -74,7 +74,9 @@ func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *
 	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func attachEvolutionWebhookRoutingSnapshots`)
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
 	for _, required := range []string{
-		"routingkey := evolutionwebhookmessagebindingroutingkey(message)",
+		"routingkey := directroutes[message.providermessageid]",
+		"evolutionwebhookroutingkeyinepoch(",
+		"currentwhatsappnonleadroutingkey(",
 		"bindingeligible := !message.fromme && !message.isreaction && !message.isdeletion && !message.unsupportedmessage",
 		"select private.capture_whatsapp_webhook_routing_snapshot(",
 		"message.providermessageid",

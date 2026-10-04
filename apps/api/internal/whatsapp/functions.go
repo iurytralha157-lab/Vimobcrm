@@ -33,6 +33,7 @@ type functionsClient struct {
 }
 
 func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
+	inboundRecordingScope := strings.TrimSpace(os.Getenv("WHATSAPP_INBOUND_RECORDING_SESSION_IDS"))
 	return functionsClient{
 		projectURL:                 strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
 		apiKey:                     strings.TrimSpace(config.APIKey),
@@ -43,9 +44,9 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
 		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
 		webhookRolloutSessionIDs:   canonicalWhatsAppSessionScope(config.EvolutionGo.WebhookRolloutSessionIDs),
-		// An explicit session scope is required before received history can use
-		// the independent "recorded" state. Empty or unknown values are off.
-		inboundRecordingSessionIDs: canonicalWhatsAppSessionScope(strings.Split(os.Getenv("WHATSAPP_INBOUND_RECORDING_SESSION_IDS"), ",")),
+		// An explicit scope enables future inbound recording. Keep the global
+		// default off until seven-day nonlead deletion is activated.
+		inboundRecordingSessionIDs: canonicalWhatsAppSessionScope(strings.Split(inboundRecordingScope, ",")),
 		db:                         db,
 		httpClient:                 newEvolutionHTTPClient(),
 		runtimeStats:               &whatsappRuntimeCounters{},

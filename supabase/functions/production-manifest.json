@@ -264,7 +264,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
-      "source_sha256": "9af95f153e85e1babd3f3d5b4eb05a5dd11d0ca3ca881e993b3f457a65e90c8f"
+      "source_sha256": "f301aab772a36a8b366a006a3a48719981a02e8daf14b2d41b76a0510ebc2800"
     },
     {
       "slug": "evolution-proxy",
@@ -524,7 +524,7 @@
       "verify_jwt": true,
       "auth_boundary": "GATEWAY_JWT",
       "captured_deployment_sha256": "1aaf8786a4fb10a03f5ee16bc4230df02d5cf5f7b7dfe03c9ffe32f9ea9af82c",
-      "source_sha256": "68baf2b4979b7226bcdafa5a2d752128bfd9e4af5c95125264e70cf2b1cf04fa"
+      "source_sha256": "694b4dfc8a68fb0482222efc9252f6230f93c802b3dd27bc572fcb2dbdb6059e"
     },
     {
       "slug": "notification-evolution-failover",
@@ -694,7 +694,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "783f713171592fc9ab94931b326330d14ffd6ebb265e5a48d6051b60cf237472"
+      "source_sha256": "aa37589d54b0381ae280de8c830f44cc8fe11b97a96733e19c28bcb877bdd017"
     },
     {
       "slug": "sla-checker",

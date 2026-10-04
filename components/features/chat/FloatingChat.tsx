@@ -26,6 +26,7 @@ import { useWhatsAppConversations, useWhatsAppUnreadCount, useSendWhatsAppMessag
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
+import { useWhatsAppSendOriginChoice } from "@/hooks/use-whatsapp-send-origin-choice";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { WhatsAppSession } from "@/hooks/use-whatsapp-sessions";
 import { getWhatsAppStartErrorMessage, useStartConversation, useFindConversationByPhone } from "@/hooks/use-start-conversation";
@@ -40,6 +41,8 @@ import { AttendanceTimelineEvents } from "@/components/features/whatsapp/Attenda
 import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
 import { WhatsAppAccessLostNotice } from "@/components/features/whatsapp/WhatsAppAccessLostNotice";
 import { WhatsAppSessionDisconnectedNotice } from "@/components/features/whatsapp/WhatsAppSessionDisconnectedNotice";
+import { WhatsAppSendOriginChoice } from "@/components/features/whatsapp/WhatsAppSendOriginChoice";
+import { NonLeadRetentionNotice } from "@/components/features/whatsapp/NonLeadRetentionNotice";
 import {
   captureConversationListReturnPosition,
   ConversationListItem,
@@ -75,6 +78,7 @@ import {
 } from "@/lib/whatsapp-message-input";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import { getOwnConnectedWhatsAppSessions, isExactExistingLeadConversation } from "@/lib/access/whatsapp-session-sharing";
+import { resolveWhatsAppSendOriginPhone } from "@/lib/whatsapp-send-origin-phone";
 import { canReactToWhatsAppMessage, groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -82,6 +86,7 @@ import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useTags } from "@/hooks/use-tags";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
 import { getTagColorStyleWithWhiteText } from "@/lib/tag-color";
+import { isExpiredWhatsAppNonLeadConversation, useWhatsAppNonLeadRetentionNow } from "@/hooks/use-whatsapp-nonlead-retention";
 import {
   blobToBase64,
   compressOutboundImageFile,
@@ -267,7 +272,7 @@ export function FloatingChat() {
   const {
     isOpen,
     isPresenceOpen,
-    activeConversation,
+    activeConversation: storedActiveConversation,
     pendingPhone,
     pendingLeadName,
     pendingMessage,
@@ -282,6 +287,7 @@ export function FloatingChat() {
   const hasWhatsAppViewPermission = hasPermission("whatsapp_view");
   const canOperateWhatsApp = hasPermission("whatsapp_operate");
   const canOperateLeads = hasPermission("lead_operate");
+  const canCreateLeads = hasPermission("lead_create");
   const currentUserId = profile?.id || user?.id || null;
   const activeTenantKey = `${currentUserId || "anonymous"}:${activeOrganization.organizationId || "none"}`;
   const [searchTerm, setSearchTerm] = useState("");
@@ -300,6 +306,8 @@ export function FloatingChat() {
   const [showSessionSelector, setShowSessionSelector] = useState(false);
   const [pendingStartData, setPendingStartData] = useState<{phone: string, leadName?: string, leadId?: string} | null>(null);
   const [isStartingConversation, setIsStartingConversation] = useState(false);
+  const [isResolvingOwnPhone, setIsResolvingOwnPhone] = useState(false);
+  const ownStartInFlightRef = useRef(false);
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<WhatsAppConversation | null>(null);
   const pathname = usePathname();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -356,6 +364,17 @@ export function FloatingChat() {
       isActive = false;
     };
   }, [profile?.id, activeOrganization.organizationId]);
+  const activeRetentionNow = useWhatsAppNonLeadRetentionNow([
+    storedActiveConversation?.nonlead_expires_at,
+  ]);
+  const activeConversationExpired = isExpiredWhatsAppNonLeadConversation(
+    storedActiveConversation,
+    activeRetentionNow,
+  );
+  const activeConversation = activeConversationExpired ? null : storedActiveConversation;
+  useEffect(() => {
+    if (activeRetentionNow !== null && activeConversationExpired) clearActiveConversation();
+  }, [activeConversationExpired, activeRetentionNow, clearActiveConversation]);
   const activeConversationId = activeConversation?.id;
   const activeConversationMessageScope = getWhatsAppConversationMessageScope(activeConversation);
   const activeMessageDraftKey = getWhatsAppConversationDraftKey({
@@ -376,11 +395,21 @@ export function FloatingChat() {
     ));
   }, [activeMessageDraftKey]);
   const handleMessageTextChange = useCallback((value: string) => {
-    textSendGuard.observeDraft(activeMessageDraftKey, value);
+    textSendGuard.editDraft(activeMessageDraftKey, value);
     setMessageText(value);
   }, [activeMessageDraftKey, setMessageText, textSendGuard]);
   const activeConversationLead = activeConversation?.lead;
   const activeConversationLeadId = activeConversation?.lead_id || activeConversationLead?.id || null;
+  const currentOwnStartIdentity = JSON.stringify([
+    activeOrganization.organizationId,
+    currentUserId,
+    activeConversationId,
+    activeConversationLeadId,
+  ]);
+  const currentOwnStartIdentityRef = useRef(currentOwnStartIdentity);
+  useLayoutEffect(() => {
+    currentOwnStartIdentityRef.current = currentOwnStartIdentity;
+  }, [currentOwnStartIdentity]);
   const canMutateActiveConversation = canOperateWhatsApp && activeConversationMessageScope.canMutate;
   const canManageActiveConversation = canOperateWhatsApp && activeConversationMessageScope.canManage;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
@@ -477,6 +506,21 @@ export function FloatingChat() {
     undefined,
     { enabled: shouldSyncFloatingChat },
   );
+  const listRetentionNow = useWhatsAppNonLeadRetentionNow(
+    conversations?.map((conversation) => conversation.nonlead_expires_at) || [],
+  );
+  const pendingDeleteRetentionNow = useWhatsAppNonLeadRetentionNow([
+    pendingDeleteConversation?.nonlead_expires_at,
+  ]);
+  const pendingDeleteExpired = isExpiredWhatsAppNonLeadConversation(
+    pendingDeleteConversation,
+    pendingDeleteRetentionNow,
+  );
+  useEffect(() => {
+    if (pendingDeleteRetentionNow !== null && pendingDeleteExpired) {
+      setPendingDeleteConversation(null);
+    }
+  }, [pendingDeleteExpired, pendingDeleteRetentionNow]);
   const {
     messages,
     isLoading: loadingMessages,
@@ -565,10 +609,22 @@ export function FloatingChat() {
   });
   const accessLost = Boolean(whatsappMessageInputState.accessLost);
   const ownConnectedSessions = getOwnConnectedWhatsAppSessions(sessions, currentUserId, activeOrganization.organizationId);
+  const sendOriginChoice = useWhatsAppSendOriginChoice({
+    conversation: activeConversation,
+    sessions,
+    currentUserId,
+    organizationId: activeOrganization.organizationId,
+    enabled: canMutateActiveConversation && !accessLost,
+    alreadySentOnEntry: attendanceGate.entries.some((entry) =>
+      entry.userId === currentUserId
+      && entry.sessionId === activeConversation?.session_id
+      && Boolean(entry.markerAt)),
+  });
   const messageInputDisabled = attendanceGate.isResolving
     || isReadOnlyMode
     || whatsappMessageInputState.disabled
-    || accessLost;
+    || accessLost
+    || sendOriginChoice.open;
   const floatingTimelineItems = useMemo<FloatingTimelineItem[]>(() => [
     ...visibleMessages.map((message): FloatingTimelineItem => ({
       kind: "message",
@@ -579,7 +635,7 @@ export function FloatingChat() {
     ...attendanceGate.entries.map((entry): FloatingTimelineItem => ({
       kind: "attendance",
       id: `attendance-${entry.id}`,
-      timestamp: entry.joinedAt,
+      timestamp: entry.markerAt ?? entry.joinedAt,
       entry,
     })),
   ].sort((left, right) => (
@@ -877,13 +933,14 @@ export function FloatingChat() {
     setIsStartingConversation(true);
 
     try {
-      // Reabra primeiro a projeção do próprio card. Se a conversa física já
-      // estiver vinculada a outro card, o backend devolve o histórico imutável
-      // deste lead e a simples navegação nunca reativa o vínculo antigo.
+      // Reabra primeiro a projeção do próprio card dentro da sessão escolhida.
+      // Sem sessão, o backend ainda pode devolver o histórico deste lead em
+      // outra conta, sem reativar um vínculo antigo pela simples navegação.
       if (leadId) {
 		const existingForLead = await whatsappAPI.findConversation({
 		  phone: "",
 		  leadId,
+		  sessionId,
 		  organizationId: activeOrganization.organizationId,
 		}) as WhatsAppConversation | null;
 		if (existingForLead) {
@@ -936,7 +993,7 @@ export function FloatingChat() {
 
       // Fallback: tentar historico via edge function (acesso restrito)
       // Adicionamos um timeout para nao travar o fluxo
-      if (leadId) {
+      if (leadId && !sessionId) {
         try {
           const restrictedData = await withTimeout(
             whatsappAPI.getHistoryAccess({
@@ -1002,17 +1059,30 @@ export function FloatingChat() {
     const leadId = activeConversationLeadId;
     const organizationId = activeOrganization.organizationId;
     if (!canMutateActiveConversation || !activeConversation || !leadId || !organizationId
+      || ownStartInFlightRef.current
       || !ownConnectedSessions.some((session) => session.id === sessionId)) return;
-    const phone = normalizeWhatsAppContactPhoneToE164(
-      activeConversation.contact_phone,
-      activeConversation.remote_jid,
-    );
-    if (!phone) {
-      toast({ title: "Contato sem WhatsApp", description: "Este lead não tem um número válido para iniciar outra conversa.", variant: "destructive" });
-      return;
-    }
+    const requestIdentity = JSON.stringify([
+      organizationId,
+      currentUserId,
+      activeConversation.id,
+      leadId,
+    ]);
+    ownStartInFlightRef.current = true;
+    setIsResolvingOwnPhone(true);
     try {
+      const phone = await resolveWhatsAppSendOriginPhone({
+        contactPhone: activeConversation.contact_phone,
+        remoteJid: activeConversation.remote_jid,
+        leadId,
+        organizationId,
+      });
+      if (!phone) {
+        toast({ title: "Contato sem WhatsApp", description: "Este lead não tem um número válido para iniciar outra conversa.", variant: "destructive" });
+        return;
+      }
+      if (currentOwnStartIdentityRef.current !== requestIdentity) return;
       const existing = await findConversation.mutateAsync({ phone, sessionId });
+      if (currentOwnStartIdentityRef.current !== requestIdentity) return;
       const nextConversation = isExactExistingLeadConversation(existing, {
         organizationId,
         sessionId,
@@ -1027,6 +1097,7 @@ export function FloatingChat() {
           leadName: activeConversation.lead?.name || activeConversation.contact_name || undefined,
           expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
         });
+      if (currentOwnStartIdentityRef.current !== requestIdentity) return;
       const nextDraftKey = getWhatsAppConversationDraftKey({
         tenantKey: activeTenantKey,
         conversationId: nextConversation.id,
@@ -1043,14 +1114,18 @@ export function FloatingChat() {
         description: getWhatsAppStartErrorMessage(error),
         variant: "destructive",
       });
+    } finally {
+      ownStartInFlightRef.current = false;
+      setIsResolvingOwnPhone(false);
     }
   };
   // Memoize filtered conversations to prevent re-renders that cause input focus loss
   const filteredConversations = useMemo(() => {
     return conversations?.filter((conversation) =>
-      matchesConversationSearch(conversation, searchTerm, normalizeSearchText),
+      !isExpiredWhatsAppNonLeadConversation(conversation, listRetentionNow)
+        && matchesConversationSearch(conversation, searchTerm, normalizeSearchText),
     );
-  }, [conversations, searchTerm]);
+  }, [conversations, listRetentionNow, searchTerm]);
 
   const handleViewLead = (leadId: string) => {
     closeChat();
@@ -1077,7 +1152,7 @@ export function FloatingChat() {
   };
 
   const confirmDeleteConversation = async () => {
-    if (!pendingDeleteConversation) return;
+    if (!pendingDeleteConversation || pendingDeleteExpired) return;
 
     try {
 	  await deleteConversation.mutateAsync(pendingDeleteConversation);
@@ -1132,6 +1207,16 @@ export function FloatingChat() {
       return;
     }
     try {
+      const origin = await sendOriginChoice.chooseForSend();
+      if (!origin) {
+        textSendGuard.aborted(intent);
+        return;
+      }
+      if (origin.kind === "own") {
+        textSendGuard.aborted(intent);
+        await handleStartWithOwnSession(origin.sessionId);
+        return;
+      }
       const joined = await attendanceGate.ensureJoined();
       if (!joined) {
         textSendGuard.aborted(intent);
@@ -1186,6 +1271,12 @@ export function FloatingChat() {
       return false;
     }
 
+    const origin = await sendOriginChoice.chooseForSend();
+    if (!origin) return false;
+    if (origin.kind === "own") {
+      await handleStartWithOwnSession(origin.sessionId);
+      return false;
+    }
     const joined = await attendanceGate.ensureJoined();
     if (!joined) return false;
 
@@ -1234,6 +1325,16 @@ export function FloatingChat() {
     }
     if (sessionDeliveryUnavailable) {
       toast({ title: "WhatsApp sem conexão", description: "Arquivo não enviado. Reconecte este número antes de enviar.", variant: "destructive" });
+      e.target.value = "";
+      return;
+    }
+    const origin = await sendOriginChoice.chooseForSend();
+    if (!origin) {
+      e.target.value = "";
+      return;
+    }
+    if (origin.kind === "own") {
+      await handleStartWithOwnSession(origin.sessionId);
       e.target.value = "";
       return;
     }
@@ -1610,6 +1711,14 @@ export function FloatingChat() {
     </div>;
   const messagesViewJsx = (
     <div className="relative flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface-solid)]">
+      {activeConversation && !activeConversation.lead_id && !activeConversation.lead?.id
+        && !activeConversation.is_group && !activeConversation.historical_lead_view ? (
+          <NonLeadRetentionNotice
+            expiresAt={activeConversation.nonlead_expires_at}
+            manageHref={canCreateLeads || (canOperateWhatsApp && canOperateLeads) ? "/crm/conversas" : undefined}
+            onManageClick={closeChat}
+          />
+        ) : null}
       <ScrollArea className="flex-1" onScrollCapture={handleScrollArea}>
         <div className="px-3 py-3 w-full max-w-full min-w-0 overflow-hidden overflow-x-hidden">
           {hasOlderMessages && (
@@ -1717,16 +1826,24 @@ export function FloatingChat() {
   );
   const renderMessageInput = (mobile = false) => {
     const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;
+    if (!activeLeadId) return null;
 
     return (
     <div className={cn("shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3", mobile && "pb-2")}>
       {sessionDeliveryUnavailable && !accessLost ? (
-        <WhatsAppSessionDisconnectedNotice hasUnconfirmedMessages={hasUnconfirmedMessages} />
+        <WhatsAppSessionDisconnectedNotice
+          hasUnconfirmedMessages={hasUnconfirmedMessages}
+          canStartWithOwnSession={Boolean(activeLeadId && !activeConversation?.is_group && canMutateActiveConversation)}
+          ownConnectedSessions={ownConnectedSessions}
+          isStarting={isResolvingOwnPhone || findConversation.isPending || startConversation.isPending}
+          onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
+          onConnect={() => router.push("/settings/integrations/whatsapp")}
+        />
       ) : null}
       {accessLost && activeLeadId && !activeConversation?.is_group && canMutateActiveConversation ? (
         <WhatsAppAccessLostNotice
           ownConnectedSessions={ownConnectedSessions}
-          isStarting={findConversation.isPending || startConversation.isPending}
+          isStarting={isResolvingOwnPhone || findConversation.isPending || startConversation.isPending}
           onStart={(sessionId) => void handleStartWithOwnSession(sessionId)}
           onConnect={() => router.push("/settings/integrations/whatsapp")}
         />
@@ -1882,14 +1999,15 @@ export function FloatingChat() {
       activeConversation?.remote_jid,
     ) ||
     undefined;
-  const pendingDeleteName = pendingDeleteConversation?.lead?.name || formatWhatsAppContactLabel(
-    pendingDeleteConversation?.contact_name,
-    pendingDeleteConversation?.contact_phone,
-    pendingDeleteConversation?.remote_jid,
+  const visiblePendingDeleteConversation = pendingDeleteExpired ? null : pendingDeleteConversation;
+  const pendingDeleteName = visiblePendingDeleteConversation?.lead?.name || formatWhatsAppContactLabel(
+    visiblePendingDeleteConversation?.contact_name,
+    visiblePendingDeleteConversation?.contact_phone,
+    visiblePendingDeleteConversation?.remote_jid,
   ) || "esta conversa";
   const deleteConversationDialog = (
     <AlertDialog
-      open={Boolean(pendingDeleteConversation)}
+      open={Boolean(visiblePendingDeleteConversation)}
       onOpenChange={(open) => {
         if (!open && !deleteConversation.isPending) setPendingDeleteConversation(null);
       }}
@@ -1924,6 +2042,17 @@ export function FloatingChat() {
       contactName={activeContactName}
     />
   );
+  const sendOriginDialog = sendOriginChoice.entrySession ? (
+    <WhatsAppSendOriginChoice
+      open={sendOriginChoice.open}
+      entrySession={sendOriginChoice.entrySession}
+      ownSessions={sendOriginChoice.ownSessions}
+      isStarting={isResolvingOwnPhone || findConversation.isPending || startConversation.isPending}
+      onContinue={sendOriginChoice.continueWithEntry}
+      onStart={sendOriginChoice.startWithOwn}
+      onCancel={sendOriginChoice.cancel}
+    />
+  ) : null;
 
   // Mobile version - fullscreen fixed container (stable bottom input)
   if (isMobile) {
@@ -1932,6 +2061,7 @@ export function FloatingChat() {
         {SessionSelectorDialog()}
         {deleteConversationDialog}
         {enterAttendanceDialog}
+        {sendOriginDialog}
         {activeLeadId && canMutateActiveConversation && (
           <StartAutomationDialog
             open={showAutomationDialog}
@@ -1984,6 +2114,7 @@ export function FloatingChat() {
       {SessionSelectorDialog()}
       {deleteConversationDialog}
       {enterAttendanceDialog}
+      {sendOriginDialog}
       {activeLeadId && canMutateActiveConversation && (
         <StartAutomationDialog
           open={showAutomationDialog}

@@ -71,14 +71,10 @@ const claimWhatsAppOutboxQueryTemplate = `
 			select
 				coalesce(nullif(btrim($3), '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid) as after_conversation_id
 		),
-		conversation_heads as (
-			select distinct on (queued.conversation_id)
+		candidate_rows as materialized (
+			select
 				queued.conversation_id,
-				queued.id,
-				queued.message_type,
-				queued.payload,
-				queued.next_attempt_at,
-				queued.created_at
+				queued.id
 			from public.whatsapp_outbox queued
 			cross join claim_params params
 			where queued.status in ('pending', 'retry')
@@ -124,61 +120,7 @@ const claimWhatsAppOutboxQueryTemplate = `
 				queued.conversation_id,
 				queued.created_at,
 				queued.id
-		),
-		candidate_conversations as materialized (
-			select
-				wc.id as conversation_id,
-				head.id as event_id
-		from conversation_heads head
-		join public.whatsapp_conversations wc on wc.id = head.conversation_id
-		order by wc.id
 			limit $1
-			for no key update of wc skip locked
-		),
-		locked_heads as materialized (
-			select
-				queued.id,
-				selected.conversation_id
-		from candidate_conversations selected
-		join public.whatsapp_outbox queued on queued.id = selected.event_id
-		where queued.status in ('pending', 'retry')
-			  and (
-				queued.attempts < queued.max_attempts
-				or queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-			  )
-			  and (
-				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or not exists (
-					select 1
-					from public.whatsapp_sessions as delivery_session
-					where delivery_session.id = queued.session_id
-					  and delivery_session.organization_id = queued.organization_id
-					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
-					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
-				)
-			  )
-			  and exists (
-				select 1
-				from public.whatsapp_messages as current_message
-				join public.whatsapp_conversations as current_conversation
-				  on current_conversation.id = current_message.conversation_id
-				 and current_conversation.organization_id = current_message.organization_id
-				 and current_conversation.session_id = current_message.session_id
-				join public.whatsapp_conversation_lead_bindings as current_binding
-				  on current_binding.organization_id = current_conversation.organization_id
-				 and current_binding.conversation_id = current_conversation.id
-				 and current_binding.session_id = current_conversation.session_id
-				 and current_binding.lead_id = current_conversation.lead_id
-				 and current_binding.active_to is null
-				where current_message.id = queued.message_id
-				  and current_message.organization_id = queued.organization_id
-				  and current_message.session_id = queued.session_id
-				  and current_message.conversation_id = queued.conversation_id
-				  and current_message.lead_id = current_conversation.lead_id
-			  )
-			  and queued.next_attempt_at <= now()
-		order by selected.conversation_id
 			for update of queued skip locked
 		),
 		claimed as (
@@ -187,7 +129,7 @@ const claimWhatsAppOutboxQueryTemplate = `
 			    locked_at = now(),
 		    locked_by = concat($2::text, ':', $4::text, ':', queued.id::text),
 			    updated_at = now()
-		from locked_heads selected
+		from candidate_rows selected
 			where queued.id = selected.id
 			  and queued.status in ('pending', 'retry')
 			  and (
@@ -690,22 +632,9 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		body["mediaUrl"] = signedURL
 		delete(body, "mediaStoragePath")
 	}
-	// A shared sender must retain the exact grant that authorized this queued
-	// intent. The grant row stays locked through the provider call, so a revoke
-	// cannot commit between this final check and the actual HTTP request.
-	releaseGrant, err := repo.holdWhatsAppOutboxGrant(ctx, item)
-	if err != nil {
-		if errors.Is(err, ErrSessionAccessRevoked) {
-			recordWhatsAppOutboxDeliveryFailure(lane)
-			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
-		}
-		slog.Error("whatsapp shared-send fence unavailable", "outbox_id", item.ID, "error", err)
-		return repo.deferWhatsAppOutboxWithoutAttempt(ctx, item,
-			fmt.Errorf("WhatsApp shared-send fence unavailable"))
-	}
-	defer releaseGrant()
 	// Revocation or team reassignment may have committed while Storage was
-	// preparing media or while the grant lock was pending.
+	// preparing media. The provider-start transaction below rechecks the exact
+	// grant and serializes it with revoke without holding a DB connection over HTTP.
 	attended, err = repo.whatsappOutboxAttendanceCurrent(ctx, item)
 	if err != nil {
 		return err
@@ -724,6 +653,17 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 
 	item.Attempts, err = repo.startWhatsAppOutboxProviderAttempt(ctx, item)
 	if err != nil {
+		if errors.Is(err, errWhatsAppOutboxSessionDisconnected) {
+			return repo.deferWhatsAppOutboxWithoutAttempt(ctx, item, err)
+		}
+		if errors.Is(err, ErrSessionAccessRevoked) {
+			recordWhatsAppOutboxDeliveryFailure(lane)
+			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+		}
+		if errors.Is(err, ErrSessionNotFound) {
+			recordWhatsAppOutboxDeliveryFailure(lane)
+			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+		}
 		return err
 	}
 
@@ -743,7 +683,6 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 			return sendErr
 		},
 	)
-	releaseGrant()
 	if leaseErr != nil {
 		// The durable provider-started marker remains on the row. Recovery will
 		// quarantine it as outcome-unknown instead of issuing another send.
@@ -1013,8 +952,16 @@ func (repo Repository) renewWhatsAppOutboxLease(ctx context.Context, item pendin
 }
 
 func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, item pendingWhatsAppOutbox) (int, error) {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockWhatsAppOutboxGrantForStart(ctx, tx, item); err != nil {
+		return 0, err
+	}
 	var attempts int
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		update public.whatsapp_outbox
 		set attempts = attempts + 1,
 		    locked_at = now(),
@@ -1029,7 +976,13 @@ func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, i
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, errWhatsAppOutboxLeaseLost
 	}
-	return attempts, err
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return attempts, nil
 }
 
 func (repo Repository) markWhatsAppOutboxProviderAccepted(ctx context.Context, item pendingWhatsAppOutbox, providerMessageID string) (bool, error) {
@@ -1462,6 +1415,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			    content = coalesce(existing.content, pending.content),
 			    media_url = coalesce(existing.media_url, pending.media_url),
 			    media_storage_path = coalesce(existing.media_storage_path, pending.media_storage_path),
+			    metadata = coalesce(existing.metadata, '{}'::jsonb) || coalesce(pending.metadata, '{}'::jsonb),
 			    provider_message_id = $3,
 			    message_id = $3,
 			    status = case when existing.status in ('delivered', 'read') then existing.status else 'sent' end,
@@ -1504,7 +1458,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 		update public.whatsapp_outbox
 		set status = 'sent',
 		    provider_message_id = $2,
-		    sent_at = now(),
+		    sent_at = clock_timestamp(),
 		    locked_at = null,
 		    locked_by = null,
 		    last_error = null,
@@ -1574,6 +1528,9 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			  and message.lead_id = lead.id
 			  and lead.organization_id = message.organization_id
 		`, canonicalMessageID, item.OrganizationID); err != nil {
+			return err
+		}
+		if err := recordConfirmedAttendanceMarker(ctx, tx, item.OrganizationID, canonicalMessageID, item.ID, item.CreatedAt); err != nil {
 			return err
 		}
 

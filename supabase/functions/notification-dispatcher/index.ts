@@ -233,6 +233,18 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "variables_too_large" }, 413);
     }
 
+    // Older session-health-check versions still request an admin notice before
+    // updating the session. Acknowledge that retired event in the shape their
+    // caller expects, without creating a notification or an external delivery.
+    if (eventKey === "whatsapp_disconnected_admin") {
+      return json({
+        success: true,
+        queued: true,
+        notification_id: "ignored:whatsapp_disconnected_admin",
+        ignored: true,
+      });
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     if (!supabaseUrl || !serviceRoleKey) {

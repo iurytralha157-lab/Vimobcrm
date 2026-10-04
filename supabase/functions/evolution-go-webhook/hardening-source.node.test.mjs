@@ -162,7 +162,7 @@ test("suppressed attendance rows are redacted before the first canonical insert"
   );
 });
 
-test("received history is enabled only for named sessions and never rehydrates a suppressed retry", () => {
+test("new received history requires explicit scope and never rehydrates a suppressed retry", () => {
   const resolverStart = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
   const resolverEnd = source.indexOf("async function findStoredMessage(", resolverStart);
   const resolver = source.slice(resolverStart, resolverEnd);
@@ -187,6 +187,17 @@ test("recorded history cannot newly trigger AI or managed lead plaintext project
   assert.equal((handle.match(/captureDecision\.captureState === "captured"/g) || []).length, 2);
   assert.match(handle, /processManagedWhatsAppLeadEntry\([\s\S]*?captureDecision\.captureState !== "captured"/);
   assert.match(handle, /if \(!captureSuppressed\) \{[\s\S]*?updateConversationAfterMessage/);
+});
+
+test("unclocked CTWA exits before Edge can look up or create a lead", () => {
+  const handleStart = source.indexOf("async function handleMessages(");
+  const handleEnd = source.indexOf("function statusFromProvider(", handleStart);
+  const handle = source.slice(handleStart, handleEnd);
+  const guard = handle.indexOf("isConfirmedClickToWhatsAppAd(message) && !message.providerOccurredAt");
+  const firstDatabaseRead = handle.indexOf("await wasNonleadWhatsAppEventPurged(");
+  const leadCreation = handle.indexOf("lead = await ensureLead(");
+  assert.ok(guard > 0 && guard < firstDatabaseRead && firstDatabaseRead < leadCreation);
+  assert.match(handle.slice(guard, firstDatabaseRead), /processed \+= 1;\s*continue;/);
 });
 
 test("a recorded pre-lead retry cannot acquire a later lead or rewrite its ingress log", () => {
@@ -287,7 +298,7 @@ test("manual capture retains its cutoff and auto capture uses first-event proven
   const start = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
   const end = source.indexOf("async function findStoredMessage(", start);
   const resolver = source.slice(start, end);
-  assert.match(resolver, /\.eq\("entry_source", "manual"\)[\s\S]*?\.lte\("joined_at", inboxCreatedAt\)[\s\S]*?\.lte\("joined_at", providerOccurredAt\)[\s\S]*?\.lt\("ingress_sequence_cutoff", ingress\.ingressSequence\)/);
+  assert.match(resolver, /\.in\("entry_source", \["manual", "implicit"\]\)[\s\S]*?\.lte\("joined_at", inboxCreatedAt\)[\s\S]*?\.lte\("joined_at", providerOccurredAt\)[\s\S]*?\.lt\("ingress_sequence_cutoff", ingress\.ingressSequence\)/);
   assert.match(resolver, /\.eq\("entry_source", "ctwa_auto"\)[\s\S]*?\.lte\("bootstrap_ingress_sequence", ingress\.ingressSequence\)[\s\S]*?\.lte\("bootstrap_provider_occurred_at", providerOccurredAt\)[\s\S]*?\.lte\("bootstrap_inbox_created_at", inboxCreatedAt\)/);
   assert.match(resolver, /Number\(autoEntry\?\.bootstrap_ingress_sequence\) < ingress\.ingressSequence/);
   assert.match(resolver, /Number\(autoEntry\?\.bootstrap_ingress_sequence\) === ingress\.ingressSequence[\s\S]*?cleanText\(autoEntry\?\.bootstrap_provider_message_id\) === message\.messageId/);

@@ -55,6 +55,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"whatsappHandler.StartOutboxWorker":                       1,
 		"whatsappHandler.StartWebhookWorker":                      1,
 		"whatsappHandler.StartMediaWorker":                        1,
+		"whatsappHandler.StartNonLeadRetentionWorker":             1,
 		"whatsappHandler.StartSessionSupervisor":                  1,
 		"metaHandler.StartWebhookWorker":                          1,
 		"metaHandler.StartConversionFeedbackWorker":               1,

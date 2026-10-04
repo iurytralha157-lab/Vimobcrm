@@ -6,13 +6,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 545
-- Arquivos com achados: 43
-- Achados: 117
-- Arquivos protegidos/mistos com achados: 42
-- Achados alcançáveis pelo CRM protegido: 116
-- Distribuição por superfície: protected-only 106, protected-and-public 10, public-only 1, infraestrutura 0
-- P1: 56
+- Arquivos analisados: 549
+- Arquivos com achados: 45
+- Achados: 119
+- Arquivos protegidos/mistos com achados: 44
+- Achados alcançáveis pelo CRM protegido: 118
+- Distribuição por superfície: protected-only 106, protected-and-public 12, public-only 1, infraestrutura 0
+- P1: 58
 - P2: 15
 - P3: 46
 
@@ -20,10 +20,10 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 | Prioridade | Regra | Quantidade | Direção |
 | --- | --- | ---: | --- |
-| P1 | Sombra forte | 16 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
+| P1 | Sombra forte | 17 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
 | P2 | Sombra fora do padrão | 7 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
-| P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
+| P1 | Tipografia pesada | 3 | Texto normal usa 300; títulos usam 400. |
 | P1 | Cor hardcoded | 33 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 5 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
@@ -61,11 +61,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/WhatsAppSendOriginChoice.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
@@ -108,12 +110,14 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/WhatsAppSendOriginChoice.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |

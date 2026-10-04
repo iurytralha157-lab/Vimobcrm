@@ -321,11 +321,14 @@ test("operações do balão falham fechadas sem whatsapp_operate", () => {
   assert.match(floatingChatSource, /const handleSendMessage[\s\S]{0,220}if \(!canMutateActiveConversation/);
   assert.match(floatingChatSource, /const handleSendAudio[\s\S]{0,180}if \(!canMutateActiveConversation/);
   assert.match(floatingChatSource, /const isReadOnlyMode = !canMutateActiveConversation/);
-  assert.match(floatingChatSource, /const messageInputDisabled = isReadOnlyMode \|\| whatsappMessageInputState\.disabled/);
+  assert.match(
+    floatingChatSource,
+    /const messageInputDisabled = attendanceGate\.isResolving\s*\|\| isReadOnlyMode\s*\|\| whatsappMessageInputState\.disabled\s*\|\| accessLost\s*\|\| sendOriginChoice\.open/,
+  );
   assert.match(floatingChatSource, /disabled=\{messageInputDisabled\}/);
   assert.match(
     floatingChatSource,
-    /onReact=\{canMutateActiveConversation[\s\S]{0,180}Boolean\(activeConversation\?\.session_id\)[\s\S]{0,180}Boolean\(msg\.session_id\)/,
+    /onReact=\{canMutateActiveConversation[\s\S]{0,180}Boolean\(activeConversation\?\.session_id\)[\s\S]{0,180}Boolean\(item\.message\.session_id\)/,
   );
   assert.match(floatingChatSource, /onRetryMedia=\{canMutateActiveConversation \?/);
 });
@@ -333,11 +336,11 @@ test("operações do balão falham fechadas sem whatsapp_operate", () => {
 test("reações ficam indisponíveis até a mensagem possuir alvo canônico", () => {
   assert.match(
     floatingChatSource,
-    /Boolean\(msg\.session_id\)[\s\S]{0,100}canReactToWhatsAppMessage\(msg\)/,
+    /Boolean\(item\.message\.session_id\)[\s\S]{0,100}canReactToWhatsAppMessage\(item\.message\)/,
   );
   assert.match(
     conversationMessagesSource,
-    /Boolean\(message\.session_id\)[\s\S]{0,100}canReactToWhatsAppMessage\(message\)/,
+    /Boolean\(item\.message\.session_id\)[\s\S]{0,100}canReactToWhatsAppMessage\(item\.message\)/,
   );
   assert.match(
     whatsappConversationsHookSource,
@@ -353,11 +356,11 @@ test("reações ficam indisponíveis até a mensagem possuir alvo canônico", ()
   );
   assert.match(
     floatingChatSource,
-    /isReacting=\{reactToMessage\.isPending[\s\S]{0,120}reactToMessage\.variables\?\.targetMessage\.id === msg\.id\}/,
+    /isReacting=\{reactToMessage\.isPending[\s\S]{0,120}reactToMessage\.variables\?\.targetMessage\.id === item\.message\.id\}/,
   );
   assert.match(
     conversationMessagesSource,
-    /isReacting=\{reactingMessageId === message\.id\}/,
+    /isReacting=\{reactingMessageId === item\.message\.id\}/,
   );
 });
 
@@ -383,6 +386,26 @@ test("nova conversa aguarda o cache de sessões antes de consumir o estado pende
     pendingConversationSource,
     /\[\s*pendingPhone,\s*pendingLeadName,\s*pendingLeadId,\s*sessions,\s*loadingSessions,\s*accessReady,\s*canViewWhatsApp,\s*handleStartConversationWithSession,\s*\]/,
   );
+});
+
+test("instância escolhida limita a busca do card sem perder histórico quando não há sessão", () => {
+  const startSource = sourceBetween(
+    floatingChatSource,
+    "async function handleStartConversationWithSession(",
+    "const handleStartWithOwnSession",
+  );
+
+  assert.match(
+    floatingChatSource,
+    /handleStartConversationWithSession\(pendingStartData\.phone, session\.id, pendingStartData\.leadName, pendingStartData\.leadId\)/,
+  );
+  assert.match(
+    startSource,
+    /whatsappAPI\.findConversation\(\{\s*phone: "",\s*leadId,\s*sessionId,\s*organizationId: activeOrganization\.organizationId/,
+  );
+  assert.match(startSource, /if \(sessionId\) \{[\s\S]*?findConversation\.mutateAsync\(\{\s*phone: canonicalPhone,\s*sessionId/);
+  assert.match(startSource, /if \(leadId && !sessionId\) \{[\s\S]*?whatsappAPI\.getHistoryAccess\(/);
+  assert.match(startSource, /if \(!canOperateWhatsApp\) \{[\s\S]*?linkConversationToLead\.mutateAsync\(/);
 });
 
 test("tags exigem lead_operate sem liberar ações gerais do WhatsApp", () => {
@@ -469,12 +492,17 @@ test("rascunhos são isolados por tenant, conversa e card e voltam ao snapshot o
     "const handleKeyPress",
   );
   assertInOrder(sendMessageSource, [
-    "const textToSend = messageText.trim()",
-    'setMessageText("")',
+    "const intent = textSendGuard.begin()",
+    "await sendOriginChoice.chooseForSend()",
+    "await attendanceGate.ensureJoined()",
+    "if (!textSendGuard.accepted(intent)) return",
+    "(current) => current === intent.rawText ? '' : current",
     "await sendMessage.mutateAsync",
+    "text: intent.text",
     "catch (error)",
     'getWhatsAppSendFailureStatus(error) !== "confirming"',
-    "setMessageText((current) => current || textToSend)",
+    "textSendGuard.allowRetry(intent)",
+    "(current) => current || intent.rawText",
   ]);
 });
 

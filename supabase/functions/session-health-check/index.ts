@@ -60,42 +60,6 @@ function isAuthorizedCronCall(req: Request): boolean {
   return !!provided && provided === cronSecret;
 }
 
-async function enqueueNotification(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  payload: Record<string, unknown>,
-) {
-  const response = await fetch(
-    `${supabaseUrl}/functions/v1/notification-dispatcher`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": serviceRoleKey,
-        "Authorization": `Bearer ${serviceRoleKey}`,
-      },
-      body: JSON.stringify(payload),
-    },
-  );
-  const result = await response.json().catch(() => null) as {
-    success?: boolean;
-    queued?: boolean;
-    notification_id?: string;
-    error?: string;
-  } | null;
-  if (
-    !response.ok || result?.success !== true || result.queued !== true ||
-    typeof result.notification_id !== "string"
-  ) {
-    throw new Error(
-      `notification_enqueue_failed:${response.status}:${
-        result?.error || "invalid_ack"
-      }`,
-    );
-  }
-  return result.notification_id;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -243,63 +207,7 @@ Deno.serve(async (req) => {
             );
             updateData.status = "disconnected";
 
-            const displayName = session.display_name || session.instance_name;
-            const disconnectEpisode = session.updated_at ||
-              session.last_connected_at || session.created_at;
-
-            // Notify session owner via Dispatcher
-            if (session.owner_user_id) {
-              await enqueueNotification(
-                SUPABASE_URL,
-                SUPABASE_SERVICE_ROLE_KEY,
-                {
-                  event_key: "whatsapp_disconnected",
-                  organization_id: session.organization_id,
-                  user_id: session.owner_user_id,
-                  variables: {
-                    nome_sessao: displayName,
-                    disconnect_episode: disconnectEpisode,
-                  },
-                  dedupe_key:
-                    `whatsapp_disconnected:${session.id}:${session.owner_user_id}:${disconnectEpisode}`,
-                },
-              );
-            }
-
-            // Notify admins
-            const { data: admins, error: adminsError } = await supabase
-              .from("users")
-              .select("id")
-              .eq("organization_id", session.organization_id)
-              .eq("role", "admin")
-              .neq("id", session.owner_user_id);
-
-            if (adminsError) {
-              throw new Error(
-                `whatsapp_notification_admin_lookup_failed:${adminsError.code}`,
-              );
-            }
-
-            if (admins && admins.length > 0) {
-              for (const admin of admins) {
-                await enqueueNotification(
-                  SUPABASE_URL,
-                  SUPABASE_SERVICE_ROLE_KEY,
-                  {
-                    event_key: "whatsapp_disconnected_admin",
-                    organization_id: session.organization_id,
-                    user_id: admin.id,
-                    variables: {
-                      nome_sessao: displayName,
-                      disconnect_episode: disconnectEpisode,
-                    },
-                    dedupe_key:
-                      `whatsapp_disconnected:${session.id}:${admin.id}:${disconnectEpisode}`,
-                  },
-                );
-              }
-            }
-
+            // The database status transition durably notifies only the owner.
             const { error: statusUpdateError } = await supabase
               .from("whatsapp_sessions")
               .update(updateData)

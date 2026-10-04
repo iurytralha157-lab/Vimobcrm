@@ -65,28 +65,30 @@ type whatsappMediaPolicy struct {
 }
 
 type queuedWhatsAppMediaJob struct {
-	ID                string
-	OrganizationID    string
-	SessionID         string
-	ConversationID    string
-	MessageID         string
-	ProviderMessageID string
-	MessageKey        map[string]any
-	MediaType         string
-	MediaMimeType     string
-	DeclaredSize      int64
-	FileSHA256        string
-	FileEncSHA256     string
-	AssetKey          string
-	Attempts          int
-	MaxAttempts       int
-	ManualRequested   bool
-	LockedBy          string
-	LeaseToken        string
-	ProcessingSlot    int
-	StoragePath       string
-	ActualSize        int64
-	CreatedAt         time.Time
+	ID                         string
+	OrganizationID             string
+	SessionID                  string
+	ConversationID             string
+	MessageID                  string
+	ProviderMessageID          string
+	MessageKey                 map[string]any
+	MediaType                  string
+	MediaMimeType              string
+	DeclaredSize               int64
+	FileSHA256                 string
+	FileEncSHA256              string
+	AssetKey                   string
+	Attempts                   int
+	MaxAttempts                int
+	ManualRequested            bool
+	LockedBy                   string
+	LeaseToken                 string
+	ProcessingSlot             int
+	StoragePath                string
+	ActualSize                 int64
+	UploadPathReservationToken string
+	UploadHTTPConfirmed        bool
+	CreatedAt                  time.Time
 }
 
 type completedWhatsAppMediaAsset struct {
@@ -325,6 +327,52 @@ func validateWhatsAppMediaBase64Size(value string, maxDecodedBytes int64) error 
 func whatsappMediaManualDownloadAllowed(messageType string, declaredSize int64) bool {
 	return nativeIsMediaType(strings.ToLower(strings.TrimSpace(messageType))) &&
 		declaredSize >= 0 && declaredSize <= whatsappMediaAbsoluteMaxBytes
+}
+
+func whatsappMediaRepairStoragePathAllowed(objectPath, organizationID, sessionID string) bool {
+	if len(objectPath) == 0 || len(objectPath) > 1024 ||
+		!whatsappMediaPathBelongsToOrganization(objectPath, organizationID) {
+		return false
+	}
+	if _, ok := normalizeUUID(sessionID); !ok {
+		return false
+	}
+	assetPrefix := "orgs/" + organizationID + "/assets/" + whatsappMediaAssetVersion + "/"
+	if strings.HasPrefix(objectPath, assetPrefix) {
+		return len(objectPath) > len(assetPrefix)
+	}
+	legacyPrefix := "orgs/" + organizationID + "/sessions/"
+	if !strings.HasPrefix(objectPath, legacyPrefix) {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(objectPath, legacyPrefix), "/")
+	if len(parts) != 3 || parts[1] != "incoming" || parts[2] == "" {
+		return false
+	}
+	normalizedSessionID, ok := normalizeUUID(parts[0])
+	return ok && normalizedSessionID == parts[0]
+}
+
+func whatsappMediaRepairSourcePath(message retryMediaMessage, projectURL string) (string, error) {
+	objectPath := strings.TrimSpace(message.MediaStoragePath)
+	urlText := strings.ToLower(strings.TrimSpace(message.MediaURL))
+	storageShapedURL := strings.Contains(urlText, "/storage/v1/object/") &&
+		strings.Contains(urlText, "/whatsapp-media/")
+	urlPath := storagePathFromPublicURL(message.MediaURL, projectURL)
+	if storageShapedURL && (urlPath == "" || (objectPath != "" && urlPath != objectPath)) {
+		return "", fmt.Errorf("%w: legacy Storage URL source cannot be proven", ErrProviderFailed)
+	}
+	if objectPath == "" {
+		// Older rows can carry only a local Storage URL. Preserve that source
+		// before the manual retry clears media_url and installs a new asset.
+		objectPath = urlPath
+	}
+	if objectPath != "" && !whatsappMediaRepairStoragePathAllowed(
+		objectPath, message.OrganizationID, message.SessionID,
+	) {
+		return "", fmt.Errorf("%w: stored media path is outside the supported organization/session repair scope", ErrProviderFailed)
+	}
+	return objectPath, nil
 }
 
 func wakeWhatsAppMediaWorker() {
@@ -599,6 +647,8 @@ func (repo Repository) claimWhatsAppMediaJobForSessions(
 			coalesce(job.processing_slot, 0),
 			coalesce(job.storage_path, ''),
 			coalesce(job.actual_size, 0),
+			coalesce(job.upload_path_reservation_token::text, ''),
+			coalesce(job.upload_http_confirmed, false),
 			job.created_at
 		from private.claim_whatsapp_media_job($1, $2::interval, $3, $4::uuid[], $5) as job
 	`, whatsappMediaWorkerID, fmt.Sprintf("%.0f seconds", lease.Seconds()),
@@ -624,6 +674,8 @@ func (repo Repository) claimWhatsAppMediaJobForSessions(
 		&job.ProcessingSlot,
 		&job.StoragePath,
 		&job.ActualSize,
+		&job.UploadPathReservationToken,
+		&job.UploadHTTPConfirmed,
 		&job.CreatedAt,
 	)
 	if err != nil {
@@ -740,6 +792,15 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 		if !whatsappMediaPathBelongsToOrganization(job.StoragePath, job.OrganizationID) {
 			return mediaErrorFailed, true, fmt.Errorf("%w: uploaded media path escaped organization scope", ErrProviderFailed)
 		}
+		if token := strings.TrimSpace(job.UploadPathReservationToken); token != "" {
+			outcome := "unknown"
+			if job.UploadHTTPConfirmed {
+				outcome = "committed"
+			}
+			if err := repo.releaseWhatsAppMediaPath(ctx, token, outcome); err != nil {
+				return mediaErrorLocalStage, false, fmt.Errorf("%w: release durable media path reservation: %v", errWhatsAppMediaLocalStagePending, err)
+			}
+		}
 		if err := repo.completeWhatsAppMediaJob(ctx, job, completedWhatsAppMediaAsset{
 			storagePath: job.StoragePath,
 			contentType: job.MediaMimeType,
@@ -760,23 +821,37 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 			return mediaErrorLocalStage, false, fmt.Errorf("%w: reconcile upload intent: %v", errWhatsAppMediaLocalStagePending, err)
 		}
 		if exists {
-			if err := repo.markWhatsAppMediaStorageUploaded(ctx, job, intent); err != nil {
+			if err := repo.markWhatsAppMediaStorageUploaded(ctx, job, intent, false); err != nil {
 				return mediaErrorLocalStage, false, fmt.Errorf("%w: record reconciled upload: %v", errWhatsAppMediaLocalStagePending, err)
+			}
+			if token := strings.TrimSpace(job.UploadPathReservationToken); token != "" {
+				if err := repo.releaseWhatsAppMediaPath(ctx, token, "unknown"); err != nil {
+					return mediaErrorLocalStage, false, fmt.Errorf("%w: release reconciled media path reservation: %v", errWhatsAppMediaLocalStagePending, err)
+				}
 			}
 			if err := repo.completeWhatsAppMediaJob(ctx, job, intent); err != nil {
 				return mediaErrorFinalizeLocal, false, fmt.Errorf("%w: %v", errWhatsAppMediaLocalFinalizePending, err)
 			}
 			return "", false, nil
 		}
+		// A prior unknown upload keeps its path reservation and blocks the new
+		// reserve below. If the intent write itself was ambiguous but no Storage
+		// request started, its released path can safely acquire a fresh token.
+		if token := strings.TrimSpace(job.UploadPathReservationToken); token != "" {
+			held, heldErr := repo.whatsAppMediaPathReservationStillHeld(ctx, token, intent.storagePath)
+			if heldErr != nil {
+				return mediaErrorLocalStage, false, fmt.Errorf("%w: inspect pending media path reservation: %v", errWhatsAppMediaLocalStagePending, heldErr)
+			}
+			if held {
+				return mediaErrorLocalStage, false, fmt.Errorf("%w: prior Storage upload outcome requires reconciliation", errWhatsAppMediaLocalStagePending)
+			}
+		}
 	}
 
 	if repairStoragePath == "" {
-		if ready, found, err := repo.findCompletedWhatsAppMediaAsset(ctx, job); err != nil {
+		if ready, found, err := repo.attachCompletedWhatsAppMediaAsset(ctx, job); err != nil {
 			return mediaErrorFailed, false, err
 		} else if found {
-			if err := repo.markWhatsAppMediaStorageUploaded(ctx, job, ready); err != nil {
-				return mediaErrorLocalStage, false, fmt.Errorf("%w: record deduplicated upload: %v", errWhatsAppMediaLocalStagePending, err)
-			}
 			if err := repo.completeWhatsAppMediaJob(ctx, job, ready); err != nil {
 				return mediaErrorFinalizeLocal, false, fmt.Errorf("%w: %v", errWhatsAppMediaLocalFinalizePending, err)
 			}
@@ -880,12 +955,20 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 		contentType: contentType,
 		actualSize:  int64(len(recovered.bytes)),
 	}
-	if err := repo.markWhatsAppMediaUploadIntent(ctx, job, asset); err != nil {
-		return mediaErrorLocalStage, false, fmt.Errorf("%w: persist upload intent: %v", errWhatsAppMediaLocalStagePending, err)
+	pathToken, reserveErr := repo.reserveWhatsAppMediaJobUpload(ctx, job, asset)
+	if reserveErr != nil {
+		return mediaErrorLocalStage, false, fmt.Errorf("%w: reserve media path: %v", errWhatsAppMediaLocalStagePending, reserveErr)
 	}
-	if uploadErr := repo.storage.upload(ctx, whatsappMediaBucket, objectPath, contentType, bytes.NewReader(recovered.bytes), true); uploadErr != nil {
+	releasePath := func(outcome string) error {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return repo.releaseWhatsAppMediaPath(releaseCtx, pathToken, outcome)
+	}
+	uploadErr := repo.storage.upload(ctx, whatsappMediaBucket, objectPath, contentType, bytes.NewReader(recovered.bytes), true)
+	if uploadErr != nil {
 		exists, reconcileErr := repo.storage.objectExists(ctx, whatsappMediaBucket, objectPath)
 		if reconcileErr != nil {
+			_ = releasePath("unknown")
 			return mediaErrorLocalStage, false, fmt.Errorf(
 				"%w: upload returned %v and reconciliation failed: %v",
 				errWhatsAppMediaLocalStagePending,
@@ -894,6 +977,7 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 			)
 		}
 		if !exists {
+			_ = releasePath("unknown")
 			return mediaErrorLocalStage, false, fmt.Errorf(
 				"%w: Storage did not retain the deterministic upload: %v",
 				errWhatsAppMediaLocalStagePending,
@@ -901,8 +985,15 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 			)
 		}
 	}
-	if err := repo.markWhatsAppMediaStorageUploaded(ctx, job, asset); err != nil {
+	if err := repo.markWhatsAppMediaStorageUploaded(ctx, job, asset, uploadErr == nil); err != nil {
 		return mediaErrorLocalStage, false, fmt.Errorf("%w: record completed upload: %v", errWhatsAppMediaLocalStagePending, err)
+	}
+	outcome := "unknown"
+	if uploadErr == nil {
+		outcome = "committed"
+	}
+	if err := releasePath(outcome); err != nil {
+		return mediaErrorLocalStage, false, fmt.Errorf("%w: release completed media path reservation: %v", errWhatsAppMediaLocalStagePending, err)
 	}
 
 	if err := repo.completeWhatsAppMediaJob(ctx, job, asset); err != nil {
@@ -1033,45 +1124,18 @@ func whatsappMediaUploadIntent(job queuedWhatsAppMediaJob, repairStoragePath str
 	return asset, true, nil
 }
 
-func (repo Repository) markWhatsAppMediaUploadIntent(ctx context.Context, job queuedWhatsAppMediaJob, asset completedWhatsAppMediaAsset) error {
-	command, err := repo.db.Pool().Exec(ctx, `
-		update public.media_jobs
-		set message_key = coalesce(message_key, '{}'::jsonb) || jsonb_build_object(
-		      $4::text, $5::text,
-		      $6::text, $7::text,
-		      $8::text, $9::bigint
-		    ),
-		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-		  and lease_token = $3::uuid
-	`, job.ID, job.LockedBy, job.LeaseToken,
-		whatsappMediaUploadPathKey, asset.storagePath,
-		whatsappMediaUploadMIMEKey, asset.contentType,
-		whatsappMediaUploadSizeKey, asset.actualSize,
-	)
-	if err != nil {
-		return err
-	}
-	if command.RowsAffected() != 1 {
-		return errWhatsAppMediaLeaseLost
-	}
-	return nil
-}
-
-func (repo Repository) markWhatsAppMediaStorageUploaded(ctx context.Context, job queuedWhatsAppMediaJob, asset completedWhatsAppMediaAsset) error {
+func (repo Repository) markWhatsAppMediaStorageUploaded(ctx context.Context, job queuedWhatsAppMediaJob, asset completedWhatsAppMediaAsset, httpConfirmed bool) error {
 	command, err := repo.db.Pool().Exec(ctx, `
 		update public.media_jobs
 		set storage_path = $4,
 		    media_mime_type = nullif($5, ''),
 		    actual_size = $6,
+		    upload_http_confirmed = case when $7::boolean then true else null end,
 		    -- Storage is now durable, so the provider JSON/base64 is redundant.
 		    -- Scrub it before releasing the lease to keep customer media out of
 		    -- Postgres WAL, backups and the completed-row retention window.
 		    message_key = jsonb_strip_nulls(jsonb_build_object(
-		      $7::text,
-		      message_key->$7::text
+		      $8::text, message_key->$8::text
 		    )),
 		    updated_at = now()
 		where id = $1::uuid
@@ -1079,7 +1143,7 @@ func (repo Repository) markWhatsAppMediaStorageUploaded(ctx context.Context, job
 		  and locked_by = $2
 		  and lease_token = $3::uuid
 	`, job.ID, job.LockedBy, job.LeaseToken, asset.storagePath, asset.contentType, asset.actualSize,
-		whatsappMediaRepairPathKey)
+		httpConfirmed, whatsappMediaRepairPathKey)
 	if err != nil {
 		return err
 	}
@@ -1236,10 +1300,22 @@ func whatsappMediaAudioMIME(value string) string {
 	return ""
 }
 
-func (repo Repository) findCompletedWhatsAppMediaAsset(ctx context.Context, job queuedWhatsAppMediaJob) (completedWhatsAppMediaAsset, bool, error) {
+// attachCompletedWhatsAppMediaAsset re-reads the source under the same path
+// lock used by retention GC, then makes this job's reference durable before
+// releasing that lock. No database connection is held across Storage HTTP.
+func (repo Repository) attachCompletedWhatsAppMediaAsset(ctx context.Context, job queuedWhatsAppMediaJob) (completedWhatsAppMediaAsset, bool, error) {
+	if strings.TrimSpace(job.UploadPathReservationToken) != "" {
+		return completedWhatsAppMediaAsset{}, false, fmt.Errorf("%w: an earlier media upload reservation is unresolved", errWhatsAppMediaLocalStagePending)
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var sourceID string
 	var asset completedWhatsAppMediaAsset
-	err := repo.db.Pool().QueryRow(ctx, `
-		select storage_path, coalesce(media_mime_type, ''), coalesce(actual_size, declared_size, 0)
+	err = tx.QueryRow(ctx, `
+		select id::text, storage_path, coalesce(media_mime_type, ''), coalesce(actual_size, declared_size, 0)
 		from public.media_jobs
 		where organization_id = $1::uuid
 		  and asset_key = $2
@@ -1251,7 +1327,7 @@ func (repo Repository) findCompletedWhatsAppMediaAsset(ctx context.Context, job 
 		limit 1
 	`, job.OrganizationID, job.AssetKey, job.ID,
 		fmt.Sprintf("orgs/%s/assets/%s/%%", job.OrganizationID, whatsappMediaAssetVersion),
-	).Scan(&asset.storagePath, &asset.contentType, &asset.actualSize)
+	).Scan(&sourceID, &asset.storagePath, &asset.contentType, &asset.actualSize)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return completedWhatsAppMediaAsset{}, false, nil
 	}
@@ -1260,6 +1336,73 @@ func (repo Repository) findCompletedWhatsAppMediaAsset(ctx context.Context, job 
 	}
 	if !whatsappMediaPathBelongsToOrganization(asset.storagePath, job.OrganizationID) {
 		return completedWhatsAppMediaAsset{}, false, fmt.Errorf("%w: deduplicated media path escaped organization scope", ErrProviderFailed)
+	}
+	if _, err := tx.Exec(ctx, `
+		select pg_catalog.pg_advisory_xact_lock(
+			pg_catalog.hashtext($1::text), pg_catalog.hashtext($2::text)
+		)
+	`, whatsappMediaBucket, asset.storagePath); err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
+	}
+	var freshAsset completedWhatsAppMediaAsset
+	err = tx.QueryRow(ctx, `
+		select source.storage_path, coalesce(source.media_mime_type, ''),
+		       coalesce(source.actual_size, source.declared_size, 0)
+		from public.media_jobs as source
+		where source.id = $1::uuid
+		  and source.organization_id = $2::uuid
+		  and source.asset_key = $3
+		  and source.status = 'completed'
+		  and source.storage_path = $4
+	`, sourceID, job.OrganizationID, job.AssetKey, asset.storagePath).Scan(
+		&freshAsset.storagePath, &freshAsset.contentType, &freshAsset.actualSize,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return completedWhatsAppMediaAsset{}, false, nil
+	}
+	if err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
+	}
+	asset = freshAsset
+	var deleteInProgress bool
+	err = tx.QueryRow(ctx, `
+		select exists (
+		  select 1 from private.whatsapp_media_path_operations as operation
+		  where operation.bucket_id = $1
+		    and operation.storage_path = $2
+		    and operation.operation = 'delete'
+		)
+	`, whatsappMediaBucket, asset.storagePath).Scan(&deleteInProgress)
+	if err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
+	}
+	if deleteInProgress {
+		return completedWhatsAppMediaAsset{}, false, nil
+	}
+	command, err := tx.Exec(ctx, `
+		update public.media_jobs
+		set storage_path = $4,
+		    media_mime_type = nullif($5, ''),
+		    actual_size = $6,
+		    upload_http_confirmed = null,
+		    message_key = jsonb_strip_nulls(jsonb_build_object(
+		      $7::text, message_key->$7::text
+		    )),
+		    updated_at = now()
+		where id = $1::uuid
+		  and status = 'processing'
+		  and locked_by = $2
+		  and lease_token = $3::uuid
+	`, job.ID, job.LockedBy, job.LeaseToken, asset.storagePath, asset.contentType,
+		asset.actualSize, whatsappMediaRepairPathKey)
+	if err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
+	}
+	if command.RowsAffected() != 1 {
+		return completedWhatsAppMediaAsset{}, false, errWhatsAppMediaLeaseLost
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return completedWhatsAppMediaAsset{}, false, err
 	}
 	return asset, true, nil
 }
@@ -1638,6 +1781,47 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 		}
 	}
 
+	// Capture only paths displaced by these locked jobs before the old columns
+	// and retry keys are scrubbed. Converting precisely this set into Storage
+	// delete tickets later in the same transaction also covers siblings whose
+	// old path differs from the leader's repair_storage_path.
+	var displacedPaths []string
+	if err := tx.QueryRow(ctx, `
+		with sources as (
+		  select distinct candidate.organization_id, candidate.session_id,
+		         candidate.conversation_id, path.storage_path
+		  from public.media_jobs as candidate
+		  join public.whatsapp_messages as message
+		    on message.id = candidate.message_id
+		   and message.organization_id = candidate.organization_id
+		   and message.conversation_id = candidate.conversation_id
+		  cross join lateral (values
+		    (nullif(btrim(candidate.storage_path), '')),
+		    (nullif(btrim(candidate.message_key->>'repair_storage_path'), '')),
+		    (nullif(btrim(candidate.message_key->>'upload_intent_path'), '')),
+		    (nullif(btrim(message.media_storage_path), ''))
+		  ) as path(storage_path)
+		  where candidate.organization_id = $1::uuid
+		    and candidate.id = any($2::uuid[])
+		    and path.storage_path is not null
+		    and path.storage_path <> $3
+		), preserved as (
+		  insert into private.whatsapp_media_repair_source_paths (
+		    organization_id, session_id, conversation_id, storage_path
+		  )
+		  select organization_id, session_id, conversation_id, storage_path
+		  from sources
+		  order by organization_id, storage_path, conversation_id, session_id
+		  on conflict (conversation_id, storage_path) do nothing
+		  returning 1
+		)
+		select coalesce(array_agg(distinct storage_path order by storage_path), array[]::text[]),
+		       (select count(*) from preserved)
+		from sources
+	`, job.OrganizationID, candidates.jobIDs, asset.storagePath).Scan(&displacedPaths, new(int)); err != nil {
+		return fmt.Errorf("preserve displaced WhatsApp media source: %w", err)
+	}
+
 	messageCommand, err := tx.Exec(ctx, `
 		update public.whatsapp_messages
 		set media_storage_path = $3,
@@ -1667,6 +1851,8 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 		    -- Durable columns now carry the canonical asset, so remove provider
 		    -- JSON/base64 before the completed row enters long-lived retention.
 		    message_key = '{}'::jsonb,
+		    upload_path_reservation_token = null,
+		    upload_http_confirmed = null,
 		    completed_at = now(),
 		    failed_at = null,
 		    error_code = null,
@@ -1716,6 +1902,19 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 	}
 	if jobCommand.RowsAffected() != int64(len(candidates.jobIDs)) {
 		return fmt.Errorf("finalize WhatsApp media jobs: updated %d of %d locked rows", jobCommand.RowsAffected(), len(candidates.jobIDs))
+	}
+	if len(displacedPaths) > 0 {
+		var stagedSources int
+		if err := tx.QueryRow(ctx, `
+			select private.stage_whatsapp_repair_source_media_delete(
+			  $1::uuid, $2::uuid[], $3::text[], $4
+			)
+		`, job.OrganizationID, candidates.jobIDs, displacedPaths, asset.storagePath).Scan(&stagedSources); err != nil {
+			return fmt.Errorf("stage displaced WhatsApp media for Storage GC: %w", err)
+		}
+		if stagedSources < 1 {
+			return fmt.Errorf("stage displaced WhatsApp media for Storage GC: no source")
+		}
 	}
 	if repairContinuation {
 		continuationCommand, err := tx.Exec(ctx, `
@@ -2132,7 +2331,10 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 		nativeMessage.MediaBase64 = candidates[0]
 	}
 	dedupeKey, assetKey, fileSHA256, fileEncSHA256 := whatsappMediaQueueKeys(message.OrganizationID, message.SessionID, nativeMessage)
-	repairStoragePath := strings.TrimSpace(message.MediaStoragePath)
+	repairStoragePath, err := whatsappMediaRepairSourcePath(message, repo.storage.projectURL)
+	if err != nil {
+		return "", false, err
+	}
 	messageKeyPayload := whatsappMediaQueueMessageKey(nativeMessage)
 	if repairStoragePath != "" {
 		messageKeyPayload[whatsappMediaRepairPathKey] = repairStoragePath

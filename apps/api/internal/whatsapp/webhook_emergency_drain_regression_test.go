@@ -117,9 +117,9 @@ func TestEvolutionEdgeStatusEventsDoNotEnterMessagePipeline(t *testing.T) {
 		t.Fatalf("read Edge Function: %v", err)
 	}
 	source := string(raw)
-	pattern := `(?s)const isMessageStatusEvent = event\.includes\("status"\) \|\| event\.includes\("receipt"\) \|\| event\.includes\("ack"\);\s*const statusUpdated = isMessageStatusEvent\s*\? await handleMessageStatus\(resolved\.session, payload\)\s*:\s*0;\s*const messageResult = isMessageStatusEvent\s*\? \{ processed: 0, duplicates: 0, inProgress: 0 \}\s*:\s*await handleMessages\(`
+	pattern := `(?s)const isMessageStatusEvent = event\.includes\("status"\) \|\| event\.includes\("receipt"\) \|\| event\.includes\("ack"\);\s*const statusUpdated = isMessageStatusEvent\s*\? await handleMessageStatus\(resolved\.session, payload\)\s*:\s*0;\s*const messageResult = isMessageStatusEvent \|\| isLoggedOutEvent\s*\? \{ processed: 0, duplicates: 0, inProgress: 0 \}\s*:\s*await handleMessages\(`
 	if !regexp.MustCompile(pattern).MatchString(source) {
-		t.Fatal("receipt/status/ack events must update status without entering handleMessages")
+		t.Fatal("receipt/status/ack and loggedout events must not enter handleMessages")
 	}
 	if calls := strings.Count(source, "await handleMessages("); calls != 1 {
 		t.Fatalf("Edge Function has %d handleMessages call sites, want exactly the guarded call", calls)

@@ -42,6 +42,29 @@ const evolutionWebhookSchemaCompatibilityQuery = `
 			  and attnum > 0
 			  and not attisdropped
 		)
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and attname = 'ignored_reason'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and to_regclass('private.whatsapp_webhook_session_cutovers') is not null
+		and to_regclass('private.whatsapp_ctwa_recent_successor_rollouts') is not null
+		and to_regclass('private.whatsapp_ctwa_recent_successor_cohorts') is not null
+		and to_regprocedure(
+			'private.whatsapp_ctwa_recent_successor_claimable(uuid,uuid,text,text)'
+		) is not null
+		and to_regprocedure(
+			'private.complete_expired_ctwa_webhook_route(uuid,text,text,text)'
+		) is not null
+		and to_regprocedure(
+			'private.whatsapp_nonlead_ingress_route_decision(uuid,uuid,text,text,timestamp with time zone)'
+		) is not null
+		and to_regprocedure(
+			'private.record_whatsapp_nonlead_first_ingress(uuid,uuid,text,text,boolean)'
+		) is not null
 		and to_regprocedure(
 			'private.capture_whatsapp_webhook_routing_snapshot(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid)'
 		) is not null
@@ -126,12 +149,13 @@ type evolutionWebhookEnvelope struct {
 }
 
 type evolutionWebhookReceipt struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	EventType string `json:"eventType"`
-	Status    string `json:"status"`
-	Duplicate bool   `json:"duplicate"`
-	Inline    bool   `json:"inline,omitempty"`
+	ID         string `json:"id"`
+	SessionID  string `json:"sessionId"`
+	EventType  string `json:"eventType"`
+	Status     string `json:"status"`
+	Duplicate  bool   `json:"duplicate"`
+	Inline     bool   `json:"inline,omitempty"`
+	WakeWorker bool   `json:"-"`
 }
 
 type evolutionWebhookSession struct {
@@ -261,7 +285,11 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		eventKey = evolutionWebhookEventKey(session.ID, envelope.Payload)
 	}
 	envelope.EventKey = eventKey
-	if evolutionWebhookIsHistorySyncControl(pendingEvolutionWebhook{
+	technicalIgnoreReason := evolutionWebhookTechnicalIgnoreReason(pendingEvolutionWebhook{
+		EventType: envelope.EventType,
+		Payload:   envelope.Payload,
+	})
+	if technicalIgnoreReason == "" && evolutionWebhookIsHistorySyncControl(pendingEvolutionWebhook{
 		EventType: envelope.EventType,
 		Payload:   envelope.Payload,
 	}) {
@@ -273,35 +301,37 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			Inline:    true,
 		}, nil
 	}
-	filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(pendingEvolutionWebhook{
-		EventType: envelope.EventType,
-		Payload:   envelope.Payload,
-	})
-	if err != nil {
-		return evolutionWebhookReceipt{}, err
-	}
-	if groupOnly {
-		// Group traffic is outside the CRM lead channel. Acknowledge it only
-		// after the session and webhook credentials were validated, but before
-		// inserting anything in the durable inbox.
-		return evolutionWebhookReceipt{
-			ID:        eventKey,
-			SessionID: session.ID,
+	if technicalIgnoreReason == "" {
+		filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(pendingEvolutionWebhook{
 			EventType: envelope.EventType,
-			Status:    "processed",
-			Inline:    true,
-		}, nil
+			Payload:   envelope.Payload,
+		})
+		if err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		if groupOnly {
+			// Group traffic is outside the CRM lead channel. Acknowledge it only
+			// after the session and webhook credentials were validated, but before
+			// inserting anything in the durable inbox.
+			return evolutionWebhookReceipt{
+				ID:        eventKey,
+				SessionID: session.ID,
+				EventType: envelope.EventType,
+				Status:    "processed",
+				Inline:    true,
+			}, nil
+		}
+		// A provider normally emits one message per callback. If a version sends a
+		// mixed batch, persist only its direct members so a lead is not discarded
+		// together with group traffic.
+		envelope.Payload = filteredItem.Payload
 	}
-	// A provider normally emits one message per callback. If a version sends a
-	// mixed batch, persist only its direct members so a lead is not discarded
-	// together with group traffic.
-	envelope.Payload = filteredItem.Payload
 	inlineState, err := evolutionWebhookInlineSessionState(envelope)
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
 	if inlineState.Handled {
-		if err := repo.applyEvolutionWebhookSessionState(ctx, session, inlineState); err != nil {
+		if err := repo.applyEvolutionWebhookInlineStateAcrossCutover(ctx, session, inlineState); err != nil {
 			return evolutionWebhookReceipt{}, err
 		}
 		return evolutionWebhookReceipt{
@@ -315,12 +345,15 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
-	parts, err := prepareEvolutionWebhookDurableParts(envelope)
-	if err != nil {
-		return evolutionWebhookReceipt{}, err
-	}
-	if len(parts) == 0 {
-		return evolutionWebhookReceipt{}, fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts")
+	var parts []evolutionWebhookDurablePart
+	if technicalIgnoreReason == "" {
+		parts, err = prepareEvolutionWebhookDurableParts(envelope)
+		if err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		if len(parts) == 0 {
+			return evolutionWebhookReceipt{}, fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts")
+		}
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -329,7 +362,102 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts)
+	routingEpoch, cutoffAt, err := lockEvolutionWebhookRoutingCutover(ctx, tx, session)
+	if err != nil {
+		return evolutionWebhookReceipt{}, fmt.Errorf("lock Evolution webhook cutover: %w", err)
+	}
+	// A per-session cohort rollout is fenced at the database INSERT trigger.
+	// SET LOCAL scopes this marker to the ACK transaction and cannot leak to
+	// another request through the connection pool.
+	if _, err := tx.Exec(ctx, `select pg_catalog.set_config('vimob.ctwa_cohort_ingress_v2', '1', true)`); err != nil {
+		return evolutionWebhookReceipt{}, fmt.Errorf("mark CTWA cohort ingress capability: %w", err)
+	}
+	if cutoffAt != nil {
+		// A callback captured before activation keeps its original inbox identity.
+		// Do not create an epoch-specific snapshot for a replay of that callback.
+		var oldReceipt evolutionWebhookReceipt
+		err = tx.QueryRow(ctx, `
+			select id::text, session_id::text, event_type, status
+			from public.whatsapp_webhook_inbox
+			where organization_id = $1::uuid
+			  and session_id = $2::uuid
+			  and event_key = $3
+			  and created_at < $4::timestamptz
+			limit 1
+		`, session.OrganizationID, session.ID, eventKey, *cutoffAt).Scan(
+			&oldReceipt.ID,
+			&oldReceipt.SessionID,
+			&oldReceipt.EventType,
+			&oldReceipt.Status,
+		)
+		if err == nil {
+			if oldReceipt.EventType != envelope.EventType {
+				return evolutionWebhookReceipt{}, errors.New("Evolution webhook event key changed type across cutover")
+			}
+			oldReceipt.Duplicate = true
+			return oldReceipt, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return evolutionWebhookReceipt{}, err
+		}
+	}
+	var nonleadRetentionActive bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from private.whatsapp_nonlead_retention_sessions as policy
+			where policy.organization_id = $1::uuid
+			  and policy.session_id = $2::uuid
+			  and policy.purge_enabled is true
+		) or exists (
+			select 1
+			from private.whatsapp_ctwa_recent_successor_rollouts as rollout
+			where rollout.organization_id = $1::uuid
+			  and rollout.session_id = $2::uuid
+		)
+	`, session.OrganizationID, session.ID).Scan(&nonleadRetentionActive); err != nil {
+		return evolutionWebhookReceipt{}, fmt.Errorf("check WhatsApp nonlead retention ingress policy: %w", err)
+	}
+	if nonleadRetentionActive {
+		// One callback can contain several direct contacts. Serialize snapshot
+		// capture per retained session so inverse provider batch orders cannot
+		// acquire conversation/route locks in opposite orders.
+		if _, err := tx.Exec(ctx, `
+			select pg_catalog.pg_advisory_xact_lock(
+				pg_catalog.hashtext('whatsapp_nonlead_ingress_session'),
+				pg_catalog.hashtext($1::text)
+			)
+		`, session.ID); err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("lock WhatsApp nonlead retention ingress session: %w", err)
+		}
+	}
+	if nonleadRetentionActive && technicalIgnoreReason == "" {
+		// The callback must be safely split before any durable ACK. A mixed row
+		// could retain a deleted nonlead's raw text/media beside a lead's message.
+		if err := requireIsolatedEvolutionWebhookDirectMessages(parts); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		parts, err = minimizeEvolutionWebhookRetentionControlParts(parts, session.ID)
+		if err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+	}
+	if technicalIgnoreReason != "" {
+		// A technical callback is an authenticated, durable receipt with no CRM
+		// effect. Completing it in this ingress transaction keeps it out of the
+		// session-wide FIFO chain, including when another route is already stuck.
+		receipt, err := recordIgnoredEvolutionWebhook(ctx, tx, session, envelope, technicalIgnoreReason, routingEpoch, cutoffAt,
+			nonleadRetentionActive || technicalIgnoreReason == "ctwa_provider_timestamp_missing")
+		if err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		return receipt, nil
+	}
+
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, routingEpoch, cutoffAt, nonleadRetentionActive)
 	if err != nil {
 		return evolutionWebhookReceipt{}, fmt.Errorf("capture Evolution webhook routing provenance: %w", err)
 	}
@@ -353,6 +481,8 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			processing_lane,
 			provider_occurred_at,
 			status,
+			ignored_reason,
+			processed_at,
 			next_attempt_at,
 			created_at,
 			expires_at
@@ -367,14 +497,16 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			$6::jsonb,
 			$7,
 			$8,
-			'pending',
+			case when nullif($10, '') is null then 'pending' else 'processed' end,
+			nullif($10, ''),
+			case when nullif($10, '') is null then null else clock_timestamp() end,
 			now(),
-			clock_timestamp(),
-			now() + interval '30 days'
+			greatest(clock_timestamp(), coalesce($9::timestamptz, '-infinity'::timestamptz)),
+			case when nullif($10, '') is null then now() + interval '30 days' else now() + interval '7 days' end
 		)
 		on conflict (event_key) do nothing
 		returning id::text, session_id::text, event_type, status, created_at
-	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), first.EventKey, first.EventType, string(first.Payload), first.ProcessingLane, first.ProviderOccurredAt).Scan(
+	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), first.EventKey, first.EventType, string(first.Payload), first.ProcessingLane, first.ProviderOccurredAt, cutoffAt, first.IgnoredReason).Scan(
 		&receipt.ID,
 		&receipt.SessionID,
 		&receipt.EventType,
@@ -447,6 +579,8 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				processing_lane,
 				provider_occurred_at,
 				status,
+				ignored_reason,
+				processed_at,
 				next_attempt_at,
 				created_at,
 				expires_at
@@ -461,16 +595,19 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				part.payload,
 				part.processing_lane,
 				part.provider_occurred_at,
-				'pending',
+				case when nullif(part.ignored_reason, '') is null then 'pending' else 'processed' end,
+				nullif(part.ignored_reason, ''),
+				case when nullif(part.ignored_reason, '') is null then null else clock_timestamp() end,
 				now(),
 				$5::timestamptz + (part.ordinal::double precision * interval '1 microsecond'),
-				now() + interval '30 days'
+				case when nullif(part.ignored_reason, '') is null then now() + interval '30 days' else now() + interval '7 days' end
 			  from jsonb_to_recordset($4::jsonb) as part (
 				event_key text,
 				event_type text,
 				payload jsonb,
 				processing_lane text,
 				provider_occurred_at timestamptz,
+				ignored_reason text,
 				ordinal integer
 			)
 			  order by part.ordinal
@@ -487,10 +624,192 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			// partial set would strand ledger rows or attach them to another receipt.
 			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook batch parts: derived event key conflict")
 		}
+		if receipt.Status == "processed" {
+			for _, part := range parts[1:] {
+				if part.IgnoredReason == "" {
+					receipt.WakeWorker = true
+					break
+				}
+			}
+		}
+	}
+	if nonleadRetentionActive {
+		if err := recordEvolutionWebhookNonleadFirstIngress(ctx, tx, session, parts); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
+	return receipt, nil
+}
+
+// Activation and inline session-state callbacks use the same session lock.
+// An old timestamped connected/loggedout callback cannot change a session
+// after the operator's cutover, including when activation races with ingress.
+func (repo Repository) applyEvolutionWebhookInlineStateAcrossCutover(
+	ctx context.Context,
+	session evolutionWebhookSession,
+	state evolutionWebhookSessionState,
+) error {
+	if state.Status == "" && state.QRCode == "" {
+		return nil
+	}
+	if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
+		return err
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, cutoffAt, err := lockEvolutionWebhookRoutingCutover(ctx, tx, session)
+	if err != nil {
+		return err
+	}
+	if cutoffAt == nil || !state.ProviderTimestamp || state.OccurredAt.After(*cutoffAt) {
+		// Use the same transaction for the session update. A second transaction
+		// could queue behind an activation waiting on this KEY SHARE lock.
+		return repo.applyEvolutionWebhookSessionState(ctx, tx, session, state)
+	}
+	return tx.Commit(ctx)
+}
+
+// The first inbound arrival is anchored only after the exact inbox row exists.
+// A replay that reused an earlier immutable snapshot must not reset its clock.
+func recordEvolutionWebhookNonleadFirstIngress(
+	ctx context.Context,
+	tx pgx.Tx,
+	session evolutionWebhookSession,
+	parts []evolutionWebhookDurablePart,
+) error {
+	for _, part := range parts {
+		if part.IgnoredReason != "" {
+			continue
+		}
+		payload, err := decodeNativeEvolutionPayload(part.Payload)
+		if err != nil {
+			return fmt.Errorf("decode WhatsApp first-ingress proof: %w", err)
+		}
+		metadata := mapFromAny(payload[evolutionWebhookRoutingMetaKey])
+		routingSnapshot := mapFromAny(metadata["routing_snapshot"])
+		rawSnapshots, _ := routingSnapshot["messages"].([]any)
+		for _, message := range withoutNativeEvolutionGroupMessages(
+			withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(payload)),
+		) {
+			if !isDirectInboundRetentionMessage(message) {
+				continue
+			}
+			proved := false
+			freshSnapshot := false
+			for _, rawSnapshot := range rawSnapshots {
+				snapshot := mapFromAny(rawSnapshot)
+				if stringFromAny(snapshot["provider_message_id"]) != message.ProviderMessageID {
+					continue
+				}
+				proved = true
+				freshSnapshot = stringFromAny(snapshot["inbox_event_key"]) == part.EventKey
+				break
+			}
+			if !proved {
+				return errors.New("WhatsApp first-ingress provider snapshot proof is missing")
+			}
+			if !freshSnapshot {
+				continue
+			}
+			if _, err := tx.Exec(ctx, `
+				select private.record_whatsapp_nonlead_first_ingress(
+				  $1::uuid, $2::uuid, $3, $4, true
+				)
+			`, session.OrganizationID, session.ID, part.EventKey,
+				message.ProviderMessageID); err != nil {
+				return fmt.Errorf("anchor WhatsApp nonlead first ingress: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func recordIgnoredEvolutionWebhook(
+	ctx context.Context,
+	tx pgx.Tx,
+	session evolutionWebhookSession,
+	envelope evolutionWebhookEnvelope,
+	ignoredReason string,
+	routingEpoch string,
+	cutoffAt *time.Time,
+	redactPayload bool,
+) (evolutionWebhookReceipt, error) {
+	var receipt evolutionWebhookReceipt
+	// Match the existing worker retention for a recorded technical receipt.
+	retentionSeconds := int64((7 * 24 * time.Hour) / time.Second)
+	storedPayload := string(envelope.Payload)
+	providerInstanceID := firstNonEmpty(session.InstanceID, session.InstanceName)
+	if redactPayload {
+		// The inbox columns already record event type, reason, event key and
+		// timestamps. Retaining the raw receipt could keep contact JIDs or media
+		// beyond a nonlead conversation's seven-day deadline.
+		storedPayload = `{}`
+		providerInstanceID = ""
+	}
+	if routingEpoch != "" {
+		// Even a technical callback completed at ingress needs the epoch marker.
+		// Keep the redacted form free of the provider body and contact identity.
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(storedPayload), &decoded); err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("encode technical webhook cutover marker: %w", err)
+		}
+		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
+		metadata["cutover_epoch"] = routingEpoch
+		decoded[evolutionWebhookRoutingMetaKey] = metadata
+		encoded, err := json.Marshal(decoded)
+		if err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("encode technical webhook cutover marker: %w", err)
+		}
+		storedPayload = string(encoded)
+	}
+	err := tx.QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, provider, provider_instance_id,
+			event_key, event_type, payload, processing_lane, status,
+			ignored_reason, processed_at, created_at, expires_at
+		)
+		values (
+			$1::uuid, $2::uuid, 'evolution_go', nullif($3, ''),
+			$4, $5, $6::jsonb, 'backlog', 'processed',
+			$7, clock_timestamp(),
+			greatest(clock_timestamp(), coalesce($8::timestamptz, '-infinity'::timestamptz)),
+			now() + ($9 * interval '1 second')
+		)
+		on conflict (event_key) do nothing
+		returning id::text, session_id::text, event_type, status
+	`, session.OrganizationID, session.ID,
+		providerInstanceID,
+		envelope.EventKey, envelope.EventType, storedPayload,
+		ignoredReason, cutoffAt, retentionSeconds,
+	).Scan(&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		receipt.Duplicate = true
+		var exactReplay bool
+		err = tx.QueryRow(ctx, `
+			select id::text, session_id::text, event_type, status,
+			       provider = 'evolution_go' and event_type = $4 as exact_replay
+			from public.whatsapp_webhook_inbox
+			where organization_id = $1::uuid
+			  and session_id = $2::uuid
+			  and event_key = $3
+			limit 1
+		`, session.OrganizationID, session.ID, envelope.EventKey, envelope.EventType).Scan(
+			&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status, &exactReplay,
+		)
+		if err == nil && !exactReplay {
+			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook technical receipt: event key conflict")
+		}
+	}
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	receipt.Inline = receipt.Status == "processed"
 	return receipt, nil
 }
 
@@ -508,6 +827,7 @@ type evolutionWebhookDurablePart struct {
 	Payload            json.RawMessage `json:"payload"`
 	ProcessingLane     string          `json:"processing_lane"`
 	ProviderOccurredAt *time.Time      `json:"provider_occurred_at"`
+	IgnoredReason      string          `json:"ignored_reason"`
 	Ordinal            int             `json:"ordinal"`
 }
 
@@ -520,6 +840,12 @@ type evolutionWebhookMessageListLocation struct {
 	topLevelKey string
 	nestedKey   string
 	values      []any
+}
+
+func isDirectInboundRetentionMessage(message nativeEvolutionMessage) bool {
+	return !message.FromMe && !message.IsGroup && !message.IsReaction &&
+		!message.IsDeletion && !message.UnsupportedID && !message.UnsupportedMessage &&
+		!message.ProviderMessageIDSynthetic && strings.TrimSpace(message.ProviderMessageID) != ""
 }
 
 // prepareEvolutionWebhookDurableParts isolates a provider batch without doing
@@ -555,10 +881,176 @@ func prepareEvolutionWebhookDurableParts(envelope evolutionWebhookEnvelope) ([]e
 			Payload:            json.RawMessage(annotatedPayload),
 			ProcessingLane:     lane,
 			ProviderOccurredAt: occurredAt,
-			Ordinal:            index,
+			IgnoredReason: evolutionWebhookTechnicalIgnoreReason(pendingEvolutionWebhook{
+				EventType: envelope.EventType,
+				Payload:   annotatedPayload,
+			}),
+			Ordinal: index,
 		})
 	}
 	return parts, nil
+}
+
+// A retention-enabled session may persist one direct provider message per
+// inbox row. The normal splitter handles recognized batches; unknown arrays,
+// wrappers and mixed locations are rejected before ACK instead of preserving
+// another contact's content in a row that cannot later be purged independently.
+func requireIsolatedEvolutionWebhookDirectMessages(parts []evolutionWebhookDurablePart) error {
+	for _, part := range parts {
+		if part.IgnoredReason != "" {
+			continue
+		}
+		payload, err := decodeNativeEvolutionPayload(part.Payload)
+		if err != nil {
+			return fmt.Errorf("retained WhatsApp webhook has an invalid payload: %w", err)
+		}
+		event := nativeEvolutionEventName(payload, part.EventType)
+		if nativeIsStatusEvent(event) || compactEvolutionWebhookControlName(event) == "loggedout" {
+			continue
+		}
+		messages := extractNativeEvolutionMessages(payload)
+		locations := evolutionWebhookMessageListLocations(payload)
+		if len(messages) == 0 {
+			if len(locations) > 0 || strings.Contains(compactEvolutionWebhookControlName(event), "message") {
+				return errors.New("retained WhatsApp webhook message shape cannot be isolated")
+			}
+			continue
+		}
+		if len(messages) != 1 || messages[0].IsGroup ||
+			messages[0].UnsupportedID || messages[0].UnsupportedMessage ||
+			nativeEvolutionMessageIsHistorySyncControl(messages[0]) ||
+			strings.TrimSpace(messages[0].ProviderMessageID) == "" ||
+			evolutionWebhookPayloadRoutingKey(payload) == evolutionWebhookSessionRoute {
+			return errors.New("retained WhatsApp webhook must contain one routed direct message")
+		}
+		if len(locations) > 1 {
+			return errors.New("retained WhatsApp webhook has multiple message locations")
+		}
+		if len(locations) == 1 {
+			if len(locations[0].values) != 1 {
+				return errors.New("retained WhatsApp webhook message array was not split safely")
+			}
+			member, ok := locations[0].values[0].(map[string]any)
+			if !ok {
+				return errors.New("retained WhatsApp webhook contains an unsupported message member")
+			}
+			isolated := extractNativeEvolutionMessages(map[string]any{"messages": []any{member}})
+			if len(isolated) != 1 || isolated[0].ProviderMessageID != messages[0].ProviderMessageID ||
+				isolated[0].RemoteJID != messages[0].RemoteJID || isolated[0].IsGroup {
+				return errors.New("retained WhatsApp webhook message member has ambiguous identity")
+			}
+		}
+	}
+	return nil
+}
+
+// Status receipts only need provider message IDs, status and time to update
+// transport state. A timestamp-less loggedout event only needs its event name:
+// the worker probes the provider before changing the session. Do not retain
+// arbitrary provider fields (including a contact JID, text or media) merely
+// because they arrived alongside these control events.
+func minimizeEvolutionWebhookRetentionControlParts(parts []evolutionWebhookDurablePart, sessionID string) ([]evolutionWebhookDurablePart, error) {
+	minimized := make([]evolutionWebhookDurablePart, len(parts))
+	copy(minimized, parts)
+	for index := range minimized {
+		if minimized[index].IgnoredReason != "" {
+			continue
+		}
+		payload, err := decodeNativeEvolutionPayload(minimized[index].Payload)
+		if err != nil {
+			return nil, fmt.Errorf("decode retained WhatsApp control event: %w", err)
+		}
+		event := nativeEvolutionEventName(payload, minimized[index].EventType)
+		isLoggedOut := compactEvolutionWebhookControlName(event) == "loggedout"
+		if !nativeIsStatusEvent(event) && !isLoggedOut {
+			continue
+		}
+		if len(extractNativeEvolutionMessages(payload)) != 0 ||
+			len(evolutionWebhookMessageListLocations(payload)) != 0 ||
+			retentionControlHasConversationPayload(payload, 0) {
+			return nil, errors.New("retained WhatsApp control event contains ambiguous conversation data")
+		}
+		metadata := mapFromAny(payload[evolutionWebhookRoutingMetaKey])
+		routingKey := strings.TrimSpace(stringFromAny(metadata["routing_key"]))
+		if routingKey == "" {
+			return nil, errors.New("retained WhatsApp control event has no routing key")
+		}
+		if routingKey != evolutionWebhookSessionRoute {
+			// Receipts already use a separate causal route from messages. Hashing
+			// that route keeps same-contact receipts ordered without retaining JID.
+			hash := sha256.Sum256([]byte(sessionID + "\x00" + routingKey))
+			routingKey = "receipt:sha256:" + hex.EncodeToString(hash[:])
+		}
+		canonical := map[string]any{
+			"event":                        event,
+			evolutionWebhookRoutingMetaKey: map[string]any{"routing_key": routingKey},
+		}
+		if isLoggedOut {
+			// No provider timestamp is retained: this preserves the worker's
+			// mandatory reconciliation of replayable loggedout callbacks.
+			minimized[index].ProviderOccurredAt = nil
+		} else {
+			statuses := extractNativeEvolutionStatuses(payload)
+			if len(statuses) == 0 {
+				return nil, errors.New("retained WhatsApp status event has no recognized receipts")
+			}
+			entries := make([]map[string]any, 0, len(statuses))
+			for _, status := range statuses {
+				if len(status.MessageIDs) == 0 || status.Status == "" {
+					return nil, errors.New("retained WhatsApp status event has an incomplete receipt")
+				}
+				for _, id := range status.MessageIDs {
+					if len(id) > 256 || strings.ContainsAny(id, "@\r\n\t ") {
+						return nil, errors.New("retained WhatsApp status event has an unsupported provider ID")
+					}
+				}
+				entry := map[string]any{
+					"messageIds": status.MessageIDs,
+					"status":     status.Status,
+					"timestamp":  status.OccurredAt.UTC().Format(time.RFC3339Nano),
+				}
+				if status.Status == "failed" {
+					entry["error"] = "Falha no envio"
+				}
+				entries = append(entries, entry)
+			}
+			canonical["data"] = map[string]any{"statuses": entries}
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return nil, fmt.Errorf("encode retained WhatsApp control event: %w", err)
+		}
+		minimized[index].Payload = encoded
+	}
+	return minimized, nil
+}
+
+func retentionControlHasConversationPayload(value any, depth int) bool {
+	if depth > 12 {
+		return true
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			normalized := compactEvolutionWebhookControlName(key)
+			switch normalized {
+			case "message", "messages", "content", "conversation", "text", "body",
+				"caption", "image", "video", "audio", "document", "sticker",
+				"media", "file", "thumbnail", "base64", "mimetype", "url", "referral":
+				return true
+			}
+			if retentionControlHasConversationPayload(nested, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if retentionControlHasConversationPayload(nested, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func splitEvolutionWebhookMessageBatch(payload []byte) ([][]byte, bool, error) {
@@ -651,11 +1143,56 @@ func annotateEvolutionWebhookRouting(payload []byte) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
+// The session row is the cutover barrier. Activation takes FOR UPDATE on this
+// row, so an ingress transaction already building a snapshot finishes before
+// the boundary is installed. FOR KEY SHARE does not serialize ordinary claims.
+func lockEvolutionWebhookRoutingCutover(
+	ctx context.Context,
+	tx pgx.Tx,
+	session evolutionWebhookSession,
+) (string, *time.Time, error) {
+	var routingEpoch string
+	var cutoffAt *time.Time
+	var lockedSessionID string
+	err := tx.QueryRow(ctx, `
+		select ws.id::text
+		from public.whatsapp_sessions ws
+		where ws.id = $1::uuid
+		  and ws.organization_id = $2::uuid
+		for key share of ws
+	`, session.ID, session.OrganizationID).Scan(&lockedSessionID)
+	if err != nil {
+		return "", nil, err
+	}
+	// A separate command gets a new READ COMMITTED snapshot after any activation
+	// holding FOR UPDATE on the session has committed.
+	err = tx.QueryRow(ctx, `
+		select coalesce(cutover.routing_epoch::text, ''), cutover.cutoff_at
+		from private.whatsapp_webhook_session_cutovers cutover
+		where cutover.session_id = $1::uuid
+	`, lockedSessionID).Scan(&routingEpoch, &cutoffAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil
+	}
+	return routingEpoch, cutoffAt, err
+}
+
+func evolutionWebhookRoutingKeyInEpoch(routingKey string, routingEpoch string) string {
+	if routingEpoch == "" || routingKey == evolutionWebhookSessionRoute {
+		return routingKey
+	}
+	hash := sha256.Sum256([]byte(routingEpoch + "\x00" + routingKey))
+	return "epoch:" + hex.EncodeToString(hash[:])
+}
+
 func attachEvolutionWebhookRoutingSnapshots(
 	ctx context.Context,
 	tx pgx.Tx,
 	session evolutionWebhookSession,
 	parts []evolutionWebhookDurablePart,
+	routingEpoch string,
+	cutoffAt *time.Time,
+	nonleadRetentionActive bool,
 ) ([]evolutionWebhookDurablePart, error) {
 	result := make([]evolutionWebhookDurablePart, len(parts))
 	copy(result, parts)
@@ -668,13 +1205,122 @@ func attachEvolutionWebhookRoutingSnapshots(
 		if err != nil {
 			return nil, err
 		}
+		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
+		if routingEpoch != "" {
+			metadata["cutover_epoch"] = routingEpoch
+		}
+		if result[index].IgnoredReason != "" {
+			// A technical receipt has no conversation predecessor or lead effect.
+			metadata["routing_key"] = evolutionWebhookSessionRoute
+			metadata["routing_snapshot"] = evolutionWebhookRoutingSnapshotEnvelope{Version: 1}
+			// An unverifiable CTWA cannot be dispatched. Keep its reason and
+			// routing marker, never the contact or ad payload.
+			if result[index].IgnoredReason == "ctwa_provider_timestamp_missing" {
+				decoded = map[string]any{}
+			}
+			decoded[evolutionWebhookRoutingMetaKey] = metadata
+			encoded, err := json.Marshal(decoded)
+			if err != nil {
+				return nil, err
+			}
+			result[index].Payload = encoded
+			continue
+		}
 		messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(decoded))
 		messages = withoutNativeEvolutionGroupMessages(messages)
-		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
 		schedulingRoutingKey := strings.TrimSpace(stringFromAny(metadata["routing_key"]))
 		if schedulingRoutingKey == "" {
 			return nil, errors.New("direct WhatsApp provider message is missing a routing key")
 		}
+		directRoutes := make(map[string]string, len(messages))
+		ignoredReason := ""
+		for _, message := range messages {
+			if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
+				return nil, errors.New("direct WhatsApp provider message is missing an immutable provider id")
+			}
+			if routingEpoch == "" || cutoffAt == nil {
+				continue
+			}
+			if isDirectInboundRetentionMessage(message) {
+				baseRoute := evolutionWebhookRoutingKeyInEpoch(
+					evolutionWebhookMessageBindingRoutingKey(message), routingEpoch,
+				)
+				occurredAt, present := nativeEvolutionMessageProviderOccurredAt(message)
+				var providerTime *time.Time
+				if present {
+					providerTime = &occurredAt
+				}
+				var route, reason string
+				err = tx.QueryRow(ctx, `
+					select routing_key, coalesce(ignored_reason, '')
+					from private.whatsapp_nonlead_ingress_route_decision(
+					  $1::uuid, $2::uuid, $3, $4, $5::timestamptz
+					)
+				`, session.OrganizationID, session.ID, baseRoute,
+					message.ProviderMessageID, providerTime).Scan(&route, &reason)
+				if err != nil {
+					return nil, fmt.Errorf("classify WhatsApp provider route: %w", err)
+				}
+				if reason != "" {
+					ignoredReason = reason
+				} else {
+					directRoutes[message.ProviderMessageID] = route
+				}
+				continue
+			}
+			// Replays of non-inbound provider IDs must also stay on the retained
+			// side of the cutover. They do not open a new CRM route or lead.
+			var oldSnapshot bool
+			err = tx.QueryRow(ctx, `
+				select exists (
+				  select 1 from public.whatsapp_webhook_routing_snapshots as snapshot
+				  where snapshot.organization_id = $1::uuid
+				    and snapshot.session_id = $2::uuid
+				    and snapshot.provider_message_id = $3
+				    and snapshot.created_at < $4::timestamptz
+				)
+			`, session.OrganizationID, session.ID, message.ProviderMessageID, *cutoffAt).Scan(&oldSnapshot)
+			if err != nil {
+				return nil, fmt.Errorf("check WhatsApp provider replay: %w", err)
+			}
+			if oldSnapshot {
+				ignoredReason = "pre_cutover_provider_replay"
+			}
+		}
+		if ignoredReason != "" {
+			if len(messages) != 1 {
+				return nil, errors.New("mixed WhatsApp provider replay requires isolated message parts")
+			}
+			result[index].IgnoredReason = ignoredReason
+			result[index].ProcessingLane = evolutionWebhookLaneBacklog
+			result[index].ProviderOccurredAt = nil
+			result[index].Payload, err = json.Marshal(map[string]any{
+				evolutionWebhookRoutingMetaKey: map[string]any{
+					"routing_key":      evolutionWebhookSessionRoute,
+					"cutover_epoch":    routingEpoch,
+					"routing_snapshot": evolutionWebhookRoutingSnapshotEnvelope{Version: 1},
+				},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("encode ignored WhatsApp provider replay: %w", err)
+			}
+			continue
+		}
+		if nonleadRetentionActive && len(messages) == 1 {
+			if route := directRoutes[messages[0].ProviderMessageID]; route != "" {
+				schedulingRoutingKey = route
+			}
+		}
+		if len(messages) != 1 || schedulingRoutingKey != directRoutes[messages[0].ProviderMessageID] {
+			schedulingRoutingKey, err = currentWhatsAppNonleadRoutingKey(
+				ctx, tx, session.OrganizationID, session.ID,
+				evolutionWebhookRoutingKeyInEpoch(schedulingRoutingKey, routingEpoch),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("resolve WhatsApp retention scheduling route: %w", err)
+			}
+		}
+		metadata["routing_key"] = schedulingRoutingKey
 		snapshots := make([]map[string]any, 0, len(messages))
 		for _, message := range messages {
 			if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
@@ -759,7 +1405,19 @@ func attachEvolutionWebhookRoutingSnapshots(
 			// The inbox scheduling key may intentionally collapse a mixed batch to
 			// __session__. Binding provenance must stay scoped to the individual
 			// contact or unrelated contacts could become one authorization chain.
-			routingKey := evolutionWebhookMessageBindingRoutingKey(message)
+			routingKey := directRoutes[message.ProviderMessageID]
+			var routeErr error
+			if routingKey == "" {
+				routingKey, routeErr = currentWhatsAppNonleadRoutingKey(
+					ctx, tx, session.OrganizationID, session.ID,
+					evolutionWebhookRoutingKeyInEpoch(
+						evolutionWebhookMessageBindingRoutingKey(message), routingEpoch,
+					),
+				)
+			}
+			if routeErr != nil {
+				return nil, fmt.Errorf("resolve WhatsApp retention message route: %w", routeErr)
+			}
 			bindingEligible := !message.FromMe &&
 				!message.IsReaction &&
 				!message.IsDeletion &&
@@ -1328,10 +1986,10 @@ func evolutionWebhookSessionStateNewer(candidate evolutionWebhookSessionState, c
 	return candidate.EventKey > current.EventKey
 }
 
-func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, session evolutionWebhookSession, state evolutionWebhookSessionState) error {
+func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, tx pgx.Tx, session evolutionWebhookSession, state evolutionWebhookSessionState) error {
 	eventMillis := state.OccurredAt.UTC().UnixMilli()
 	if state.QRCode != "" {
-		_, err := repo.db.Pool().Exec(ctx, `
+		_, err := tx.Exec(ctx, `
 		update public.whatsapp_sessions
 		set status = 'qr_ready',
 		    qr_code = $3,
@@ -1368,17 +2026,15 @@ func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, se
 		    coalesce(advanced_settings->>'webhook_state_event_key', '')
 		  ) < ($4::bigint, $5::integer, $6::text)
 	`, session.OrganizationID, session.ID, state.QRCode, eventMillis, state.Rank, state.EventKey, state.ProviderTimestamp)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	}
 
 	if state.Status == "" {
-		return nil
+		return tx.Commit(ctx)
 	}
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	result, err := tx.Exec(ctx, `
 		update public.whatsapp_sessions

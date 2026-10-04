@@ -38,8 +38,22 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	}
 
 	cleanup := func(cleanupCtx context.Context) {
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		for _, removal := range []struct {
+			sql  string
+			args []any
+		}{
+			{`delete from public.whatsapp_sessions
+			  where organization_id = $1::uuid and id in ($2::uuid, $3::uuid, $4::uuid)`,
+				[]any{organizationID, sessionA, sessionB, sessionC}},
+			{`delete from public.users where id = $1::uuid and organization_id = $2::uuid`,
+				[]any{userID, organizationID}},
+			{`delete from auth.users where id = $1::uuid`, []any{userID}},
+			{`delete from public.organizations where id = $1::uuid`, []any{organizationID}},
+		} {
+			if _, err := postgres.Pool().Exec(cleanupCtx, removal.sql, removal.args...); err != nil {
+				t.Errorf("clean local fair-claim fixture: %v", err)
+			}
+		}
 	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -64,15 +78,20 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	`, userID, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
+	// auth.users.on_auth_user_created already creates this CRM profile.
 	if _, err := postgres.Pool().Exec(ctx, `
-		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		update public.users
+		set organization_id = $2::uuid, name = $3, email = $4,
+		    role = 'user', is_active = true
+		where id = $1::uuid
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role, is_active = excluded.is_active, deleted_at = null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +113,8 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			organization_id, session_id, event_key, event_type, payload,
 			status, attempts, next_attempt_at, created_at
 		) values (
-			$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
+			$1::uuid, $2::uuid, $3, 'message',
+			'{"__vimob_ingress":{"routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 			'pending', 0, now() - interval '2 minutes', now() - interval '2 minutes'
 		)
 		returning id::text
@@ -115,7 +135,8 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 				organization_id, session_id, event_key, event_type, payload,
 				status, attempts, next_attempt_at, created_at
 			) values (
-				$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
+				$1::uuid, $2::uuid, $3, 'message',
+				'{"__vimob_ingress":{"routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 				'pending', 0, now() - $4::interval, now() - $4::interval
 			)
 		`, organizationID, fixture.sessionID, fixture.eventKey, fixture.delay); err != nil {
@@ -257,7 +278,8 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			organization_id, session_id, event_key, event_type, payload,
 			processing_lane, status, attempts, next_attempt_at, created_at
 		) values (
-			$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
+			$1::uuid, $2::uuid, $3, 'message',
+			'{"__vimob_ingress":{"routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 			'backlog', 'pending', 0, now() - interval '3 minutes', now() - interval '3 minutes'
 		)
 		returning id::text
@@ -310,7 +332,7 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			processing_lane, status, attempts, next_attempt_at, created_at
 		) values (
 			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999991111"}}'::jsonb,
+			'{"__vimob_ingress":{"routing_key":"phone:5511999991111","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 			'live', 'retry', 1, now() + interval '5 minutes', now() - interval '2 minutes'
 		)
 		returning id::text
@@ -323,7 +345,7 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			processing_lane, status, attempts, next_attempt_at, created_at
 		) values (
 			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999991111"}}'::jsonb,
+			'{"__vimob_ingress":{"routing_key":"phone:5511999991111","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 			'live', 'pending', 0, now() - interval '1 minute', now() - interval '1 minute'
 		)
 		returning id::text
@@ -336,7 +358,7 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			processing_lane, status, attempts, next_attempt_at, created_at
 		) values (
 			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999992222"}}'::jsonb,
+			'{"__vimob_ingress":{"routing_key":"phone:5511999992222","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
 			'live', 'pending', 0, now() - interval '30 seconds', now() - interval '30 seconds'
 		)
 		returning id::text

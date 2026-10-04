@@ -248,6 +248,15 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		// participate after a person joined this exact card/session binding.
 		return SendMessageResponse{}, ErrAttendanceRequired
 	}
+	if !input.InternalAutomation {
+		// The UI asks for sharing confirmation when required, but the API must
+		// enforce it too. An earlier implicit/CTWA capture entry cannot serve
+		// as proof that this human approved sending from their own number.
+		if err := requireAttendanceSendConsent(ctx, tx, tenantContext,
+			conversation.ID, lockedLeadID, session.ID); err != nil {
+			return SendMessageResponse{}, err
+		}
+	}
 	accessGrantID := ""
 	if !input.InternalAutomation {
 		accessGrantID, err = outboundSessionAccessGrantID(ctx, tx,

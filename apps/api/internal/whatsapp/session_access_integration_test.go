@@ -185,14 +185,100 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	outboxItem := pendingWhatsAppOutbox{
 		OrganizationID: fixture.organizationID, SessionID: fixture.sessionID,
 		ConversationID: fixture.conversationID, MessageRowID: response.Message.ID,
+		LeaseToken: fixture.suffix + "-disconnect-lease",
+	}
+	if err := pool.QueryRow(ctx, `
+		update public.whatsapp_outbox
+		set status = 'processing', locked_by = $2, locked_at = now()
+		where message_id = $1::uuid
+		returning id::text
+	`, outboxItem.MessageRowID, outboxItem.LeaseToken).Scan(&outboxItem.ID); err != nil {
+		t.Fatal(err)
+	}
+	disconnectTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = disconnectTx.Rollback(ctx) }()
+	if _, err := disconnectTx.Exec(ctx, `
+		update public.whatsapp_sessions set status = 'disconnected'
+		where organization_id = $1::uuid and id = $2::uuid
+	`, fixture.organizationID, fixture.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	type providerStartResult struct {
+		attempts int
+		err      error
+	}
+	disconnectStartDone := make(chan providerStartResult, 1)
+	go func() {
+		attempts, startErr := repo.startWhatsAppOutboxProviderAttempt(ctx, outboxItem)
+		disconnectStartDone <- providerStartResult{attempts: attempts, err: startErr}
+	}()
+	disconnectDeadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `
+			select exists (
+			  select 1 from pg_catalog.pg_stat_activity activity
+			  where activity.pid <> pg_backend_pid()
+			    and activity.wait_event_type = 'Lock'
+			    and activity.query like '%for share of session%'
+			)
+		`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case result := <-disconnectStartDone:
+			t.Fatalf("provider start escaped pending disconnect: %+v", result)
+		default:
+		}
+		if time.Now().After(disconnectDeadline) {
+			t.Fatal("provider start did not wait for session disconnect")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := disconnectTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-disconnectStartDone:
+		if !errors.Is(result.err, errWhatsAppOutboxSessionDisconnected) || result.attempts != 0 {
+			t.Fatalf("provider start after disconnect = %+v, want defer without attempt", result)
+		}
+		if err := repo.deferWhatsAppOutboxWithoutAttempt(ctx, outboxItem, result.err); err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("provider start stayed blocked after disconnect")
+	}
+	var deferredStatus string
+	var deferredAttempts int
+	if err := pool.QueryRow(ctx, `
+		select status, attempts from public.whatsapp_outbox where id = $1::uuid
+	`, outboxItem.ID).Scan(&deferredStatus, &deferredAttempts); err != nil || deferredStatus != "retry" || deferredAttempts != 0 {
+		t.Fatalf("disconnected send = %s/%d, error %v, want retry/0", deferredStatus, deferredAttempts, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update public.whatsapp_sessions set status = 'connected'
+		where organization_id = $1::uuid and id = $2::uuid
+	`, fixture.organizationID, fixture.sessionID); err != nil {
+		t.Fatal(err)
 	}
 	allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, outboxItem)
 	if err != nil || !allowed {
 		t.Fatalf("outbox preflight before revoke = %v, error = %v", allowed, err)
 	}
-	release, err := repo.holdWhatsAppOutboxGrant(ctx, outboxItem)
+	startTx, err := pool.Begin(ctx)
 	if err != nil {
-		t.Fatalf("hold shared send grant: %v", err)
+		t.Fatal(err)
+	}
+	if err := lockWhatsAppOutboxGrantForStart(ctx, startTx, outboxItem); err != nil {
+		_ = startTx.Rollback(ctx)
+		t.Fatalf("lock shared send grant for provider start: %v", err)
 	}
 	revokeDone := make(chan error, 1)
 	revokeStarted := make(chan struct{})
@@ -203,22 +289,29 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	<-revokeStarted
 	select {
 	case err := <-revokeDone:
-		release()
-		t.Fatalf("revoke returned before the in-flight provider fence ended: %v", err)
+		_ = startTx.Rollback(ctx)
+		t.Fatalf("revoke returned before the provider-start transaction committed: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	release()
+	if err := startTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case err := <-revokeDone:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-ctx.Done():
-		t.Fatal("revoke did not finish after the send fence was released")
+		t.Fatal("revoke did not finish after the provider-start transaction committed")
 	}
-	if _, err := repo.holdWhatsAppOutboxGrant(ctx, outboxItem); !errors.Is(err, ErrSessionAccessRevoked) {
+	checkTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockWhatsAppOutboxGrantForStart(ctx, checkTx, outboxItem); !errors.Is(err, ErrSessionAccessRevoked) {
 		t.Fatalf("old intent after revoke = %v, want ErrSessionAccessRevoked", err)
 	}
+	_ = checkTx.Rollback(ctx)
 	allowed, err = repo.whatsappOutboxAttendanceCurrent(ctx, outboxItem)
 	if err != nil || allowed {
 		t.Fatalf("outbox preflight after revoke = %v, error = %v", allowed, err)
@@ -255,9 +348,14 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	if err != nil || len(accesses) != 1 || accesses[0].ID == intentGrantID {
 		t.Fatalf("regrant must have a new identity: %+v, error = %v", accesses, err)
 	}
-	if _, err := repo.holdWhatsAppOutboxGrant(ctx, outboxItem); !errors.Is(err, ErrSessionAccessRevoked) {
+	checkTx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockWhatsAppOutboxGrantForStart(ctx, checkTx, outboxItem); !errors.Is(err, ErrSessionAccessRevoked) {
 		t.Fatalf("old intent after regrant = %v, want ErrSessionAccessRevoked", err)
 	}
+	_ = checkTx.Rollback(ctx)
 
 	if _, err := pool.Exec(ctx, `update public.organization_members set role = 'user' where organization_id = $1::uuid and user_id = $2::uuid`, fixture.organizationID, fixture.userID); err != nil {
 		t.Fatal(err)
@@ -281,6 +379,125 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	accesses, err = repo.ListSessionAccess(ctx, fixture.tenant, fixture.sessionID)
 	if err != nil || len(accesses) != 1 || pointerValue(accesses[0].GrantScope) != "team" || pointerValue(accesses[0].GrantTeamID) != teamID {
 		t.Fatalf("team grant scope = %+v, error = %v", accesses, err)
+	}
+	for _, testCase := range []struct {
+		name   string
+		key    string
+		update string
+		userID string
+	}{
+		{
+			name: "recipient exits team",
+			key:  "recipient-exit",
+			update: `update public.team_members set is_active = false
+				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
+			userID: recipientID,
+		},
+		{
+			name: "owner loses leader role",
+			key:  "owner-leader-loss",
+			update: `update public.team_members set is_leader = false
+				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
+			userID: fixture.userID,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			// The first membership change can invalidate the old grant. Give
+			// each race an independently authorized intent to test the lock,
+			// rather than an already-revoked historical message.
+			if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
+				t.Fatalf("leader granting fresh access: %v", err)
+			}
+			if _, err := repo.JoinConversationAttendance(ctx, recipient, fixture.conversationID, attendance); err != nil {
+				t.Fatalf("fresh team attendance: %v", err)
+			}
+			teamSend, err := repo.SendMessage(ctx, recipient, fixture.conversationID, sendMessageInput{
+				Text: "team membership fence", SendSessionID: fixture.sessionID,
+				ClientMessageID: fixture.suffix + "-team-fence-" + testCase.key,
+				ExpectedLeadID:  fixture.leadID,
+			})
+			if err != nil || teamSend.Message == nil {
+				t.Fatalf("team sender could not enqueue: %+v, %v", teamSend, err)
+			}
+			teamItem := pendingWhatsAppOutbox{
+				OrganizationID: fixture.organizationID, SessionID: fixture.sessionID,
+				ConversationID: fixture.conversationID, MessageRowID: teamSend.Message.ID,
+				LeaseToken: fixture.suffix + "-team-lease-" + testCase.key,
+			}
+			if err := pool.QueryRow(ctx, `
+				update public.whatsapp_outbox
+				set status = 'processing', locked_by = $2, locked_at = now()
+				where message_id = $1::uuid
+				returning id::text
+			`, teamItem.MessageRowID, teamItem.LeaseToken).Scan(&teamItem.ID); err != nil {
+				t.Fatal(err)
+			}
+			changeTx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = changeTx.Rollback(ctx) }()
+			if _, err := changeTx.Exec(ctx, testCase.update, teamID, fixture.organizationID, testCase.userID); err != nil {
+				t.Fatal(err)
+			}
+			type startResult struct {
+				attempts int
+				err      error
+			}
+			startDone := make(chan startResult, 1)
+			go func() {
+				attempts, startErr := repo.startWhatsAppOutboxProviderAttempt(ctx, teamItem)
+				startDone <- startResult{attempts: attempts, err: startErr}
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				var waiting bool
+				if err := pool.QueryRow(ctx, `
+					select exists (
+					  select 1 from pg_catalog.pg_stat_activity activity
+					  where activity.pid <> pg_backend_pid()
+					    and activity.wait_event_type = 'Lock'
+					    and activity.query like '%from public.team_members%'
+					)
+				`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case result := <-startDone:
+					t.Fatalf("provider start escaped pending %s change: attempts=%d error=%v", testCase.name, result.attempts, result.err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("provider start did not wait for membership change")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if err := changeTx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case result := <-startDone:
+				if !errors.Is(result.err, ErrSessionAccessRevoked) || result.attempts != 0 {
+					t.Fatalf("provider start after %s: attempts=%d error=%v, want revoked without attempt", testCase.name, result.attempts, result.err)
+				}
+			case <-ctx.Done():
+				t.Fatal("provider start stayed blocked after membership change")
+			}
+			var attempts int
+			if err := pool.QueryRow(ctx, `select attempts from public.whatsapp_outbox where id = $1::uuid`, teamItem.ID).Scan(&attempts); err != nil || attempts != 0 {
+				t.Fatalf("provider attempt after %s = %d, error %v", testCase.name, attempts, err)
+			}
+		})
+		if testCase.userID == recipientID {
+			if _, err := pool.Exec(ctx, `update public.team_members set is_active = true
+				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
+				teamID, fixture.organizationID, recipientID); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	if _, err := pool.Exec(ctx, `update public.team_members set is_active = false where team_id = $1::uuid and user_id = $2::uuid`, teamID, recipientID); err != nil {
 		t.Fatal(err)
