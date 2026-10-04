@@ -2719,6 +2719,10 @@ func ensureNativeEvolutionConversation(
 					message,
 					originRoundRobinID,
 				)
+			} else if conversationMissing {
+				// A new CTWA with no canonical queue skips phone lookup. Its
+				// missing conversation is expected, not a lead lookup failure.
+				err = nil
 			}
 			if isNativeEvolutionLeadPhoneAmbiguous(err) {
 				quarantineReason = "whatsapp_lead_phone_ambiguous_in_intake_scope"
