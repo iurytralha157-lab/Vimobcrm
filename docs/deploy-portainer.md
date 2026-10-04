@@ -110,8 +110,8 @@ EVOLUTION_GO_API_KEY=sua-chave-evolution-go
 EVOLUTION_GO_IMAGE_DIGEST=sha256:<digest-real-de-64-hex>
 EVOLUTION_GO_WEBHOOK_URL=https://seu-projeto.supabase.co/functions/v1/evolution-go-webhook
 EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go
-WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback
-WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=13eea7e8-a74f-4bfb-bb36-024e3d26ccc9
+WHATSAPP_WEBHOOK_PROCESSOR_MODE=edge
+WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=
 WHATSAPP_OUTBOX_WORKER_INTERVAL=1s
 WHATSAPP_OUTBOX_WORKER_BATCH=10
 WHATSAPP_OUTBOX_WORKER_CONCURRENCY=4
@@ -238,39 +238,11 @@ Antes de ampliar o rollout, confirme que `attempts` nunca passa de 2, que jobs n
 
 ## Canary e rollback do WhatsApp
 
-Nunca use `latest` no canario. Antes do deploy, registre os dois tags atualmente executados e fixe `VIMOB_API_IMAGE` e `VIMOB_WEB_IMAGE` no mesmo tag imutavel `${github.sha}` publicado pelo workflow. Guarde os tags anteriores como par de rollback; nao misture uma API nova com um web antigo sem uma validacao especifica dessa combinacao.
-
-Para iniciar o canario do processador, mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` e coloque somente o UUID aprovado em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`. O callback permanece na API tanto durante o canario quanto durante o rollback.
-
-O rollback do processador deve ocorrer nesta ordem:
-
-1. Mude `WHATSAPP_WEBHOOK_PROCESSOR_MODE` para `edge`, mantendo a imagem que conhece a fila duravel. Eventos continuam chegando ao backend e passam a ser encaminhados para a Edge via header.
-2. Aguarde as filas de inbox e outbox abaixo chegarem a zero. Nao remova a imagem que conhece essas filas enquanto existir trabalho pendente.
-3. Esvazie `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`; isso desativa o processador nativo, mas nao devolve credenciais para a URL.
-4. Confirme que a primeira consulta abaixo nao retorna nenhuma URL com segredo e que as duas filas continuam vazias.
-5. Restaure somente uma imagem que mantenha o callback tokenless da API e rejeite autenticacao por query. Imagens anteriores a esse contrato nao sao rollback seguro.
-6. Valide `/readyz`, envio, recebimento e historico antes de encerrar o rollback.
-
-Durante o canario, mantenha a acao de falha do update do Swarm em `pause`; nao habilite rollback automatico da imagem da API. A stack fixa atualizacao `start-first`, uma replica por vez e monitor de oito minutos, suficiente para o healthcheck atravessar o retry inicial do banco. O `pause` e intencional: a ordem acima e obrigatoria porque a imagem anterior nao deve receber uma instancia que ainda aponta para o webhook novo.
-
-```sql
-select id, instance_name, status
-from public.whatsapp_sessions
-where provider = 'evolution_go'
-  and coalesce(advanced_settings->>'webhook_url', '') ~* '([?&])(webhook_token|apikey|token)=';
-
-select 'inbox' as queue, status, count(*)
-from public.whatsapp_webhook_inbox
-where status in ('pending', 'retry', 'processing')
-group by status
-union all
-select 'outbox', status, count(*)
-from public.whatsapp_outbox
-where status in ('pending', 'retry', 'processing')
-group by status;
-```
-
-Se a primeira consulta retornar uma sessao, o corte de seguranca ainda nao terminou: confira a conectividade com a Evolution Go e os logs do supervisor. Se a segunda retornar trabalho pendente, nao troque a imagem da API ate a drenagem. Nunca imprima a URL completa de um webhook legado.
+Use o roteiro unico em [whatsapp-rollback.md](./whatsapp-rollback.md). Ele separa
+o canario anterior ao corte (`edge`/`native_fallback`) do canario CTWA com coorte
+ativa (`native`). A volta para `edge` ou para uma imagem anterior depende do
+estado efetivo da sessao e das migracoes, nao apenas de uma flag. Mantenha a
+atualizacao Swarm em `pause` e registre os SHAs/digests antes de qualquer troca.
 
 ### Corte definitivo das credenciais em URL
 
@@ -283,7 +255,9 @@ Este corte deve ser executado uma unica vez e nesta ordem. Nao aplique a migrati
 5. Publique `supabase/functions/evolution-go-webhook`. A funcao endurecida rejeita `token`, `apikey` e `webhook_token` na query em qualquer metodo; o worker interno continua autenticando pelo header.
 6. Repita as consultas de URL e filas, verifique os logs sem imprimir query strings e execute o teste funcional de envio, recebimento, historico, QR Code e reconexao.
 
-Se qualquer passo falhar, pare antes do seguinte. O rollback seguro mantem a nova API e o callback tokenless; nunca restaure uma imagem que volte a gravar segredo na URL.
+Se qualquer passo falhar, pare antes do seguinte e siga [o roteiro unico de
+reversao](./whatsapp-rollback.md). O callback deve continuar tokenless; nunca
+restaure uma imagem que volte a gravar segredo na URL.
 
 A imagem da API usa `/healthz` como liveness depois de um periodo inicial de cinco minutos, compativel com o retry de conexao inicial ao banco. O gate operacional do deploy continua sendo `/readyz`, que tambem confirma acesso ao Postgres. Nao considere o canario pronto apenas porque o container esta `healthy`.
 
