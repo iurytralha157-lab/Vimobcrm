@@ -414,13 +414,21 @@ test('falha do destinatário no WhatsApp aparece no histórico sem expor o erro 
       id: 'legacy-duplicate',
       type: 'whatsapp_message_failed',
       created_at: '2026-10-05T14:36:45.000Z',
-      metadata: { delivery_failure_code: 'recipient_not_registered' },
+      metadata: { delivery_failure_code: 'recipient_not_registered', outbox_id: 'outbox-1' },
+    }, {
+      id: 'distinct-failure',
+      type: 'whatsapp_message_failed',
+      created_at: '2026-10-05T14:40:00.000Z',
+      metadata: { delivery_failure_code: 'recipient_not_registered', outbox_id: 'outbox-2' },
     }],
   }, 'lead-1', formatters);
 
-  assert.equal(history.length, 1);
-  assert.equal(history[0]?.type, 'whatsapp_message_failed');
-  assert.equal(history[0]?.label, 'Envio não confirmado (WhatsApp)');
+  assert.equal(history.length, 2);
+  assert.deepEqual(history.map(({ type }) => type), ['whatsapp_message_failed', 'whatsapp_message_failed']);
+  assert.deepEqual(history.map(({ label }) => label), [
+    'Envio não confirmado (WhatsApp)',
+    'Envio não confirmado (WhatsApp)',
+  ]);
   assert.equal(history[0]?.content, 'O provedor informou que o número do lead não está cadastrado no WhatsApp.');
 });
 

@@ -68,14 +68,14 @@ export const whatsAppAttendanceEntrySchema = z.object({
 	userName: z.string().trim().min(1),
 	sessionId: uuidSchema,
 	joinedAt: timestampSchema,
-	entrySource: z.enum(['manual', 'implicit', 'ctwa_auto']),
+	entrySource: z.enum(['manual', 'implicit', 'ctwa_auto']).optional(),
 	markerAt: timestampSchema.optional(),
 	markerKind: z.enum(['started', 'joined']).optional(),
 }).strict()
 
 export const whatsAppAttendanceStateSchema = z.object({
 	joined: z.boolean(),
-	confirmationRequired: z.boolean(),
+	confirmationRequired: z.boolean().optional(),
 	currentEntry: whatsAppAttendanceEntrySchema.nullable(),
 	entries: z.array(whatsAppAttendanceEntrySchema),
 	created: z.boolean().optional(),

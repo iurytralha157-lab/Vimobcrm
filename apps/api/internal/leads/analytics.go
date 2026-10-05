@@ -138,7 +138,7 @@ func (repo Repository) ListLeadTimeline(ctx context.Context, tenantContext tenan
 					'user_id', e.user_id::text,
 					'actor_user_id', coalesce(e.actor_user_id::text, e.user_id::text),
 					'event_at', e.created_at,
-					'metadata', e.metadata - 'message_fingerprint',
+					'metadata', e.metadata - 'message_fingerprint' - 'last_error',
 					'channel', null,
 					'is_automation', false,
 					'actor',
@@ -221,7 +221,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 					'lead_id', e.lead_id::text,
 					'user_id', e.user_id::text,
 					'actor_user_id', e.actor_user_id::text,
-					'metadata', (coalesce(e.metadata, '{}'::jsonb) - 'message_fingerprint') || jsonb_strip_nulls(jsonb_build_object(
+					'metadata', (coalesce(e.metadata, '{}'::jsonb) - 'message_fingerprint' - 'last_error') || jsonb_strip_nulls(jsonb_build_object(
 						'from_stage', coalesce(e.metadata->>'from_stage', e.metadata->>'old_stage_name', old_stage.name),
 						'to_stage', coalesce(e.metadata->>'to_stage', e.metadata->>'new_stage_name', new_stage.name),
 						'old_stage_name', coalesce(e.metadata->>'old_stage_name', e.metadata->>'from_stage', old_stage.name),

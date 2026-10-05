@@ -139,6 +139,27 @@ func TestWhatsAppOutboxRecipientNotRegisteredRequiresExplicitProviderReason(t *t
 	}
 }
 
+func TestWhatsAppOutboxFailureOutcomeRetainsSafeCodeBeforeAmbiguousMarker(t *testing.T) {
+	providerError := errors.New("Evolution Go operation send.text returned ambiguous HTTP 500: number +5511999991111@s.whatsapp.net is not registered on WhatsApp")
+	status, lastError, code := whatsappOutboxFailureOutcome(providerError, false, true, 1, 5)
+	if status != "dead" || lastError != whatsappOutboxProviderUnknownMarker || code != whatsappRecipientNotRegisteredFailureCode {
+		t.Fatalf("explicit provider rejection = %q/%q/%q, want dead/marker/safe code", status, lastError, code)
+	}
+	if strings.Contains(lastError, "5511999991111") || strings.Contains(code, "5511999991111") {
+		t.Fatal("provider error leaked the recipient number into persisted failure fields")
+	}
+
+	status, lastError, code = whatsappOutboxFailureOutcome(errors.New("ambiguous HTTP 500"), false, true, 1, 5)
+	if status != "dead" || lastError != whatsappOutboxProviderUnknownMarker || code != "" {
+		t.Fatalf("generic ambiguous outcome = %q/%q/%q, want dead/marker/no code", status, lastError, code)
+	}
+
+	status, _, code = whatsappOutboxFailureOutcome(providerError, false, false, 1, 5)
+	if status != "retry" || code != "" {
+		t.Fatalf("retryable rejection = %q/%q, want retry/no terminal code", status, code)
+	}
+}
+
 func TestSendMessageCommitsDurableStoragePathWithoutSigningBeforeOutbox(t *testing.T) {
 	sourceBytes, err := os.ReadFile("message_operations.go")
 	if err != nil {

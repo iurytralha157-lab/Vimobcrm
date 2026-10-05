@@ -66,7 +66,6 @@ export const TIMELINE_AUTHORITY_TYPES = new Set([
   'stage_change',
   'first_response',
   'whatsapp_message_sent',
-  'whatsapp_message_failed',
   'whatsapp_message_received',
   'call_initiated',
   'note_created',

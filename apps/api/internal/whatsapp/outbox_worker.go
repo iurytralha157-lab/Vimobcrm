@@ -1426,6 +1426,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			    provider_message_id = $3,
 			    message_id = $3,
 			    status = case when existing.status in ('delivered', 'read') then existing.status else 'sent' end,
+			    metadata = coalesce(existing.metadata, '{}'::jsonb) - 'delivery_failure_code',
 			    sent_at = coalesce(existing.sent_at, now()),
 			    updated_at = now()
 			from public.whatsapp_messages pending
@@ -1452,6 +1453,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			set provider_message_id = $2,
 			    message_id = $2,
 			    status = case when status in ('delivered', 'read') then status else 'sent' end,
+			    metadata = coalesce(metadata, '{}'::jsonb) - 'delivery_failure_code',
 			    sent_at = coalesce(sent_at, now()),
 			    updated_at = now()
 			where id = $1::uuid
@@ -1633,9 +1635,15 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	return tx.Commit(ctx)
 }
 
-func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, cause error, permanent bool, outcomeUnknown bool) error {
-	status := "retry"
-	lastError := cause.Error()
+func whatsappOutboxFailureOutcome(cause error, permanent bool, outcomeUnknown bool, attempts int, maxAttempts int) (status string, lastError string, failureCode string) {
+	status = "retry"
+	lastError = cause.Error()
+	// Preserve only a reviewed, non-sensitive reason before an ambiguous
+	// provider outcome replaces the raw error with the exact reconciliation
+	// marker. The raw response can include the recipient's phone number.
+	if whatsappOutboxRecipientNotRegistered(lastError) {
+		failureCode = whatsappRecipientNotRegisteredFailureCode
+	}
 	if outcomeUnknown {
 		// A timeout or broken response can happen after WhatsApp accepted the
 		// stanza. Evolution Go documents the custom message ID but does not
@@ -1646,9 +1654,17 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		lastError = whatsappOutboxProviderUnknownMarker
 	} else if permanent {
 		status = "failed"
-	} else if item.Attempts >= item.MaxAttempts {
+	} else if attempts >= maxAttempts {
 		status = "dead"
 	}
+	if status != "failed" && status != "dead" {
+		failureCode = ""
+	}
+	return status, lastError, failureCode
+}
+
+func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, cause error, permanent bool, outcomeUnknown bool) error {
+	status, lastError, failureCode := whatsappOutboxFailureOutcome(cause, permanent, outcomeUnknown, item.Attempts, item.MaxAttempts)
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -1682,10 +1698,13 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_messages
 			set status = 'failed',
+			    metadata = (coalesce(metadata, '{}'::jsonb) - 'delivery_failure_code') || case when $3 <> '' then jsonb_build_object(
+			      'delivery_failure_code', $3
+			    ) else '{}'::jsonb end,
 			    updated_at = now()
 			where id = $1::uuid
 			  and organization_id = $2::uuid
-		`, item.MessageRowID, item.OrganizationID); err != nil {
+		`, item.MessageRowID, item.OrganizationID, failureCode); err != nil {
 			return err
 		}
 		if err := repo.syncTerminalWhatsAppOutboxFailures(ctx, tx, item.ID); err != nil {
@@ -1746,7 +1765,9 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	outboxRows.Close()
 
 	messageRows, err := tx.Query(ctx, `
-		select message.id::text
+		select message.id::text, outbox.id::text, outbox.status,
+		       coalesce(outbox.last_error, ''),
+		       coalesce(message.metadata->>'delivery_failure_code', '')
 		from public.whatsapp_messages as message
 		join public.whatsapp_outbox as outbox
 		  on outbox.message_id = message.id
@@ -1762,10 +1783,15 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 		return err
 	}
 	for messageRows.Next() {
-		var ignoredID string
-		if err := messageRows.Scan(&ignoredID); err != nil {
+		var messageID, lockedOutboxID, status, lastError, failureCode string
+		if err := messageRows.Scan(&messageID, &lockedOutboxID, &status, &lastError, &failureCode); err != nil {
 			messageRows.Close()
 			return err
+		}
+		if (status == "failed" || status == "dead") &&
+			lastError == whatsappOutboxProviderUnknownMarker &&
+			failureCode == whatsappRecipientNotRegisteredFailureCode {
+			recipientNotRegisteredOutboxIDs = append(recipientNotRegisteredOutboxIDs, lockedOutboxID)
 		}
 	}
 	if err := messageRows.Err(); err != nil {
@@ -1773,6 +1799,7 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 		return err
 	}
 	messageRows.Close()
+	recipientNotRegisteredOutboxIDs = uniqueStrings(recipientNotRegisteredOutboxIDs...)
 
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages as message
@@ -1819,7 +1846,11 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 		      select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
 		    ) then jsonb_build_object('delivery_failure_code', $4) else '{}'::jsonb end
 		from public.whatsapp_outbox as outbox
+		join public.whatsapp_messages as message
+		  on message.id = outbox.message_id
+		 and message.organization_id = outbox.organization_id
 		where outbox.organization_id = timeline.organization_id
+		  and timeline.lead_id = message.lead_id
 		  and timeline.metadata->>'outbox_id' = outbox.id::text
 		  and outbox.status in ('failed', 'dead')
 		  and (
@@ -1878,6 +1909,7 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 			  and not exists (
 			    select 1 from public.lead_timeline_events as timeline
 			    where timeline.organization_id = outbox.organization_id
+			      and timeline.lead_id = message.lead_id
 			      and timeline.metadata->>'outbox_id' = outbox.id::text
 			  )
 			on conflict (id) do nothing

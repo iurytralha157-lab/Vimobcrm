@@ -15,7 +15,9 @@ func TestLeadHistoryDoesNotExposeManagedMessageFingerprint(t *testing.T) {
 	}
 	for _, required := range []string{
 		"'metadata', e.metadata - 'message_fingerprint'",
+		"'metadata', e.metadata - 'message_fingerprint' - 'last_error'",
 		"coalesce(e.metadata, '{}'::jsonb) - 'message_fingerprint'",
+		"coalesce(e.metadata, '{}'::jsonb) - 'message_fingerprint' - 'last_error'",
 		"'metadata', e.metadata - 'message_fingerprint'",
 		"'payload', e.payload - 'message_fingerprint'",
 	} {

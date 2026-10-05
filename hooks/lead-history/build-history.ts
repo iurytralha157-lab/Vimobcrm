@@ -165,6 +165,19 @@ export function buildLeadHistory(
       }
       // Always include activity-only types
       if (ACTIVITY_ONLY_TYPES.has(activity.type)) return true;
+      if (activity.type === 'whatsapp_message_failed') {
+        const metadata = asMetadata(activity.metadata);
+        const outboxId = metadataString(metadata.outbox_id);
+        const messageRowId = metadataString(metadata.message_row_id);
+        return !timelineMapped.some((event) => {
+          if (event.type !== 'whatsapp_message_failed') return false;
+          const eventMetadata = asMetadata(event.metadata);
+          return Boolean(
+            (outboxId && metadataString(eventMetadata.outbox_id) === outboxId)
+            || (messageRowId && metadataString(eventMetadata.message_row_id) === messageRowId),
+          );
+        });
+      }
       if (activity.type === 'lead_reentry' && asMetadata(activity.metadata).entry_type === 'manual_reentry') return true;
       // Skip if timeline already has authority over this type
       if (TIMELINE_AUTHORITY_TYPES.has(activity.type) && timelineTypesPresent.has(activity.type)) return false;

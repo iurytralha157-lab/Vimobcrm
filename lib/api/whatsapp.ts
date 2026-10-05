@@ -300,14 +300,14 @@ export type WhatsAppAttendanceEntry = {
   userName: string
   sessionId: string
   joinedAt: string
-  entrySource: 'manual' | 'implicit' | 'ctwa_auto'
+  entrySource?: 'manual' | 'implicit' | 'ctwa_auto'
   markerAt?: string
   markerKind?: 'started' | 'joined'
 }
 
 export type WhatsAppAttendanceState = {
   joined: boolean
-  confirmationRequired: boolean
+  confirmationRequired?: boolean
   currentEntry: WhatsAppAttendanceEntry | null
   entries: WhatsAppAttendanceEntry[]
   created?: boolean

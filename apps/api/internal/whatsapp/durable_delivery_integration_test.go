@@ -1968,9 +1968,9 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	if notRegisteredStatus != "dead" || notRegisteredMessageStatus != "failed" ||
-		!whatsappOutboxRecipientNotRegistered(notRegisteredLastError) ||
+		notRegisteredLastError != whatsappOutboxProviderUnknownMarker ||
 		!strings.Contains(notRegisteredMessageMetadata, whatsappRecipientNotRegisteredFailureCode) {
-		t.Fatalf("provider rejection state = outbox:%s message:%s metadata:%s", notRegisteredStatus, notRegisteredMessageStatus, notRegisteredMessageMetadata)
+		t.Fatalf("provider rejection state = outbox:%s message:%s marker:%s metadata:%s", notRegisteredStatus, notRegisteredMessageStatus, notRegisteredLastError, notRegisteredMessageMetadata)
 	}
 	checkNotRegisteredTimeline := func() {
 		t.Helper()
@@ -2017,6 +2017,13 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, notRegisteredOutboxID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_outbox
+		set last_error = 'Evolution Go operation send.text returned ambiguous HTTP 500: number +5511999991111@s.whatsapp.net is not registered on WhatsApp'
+		where id = $1::uuid
+	`, notRegisteredOutboxID); err != nil {
+		t.Fatal(err)
+	}
 	messagesAfterFailure, err := repo.ListMessages(ctx, tenantContext, conversationID, MessageFilter{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
@@ -2033,5 +2040,66 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	}
 	if projectedFailureCode != whatsappRecipientNotRegisteredFailureCode {
 		t.Fatalf("message read projection failure code = %q", projectedFailureCode)
+	}
+	// A later signed provider echo is stronger evidence than the ambiguous HTTP
+	// response. It may heal the dead row, and must remove the obsolete warning.
+	var notRegisteredMessageRowID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		update public.whatsapp_outbox
+		set last_error = $2
+		where id = $1::uuid
+		returning message_id::text
+	`, notRegisteredOutboxID, whatsappOutboxProviderUnknownMarker).Scan(&notRegisteredMessageRowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_messages
+		set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('delivery_failure_code', $2)
+		where id = $1::uuid
+	`, notRegisteredMessageRowID, whatsappRecipientNotRegisteredFailureCode); err != nil {
+		t.Fatal(err)
+	}
+	confirmedAt := time.Now().UTC()
+	confirmationTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileNativeOutboundOutbox(ctx, confirmationTx, nativeEvolutionSession{
+		ID: sessionID, OrganizationID: organizationID,
+	}, nativeEvolutionMessage{
+		ProviderMessageID: deterministicProviderMessageID(notRegisteredClientID),
+		FromMe:            true,
+		SentAt:            confirmedAt,
+	}, notRegisteredMessageRowID); err != nil {
+		_ = confirmationTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := confirmationTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var healedOutboxStatus, healedMessageStatus, healedTimelineType, healedTimelineDescription string
+	var healedMessageCode, healedTimelineCode bool
+	if err := postgres.Pool().QueryRow(ctx, `
+		select outbox.status, message.status, timeline.event_type, timeline.description,
+		       message.metadata ? 'delivery_failure_code', timeline.metadata ? 'delivery_failure_code'
+		from public.whatsapp_outbox as outbox
+		join public.whatsapp_messages as message on message.id = outbox.message_id
+		join public.lead_timeline_events as timeline
+		  on timeline.lead_id = message.lead_id
+		 and timeline.metadata->>'outbox_id' = outbox.id::text
+		where outbox.id = $1::uuid
+	`, notRegisteredOutboxID).Scan(
+		&healedOutboxStatus, &healedMessageStatus, &healedTimelineType, &healedTimelineDescription,
+		&healedMessageCode, &healedTimelineCode,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if healedOutboxStatus != "sent" || healedMessageStatus != "sent" ||
+		healedTimelineType != "whatsapp_message_sent" ||
+		healedTimelineDescription == whatsappRecipientNotRegisteredDescription ||
+		healedMessageCode || healedTimelineCode {
+		t.Fatalf("signed echo left stale failure: outbox=%s message=%s timeline=%s/%q code=%t/%t",
+			healedOutboxStatus, healedMessageStatus, healedTimelineType, healedTimelineDescription,
+			healedMessageCode, healedTimelineCode)
 	}
 }

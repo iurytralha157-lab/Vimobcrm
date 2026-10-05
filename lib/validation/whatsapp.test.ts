@@ -171,6 +171,19 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 			created: true,
 		},
 	}).success, true)
+	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+		data: {
+			joined: true,
+			currentEntry: {
+				id: ID,
+				userId: USER_ID,
+				userName: 'Andre',
+				sessionId: ORG_ID,
+				joinedAt: '2026-10-05T13:00:00.000Z',
+			},
+			entries: [],
+		},
+	}).success, true)
 })
 
 test('valida lista de sessoes e cota', () => {

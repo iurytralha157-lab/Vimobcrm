@@ -2001,7 +2001,7 @@ func reconcileNativeOutboundOutbox(
 			    media_mime_type = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_mime_type, pending.media_mime_type) end,
 			    media_storage_path = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_storage_path, pending.media_storage_path) end,
 			    media_size = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_size, pending.media_size) end,
-			    metadata = case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else coalesce(canonical.metadata, '{}'::jsonb) || coalesce(pending.metadata, '{}'::jsonb) end,
+			    metadata = (case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else coalesce(canonical.metadata, '{}'::jsonb) || coalesce(pending.metadata, '{}'::jsonb) end) - 'delivery_failure_code',
 			    capture_state = coalesce(pending.capture_state, canonical.capture_state),
 			    provider_message_id = $6,
 			    message_id = $6,
@@ -2038,6 +2038,7 @@ func reconcileNativeOutboundOutbox(
 			set provider_message_id = $5,
 			    message_id = $5,
 			    status = case when message.status in ('delivered', 'read') then message.status else 'sent' end,
+			    metadata = coalesce(message.metadata, '{}'::jsonb) - 'delivery_failure_code',
 			    sent_at = coalesce(message.sent_at, $6),
 			    updated_at = now()
 			where message.id = $1::uuid
@@ -2169,7 +2170,11 @@ func reconcileNativeOutboundOutbox(
 		update public.lead_timeline_events as timeline
 		set event_type = 'whatsapp_message_sent',
 		    title = 'Mensagem WhatsApp enviada',
-		    metadata = (coalesce(timeline.metadata, '{}'::jsonb) - 'last_error') || jsonb_build_object(
+		    description = coalesce(nullif(message.content, ''), case message.message_type
+		      when 'image' then '[Imagem]' when 'audio' then '[Audio]'
+		      when 'video' then '[Video]' when 'document' then '[Documento]'
+		      else '[Mensagem]' end),
+		    metadata = (coalesce(timeline.metadata, '{}'::jsonb) - 'last_error' - 'delivery_failure_code') || jsonb_build_object(
 		      'delivery_status', 'sent',
 		      'message_id', $4,
 		      'client_message_id', $5,
@@ -2181,6 +2186,7 @@ func reconcileNativeOutboundOutbox(
 		  and timeline.metadata->>'outbox_id' = $3
 		  and message.id = $1::uuid
 		  and message.organization_id = timeline.organization_id
+		  and timeline.lead_id = message.lead_id
 		  and message.capture_state is distinct from 'suppressed'
 	`, messageRowID, session.OrganizationID, outboxID, message.ProviderMessageID, clientMessageID, message.SentAt)
 	if err != nil {
