@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+	createWhatsAppTextSendGuard,
 	getWhatsAppConversationDraftKey,
 	getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
@@ -9,6 +10,80 @@ import {
 	preserveWhatsAppConversationCardSnapshot,
 	updateWhatsAppConversationDraft,
 } from './whatsapp-message-input'
+
+test('duplo clique no mesmo rascunho inicia um unico envio', () => {
+	const guard = createWhatsAppTextSendGuard()
+	guard.observeDraft('lead-a', ' Primeira mensagem ')
+	const first = guard.begin()
+	assert.ok(first)
+	assert.equal(first.text, 'Primeira mensagem')
+	assert.equal(guard.begin(), null)
+	guard.accepted(first)
+	// Mesmo que um render atrasado ainda mostre o texto anterior, o mesmo
+	// clique nao cria uma segunda intencao nem um novo clientMessageId.
+	guard.observeDraft('lead-a', ' Primeira mensagem ')
+	assert.equal(guard.begin(), null)
+	guard.observeDraft('lead-a', '')
+	assert.equal(guard.begin(), null)
+})
+
+test('um novo texto avanca antes da resposta do envio anterior', () => {
+	const guard = createWhatsAppTextSendGuard()
+	guard.observeDraft('lead-a', 'Primeira')
+	const first = guard.begin()
+	assert.ok(first)
+	guard.accepted(first)
+	guard.observeDraft('lead-a', '')
+	guard.observeDraft('lead-a', 'Segunda')
+	const second = guard.begin()
+	assert.ok(second)
+	assert.equal(second.text, 'Segunda')
+	assert.notEqual(second.revision, first.revision)
+	guard.accepted(second)
+})
+
+test('o mesmo texto digitado novamente depois de limpar e um novo envio legitimo', () => {
+	const guard = createWhatsAppTextSendGuard()
+	guard.observeDraft('lead-a', 'Oi')
+	const first = guard.begin()
+	assert.ok(first)
+	guard.accepted(first)
+	guard.observeDraft('lead-a', '')
+	guard.observeDraft('lead-a', 'Oi')
+	const second = guard.begin()
+	assert.ok(second)
+	assert.equal(second.text, 'Oi')
+	assert.notEqual(second.revision, first.revision)
+})
+
+test('edicao durante confirmacao conserva o novo rascunho e cancelamento permite tentar de novo', () => {
+	const guard = createWhatsAppTextSendGuard()
+	guard.observeDraft('lead-a', 'Primeira')
+	const first = guard.begin()
+	assert.ok(first)
+	guard.observeDraft('lead-a', 'Segunda')
+	assert.equal(guard.begin(), null)
+	guard.aborted(first)
+	const second = guard.begin()
+	assert.ok(second)
+	assert.equal(second.text, 'Segunda')
+	guard.accepted(second)
+	guard.allowRetry(second)
+	guard.observeDraft('lead-a', 'Segunda')
+	assert.ok(guard.begin())
+})
+
+test('confirmacao antiga nao envia depois de trocar conversa ou organizacao', () => {
+	const guard = createWhatsAppTextSendGuard()
+	guard.observeDraft('org-a:lead-a', 'Mensagem antiga')
+	const oldIntent = guard.begin()
+	assert.ok(oldIntent)
+	guard.observeDraft('org-b:lead-b', 'Mensagem nova')
+	assert.equal(guard.accepted(oldIntent), false)
+	const currentIntent = guard.begin()
+	assert.ok(currentIntent)
+	assert.equal(currentIntent.draftKey, 'org-b:lead-b')
+})
 
 test('rascunhos sao isolados por tenant, conversa e snapshot do card', () => {
 	const base = {
@@ -165,7 +240,7 @@ test('historical conversation without a trusted session cannot fall back to anot
   assert.equal(result, undefined)
 })
 
-test('authorized persisted conversation keeps its own session', () => {
+test('persisted conversation does not use a revoked session or another account', () => {
   const result = getWhatsAppSendSessionId(
     {
       id: '50000000-0000-4000-8000-000000000001',
@@ -175,7 +250,25 @@ test('authorized persisted conversation keeps its own session', () => {
     [{ id: '40000000-0000-4000-8000-000000000002' }],
   )
 
-  assert.equal(result, '40000000-0000-4000-8000-000000000001')
+  assert.equal(result, undefined)
+})
+
+test('removed access disables the composer without choosing the user own number', () => {
+  const state = getWhatsAppMessageInputState(
+    {
+      id: 'conversation-1',
+      lead_id: 'lead-1',
+      session_id: 'old-session',
+      contact_phone: '5511999999999',
+      session: { id: 'old-session', status: 'connected' },
+    },
+    'own-session',
+    [{ id: 'own-session', status: 'connected', provider: 'evolution_go' }],
+  )
+
+  assert.equal(state.disabled, true)
+  assert.equal(state.accessLost, true)
+  assert.equal(state.sendSessionId, undefined)
 })
 
 test('new conversation draft may use the explicitly selected session', () => {

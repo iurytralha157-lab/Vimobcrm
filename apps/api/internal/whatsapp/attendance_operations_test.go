@@ -132,7 +132,7 @@ func TestNativeCTWAAutoAttendanceUsesTrustedRPCBeforeCapture(t *testing.T) {
 	source := string(capture)
 	for _, token := range []string{
 		"public.auto_enter_whatsapp_ctwa_attendance",
-		"entry.entry_source = 'manual'",
+		"entry.entry_source in ('manual', 'implicit')",
 		"entry.entry_source = 'ctwa_auto'",
 		"entry.bootstrap_provider_message_id = $9",
 		"entry.bootstrap_ingress_sequence = $8::bigint",
@@ -345,7 +345,7 @@ func TestAttendanceRequiredErrorUsesConflictContract(t *testing.T) {
 	}
 	body := recorder.Body.String()
 	if !strings.Contains(body, `"code":"whatsapp_attendance_required"`) ||
-		!strings.Contains(body, "Confirme o início do atendimento") {
+		!strings.Contains(body, "confirme o compartilhamento do histórico") {
 		t.Fatalf("unexpected attendance error response: %s", body)
 	}
 }
@@ -376,7 +376,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 
 	for _, required := range []string{
-		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, false, false, false)",
+		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, false, false)",
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)",
 		"ws.owner_user_id = $3::uuid",
 		"conversation.session_id = $3::uuid",
@@ -388,7 +388,8 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 		"on conflict (organization_id, conversation_id, binding_id, session_id, user_id)",
 		"'whatsapp_attendance_joined'",
 		"'attendance_entry_id'",
-		"'ingress_sequence_cutoff'",
+		"whatsapp_attendance_send_consents",
+		"recordConfirmedAttendanceMarker",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("attendance repository is missing contract token %q", required)
@@ -396,7 +397,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
+func TestAttendanceReadRequiresOwnerOrCurrentGrant(t *testing.T) {
 	raw, err := os.ReadFile("attendance_operations.go")
 	if err != nil {
 		t.Fatalf("read attendance repository: %v", err)
@@ -404,16 +405,16 @@ func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
 	source := string(raw)
 
 	if !strings.Contains(source,
-		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, false, false, false)") {
-		t.Fatal("attendance GET must validate the card without requiring WhatsApp session ownership")
+		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, false, false)") {
+		t.Fatal("attendance GET must require owner or current grant on the session")
 	}
 	if !strings.Contains(source,
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)") {
-		t.Fatal("attendance POST must continue requiring session ownership and a connected session")
+		t.Fatal("attendance POST must require owner or current grant and a connected session")
 	}
 	if !strings.Contains(source,
-		"and (not $4::boolean or ws.owner_user_id = $3::uuid)") {
-		t.Fatal("session ownership must be conditional so managers can read attendance for visible cards")
+		"sessionGrantExistsSQL(\"ws\", \"$3::uuid\", true)") {
+		t.Fatal("attendance must validate a current send grant for a shared number")
 	}
 	if !strings.Contains(source, "IsoLevel:   pgx.RepeatableRead") ||
 		!strings.Contains(source, "AccessMode: pgx.ReadOnly") {

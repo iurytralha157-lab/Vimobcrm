@@ -3,72 +3,80 @@ package whatsapp
 import "time"
 
 const (
-	defaultAIWorkerInterval                      = time.Minute
-	defaultAIFollowUpWorkerInterval              = 10 * time.Minute
-	defaultWhatsAppOutboxWorkerInterval          = time.Second
-	defaultWhatsAppOutboxWorkerBatch             = 10
-	defaultWhatsAppOutboxWorkerConcurrency       = 4
-	maxWhatsAppOutboxWorkerConcurrency           = 16
-	defaultWhatsAppWebhookWorkerInterval         = time.Second
-	defaultWhatsAppWebhookWorkerBatch            = 10
-	defaultWhatsAppWebhookWorkerConcurrency      = 4
-	maxWhatsAppWebhookWorkerConcurrency          = 16
-	defaultWhatsAppMediaWorkerInterval           = 2 * time.Second
-	defaultWhatsAppMediaWorkerLease              = 5 * time.Minute
-	defaultWhatsAppMediaWorkerConcurrency        = 4
-	maxWhatsAppMediaWorkerConcurrency            = 16
-	defaultWhatsAppSessionSupervisorInitialDelay = 30 * time.Second
-	defaultWhatsAppSessionSupervisorInterval     = time.Minute
-	defaultWhatsAppSessionSupervisorBatch        = 50
+	defaultAIWorkerInterval                       = time.Minute
+	defaultAIFollowUpWorkerInterval               = 10 * time.Minute
+	defaultWhatsAppOutboxWorkerInterval           = time.Second
+	defaultWhatsAppOutboxWorkerBatch              = 10
+	defaultWhatsAppOutboxWorkerConcurrency        = 4
+	maxWhatsAppOutboxWorkerConcurrency            = 16
+	defaultWhatsAppWebhookWorkerInterval          = time.Second
+	defaultWhatsAppWebhookWorkerBatch             = 10
+	defaultWhatsAppWebhookWorkerConcurrency       = 4
+	maxWhatsAppWebhookWorkerConcurrency           = 16
+	defaultWhatsAppMediaWorkerInterval            = 2 * time.Second
+	defaultWhatsAppMediaWorkerLease               = 5 * time.Minute
+	defaultWhatsAppMediaWorkerConcurrency         = 4
+	maxWhatsAppMediaWorkerConcurrency             = 16
+	defaultWhatsAppNonLeadRetentionWorkerInterval = time.Minute
+	defaultWhatsAppNonLeadRetentionWorkerBatch    = 5
+	defaultWhatsAppSessionSupervisorInitialDelay  = 30 * time.Second
+	defaultWhatsAppSessionSupervisorInterval      = time.Minute
+	defaultWhatsAppSessionSupervisorBatch         = 50
 )
 
 type WorkerConfig struct {
-	AIWorkerEnabled               bool
-	AIWorkerInterval              time.Duration
-	AIFollowUpWorkerEnabled       bool
-	AIFollowUpWorkerInterval      time.Duration
-	OutboxWorkerEnabled           bool
-	OutboxWorkerInterval          time.Duration
-	OutboxWorkerBatch             int
-	OutboxWorkerConcurrency       int
-	WebhookWorkerEnabled          bool
-	WebhookWorkerInterval         time.Duration
-	WebhookWorkerBatch            int
-	WebhookWorkerConcurrency      int
-	MediaWorkerEnabled            bool
-	MediaWorkerInterval           time.Duration
-	MediaWorkerLease              time.Duration
-	MediaWorkerConcurrency        int
-	SessionSupervisorEnabled      bool
-	SessionSupervisorInitialDelay time.Duration
-	SessionSupervisorInterval     time.Duration
-	SessionSupervisorBatch        int
-	SessionSupervisorRecoveryIDs  []string
+	AIWorkerEnabled                bool
+	AIWorkerInterval               time.Duration
+	AIFollowUpWorkerEnabled        bool
+	AIFollowUpWorkerInterval       time.Duration
+	OutboxWorkerEnabled            bool
+	OutboxWorkerInterval           time.Duration
+	OutboxWorkerBatch              int
+	OutboxWorkerConcurrency        int
+	WebhookWorkerEnabled           bool
+	WebhookWorkerInterval          time.Duration
+	WebhookWorkerBatch             int
+	WebhookWorkerConcurrency       int
+	MediaWorkerEnabled             bool
+	MediaWorkerInterval            time.Duration
+	MediaWorkerLease               time.Duration
+	MediaWorkerConcurrency         int
+	NonLeadRetentionWorkerEnabled  bool
+	NonLeadRetentionWorkerInterval time.Duration
+	NonLeadRetentionWorkerBatch    int
+	SessionSupervisorEnabled       bool
+	SessionSupervisorInitialDelay  time.Duration
+	SessionSupervisorInterval      time.Duration
+	SessionSupervisorBatch         int
+	SessionSupervisorRecoveryIDs   []string
 }
 
 func DefaultWorkerConfig() WorkerConfig {
 	return WorkerConfig{
-		AIWorkerEnabled:               true,
-		AIWorkerInterval:              defaultAIWorkerInterval,
-		AIFollowUpWorkerEnabled:       true,
-		AIFollowUpWorkerInterval:      defaultAIFollowUpWorkerInterval,
-		OutboxWorkerEnabled:           true,
-		OutboxWorkerInterval:          defaultWhatsAppOutboxWorkerInterval,
-		OutboxWorkerBatch:             defaultWhatsAppOutboxWorkerBatch,
-		OutboxWorkerConcurrency:       defaultWhatsAppOutboxWorkerConcurrency,
-		WebhookWorkerEnabled:          true,
-		WebhookWorkerInterval:         defaultWhatsAppWebhookWorkerInterval,
-		WebhookWorkerBatch:            defaultWhatsAppWebhookWorkerBatch,
-		WebhookWorkerConcurrency:      defaultWhatsAppWebhookWorkerConcurrency,
-		MediaWorkerEnabled:            false,
-		MediaWorkerInterval:           defaultWhatsAppMediaWorkerInterval,
-		MediaWorkerLease:              defaultWhatsAppMediaWorkerLease,
-		MediaWorkerConcurrency:        defaultWhatsAppMediaWorkerConcurrency,
-		SessionSupervisorEnabled:      true,
-		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
-		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
-		SessionSupervisorBatch:        defaultWhatsAppSessionSupervisorBatch,
-		SessionSupervisorRecoveryIDs:  nil,
+		AIWorkerEnabled:                true,
+		AIWorkerInterval:               defaultAIWorkerInterval,
+		AIFollowUpWorkerEnabled:        true,
+		AIFollowUpWorkerInterval:       defaultAIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:            true,
+		OutboxWorkerInterval:           defaultWhatsAppOutboxWorkerInterval,
+		OutboxWorkerBatch:              defaultWhatsAppOutboxWorkerBatch,
+		OutboxWorkerConcurrency:        defaultWhatsAppOutboxWorkerConcurrency,
+		WebhookWorkerEnabled:           true,
+		WebhookWorkerInterval:          defaultWhatsAppWebhookWorkerInterval,
+		WebhookWorkerBatch:             defaultWhatsAppWebhookWorkerBatch,
+		WebhookWorkerConcurrency:       defaultWhatsAppWebhookWorkerConcurrency,
+		MediaWorkerEnabled:             false,
+		MediaWorkerInterval:            defaultWhatsAppMediaWorkerInterval,
+		MediaWorkerLease:               defaultWhatsAppMediaWorkerLease,
+		MediaWorkerConcurrency:         defaultWhatsAppMediaWorkerConcurrency,
+		NonLeadRetentionWorkerEnabled:  false,
+		NonLeadRetentionWorkerInterval: defaultWhatsAppNonLeadRetentionWorkerInterval,
+		NonLeadRetentionWorkerBatch:    defaultWhatsAppNonLeadRetentionWorkerBatch,
+		SessionSupervisorEnabled:       true,
+		SessionSupervisorInitialDelay:  defaultWhatsAppSessionSupervisorInitialDelay,
+		SessionSupervisorInterval:      defaultWhatsAppSessionSupervisorInterval,
+		SessionSupervisorBatch:         defaultWhatsAppSessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:   nil,
 	}
 }
 
@@ -102,6 +110,12 @@ func (config WorkerConfig) normalized() WorkerConfig {
 		config.MediaWorkerLease = defaults.MediaWorkerLease
 	}
 	config.MediaWorkerConcurrency = normalizeMediaWorkerConcurrency(config.MediaWorkerConcurrency)
+	if config.NonLeadRetentionWorkerInterval <= 0 {
+		config.NonLeadRetentionWorkerInterval = defaults.NonLeadRetentionWorkerInterval
+	}
+	config.NonLeadRetentionWorkerBatch = normalizeWorkerBatch(
+		config.NonLeadRetentionWorkerBatch, defaults.NonLeadRetentionWorkerBatch,
+	)
 	if config.SessionSupervisorInitialDelay <= 0 {
 		config.SessionSupervisorInitialDelay = defaults.SessionSupervisorInitialDelay
 	}

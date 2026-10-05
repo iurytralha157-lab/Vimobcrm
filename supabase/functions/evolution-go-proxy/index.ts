@@ -238,16 +238,11 @@ function sendMediaBody(body: JsonRecord, allowProviderMessageId: boolean, forced
 }
 
 function isSendAction(action: string) {
-  return [
-    "send.text",
-    "send.media",
-    "send.audio",
-    "send.sticker",
-    "send.location",
-    "send.contact",
-    "send.link",
-    "send.poll",
-  ].includes(action);
+  return action.startsWith("send.");
+}
+
+function isDirectMessageMutationAction(action: string) {
+  return isSendAction(action) || ["message.react", "message.edit", "message.delete"].includes(action);
 }
 
 function getInstanceCandidates(session: any, payload: any) {
@@ -446,12 +441,6 @@ function endpointFor(
       return { method: "POST", path: "/send/media", body: sendMediaBody(body, allowProviderMessageId, "audio") };
     case "send.sticker":
       return { method: "POST", path: "/send/sticker", body };
-    case "message.delete":
-      return { method: "POST", path: "/message/delete", body };
-    case "message.edit":
-      return { method: "POST", path: "/message/edit", body };
-    case "message.react":
-      return { method: "POST", path: "/message/react", body };
     case "message.markread":
       if (body.allowWhatsAppReadReceipt !== true) {
         return { skipped: true, reason: "read_receipts_disabled" };
@@ -525,6 +514,13 @@ Deno.serve(async (req) => {
     const payload = await req.json().catch(() => ({}));
     const action = String(payload.action || "");
     if (!action) return json({ ok: false, error: "Missing action" }, 400);
+    if (isDirectMessageMutationAction(action)) {
+      return json({
+        ok: false,
+        error: "Direct WhatsApp message mutations are disabled. Use the CRM conversation API.",
+        effect_not_attempted: true,
+      }, 410);
+    }
 
     const session = await getSession(payload, supabaseAdmin);
     const body = payload.body || {};
@@ -608,9 +604,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Only the private worker may choose the deterministic provider stanza ID.
-    // Browser calls keep their historical send behavior, but cannot inject an
-    // ID that could collide with a different provider message.
+    // Non-message provider operations retain their existing session authorization.
+    // Message mutations must enter through the CRM conversation API/outbox.
     const allowProviderMessageId = auth.serviceRole === true && !!session?.id;
     const endpoint = endpointFor(action, body, instanceKey, allowProviderMessageId);
     if ("skipped" in endpoint) return json({ ok: true, ...endpoint });

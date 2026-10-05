@@ -149,12 +149,14 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
 		data: {
 			joined: true,
+			confirmationRequired: false,
 			currentEntry: {
 				id: ID,
 				userId: USER_ID,
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
 			},
 			entries: [{
 				id: ID,
@@ -162,6 +164,9 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 				userName: emojiDisplayName,
 				sessionId: ORG_ID,
 				joinedAt: '2026-09-23T12:00:00.000Z',
+				entrySource: 'manual',
+				markerAt: '2026-09-23T12:00:01.000Z',
+				markerKind: 'joined',
 			}],
 			created: true,
 		},

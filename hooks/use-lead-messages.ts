@@ -3,7 +3,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from '@tanstack/react-query';
-import { whatsappAPI, type WhatsAppMessage } from '@/lib/api/whatsapp';
+import { whatsappAPI, type WhatsAppConversation, type WhatsAppMessage } from '@/lib/api/whatsapp';
 import { useWhatsAppQueryScope } from '@/hooks/use-whatsapp-query-scope';
 import {
   flattenWhatsAppMessagePages,
@@ -20,6 +20,7 @@ export interface LeadMessage extends WhatsAppMessage {
 
 type LeadMessagePage = {
   messages: LeadMessage[];
+  conversations: WhatsAppConversation[];
   nextCursor: string | null;
 };
 
@@ -42,7 +43,7 @@ export function useLeadMessages(
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam, signal }): Promise<LeadMessagePage> => {
       if (!leadId || !scope.organizationId) {
-        return { messages: [], nextCursor: null };
+        return { messages: [], conversations: [], nextCursor: null };
       }
 
       const history = await whatsappAPI.getHistoryAccess({
@@ -57,6 +58,7 @@ export function useLeadMessages(
       if (pageParam) {
         return {
           messages: serverMessages,
+          conversations: [],
           nextCursor: history.nextCursor,
         };
       }
@@ -67,6 +69,7 @@ export function useLeadMessages(
           serverMessages,
           cached?.pages[0]?.messages,
         ),
+        conversations: history.conversations ?? (history.conversation ? [history.conversation] : []),
         nextCursor: history.nextCursor,
       };
     },
@@ -88,6 +91,7 @@ export function useLeadMessages(
     ...query,
     data: messages,
     messages,
+    historyConversations: query.data?.pages[0]?.conversations ?? [],
     hasOlderMessages: Boolean(query.hasNextPage),
     loadOlderMessages: query.fetchNextPage,
     isLoadingOlder: query.isFetchingNextPage,

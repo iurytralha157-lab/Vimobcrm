@@ -854,7 +854,7 @@ test("ajustes visuais do fluxo WhatsApp preservam os dados e escondem codigos in
   assert.doesNotMatch(cardSource, /`WhatsApp · \$\{campaignName\}`/);
 });
 
-test("resposta automática da fila WhatsApp permanece opt-in e limitada", () => {
+test("fila WhatsApp não oferece nem ativa resposta automática da distribuição", () => {
   const editorSource = readFileSync(
     resolve(
       process.cwd(),
@@ -864,13 +864,6 @@ test("resposta automática da fila WhatsApp permanece opt-in e limitada", () => 
   );
   const formContractSource = readFileSync(
     resolve(process.cwd(), "lib/round-robin/distribution-queue-form.ts"),
-    "utf8",
-  );
-  const autoReplySectionSource = readFileSync(
-    resolve(
-      process.cwd(),
-      "components/features/round-robin/distribution-queue-editor/DistributionQueueWhatsAppAutoReplySection.tsx",
-    ),
     "utf8",
   );
   const createHookSource = readFileSync(
@@ -902,21 +895,14 @@ test("resposta automática da fila WhatsApp permanece opt-in e limitada", () => 
     formContractSource,
     /MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS = 3600/,
   );
-  assert.match(
-    editorSource,
-    /\{hasWhatsAppMessageCondition && \([\s\S]*?<DistributionQueueWhatsAppAutoReplySection/,
-  );
-  assert.match(
-    autoReplySectionSource,
-    /data-tour="distribution-queue-whatsapp-auto-reply"/,
-  );
+  assert.doesNotMatch(editorSource, /DistributionQueueWhatsAppAutoReplySection/);
   assert.match(
     editorSource,
     /removedLastWhatsAppCondition[\s\S]*?whatsapp_distribution_auto_reply_enabled: false/,
   );
   assert.match(
     editorSource,
-    /sanitizedHasWhatsAppMessageCondition && whatsappAutoReplyEnabled/,
+    /whatsapp_distribution_auto_reply_enabled: false/,
   );
 });
 

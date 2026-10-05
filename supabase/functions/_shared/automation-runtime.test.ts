@@ -1,6 +1,7 @@
 import {
   isPrivateIP,
   normalizeDurableWhatsAppReservation,
+  processEvent,
   replyWinsDelayWindow,
 } from "./automation-runtime.ts";
 import { evaluateAutomationCondition } from "../../../lib/automations/engine.ts";
@@ -64,5 +65,63 @@ Deno.test("DB-first WhatsApp replay continues from an existing sending reservati
   });
   if (normalized.execute !== true) {
     throw new Error("an idempotent DB-first replay must reach the enqueue RPC");
+  }
+});
+
+Deno.test("recorded inbound replies reach waiting follow-ups but do not start new automations", async () => {
+  const calls: string[] = [];
+  const event = {
+    id: "00000000-0000-4000-8000-000000000001",
+    organization_id: "00000000-0000-4000-8000-000000000002",
+    event_type: "message_received",
+    lead_id: "00000000-0000-4000-8000-000000000003",
+    conversation_id: "00000000-0000-4000-8000-000000000004",
+    payload: {
+      message_id: "00000000-0000-4000-8000-000000000005",
+      conversation_id: "00000000-0000-4000-8000-000000000004",
+      occurred_at: "2026-10-02T12:00:00Z",
+      message_type: "text",
+      content: "Resposta do cliente",
+    },
+    attempts: 1,
+  };
+  const makeQuery = (table: string, state: string) => {
+    const query = {
+      select: () => query,
+      eq: () => query,
+      ilike: () => query,
+      limit: async () => ({ data: [{}], error: null }),
+      maybeSingle: async () => ({
+        data: table === "whatsapp_messages" ? { capture_state: state } : null,
+        error: null,
+      }),
+    };
+    return query;
+  };
+  for (const state of ["recorded", "captured", "suppressed"]) {
+    calls.length = 0;
+    const client = {
+      from(table: string) {
+        calls.push(`from:${table}`);
+        if (table === "organization_modules" || table === "whatsapp_messages" || table === "leads") {
+          return makeQuery(table, state);
+        }
+        throw new Error(`unexpected table: ${table}`);
+      },
+      async rpc(name: string) {
+        calls.push(`rpc:${name}`);
+        return { data: { ok: true }, error: null };
+      },
+    } as unknown as Parameters<typeof processEvent>[0];
+    const candidate = state === "captured"
+      ? { ...event, aggregate_id: event.payload.message_id, payload: { ...event.payload, message_id: undefined } }
+      : event;
+    await processEvent(client, candidate);
+    if (calls.includes("rpc:process_automation_inbound_message") !== (state !== "suppressed")) {
+      throw new Error(`${state} did not apply the expected reply-handling gate`);
+    }
+    if (calls.includes("from:leads") !== (state === "captured")) {
+      throw new Error(`${state} did not separate reply handling from new automation startup`);
+    }
   }
 });

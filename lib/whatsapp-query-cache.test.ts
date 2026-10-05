@@ -13,6 +13,7 @@ import {
   matchesWhatsAppMessagesQueryKey,
   mergeWhatsAppLatestMessagePage,
   mergeWhatsAppMessagesWithLocalState,
+  removeRevokedWhatsAppSession,
   resolveWhatsAppConversationSessionFilter,
   resolveWhatsAppSessionStatus,
   shouldRebaseWhatsAppMessagePages,
@@ -322,6 +323,61 @@ test('preserva mensagem local ate o servidor devolver a linha canonica', () => {
     mergeWhatsAppMessagesWithLocalState([canonical], [local], beforeTimeout),
     [canonical],
   )
+})
+
+test('dois envios simultaneos mantem identidades separadas com respostas fora de ordem', () => {
+  const localFirst = {
+    id: 'client-first', message_id: 'client-first', client_message_id: 'client-first',
+    status: 'pending', sent_at: '2026-07-12T12:00:00.000Z', content: 'Primeira',
+  }
+  const localSecond = {
+    id: 'client-second', message_id: 'client-second', client_message_id: 'client-second',
+    status: 'pending', sent_at: '2026-07-12T12:00:01.000Z', content: 'Segunda',
+  }
+  const secondAccepted = {
+    ...localSecond, id: 'database-second', message_id: 'provider-second', status: 'sent',
+  }
+  const afterSecond = mergeWhatsAppMessagesWithLocalState(
+    [secondAccepted], [localFirst, localSecond],
+    { nowMs: Date.parse('2026-07-12T12:00:02.000Z') },
+  )
+  assert.deepEqual(afterSecond.map((message) => message.id), ['client-first', 'database-second'])
+
+  const firstAccepted = {
+    ...localFirst, id: 'database-first', message_id: 'provider-first', status: 'sent',
+  }
+  const settled = mergeWhatsAppMessagesWithLocalState(
+    [secondAccepted, firstAccepted], afterSecond,
+    { nowMs: Date.parse('2026-07-12T12:00:03.000Z') },
+  )
+  assert.deepEqual(settled.map((message) => message.id), ['database-first', 'database-second'])
+  assert.deepEqual(settled.map((message) => message.content), ['Primeira', 'Segunda'])
+})
+
+test('revogacao do envio A retira apenas sua sessao mesmo se B terminar com sucesso', () => {
+  const sessions = Object.assign([
+    { id: 'session-a', status: 'connected' },
+    { id: 'session-b', status: 'connected' },
+  ], { meta: { maxSessions: 3 } })
+  const afterARevoked = removeRevokedWhatsAppSession(sessions, 'session-a')
+  assert.deepEqual(afterARevoked?.map((session) => session.id), ['session-b'])
+  assert.deepEqual(afterARevoked?.meta, sessions.meta)
+  const failedA = {
+    id: 'client-a', message_id: 'client-a', client_message_id: 'client-a',
+    status: 'failed', sent_at: '2026-07-12T12:00:00.000Z', content: 'A',
+  }
+  const pendingB = {
+    id: 'client-b', message_id: 'client-b', client_message_id: 'client-b',
+    status: 'pending', sent_at: '2026-07-12T12:00:01.000Z', content: 'B',
+  }
+  const acceptedB = { ...pendingB, id: 'database-b', status: 'sent' }
+  const messages = mergeWhatsAppMessagesWithLocalState([acceptedB], [failedA, pendingB], {
+    nowMs: Date.parse('2026-07-12T12:00:02.000Z'),
+  })
+  assert.deepEqual(messages.map((message) => [message.id, message.status]), [
+    ['client-a', 'failed'], ['database-b', 'sent'],
+  ])
+  assert.deepEqual(afterARevoked?.map((session) => session.id), ['session-b'])
 })
 
 test('preserva todos os estados locais de entrega durante reconciliacao', () => {

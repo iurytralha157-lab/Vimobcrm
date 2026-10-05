@@ -25,6 +25,9 @@ export async function callEvolutionGo<T = EvolutionGoData>(
   action: string,
   payload: EvolutionGoPayload = {},
 ): Promise<EvolutionGoResponse<T>> {
+  if (action.startsWith("send.") || ["message.react", "message.edit", "message.delete"].includes(action)) {
+    return { ok: false, error: "Alteração direta de mensagem desativada. Use a conversa do CRM." };
+  }
   if (!payload.session_id) {
     return { ok: false, error: "session_id is required" };
   }

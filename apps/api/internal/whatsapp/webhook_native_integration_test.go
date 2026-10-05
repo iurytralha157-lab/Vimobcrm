@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -139,13 +141,18 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	}
 
 	repo := NewRepository(postgres, nil, StorageConfig{})
+	// This legacy sub-scenario intentionally starts outside the recording rollout.
+	repo.functions.inboundRecordingSessionIDs = nil
+	var fixtureEventSequence atomic.Int64
 	item := func(event, fixture string) pendingEvolutionWebhook {
 		return pendingEvolutionWebhook{
+			ID:             fmt.Sprintf("00000000-0000-4000-8000-%012d", fixtureEventSequence.Add(1)),
 			OrganizationID: organizationID,
 			SessionID:      sessionID,
 			EventType:      event,
 			Payload:        readNativeFixture(t, fixture),
 			ProcessingLane: evolutionWebhookLaneLive,
+			CreatedAt:      time.Now().UTC(),
 		}
 	}
 
@@ -171,9 +178,255 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if err := postgres.Pool().QueryRow(ctx, `select unread_count from public.whatsapp_conversations where id = $1::uuid`, conversationID).Scan(&unreadAfter); err != nil {
 		t.Fatal(err)
 	}
-	if messageCount != 1 || messageLeadID != leadID || direction != "inbound" || unreadAfter != unreadBefore+1 {
+	if messageCount != 1 || messageLeadID != leadID || direction != "inbound" || unreadAfter != unreadBefore {
 		t.Fatalf("native replay state = count:%d lead:%s direction:%s unread:%d->%d", messageCount, messageLeadID, direction, unreadBefore, unreadAfter)
 	}
+	var suppressedState, suppressedContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(capture_state, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-text-1'
+	`, organizationID, sessionID).Scan(&suppressedState, &suppressedContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedState != "suppressed" || suppressedContent != "" {
+		t.Fatalf("disabled inbound recording = state:%q content:%q", suppressedState, suppressedContent)
+	}
+
+	// Enable one test number only after the original row was stored. A signed
+	// duplicate must not reveal its formerly suppressed content.
+	repo.functions.inboundRecordingSessionIDs = []string{sessionID}
+	replayAfterEnable := item("messages.upsert", "message_text.json")
+	replayAfterEnable.ID = "77777777-7777-4777-8777-777777777777"
+	replayAfterEnable.CreatedAt = time.Now().UTC()
+	if handled, err := repo.processEvolutionWebhookNative(ctx, replayAfterEnable); err != nil || !handled {
+		t.Fatalf("suppressed replay after opt-in = handled:%v error:%v", handled, err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(capture_state, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-text-1'
+	`, organizationID, sessionID).Scan(&suppressedState, &suppressedContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedState != "suppressed" || suppressedContent != "" {
+		t.Fatalf("persisted suppression changed on retry = state:%q content:%q", suppressedState, suppressedContent)
+	}
+
+	newInbound := replayAfterEnable
+	newInbound.ID = "88888888-8888-4888-8888-888888888888"
+	newInbound.Payload = []byte(strings.ReplaceAll(string(newInbound.Payload), "provider-inbound-text-1", "provider-inbound-recorded-1"))
+	for attempt := 0; attempt < 2; attempt++ {
+		if handled, err := repo.processEvolutionWebhookNative(ctx, newInbound); err != nil || !handled {
+			t.Fatalf("recorded inbound attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		}
+	}
+	var recordedRows int
+	var recordedState, recordedContent, recordedMetadataState string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(capture_state), ''),
+		       coalesce(max(content), ''),
+		       coalesce(max(metadata #>> '{whatsapp_attendance_capture,state}'), '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-inbound-recorded-1'
+	`, organizationID, sessionID).Scan(&recordedRows, &recordedState, &recordedContent, &recordedMetadataState); err != nil {
+		t.Fatal(err)
+	}
+	if recordedRows != 1 || recordedState != "recorded" || recordedContent != "Mensagem recebida pelo backend" || recordedMetadataState != "recorded" {
+		t.Fatalf("recorded inbound retry = rows:%d state:%q content:%q metadata:%q", recordedRows, recordedState, recordedContent, recordedMetadataState)
+	}
+	var nonleadConversationID, eventualLeadID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, assigned_user_id, remote_jid, contact_phone, unread_count
+		) values ($1::uuid, $2::uuid, $3::uuid, '5511999992222@s.whatsapp.net', '5511999992222', 0)
+		returning id::text
+	`, organizationID, sessionID, userID).Scan(&nonleadConversationID); err != nil {
+		t.Fatal(err)
+	}
+	nonleadMessage := nativeEvolutionMessage{
+		ProviderMessageID: "provider-nonlead-recorded-1",
+		RemoteJID:         "5511999992222@s.whatsapp.net",
+		ContactPhone:      "5511999992222",
+		Content:           "Histórico antes do cadastro",
+		MessageType:       "text",
+		SentAt:            time.Now().UTC(),
+	}
+	nonleadSession := nativeEvolutionSession{OrganizationID: organizationID, ID: sessionID}
+	nonleadConversation := nativeEvolutionConversation{ID: nonleadConversationID, RemoteJID: nonleadMessage.RemoteJID}
+	firstTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertedPrelead, _, recordedPreleadMessageID, preleadInsertErr := insertNativeEvolutionMessage(ctx, firstTx, nonleadSession, nonleadConversation, nonleadMessage, "recorded", "")
+	if preleadInsertErr != nil || !insertedPrelead {
+		_ = firstTx.Rollback(ctx)
+		t.Fatalf("prelead recorded insert = inserted:%v error:%v", insertedPrelead, preleadInsertErr)
+	}
+	suppressedPreleadMessage := nonleadMessage
+	suppressedPreleadMessage.ProviderMessageID = "provider-nonlead-suppressed-1"
+	suppressedPreleadMessage.Content = "Conteúdo que deve permanecer oculto"
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, firstTx, nonleadSession, nonleadConversation, suppressedPreleadMessage, "suppressed", ""); err != nil || !inserted {
+		_ = firstTx.Rollback(ctx)
+		t.Fatalf("prelead suppressed insert = inserted:%v error:%v", inserted, err)
+	}
+	if err := firstTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A recorded pre-lead event can have an inbound log with no card. A provider
+	// retry after registration must not rewrite either immutable attribution.
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_inbound_logs (
+			organization_id, session_id, conversation_id, lead_id, match_details
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, null,
+			jsonb_build_object('message_id', $4, 'message_row_id', $5)
+		)
+	`, organizationID, sessionID, nonleadConversationID, nonleadMessage.ProviderMessageID, recordedPreleadMessageID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.leads (organization_id, assigned_user_id, name, phone, source)
+		values ($1::uuid, $2::uuid, 'Contato registrado depois', '5511999992222', 'manual')
+		returning id::text
+	`, organizationID, userID).Scan(&eventualLeadID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding($1::uuid, $2::uuid, $3::uuid, null)
+	`, organizationID, nonleadConversationID, eventualLeadID); err != nil {
+		t.Fatal(err)
+	}
+	nonleadConversation.LeadID = eventualLeadID
+	nonleadConversation.MessageLeadID = eventualLeadID
+	replayTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, replayTx, nonleadSession, nonleadConversation, nonleadMessage, "recorded", ""); err != nil || inserted {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("prelead replay after registration = inserted:%v error:%v", inserted, err)
+	}
+	if inserted, _, _, err := insertNativeEvolutionMessage(ctx, replayTx, nonleadSession, nonleadConversation, suppressedPreleadMessage, "recorded", ""); err != nil || inserted {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("suppressed prelead retry after opt-in = inserted:%v error:%v", inserted, err)
+	}
+	if err := replayTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var preleadCapture, preleadLeadID, preleadContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-nonlead-recorded-1'
+	`, organizationID, sessionID).Scan(&preleadCapture, &preleadLeadID, &preleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if preleadCapture != "recorded" || preleadLeadID != "" || preleadContent != nonleadMessage.Content {
+		t.Fatalf("prelead recorded history changed on retry = state:%q lead:%q content:%q", preleadCapture, preleadLeadID, preleadContent)
+	}
+	var suppressedPreleadCapture, suppressedPreleadLeadID, suppressedPreleadContent string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = $3
+	`, organizationID, sessionID, suppressedPreleadMessage.ProviderMessageID).Scan(&suppressedPreleadCapture, &suppressedPreleadLeadID, &suppressedPreleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if suppressedPreleadCapture != "suppressed" || suppressedPreleadLeadID != "" || suppressedPreleadContent != "" {
+		t.Fatalf("suppressed prelead history revived on retry = state:%q lead:%q content:%q", suppressedPreleadCapture, suppressedPreleadLeadID, suppressedPreleadContent)
+	}
+	preleadReplay := item("messages.upsert", "message_text.json")
+	preleadReplay.ID = "99999999-9999-4999-8999-999999999999"
+	preleadReplay.CreatedAt = time.Now().UTC()
+	preleadReplay.Payload = []byte(strings.ReplaceAll(
+		strings.ReplaceAll(
+			strings.ReplaceAll(string(preleadReplay.Payload), "provider-inbound-text-1", nonleadMessage.ProviderMessageID),
+			"5511999991111", "5511999992222",
+		),
+		"Mensagem recebida pelo backend", nonleadMessage.Content,
+	))
+	var preleadReplayPayload map[string]any
+	if err := json.Unmarshal(preleadReplay.Payload, &preleadReplayPayload); err != nil {
+		t.Fatal(err)
+	}
+	preleadReplayPayload[evolutionWebhookRoutingMetaKey] = map[string]any{
+		"routing_key": "__session__",
+		"routing_snapshot": map[string]any{
+			"version": 1,
+			"messages": []map[string]any{{
+				"version":                      1,
+				"organization_id":              organizationID,
+				"session_id":                   sessionID,
+				"provider_message_id":          nonleadMessage.ProviderMessageID,
+				"inbox_event_key":              suffix + "-prelead-replay",
+				"processing_lane":              "live",
+				"state":                        "unlinked",
+				"conversation_id":              nonleadConversationID,
+				"context_kind":                 "organic",
+				"managed_message_distribution": false,
+				"managed_event_pending":        false,
+				"managed_event_handled":        false,
+				"binding_eligible":             false,
+				"routing_key":                  "__session__",
+				"target_mode":                  "snapshot",
+				"ingress_sequence":             1,
+			}},
+		},
+	}
+	preleadReplay.Payload, err = json.Marshal(preleadReplayPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := repo.processEvolutionWebhookNative(ctx, preleadReplay); err != nil || !handled {
+		t.Fatalf("prelead webhook retry after registration = handled:%v error:%v", handled, err)
+	}
+	var preleadLogRows, preleadPhoneLeadRows int
+	var preleadLogLeadID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(lead_id::text), '')
+		from public.whatsapp_inbound_logs
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and match_details->>'message_id' = $3
+	`, organizationID, sessionID, nonleadMessage.ProviderMessageID).Scan(&preleadLogRows, &preleadLogLeadID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer from public.leads
+		where organization_id = $1::uuid and phone = '5511999992222'
+	`, organizationID).Scan(&preleadPhoneLeadRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select capture_state, coalesce(lead_id::text, ''), coalesce(content, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = $3
+	`, organizationID, sessionID, nonleadMessage.ProviderMessageID).Scan(&preleadCapture, &preleadLeadID, &preleadContent); err != nil {
+		t.Fatal(err)
+	}
+	if preleadLogRows != 1 || preleadLogLeadID != "" || preleadPhoneLeadRows != 1 || preleadCapture != "recorded" || preleadLeadID != "" || preleadContent != nonleadMessage.Content {
+		t.Fatalf("prelead webhook retry changed original event = logs:%d log lead:%q leads:%d state:%q lead:%q content:%q", preleadLogRows, preleadLogLeadID, preleadPhoneLeadRows, preleadCapture, preleadLeadID, preleadContent)
+	}
+	preleadHistory, err := repo.GetHistoryAccess(ctx, tenant.Context{
+		OrganizationID: organizationID,
+		UserID:         userID,
+		MemberRole:     "user",
+		Permissions:    []string{permissions.LeadViewOwn},
+	}, HistoryAccessFilter{
+		LeadID:         eventualLeadID,
+		ConversationID: nonleadConversationID,
+		MessageFilter:  MessageFilter{Limit: 50},
+	})
+	if err != nil || len(preleadHistory.Messages) != 1 || preleadHistory.Messages[0].MessageID != nonleadMessage.ProviderMessageID {
+		t.Fatalf("prelead recorded history after replay = %#v, error:%v", preleadHistory.Messages, err)
+	}
+	repo.functions.inboundRecordingSessionIDs = nil
 
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.whatsapp_sessions set phone_number = 'André Rocha' where id = $1::uuid
@@ -191,6 +444,8 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("outbound self JID repaired session phone = %q", repairedSessionPhone)
 	}
 
+	// The media flow below requires recording after the legacy suppression case.
+	repo.functions.inboundRecordingSessionIDs = []string{sessionID}
 	mediaBytes := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 	var mediaUploads atomic.Int32
 	storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -284,6 +539,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		)
 	}
 	storageRepo := NewRepository(postgres, nil, StorageConfig{ProjectURL: storageServer.URL, APIKey: "sb_secret_whatsapp_test"})
+	storageRepo.functions.inboundRecordingSessionIDs = []string{sessionID}
 	if handled, err := storageRepo.processEvolutionWebhookNative(ctx, mediaItem); err != nil || !handled {
 		t.Fatalf("native media placeholder replay = handled:%v error:%v", handled, err)
 	}
@@ -366,6 +622,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			APIKey: "provider-key",
 		},
 	})
+	providerRepo.functions.inboundRecordingSessionIDs = []string{sessionID}
 	if handled, err := providerRepo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_media_provider.json")); err != nil || !handled {
 		t.Fatalf("provider media enqueue = handled:%v error:%v", handled, err)
 	}
@@ -396,6 +653,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			APIKey: "provider-key",
 		},
 	})
+	failingProviderRepo.functions.inboundRecordingSessionIDs = []string{sessionID}
 	failedProviderItem := item("messages.upsert", "message_media_provider.json")
 	failedProviderItem.Payload = []byte(strings.ReplaceAll(string(failedProviderItem.Payload), "provider-inbound-image-download-1", "provider-inbound-image-download-failed"))
 	failedProviderItem.Payload = []byte(strings.ReplaceAll(
@@ -447,8 +705,45 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		)
 	}
 
-	reactionPayload := strings.ReplaceAll(string(readNativeFixture(t, "message_reaction.json")), "provider-outbound-for-reaction", "provider-outbound-status")
-	reactionItem := pendingEvolutionWebhook{OrganizationID: organizationID, SessionID: sessionID, EventType: "messages.upsert", Payload: []byte(reactionPayload)}
+	// A reaction is visible only inside an attendance and against a captured
+	// target. The earlier outbound fixture intentionally predates attendance.
+	attendanceTag, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_attendance_entries (
+			organization_id, conversation_id, session_id, lead_id,
+			binding_id, user_id, actor_name_snapshot, joined_at,
+			ingress_sequence_cutoff
+		)
+		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+		       binding.id, $5::uuid, 'Native reaction test actor',
+		       now() - interval '1 minute', 0
+		from public.whatsapp_conversation_lead_bindings binding
+		where binding.organization_id = $1::uuid
+		  and binding.conversation_id = $2::uuid
+		  and binding.session_id = $3::uuid
+		  and binding.lead_id = $4::uuid
+		  and binding.active_to is null
+	`, organizationID, conversationID, sessionID, leadID, userID)
+	if err != nil || attendanceTag.RowsAffected() != 1 {
+		t.Fatalf("reaction fixture attendance entry = rows:%d error:%v", attendanceTag.RowsAffected(), err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_messages set capture_state = 'captured'
+		where id = $1::uuid and organization_id = $2::uuid
+	`, outboundRowID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	reactionItem := item("messages.upsert", "message_reaction.json")
+	var reactionEnvelope map[string]any
+	if err := json.Unmarshal(reactionItem.Payload, &reactionEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	reactionData := reactionEnvelope["data"].(map[string]any)["message"].(map[string]any)
+	reactionData["Info"].(map[string]any)["Timestamp"] = time.Now().Unix()
+	reactionData["Message"].(map[string]any)["reactionMessage"].(map[string]any)["key"].(map[string]any)["id"] = "provider-outbound-status"
+	reactionItem.Payload, err = json.Marshal(reactionEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		if handled, err := repo.processEvolutionWebhookNative(ctx, reactionItem); err != nil || !handled {
 			t.Fatalf("native reaction attempt %d = handled:%v error:%v", attempt+1, handled, err)
@@ -838,6 +1133,34 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	`, organizationID, sessionID, suffix+" inbound", roundRobinID).Scan(&inboundRuleID); err != nil {
 		t.Fatal(err)
 	}
+	// A legacy inbound rule cannot invent a canonical queue. A confirmed CTWA
+	// with no matching distribution rule must still create a card for the owner.
+	noQueueCampaign := item("messages.upsert", "meta_ctwa_instagram.json")
+	noQueueCampaign.Payload = []byte(strings.ReplaceAll(
+		strings.ReplaceAll(string(noQueueCampaign.Payload), "provider-meta-ctwa-instagram-1", "provider-meta-ctwa-no-queue-1"),
+		"559491298288", "559491298287",
+	))
+	if handled, err := repo.processEvolutionWebhookNative(ctx, noQueueCampaign); err != nil || !handled {
+		t.Fatalf("confirmed CTWA without canonical queue = handled:%v error:%v", handled, err)
+	}
+	var noQueueAssignedUserID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(assigned_user_id::text, '')
+		from public.leads
+		where organization_id = $1::uuid and normalize_phone(phone) = normalize_phone('559491298287')
+	`, organizationID).Scan(&noQueueAssignedUserID); err != nil {
+		t.Fatal(err)
+	}
+	if noQueueAssignedUserID != userID {
+		t.Fatalf("confirmed CTWA without canonical queue assigned to %q, want session owner %q", noQueueAssignedUserID, userID)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.round_robin_rules (
+		  organization_id, round_robin_id, match_type, match_value, is_active, priority
+		) values ($1::uuid, $2::uuid, 'campaign_contains', 'Lumy Penha', true, 100)
+	`, organizationID, roundRobinID); err != nil {
+		t.Fatal(err)
+	}
 
 	verifiedCampaign := item("messages.upsert", "meta_ctwa_instagram.json")
 	var verifiedLeadCount int
@@ -969,6 +1292,16 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	}
 	autoReplyItem := item("messages.upsert", "message_text.json")
 	autoReplyItem.Payload = []byte(strings.ReplaceAll(string(autoReplyItem.Payload), "provider-inbound-text-1", "provider-inbound-autoreply-1"))
+	var autoReplyPayload map[string]any
+	if err := json.Unmarshal(autoReplyItem.Payload, &autoReplyPayload); err != nil {
+		t.Fatal(err)
+	}
+	autoReplyMessages := mapFromAny(autoReplyPayload["data"])["messages"].([]any)
+	mapFromAny(autoReplyMessages[0])["Info"].(map[string]any)["Timestamp"] = time.Now().Unix()
+	autoReplyItem.Payload, err = json.Marshal(autoReplyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		if handled, err := repo.processEvolutionWebhookNative(ctx, autoReplyItem); err != nil || !handled {
 			t.Fatalf("native auto-reply enqueue attempt %d = handled:%v error:%v", attempt+1, handled, err)

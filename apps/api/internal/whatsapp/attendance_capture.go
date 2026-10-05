@@ -110,23 +110,32 @@ func currentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, conv
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
+		join public.leads lead
+		  on lead.organization_id = entry.organization_id
+		 and lead.id = entry.lead_id
 		join public.users actor
 		  on actor.id = entry.user_id
-		 and actor.organization_id = entry.organization_id
 		 and coalesce(actor.is_active, false) = true
 		join public.organization_members member
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
 		  and entry.user_id = $6::uuid
+		  and (
+		    session.owner_user_id = entry.user_id
+		    or (
+		      lead.assigned_user_id = entry.user_id
+		      and `+sessionGrantExistsSQL("session", "entry.user_id", true)+`
+		    )
+		  )
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID, userID).Scan(&entryID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -156,25 +165,34 @@ func eventAttendanceEntry(
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
+		join public.leads lead
+		  on lead.organization_id = entry.organization_id
+		 and lead.id = entry.lead_id
 		join public.users actor
 		  on actor.id = entry.user_id
-		 and actor.organization_id = entry.organization_id
 		 and coalesce(actor.is_active, false) = true
 		join public.organization_members member
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
 		  and (
+		    session.owner_user_id = entry.user_id
+		    or (
+		      lead.assigned_user_id = entry.user_id
+		      and `+sessionGrantExistsSQL("session", "entry.user_id", true)+`
+		    )
+		  )
+		  and (
 		    (
-		      entry.entry_source = 'manual'
+		      entry.entry_source in ('manual', 'implicit')
 		      and entry.joined_at <= $6::timestamptz
 		      and entry.joined_at <= $7::timestamptz
 		      and ($8::bigint = 0 or entry.ingress_sequence_cutoff < $8::bigint)
@@ -224,22 +242,31 @@ func anyCurrentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, c
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
+		join public.leads lead
+		  on lead.organization_id = entry.organization_id
+		 and lead.id = entry.lead_id
 		join public.users actor
 		  on actor.id = entry.user_id
-		 and actor.organization_id = entry.organization_id
 		 and coalesce(actor.is_active, false) = true
 		join public.organization_members member
 		  on member.organization_id = entry.organization_id
 		 and member.user_id = entry.user_id
 		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where entry.organization_id = $1::uuid
 		  and entry.conversation_id = $2::uuid
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
+		  and (
+		    session.owner_user_id = entry.user_id
+		    or (
+		      lead.assigned_user_id = entry.user_id
+		      and `+sessionGrantExistsSQL("session", "entry.user_id", true)+`
+		    )
+		  )
 		order by entry.joined_at, entry.id
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID).Scan(&entryID)

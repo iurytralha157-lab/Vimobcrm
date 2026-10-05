@@ -647,11 +647,11 @@ func TestWhatsAppMediaUploadedAssetFinalizationRemainsRetryable(t *testing.T) {
 		"repairStoragePath == \"\" || job.StoragePath != repairStoragePath",
 		"whatsappMediaUploadIntent(job, repairStoragePath)",
 		"repo.storage.objectExists(ctx, whatsappMediaBucket, intent.storagePath)",
-		"repo.markWhatsAppMediaUploadIntent(ctx, job, asset)",
+		"repo.reserveWhatsAppMediaJobUpload(ctx, job, asset)",
 		"errWhatsAppMediaLocalStagePending",
 		"repo.deferWhatsAppMediaLocalStage(ctx, job)",
 		"errWhatsAppMediaLocalFinalizePending",
-		"repo.markWhatsAppMediaStorageUploaded(ctx, job, ready)",
+		"repo.attachCompletedWhatsAppMediaAsset(ctx, job)",
 		"repo.deferWhatsAppMediaLocalFinalization(ctx, job)",
 		"The upload is already durably recorded on the leased job",
 		"next_retry_at = now() + interval '15 seconds'",
@@ -1108,6 +1108,96 @@ func TestWhatsAppMediaCanaryScopeCanonicalizesUUIDText(t *testing.T) {
 	}}, nil)
 	if len(client.webhookRolloutSessionIDs) != 1 || client.webhookRolloutSessionIDs[0] != "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9" {
 		t.Fatalf("canonical media canary scope = %#v", client.webhookRolloutSessionIDs)
+	}
+}
+
+func TestWhatsAppMediaManualRepairPathScope(t *testing.T) {
+	const organizationID = "11111111-1111-4111-8111-111111111111"
+	const sessionID = "22222222-2222-4222-8222-222222222222"
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"canonical asset", "orgs/" + organizationID + "/assets/v2/media.png", true},
+		{"same-session legacy incoming", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/provider-image.png", true},
+		{"other organization", "orgs/33333333-3333-4333-8333-333333333333/sessions/" + sessionID + "/incoming/provider-image.png", false},
+		{"same-organization sibling session", "orgs/" + organizationID + "/sessions/33333333-3333-4333-8333-333333333333/incoming/provider-image.png", true},
+		{"malformed sibling session", "orgs/" + organizationID + "/sessions/not-a-uuid/incoming/provider-image.png", false},
+		{"bare legacy namespace", organizationID + "/sessions/" + sessionID + "/incoming/provider-image.png", false},
+		{"nested incoming path", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/nested/provider-image.png", false},
+		{"traversal", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/../provider-image.png", false},
+		{"encoded separator", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/provider%2fimage.png", false},
+		{"empty filename", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := whatsappMediaRepairStoragePathAllowed(test.path, organizationID, sessionID); got != test.want {
+				t.Fatalf("repair path %q allowed = %v, want %v", test.path, got, test.want)
+			}
+		})
+	}
+}
+
+func TestWhatsAppMediaRepairSourcePathFromLegacyLocalURL(t *testing.T) {
+	const organizationID = "11111111-1111-4111-8111-111111111111"
+	const sessionID = "22222222-2222-4222-8222-222222222222"
+	const projectURL = "https://storage.example.test"
+	const sourcePath = "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/old-image.png"
+	message := retryMediaMessage{
+		OrganizationID: organizationID,
+		SessionID:      sessionID,
+		MediaURL:       projectURL + "/storage/v1/object/public/whatsapp-media/" + sourcePath,
+	}
+	got, err := whatsappMediaRepairSourcePath(message, projectURL)
+	if err != nil || got != sourcePath {
+		t.Fatalf("local legacy URL source = %q, %v; want %q", got, err, sourcePath)
+	}
+
+	message.MediaURL = "https://provider.example.test/media/old-image.png"
+	got, err = whatsappMediaRepairSourcePath(message, projectURL)
+	if err != nil || got != "" {
+		t.Fatalf("external provider URL source = %q, %v; want no local source", got, err)
+	}
+	message.MediaURL = "https://unverified-storage.example.test/storage/v1/object/public/whatsapp-media/" + sourcePath
+	if _, err := whatsappMediaRepairSourcePath(message, projectURL); err == nil {
+		t.Fatal("unverified legacy Storage URL was accepted and would lose its source")
+	}
+
+	message.MediaStoragePath = "orgs/" + organizationID + "/sessions/33333333-3333-4333-8333-333333333333/incoming/old-image.png"
+	message.MediaURL = ""
+	if got, err := whatsappMediaRepairSourcePath(message, projectURL); err != nil || got != message.MediaStoragePath {
+		t.Fatalf("same-organization sibling source = %q, %v; want %q", got, err, message.MediaStoragePath)
+	}
+	message.MediaStoragePath = "orgs/" + organizationID + "/assets/v2/different-image.png"
+	message.MediaURL = projectURL + "/storage/v1/object/public/whatsapp-media/" + sourcePath
+	if _, err := whatsappMediaRepairSourcePath(message, projectURL); err == nil {
+		t.Fatal("different local Storage URL and stored path were accepted")
+	}
+}
+
+func TestWhatsAppNonLeadDeletableMediaPathScope(t *testing.T) {
+	const organizationID = "11111111-1111-4111-8111-111111111111"
+	const sessionID = "22222222-2222-4222-8222-222222222222"
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"canonical asset", "orgs/" + organizationID + "/assets/v2/media.png", true},
+		{"same-organization legacy source", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/media.png", true},
+		{"other organization", "orgs/33333333-3333-4333-8333-333333333333/sessions/" + sessionID + "/incoming/media.png", false},
+		{"non UUID session", "orgs/" + organizationID + "/sessions/not-a-uuid/incoming/media.png", false},
+		{"nested filename", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/another/media.png", false},
+		{"wrong segment", "orgs/" + organizationID + "/sessions/" + sessionID + "/other/incoming/media.png", false},
+		{"traversal", "orgs/" + organizationID + "/sessions/" + sessionID + "/incoming/../media.png", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := whatsAppNonLeadDeletableMediaPath(test.path, organizationID); got != test.want {
+				t.Fatalf("deletable media path %q = %v, want %v", test.path, got, test.want)
+			}
+		})
 	}
 }
 

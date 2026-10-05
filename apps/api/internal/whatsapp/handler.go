@@ -26,6 +26,10 @@ func NewHandler(repo Repository) Handler {
 	}
 }
 
+func (handler Handler) Close() {
+	handler.repo.Close()
+}
+
 func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
 	handler.workerConfig = config.normalized()
 	return handler
@@ -102,7 +106,7 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	if !receipt.Inline && (receipt.Status == "pending" || receipt.Status == "retry") {
+	if receipt.WakeWorker || (!receipt.Inline && (receipt.Status == "pending" || receipt.Status == "retry")) {
 		wakeWhatsAppWebhookWorker()
 	}
 	httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true, "receipt": receipt})
@@ -1066,12 +1070,14 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_whatsapp_reference", "One or more WhatsApp references do not belong to this organization.")
 	case errors.Is(err, ErrSessionNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_session_not_found", "WhatsApp session was not found.")
+	case errors.Is(err, ErrSessionAccessRevoked):
+		httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_access_revoked", "Você não tem mais acesso a este WhatsApp. Inicie uma nova conversa pelo seu número conectado.")
 	case errors.Is(err, ErrConversationNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_conversation_not_found", "WhatsApp conversation was not found.")
 	case errors.Is(err, ErrConversationBindingChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
 	case errors.Is(err, ErrAttendanceRequired):
-		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Confirme o início do atendimento antes de enviar mensagens por este WhatsApp.")
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Entre no atendimento e, se solicitado, confirme o compartilhamento do histórico antes de enviar por este WhatsApp.")
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):

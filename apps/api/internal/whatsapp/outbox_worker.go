@@ -35,12 +35,6 @@ const (
 	whatsappOutboxSessionDeferDelay      = 30 * time.Second
 	whatsappOutboxRecoveryBatch          = 250
 	whatsappOutboxRecoveryMaxBatches     = 8
-
-	// Preserve normal per-conversation order while a media send is healthy, but
-	// never let a slow upload/provider call hold a newer text indefinitely.
-	// After this grace period the fast lane may progress concurrently with the
-	// older media operation; provider-visible cross-lane order is then best-effort.
-	whatsappOutboxMediaOrderingGrace = 2 * time.Second
 )
 
 var (
@@ -70,42 +64,35 @@ var whatsappOutboxMediaMetrics whatsappOutboxLaneMetrics
 
 const (
 	whatsappOutboxQueuedLanePredicateToken = "/* whatsapp_outbox_queued_lane_predicate */"
-	whatsappOutboxActiveLanePredicateToken = "/* whatsapp_outbox_active_lane_predicate */"
-	whatsappOutboxCrossLaneOrderingToken   = "/* whatsapp_outbox_cross_lane_ordering */"
 )
 
 const claimWhatsAppOutboxQueryTemplate = `
 	with claim_params as materialized (
 			select
-				coalesce(nullif(btrim($3), '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid) as after_conversation_id,
-				$4::text as requested_lane,
-				$5::double precision as media_ordering_grace_millis
+				coalesce(nullif(btrim($3), '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid) as after_conversation_id
 		),
-		conversation_heads as (
-			select distinct on (queued.conversation_id)
+		candidate_rows as materialized (
+			select
 				queued.conversation_id,
-				queued.id,
-				queued.message_type,
-				queued.payload,
-				queued.next_attempt_at,
-				queued.created_at
+				queued.id
 			from public.whatsapp_outbox queued
 			cross join claim_params params
 			where queued.status in ('pending', 'retry')
+			  and queued.next_attempt_at <= now()
 			  and (
 				queued.attempts < queued.max_attempts
 				or queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
 			  )
 			  and (
 				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
+				or not exists (
 					select 1
 					from public.whatsapp_sessions as delivery_session
 					where delivery_session.id = queued.session_id
 					  and delivery_session.organization_id = queued.organization_id
 					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
 					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
+					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
 				)
 			  )
 			  and exists (
@@ -133,89 +120,16 @@ const claimWhatsAppOutboxQueryTemplate = `
 				queued.conversation_id,
 				queued.created_at,
 				queued.id
-		),
-		candidate_conversations as materialized (
-			select
-				wc.id as conversation_id,
-				head.id as event_id
-			from conversation_heads head
-			join public.whatsapp_conversations wc on wc.id = head.conversation_id
-			cross join claim_params params
-			where head.next_attempt_at <= now()
-			  and not exists (
-				select 1
-				from public.whatsapp_outbox active
-				where active.conversation_id = wc.id
-				  and active.status = 'processing'
-				  ` + whatsappOutboxActiveLanePredicateToken + `
-			)
-			  ` + whatsappOutboxCrossLaneOrderingToken + `
-			order by wc.id
 			limit $1
-			for no key update of wc skip locked
-		),
-		locked_heads as materialized (
-			select
-				queued.id,
-				selected.conversation_id
-			from candidate_conversations selected
-			join public.whatsapp_outbox queued on queued.id = selected.event_id
-			cross join claim_params params
-			where queued.status in ('pending', 'retry')
-			  and (
-				queued.attempts < queued.max_attempts
-				or queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-			  )
-			  and (
-				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
-					select 1
-					from public.whatsapp_sessions as delivery_session
-					where delivery_session.id = queued.session_id
-					  and delivery_session.organization_id = queued.organization_id
-					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
-					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
-				)
-			  )
-			  and exists (
-				select 1
-				from public.whatsapp_messages as current_message
-				join public.whatsapp_conversations as current_conversation
-				  on current_conversation.id = current_message.conversation_id
-				 and current_conversation.organization_id = current_message.organization_id
-				 and current_conversation.session_id = current_message.session_id
-				join public.whatsapp_conversation_lead_bindings as current_binding
-				  on current_binding.organization_id = current_conversation.organization_id
-				 and current_binding.conversation_id = current_conversation.id
-				 and current_binding.session_id = current_conversation.session_id
-				 and current_binding.lead_id = current_conversation.lead_id
-				 and current_binding.active_to is null
-				where current_message.id = queued.message_id
-				  and current_message.organization_id = queued.organization_id
-				  and current_message.session_id = queued.session_id
-				  and current_message.conversation_id = queued.conversation_id
-				  and current_message.lead_id = current_conversation.lead_id
-			  )
-			  and queued.next_attempt_at <= now()
-			  and not exists (
-				select 1
-				from public.whatsapp_outbox active
-				where active.conversation_id = selected.conversation_id
-				  and active.id <> queued.id
-				  and active.status = 'processing'
-				  ` + whatsappOutboxActiveLanePredicateToken + `
-			  )
-			order by selected.conversation_id
 			for update of queued skip locked
 		),
 		claimed as (
 			update public.whatsapp_outbox queued
 			set status = 'processing',
 			    locked_at = now(),
-			    locked_by = concat($2::text, ':', $6::text, ':', queued.id::text),
+		    locked_by = concat($2::text, ':', $4::text, ':', queued.id::text),
 			    updated_at = now()
-			from locked_heads selected, claim_params params
+		from candidate_rows selected
 			where queued.id = selected.id
 			  and queued.status in ('pending', 'retry')
 			  and (
@@ -224,14 +138,14 @@ const claimWhatsAppOutboxQueryTemplate = `
 			  )
 			  and (
 				queued.last_error = '` + whatsappOutboxProviderAcceptedMarker + `'
-				or exists (
+				or not exists (
 					select 1
 					from public.whatsapp_sessions as delivery_session
 					where delivery_session.id = queued.session_id
 					  and delivery_session.organization_id = queued.organization_id
 					  and lower(btrim(coalesce(delivery_session.provider, ''))) = 'evolution_go'
 					  and coalesce(delivery_session.is_active, true)
-					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
+					  and lower(btrim(coalesce(delivery_session.status, ''))) not in ('connected', 'deleted')
 				)
 			  )
 			  and exists (
@@ -254,15 +168,7 @@ const claimWhatsAppOutboxQueryTemplate = `
 				  and current_message.lead_id = current_conversation.lead_id
 			  )
 			  and queued.next_attempt_at <= now()
-			  and not exists (
-				select 1
-				from public.whatsapp_outbox active
-				where active.conversation_id = queued.conversation_id
-				  and active.id <> queued.id
-				  and active.status = 'processing'
-				  ` + whatsappOutboxActiveLanePredicateToken + `
-			  )
-			returning
+		returning
 				queued.id,
 				queued.organization_id,
 				queued.session_id,
@@ -288,9 +194,16 @@ const claimWhatsAppOutboxQueryTemplate = `
 			claimed.payload::text,
 			claimed.attempts,
 			claimed.max_attempts,
-			coalesce(claimed.locked_by, ''),
-			coalesce(claimed.last_error, ''),
-			claimed.created_at
+				coalesce(claimed.locked_by, ''),
+				coalesce(claimed.last_error, ''),
+				claimed.created_at,
+				exists (
+					select 1
+					from public.whatsapp_messages message
+					where message.id = claimed.message_id
+					  and message.organization_id = claimed.organization_id
+					  and message.metadata @> '{"managed_whatsapp_distribution_auto_reply":true}'::jsonb
+				)
 		from claimed
 		order by claimed.conversation_id
 	`
@@ -307,8 +220,6 @@ var (
 
 func buildWhatsAppOutboxClaimQuery(lane whatsappOutboxLane) string {
 	queuedLanePredicate := ""
-	activeLanePredicate := ""
-	crossLaneOrdering := ""
 
 	switch lane {
 	case whatsappOutboxLaneFast:
@@ -316,52 +227,15 @@ func buildWhatsAppOutboxClaimQuery(lane whatsappOutboxLane) string {
 			lower(coalesce(queued.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
 			or lower(coalesce(queued.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
 		)`
-		activeLanePredicate = `and not (
-			lower(coalesce(active.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
-			or lower(coalesce(active.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
-		)`
-		crossLaneOrdering = `and (
-			head.created_at <= now() - make_interval(secs => params.media_ordering_grace_millis / 1000.0)
-			or not exists (
-				select 1
-				from public.whatsapp_outbox older_media
-				where older_media.conversation_id = wc.id
-				  and older_media.status in ('pending', 'retry', 'processing')
-				  and (older_media.status = 'processing' or older_media.attempts < older_media.max_attempts)
-				  and (older_media.created_at, older_media.id) < (head.created_at, head.id)
-				  and (
-					lower(coalesce(older_media.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
-					or lower(coalesce(older_media.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
-				  )
-			)
-		)`
 	case whatsappOutboxLaneMedia:
 		queuedLanePredicate = `and (
 			lower(coalesce(queued.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
 			or lower(coalesce(queued.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
 		)`
-		activeLanePredicate = `and (
-			lower(coalesce(active.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
-			or lower(coalesce(active.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
-		)`
-		crossLaneOrdering = `and not exists (
-			select 1
-			from public.whatsapp_outbox older_fast
-			where older_fast.conversation_id = wc.id
-			  and older_fast.status in ('pending', 'retry', 'processing')
-			  and (older_fast.status = 'processing' or older_fast.attempts < older_fast.max_attempts)
-			  and (older_fast.created_at, older_fast.id) < (head.created_at, head.id)
-			  and not (
-				lower(coalesce(older_fast.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker')
-				or lower(coalesce(older_fast.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker')
-			  )
-		)`
 	}
 
 	return strings.NewReplacer(
 		whatsappOutboxQueuedLanePredicateToken, queuedLanePredicate,
-		whatsappOutboxActiveLanePredicateToken, activeLanePredicate,
-		whatsappOutboxCrossLaneOrderingToken, crossLaneOrdering,
 	).Replace(claimWhatsAppOutboxQueryTemplate)
 }
 
@@ -476,19 +350,20 @@ func logWhatsAppOutboxMinute(logger *slog.Logger) {
 }
 
 type pendingWhatsAppOutbox struct {
-	ID                string
-	OrganizationID    string
-	SessionID         string
-	ConversationID    string
-	MessageRowID      string
-	ClientMessageID   string
-	ProviderMessageID string
-	Payload           map[string]any
-	Attempts          int
-	MaxAttempts       int
-	LeaseToken        string
-	LastError         string
-	CreatedAt         time.Time
+	ID                           string
+	OrganizationID               string
+	SessionID                    string
+	ConversationID               string
+	MessageRowID                 string
+	ClientMessageID              string
+	ProviderMessageID            string
+	Payload                      map[string]any
+	Attempts                     int
+	MaxAttempts                  int
+	LeaseToken                   string
+	LastError                    string
+	CreatedAt                    time.Time
+	ManagedDistributionAutoReply bool
 }
 
 func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logger) {
@@ -503,9 +378,8 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 
 	// Text and lightweight control operations have their own capacity. Outbound
 	// media is intentionally isolated because provider-side fetch/upload can take
-	// orders of magnitude longer than a text request. FIFO is strict inside each
-	// lane. Across lanes, text waits briefly for older media and then proceeds so
-	// an upload/provider stall cannot freeze the conversation indefinitely.
+	// orders of magnitude longer than a text request. Each row has its own lease:
+	// an older row in this conversation never holds a newer send at the provider.
 	for range config.OutboxWorkerConcurrency {
 		go handler.runWhatsAppOutboxLaneWorker(
 			ctx,
@@ -575,9 +449,8 @@ func (handler Handler) runWhatsAppOutboxLaneWorker(
 			logger.Error("whatsapp outbox lane failed", "lane", lane, "error", err)
 		}
 		if err == nil && processed > 0 {
-			// Any successful delivery just changed the head of its conversation.
-			// Probe again immediately so a single busy conversation is not throttled
-			// by the fallback poll after the fair cursor completes one wrap.
+			// Probe again immediately to drain due work without waiting for the
+			// fallback poll after the fair cursor completes one wrap.
 			continue
 		}
 
@@ -704,6 +577,12 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		recordWhatsAppOutboxSent(lane)
 		return nil
 	}
+	if item.ManagedDistributionAutoReply {
+		// Old distribution auto-replies may already be queued when the SQL
+		// producer is disabled. Never cross the provider boundary for them.
+		recordWhatsAppOutboxDeliveryFailure(lane)
+		return repo.failWhatsAppOutbox(ctx, item, fmt.Errorf("distribution auto-reply is disabled"), true, false)
+	}
 
 	action := strings.TrimSpace(stringFromAny(item.Payload["action"]))
 	body := mapFromAny(item.Payload["body"])
@@ -753,9 +632,38 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		body["mediaUrl"] = signedURL
 		delete(body, "mediaStoragePath")
 	}
+	// Revocation or team reassignment may have committed while Storage was
+	// preparing media. The provider-start transaction below rechecks the exact
+	// grant and serializes it with revoke without holding a DB connection over HTTP.
+	attended, err = repo.whatsappOutboxAttendanceCurrent(ctx, item)
+	if err != nil {
+		return err
+	}
+	if !attended {
+		recordWhatsAppOutboxDeliveryFailure(lane)
+		return repo.failWhatsAppOutbox(ctx, item, ErrSessionAccessRevoked, true, false)
+	}
+	leaseOwned, err = repo.renewWhatsAppOutboxLease(ctx, item)
+	if err != nil {
+		return err
+	}
+	if !leaseOwned {
+		return fmt.Errorf("%w: %s", errWhatsAppOutboxLeaseLost, item.ID)
+	}
 
 	item.Attempts, err = repo.startWhatsAppOutboxProviderAttempt(ctx, item)
 	if err != nil {
+		if errors.Is(err, errWhatsAppOutboxSessionDisconnected) {
+			return repo.deferWhatsAppOutboxWithoutAttempt(ctx, item, err)
+		}
+		if errors.Is(err, ErrSessionAccessRevoked) {
+			recordWhatsAppOutboxDeliveryFailure(lane)
+			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+		}
+		if errors.Is(err, ErrSessionNotFound) {
+			recordWhatsAppOutboxDeliveryFailure(lane)
+			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+		}
 		return err
 	}
 
@@ -869,6 +777,9 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			 and binding.lead_id = message.lead_id
 			 and binding.active_to is null
 			 and binding.stale = false
+			join public.leads as lead
+			  on lead.id = conversation.lead_id
+			 and lead.organization_id = conversation.organization_id
 			join public.whatsapp_attendance_entries as attendance
 			  on attendance.organization_id = binding.organization_id
 			 and attendance.conversation_id = binding.conversation_id
@@ -878,23 +789,43 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			join public.whatsapp_sessions as session
 			  on session.organization_id = attendance.organization_id
 			 and session.id = attendance.session_id
-			 and session.owner_user_id = attendance.user_id
 			 and session.provider = 'evolution_go'
 			 and coalesce(session.is_active, true) = true
 			 and coalesce(session.status, '') not in ('deleted', 'disabled')
 			join public.users as actor
 			  on actor.id = attendance.user_id
-			 and actor.organization_id = attendance.organization_id
 			 and coalesce(actor.is_active, false) = true
 			join public.organization_members as member
 			  on member.organization_id = attendance.organization_id
 			 and member.user_id = attendance.user_id
 			 and coalesce(member.is_active, true) = true
+			 and member.deleted_at is null
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
 			  and message.session_id = $3::uuid
 			  and message.conversation_id = $4::uuid
 			  and message.capture_state = 'captured'
+			  and (
+			    coalesce(message.metadata->>'origin', '') = 'automation'
+			    or message.sender_user_id is null
+			    or message.sender_user_id = session.owner_user_id
+			    or (
+			      lead.assigned_user_id = message.sender_user_id
+			      and `+sessionGrantExistsSQL("session", "message.sender_user_id", true)+`
+			    )
+			  )
+			  and (
+			    session.owner_user_id = attendance.user_id
+			    or (
+			      lead.assigned_user_id = attendance.user_id
+			      and `+sessionGrantExistsSQL("session", "attendance.user_id", true)+`
+			    )
+			  )
+			  and (
+			    coalesce(message.metadata->>'origin', '') = 'automation'
+			    or message.sender_user_id is null
+			    or message.sender_user_id = attendance.user_id
+			  )
 		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
 	return attended, err
@@ -1021,8 +952,16 @@ func (repo Repository) renewWhatsAppOutboxLease(ctx context.Context, item pendin
 }
 
 func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, item pendingWhatsAppOutbox) (int, error) {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockWhatsAppOutboxGrantForStart(ctx, tx, item); err != nil {
+		return 0, err
+	}
 	var attempts int
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		update public.whatsapp_outbox
 		set attempts = attempts + 1,
 		    locked_at = now(),
@@ -1037,7 +976,13 @@ func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, i
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, errWhatsAppOutboxLeaseLost
 	}
-	return attempts, err
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return attempts, nil
 }
 
 func (repo Repository) markWhatsAppOutboxProviderAccepted(ctx context.Context, item pendingWhatsAppOutbox, providerMessageID string) (bool, error) {
@@ -1187,8 +1132,6 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 		batch,
 		whatsappOutboxWorkerID,
 		afterConversationID,
-		string(lane),
-		whatsappOutboxMediaOrderingGrace.Milliseconds(),
 		randomHex(16),
 	)
 	if err != nil {
@@ -1214,6 +1157,7 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 			&item.LeaseToken,
 			&item.LastError,
 			&item.CreatedAt,
+			&item.ManagedDistributionAutoReply,
 		); err != nil {
 			return nil, err
 		}
@@ -1471,6 +1415,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			    content = coalesce(existing.content, pending.content),
 			    media_url = coalesce(existing.media_url, pending.media_url),
 			    media_storage_path = coalesce(existing.media_storage_path, pending.media_storage_path),
+			    metadata = coalesce(existing.metadata, '{}'::jsonb) || coalesce(pending.metadata, '{}'::jsonb),
 			    provider_message_id = $3,
 			    message_id = $3,
 			    status = case when existing.status in ('delivered', 'read') then existing.status else 'sent' end,
@@ -1513,7 +1458,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 		update public.whatsapp_outbox
 		set status = 'sent',
 		    provider_message_id = $2,
-		    sent_at = now(),
+		    sent_at = clock_timestamp(),
 		    locked_at = null,
 		    locked_by = null,
 		    last_error = null,
@@ -1583,6 +1528,9 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			  and message.lead_id = lead.id
 			  and lead.organization_id = message.organization_id
 		`, canonicalMessageID, item.OrganizationID); err != nil {
+			return err
+		}
+		if err := recordConfirmedAttendanceMarker(ctx, tx, item.OrganizationID, canonicalMessageID, item.ID, item.CreatedAt); err != nil {
 			return err
 		}
 
@@ -1680,11 +1628,15 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 
 func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, cause error, permanent bool, outcomeUnknown bool) error {
 	status := "retry"
+	lastError := cause.Error()
 	if outcomeUnknown {
 		// A timeout or broken response can happen after WhatsApp accepted the
 		// stanza. Evolution Go documents the custom message ID but does not
 		// guarantee exactly-once delivery, so automatic resend is unsafe.
 		status = "dead"
+		// The database reconciliation trigger requires this exact marker before
+		// a late signed provider acknowledgement may heal the dead row.
+		lastError = whatsappOutboxProviderUnknownMarker
 	} else if permanent {
 		status = "failed"
 	} else if item.Attempts >= item.MaxAttempts {
@@ -1712,7 +1664,7 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $4
-	`, item.ID, status, cause.Error(), item.LeaseToken)
+	`, item.ID, status, lastError, item.LeaseToken)
 	if err != nil {
 		return err
 	}

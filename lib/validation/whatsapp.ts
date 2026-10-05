@@ -59,6 +59,7 @@ export const sendWhatsAppMessageInputSchema = z.object({
 export const whatsAppAttendanceRequestSchema = z.object({
 	expectedLeadId: uuidSchema,
 	sendSessionId: uuidSchema,
+	confirmedSharing: z.boolean().optional(),
 }).strict()
 
 export const whatsAppAttendanceEntrySchema = z.object({
@@ -67,10 +68,14 @@ export const whatsAppAttendanceEntrySchema = z.object({
 	userName: z.string().trim().min(1),
 	sessionId: uuidSchema,
 	joinedAt: timestampSchema,
+	entrySource: z.enum(['manual', 'implicit', 'ctwa_auto']),
+	markerAt: timestampSchema.optional(),
+	markerKind: z.enum(['started', 'joined']).optional(),
 }).strict()
 
 export const whatsAppAttendanceStateSchema = z.object({
 	joined: z.boolean(),
+	confirmationRequired: z.boolean(),
 	currentEntry: whatsAppAttendanceEntrySchema.nullable(),
 	entries: z.array(whatsAppAttendanceEntrySchema),
 	created: z.boolean().optional(),
@@ -172,6 +177,7 @@ export const whatsAppConversationSchema = z.object({
   id: uuidSchema,
   session_id: uuidSchema.nullable(),
   lead_id: uuidSchema.nullable(),
+  nonlead_expires_at: timestampSchema.nullable().optional(),
   remote_jid: z.string().min(1),
   contact_name: z.string().nullable(),
   contact_phone: z.string().nullable(),

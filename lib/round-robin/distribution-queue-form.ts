@@ -238,11 +238,7 @@ export function hydrateDistributionQueueFormData(
         queue.reentry_behavior ??
         queue.settings?.reentry_behavior ??
         "redistribute",
-      whatsapp_distribution_auto_reply_enabled:
-        conditions.some(
-          (condition) => condition.type === "whatsapp_message_contains",
-        ) &&
-        queue.settings?.whatsapp_distribution_auto_reply_enabled === true,
+      whatsapp_distribution_auto_reply_enabled: false,
     },
     conditions,
     members: hydrateQueueMembers(queue.members || [], teams),

@@ -26,6 +26,7 @@ export type WhatsAppMessageInputState = {
   disabled: boolean;
   placeholder: string;
   sendSessionId?: string;
+  accessLost?: boolean;
 };
 
 type RefreshableConversation = MessageInputConversation & {
@@ -72,6 +73,76 @@ export function updateWhatsAppConversationDraft(
     return remainingDrafts;
   }
   return { ...drafts, [draftKey]: nextValue };
+}
+
+export type WhatsAppTextSendIntent = {
+  draftKey: string;
+  rawText: string;
+  text: string;
+  revision: number;
+};
+
+// A reservation lasts only through the attendance check. Once a send has
+// started, a new draft may be sent while the previous request is still open.
+// Keeping the current value here also closes the double-click gap before
+// React has rendered the cleared draft.
+export function createWhatsAppTextSendGuard() {
+  let current = { draftKey: null as string | null, text: '', revision: 0 };
+  let joining: WhatsAppTextSendIntent | null = null;
+  let awaitingClear: Pick<WhatsAppTextSendIntent, 'draftKey' | 'rawText'> | null = null;
+
+  return {
+    observeDraft(draftKey: string | null, text: string) {
+      if (awaitingClear?.draftKey === draftKey) {
+        if (text === awaitingClear.rawText) return;
+        awaitingClear = null;
+      }
+      if (current.draftKey === draftKey && current.text === text) return;
+      current = { draftKey, text, revision: current.revision + 1 };
+    },
+    editDraft(draftKey: string | null, text: string) {
+      // A user edit is authoritative even if it exactly matches a just-sent
+      // text. Only observeDraft suppresses a late React render of the old text.
+      awaitingClear = null;
+      if (current.draftKey === draftKey && current.text === text) return;
+      current = { draftKey, text, revision: current.revision + 1 };
+    },
+    begin(): WhatsAppTextSendIntent | null {
+      if (joining || !current.draftKey || !current.text.trim()) return null;
+      joining = {
+        draftKey: current.draftKey,
+        rawText: current.text,
+        text: current.text.trim(),
+        revision: current.revision,
+      };
+      return joining;
+    },
+    accepted(intent: WhatsAppTextSendIntent) {
+      if (joining !== intent) return false;
+      joining = null;
+      // A confirmation for a tab/tenant that is no longer open cannot send
+      // from that old conversation after navigation.
+      if (current.draftKey !== intent.draftKey) return false;
+      if (current.draftKey === intent.draftKey && current.revision === intent.revision) {
+        current = { ...current, text: '', revision: current.revision + 1 };
+        awaitingClear = { draftKey: intent.draftKey, rawText: intent.rawText };
+      }
+      return true;
+    },
+    aborted(intent: WhatsAppTextSendIntent) {
+      if (joining === intent) joining = null;
+    },
+    allowRetry(intent: WhatsAppTextSendIntent) {
+      if (awaitingClear?.draftKey === intent.draftKey && awaitingClear.rawText === intent.rawText) {
+        awaitingClear = null;
+      }
+    },
+    canRestore(intent: WhatsAppTextSendIntent) {
+      return current.draftKey === intent.draftKey
+        && current.text === ''
+        && current.revision === intent.revision + 1;
+    },
+  };
 }
 
 export function getWhatsAppConversationMessageScope(
@@ -174,8 +245,15 @@ export function getWhatsAppSendSessionId(
     return undefined;
   }
 
+  // A persisted conversation belongs to its original WhatsApp account. Once
+  // that account disappears from the authorized list, never send through a
+  // different account without explicitly starting a new conversation.
+  if (conversation?.id && conversation.session_id) {
+    return findSessionById(sessions, conversation.session_id)?.id;
+  }
+
   if (selectedSessionId && selectedSessionId !== "all") {
-    return selectedSessionId;
+    return findSessionById(sessions, selectedSessionId)?.id;
   }
 
   const conversationSession = getConversationSession(conversation, sessions);
@@ -195,13 +273,6 @@ export function getWhatsAppSendSessionId(
   // is reconciling it. Let the backend perform the definitive validation when
   // there is no ambiguity about which account should send.
   if (conversationSession?.id && findSessionById(sessions, conversationSession.id)) {
-    return conversationSession.id;
-  }
-
-  // Preserve a persisted conversation's trusted account when that account is
-  // absent from the refreshed list. The backend will validate authorization;
-  // the client must not silently redirect history through another account.
-  if (conversationSession?.id && conversationSession.status == null) {
     return conversationSession.id;
   }
 
@@ -232,12 +303,21 @@ export function getWhatsAppMessageInputState(
     };
   }
 
-	if (conversation.historical_lead_view) {
+  if (conversation.historical_lead_view) {
 		return {
 			disabled: true,
 			placeholder: "Histórico deste card (somente leitura)",
 		};
 	}
+
+  if (conversation.id && conversation.session_id && sessions
+    && !findSessionById(sessions, conversation.session_id)) {
+    return {
+      disabled: true,
+      placeholder: "Você não tem mais acesso a este WhatsApp. Inicie uma nova conversa pelo seu número.",
+      accessLost: true,
+    };
+  }
 
   const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
   if (!sendSessionId) {

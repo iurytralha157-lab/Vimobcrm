@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "3e745e013a227061884874f57931ba7f501ab7ee5090a0a87cdb086d0ee5ebae",
+  "sourceDigestSha256": "c2726f8c3b4f5511e3cb5b3d714c35e9713d4075404a2ffeea62bac73205b528",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1054,10 +1054,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:0510f605f3c7ef6b7b95",
+          "id": "overlay:1cfc35cab10d36aaf247",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 171,
+          "line": 181,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -1108,10 +1108,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:020526ebe093d7612d22",
+          "id": "overlay:d2882d9832f375705f50",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1224,
+          "line": 1428,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -1162,10 +1162,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f1a5c849d5498e0be597",
+          "id": "overlay:9aab74604171ff20d385",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1777,
+          "line": 2009,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -1701,6 +1701,17 @@
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
+          ],
+          "kind": "dialog"
+        },
+        {
+          "id": "overlay:db39ba93cecae4d239c9",
+          "column": 5,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 97,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
           ],
           "kind": "dialog"
         },
@@ -2946,10 +2957,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:dce48f8fd02d5dc46bbd",
+          "id": "overlay:76f2334b570472710425",
           "column": 5,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1181,
+          "line": 1115,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -3332,10 +3343,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:8146ca30df507af53251",
+          "id": "overlay:a780355d064816ec32ed",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 610,
+          "line": 653,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3343,10 +3354,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:887122d380d854063253",
+          "id": "overlay:5891180df7792a1114c2",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 640,
+          "line": 683,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3354,10 +3365,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f3e0a160da637ce7edc2",
+          "id": "overlay:f35adfb560cee62b4448",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 703,
+          "line": 746,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3365,10 +3376,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:1d60afa1f297036d43b2",
+          "id": "overlay:e028abea56bcd5a2a9fb",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 737,
+          "line": 780,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -4014,6 +4025,60 @@
             "/suporte/[slug]"
           ],
           "kind": "dialog"
+        },
+        {
+          "id": "overlay:7dc955b2d678908e9301",
+          "column": 5,
+          "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+          "line": 35,
+          "owner": "WhatsAppSendOriginChoice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "alertDialog"
         },
         {
           "id": "overlay:d40155890ce39ff4c8f8",
@@ -9905,10 +9970,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9698b8ccb9931f14ab9f",
+          "id": "cta:12ad42d1d55ac381543e",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 173,
+          "line": 183,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9960,10 +10025,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0a53a157615d38e27c6e",
+          "id": "cta:ddfa4a62cbd72e9744b0",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 236,
+          "line": 246,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -10015,10 +10080,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8a6487c5beac21bcf87b",
+          "id": "cta:27a4f0d1307ae6700ddb",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1246,
+          "line": 1450,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -10070,10 +10135,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b3e6cf0e7a6510c125aa",
+          "id": "cta:95dbaf9b33cff82509c6",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1303,
+          "line": 1507,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10125,10 +10190,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1d0b755687f162b075e8",
+          "id": "cta:04d55eec06ddbd88f441",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1351,
+          "line": 1555,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10180,10 +10245,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:045150ecc3b2dbe32cd5",
+          "id": "cta:7a50feaa0f688a45a6b4",
           "column": 21,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1393,
+          "line": 1597,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10235,10 +10300,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fe5041f9e4813da44760",
+          "id": "cta:e5c77a73d98eb8f46327",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1411,
+          "line": 1615,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10290,10 +10355,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fcffb3b657705faa7d80",
+          "id": "cta:e604cbde2d170f5c9ed1",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1514,
+          "line": 1726,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10345,10 +10410,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e30cf3189275d31dc0a0",
+          "id": "cta:1f3977d43c45acf5bdb6",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1542,
+          "line": 1754,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10400,10 +10465,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e262d1998aaedb42dd81",
+          "id": "cta:f5ca8609060f79ac85ad",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1601,
+          "line": 1813,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10455,10 +10520,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6c769ebb8907b789bf23",
+          "id": "cta:df5d1d7be1169d3df9a0",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1635,
+          "line": 1866,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10510,10 +10575,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4c331e7174cdf0ef131a",
+          "id": "cta:6c08ca6df67fea0fd7b9",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1639,
+          "line": 1870,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10565,10 +10630,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bbd70164fe2cb796039d",
+          "id": "cta:555e76bea648b456974b",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1681,
+          "line": 1912,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10620,10 +10685,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3a1e900cfb1fe028391f",
+          "id": "cta:ee9361d556bd87a338a1",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1699,
+          "line": 1930,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10675,10 +10740,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c88313a5e3b0826975b8",
+          "id": "cta:a7d9936d857a08046e79",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1744,
+          "line": 1975,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -14059,6 +14124,42 @@
           "tag": "Button"
         },
         {
+          "id": "cta:876fce0919ddc9e051c3",
+          "column": 21,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 121,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:d153c0b9f4427b18ccf4",
+          "column": 17,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 157,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:1da693ee67f6119337ed",
+          "column": 11,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 170,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
           "id": "cta:54efa486a1d919ee4b7d",
           "column": 13,
           "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
@@ -15312,10 +15413,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4c5b00f3dc93505a8fb3",
+          "id": "cta:44f847e0dba11d4e366f",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1329,
+          "line": 1595,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -15325,10 +15426,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f519f74bdba3b4924272",
+          "id": "cta:e08adaaa00283ca892be",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1345,
+          "line": 1611,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -15338,10 +15439,24 @@
           "tag": "button"
         },
         {
-          "id": "cta:2099f840e481e7c5084c",
+          "id": "cta:1caad5707a8456d9cf98",
           "column": 17,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1451,
+          "line": 1713,
+          "owner": "LeadUnifiedThread",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "href": "/settings/integrations/whatsapp",
+          "kind": "internal",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:efde90e3bb6116d168b0",
+          "column": 17,
+          "file": "components/features/leads/LeadUnifiedThread.tsx",
+          "line": 1743,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -21134,10 +21249,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d387a9707b5a893918a0",
+          "id": "cta:9d16a83a1d601ccd13b6",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1140,
+          "line": 1074,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -21148,10 +21263,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:838165795ebc78ec7266",
+          "id": "cta:8435bd75fa8611e26d18",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1148,
+          "line": 1082,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -23231,10 +23346,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a15012c4dcbf167a8450",
+          "id": "cta:fcd72f3b28edc3125069",
           "column": 7,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 426,
+          "line": 442,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23243,10 +23358,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:466a0488865f58212646",
+          "id": "cta:e3999b34ceb364a9b267",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 453,
+          "line": 469,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23255,10 +23370,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:283732660fd69561206a",
+          "id": "cta:b1dbdf96ea5dd82000cc",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 476,
+          "line": 492,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23267,10 +23382,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef7430a61964e9c59ee2",
+          "id": "cta:c15d5d9427e06cf7c7a6",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 487,
+          "line": 503,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23279,10 +23394,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:07dd1a77f7d7977cf3c7",
-          "column": 21,
+          "id": "cta:ea44ba02cd10712b17d3",
+          "column": 23,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 556,
+          "line": 580,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23291,10 +23406,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e53740035a66ebc44976",
+          "id": "cta:e37f8179bcb8eb457bd3",
+          "column": 23,
+          "file": "components/features/settings/WhatsAppTab.tsx",
+          "line": 592,
+          "owner": "WhatsAppTab",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:6a62b72b35f4a5fc2f44",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 569,
+          "line": 606,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23303,10 +23430,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ffb7cbeba1fb5fb9b3ce",
+          "id": "cta:a41ad911155c93271256",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 573,
+          "line": 610,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23315,10 +23442,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a1c357bc7b1950279417",
+          "id": "cta:a7ab58feb5c0e15e160a",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 586,
+          "line": 623,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23327,10 +23454,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a1fe406a33ca3b1126d5",
+          "id": "cta:3dcd61f66e22e80340c5",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 590,
+          "line": 627,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23339,10 +23466,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a798fa60e4e77d0df57d",
+          "id": "cta:1cbd3dd81f1ed9f78ea6",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 626,
+          "line": 669,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23351,10 +23478,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7acebe5d6af71dfb0034",
+          "id": "cta:de98ded3ad964fd75356",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 629,
+          "line": 672,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23363,10 +23490,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:08db99d8dbb80c3af56c",
+          "id": "cta:e2cf90eb617843cc7fe6",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 683,
+          "line": 726,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23375,10 +23502,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:54e11be5d7d899e4bd16",
+          "id": "cta:841653342d1c9760bf09",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 691,
+          "line": 734,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -26348,10 +26475,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1bbc959c825187bb8217",
+          "id": "cta:463866a0e17a31b4bc6b",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 135,
+          "line": 144,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26403,10 +26530,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ee20c746f5d67bc20db8",
+          "id": "cta:54fe9ed0809fccd51969",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 154,
+          "line": 163,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26458,10 +26585,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0cdae62b2cdb21b49309",
+          "id": "cta:6585e50c31c46f644c15",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 169,
+          "line": 178,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26513,10 +26640,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:473758e68be5109883a4",
+          "id": "cta:2635a5f725bb4cb4799d",
           "column": 9,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 233,
+          "line": 242,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26734,10 +26861,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d5ea7fd7f81f8afbc347",
+          "id": "cta:5243ab518b8afb0719ae",
           "column": 11,
           "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
-          "line": 65,
+          "line": 64,
           "owner": "EnterAttendanceDialog",
           "routes": [
             "/agenda",
@@ -26789,10 +26916,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0548b840cf9274d1ba86",
+          "id": "cta:6fc31a98bd057e798634",
           "column": 11,
           "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
-          "line": 73,
+          "line": 72,
           "owner": "EnterAttendanceDialog",
           "routes": [
             "/agenda",
@@ -28329,6 +28456,117 @@
           "tag": "button"
         },
         {
+          "id": "cta:1eebfb18482116b99ca2",
+          "column": 9,
+          "file": "components/features/whatsapp/NonLeadRetentionNotice.tsx",
+          "line": 68,
+          "owner": "NonLeadRetentionNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:7728f848dba3d97e64f9",
+          "column": 11,
+          "file": "components/features/whatsapp/NonLeadRetentionNotice.tsx",
+          "line": 74,
+          "owner": "NonLeadRetentionNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "href": "manageHref",
+          "kind": "internalDynamic",
+          "tag": "Link"
+        },
+        {
           "id": "cta:dc2cbec50873a7a69c14",
           "column": 15,
           "file": "components/features/whatsapp/StartAutomationDialog.tsx",
@@ -28437,6 +28675,391 @@
           ],
           "kind": "actionButton",
           "tag": "button"
+        },
+        {
+          "id": "cta:583f93cadf10fce01efe",
+          "column": 13,
+          "file": "components/features/whatsapp/WhatsAppAccessLostNotice.tsx",
+          "line": 23,
+          "owner": "WhatsAppAccessLostNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:eecafc80bda79a8d3f8c",
+          "column": 9,
+          "file": "components/features/whatsapp/WhatsAppAccessLostNotice.tsx",
+          "line": 36,
+          "owner": "WhatsAppAccessLostNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:f33a7103c24866df6b12",
+          "column": 11,
+          "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+          "line": 44,
+          "owner": "WhatsAppSendOriginChoice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:2b9a1a296a7b2df81597",
+          "column": 13,
+          "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+          "line": 48,
+          "owner": "WhatsAppSendOriginChoice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:3af20e18ce286300b223",
+          "column": 11,
+          "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+          "line": 52,
+          "owner": "WhatsAppSendOriginChoice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:09f1c351855dc4d304ec",
+          "column": 15,
+          "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
+          "line": 33,
+          "owner": "WhatsAppSessionDisconnectedNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:bf106203d1c8b2a6d4aa",
+          "column": 11,
+          "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
+          "line": 46,
+          "owner": "WhatsAppSessionDisconnectedNotice",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
         },
         {
           "id": "cta:7cdaea7fd486d9931e5f",
@@ -30898,10 +31521,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:41e352fc142d54d993d8",
+          "id": "control:18887b86a2e4d62c0d1f",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1791,
+          "line": 2023,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -30953,10 +31576,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:fbb1738ff6db2f388bd4",
+          "id": "control:c1772237580820e5655d",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1792,
+          "line": 2024,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -33852,10 +34475,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:fc3724068ac69977f602",
+          "id": "control:a104728eafcf7ee29529",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 720,
+          "line": 763,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33864,10 +34487,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:7b6b5bbdbcd7868ef1df",
+          "id": "control:6c896070b0902e057d27",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 723,
+          "line": 766,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33876,10 +34499,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:3dbff698e5490a6b1a37",
+          "id": "control:94458e3e9ff93ca044de",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 749,
+          "line": 792,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33888,10 +34511,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:3d541ca11a5e079c09f0",
+          "id": "control:1a9f376ce9a72992c361",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 750,
+          "line": 793,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -35365,7 +35988,7 @@
         }
       ]
     },
-    "digestSha256": "4daffbe863f314101343b8663005046831c760dabaa9a8affebad714419ef52f"
+    "digestSha256": "2b56441ba18eb981906d56bf85084551af2947920ac6de47f6cac44405676a0d"
   },
   "routes": [
     {
@@ -39613,6 +40236,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+      "routes": [
+        "/settings/integrations/whatsapp"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
       "routes": [
         "/settings/integrations/whatsapp"
@@ -41898,17 +42530,6 @@
       "access": [
         "protected"
       ],
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueWhatsAppAutoReplySection.tsx",
-      "routes": [
-        "/crm/management/distribution/[id]/edit",
-        "/crm/management/distribution/new",
-        "/settings/integrations/meta"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
       "file": "components/features/round-robin/DistributionQueueChangeHistory.tsx",
       "routes": [
         "/crm/management/distribution/[id]/edit",
@@ -43886,7 +44507,219 @@
         "protected",
         "public"
       ],
+      "file": "components/features/whatsapp/NonLeadRetentionNotice.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
       "file": "components/features/whatsapp/StartAutomationDialog.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
+      "file": "components/features/whatsapp/WhatsAppAccessLostNotice.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
+      "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
+      "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
       "routes": [
         "/agenda",
         "/automations",
@@ -45237,32 +46070,32 @@
       "not-found.tsx": 1
     },
     "surfaces": {
-      "asChildButtonsExcluded": 41,
+      "asChildButtonsExcluded": 43,
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 82,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1414,
+      "ctasAll": 1428,
       "ctasByKind": {
-        "actionButton": 1251,
+        "actionButton": 1263,
         "external": 6,
-        "internal": 31,
-        "internalDynamic": 78,
+        "internal": 32,
+        "internalDynamic": 79,
         "unknownDynamic": 48
       },
       "forms": 50,
       "formsRouteReachable": 50,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1360,
-      "internalCtasRouteReachable": 1324,
-      "overlays": 222,
+      "internalCtas": 1374,
+      "internalCtasRouteReachable": 1338,
+      "overlays": 224,
       "overlaysByKind": {
-        "alertDialog": 61,
-        "dialog": 84,
+        "alertDialog": 62,
+        "dialog": 85,
         "dropdownMenu": 30,
         "popover": 34,
         "sheet": 13
       },
-      "overlaysRouteReachable": 215,
+      "overlaysRouteReachable": 217,
       "supplementalControls": 282,
       "supplementalControlsByKind": {
         "AlertDialogAction": 58,
@@ -45281,8 +46114,8 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 166,
     "routeReachableFormImplementations": 50,
-    "routeReachableInternalCtaImplementations": 1324,
-    "routeReachableOverlayImplementations": 215,
+    "routeReachableInternalCtaImplementations": 1338,
+    "routeReachableOverlayImplementations": 217,
     "routeReachableSupplementalOverlayAndTabControls": 275
   },
   "diagnostics": {

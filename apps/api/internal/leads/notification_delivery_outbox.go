@@ -499,6 +499,13 @@ func (repo Repository) prepareNormalizedNotificationDelivery(
 	delivery normalizedNotificationDelivery,
 	notification pendingNotification,
 ) normalizedNotificationPreflight {
+	// Retired owner-session admin alerts may already have durable deliveries.
+	// Keep their notification records, but finish every external channel without
+	// calling a provider or retrying the obsolete event.
+	if strings.EqualFold(strings.TrimSpace(stringFromMap(notification.Metadata, "event_key")), "whatsapp_disconnected_admin") {
+		return normalizedNotificationPermanentPreflight("vimob", "whatsapp_disconnected_admin_retired")
+	}
+
 	if isCadenceNotificationDeliverySuppressed(notification.Metadata) {
 		return normalizedNotificationPermanentPreflight("vimob", "cadence_notification_delivery_disabled")
 	}
@@ -659,7 +666,9 @@ func (repo Repository) prepareNormalizedWhatsAppDelivery(
 	provider := "evolution_go_global_instance"
 	organizationFallbackDependency := ""
 	organizationFallbackStatus := ""
-	if !isPlatformTransactionalNotificationEvent(eventKey) {
+	// A disconnected session cannot send its own alert. The owner notice always
+	// uses the platform's official notification instance, never a tenant number.
+	if eventKey != "whatsapp_disconnected" && !isPlatformTransactionalNotificationEvent(eventKey) {
 		candidate, status, found, err := repo.findAnyNotificationWhatsAppSession(ctx, notification.OrganizationID)
 		if err != nil {
 			return normalizedNotificationTransientPreflight("evolution_go_org_session", "notification_whatsapp_session_load_failed: "+trimMax(err.Error(), 900))

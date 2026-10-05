@@ -1,31 +1,31 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ee813bc28cc3b80aa5568a25e41a018b49f257e096f776c79973507323a30de4",
-  "surfaceInventoryDigestSha256": "3e745e013a227061884874f57931ba7f501ab7ee5090a0a87cdb086d0ee5ebae",
+  "sourceDigestSha256": "4ed86b33daca8e00cc26060aab3ea8b1eb963436810607f6904919f4bfb7f41a",
+  "surfaceInventoryDigestSha256": "c2726f8c3b4f5511e3cb5b3d714c35e9713d4075404a2ffeea62bac73205b528",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 546,
+    "filesScanned": 550,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 44,
-    "findings": 118,
-    "protectedReachableFilesWithFindings": 43,
-    "protectedReachableFindings": 117,
+    "filesWithFindings": 48,
+    "findings": 124,
+    "protectedReachableFilesWithFindings": 47,
+    "protectedReachableFindings": 123,
     "bySurfaceScope": {
-      "protected-only": 95,
-      "protected-and-public": 22,
+      "protected-only": 99,
+      "protected-and-public": 24,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 57,
+      "P1": 63,
       "P2": 15,
       "P3": 46
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 16,
+        "count": 17,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
@@ -37,13 +37,13 @@
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 5,
+        "count": 9,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 2,
+        "count": 3,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
@@ -178,6 +178,22 @@
       }
     },
     {
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/settings/WhatsAppTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
       "file": "components/features/contacts/ImportContactsDialog.tsx",
       "count": 4,
       "score": 4,
@@ -298,6 +314,14 @@
       }
     },
     {
+      "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
       "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
       "count": 2,
       "score": 3,
@@ -341,6 +365,14 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -542,6 +574,22 @@
       }
     },
     {
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/settings/WhatsAppTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
       "file": "components/features/contacts/ImportContactsDialog.tsx",
       "count": 4,
       "score": 4,
@@ -662,6 +710,14 @@
       }
     },
     {
+      "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
       "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
       "count": 2,
       "score": 3,
@@ -697,6 +753,14 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -821,7 +885,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 194,
+      "line": 204,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -830,7 +894,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1607,
+      "line": 1819,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -971,6 +1035,24 @@
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
+      "line": 49,
+      "match": "rounded-xl",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
+      "line": 134,
+      "match": "rounded-xl",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/leads/LeadCard.tsx",
@@ -1460,7 +1542,7 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 920,
+      "line": 867,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1469,7 +1551,7 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1001,
+      "line": 948,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1657,6 +1739,24 @@
       "weight": 4
     },
     {
+      "file": "components/features/settings/WhatsAppTab.tsx",
+      "line": 440,
+      "match": "rounded-xl",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/WhatsAppTab.tsx",
+      "line": 521,
+      "match": "rounded-xl",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
       "file": "components/features/site/VisitorMap.tsx",
       "line": 323,
       "match": "shadow-sm",
@@ -1739,7 +1839,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 239,
+      "line": 248,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1763,6 +1863,24 @@
       "rule": "medium-shadow",
       "surfaceScope": "protected-and-public",
       "weight": 2
+    },
+    {
+      "file": "components/features/whatsapp/WhatsAppSendOriginChoice.tsx",
+      "line": 36,
+      "match": "shadow-lg",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx",
+      "line": 23,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-and-public",
+      "weight": 3
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",

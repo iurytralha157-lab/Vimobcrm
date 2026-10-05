@@ -22,13 +22,13 @@ import {
 
 const statusToneClassName: Record<WhatsAppStatusTone, string> = {
   connected:
-    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300",
+    "bg-green-500 text-white",
   waiting:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300",
+    "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
   disconnected:
-    "border-red-200 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300",
+    "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300",
   unknown:
-    "border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
+    "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
 };
 
 function SessionStatusCard({
@@ -46,7 +46,7 @@ function SessionStatusCard({
   const verifying = verifyingSessionId === session.id;
 
   return (
-    <Card className="border">
+    <Card className="rounded-xl border-0 bg-[var(--app-surface-soft)]">
       <CardContent className="space-y-2.5 p-3">
         <div className="flex items-center gap-2.5">
           <Avatar className="h-9 w-9 shrink-0">
@@ -65,13 +65,13 @@ function SessionStatusCard({
           </div>
           <Badge
             variant="outline"
-            className={`shrink-0 rounded-[6px] text-[10px] font-medium ${statusToneClassName[status.tone]}`}
+            className={`shrink-0 rounded-full border-0 text-[10px] font-medium ${statusToneClassName[status.tone]}`}
           >
             {status.label}
           </Badge>
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-y border-[var(--app-border)] py-1.5">
+        <div className="flex items-center justify-between gap-2 py-1.5">
           <span className="truncate text-xs text-[var(--app-text-tertiary)]">
             {phone || session.profile_name || "Número não identificado"}
           </span>
@@ -131,7 +131,7 @@ export function WhatsAppSessionStatusPanel() {
   };
 
   return (
-    <Card className="border-0 bg-[var(--app-surface-solid)] shadow-none">
+    <Card className="rounded-xl border-0 bg-[var(--app-surface-solid)] shadow-none">
       <CardContent className="space-y-3 p-4">
         <div className="flex justify-end">
           <Button

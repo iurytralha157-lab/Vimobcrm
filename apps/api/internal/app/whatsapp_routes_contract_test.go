@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestAuthenticatedWhatsAppRoutesRequireModuleAndPermission(t *testing.T) {
+func TestAuthenticatedWhatsAppRoutesRequireWhatsAppModule(t *testing.T) {
 	raw, err := os.ReadFile("routes.go")
 	if err != nil {
 		t.Fatalf("read app.go: %v", err)
@@ -23,8 +23,9 @@ func TestAuthenticatedWhatsAppRoutesRequireModuleAndPermission(t *testing.T) {
 	for _, match := range matches {
 		registration := match[0]
 		guard := match[1]
-		if !strings.Contains(guard, `withModulePermission("whatsapp", permissions.WhatsApp`) {
-			t.Fatalf("WhatsApp route is missing module + permission guard: %s", registration)
+		if !strings.Contains(guard, `withModulePermission("whatsapp", permissions.WhatsApp`) &&
+			!strings.Contains(guard, `withWhatsAppModule(`) {
+			t.Fatalf("WhatsApp route is missing a module guard: %s", registration)
 		}
 	}
 }
@@ -69,15 +70,15 @@ func TestWhatsAppAttendanceRoutesUseReadAndOperatePermissions(t *testing.T) {
 	}
 }
 
-func TestWhatsAppSessionStatusesRouteUsesViewPermission(t *testing.T) {
+func TestWhatsAppSessionStatusesRouteAllowsOwnConnectionWithoutManagePermission(t *testing.T) {
 	raw, err := os.ReadFile("routes.go")
 	if err != nil {
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	expected := `mux.Handle("GET /v1/whatsapp/session-statuses", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListSessionStatuses)))`
+	expected := `mux.Handle("GET /v1/whatsapp/session-statuses", withWhatsAppModule(http.HandlerFunc(whatsappHandler.ListSessionStatuses)))`
 	if !strings.Contains(string(raw), expected) {
-		t.Fatal("WhatsApp session statuses must stay behind the WhatsApp module and view permission")
+		t.Fatal("WhatsApp session statuses must stay behind the WhatsApp module")
 	}
 }
 

@@ -31,7 +31,9 @@ func discoverConversationSessionID(
 }
 
 // lockOwnedConnectedEvolutionSession acquires the outer, read-only session
-// fence used by conversation mutations. The row is never upgraded while a
+// fence used by conversation mutations. It accepts an active send grant for a
+// shared number, while each caller still checks lead assignment separately.
+// The row is never upgraded while a
 // conversation lock is held; native paths that may mutate the session acquire
 // FOR UPDATE before touching any conversation instead.
 func lockOwnedConnectedEvolutionSession(
@@ -46,7 +48,7 @@ func lockOwnedConnectedEvolutionSession(
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
-		  and ws.owner_user_id = $3::uuid
+		  and (ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and ws.status = 'connected'

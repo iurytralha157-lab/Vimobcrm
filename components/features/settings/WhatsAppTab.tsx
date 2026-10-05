@@ -29,7 +29,8 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Bell } from
+  Bell,
+  Users } from
 "lucide-react";
 import {
   useWhatsAppSessions,
@@ -48,6 +49,9 @@ import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { canManageOrganization } from "@/lib/access/organization";
 import { resolveWhatsAppSessionStatus } from "@/lib/whatsapp-query-cache";
+import { canShareOwnWhatsAppSession } from "@/lib/access/whatsapp-session-sharing";
+import { isTenantContextForOrganization } from "@/lib/access/tenant-navigation";
+import { WhatsAppSessionAccessDialog } from "@/components/features/integrations/whatsapp/WhatsAppSessionAccessDialog";
 
 interface WhatsAppTabProps {
   embedded?: boolean;
@@ -82,6 +86,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     activeOrganization,
     profile,
     isSuperAdmin,
+    tenantContext,
     userOrganizations,
   } = useAuth();
   const queryClient = useQueryClient();
@@ -99,6 +104,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const [instanceName, setInstanceName] = useState("");
   const [selectedSession, setSelectedSession] = useState<WhatsAppSession | null>(null);
   const [sessionToDisconnect, setSessionToDisconnect] = useState<WhatsAppSession | null>(null);
+  const [sessionToShare, setSessionToShare] = useState<WhatsAppSession | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isRefreshingQr, setIsRefreshingQr] = useState(false);
   const [verifyingSessionId, setVerifyingSessionId] = useState<string | null>(null);
@@ -114,7 +120,17 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const activeMemberRole = userOrganizations.find(
     (membership) =>
       membership.organization_id === activeOrganization.organizationId,
-  )?.member_role;
+  )?.member_role || (isTenantContextForOrganization(activeOrganization.organizationId, tenantContext)
+    ? tenantContext?.memberRole
+    : undefined);
+  const hasCurrentTenantContext = isTenantContextForOrganization(activeOrganization.organizationId, tenantContext);
+  const sharingActor = {
+    userId: profile?.id || "",
+    memberRole: activeMemberRole,
+    isSuperAdmin,
+    isTeamLeader: hasCurrentTenantContext && Boolean(tenantContext?.isTeamLeader),
+    ledUserIds: hasCurrentTenantContext ? tenantContext?.ledUserIds || [] : [],
+  };
   const canManageNotificationSession = canManageOrganization({
     isSuperAdmin,
     memberRole: activeMemberRole,
@@ -407,7 +423,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
-        return <Badge className="bg-green-500 hover:bg-green-600"><CheckCircle className="w-3 h-3 mr-1" />Conectado</Badge>;
+        return <Badge className="bg-green-500 text-white hover:bg-green-600"><CheckCircle className="w-3 h-3 mr-1" />Conectado</Badge>;
       case "qr_ready":
         return <Badge className="bg-blue-500 hover:bg-blue-600"><QrCode className="w-3 h-3 mr-1" />Aguardando Leitura</Badge>;
       case "connecting":
@@ -421,7 +437,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   };
 
   return (
-    <Card className={embedded ? "border-0 bg-transparent shadow-none" : undefined}>
+    <Card className={embedded ? "border-0 bg-transparent shadow-none" : "rounded-xl"}>
       {embedded &&
       <Button
         data-tour="whatsapp-new-session"
@@ -493,9 +509,16 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         <div className={embedded ? "grid gap-3 sm:grid-cols-2" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 px-[10px]"}>
             {sessions?.map((session, index) => {
               const canManageThisSession = session.owner_user_id === profile?.id;
+              const canShareThisSession = canShareOwnWhatsAppSession({
+                ownerUserId: session.owner_user_id,
+                currentUserId: sharingActor.userId,
+                memberRole: sharingActor.memberRole,
+                isSuperAdmin: sharingActor.isSuperAdmin,
+                isTeamLeader: sharingActor.isTeamLeader,
+              });
 
               return (
-          <Card key={session.id} data-tour={index === 0 ? "whatsapp-session-card" : undefined} className="border">
+          <Card key={session.id} data-tour={index === 0 ? "whatsapp-session-card" : undefined} className="rounded-xl border-0 bg-[var(--app-surface-soft)]">
                 <CardContent className="p-3 space-y-2.5">
                   {/* Row 1: Avatar + name + status badge */}
                   <div className="flex items-center gap-2.5">
@@ -517,7 +540,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                   </div>
 
                   {/* Row 2: Responsavel + notificacao toggle */}
-                  <div className="flex items-center justify-between gap-2 border-y border-[var(--app-border)] py-1.5">
+                  <div className="flex items-center justify-between gap-2 py-1.5">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                       {session.is_notification_session &&
                   <Badge variant="outline" className="text-orange-600 border-orange-300 bg-orange-50 text-[10px] px-1.5 py-0 shrink-0">
@@ -552,18 +575,32 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                 }
                   </div>
                   {/* Row 3: Action buttons */}
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      data-tour={index === 0 ? "whatsapp-verify-button" : undefined}
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5 px-3 text-xs"
-                      onClick={() => handleVerifyConnection(session)}
-                      disabled={verifyingSessionId === session.id}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${verifyingSessionId === session.id ? "animate-spin" : ""}`} />
-                      Verificar
-                    </Button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {canShareThisSession ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 px-3 text-xs"
+                        onClick={() => setSessionToShare(session)}
+                      >
+                        <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                        Compartilhar
+                      </Button>
+                    ) : null}
+                    {canManageThisSession ? (
+                      <Button
+                        data-tour={index === 0 ? "whatsapp-verify-button" : undefined}
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 px-3 text-xs"
+                        onClick={() => handleVerifyConnection(session)}
+                        disabled={verifyingSessionId === session.id}
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${verifyingSessionId === session.id ? "animate-spin" : ""}`} />
+                        Verificar
+                      </Button>
+                    ) : null}
                     {canManageThisSession && session.status !== "connected" ? (
                       <>
                         <Button data-tour={index === 0 ? "whatsapp-qr-button" : undefined} variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenQRDialog(session)}>
@@ -607,6 +644,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         }
 
         {/* Create Session Dialog */}
+        <WhatsAppSessionAccessDialog
+          session={sessionToShare}
+          actor={sharingActor}
+          open={Boolean(sessionToShare)}
+          onOpenChange={(open) => { if (!open) setSessionToShare(null); }}
+        />
         <Dialog open={createDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
           <DialogContent data-tour="whatsapp-create-dialog" className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] p-5">
             <DialogHeader>

@@ -159,7 +159,11 @@ test('preserva o nome do participante no evento de entrada no atendimento', () =
       title: 'Ana entrou no atendimento',
       user_id: 'user-1',
       created_at: '2026-09-23T12:00:00.000Z',
-      metadata: { attendance_entry_id: 'entry-1' },
+      metadata: {
+        attendance_entry_id: 'entry-1',
+        marker_kind: 'joined',
+        marker_at: '2026-09-23T12:00:00.000Z',
+      },
     }],
     users: [{ id: 'user-1', name: 'Ana', avatar_url: null }],
   };
@@ -169,6 +173,26 @@ test('preserva o nome do participante no evento de entrada no atendimento', () =
   assert.equal(history[0]?.type, 'whatsapp_attendance_joined');
   assert.equal(history[0]?.label, 'Ana entrou no atendimento');
   assert.equal(history[0]?.content, undefined);
+});
+
+test('omite entrada antiga no atendimento sem envio confirmado', () => {
+  const history = buildLeadHistory({
+    timelineEvents: [{
+      id: 'legacy-attendance-entry',
+      event_type: 'whatsapp_attendance_joined',
+      title: 'Ana entrou no atendimento',
+      created_at: '2026-09-23T12:00:00.000Z',
+      metadata: { attendance_entry_id: 'entry-1' },
+    }, {
+      id: 'incomplete-attendance-marker',
+      event_type: 'whatsapp_attendance_joined',
+      title: 'Ana entrou no atendimento',
+      created_at: '2026-09-23T12:01:00.000Z',
+      metadata: { attendance_entry_id: 'entry-2', marker_kind: 'joined' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.deepEqual(history, []);
 });
 
 test('distribuição automática mostra o destinatário sem atribuir a ação a ele', () => {

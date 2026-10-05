@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "8bd8fd72fa7e0be66871b7ac179344db9c5945b26d652de62b61e10c76faa8e2",
+  "shared_source_sha256": "12b435d846fab11a76f2fa51aeb68c007a93cfe03e34ffad6fe5acd785a888ea",
   "functions": [
     {
       "slug": "ai-agent-responder",
@@ -254,7 +254,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "4c3089aa3000f0db994226862540638cf57b4ce5e945826915484e4bec998a53",
-      "source_sha256": "70ac7ff1c5126f60e7ab8ba58ab11d8de1c33ed2a6bf0493812a4333c175166b"
+      "source_sha256": "00bd81c1a13007c579df8db7686937fd43b38406e53180b3693c425319724e87"
     },
     {
       "slug": "evolution-go-webhook",
@@ -264,7 +264,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
-      "source_sha256": "665d8203601254e551efd19bc7f3e64fd3995e0edd9222f2b6120fbec84de7e0"
+      "source_sha256": "f301aab772a36a8b366a006a3a48719981a02e8daf14b2d41b76a0510ebc2800"
     },
     {
       "slug": "evolution-proxy",
@@ -274,7 +274,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "1828b71cb273c012c31954db8e098bf44ffaa1b370a49bf1101c650682b7b6b9",
-      "source_sha256": "547cdd06f45a3d93938bdbb92c347ece1769688be012199b02cd6e02452a3d6b"
+      "source_sha256": "90334e5d45e6e8680c282594a097a09516cab271aa354ebceb5e557928f148fe"
     },
     {
       "slug": "evolution-webhook",
@@ -524,7 +524,7 @@
       "verify_jwt": true,
       "auth_boundary": "GATEWAY_JWT",
       "captured_deployment_sha256": "1aaf8786a4fb10a03f5ee16bc4230df02d5cf5f7b7dfe03c9ffe32f9ea9af82c",
-      "source_sha256": "68baf2b4979b7226bcdafa5a2d752128bfd9e4af5c95125264e70cf2b1cf04fa"
+      "source_sha256": "694b4dfc8a68fb0482222efc9252f6230f93c802b3dd27bc572fcb2dbdb6059e"
     },
     {
       "slug": "notification-evolution-failover",
@@ -694,7 +694,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "783f713171592fc9ab94931b326330d14ffd6ebb265e5a48d6051b60cf237472"
+      "source_sha256": "aa37589d54b0381ae280de8c830f44cc8fe11b97a96733e19c28bcb877bdd017"
     },
     {
       "slug": "sla-checker",

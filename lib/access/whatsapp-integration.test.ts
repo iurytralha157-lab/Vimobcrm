@@ -41,7 +41,7 @@ test("organization admins can view status, manage their sessions and choose noti
   );
 });
 
-test("team leaders get a read-only scoped status surface through the resolved view permission", () => {
+test("team leaders can connect their own number and view their scoped statuses", () => {
   assert.deepEqual(
     getWhatsAppIntegrationAccess({
       ...baseAccess,
@@ -50,18 +50,18 @@ test("team leaders get a read-only scoped status surface through the resolved vi
     }),
     {
       canViewStatuses: true,
-      canManageOwnSessions: false,
+      canManageOwnSessions: true,
       canSetNotificationSender: false,
     },
   );
 });
 
-test("an explicit WhatsApp denial remains authoritative for a team leader", () => {
-  assert.equal(
-    getWhatsAppIntegrationAccess({ ...baseAccess, isTeamLeader: true })
-      .canViewStatuses,
-    false,
-  );
+test("a member without view permission can connect their own number but not see organization statuses", () => {
+  assert.deepEqual(getWhatsAppIntegrationAccess({ ...baseAccess, isTeamLeader: true }), {
+    canViewStatuses: false,
+    canManageOwnSessions: true,
+    canSetNotificationSender: false,
+  });
 });
 
 test("WhatsApp manage permission implies view but never grants notification sender selection", () => {
@@ -78,10 +78,10 @@ test("WhatsApp manage permission implies view but never grants notification send
   );
 });
 
-test("ordinary members without WhatsApp permission cannot open the page", () => {
+test("ordinary members may connect their own number when the module is enabled", () => {
   assert.deepEqual(getWhatsAppIntegrationAccess(baseAccess), {
     canViewStatuses: false,
-    canManageOwnSessions: false,
+    canManageOwnSessions: true,
     canSetNotificationSender: false,
   });
 });

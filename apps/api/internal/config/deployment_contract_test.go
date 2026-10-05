@@ -90,6 +90,30 @@ func TestProductionStacksExposeBoundedWhatsAppMediaWorker(t *testing.T) {
 	}
 }
 
+func TestProductionStacksRequireExplicitInboundRecordingCanary(t *testing.T) {
+	for _, path := range []string{
+		"../../../../deploy/portainer-stack.yml",
+		"../../../../deploy/portainer-stack.build.yml",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !strings.Contains(string(raw), `WHATSAPP_INBOUND_RECORDING_SESSION_IDS: ${WHATSAPP_INBOUND_RECORDING_SESSION_IDS:-}`) {
+			t.Fatalf("%s must require explicit inbound recording scope until retention is active", path)
+		}
+	}
+
+	raw, err := os.ReadFile("../../../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "WHATSAPP_INBOUND_RECORDING_SESSION_IDS=") ||
+		strings.Contains(string(raw), "WHATSAPP_INBOUND_RECORDING_SESSION_IDS=*") {
+		t.Fatal(".env.example must require an explicit inbound recording canary")
+	}
+}
+
 func TestProductionWebIngressCannotBypassTheForwardingProxy(t *testing.T) {
 	swarmRaw, err := os.ReadFile("../../../../deploy/portainer-stack.yml")
 	if err != nil {

@@ -81,18 +81,39 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	queueIDs := make([]string, 3)
+	var pipelineID, stageID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.pipelines (organization_id, name, is_default, is_active, position)
+		values ($1::uuid, $2, true, true, 0)
+		returning id::text
+	`, organizationID, suffix+" pipeline").Scan(&pipelineID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.stages (organization_id, pipeline_id, name, stage_key, position, is_active)
+		values ($1::uuid, $2::uuid, $3, 'new', 0, true)
+		returning id::text
+	`, organizationID, pipelineID, suffix+" stage").Scan(&stageID); err != nil {
+		t.Fatal(err)
+	}
+
+	queueIDs := make([]string, 2)
 	for index := range queueIDs {
 		if err := postgres.Pool().QueryRow(ctx, `
-			insert into public.round_robins (organization_id, name, is_active)
-			values ($1::uuid, $2, true)
+			insert into public.round_robins (
+				organization_id, name, is_active, pipeline_id, target_pipeline_id, target_stage_id
+			) values ($1::uuid, $2, true, $3::uuid, $3::uuid, $4::uuid)
 			returning id::text
-		`, organizationID, fmt.Sprintf("%s-queue-%d", suffix, index)).Scan(&queueIDs[index]); err != nil {
+		`, organizationID, fmt.Sprintf("%s-queue-%d", suffix, index), pipelineID, stageID).Scan(&queueIDs[index]); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	leadIDs := make([]string, 3)
+	// The legacy organization-wide phone index is still present before the
+	// queue-scoped cutover. These two stored BR phone variants have distinct
+	// indexed values but both match the same WhatsApp contact for manual binding.
+	leadPhones := []string{phone, phone[:4] + phone[5:]}
+	leadIDs := make([]string, len(leadPhones))
 	for index := range leadIDs {
 		if err := postgres.Pool().QueryRow(ctx, `
 			insert into public.leads (
@@ -100,7 +121,7 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 				name, phone, source
 			) values ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'whatsapp')
 			returning id::text
-		`, organizationID, queueIDs[index], userID, fmt.Sprintf("%s-lead-%d", suffix, index), phone).Scan(&leadIDs[index]); err != nil {
+		`, organizationID, queueIDs[index], userID, fmt.Sprintf("%s-lead-%d", suffix, index), leadPhones[index]).Scan(&leadIDs[index]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -138,37 +159,37 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		MemberRole:     "admin",
 	}
 
-	t.Run("stale unlinked to B loses after unlinked to C", func(t *testing.T) {
+	t.Run("stale unlinked snapshot loses after a different lead binds", func(t *testing.T) {
 		if err := repo.LinkConversationToLead(
-			ctx, tenantContext, conversationIDs[0], leadIDs[2], unlinkedConversationLeadSnapshot,
+			ctx, tenantContext, conversationIDs[0], leadIDs[0], unlinkedConversationLeadSnapshot,
 		); err != nil {
-			t.Fatalf("unlinked -> C: %v", err)
+			t.Fatalf("unlinked -> first lead: %v", err)
 		}
 		if err := repo.LinkConversationToLead(
 			ctx, tenantContext, conversationIDs[0], leadIDs[1], unlinkedConversationLeadSnapshot,
 		); !errors.Is(err, ErrConversationBindingChanged) {
-			t.Fatalf("stale unlinked -> B error = %v, want ErrConversationBindingChanged", err)
+			t.Fatalf("stale unlinked -> second lead error = %v, want ErrConversationBindingChanged", err)
 		}
-		assertConversationLead(t, ctx, postgres, conversationIDs[0], leadIDs[2])
+		assertConversationLead(t, ctx, postgres, conversationIDs[0], leadIDs[0])
 	})
 
-	t.Run("stale A to B loses after A to C", func(t *testing.T) {
+	t.Run("stale A snapshot loses after A moves to another lead", func(t *testing.T) {
 		if err := repo.LinkConversationToLead(
 			ctx, tenantContext, conversationIDs[1], leadIDs[0], unlinkedConversationLeadSnapshot,
 		); err != nil {
 			t.Fatalf("unlinked -> A: %v", err)
 		}
 		if err := repo.LinkConversationToLead(
-			ctx, tenantContext, conversationIDs[1], leadIDs[2], leadIDs[0],
+			ctx, tenantContext, conversationIDs[1], leadIDs[1], leadIDs[0],
 		); err != nil {
-			t.Fatalf("A -> C: %v", err)
+			t.Fatalf("first -> second lead: %v", err)
 		}
 		if err := repo.LinkConversationToLead(
-			ctx, tenantContext, conversationIDs[1], leadIDs[1], leadIDs[0],
+			ctx, tenantContext, conversationIDs[1], leadIDs[0], leadIDs[0],
 		); !errors.Is(err, ErrConversationBindingChanged) {
-			t.Fatalf("stale A -> B error = %v, want ErrConversationBindingChanged", err)
+			t.Fatalf("stale first-lead snapshot error = %v, want ErrConversationBindingChanged", err)
 		}
-		assertConversationLead(t, ctx, postgres, conversationIDs[1], leadIDs[2])
+		assertConversationLead(t, ctx, postgres, conversationIDs[1], leadIDs[1])
 	})
 
 	t.Run("concurrent link has exactly one winner", func(t *testing.T) {
@@ -176,12 +197,12 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 			return repo.LinkConversationToLead(
 				ctx, tenantContext, conversationIDs[2], targetLeadID, unlinkedConversationLeadSnapshot,
 			)
-		}, leadIDs[1], leadIDs[2])
+		}, leadIDs[0], leadIDs[1])
 		assertSingleBindingCASWinner(t, results)
-		assertConversationLeadOneOf(t, ctx, postgres, conversationIDs[2], leadIDs[1], leadIDs[2])
+		assertConversationLeadOneOf(t, ctx, postgres, conversationIDs[2], leadIDs[0], leadIDs[1])
 	})
 
-	t.Run("StartConversation has exactly one winner", func(t *testing.T) {
+	t.Run("concurrent StartConversation has exactly one winner for one exact phone", func(t *testing.T) {
 		results := runConcurrentBindingAttempts(func(targetLeadID string) error {
 			_, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
 				Phone:                  phone,
@@ -190,9 +211,9 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 				ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
 			})
 			return err
-		}, leadIDs[1], leadIDs[2])
+		}, leadIDs[0], leadIDs[0])
 		assertSingleBindingCASWinner(t, results)
-		assertConversationLeadOneOf(t, ctx, postgres, conversationIDs[3], leadIDs[1], leadIDs[2])
+		assertConversationLead(t, ctx, postgres, conversationIDs[3], leadIDs[0])
 	})
 }
 

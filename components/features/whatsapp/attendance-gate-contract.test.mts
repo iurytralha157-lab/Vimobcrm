@@ -35,13 +35,14 @@ test("contrato de attendance usa card e WhatsApp selecionado em GET e POST", () 
   assert.match(hookSource, /pending\.identityKey !== requestIdentityRef\.current/);
 });
 
-test("dialogo explica inicio temporal, visibilidade e ausencia de importacao", () => {
-  assert.match(dialogSource, /Entrar no atendimento\?/);
-  assert.match(dialogSource, /mensagens enviadas e recebidas pelo WhatsApp selecionado/);
-  assert.match(dialogSource, /a partir da sua entrada/);
-  assert.match(dialogSource, /visíveis[\s\S]*quem tem acesso ao lead/);
-  assert.match(dialogSource, /Mensagens anteriores a esta entrada não serão acrescentadas ao histórico/);
-  assert.match(dialogSource, /registros antigos do card permanecem/);
+test("dialogo explica confirmacao do envio, visibilidade e historico recebido", () => {
+  assert.match(dialogSource, /Compartilhar o histórico deste atendimento\?/);
+  assert.match(dialogSource, /Confirme antes de enviar pelo seu WhatsApp/);
+  assert.match(dialogSource, /Seus envios e sua participação[\s\S]*ficarão no histórico do card/);
+  assert.match(dialogSource, /visíveis para quem tem acesso ao lead/);
+  assert.match(dialogSource, /Esta confirmação vale uma vez para você, este WhatsApp e este lead/);
+  assert.match(dialogSource, /Ela não limita o recebimento/);
+  assert.match(dialogSource, /Confirmar e enviar/);
 });
 
 test("as tres superficies passam pelo gate antes da mutacao de envio", () => {
@@ -62,19 +63,31 @@ test("as tres superficies passam pelo gate antes da mutacao de envio", () => {
 
   assert.match(conversationsSource, /attendanceEntries=\{attendanceGate\.entries\}/);
   assert.match(floatingSource, /attendanceGate\.entries\.map/);
-  assert.doesNotMatch(leadThreadSource, /attendanceGate\.entries/);
-  assert.match(hookSource, /\['lead-history-v2', target\.expectedLeadId\]/);
+  assert.match(leadThreadSource, /attendanceGate\.entries\.some/);
+  assert.match(hookSource, /whatsappQueryKeys\.leadMessagesScope\(scope\)/);
 });
 
 test("rascunho, audio e criacao de conversa aguardam confirmacao", () => {
-  const mainSend = sourceBetween(conversationsSource, "const handleSendMessage", "const handleKeyPress");
-  assert.ok(mainSend.indexOf("ensureJoined") < mainSend.indexOf('setMessageText("")'));
-
-  const floatingSend = sourceBetween(floatingSource, "const handleSendMessage", "const handleKeyPress");
-  assert.ok(floatingSend.indexOf("ensureJoined") < floatingSend.indexOf('setMessageText("")'));
+  for (const [name, source, mutation] of [
+    ["conversas", conversationsSource, "sendTextMessage.mutateAsync"],
+    ["flutuante", floatingSource, "sendMessage.mutateAsync"],
+  ] as const) {
+    const send = sourceBetween(source, "const handleSendMessage", "const handleKeyPress");
+    const confirm = send.indexOf("await attendanceGate.ensureJoined()");
+    const check = send.indexOf("if (!joined)", confirm);
+    const accept = send.indexOf("textSendGuard.accepted(intent)", check);
+    const clear = send.indexOf("setMessageDrafts(", accept);
+    const mutate = send.indexOf(mutation, clear);
+    assert.ok(confirm >= 0 && confirm < check && check < accept && accept < clear && clear < mutate,
+      `${name} deve confirmar atendimento antes de aceitar, limpar e enviar o rascunho`);
+  }
 
   const leadSend = sourceBetween(leadThreadSource, "const handleSend = async", "const handleSendAudio");
-  assert.ok(leadSend.indexOf("ensureConversationAndAttendanceForSend") < leadSend.indexOf("setText('')"));
+  const leadConfirm = leadSend.indexOf("ensureConversationAndAttendanceForSend");
+  const leadAccept = leadSend.indexOf("textSendGuard.accepted(intent)", leadConfirm);
+  const leadClear = leadSend.indexOf("setText((current)", leadAccept);
+  const leadMutate = leadSend.indexOf("sendMessage.mutateAsync", leadClear);
+  assert.ok(leadConfirm >= 0 && leadConfirm < leadAccept && leadAccept < leadClear && leadClear < leadMutate);
   assert.match(leadThreadSource, /prepareTarget:[\s\S]*?ensureConversationForSend/);
   assert.match(audioRecorderSource, /if \(sent !== false\) clearRecording\(\)/);
 });

@@ -52,7 +52,7 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
-type WhatsAppMessageCaptureState = "legacy" | "captured" | "suppressed";
+type WhatsAppMessageCaptureState = "legacy" | "captured" | "suppressed" | "recorded";
 
 type WhatsAppAttendanceCaptureDecision = {
   captureState: WhatsAppMessageCaptureState;
@@ -70,6 +70,12 @@ const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
 const EVOLUTION_WEBHOOK_SECRET = Deno.env.get("EVOLUTION_WEBHOOK_SECRET") || "";
 const VIMOB_API_URL = Deno.env.get("VIMOB_API_URL") || Deno.env.get("VIMOB_API_BASE_URL") || "";
 const AI_AUTOREPLY_TOKEN = Deno.env.get("AI_AUTOREPLY_TOKEN") || Deno.env.get("INTERNAL_WEBHOOK_TOKEN") || "";
+// Enable future inbound recording only for an explicit canary session until
+// seven-day nonlead deletion can be activated; existing rows keep their state.
+const WHATSAPP_INBOUND_RECORDING_SESSION_IDS = (Deno.env.get("WHATSAPP_INBOUND_RECORDING_SESSION_IDS") || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 // Stay below Evolution's callback retry window; failures persist as pending.
 const EVOLUTION_GO_MEDIA_TIMEOUT_MS = 20_000;
 const EVOLUTION_GO_MEDIA_RESPONSE_MAX_BYTES = Math.ceil(WHATSAPP_MEDIA_MAX_BYTES / 3) * 4 + 1024 * 1024;
@@ -141,6 +147,15 @@ function optionalUuid(value: unknown) {
     : null;
 }
 
+function inboundRecordingEnabledForSession(session: JsonRecord) {
+  const sessionId = optionalUuid(session.id);
+  if (!sessionId) return false;
+  return (
+    WHATSAPP_INBOUND_RECORDING_SESSION_IDS.includes("*")
+    || WHATSAPP_INBOUND_RECORDING_SESSION_IDS.includes(sessionId)
+  );
+}
+
 function isUniqueViolation(error: any, constraintName?: string) {
   if (error?.code !== "23505") return false;
   if (!constraintName) return true;
@@ -180,7 +195,7 @@ function persistedWhatsAppMessageCaptureState(
   if (!storedMessage) return null;
   const value = cleanText(storedMessage.capture_state);
   if (!value) return "legacy";
-  if (["legacy", "captured", "suppressed"].includes(value)) {
+  if (["legacy", "captured", "suppressed", "recorded"].includes(value)) {
     return value as WhatsAppMessageCaptureState;
   }
   throw new Error("whatsapp_message_capture_state_invalid");
@@ -540,7 +555,7 @@ function normalizeStatus(data: any) {
   if (connectedPresent) return "disconnected";
   if ((rawState === "open" || rawState === "connected") && !loggedOut) return "connected";
   if (["qr", "qrcode", "qr_ready", "pairing", "connecting"].includes(rawState) || extractQr(data)) return "qr_ready";
-  if (loggedOut || ["close", "closed", "disconnected", "disconnect", "offline", "logout", "logged_out"].includes(rawState)) {
+  if (loggedOut || ["close", "closed", "disconnected", "disconnect", "offline", "logout", "logged_out", "loggedout"].includes(rawState)) {
     return "disconnected";
   }
   return null;
@@ -684,6 +699,10 @@ function isMessageLike(value: any) {
     value.text ||
     value.body ||
     value.content ||
+    value.buttonText ||
+    value.button_text ||
+    value.buttonId ||
+    value.button_id ||
     value.message_id ||
     value.messageId ||
     value.ID,
@@ -762,6 +781,21 @@ function extractMessages(payload: any) {
     seen.add(key);
     return true;
   });
+}
+
+function technicalEvolutionIgnoreReason(payload: any, event: string) {
+  const compactEvent = event.replace(/[.\s_-]/g, "");
+  if (compactEvent === "readself") return "technical_read_self";
+  if (compactEvent !== "buttonclick") return null;
+
+  for (const { rawMessage, envelope } of extractMessages(payload)) {
+    const message = normalizeMessage(rawMessage, envelope);
+    const choice = extractButtonChoice(getMessageNode(rawMessage), rawMessage);
+    if (message && !message.fromMe && !message.isGroup && message.messageType === "text" && choice) {
+      return null;
+    }
+  }
+  return "technical_button_click";
 }
 
 function getMessageNode(message: any) {
@@ -1142,8 +1176,29 @@ function hasEncryptedMediaDescriptor(block: JsonRecord | null) {
   ].some((value) => value !== undefined && value !== null && value !== "");
 }
 
+function extractButtonChoice(messageNode: any, message: any) {
+  const values = [
+    messageNode?.buttonText,
+    messageNode?.button_text,
+    messageNode?.buttonId,
+    messageNode?.button_id,
+    messageNode?.selectedDisplayText,
+    messageNode?.selectedButtonId,
+    message?.buttonText,
+    message?.button_text,
+    message?.buttonId,
+    message?.button_id,
+  ];
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
 function extractContent(messageNode: any, message: any, mediaBlock: any) {
   return firstPresent(
+    extractButtonChoice(messageNode, message),
     typeof messageNode === "string" ? messageNode : null,
     messageNode?.conversation,
     messageNode?.Conversation,
@@ -1227,11 +1282,19 @@ function fallbackMimeType(type: string) {
 
 type InboundMediaStoreResult = {
   path: string | null;
+  reservationToken: string | null;
   status: "ready" | "pending";
   error: string | null;
   contentType: string | null;
   size: number | null;
 };
+
+class WhatsAppNonleadRetentionFenceError extends Error {
+  constructor() {
+    super("whatsapp_nonlead_retention_fence_unavailable");
+    this.name = "WhatsAppNonleadRetentionFenceError";
+  }
+}
 
 class InboundMediaRecoveryError extends Error {
   readonly code: string;
@@ -1374,11 +1437,63 @@ function inboundMediaErrorCode(error: unknown) {
   return "media_storage_upload_failed";
 }
 
+async function wasNonleadWhatsAppEventPurged(
+  session: JsonRecord,
+  providerMessageId: string,
+  inboxEventKey: string | null = null,
+  providerOccurredAt: string | null = null,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("whatsapp_nonlead_event_is_purged", {
+    p_organization_id: session.organization_id,
+    p_session_id: session.id,
+    p_provider_message_id: providerMessageId,
+    p_inbox_event_key: inboxEventKey,
+    p_provider_occurred_at: providerOccurredAt,
+  });
+  if (error) throw error;
+  if (typeof data !== "boolean") {
+    throw new Error("whatsapp_nonlead_retention_fence_result_invalid");
+  }
+  return data;
+}
+
+async function reserveInboundMediaPath(
+  session: JsonRecord,
+  conversationId: string,
+  path: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc("whatsapp_media_path_reserve", {
+    p_organization_id: session.organization_id,
+    p_conversation_id: conversationId,
+    p_bucket_id: "whatsapp-media",
+    p_storage_path: path,
+    p_operation: "upload",
+  });
+  if (error || typeof data !== "string" || !data) {
+    // A concurrent delete, unavailable schema, or unknown prior upload must
+    // retry the entire webhook without creating a message that points to a
+    // possibly absent object.
+    throw new WhatsAppNonleadRetentionFenceError();
+  }
+  return data;
+}
+
+async function releaseInboundMediaPath(token: string, outcome: "committed" | "not_started" | "unknown"): Promise<void> {
+  const { data, error } = await supabase.rpc("whatsapp_media_path_release", {
+    p_owner_token: token,
+    p_outcome: outcome,
+  });
+  if (error || data !== true) throw new WhatsAppNonleadRetentionFenceError();
+}
+
 async function storeInboundMedia(params: {
   session: JsonRecord;
+  conversationId: string;
   message: NonNullable<ReturnType<typeof normalizeMessage>>;
 }): Promise<InboundMediaStoreResult> {
-  const { session, message } = params;
+  const { session, conversationId, message } = params;
+  let reservationToken: string | null = null;
+  let uploadStarted = false;
   try {
     let recovered: { bytes: Uint8Array; contentType: string | null };
     if (message.mediaBase64) {
@@ -1407,6 +1522,17 @@ async function storeInboundMedia(params: {
     });
     const extension = mediaExtension(validated.contentType, message.messageType);
     const path = `orgs/${session.organization_id}/sessions/${session.id}/incoming/${message.messageId}.${extension}`;
+    try {
+      if (await wasNonleadWhatsAppEventPurged(session, message.messageId, null, message.providerOccurredAt)) {
+        throw new WhatsAppNonleadRetentionFenceError();
+      }
+    } catch {
+      // A failed fence is a failed webhook, not a recoverable media download.
+      // Recording a pending-media message here would restore purged content.
+      throw new WhatsAppNonleadRetentionFenceError();
+    }
+    reservationToken = await reserveInboundMediaPath(session, conversationId, path);
+    uploadStarted = true;
     const { error } = await supabase.storage
       .from("whatsapp-media")
       .upload(path, validated.bytes, {
@@ -1417,12 +1543,23 @@ async function storeInboundMedia(params: {
 
     return {
       path,
+      reservationToken,
       status: "ready",
       error: null,
       contentType: validated.contentType,
       size: validated.size,
     };
   } catch (error) {
+    if (error instanceof WhatsAppNonleadRetentionFenceError) throw error;
+    if (reservationToken) {
+      // Once the HTTP request starts, a timeout cannot prove that Storage did
+      // not persist the object. Preserve the reservation for reconciliation.
+      try {
+        await releaseInboundMediaPath(reservationToken, uploadStarted ? "unknown" : "not_started");
+      } catch {
+        throw new WhatsAppNonleadRetentionFenceError();
+      }
+    }
     const code = inboundMediaErrorCode(error);
     console.warn("Inbound WhatsApp media remains pending", {
       session_id: session.id,
@@ -1431,6 +1568,7 @@ async function storeInboundMedia(params: {
     });
     return {
       path: null,
+      reservationToken: null,
       status: "pending",
       error: code,
       contentType: message.mediaMimeType || null,
@@ -1446,76 +1584,94 @@ async function storeInboundMedia(params: {
 async function reconcileHandledWhatsAppMessageTransport(
   session: JsonRecord,
   message: ReturnType<typeof normalizeMessage>,
-) {
+  expectedMessage: JsonRecord | null = null,
+): Promise<boolean> {
   if (!message || message.fromMe || !["image", "video", "audio", "document", "sticker"].includes(message.messageType)) {
-    return;
+    return true;
   }
 
-  let existing: JsonRecord | null = null;
-  for (const providerIdentityColumn of ["message_id", "provider_message_id"]) {
-    const { data, error } = await supabase
-      .from("whatsapp_messages")
-      .select("id, conversation_id, lead_id, message_id, capture_state, metadata, media_url, media_mime_type, media_storage_path, media_status, media_error, media_size")
-      .eq("organization_id", session.organization_id)
-      .eq("session_id", session.id)
-      .eq(providerIdentityColumn, message.messageId)
-      .eq("from_me", false)
-      .maybeSingle();
-    if (error) throw error;
-    if (data?.id) {
-      existing = data;
-      break;
-    }
+  const existing = await findMessageByProviderIdentity(
+    session,
+    message,
+    "id, conversation_id, lead_id, from_me, message_id, capture_state, metadata, media_url, media_mime_type, media_storage_path, media_status, media_error, media_size",
+  );
+  if (expectedMessage?.id && (
+    !existing?.id
+    || existing.id !== expectedMessage.id
+    || optionalUuid(existing.conversation_id) !== optionalUuid(expectedMessage.conversation_id)
+    || optionalUuid(existing.lead_id) !== optionalUuid(expectedMessage.lead_id)
+    || persistedWhatsAppMessageCaptureState(existing) !== persistedWhatsAppMessageCaptureState(expectedMessage)
+  )) {
+    throw new Error("whatsapp_recorded_replay_media_identity_conflict");
   }
-  if (!existing?.id) return;
+  if (!existing?.id) return true;
+  if (existing.from_me !== false) {
+    throw new Error("whatsapp_replay_media_direction_conflict");
+  }
   if (persistedWhatsAppMessageCaptureState(existing) === "suppressed") {
     await redactSuppressedStoredMessage(
       session,
       existing,
       message.messageId,
     );
-    return;
+    return true;
   }
 
-  const existingStoragePath = normalizeText(existing.media_storage_path).trim() || null;
-  if (existingStoragePath) return;
-  const media = await storeInboundMedia({ session, message });
-
-  if (media.path) {
-    const mediaStoragePath = media.path;
-    const { error: readyUpdateError } = await supabase
+  const updateTransport = async (fields: JsonRecord) => {
+    let updateQuery = supabase
       .from("whatsapp_messages")
-      .update({
-        media_url: existing.media_url || message.mediaUrl || null,
-        media_mime_type: media.contentType || existing.media_mime_type || message.mediaMimeType || null,
-        media_storage_path: mediaStoragePath,
-        media_status: "ready",
-        media_error: null,
-        media_size: media.size || existing.media_size || message.mediaSize || null,
-      })
+      .update(fields)
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("id", existing.id)
+      .eq("conversation_id", existing.conversation_id)
       .eq("from_me", false);
-    if (readyUpdateError) throw readyUpdateError;
-    return;
-  }
+    updateQuery = existing.lead_id
+      ? updateQuery.eq("lead_id", existing.lead_id)
+      : updateQuery.is("lead_id", null);
+    updateQuery = existing.capture_state
+      ? updateQuery.eq("capture_state", existing.capture_state)
+      : updateQuery.is("capture_state", null);
+    const { data, error } = await updateQuery.select("id").maybeSingle();
+    if (error || !data?.id) {
+      throw error || new Error("whatsapp_replay_media_identity_changed");
+    }
+  };
 
-  const { error: updateError } = await supabase
-    .from("whatsapp_messages")
-    .update({
+  const existingStoragePath = normalizeText(existing.media_storage_path).trim() || null;
+  if (existingStoragePath) {
+    if (existing.media_status !== "ready") {
+      await updateTransport({ media_status: "ready", media_error: null });
+    }
+    return true;
+  }
+  const conversationId = optionalUuid(existing.conversation_id);
+  if (!conversationId) throw new Error("whatsapp_replay_media_conversation_missing");
+  const media = await storeInboundMedia({ session, conversationId, message });
+
+  if (media.path) {
+    const mediaStoragePath = media.path;
+    await updateTransport({
       media_url: existing.media_url || message.mediaUrl || null,
       media_mime_type: media.contentType || existing.media_mime_type || message.mediaMimeType || null,
-      media_storage_path: null,
-      media_status: "pending",
-      media_error: media.error,
+      media_storage_path: mediaStoragePath,
+      media_status: "ready",
+      media_error: null,
       media_size: media.size || existing.media_size || message.mediaSize || null,
-    })
-    .eq("organization_id", session.organization_id)
-    .eq("session_id", session.id)
-    .eq("id", existing.id)
-    .eq("from_me", false);
-  if (updateError) throw updateError;
+    });
+    if (media.reservationToken) await releaseInboundMediaPath(media.reservationToken, "committed");
+    return true;
+  }
+
+  await updateTransport({
+    media_url: existing.media_url || message.mediaUrl || null,
+    media_mime_type: media.contentType || existing.media_mime_type || message.mediaMimeType || null,
+    media_storage_path: null,
+    media_status: "pending",
+    media_error: media.error,
+    media_size: media.size || existing.media_size || message.mediaSize || null,
+  });
+  return false;
 }
 
 function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = null) {
@@ -4336,7 +4492,9 @@ async function resolveWhatsAppAttendanceCapture(
     };
   }
 
-  if (!eventBindingIsCurrent || !eventLeadId || !conversation?.id) {
+  const recordInbound = inboundRecordingEnabledForSession(session)
+    && !message.fromMe && !message.isGroup;
+  if (!eventBindingIsCurrent || !conversation?.id || (!eventLeadId && !recordInbound)) {
     return {
       captureState: "suppressed",
       reason: "current_binding_not_proven",
@@ -4373,20 +4531,23 @@ async function resolveWhatsAppAttendanceCapture(
     };
   }
 
-  const { data: activeBinding, error: bindingError } = await supabase
-    .from("whatsapp_conversation_lead_bindings")
-    .select("id")
-    .eq("organization_id", session.organization_id)
-    .eq("conversation_id", conversation.id)
-    .eq("session_id", session.id)
-    .eq("lead_id", eventLeadId)
-    .eq("stale", false)
-    .is("active_to", null)
-    .maybeSingle();
-  if (bindingError) throw bindingError;
-  const bindingId = optionalUuid(activeBinding?.id);
+  let bindingId: string | null = null;
+  if (eventLeadId) {
+    const { data: activeBinding, error: bindingError } = await supabase
+      .from("whatsapp_conversation_lead_bindings")
+      .select("id")
+      .eq("organization_id", session.organization_id)
+      .eq("conversation_id", conversation.id)
+      .eq("session_id", session.id)
+      .eq("lead_id", eventLeadId)
+      .eq("stale", false)
+      .is("active_to", null)
+      .maybeSingle();
+    if (bindingError) throw bindingError;
+    bindingId = optionalUuid(activeBinding?.id);
+  }
   if (
-    !bindingId
+    (eventLeadId && !bindingId)
     || (
       ingress.activeBindingId
       && ingress.activeBindingId !== bindingId
@@ -4442,6 +4603,20 @@ async function resolveWhatsAppAttendanceCapture(
     };
   }
 
+  // A contact without a card has no lead binding or attendance entry. Its
+  // received history is still durable when the inbox and current route agree.
+  if (!eventLeadId) {
+    return {
+      captureState: "recorded",
+      reason: "inbound_contact_history",
+      bindingId: null,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt,
+      messageFingerprint,
+    };
+  }
+
   // Attendance belongs to the current owner of this connection, not merely
   // to someone who owned it when they entered. Re-read after the ingress and
   // binding checks so an ownership transfer or offboarding does not let the
@@ -4459,8 +4634,10 @@ async function resolveWhatsAppAttendanceCapture(
     : null;
   if (!attendanceOwnerId) {
     return {
-      captureState: "suppressed",
-      reason: "current_session_owner_inactive_or_missing",
+      captureState: recordInbound ? "recorded" : "suppressed",
+      reason: recordInbound
+        ? "inbound_history_without_active_attendance_owner"
+        : "current_session_owner_inactive_or_missing",
       bindingId,
       attendanceEntryId: null,
       ingressSequence: ingress.ingressSequence,
@@ -4516,7 +4693,7 @@ async function resolveWhatsAppAttendanceCapture(
     .eq("user_id", attendanceOwnerId);
   const [manualResult, autoResult] = await Promise.all([
     attendanceScope()
-      .eq("entry_source", "manual")
+      .in("entry_source", ["manual", "implicit"])
       .lte("joined_at", inboxCreatedAt)
       .lte("joined_at", providerOccurredAt)
       .lt("ingress_sequence_cutoff", ingress.ingressSequence)
@@ -4547,10 +4724,10 @@ async function resolveWhatsAppAttendanceCapture(
     || (autoEntryEffective ? autoEntryId : null);
 
   return {
-    captureState: attendanceEntryId ? "captured" : "suppressed",
+    captureState: attendanceEntryId ? "captured" : (recordInbound ? "recorded" : "suppressed"),
     reason: attendanceEntryId
       ? "attendance_entry_effective_for_ingress"
-      : "attendance_entry_not_effective",
+      : (recordInbound ? "inbound_history_without_attendance" : "attendance_entry_not_effective"),
     bindingId,
     attendanceEntryId,
     ingressSequence: ingress.ingressSequence,
@@ -4668,6 +4845,20 @@ async function insertMessage(
   if (!existing && captureState === "legacy") {
     throw new Error("new_whatsapp_message_cannot_be_legacy");
   }
+  if (existing) {
+    const existingConversationId = optionalUuid(existing.conversation_id);
+    const requestedConversationId = optionalUuid(conversation.id);
+    const existingLeadId = optionalUuid(existing.lead_id);
+    if (!existingConversationId || existingConversationId !== requestedConversationId) {
+      throw new Error("whatsapp_message_conversation_identity_conflict");
+    }
+    if (existingLeadId && existingLeadId !== eventLeadId) {
+      throw new Error("whatsapp_message_lead_identity_conflict");
+    }
+    if (!eventLeadId && existingLeadId) {
+      throw new Error("whatsapp_message_quarantine_identity_conflict");
+    }
+  }
   const captureSuppressed = captureState === "suppressed";
   const existingCaptureMetadata = isRecord(existing?.metadata?.whatsapp_attendance_capture)
     ? existing.metadata.whatsapp_attendance_capture
@@ -4679,9 +4870,10 @@ async function insertMessage(
   // media download/storage side effect for whichever card currently owns the
   // physical conversation.
   const isMedia = !captureSuppressed && allowMediaEffects && !leadResolutionQuarantineReason
+    && !(existingCaptureState === "recorded" && !optionalUuid(existing?.lead_id) && eventLeadId)
     && ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
   const media = isMedia && !existing?.media_storage_path
-    ? await storeInboundMedia({ session, message })
+    ? await storeInboundMedia({ session, conversationId: optionalUuid(conversation.id) || "", message })
     : null;
   const mediaStoragePath = captureSuppressed
     ? null
@@ -4767,21 +4959,18 @@ async function insertMessage(
   };
 
   if (existing) {
-	const existingConversationId = optionalUuid(existing.conversation_id);
-	const requestedConversationId = optionalUuid(conversation.id);
-	const existingLeadId = optionalUuid(existing.lead_id);
-	if (!existingConversationId || existingConversationId !== requestedConversationId) {
-	  throw new Error("whatsapp_message_conversation_identity_conflict");
-	}
-	if (existingLeadId && existingLeadId !== eventLeadId) {
-	  throw new Error("whatsapp_message_lead_identity_conflict");
-	}
-	if (!eventLeadId && existingLeadId) {
-	  throw new Error("whatsapp_message_quarantine_identity_conflict");
-	}
+    const existingLeadId = optionalUuid(existing.lead_id);
+    if (existingCaptureState === "recorded" && !existingLeadId && eventLeadId) {
+      // The caller completes this historical replay without card effects. Do
+      // not even update transport metadata against a newly bound lead.
+      return { inserted: false, message: existing };
+    }
+    const persistedLeadId = existingCaptureState === "recorded" || existingCaptureState === "suppressed"
+      ? existingLeadId
+      : (existingLeadId || eventLeadId);
     const update = captureSuppressed
       ? {
-        lead_id: existingLeadId || eventLeadId,
+        lead_id: persistedLeadId,
         capture_state: "suppressed",
         media_url: null,
         media_mime_type: null,
@@ -4810,7 +4999,7 @@ async function insertMessage(
         // Provider replay is immutable identity-wise. A legacy NULL may be
         // filled only with the event's ledgered card; a non-NULL identity is
         // never moved to another conversation/card.
-        lead_id: existingLeadId || eventLeadId,
+        lead_id: persistedLeadId,
         metadata: pendingEvolutionGoEffectMetadata({
           ...(isRecord(existing.metadata) ? existing.metadata : {}),
           source: "evolution_go_webhook",
@@ -4843,6 +5032,7 @@ async function insertMessage(
       .select("*")
       .single();
     if (error) throw error;
+    if (media?.reservationToken) await releaseInboundMediaPath(media.reservationToken, "committed");
     return { inserted: false, message: data };
   }
 
@@ -4853,6 +5043,7 @@ async function insertMessage(
     .single();
 
   if (error) throw error;
+  if (media?.reservationToken) await releaseInboundMediaPath(media.reservationToken, "committed");
   return { inserted: true, message: data };
 }
 
@@ -4876,15 +5067,21 @@ async function completeStoredMessageEffects(
     storedMessage.metadata,
     providerMessageId,
   );
-  const { data, error } = await supabase
+  let completionQuery = supabase
     .from("whatsapp_messages")
     .update({ metadata })
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("id", storedMessage.id)
     .eq("message_id", providerMessageId)
-    .select("id")
-    .maybeSingle();
+    .eq("conversation_id", storedMessage.conversation_id);
+  completionQuery = storedMessage.lead_id
+    ? completionQuery.eq("lead_id", storedMessage.lead_id)
+    : completionQuery.is("lead_id", null);
+  completionQuery = storedMessage.capture_state
+    ? completionQuery.eq("capture_state", storedMessage.capture_state)
+    : completionQuery.is("capture_state", null);
+  const { data, error } = await completionQuery.select("id").maybeSingle();
   if (error || !data?.id) {
     throw error || new Error("Stored message effect completion lost ownership");
   }
@@ -5167,25 +5364,11 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
   if (existing?.id) {
 	const existingLeadId = optionalUuid(existing.lead_id);
 	const eventLeadId = optionalUuid(lead?.id);
-	if (existingLeadId && existingLeadId !== eventLeadId) {
+	if (existingLeadId !== eventLeadId) {
 	  throw new Error("whatsapp_inbound_log_lead_identity_conflict");
 	}
-    const nonNullDetails = Object.fromEntries(
-      Object.entries(details).filter(([, value]) => value !== null && value !== undefined),
-    );
-    const { error: updateError } = await supabase
-      .from("whatsapp_inbound_logs")
-      .update({
-		lead_id: existingLeadId || eventLeadId,
-        matched_rule_id: existing.matched_rule_id || rule?.id || null,
-        assigned_user_id: existing.assigned_user_id || lead?.assigned_user_id || null,
-        match_details: {
-          ...(isRecord(existing.match_details) ? existing.match_details : {}),
-          ...nonNullDetails,
-        },
-      })
-      .eq("id", existing.id);
-    if (updateError) throw updateError;
+    // This provider event was already logged. A later card binding must not
+    // rewrite its original lead, assignment, rule or match evidence.
     return;
   }
 
@@ -5287,8 +5470,35 @@ async function handleMessages(
     if (message.messageType === "reaction" && !message.reactionToMessageId) {
       throw new Error("Evolution reaction is missing its target message");
     }
+    if (!message.fromMe && !message.isGroup &&
+        isConfirmedClickToWhatsAppAd(message) && !message.providerOccurredAt) {
+      // A provider clock is required to distinguish a new CTWA arrival from
+      // a delayed replay. The Go ingress records a redacted ignored receipt;
+      // this also protects an older Go replica forwarding to this Edge code.
+      processed += 1;
+      continue;
+    }
     const messageIdentity = whatsappIdentityForMessage(message);
     const diagnosticRemoteJid = messageIdentity.remoteJid || message.remoteJid;
+    const ingressRoutingSnapshot = ingressRoutingSnapshotForMessage(
+      payload,
+      session,
+      message,
+      authorization,
+    );
+    if (!message.isGroup &&
+        await wasNonleadWhatsAppEventPurged(
+          session,
+          message.messageId,
+          ingressRoutingSnapshot?.inboxEventKey || null,
+          message.providerOccurredAt,
+        )) {
+      // Preserve the purge boundary before any media, lead, conversation,
+      // automation, or notification effect. A genuinely new provider id after
+      // the route cutoff remains eligible for a fresh seven-day cycle.
+      duplicates += 1;
+      continue;
+    }
     let ownedClaim: OwnedEvolutionMessageClaim | null = null;
     if (authorization.contract !== "internal_worker_lease") {
       const deliveryClaim = await claimEvolutionMessageDelivery(supabase, {
@@ -5353,7 +5563,7 @@ async function handleMessages(
               true,
             );
           }
-          await reconcileHandledWhatsAppMessageTransport(session, message);
+          await reconcileHandledWhatsAppMessageTransport(session, message, storedBeforeProcessing);
           if (storedBeforeProcessing.conversation_id) {
             await releaseConversationMessageEffect(
               session,
@@ -5373,17 +5583,53 @@ async function handleMessages(
           // those effects; keep the durable caller retrying for remediation.
           throw new Error("Stored Evolution message has no recoverable effect ledger");
         }
+        if (
+          persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "recorded"
+          && !optionalUuid(storedBeforeProcessing.lead_id)
+        ) {
+          const recordedConversationId = optionalUuid(storedBeforeProcessing.conversation_id);
+          if (!recordedConversationId) {
+            throw new Error("whatsapp_recorded_prelead_conversation_missing");
+          }
+          const { data: recordedConversation, error: recordedConversationError } = await supabase
+            .from("whatsapp_conversations")
+            .select("id, lead_id")
+            .eq("organization_id", session.organization_id)
+            .eq("session_id", session.id)
+            .eq("id", recordedConversationId)
+            .maybeSingle();
+          if (recordedConversationError) throw recordedConversationError;
+          if (!recordedConversation?.id) {
+            throw new Error("whatsapp_recorded_prelead_conversation_missing");
+          }
+          if (optionalUuid(recordedConversation.lead_id)) {
+            // The original message predates the first card binding. Finish its
+            // pending ledger before any lead lookup, binding CAS or log write;
+            // otherwise a replay could create or notify the newly bound card.
+            // Media recovery touches only the original message's transport
+            // fields and does not attribute this event to the new card.
+            const mediaReady = await reconcileHandledWhatsAppMessageTransport(
+              session,
+              message,
+              storedBeforeProcessing,
+            );
+            if (!mediaReady) {
+              throw new Error("whatsapp_recorded_prelead_media_pending");
+            }
+            await completeStoredMessageEffects(session, storedBeforeProcessing, message.messageId);
+            await releaseConversationMessageEffect(session, recordedConversationId, message.messageId);
+            if (ownedClaim) {
+              await completeEvolutionMessageDelivery(supabase, ownedClaim);
+            }
+            processed += 1;
+            continue;
+          }
+        }
       }
 
       const providerEventBinding = await findWhatsAppProviderEventBinding(session, message);
       const storedConversationId = optionalUuid(storedBeforeProcessing?.conversation_id);
       const storedLeadId = optionalUuid(storedBeforeProcessing?.lead_id);
-      const ingressRoutingSnapshot = ingressRoutingSnapshotForMessage(
-        payload,
-        session,
-        message,
-        authorization,
-      );
       let inheritedRoutingTarget: WhatsAppInheritedRoutingTarget | null = null;
       let inheritedRoutingQuarantineReason: string | null = null;
       if (
@@ -5693,7 +5939,9 @@ async function handleMessages(
         session,
         conversation,
         eventLeadId,
-        eventBindingIsCurrent,
+        // A quarantined event may have no card and still match the physical
+        // conversation. Never turn that neutral evidence into recorded media.
+        eventBindingIsCurrent && !leadResolutionQuarantineReason,
         ingressRoutingSnapshot,
         message,
         lead,
@@ -5777,7 +6025,7 @@ async function handleMessages(
 
       let autoReplyTriggered = false;
       if (
-        !captureSuppressed
+        captureDecision.captureState === "captured"
         && eventBindingIsCurrent
         && eventLeadId
         && result.inserted
@@ -5795,15 +6043,24 @@ async function handleMessages(
             attachedLead,
             rule,
             message,
-            captureSuppressed,
+            captureDecision.captureState !== "captured",
           );
         }
         await enrichManagedWhatsAppLeadEntryAttribution(session, attachedLead?.id, message);
       }
       // Keep the local durability contract: the API request is awaited and its
       // idempotent queue write must succeed before the message ledger is final.
-      if (!captureSuppressed && eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
+      if (captureDecision.captureState === "captured" && eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
         await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
+      }
+      if (
+        persistedWhatsAppMessageCaptureState(result.message) === "recorded"
+        && ["image", "video", "audio", "document", "sticker"].includes(message.messageType)
+        && (result.message.media_status !== "ready" || !normalizeText(result.message.media_storage_path).trim())
+      ) {
+        // The message and its idempotent card effects are durable, but media
+        // is not. Keep this event retryable until transport recovery succeeds.
+        throw new Error("whatsapp_recorded_media_pending");
       }
       await completeStoredMessageEffects(
         session,
@@ -6200,8 +6457,27 @@ Deno.serve(async (req) => {
       });
     }
 
-    const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;
-    const connectionStatus = (
+    const technicalIgnoreReason = technicalEvolutionIgnoreReason(payload, event);
+    if (technicalIgnoreReason) {
+      // The Go inbox is the durable receipt for internal worker deliveries.
+      // No CRM message, lead, automation or retry is produced here.
+      console.info("evolution-go-webhook technical event ignored", {
+        reason: technicalIgnoreReason,
+        organization_id: resolved.session.organization_id,
+        session_id: resolved.session.id,
+      });
+      return json({ ok: true, session_id: resolved.session.id, technicalIgnoredReason: technicalIgnoreReason });
+    }
+
+    const isLoggedOutEvent = event.replace(/[.\s_-]/g, "") === "loggedout";
+    const qrUpdated = !isLoggedOutEvent && (event.includes("qr") || extractQr(payload))
+      ? await handleQr(resolved.session, payload)
+      : false;
+    // LoggedOut has no trustworthy event time on some Evolution versions.
+    // The Go inbox reconciles it with the provider's current status before any
+    // session write. A direct legacy Edge delivery must also avoid applying a
+    // possibly old callback; the independent health check will verify status.
+    const connectionStatus = !isLoggedOutEvent && (
       event.includes("connection") ||
       event.includes("connect") ||
       event.includes("logout") ||
@@ -6216,7 +6492,7 @@ Deno.serve(async (req) => {
     const statusUpdated = isMessageStatusEvent
       ? await handleMessageStatus(resolved.session, payload)
       : 0;
-    const messageResult = isMessageStatusEvent
+    const messageResult = isMessageStatusEvent || isLoggedOutEvent
       ? { processed: 0, duplicates: 0, inProgress: 0 }
       : await handleMessages(
         resolved.session,

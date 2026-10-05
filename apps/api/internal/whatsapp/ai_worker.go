@@ -40,6 +40,7 @@ type aiFollowUpCandidate struct {
 	AgentID        string
 	Template       string
 	IntervalDays   int
+	DueAt          time.Time
 }
 
 func (handler Handler) StartAIWorker(ctx context.Context, logger *slog.Logger) {
@@ -145,6 +146,9 @@ func (handler Handler) ProcessAIFollowUps(ctx context.Context) error {
 
 	for _, candidate := range candidates {
 		if err := handler.processAIFollowUp(ctx, candidate); err != nil {
+			if errors.Is(err, errAIFollowUpClaimStale) || errors.Is(err, errAIFollowUpLegacyReview) {
+				continue
+			}
 			handler.repo.saveAIJobEvent(ctx, candidate.OrganizationID, "ai_followup_failed", map[string]any{
 				"leadId":         candidate.LeadID,
 				"conversationId": candidate.ConversationID,
@@ -166,6 +170,24 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 			return err
 		}
 		return handler.repo.clearAIFollowUp(ctx, candidate.OrganizationID, candidate.LeadID)
+	}
+	attempt, err := handler.repo.reserveAIFollowUpAttempt(ctx, candidate)
+	if err != nil {
+		return err
+	}
+	clientMessageID := autoFollowUpMessagePrefix + attempt.ID
+	previouslyEnqueued, err := handler.repo.hasAIFollowUpEnqueueProof(ctx, candidate, clientMessageID)
+	if err != nil {
+		return err
+	}
+	if previouslyEnqueued {
+		// An earlier run may have committed the message/outbox and failed before
+		// moving the schedule. Reconcile that exact send; never ask AI to create
+		// a different message for the same occurrence.
+		if err := handler.repo.markAIFollowUpMessage(ctx, candidate, clientMessageID, ai.RunResponse{}); err != nil {
+			return err
+		}
+		return handler.repo.completeAIFollowUpAttempt(ctx, candidate, attempt.ID, true)
 	}
 	if paused, err := handler.repo.isConversationAIPaused(ctx, candidate.OrganizationID, candidate.ConversationID); err != nil || paused {
 		if err != nil {
@@ -193,11 +215,10 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 
 	output := strings.TrimSpace(response.Output)
 	if output == "" {
-		return handler.repo.scheduleNextAIFollowUp(ctx, candidate.OrganizationID, candidate.LeadID, candidate.IntervalDays)
+		return handler.repo.completeAIFollowUpAttempt(ctx, candidate, attempt.ID, false)
 	}
 
-	clientMessageID := fmt.Sprintf("%s%s-%d", autoFollowUpMessagePrefix, candidate.LeadID, time.Now().UTC().Unix())
-	sendResponse, err := handler.repo.SendMessage(ctx, tenantContext, candidate.ConversationID, sendMessageInput{
+	_, err = handler.repo.SendMessage(ctx, tenantContext, candidate.ConversationID, sendMessageInput{
 		Text:               output,
 		SendSessionID:      candidate.SessionID,
 		ClientMessageID:    clientMessageID,
@@ -205,12 +226,21 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 		InternalAutomation: true,
 	})
 	if err != nil {
-		return err
+		// A database or network error can arrive after SendMessage committed.
+		// Only a matching canonical message and outbox prove that enqueue won.
+		proved, proofErr := handler.repo.hasAIFollowUpEnqueueProof(ctx, candidate, clientMessageID)
+		if proofErr != nil {
+			return errors.Join(err, proofErr)
+		}
+		if !proved {
+			return err
+		}
+		response = ai.RunResponse{}
 	}
 	if err := handler.repo.markAIFollowUpMessage(ctx, candidate, clientMessageID, response); err != nil {
 		return err
 	}
-	if err := handler.repo.scheduleNextAIFollowUp(ctx, candidate.OrganizationID, candidate.LeadID, candidate.IntervalDays); err != nil {
+	if err := handler.repo.completeAIFollowUpAttempt(ctx, candidate, attempt.ID, true); err != nil {
 		return err
 	}
 
@@ -218,7 +248,7 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 		"leadId":          candidate.LeadID,
 		"conversationId":  candidate.ConversationID,
 		"sessionId":       candidate.SessionID,
-		"clientMessageId": sendResponse.ClientMessageID,
+		"clientMessageId": clientMessageID,
 		"agentId":         response.Agent.ID,
 		"agentName":       response.Agent.Name,
 		"template":        candidate.Template,
@@ -362,6 +392,7 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 			select
 				l.id as lead_id,
 				l.organization_id,
+				l.next_follow_up_at as due_at,
 				coalesce(nullif(l.name, ''), 'Lead') as lead_name,
 				wc.id as conversation_id,
 				ws.id as session_id,
@@ -391,12 +422,20 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 			join public.organization_ai_settings settings
 			  on settings.organization_id = l.organization_id
 			 and settings.is_enabled = true
+			left join private.whatsapp_ai_followup_attempts active_attempt
+			  on active_attempt.organization_id = l.organization_id
+			 and active_attempt.lead_id = l.id
+			 and active_attempt.status in ('active', 'legacy_review')
 			where coalesce(l.deal_status, 'open') = 'open'
 			  and l.next_follow_up_at is not null
 			  and l.next_follow_up_at <= now()
+			  and (active_attempt.attempt_id is null
+			       or (active_attempt.status = 'active'
+			           and active_attempt.conversation_id = wc.id
+			           and active_attempt.session_id = ws.id))
 			  and lower(coalesce(ws.advanced_settings->>'ai_auto_reply_enabled', 'false')) in ('true', '1', 'yes', 'sim')
 			  and lower(coalesce(ws.advanced_settings->>'ai_follow_up_enabled', 'false')) in ('true', '1', 'yes', 'sim')
-			  and exists (
+		  and exists (
 			    select 1
 			    from public.whatsapp_conversation_lead_bindings binding
 			    join public.whatsapp_attendance_entries attendance
@@ -407,17 +446,36 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 			      and binding.session_id = ws.id
 			      and binding.lead_id = l.id
 			      and binding.active_to is null
-			  )
-			  and not exists (
-			    select 1
-			    from public.whatsapp_messages wm
+		  )
+		  and (
+		    exists (
+		      select 1 from private.whatsapp_ai_followup_attempts attempt
+		      join public.whatsapp_messages proof_message
+		        on proof_message.organization_id = attempt.organization_id
+		       and proof_message.lead_id = attempt.lead_id
+		       and proof_message.session_id = attempt.session_id
+		       and proof_message.conversation_id = attempt.conversation_id
+		       and proof_message.client_message_id = 'ai-followup-' || attempt.attempt_id::text
+		      join public.whatsapp_outbox proof_outbox
+		        on proof_outbox.organization_id = proof_message.organization_id
+		       and proof_outbox.session_id = proof_message.session_id
+		       and proof_outbox.message_id = proof_message.id
+		      where attempt.organization_id = l.organization_id
+		        and attempt.lead_id = l.id
+		        and attempt.status = 'active'
+		    )
+		    or not exists (
+		    select 1
+		    from public.whatsapp_messages wm
 			    where wm.organization_id = l.organization_id
 			      and wm.lead_id = l.id
 			      and wm.capture_state is distinct from 'suppressed'
 			      and wm.from_me = true
-			      and coalesce(wm.sent_at, wm.created_at) > l.next_follow_up_at - interval '15 minutes'
-			      and coalesce(wm.metadata->>'ai_generated', 'false') <> 'true'
-			  )
+		      and coalesce(wm.sent_at, wm.created_at) > l.next_follow_up_at - interval '15 minutes'
+		      and coalesce(wm.metadata->>'ai_generated', 'false') <> 'true'
+		      and coalesce(wm.client_message_id, '') not like 'ai-followup-%'
+		    )
+		  )
 			order by l.next_follow_up_at asc
 			limit $1::integer
 			for update of l skip locked
@@ -431,6 +489,7 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 		returning
 			due.organization_id::text,
 			due.lead_id::text,
+			due.due_at,
 			due.lead_name,
 			due.conversation_id::text,
 			due.session_id::text,
@@ -450,6 +509,7 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 		if err := rows.Scan(
 			&candidate.OrganizationID,
 			&candidate.LeadID,
+			&candidate.DueAt,
 			&candidate.LeadName,
 			&candidate.ConversationID,
 			&candidate.SessionID,
@@ -536,13 +596,15 @@ func (repo Repository) markAIFollowUpMessage(ctx context.Context, candidate aiFo
 	metadata := map[string]any{
 		"ai_generated":       true,
 		"ai_follow_up":       true,
-		"ai_agent_id":        response.Agent.ID,
-		"ai_agent_name":      response.Agent.Name,
-		"ai_agent_type":      response.Agent.Type,
-		"ai_mode":            response.Mode,
 		"ai_follow_up_model": candidate.Template,
 	}
-	_, err := repo.db.Pool().Exec(ctx, `
+	if response.Agent.ID != "" {
+		metadata["ai_agent_id"] = response.Agent.ID
+		metadata["ai_agent_name"] = response.Agent.Name
+		metadata["ai_agent_type"] = response.Agent.Type
+		metadata["ai_mode"] = response.Mode
+	}
+	tag, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_messages
 		set metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb,
 		    updated_at = now()
@@ -550,21 +612,13 @@ func (repo Repository) markAIFollowUpMessage(ctx context.Context, candidate aiFo
 		  and conversation_id = $2::uuid
 		  and client_message_id = $3
 	`, candidate.OrganizationID, candidate.ConversationID, clientMessageID, jsonb(metadata))
-	return err
-}
-
-func (repo Repository) scheduleNextAIFollowUp(ctx context.Context, organizationID string, leadID string, intervalDays int) error {
-	if intervalDays <= 0 {
-		intervalDays = 3
+	if err != nil {
+		return err
 	}
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.leads
-		set next_follow_up_at = now() + ($3::integer * interval '1 day'),
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, organizationID, leadID, intervalDays)
-	return err
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("%w: AI follow-up message not found", ErrInvalidReference)
+	}
+	return nil
 }
 
 func (repo Repository) rescheduleAIFollowUp(ctx context.Context, organizationID string, leadID string, delay time.Duration) error {
@@ -577,18 +631,9 @@ func (repo Repository) rescheduleAIFollowUp(ctx context.Context, organizationID 
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and next_follow_up_at is not null
+		  and next_follow_up_at <= $3::timestamptz
 	`, organizationID, leadID, time.Now().UTC().Add(delay))
-	return err
-}
-
-func (repo Repository) clearAIFollowUp(ctx context.Context, organizationID string, leadID string) error {
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.leads
-		set next_follow_up_at = null,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, organizationID, leadID)
 	return err
 }
 

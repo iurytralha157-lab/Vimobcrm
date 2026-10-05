@@ -117,7 +117,11 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 }
 
 func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t *testing.T) {
-	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessed`)
+	wrapper := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessed(`)
+	if !strings.Contains(wrapper, "repo.markEvolutionWebhookProcessedWithReason(ctx, item,") {
+		t.Fatal("normal completion must use the shared atomic outcome writer")
+	}
+	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessedWithReason`)
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
 	for _, required := range []string{
 		"with owned as materialized",
@@ -151,7 +155,7 @@ func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t 
 func TestClaimedEvolutionWebhookPublishesOutcomeOnlyAfterDispatchCompletes(t *testing.T) {
 	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) processClaimedEvolutionWebhook`)
 	dispatch := strings.Index(source, "repo.dispatchEvolutionWebhook(ctx, item)")
-	failed := strings.Index(source, "repo.markEvolutionWebhookFailed(ctx, item, err)")
+	failed := strings.LastIndex(source, "repo.markEvolutionWebhookFailed(ctx, item, err)")
 	processed := strings.Index(source, "repo.markEvolutionWebhookProcessed(ctx, item)")
 	if dispatch < 0 || failed < dispatch || processed < failed {
 		t.Fatalf("dispatch, failure handling, and atomic completion are not ordered fail-closed\n%s", source)

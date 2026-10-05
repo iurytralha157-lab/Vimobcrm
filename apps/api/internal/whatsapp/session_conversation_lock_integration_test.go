@@ -51,6 +51,8 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 				_ = blocker.Rollback(context.Background())
 			}
 		}()
+		operationCtx, cancelOperations := context.WithCancel(ctx)
+		defer cancelOperations()
 
 		type claimResult struct {
 			found bool
@@ -59,7 +61,7 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 		claimDone := make(chan claimResult, 1)
 		go func() {
 			_, _, found, claimErr := repo.claimExactQuarantinedConversationForLead(
-				ctx,
+				operationCtx,
 				fixture.tenant,
 				fixture.sessionID,
 				fixture.leadID,
@@ -72,7 +74,7 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 
 		sendDone := make(chan error, 1)
 		go func() {
-			_, sendErr := repo.SendMessage(ctx, fixture.tenant, fixture.conversationID, sendMessageInput{
+			_, sendErr := repo.SendMessage(operationCtx, fixture.tenant, fixture.conversationID, sendMessageInput{
 				Text:            "session-first claim/send",
 				ClientMessageID: fixture.suffix + "-send",
 				ExpectedLeadID:  fixture.leadID,
@@ -113,12 +115,14 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 				_ = blocker.Rollback(context.Background())
 			}
 		}()
+		operationCtx, cancelOperations := context.WithCancel(ctx)
+		defer cancelOperations()
 
 		selfPhone := "5511888877777"
 		providerMessageID := fixture.suffix + "-native"
 		nativeDone := make(chan error, 1)
 		go func() {
-			nativeDone <- repo.processNativeEvolutionMessages(ctx, pendingEvolutionWebhook{
+			nativeDone <- repo.processNativeEvolutionMessages(operationCtx, pendingEvolutionWebhook{
 				OrganizationID: fixture.organizationID,
 				SessionID:      fixture.sessionID,
 				EventType:      "messages.upsert",
@@ -140,7 +144,7 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 		sendClientID := fixture.suffix + "-send"
 		sendDone := make(chan error, 1)
 		go func() {
-			_, sendErr := repo.SendMessage(ctx, fixture.tenant, fixture.conversationID, sendMessageInput{
+			_, sendErr := repo.SendMessage(operationCtx, fixture.tenant, fixture.conversationID, sendMessageInput{
 				Text:            "session-first native/send",
 				ClientMessageID: sendClientID,
 				ExpectedLeadID:  fixture.leadID,
@@ -378,6 +382,28 @@ func createSessionConversationLockFixture(
 	`, fixture.organizationID, fixture.conversationID, fixture.leadID); err != nil {
 		t.Fatal(err)
 	}
+	attendanceTag, err := pool.Exec(ctx, `
+		insert into public.whatsapp_attendance_entries (
+			organization_id, conversation_id, session_id, lead_id,
+			binding_id, user_id, actor_name_snapshot, joined_at,
+			ingress_sequence_cutoff
+		)
+		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+		       binding.id, $5::uuid, 'Lock test actor',
+		       now() - interval '1 minute', 0
+		from public.whatsapp_conversation_lead_bindings binding
+		where binding.organization_id = $1::uuid
+		  and binding.conversation_id = $2::uuid
+		  and binding.session_id = $3::uuid
+		  and binding.lead_id = $4::uuid
+		  and binding.active_to is null
+	`, fixture.organizationID, fixture.conversationID, fixture.sessionID, fixture.leadID, fixture.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attendanceTag.RowsAffected() != 1 {
+		t.Fatalf("fixture attendance entries inserted = %d, want 1", attendanceTag.RowsAffected())
+	}
 	fixture.tenant = tenant.Context{
 		OrganizationID: fixture.organizationID,
 		UserID:         fixture.userID,
@@ -392,6 +418,7 @@ func cleanupSessionConversationLockFixture(t *testing.T, pool *pgxpool.Pool, fix
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := pool.Exec(cleanupCtx, `
+		delete from public.whatsapp_attendance_entries where organization_id = $1::uuid;
 		delete from public.whatsapp_conversations where organization_id = $1::uuid;
 		delete from public.whatsapp_sessions where organization_id = $1::uuid;
 		delete from public.leads where organization_id = $1::uuid;

@@ -547,24 +547,6 @@ export function useLogoutSession() {
       }
 
       const result = await whatsappAPI.logoutSession(session.id, scope.organizationId);
-
-      try {
-        const { notificationService } = await import("@/services/NotificationService");
-        await notificationService.send({
-          eventKey: "whatsapp_disconnected",
-          organizationId: session.organization_id,
-          userId: session.owner_user_id,
-          variables: {
-            session_id: session.id,
-            session_name: session.display_name || session.instance_name,
-            display_name: session.display_name || session.instance_name,
-          },
-          dedupeKey: `whatsapp_disconnected:${session.id}:${session.owner_user_id}:${session.updated_at}`,
-        });
-      } catch (err) {
-        console.warn("Disconnection notification failed:", err);
-      }
-
       return result;
     },
     onMutate: async (session) => {

@@ -1015,6 +1015,9 @@ func normalizeManagedWhatsAppAutoReplySettings(value map[string]any) (map[string
 		settings[whatsAppDistributionAutoReplyDelayKey] = delay
 	}
 
+	// Old clients may still submit the retired setting during a rolling deploy.
+	// Preserve its historical text/delay, but never persist an active producer.
+	settings[whatsAppDistributionAutoReplyEnabledKey] = false
 	return settings, nil
 }
 

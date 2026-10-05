@@ -38,6 +38,8 @@
     "lib/access/user-management-contract.test.ts",
     "lib/access/whatsapp-realtime.ts",
     "lib/access/whatsapp-realtime.test.ts",
+    "lib/access/whatsapp-session-sharing.test.ts",
+    "lib/whatsapp-access-error.test.ts",
     "lib/whatsapp-query-cache.ts",
     "lib/whatsapp-query-cache.test.ts",
     "lib/whatsapp-message-input.ts",

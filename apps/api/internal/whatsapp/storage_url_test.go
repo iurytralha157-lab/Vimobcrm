@@ -232,7 +232,7 @@ func TestDownloadWhatsAppMediaNeverSendsProviderCredentialsToWebhookURL(t *testi
 	}
 }
 
-func TestHydrateMessageMediaURLsSignsOnlySameOrganizationPaths(t *testing.T) {
+func TestSignedMessageMediaURLSignsOnlySameOrganizationPaths(t *testing.T) {
 	const organizationID = "20000000-0000-0000-0000-000000000001"
 	modernPath := "orgs/" + organizationID + "/sessions/session-1/incoming/modern.png"
 	legacyPath := organizationID + "/sessions/session-1/incoming/legacy.png"
@@ -255,23 +255,17 @@ func TestHydrateMessageMediaURLsSignsOnlySameOrganizationPaths(t *testing.T) {
 		apiKey:     "service-role-test-key",
 		httpClient: storage.Client(),
 	}}
-	foreignURL := "https://attacker.invalid/already-present"
-	messages := []Message{
-		{MessageType: "image", MediaStoragePath: &modernPath},
-		{MessageType: "image", MediaStoragePath: &legacyPath},
-		{MessageType: "image", MediaStoragePath: &foreignPath, MediaURL: &foreignURL},
-	}
-	if err := repo.hydrateMessageMediaURLs(context.Background(), organizationID, messages); err != nil {
-		t.Fatal(err)
-	}
+	modernURL, _, modernErr := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, modernPath)
+	legacyURL, _, legacyErr := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, legacyPath)
+	foreignURL, _, foreignErr := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, foreignPath)
 	if signingRequests.Load() != 2 {
 		t.Fatalf("storage signing requests = %d, want 2 same-organization objects", signingRequests.Load())
 	}
-	if messages[0].MediaURL == nil || messages[1].MediaURL == nil {
-		t.Fatalf("same-organization media was not signed: %#v", messages)
+	if modernErr != nil || modernURL == "" || legacyErr != nil || legacyURL == "" {
+		t.Fatalf("same-organization media was not signed: modern=%v legacy=%v", modernErr, legacyErr)
 	}
-	if messages[2].MediaURL != nil {
-		t.Fatalf("foreign organization media retained/signed URL: %#v", messages[2])
+	if foreignURL != "" || !errors.Is(foreignErr, ErrMessageNotFound) {
+		t.Fatalf("foreign organization media signing = %q, %v", foreignURL, foreignErr)
 	}
 }
 
@@ -318,6 +312,55 @@ func TestSignedWhatsAppMessageMediaURLUsesTenantScopedCache(t *testing.T) {
 	foreignOrganization := "20000000-0000-0000-0000-000000000012"
 	if _, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), foreignOrganization, objectPath); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("foreign tenant signing error = %v, want ErrMessageNotFound", err)
+	}
+}
+
+func TestNonLeadMediaURLDoesNotReuseLeadCacheOrCrossSevenDayDeadline(t *testing.T) {
+	const organizationID = "20000000-0000-0000-0000-000000000021"
+	objectPath := "orgs/" + organizationID + "/assets/v2/shared.png"
+	whatsappMediaSignedURLCache.Delete(objectPath)
+	t.Cleanup(func() { whatsappMediaSignedURLCache.Delete(objectPath) })
+	whatsappMediaSignedURLCache.Store(objectPath, cachedWhatsAppMediaSignedURL{
+		url:       "https://example.invalid/lead-token",
+		expiresAt: time.Now().Add(10 * time.Minute),
+	})
+	var signingRequests atomic.Int32
+	var requestedTTL atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signingRequests.Add(1)
+		var request struct {
+			ExpiresIn int `json:"expiresIn"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode Storage signing request: %v", err)
+		}
+		requestedTTL.Store(int32(request.ExpiresIn))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"signedURL":"/object/sign/whatsapp-media/shared?token=nonlead"}`))
+	}))
+	defer storage.Close()
+	repo := Repository{storage: storageClient{
+		projectURL: storage.URL, apiKey: "service-role-test-key", httpClient: storage.Client(),
+	}}
+	deadline := time.Now().Add(2 * time.Minute)
+	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithDeadline(
+		context.Background(), organizationID, objectPath, &deadline,
+	)
+	if err != nil || signedURL == "" || strings.Contains(signedURL, "lead-token") {
+		t.Fatalf("nonlead signing used cached lead token or failed: url=%q err=%v", signedURL, err)
+	}
+	if signingRequests.Load() != 1 || expiresIn < 1 || expiresIn > 95 || int(requestedTTL.Load()) != expiresIn {
+		t.Fatalf("nonlead signing requests=%d ttl=%d requested=%d; want one request capped below deadline",
+			signingRequests.Load(), expiresIn, requestedTTL.Load())
+	}
+	nearDeadline := time.Now().Add(20 * time.Second)
+	if _, _, err := repo.signedWhatsAppMessageMediaURLWithDeadline(
+		context.Background(), organizationID, objectPath, &nearDeadline,
+	); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("near-deadline media signing error = %v, want denial", err)
+	}
+	if signingRequests.Load() != 1 {
+		t.Fatalf("near-deadline request reached Storage signing %d times", signingRequests.Load())
 	}
 }
 

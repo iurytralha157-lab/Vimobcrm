@@ -5,6 +5,7 @@ import { DateSeparator, shouldShowDateSeparator } from "@/components/features/wh
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { AttendanceTimelineEvents } from "@/components/features/whatsapp/AttendanceTimelineEvents";
+import { NonLeadRetentionNotice } from "@/components/features/whatsapp/NonLeadRetentionNotice";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
@@ -36,6 +37,7 @@ type ConversationMessagesProps = {
   canOperateWhatsApp: boolean;
   canOperateLeads: boolean;
   selectedLeadId: string | null;
+  onCreateLead?: () => void;
   onRetryMedia: (messageId: string) => Promise<void>;
   onRefreshStoredMediaURL: (messageId: string) => Promise<void>;
   reactionsByMessageId: Map<string, GroupedWhatsAppReaction[]>;
@@ -65,6 +67,7 @@ export function ConversationMessages({
   canOperateWhatsApp,
   canOperateLeads,
   selectedLeadId,
+  onCreateLead,
   onRetryMedia,
   onRefreshStoredMediaURL,
   reactionsByMessageId,
@@ -93,7 +96,7 @@ export function ConversationMessages({
       ...attendanceEntries.map((entry): ConversationTimelineItem => ({
         kind: "attendance",
         id: `attendance-${entry.id}`,
-        timestamp: entry.joinedAt,
+        timestamp: entry.markerAt ?? entry.joinedAt,
         entry,
       })),
     ].sort((left, right) => (
@@ -121,9 +124,15 @@ export function ConversationMessages({
   return (
     <div
       {...(!isMobile ? { "data-tour": "conversations-messages" } : {})}
-      className="relative flex-1 overflow-hidden min-h-0"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <ScrollArea className="h-full" onScrollCapture={handleScrollCapture}>
+      {activePlatform === "whatsapp" && !selectedLeadId && !conversation.is_group && !conversation.historical_lead_view ? (
+        <NonLeadRetentionNotice
+          expiresAt={conversation.nonlead_expires_at}
+          onCreateLead={onCreateLead}
+        />
+      ) : null}
+      <ScrollArea className="min-h-0 flex-1" onScrollCapture={handleScrollCapture}>
         <div className={cn(
           "space-y-2",
           isMobile

@@ -72,3 +72,31 @@ devem ser repetidos quando a atividade em voo terminar naturalmente.
 O passo 9 é o ponto em que duas filas passam a poder manter cards distintos
 para o mesmo telefone. Não o execute se qualquer readback, smoke ou pgTAP não
 estiver verde.
+
+## Reparo de mídia legada do WhatsApp
+
+O webhook Edge antigo salvava mídia em
+`orgs/{organização}/sessions/{sessão}/incoming/{arquivo}`. A fila Go usa o
+caminho antigo como marcador para baixar novamente, criar um objeto novo em
+`assets/v2` e reparar mensagens irmãs. A regra antiga do banco só aceitava
+`assets/v2` nesse marcador.
+
+Ordem para liberar esse reparo:
+
+1. Aplicar a migration aditiva
+   `20261003235500_whatsapp_legacy_media_repair_path_prepare.sql`. A regra
+   antiga continua ativa, e a nova é criada sem varrer a tabela.
+2. Em janela observada e fora da transação de deploy, executar
+   `20261003_validate_whatsapp_legacy_media_repair_path.sql`. A validação pode
+   percorrer toda a tabela `media_jobs`, mas permite leituras e escritas normais.
+3. Executar `20261003_activate_whatsapp_legacy_media_repair_path.sql`. A troca
+   usa lock com timeout de cinco segundos e só ocorre se a nova regra estiver
+   validada.
+4. Rodar `supabase/tests/whatsapp_legacy_media_repair_path.test.sql` em banco
+   isolado e publicar a API compatível apenas após confirmar o cutover.
+
+Se a validação falhar, a regra antiga permanece e o cutover deve parar. Antes
+da ativação, a preparação pode ser desfeita removendo apenas a nova constraint.
+Depois que reparos legados começarem a gravar marcadores, volte somente o
+binário Go em caso de erro; reinstalar a regra antiga exige resolver primeiro
+todos os marcadores legados ativos. O cutover não apaga nem reprocessa mídia.

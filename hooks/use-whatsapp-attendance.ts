@@ -5,14 +5,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import type { WhatsAppSessionList } from "@/hooks/use-whatsapp-sessions";
 import {
   whatsappAPI,
   type WhatsAppAttendanceState,
 } from "@/lib/api/whatsapp";
 import {
+  removeRevokedWhatsAppSession,
   whatsappQueryKeys,
   type WhatsAppQueryScope,
 } from "@/lib/whatsapp-query-cache";
+import { isWhatsAppAccessRevokedError } from "@/lib/whatsapp-access-error";
 
 export type WhatsAppAttendanceTarget = {
   conversationId: string;
@@ -110,7 +113,7 @@ export function useJoinWhatsAppAttendance() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async (target: WhatsAppAttendanceTarget) => {
+    mutationFn: async (target: WhatsAppAttendanceTarget & { confirmedSharing?: boolean }) => {
       if (!scope.organizationId || !scope.userId) {
         throw new Error("Usuário não autenticado.");
       }
@@ -119,6 +122,7 @@ export function useJoinWhatsAppAttendance() {
         {
           expectedLeadId: target.expectedLeadId,
           sendSessionId: target.sendSessionId,
+          confirmedSharing: target.confirmedSharing ?? false,
         },
         scope.organizationId,
       );
@@ -146,9 +150,6 @@ export function useJoinWhatsAppAttendance() {
         queryClient.invalidateQueries({
           queryKey: whatsappQueryKeys.leadMessagesScope(scope),
         }),
-        queryClient.invalidateQueries({
-          queryKey: ['lead-history-v2', target.expectedLeadId],
-        }),
       ]);
     },
   });
@@ -167,6 +168,10 @@ export function useWhatsAppAttendanceGate(
   const pendingOperationRef = useRef<PendingAttendanceOperation | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [checkingIdentityKey, setCheckingIdentityKey] = useState<string | null>(null);
+  const [accessRevokedTarget, setAccessRevokedTarget] = useState<{
+    identityKey: string;
+    sessionId: string;
+  } | null>(null);
   const [lastJoinedState, setLastJoinedState] = useState<{
     targetKey: string;
     attendance: WhatsAppAttendanceState;
@@ -205,7 +210,31 @@ export function useWhatsAppAttendanceGate(
     }
 
     const operation = (async () => {
-      const requestedTarget = request.target === undefined ? target ?? null : request.target;
+      let requestedTarget = request.target === undefined ? target ?? null : request.target;
+
+      // A new conversation has no ID until it is prepared. Resolve it first
+      // so the API, not the absence of a target, decides whether a pop-up is
+      // actually required for this user, number and lead.
+      if (!requestedTarget && request.prepareTarget) {
+        setCheckingIdentityKey(operationIdentityKey);
+        try {
+          requestedTarget = await request.prepareTarget();
+          if (requestIdentityRef.current !== operationIdentityKey) return false;
+        } catch (error) {
+          toast({
+            title: "Conversa indisponível",
+            description: error instanceof Error && error.message.length < 180
+              ? error.message
+              : "Não foi possível preparar esta conversa para envio.",
+            variant: "destructive",
+          });
+          return false;
+        } finally {
+          setCheckingIdentityKey((current) => (
+            current === operationIdentityKey ? null : current
+          ));
+        }
+      }
 
       if (requestedTarget) {
         setCheckingIdentityKey(operationIdentityKey);
@@ -232,9 +261,32 @@ export function useWhatsAppAttendanceGate(
             ),
             attendance,
           );
+          setAccessRevokedTarget(null);
           if (requestIdentityRef.current !== operationIdentityKey) return false;
-          if (attendance.joined) return true;
-        } catch {
+          if (attendance.joined && !attendance.confirmationRequired) return true;
+          if (!attendance.confirmationRequired) {
+            const joined = await joinAttendance.mutateAsync(requestedTarget);
+            if (requestIdentityRef.current !== operationIdentityKey) return false;
+            return joined.joined && !joined.confirmationRequired;
+          }
+        } catch (error) {
+          if (isWhatsAppAccessRevokedError(error)) {
+            setAccessRevokedTarget({
+              identityKey: operationIdentityKey,
+              sessionId: requestedTarget.sendSessionId,
+            });
+            queryClient.setQueryData<WhatsAppSessionList>(
+              whatsappQueryKeys.sessions(scope),
+              (sessions) => removeRevokedWhatsAppSession(sessions, requestedTarget.sendSessionId),
+            );
+            void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessionsScope(scope) });
+            toast({
+              title: "Acesso ao WhatsApp encerrado",
+              description: "Você não tem mais acesso a este número. Inicie uma nova conversa pelo seu WhatsApp ou conecte um número.",
+              variant: "destructive",
+            });
+            return false;
+          }
           toast({
             title: "Não foi possível verificar o atendimento",
             description: "Atualize a conversa e tente novamente antes de enviar a mensagem.",
@@ -278,7 +330,7 @@ export function useWhatsAppAttendanceGate(
       }
     });
     return operation;
-  }, [queryClient, scope, target, toast]);
+  }, [joinAttendance, queryClient, scope, target, toast]);
 
   const confirmAttendance = useCallback(async () => {
     const pending = pendingRequestRef.current;
@@ -288,8 +340,9 @@ export function useWhatsAppAttendanceGate(
       return;
     }
 
+    let resolvedTarget: WhatsAppAttendanceTarget | null | undefined;
     try {
-      const resolvedTarget = pending.target ?? await pending.prepareTarget?.();
+      resolvedTarget = pending.target ?? await pending.prepareTarget?.();
       if (!resolvedTarget) {
         throw new Error("Conversa indisponível para iniciar o atendimento.");
       }
@@ -299,7 +352,10 @@ export function useWhatsAppAttendanceGate(
         settlePendingRequest(false);
         return;
       }
-      const attendance = await joinAttendance.mutateAsync(resolvedTarget);
+      const attendance = await joinAttendance.mutateAsync({
+        ...resolvedTarget,
+        confirmedSharing: true,
+      });
       if (!attendance.joined) {
         throw new Error("A entrada no atendimento não foi confirmada.");
       }
@@ -313,6 +369,25 @@ export function useWhatsAppAttendanceGate(
       });
       settlePendingRequest(true);
     } catch (error) {
+      if (resolvedTarget && isWhatsAppAccessRevokedError(error)) {
+        const revokedSessionId = resolvedTarget.sendSessionId;
+        setAccessRevokedTarget({
+          identityKey: pending.identityKey,
+          sessionId: revokedSessionId,
+        });
+        queryClient.setQueryData<WhatsAppSessionList>(
+          whatsappQueryKeys.sessions(scope),
+          (sessions) => removeRevokedWhatsAppSession(sessions, revokedSessionId),
+        );
+        void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessionsScope(scope) });
+        settlePendingRequest(false);
+        toast({
+          title: "Acesso ao WhatsApp encerrado",
+          description: "Você não tem mais acesso a este número. Inicie uma nova conversa pelo seu WhatsApp ou conecte um número.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Não foi possível entrar no atendimento",
         description: error instanceof Error && error.message.length < 180
@@ -321,7 +396,7 @@ export function useWhatsAppAttendanceGate(
         variant: "destructive",
       });
     }
-  }, [joinAttendance, settlePendingRequest, toast]);
+  }, [joinAttendance, queryClient, scope, settlePendingRequest, toast]);
 
   const cancelAttendance = useCallback(() => {
     if (joinAttendance.isPending) return;
@@ -341,6 +416,9 @@ export function useWhatsAppAttendanceGate(
   return {
     attendance,
     entries: attendance?.entries ?? [],
+    accessRevokedSessionId: accessRevokedTarget?.identityKey === requestIdentityKey
+      ? accessRevokedTarget.sessionId
+      : null,
     ensureJoined,
     isChecking,
     isJoining: joinAttendance.isPending,

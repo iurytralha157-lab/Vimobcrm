@@ -59,11 +59,11 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`new TextEncoder().encode(content).byteLength > 65_536`,
 		`reconcileHandledWhatsAppMessageTransport`,
 		`managedEntryWasPending = true;`,
-		`!captureSuppressed`,
+		`captureDecision.captureState === "captured"`,
 		`&& eventBindingIsCurrent`,
 		`&& result.inserted`,
 		`await processManagedWhatsAppLeadEntry(`,
-		`captureSuppressed,`,
+		`captureDecision.captureState !== "captured",`,
 		`await enrichManagedWhatsAppLeadEntryAttribution(session, attachedLead?.id, message);`,
 		`if (updateError) throw updateError;`,
 		`if (insertError) throw insertError;`,
@@ -82,13 +82,38 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`(?s)if \(existing\).*?if \(managedMessageDistribution\).*?return \{.*?is_new_lead: false.*?is_managed_whatsapp_message_distribution: true.*?\};`,
 		`(?s)let conversation = await ensureConversation\(.*?activateWhatsAppConversationLeadBinding\(.*?await logInbound\(session, conversation, attachedLead, rule, message\);.*?const result = await insertMessage\(\s*session,\s*conversation,\s*attachedLead,\s*message,\s*captureDecision,\s*leadResolutionQuarantineReason,\s*eventBindingIsCurrent,\s*\);`,
 		`(?s)const providerMessageId = \[.*?message\.provider_message_id,\s*\]\s*\.map\(\(value\) => normalizeText\(value\)\.replace\(/\\u0000/g, ""\)\.trim\(\)\)\s*\.find\(Boolean\) \|\| "";\s*const providerMessageIdSynthetic = !providerMessageId;`,
-		`(?s)async function reconcileHandledWhatsAppMessageTransport\(.*?for \(const providerIdentityColumn of \["message_id", "provider_message_id"\]\).*?\.from\("whatsapp_messages"\).*?\.eq\("organization_id", session\.organization_id\).*?\.eq\("session_id", session\.id\).*?\.eq\(providerIdentityColumn, message\.messageId\).*?\.eq\("from_me", false\).*?\.update\(\{.*?media_storage_path: mediaStoragePath,.*?media_status: "ready",.*?media_error: null,.*?\}\).*?\.eq\("id", existing\.id\).*?\.eq\("from_me", false\);`,
 		`(?s)managedEntryLookup = await lookupManagedWhatsAppLeadEntry\(session, message\).*?if \(managedEntryLookup\?\.handled === true\) \{.*?await reconcileHandledWhatsAppMessageTransport\(session, message\);.*?managedEntryAlreadyHandled = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else if \(managedEntryLookup\?\.pending === true\) \{.*?managedEntryWasPending = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else \{\s*try \{\s*rule = await findInboundRule\(session, message\);.*?if \(managedRuleMatched \|\| confirmedCtwaAd\) \{.*?validateNewWhatsAppLeadProviderEvent\(message\);\s*\}.*?lead = await ensureLead\(`,
 		`(?s)function validateNewWhatsAppLeadProviderEvent\(.*?message\.providerMessageIdSynthetic.*?Array\.from\(providerMessageId\)\.length.*?providerMessageIdCharacters < 1 \|\| providerMessageIdCharacters > 500.*?if \(!content\.trim\(\)\).*?new TextEncoder\(\)\.encode\(content\)\.byteLength > 65_536`,
-		`(?s)if \(managedMessageDistribution\) \{\s*if \(!managedEntryAlreadyHandled \|\| managedEntryWasPending\) \{\s*await processManagedWhatsAppLeadEntry\(\s*session,\s*attachedLead,\s*rule,\s*message,\s*captureSuppressed,\s*\);\s*\}\s*await enrichManagedWhatsAppLeadEntryAttribution\(session, attachedLead\?\.id, message\);\s*\}.*?await completeStoredMessageEffects\(`,
+		`(?s)if \(managedMessageDistribution\) \{\s*if \(!managedEntryAlreadyHandled \|\| managedEntryWasPending\) \{\s*await processManagedWhatsAppLeadEntry\(\s*session,\s*attachedLead,\s*rule,\s*message,\s*captureDecision\.captureState !== "captured",\s*\);\s*\}\s*await enrichManagedWhatsAppLeadEntryAttribution\(session, attachedLead\?\.id, message\);\s*\}.*?await completeStoredMessageEffects\(`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(source) {
 			t.Fatalf("Edge Function must propagate operational failure matching %q", pattern)
+		}
+	}
+	transportStart := strings.Index(source, "async function reconcileHandledWhatsAppMessageTransport(")
+	transportEnd := strings.Index(source, "function normalizeMessage(")
+	if transportStart < 0 || transportEnd <= transportStart {
+		t.Fatal("Edge Function transport reconciliation is missing")
+	}
+	transport := source[transportStart:transportEnd]
+	for _, fragment := range []string{
+		"await findMessageByProviderIdentity(",
+		"existing.id !== expectedMessage.id",
+		"optionalUuid(existing.conversation_id) !== optionalUuid(expectedMessage.conversation_id)",
+		"optionalUuid(existing.lead_id) !== optionalUuid(expectedMessage.lead_id)",
+		"if (existing.from_me !== false)",
+		`.eq("organization_id", session.organization_id)`,
+		`.eq("session_id", session.id)`,
+		`.eq("conversation_id", existing.conversation_id)`,
+		`.eq("from_me", false)`,
+		`updateQuery.is("lead_id", null)`,
+		`media_storage_path: mediaStoragePath`,
+		`media_status: "ready"`,
+		`media_status: "pending"`,
+		"return false;",
+	} {
+		if !strings.Contains(transport, fragment) {
+			t.Fatalf("Edge Function transport reconciliation is missing %q", fragment)
 		}
 	}
 }
@@ -152,7 +177,8 @@ func TestProviderReplayKeepsOriginalCardWithoutMutatingCurrentPreview(t *testing
 	for _, fragment := range []string{
 		"conversation.MessageLeadID = storedLeadID",
 		"conversation.HistoricalBindingReplay = storedLeadID != conversation.LeadID",
-		"set lead_id = coalesce(lead_id, nullif($15, '')::uuid)",
+		"set provider_message_id = coalesce(provider_message_id, $4)",
+		"metadata = case when capture_state in ('suppressed', 'recorded') then coalesce(metadata, '{}'::jsonb)",
 		"eventBindingIsCurrent := !conversation.HistoricalBindingReplay",
 		"updated, err = updateNativeEvolutionConversation",
 		`quarantineReason = "whatsapp_message_lead_unattributed"`,
@@ -160,6 +186,11 @@ func TestProviderReplayKeepsOriginalCardWithoutMutatingCurrentPreview(t *testing
 		if !strings.Contains(native, fragment) {
 			t.Fatalf("native replay isolation contract is missing %q", fragment)
 		}
+	}
+	replayStart := strings.Index(native, "func insertNativeEvolutionMessage(")
+	replayEnd := strings.Index(native, "func redactSuppressedNativeMessage(")
+	if replayStart < 0 || replayEnd <= replayStart || strings.Contains(native[replayStart:replayEnd], "set lead_id") {
+		t.Fatal("native provider replay must not update lead_id or fire its context trigger")
 	}
 
 	edgePath := filepath.Clean(filepath.Join(
@@ -174,7 +205,10 @@ func TestProviderReplayKeepsOriginalCardWithoutMutatingCurrentPreview(t *testing
 	for _, fragment := range []string{
 		`for (const identityColumn of ["message_id", "provider_message_id"] as const)`,
 		`throw new Error("whatsapp_message_provider_identity_conflict")`,
-		"lead_id: existingLeadId || eventLeadId",
+		`const persistedLeadId = existingCaptureState === "recorded" || existingCaptureState === "suppressed"`,
+		"lead_id: persistedLeadId",
+		`persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "recorded"`,
+		`await completeStoredMessageEffects(session, storedBeforeProcessing, message.messageId);`,
 		"|| ingressRoutingSnapshot?.eventLeadId",
 		"eventBindingIsCurrent = eventBindingIsCurrent",
 		"await updateConversationAfterMessage(session, conversation, eventLeadId, message)",
@@ -392,10 +426,11 @@ func TestNativeOutboundWebhookReconciliationTransfersOnlyExactDurableIdentity(t 
 		"canonical.client_message_id is null or canonical.client_message_id = $5",
 		"and canonical.provider_message_id = $6",
 		"and canonical.message_id = $6",
-		"and outbox.message_id = $7::uuid",
-		"and outbox.client_message_id = $8",
-		"and outbox.provider_message_id = $9",
-		"and outbox.last_error = $10",
+		"and outbox.conversation_id = $5::uuid",
+		"and outbox.message_id = $6::uuid",
+		"and outbox.client_message_id = $7",
+		"and outbox.provider_message_id = $8",
+		"and outbox.last_error = $9",
 		"if reconciled.RowsAffected() != 1",
 		"delete from public.whatsapp_messages as pending",
 	} {

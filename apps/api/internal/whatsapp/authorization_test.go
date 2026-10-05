@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -79,7 +80,7 @@ func TestConversationAuthorizationScopeArguments(t *testing.T) {
 	}
 }
 
-func TestConversationVisibilityAllowsLeadAccessOrOwnedUnlinkedConversation(t *testing.T) {
+func TestConversationVisibilityRequiresNumberAccessAndAssignedLead(t *testing.T) {
 	query := conversationVisibilitySQL(true)
 	required := []string{
 		"ws.organization_id = wc.organization_id",
@@ -91,11 +92,17 @@ func TestConversationVisibilityAllowsLeadAccessOrOwnedUnlinkedConversation(t *te
 		"member.user_id = l.assigned_user_id",
 		"wc.lead_id is null",
 		"ws.owner_user_id = $2::uuid",
+		"access.grant_scope = 'organization'",
+		"access.grant_scope = 'team'",
+		"access.can_view = true and access.can_read = true",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("conversation visibility is missing %q:\n%s", fragment, query)
 		}
+	}
+	if strings.Contains(leadHistoryVisibilitySQL(true), "whatsapp_session_access") {
+		t.Fatal("card history must remain visible through lead permission after number access is revoked")
 	}
 }
 
@@ -122,8 +129,44 @@ func TestMessageLeadPredicatesFailClosedOnMismatchedAttribution(t *testing.T) {
 	if got := conversationMessageLeadMatchSQL(); got != "(wm.lead_id = wc.lead_id or (wm.lead_id is null and wc.lead_id is null))" {
 		t.Fatalf("conversation message predicate = %q", got)
 	}
-	if got := leadHistoryMessageLeadMatchSQL(); got != "wm.lead_id = $5::uuid" {
-		t.Fatalf("lead history message predicate = %q", got)
+	for _, tc := range []struct {
+		name       string
+		predicate  string
+		leadTarget string
+	}{
+		{"current conversation read", conversationReadableMessageLeadMatchSQL(), "first_binding.lead_id = wc.lead_id"},
+		{"lead history read", leadHistoryMessageLeadMatchSQL(), "first_binding.lead_id = $5::uuid"},
+		{"signed media", messageMediaVisibilitySQL(true), "first_binding.lead_id = historical_lead.id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, fragment := range []string{
+				"wm.lead_id is null",
+				"wm.capture_state = 'recorded'",
+				"wm.from_me = false",
+				"first_binding.organization_id = wm.organization_id",
+				"first_binding.conversation_id = wm.conversation_id",
+				"first_binding.session_id = wm.session_id",
+				"first_binding.previous_lead_id is null",
+				"first_binding.changed = true",
+				"first_binding.stale = false",
+				"wm.created_at < first_binding.active_from",
+				"earliest_binding.organization_id = wm.organization_id",
+				"earliest_binding.conversation_id = wm.conversation_id",
+				"earliest_binding.session_id = wm.session_id",
+				"order by earliest_binding.active_from asc, earliest_binding.id asc",
+				tc.leadTarget,
+			} {
+				if !strings.Contains(tc.predicate, fragment) {
+					t.Fatalf("%s predicate is missing %q:\n%s", tc.name, fragment, tc.predicate)
+				}
+			}
+		})
+	}
+	if strings.Contains(leadHistoryMessageLeadMatchSQL(), "wc.lead_id") {
+		t.Fatal("historical lead view must not infer attribution from the current card")
+	}
+	if strings.Contains(conversationMessageLeadMatchSQL(), "recorded") {
+		t.Fatal("mutating message operations must retain exact lead attribution")
 	}
 }
 
@@ -345,6 +388,29 @@ func TestGenericProviderActionCannotBypassLeadBoundAPIs(t *testing.T) {
 		requireSend, allowed := providerActionAllowed(action)
 		if !allowed || requireSend {
 			t.Fatalf("providerActionAllowed(%q) = send:%t allowed:%t", action, requireSend, allowed)
+		}
+	}
+}
+
+func TestSessionManagementActionsStayOwnerOnlyAfterSharing(t *testing.T) {
+	raw, err := os.ReadFile("labels_groups_operations.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	for _, bounds := range [][2]string{
+		{"func (repo Repository) UpdateGroup(", "func (repo Repository) CheckNumbers("},
+		{"func (repo Repository) RunProviderAction(", "func providerActionPayload("},
+	} {
+		start := strings.Index(source, bounds[0])
+		end := strings.Index(source, bounds[1])
+		if start < 0 || end <= start {
+			t.Fatalf("cannot locate session management action %q", bounds[0])
+		}
+		operation := source[start:end]
+		if !strings.Contains(operation, "repo.GetSession(ctx, tenantContext,") ||
+			strings.Contains(operation, "repo.getCanSendSession(ctx, tenantContext,") {
+			t.Fatalf("%s must require the number owner, not a send grant", bounds[0])
 		}
 	}
 }

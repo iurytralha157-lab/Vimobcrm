@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -25,12 +26,14 @@ type functionsClient struct {
 	evolutionBackendWebhookURL string
 	webhookProcessorMode       string
 	webhookRolloutSessionIDs   []string
+	inboundRecordingSessionIDs []string
 	db                         *dbpkg.Postgres
 	httpClient                 *http.Client
 	runtimeStats               *whatsappRuntimeCounters
 }
 
 func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
+	inboundRecordingScope := strings.TrimSpace(os.Getenv("WHATSAPP_INBOUND_RECORDING_SESSION_IDS"))
 	return functionsClient{
 		projectURL:                 strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
 		apiKey:                     strings.TrimSpace(config.APIKey),
@@ -41,6 +44,9 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
 		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
 		webhookRolloutSessionIDs:   canonicalWhatsAppSessionScope(config.EvolutionGo.WebhookRolloutSessionIDs),
+		// An explicit scope enables future inbound recording. Keep the global
+		// default off until seven-day nonlead deletion is activated.
+		inboundRecordingSessionIDs: canonicalWhatsAppSessionScope(strings.Split(inboundRecordingScope, ",")),
 		db:                         db,
 		httpClient:                 newEvolutionHTTPClient(),
 		runtimeStats:               &whatsappRuntimeCounters{},

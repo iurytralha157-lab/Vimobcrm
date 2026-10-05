@@ -54,6 +54,7 @@ type App struct {
 	db       *dbpkg.Postgres
 	auth     *authpkg.Verifier
 	realtime *realtime.Hub
+	whatsapp whatsapp.Handler
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -338,27 +339,30 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
 	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
-		AIWorkerEnabled:               cfg.WhatsApp.AIWorkerEnabled,
-		AIWorkerInterval:              cfg.WhatsApp.AIWorkerInterval,
-		AIFollowUpWorkerEnabled:       cfg.WhatsApp.AIFollowUpWorkerEnabled,
-		AIFollowUpWorkerInterval:      cfg.WhatsApp.AIFollowUpWorkerInterval,
-		OutboxWorkerEnabled:           cfg.WhatsApp.OutboxWorkerEnabled,
-		OutboxWorkerInterval:          cfg.WhatsApp.OutboxWorkerInterval,
-		OutboxWorkerBatch:             cfg.WhatsApp.OutboxWorkerBatch,
-		OutboxWorkerConcurrency:       cfg.WhatsApp.OutboxWorkerConcurrency,
-		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
-		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
-		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
-		WebhookWorkerConcurrency:      cfg.WhatsApp.WebhookWorkerConcurrency,
-		MediaWorkerEnabled:            cfg.WhatsApp.MediaWorkerEnabled,
-		MediaWorkerInterval:           cfg.WhatsApp.MediaWorkerInterval,
-		MediaWorkerLease:              cfg.WhatsApp.MediaWorkerLease,
-		MediaWorkerConcurrency:        cfg.WhatsApp.MediaWorkerConcurrency,
-		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
-		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
-		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
-		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
-		SessionSupervisorRecoveryIDs:  cfg.WhatsApp.SessionSupervisorRecoveryIDs,
+		AIWorkerEnabled:                cfg.WhatsApp.AIWorkerEnabled,
+		AIWorkerInterval:               cfg.WhatsApp.AIWorkerInterval,
+		AIFollowUpWorkerEnabled:        cfg.WhatsApp.AIFollowUpWorkerEnabled,
+		AIFollowUpWorkerInterval:       cfg.WhatsApp.AIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:            cfg.WhatsApp.OutboxWorkerEnabled,
+		OutboxWorkerInterval:           cfg.WhatsApp.OutboxWorkerInterval,
+		OutboxWorkerBatch:              cfg.WhatsApp.OutboxWorkerBatch,
+		OutboxWorkerConcurrency:        cfg.WhatsApp.OutboxWorkerConcurrency,
+		WebhookWorkerEnabled:           cfg.WhatsApp.WebhookWorkerEnabled,
+		WebhookWorkerInterval:          cfg.WhatsApp.WebhookWorkerInterval,
+		WebhookWorkerBatch:             cfg.WhatsApp.WebhookWorkerBatch,
+		WebhookWorkerConcurrency:       cfg.WhatsApp.WebhookWorkerConcurrency,
+		MediaWorkerEnabled:             cfg.WhatsApp.MediaWorkerEnabled,
+		MediaWorkerInterval:            cfg.WhatsApp.MediaWorkerInterval,
+		MediaWorkerLease:               cfg.WhatsApp.MediaWorkerLease,
+		MediaWorkerConcurrency:         cfg.WhatsApp.MediaWorkerConcurrency,
+		NonLeadRetentionWorkerEnabled:  cfg.WhatsApp.NonLeadRetentionWorkerEnabled,
+		NonLeadRetentionWorkerInterval: cfg.WhatsApp.NonLeadRetentionWorkerInterval,
+		NonLeadRetentionWorkerBatch:    cfg.WhatsApp.NonLeadRetentionWorkerBatch,
+		SessionSupervisorEnabled:       cfg.WhatsApp.SessionSupervisorEnabled,
+		SessionSupervisorInitialDelay:  cfg.WhatsApp.SessionSupervisorInitialDelay,
+		SessionSupervisorInterval:      cfg.WhatsApp.SessionSupervisorInterval,
+		SessionSupervisorBatch:         cfg.WhatsApp.SessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:   cfg.WhatsApp.SessionSupervisorRecoveryIDs,
 	})
 	whatsappRuntimeStats = whatsappHandler.RuntimeStats
 	backgroundWorkers.Run(func() {
@@ -372,6 +376,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartNonLeadRetentionWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)
@@ -495,6 +502,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db:       postgres,
 		auth:     authVerifier,
 		realtime: realtimeHub,
+		whatsapp: whatsappHandler,
 	}, nil
 }
 
@@ -518,6 +526,7 @@ func (app *App) Close() {
 	}
 
 	if app.db != nil {
+		app.whatsapp.Close()
 		app.db.Close()
 	}
 

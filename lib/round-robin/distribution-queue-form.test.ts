@@ -94,7 +94,7 @@ test("hidrata regra legada Meta e preserva contexto de WhatsApp e reentrada", ()
   assert.equal(form.is_active, true);
   assert.equal(form.settings.reentry_behavior, "keep_assignee");
   assert.deepEqual(form.settings.auto_tag_ids, [TAG_ID]);
-  assert.equal(form.settings.whatsapp_distribution_auto_reply_enabled, true);
+  assert.equal(form.settings.whatsapp_distribution_auto_reply_enabled, false);
   assert.equal(
     form.settings.whatsapp_distribution_auto_reply_message,
     "Retornaremos em breve.",

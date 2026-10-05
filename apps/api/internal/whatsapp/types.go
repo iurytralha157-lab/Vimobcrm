@@ -23,7 +23,8 @@ var (
 	ErrProviderOutcomeUnknown     = errors.New("whatsapp provider outcome is unknown")
 	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
-	ErrAttendanceRequired         = errors.New("whatsapp attendance confirmation is required")
+	ErrAttendanceRequired         = errors.New("whatsapp attendance or sharing consent is required")
+	ErrSessionAccessRevoked       = errors.New("whatsapp session access revoked")
 )
 
 type Session struct {
@@ -97,6 +98,8 @@ type SessionAccess struct {
 	CanSend         bool        `json:"can_send"`
 	OnlyLeadsAccess bool        `json:"only_leads_access"`
 	GrantedBy       *string     `json:"granted_by"`
+	GrantScope      *string     `json:"grant_scope,omitempty"`
+	GrantTeamID     *string     `json:"grant_team_id,omitempty"`
 	CreatedAt       time.Time   `json:"created_at"`
 	User            *AccessUser `json:"user,omitempty"`
 }
@@ -125,6 +128,7 @@ type Conversation struct {
 	DeletedAt          *time.Time   `json:"deleted_at"`
 	CreatedAt          time.Time    `json:"created_at"`
 	UpdatedAt          time.Time    `json:"updated_at"`
+	NonleadExpiresAt   *time.Time   `json:"nonlead_expires_at"`
 	HistoricalLeadView bool         `json:"historical_lead_view,omitempty"`
 	Session            *SessionLite `json:"session,omitempty"`
 	Lead               *LeadLite    `json:"lead,omitempty"`
@@ -247,24 +251,27 @@ type HistoryAccessResponse struct {
 }
 
 type AttendanceEntry struct {
-	ID                    string    `json:"id"`
-	OrganizationID        string    `json:"-"`
-	ConversationID        string    `json:"-"`
-	SessionID             string    `json:"sessionId"`
-	LeadID                string    `json:"-"`
-	BindingID             string    `json:"-"`
-	UserID                string    `json:"userId"`
-	ActorNameSnapshot     string    `json:"userName"`
-	JoinedAt              time.Time `json:"joinedAt"`
-	EntrySource           string    `json:"entrySource"`
-	IngressSequenceCutoff int64     `json:"-"`
+	ID                    string     `json:"id"`
+	OrganizationID        string     `json:"-"`
+	ConversationID        string     `json:"-"`
+	SessionID             string     `json:"sessionId"`
+	LeadID                string     `json:"-"`
+	BindingID             string     `json:"-"`
+	UserID                string     `json:"userId"`
+	ActorNameSnapshot     string     `json:"userName"`
+	JoinedAt              time.Time  `json:"joinedAt"`
+	EntrySource           string     `json:"entrySource"`
+	IngressSequenceCutoff int64      `json:"-"`
+	MarkerAt              *time.Time `json:"markerAt,omitempty"`
+	MarkerKind            *string    `json:"markerKind,omitempty"`
 }
 
 type AttendanceResponse struct {
-	Joined       bool              `json:"joined"`
-	CurrentEntry *AttendanceEntry  `json:"currentEntry"`
-	Entries      []AttendanceEntry `json:"entries"`
-	Created      bool              `json:"created"`
+	Joined               bool              `json:"joined"`
+	ConfirmationRequired bool              `json:"confirmationRequired"`
+	CurrentEntry         *AttendanceEntry  `json:"currentEntry"`
+	Entries              []AttendanceEntry `json:"entries"`
+	Created              bool              `json:"created"`
 }
 
 type Envelope[T any] struct {
@@ -554,13 +561,15 @@ type StartConversationRequest struct {
 }
 
 type AttendanceRequest struct {
-	ExpectedLeadID string `json:"expectedLeadId"`
-	SendSessionID  string `json:"sendSessionId"`
+	ExpectedLeadID   string `json:"expectedLeadId"`
+	SendSessionID    string `json:"sendSessionId"`
+	ConfirmedSharing bool   `json:"confirmedSharing,omitempty"`
 }
 
 type attendanceInput struct {
-	ExpectedLeadID string
-	SendSessionID  string
+	ExpectedLeadID   string
+	SendSessionID    string
+	ConfirmedSharing bool
 }
 
 func ParseConversationListFilter(values url.Values) (ConversationListFilter, error) {
@@ -954,8 +963,9 @@ func (request AttendanceRequest) Validate() (attendanceInput, error) {
 		return attendanceInput{}, fmt.Errorf("%w: sendSessionId is required and must be a valid UUID", ErrInvalidInput)
 	}
 	return attendanceInput{
-		ExpectedLeadID: expectedLeadID,
-		SendSessionID:  sendSessionID,
+		ExpectedLeadID:   expectedLeadID,
+		SendSessionID:    sendSessionID,
+		ConfirmedSharing: request.ConfirmedSharing,
 	}, nil
 }
 

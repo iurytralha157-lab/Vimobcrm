@@ -143,7 +143,10 @@ test("proxy exposes effect_not_attempted only while the backend boundary is un-c
     ),
   ]);
 
-  assert.equal(proxySource.match(/effect_not_attempted: true/g)?.length, 2);
+  assert.match(
+    proxySource,
+    /if \(isDirectMessageMutationAction\(action\)\)[\s\S]*?effect_not_attempted: true/,
+  );
   assert.match(
     proxySource,
     /status >= 500 && !backendFetchAttempted[\s\S]*effect_not_attempted: true/,

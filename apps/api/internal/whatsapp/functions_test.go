@@ -20,6 +20,33 @@ func TestConfiguredEvolutionWebhookURLRequiresBackendReceiver(t *testing.T) {
 	}
 }
 
+func TestInboundRecordingSessionScopeRequiresExplicitCanary(t *testing.T) {
+	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+	const otherSessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
+	for _, test := range []struct {
+		name    string
+		value   string
+		allowed bool
+	}{
+		{name: "unset stays off"},
+		{name: "unknown value remains off", value: "unknown"},
+		{name: "one session", value: sessionID, allowed: true},
+		{name: "comma-separated scope", value: "unknown, " + sessionID, allowed: true},
+		{name: "explicit wildcard", value: "*", allowed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("WHATSAPP_INBOUND_RECORDING_SESSION_IDS", test.value)
+			client := newFunctionsClient(StorageConfig{}, nil)
+			if got := sessionIDAllowlistAllows(client.inboundRecordingSessionIDs, sessionID); got != test.allowed {
+				t.Fatalf("session recording enabled = %v, want %v", got, test.allowed)
+			}
+			if test.value != "*" && test.value != "" && sessionIDAllowlistAllows(client.inboundRecordingSessionIDs, otherSessionID) {
+				t.Fatal("one session enabled a different WhatsApp number")
+			}
+		})
+	}
+}
+
 func TestConfiguredEvolutionWebhookURLRoutesEverySessionToBackend(t *testing.T) {
 	const sessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
 	client := functionsClient{

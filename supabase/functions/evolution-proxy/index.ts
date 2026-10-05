@@ -39,19 +39,29 @@ Deno.serve(async (req) => {
     }
 
     const { action, ...params } = await req.json();
-    console.log(`Evolution proxy action: ${action}`, params);
 
     // Initialize Supabase client for actions that need it
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const authHeader = req.headers.get("Authorization");
     const bearerToken = authHeader?.replace("Bearer ", "").trim();
-    if (bearerToken !== SUPABASE_SERVICE_ROLE_KEY) {
+    if (!SUPABASE_SERVICE_ROLE_KEY || bearerToken !== SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
         JSON.stringify({ success: false, error: "Evolution legada desativada" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    if (isSendAction(action)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Direct WhatsApp sending is disabled. Use the CRM conversation API.",
+          effect_not_attempted: true,
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    console.log(`Evolution proxy action: ${action}`, params);
 
     let webhookSessionToken = "";
     if (action === "createInstance" || action === "setWebhook") {

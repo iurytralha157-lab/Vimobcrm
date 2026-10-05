@@ -285,7 +285,9 @@ func (repo Repository) GroupInviteLink(ctx context.Context, tenantContext tenant
 }
 
 func (repo Repository) UpdateGroup(ctx context.Context, tenantContext tenant.Context, sessionID string, request UpdateGroupRequest) (map[string]any, error) {
-	session, err := repo.getCanSendSession(ctx, tenantContext, sessionID)
+	// Sharing a number authorizes lead-bound attendance, not management of any
+	// group attached to the owner's WhatsApp account.
+	session, err := repo.GetSession(ctx, tenantContext, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,18 +370,14 @@ func (repo Repository) RunProviderAction(ctx context.Context, tenantContext tena
 	}
 
 	action := strings.TrimSpace(request.Action)
-	requireSend, allowed := providerActionAllowed(action)
+	_, allowed := providerActionAllowed(action)
 	if !allowed {
 		return ProviderActionResponse{}, fmt.Errorf("%w: provider action is not allowed", ErrInvalidInput)
 	}
 
-	var session Session
-	var err error
-	if requireSend {
-		session, err = repo.getCanSendSession(ctx, tenantContext, request.SessionID)
-	} else {
-		session, err = repo.GetSession(ctx, tenantContext, request.SessionID)
-	}
+	// Generic provider actions are always owner-scoped, including future
+	// actions whose provider implementation happens to send a network request.
+	session, err := repo.GetSession(ctx, tenantContext, request.SessionID)
 	if err != nil {
 		return ProviderActionResponse{}, err
 	}

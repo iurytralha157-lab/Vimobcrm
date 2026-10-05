@@ -6,13 +6,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 546
-- Arquivos com achados: 44
-- Achados: 118
-- Arquivos protegidos/mistos com achados: 43
-- Achados alcançáveis pelo CRM protegido: 117
-- Distribuição por superfície: protected-only 95, protected-and-public 22, public-only 1, infraestrutura 0
-- P1: 57
+- Arquivos analisados: 550
+- Arquivos com achados: 48
+- Achados: 124
+- Arquivos protegidos/mistos com achados: 47
+- Achados alcançáveis pelo CRM protegido: 123
+- Distribuição por superfície: protected-only 99, protected-and-public 24, public-only 1, infraestrutura 0
+- P1: 63
 - P2: 15
 - P3: 46
 
@@ -20,10 +20,10 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 | Prioridade | Regra | Quantidade | Direção |
 | --- | --- | ---: | --- |
-| P1 | Sombra forte | 16 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
+| P1 | Sombra forte | 17 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
 | P2 | Sombra fora do padrão | 7 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
-| P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
-| P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
+| P1 | Raio acima de 8px | 9 | Blocos usam 8px; controles 6px; microelementos 4px. |
+| P1 | Tipografia pesada | 3 | Texto normal usa 300; títulos usam 400. |
 | P1 | Cor hardcoded | 34 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 5 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
@@ -47,6 +47,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChat.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
+| `components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx` | 6 | 2 | oversized-radius: 2 |
+| `components/features/settings/WhatsAppTab.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/schedule/CalendarView.tsx` | 4 | 2 | hardcoded-surface: 2 |
@@ -62,11 +64,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/whatsapp/conversations/ConversationFilters.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/WhatsAppSendOriginChoice.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
@@ -95,6 +99,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChat.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
+| `components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx` | 6 | 2 | oversized-radius: 2 |
+| `components/features/settings/WhatsAppTab.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/schedule/CalendarView.tsx` | 4 | 2 | hardcoded-surface: 2 |
@@ -110,12 +116,14 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/whatsapp/conversations/ConversationFilters.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/WhatsAppSendOriginChoice.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/whatsapp/WhatsAppSessionDisconnectedNotice.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/LeadDistributionSection.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/round-robin/DistributionQueueEditor.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
