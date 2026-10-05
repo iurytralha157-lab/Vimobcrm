@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "08ac7805daf902820f0280253e36d294e75bafd4d45dcae6cd60eeffc677e686",
+  "sourceDigestSha256": "3e745e013a227061884874f57931ba7f501ab7ee5090a0a87cdb086d0ee5ebae",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3854,10 +3854,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:6cb3f4d20eb47efa3a22",
+          "id": "overlay:0d31dc045b614e9628e7",
           "column": 7,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 741,
+          "line": 755,
           "owner": "MessageMedia",
           "routes": [
             "/agenda",
@@ -26348,10 +26348,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:cf910025ae2b5f620e2b",
+          "id": "cta:1bbc959c825187bb8217",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 133,
+          "line": 135,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26403,10 +26403,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0a355a18ed2f832d3eb2",
+          "id": "cta:ee20c746f5d67bc20db8",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 152,
+          "line": 154,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26458,10 +26458,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:86b77994118e19738c31",
+          "id": "cta:0cdae62b2cdb21b49309",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 167,
+          "line": 169,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -26513,10 +26513,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f811e58dc6ec2dc43d90",
+          "id": "cta:473758e68be5109883a4",
           "column": 9,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 225,
+          "line": 233,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -27504,10 +27504,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2fc0007883f8965d1e94",
+          "id": "cta:479176bac5e0497623c8",
           "column": 11,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 293,
+          "line": 295,
           "owner": "renderMediaPolicyPlaceholder",
           "routes": [
             "/agenda",
@@ -27559,10 +27559,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:74d5f50326a52197fedb",
+          "id": "cta:6e2f5ff0a081b5ba6966",
           "column": 13,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 325,
+          "line": 327,
           "owner": "renderMediaPending",
           "routes": [
             "/agenda",
@@ -27614,10 +27614,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0740dc1167d8b4ae7881",
+          "id": "cta:c63c534a4d35257ea581",
           "column": 11,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 363,
+          "line": 365,
           "owner": "renderMediaFailed",
           "routes": [
             "/agenda",
@@ -27669,10 +27669,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6c05fe5742ab4a125931",
+          "id": "cta:3829ddd0fcb0c4148de9",
           "column": 9,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 386,
+          "line": 388,
           "owner": "renderMediaTimestamp",
           "routes": [
             "/agenda",
@@ -27724,10 +27724,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:09a18dff3ffa23de4181",
+          "id": "cta:fd487736e663d2fe3c86",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 467,
+          "line": 481,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -27779,10 +27779,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2b4dd395bde54b278d67",
+          "id": "cta:7e64bb3eebf56439817c",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 471,
+          "line": 485,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -27834,10 +27834,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f0f97a4434aac6e81e98",
+          "id": "cta:a14c4d4207c30c732a7c",
           "column": 17,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 510,
+          "line": 524,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -27889,10 +27889,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5809287c3dc806759ed8",
+          "id": "cta:6eea3551e3b5efe20910",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 539,
+          "line": 553,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -27944,10 +27944,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:34c498b9c01f02c18f28",
+          "id": "cta:fd677e7f30e9d9d17b98",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 543,
+          "line": 557,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -27999,10 +27999,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:03acde59602e8f70c9d2",
+          "id": "cta:34a8eff5fbe55b886bf6",
           "column": 17,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 608,
+          "line": 622,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -28054,10 +28054,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:96892785d27a836b3c33",
+          "id": "cta:3c6792c1e12676d759f8",
           "column": 19,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 621,
+          "line": 635,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -28109,10 +28109,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:910b5dd2363e4d1f9b63",
+          "id": "cta:dbfb9ecc788959289edc",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 685,
+          "line": 699,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -28164,10 +28164,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:857a1db4a4bbf4dec94c",
+          "id": "cta:c8e0ea08a5553b873c42",
           "column": 15,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 689,
+          "line": 703,
           "owner": "renderMedia",
           "routes": [
             "/agenda",
@@ -34649,10 +34649,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:c2c5405204cead660e44",
+          "id": "control:a579272a72900b6605dd",
           "column": 13,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 755,
+          "line": 769,
           "owner": "MessageMedia",
           "routes": [
             "/agenda",
@@ -34704,10 +34704,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:438120bf17c0e06f1573",
+          "id": "control:4342f9e15b63c098c05f",
           "column": 13,
           "file": "components/features/whatsapp/message-bubble/MessageMedia.tsx",
-          "line": 756,
+          "line": 770,
           "owner": "MessageMedia",
           "routes": [
             "/agenda",
@@ -35365,7 +35365,7 @@
         }
       ]
     },
-    "digestSha256": "70681166ab3f05aa1e958320bb8c21359c4a08413d8064db53c25ac514f5f58e"
+    "digestSha256": "4daffbe863f314101343b8663005046831c760dabaa9a8affebad714419ef52f"
   },
   "routes": [
     {
