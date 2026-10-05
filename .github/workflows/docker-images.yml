@@ -36,8 +36,8 @@ jobs:
       - name: Install web dependencies
         run: npm ci
 
-      - name: Audit production and development dependencies
-        run: npm audit --audit-level=high
+      - name: Audit release dependencies
+        run: node scripts/security/check-release-audit.mjs
 
       - name: Verify generated inventories
         run: npm run audit:check
