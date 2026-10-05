@@ -2,6 +2,7 @@
 
 import {
   type ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -64,6 +65,14 @@ export interface SearchableTagPickerProps {
   showSelectedBadges?: boolean;
   allowCreate?: boolean;
   maxSelected?: number;
+  itemNameSingular?: string;
+  itemNamePlural?: string;
+  triggerIcon?: ReactNode;
+  showColorDot?: boolean;
+  onClearSelection?: () => void;
+  emptyMessage?: string;
+  showUnavailableId?: boolean;
+  caseSensitiveIds?: boolean;
 }
 
 function normalizeTagId(value: string) {
@@ -87,6 +96,14 @@ export function SearchableTagPicker({
   showSelectedBadges = true,
   allowCreate = true,
   maxSelected = DEFAULT_MAX_SELECTED_TAGS,
+  itemNameSingular = "tag",
+  itemNamePlural = "tags",
+  triggerIcon = <TagIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />,
+  showColorDot = true,
+  onClearSelection,
+  emptyMessage,
+  showUnavailableId = false,
+  caseSensitiveIds = false,
 }: SearchableTagPickerProps) {
   const { hasPermission } = useUserPermissions();
   const createTag = useCreateTag();
@@ -98,39 +115,43 @@ export function SearchableTagPicker({
   const hasError = Boolean(error);
   const canCreate =
     allowCreate && hasPermission("tag_manage") && !loading && !hasError;
+  const normalizeOptionId = useCallback(
+    (value: string) => caseSensitiveIds ? value.trim() : normalizeTagId(value),
+    [caseSensitiveIds],
+  );
 
   const normalizedSelectedIds = useMemo(() => {
     const selected = new Map<string, string>();
     for (const rawId of selectedTagIds) {
-      const normalizedId = normalizeTagId(rawId);
+      const normalizedId = normalizeOptionId(rawId);
       if (normalizedId && !selected.has(normalizedId)) {
         selected.set(normalizedId, rawId);
       }
     }
     return selected;
-  }, [selectedTagIds]);
+  }, [normalizeOptionId, selectedTagIds]);
 
   const normalizedTags = useMemo(() => {
     const uniqueTags = new Map<string, SearchableTagPickerTag>();
     for (const tag of tags) {
-      const normalizedId = normalizeTagId(tag.id);
+      const normalizedId = normalizeOptionId(tag.id);
       if (normalizedId && !uniqueTags.has(normalizedId)) {
         uniqueTags.set(normalizedId, tag);
       }
     }
     return Array.from(uniqueTags.values());
-  }, [tags]);
+  }, [normalizeOptionId, tags]);
 
   const knownTagIds = useMemo(
-    () => new Set(normalizedTags.map((tag) => normalizeTagId(tag.id))),
-    [normalizedTags],
+    () => new Set(normalizedTags.map((tag) => normalizeOptionId(tag.id))),
+    [normalizeOptionId, normalizedTags],
   );
   const selectedTags = useMemo(
     () =>
       normalizedTags.filter((tag) =>
-        normalizedSelectedIds.has(normalizeTagId(tag.id)),
+        normalizedSelectedIds.has(normalizeOptionId(tag.id)),
       ),
-    [normalizedSelectedIds, normalizedTags],
+    [normalizeOptionId, normalizedSelectedIds, normalizedTags],
   );
   const unavailableTagIds = useMemo(
     () =>
@@ -160,7 +181,9 @@ export function SearchableTagPicker({
       ? placeholder
       : selectedCount === 1 && selectedTags.length === 1
         ? selectedTags[0].name
-        : `${selectedCount} tags selecionadas`);
+        : selectedCount === 1
+          ? `1 ${itemNameSingular} selecionada`
+          : `${selectedCount} ${itemNamePlural} selecionadas`);
   useEffect(() => {
     if (!open) return;
     const timeoutId = window.setTimeout(() => inputRef.current?.focus(), 100);
@@ -178,12 +201,12 @@ export function SearchableTagPicker({
   }, [open]);
 
   const isSelected = (tagId: string) =>
-    normalizedSelectedIds.has(normalizeTagId(tagId));
+    normalizedSelectedIds.has(normalizeOptionId(tagId));
 
   const toggleTag = (tagId: string) => {
     if (disabled) return;
     if (!isSelected(tagId) && isAtLimit) {
-      toast.error(`Selecione no máximo ${selectionLimit} tags.`);
+      toast.error(`Selecione no máximo ${selectionLimit} ${itemNamePlural}.`);
       return;
     }
     onToggleTag(tagId);
@@ -199,7 +222,7 @@ export function SearchableTagPicker({
       isAtLimit
     ) {
       if (name && canCreate && isAtLimit) {
-        toast.error(`Selecione no máximo ${selectionLimit} tags.`);
+        toast.error(`Selecione no máximo ${selectionLimit} ${itemNamePlural}.`);
       }
       return;
     }
@@ -243,7 +266,7 @@ export function SearchableTagPicker({
                 <button
                   type="button"
                   disabled={disabled}
-                  aria-label={`Remover tag ${tag.name}`}
+                  aria-label={`Remover ${itemNameSingular} ${tag.name}`}
                   onClick={() => toggleTag(tag.id)}
                   className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10 disabled:pointer-events-none disabled:opacity-50"
                 >
@@ -258,11 +281,11 @@ export function SearchableTagPicker({
               variant="outline"
               className="flex items-center gap-1 rounded-[4px] border-dashed py-0.5 pr-1 text-xs text-muted-foreground"
             >
-              Tag indisponível
+              {itemNameSingular.charAt(0).toUpperCase() + itemNameSingular.slice(1)} indisponível
               <button
                 type="button"
                 disabled={disabled}
-                aria-label="Remover tag indisponível"
+                aria-label={`Remover ${itemNameSingular} indisponível`}
                 onClick={() => toggleTag(tagId)}
                 className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10 disabled:pointer-events-none disabled:opacity-50"
               >
@@ -295,7 +318,7 @@ export function SearchableTagPicker({
             )}
           >
             <span className="flex min-w-0 items-center gap-2">
-              <TagIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {triggerIcon}
               <span className="truncate">{resolvedTriggerLabel}</span>
             </span>
             <ChevronsUpDown
@@ -330,19 +353,33 @@ export function SearchableTagPicker({
                     void handleCreate();
                   }
                 }}
-                aria-label={canCreate ? "Buscar ou criar tag" : "Buscar tag"}
+                aria-label={canCreate ? `Buscar ou criar ${itemNameSingular}` : `Buscar ${itemNameSingular}`}
                 placeholder={
-                  canCreate ? "Buscar ou criar tag..." : "Buscar tag..."
+                  canCreate ? `Buscar ou criar ${itemNameSingular}...` : `Buscar ${itemNameSingular}...`
                 }
                 className="h-8 py-1 pl-8 text-sm"
               />
             </div>
           </div>
 
+          {onClearSelection && selectedCount > 0 && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                onClearSelection();
+                setSearch("");
+              }}
+              className="mx-2 mb-1 rounded-[6px] px-2 py-1 text-xs text-primary hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            >
+              Limpar {itemNamePlural} selecionadas
+            </button>
+          )}
+
           <div
             ref={scrollListRef}
             role="listbox"
-            aria-label="Tags disponíveis"
+            aria-label={`${itemNamePlural.charAt(0).toUpperCase() + itemNamePlural.slice(1)} disponíveis`}
             aria-multiselectable="true"
             className="max-h-48 overflow-y-auto overscroll-contain"
             onWheel={(event) => event.stopPropagation()}
@@ -354,7 +391,7 @@ export function SearchableTagPicker({
                   role="status"
                 >
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  Carregando tags...
+                  Carregando {itemNamePlural}...
                 </div>
               )}
 
@@ -365,20 +402,20 @@ export function SearchableTagPicker({
                 >
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span>
-                    Não foi possível carregar as tags. As seleções foram preservadas.
+                    Não foi possível carregar as {itemNamePlural}. As seleções foram preservadas.
                   </span>
                 </div>
               )}
 
               {!loading && !hasError && normalizedTags.length === 0 && (
                 <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-                  Nenhuma tag cadastrada
+                  {emptyMessage ?? `Nenhuma ${itemNameSingular} cadastrada`}
                 </p>
               )}
 
               {normalizedTags.length > 0 && visibleTags.length === 0 && (
                 <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-                  Nenhuma tag encontrada
+                  Nenhuma {itemNameSingular} encontrada
                 </p>
               )}
 
@@ -399,11 +436,13 @@ export function SearchableTagPicker({
                       blockedByLimit && "cursor-not-allowed opacity-50",
                     )}
                   >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: tagColor(tag) }}
-                      aria-hidden="true"
-                    />
+                    {showColorDot && (
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: tagColor(tag) }}
+                        aria-hidden="true"
+                      />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{tag.name}</span>
                     <Check
                       className={cn(
@@ -421,11 +460,14 @@ export function SearchableTagPicker({
                   key={tagId}
                   className="flex items-center gap-2 rounded-[6px] border border-dashed border-[var(--app-border)] px-2 py-1.5 text-sm text-muted-foreground"
                 >
-                  <span className="min-w-0 flex-1 truncate">Tag indisponível</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {itemNameSingular.charAt(0).toUpperCase() + itemNameSingular.slice(1)} indisponível
+                    {showUnavailableId ? ` · …${tagId.slice(-6)}` : ""}
+                  </span>
                   <button
                     type="button"
                     disabled={disabled}
-                    aria-label="Remover tag indisponível"
+                    aria-label={`Remover ${itemNameSingular} indisponível`}
                     onClick={() => toggleTag(tagId)}
                     className="rounded-[4px] p-1 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
                   >

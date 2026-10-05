@@ -146,12 +146,18 @@ export function ConversationMessages({
               </Button>
             </div>
           )}
+          {isError && timelineItems.length > 0 && (
+            <div className="flex items-center justify-between gap-2 bg-muted/60 px-3 py-2 text-xs text-muted-foreground" role="status">
+              <span>Não foi possível atualizar. Exibindo mensagens já carregadas.</span>
+              <Button size="sm" variant="ghost" onClick={onRetryMessages}>Tentar novamente</Button>
+            </div>
+          )}
           {isLoading || (isFetching && messages.length === 0) ? (
             <div className="flex flex-col items-center justify-center gap-2 py-12" role="status" aria-live="polite">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
             </div>
-          ) : isError ? (
+          ) : isError && timelineItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" role="alert">
               <MessageSquare className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
               <div>

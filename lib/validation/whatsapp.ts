@@ -148,6 +148,7 @@ export const whatsAppSessionStatusSummarySchema = z.object({
 const whatsAppConversationLeadSchema = z.object({
   id: uuidSchema,
   name: z.string(),
+  source: z.string().nullable().optional(),
   whatsapp_avatar_url: z.string().nullable().optional(),
   pipeline_id: uuidSchema.nullable().optional(),
   stage_id: uuidSchema.nullable().optional(),
@@ -249,6 +250,19 @@ export const whatsAppSessionOperationResponseSchema = z.object({
 }).passthrough()
 export const whatsAppSessionAccessResponseSchema = apiEnvelopeSchema(z.array(whatsAppSessionAccessSchema))
 export const whatsAppConversationsResponseSchema = apiEnvelopeSchema(z.array(whatsAppConversationSchema))
+const whatsAppConversationFilterOptionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+}).strict()
+export const whatsAppConversationFilterOptionsResponseSchema = apiEnvelopeSchema(z.object({
+  pipelines: z.array(whatsAppConversationFilterOptionSchema),
+  teams: z.array(whatsAppConversationFilterOptionSchema),
+  users: z.array(whatsAppConversationFilterOptionSchema),
+  sources: z.array(z.string()),
+  tags: z.array(whatsAppConversationFilterOptionSchema),
+  pages: z.array(whatsAppConversationFilterOptionSchema),
+  campaigns: z.array(whatsAppConversationFilterOptionSchema),
+}).strict())
 export const whatsAppUnreadCountResponseSchema = z.object({
   count: nonNegativeIntegerSchema,
 }).passthrough()

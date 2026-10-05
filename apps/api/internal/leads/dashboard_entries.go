@@ -56,7 +56,7 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 	cardFilter := filter
 	cardFilter.DateFrom, cardFilter.DateTo = nil, nil
 	cardFilter.Source = ""
-	cardFilter.PageID, cardFilter.CampaignID = "", ""
+	cardFilter.PageID, cardFilter.CampaignID, cardFilter.CampaignIDs = "", "", nil
 	cardFilter.AdSetID, cardFilter.AdID = "", ""
 	cardWhere, args, err := repo.buildDashboardLeadWhere(tenantContext, cardFilter, dashboardLeadWhereOptions{})
 	if err != nil {
@@ -80,8 +80,14 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 	if value := normalizedLeadAttributionValue(filter.PageID); value != "" {
 		add("btrim(entry.page_id) = $%d", value)
 	}
-	if value := normalizedLeadAttributionValue(filter.CampaignID); value != "" {
-		add("(btrim(entry.campaign_id) = $%[1]d or btrim(entry.campaign_name) = $%[1]d or btrim(entry.utm_campaign) = $%[1]d)", value)
+	campaignIDs, err := normalizeDashboardCampaignFilterIDs(filter.CampaignID, filter.CampaignIDs)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if len(campaignIDs) == 1 {
+		add("(btrim(entry.campaign_id) = $%[1]d or btrim(entry.campaign_name) = $%[1]d or btrim(entry.utm_campaign) = $%[1]d)", campaignIDs[0])
+	} else if len(campaignIDs) > 1 {
+		add("(btrim(entry.campaign_id) = any($%[1]d::text[]) or btrim(entry.campaign_name) = any($%[1]d::text[]) or btrim(entry.utm_campaign) = any($%[1]d::text[]))", campaignIDs)
 	}
 	if value := normalizedLeadAttributionValue(filter.AdSetID); value != "" {
 		add("(btrim(entry.adset_id) = $%[1]d or btrim(entry.adset_name) = $%[1]d)", value)
@@ -108,7 +114,18 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 				nullif(initial.adset_id, '') as adset_id,
 				nullif(initial.adset_name, '') as adset_name,
 				nullif(initial.ad_id, '') as ad_id,
-				nullif(initial.ad_name, '') as ad_name
+				nullif(initial.ad_name, '') as ad_name,
+				nullif(btrim(initial.provider), '') as provider,
+				nullif(btrim(initial.metadata->>'source_type'), '') as meta_source_type,
+				nullif(btrim(initial.metadata->>'leadgen_id'), '') as meta_leadgen_id,
+				nullif(btrim(initial.metadata->>'creative_id'), '') as creative_id,
+				nullif(btrim(initial.metadata->>'creative_name'), '') as creative_name,
+				nullif(btrim(initial.metadata->>'creative_type'), '') as creative_type,
+				nullif(btrim(initial.metadata->>'creative_thumbnail_url'), '') as creative_thumbnail_url,
+				nullif(btrim(initial.metadata->>'creative_url'), '') as creative_url,
+				nullif(btrim(initial.metadata->>'creative_video_url'), '') as creative_video_url,
+				nullif(btrim(initial.metadata->>'creative_instagram_url'), '') as creative_instagram_url,
+				nullif(btrim(initial.metadata->>'creative_permalink_url'), '') as creative_permalink_url
 			from visible_cards l
 			-- The earliest initial event is the first-arrival fact even when a
 			-- duplicate provider delivery marked it non-countable. If it is
@@ -116,7 +133,7 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 			-- lead and lead_meta attribution may belong to a later reentry.
 			left join lateral (
 				select e.id, e.occurred_at, e.source, e.page_id, e.page_name, e.campaign_id, e.campaign_name,
-					e.utm_campaign, e.adset_id, e.adset_name, e.ad_id, e.ad_name
+					e.utm_campaign, e.adset_id, e.adset_name, e.ad_id, e.ad_name, e.provider, e.metadata
 				from public.lead_entry_events e
 				where e.organization_id = l.organization_id
 				  and e.lead_id = l.id
@@ -136,7 +153,18 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 				nullif(e.adset_id, '') as adset_id,
 				nullif(e.adset_name, '') as adset_name,
 				nullif(e.ad_id, '') as ad_id,
-				nullif(e.ad_name, '') as ad_name
+				nullif(e.ad_name, '') as ad_name,
+				nullif(btrim(e.provider), '') as provider,
+				nullif(btrim(e.metadata->>'source_type'), '') as meta_source_type,
+				nullif(btrim(e.metadata->>'leadgen_id'), '') as meta_leadgen_id,
+				nullif(btrim(e.metadata->>'creative_id'), '') as creative_id,
+				nullif(btrim(e.metadata->>'creative_name'), '') as creative_name,
+				nullif(btrim(e.metadata->>'creative_type'), '') as creative_type,
+				nullif(btrim(e.metadata->>'creative_thumbnail_url'), '') as creative_thumbnail_url,
+				nullif(btrim(e.metadata->>'creative_url'), '') as creative_url,
+				nullif(btrim(e.metadata->>'creative_video_url'), '') as creative_video_url,
+				nullif(btrim(e.metadata->>'creative_instagram_url'), '') as creative_instagram_url,
+				nullif(btrim(e.metadata->>'creative_permalink_url'), '') as creative_permalink_url
 			from visible_cards l
 			join public.lead_entry_events e
 			  on e.organization_id = l.organization_id and e.lead_id = l.id

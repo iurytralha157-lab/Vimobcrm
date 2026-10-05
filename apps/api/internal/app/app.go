@@ -238,7 +238,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			)
 		}
 	})
-	leadsHandler := leads.NewHandler(leadsRepository, realtimeHub)
+	leadsHandler := leads.NewHandler(leadsRepository, realtimeHub).WithDashboardCreativeMediaResolver(
+		meta.NewDashboardCreativeMediaResolver(postgres, meta.Config{
+			AppSecret: cfg.Meta.AppSecret, GraphVersion: cfg.Meta.GraphVersion, GraphBaseURL: cfg.Meta.GraphBaseURL,
+		}),
+	)
 	pipelinesHandler := pipelines.NewHandler(pipelines.NewRepository(postgres))
 	propertiesRepository := properties.NewRepository(postgres, properties.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,

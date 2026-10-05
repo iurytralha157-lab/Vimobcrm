@@ -162,6 +162,7 @@ type SessionLite struct {
 type LeadLite struct {
 	ID                string           `json:"id"`
 	Name              string           `json:"name"`
+	Source            *string          `json:"source,omitempty"`
 	WhatsAppAvatarURL *string          `json:"whatsapp_avatar_url,omitempty"`
 	PipelineID        *string          `json:"pipeline_id,omitempty"`
 	StageID           *string          `json:"stage_id,omitempty"`
@@ -280,6 +281,16 @@ type SessionQuota struct {
 type ConversationListFilter struct {
 	SessionID           string
 	SessionIDs          []string
+	PipelineID          string
+	TeamID              string
+	UserID              string
+	LeadSource          string
+	TagIDs              []string
+	DealStatus          string
+	PageID              string
+	CampaignIDs         []string
+	LastMessageFrom     *time.Time
+	LastMessageTo       *time.Time
 	HideGroups          bool
 	ShowArchived        bool
 	OnlyLeads           bool
@@ -296,6 +307,21 @@ type ConversationListFilter struct {
 
 type ConversationListMeta struct {
 	NextCursor *string `json:"nextCursor"`
+}
+
+type ConversationFilterOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type ConversationFilterOptions struct {
+	Pipelines []ConversationFilterOption `json:"pipelines"`
+	Teams     []ConversationFilterOption `json:"teams"`
+	Users     []ConversationFilterOption `json:"users"`
+	Sources   []string                   `json:"sources"`
+	Tags      []ConversationFilterOption `json:"tags"`
+	Pages     []ConversationFilterOption `json:"pages"`
+	Campaigns []ConversationFilterOption `json:"campaigns"`
 }
 
 type MessageFilter struct {
@@ -549,6 +575,97 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	}
 	if filter.OnlyLeads && filter.WithoutLead {
 		return ConversationListFilter{}, fmt.Errorf("%w: lead filters are mutually exclusive", ErrInvalidInput)
+	}
+	if source := strings.TrimSpace(values.Get("leadSource")); source != "" {
+		if len(source) > 120 {
+			return ConversationListFilter{}, fmt.Errorf("%w: leadSource is invalid", ErrInvalidInput)
+		}
+		filter.LeadSource = source
+	}
+	for _, item := range []struct {
+		name   string
+		target *string
+	}{
+		{"pipelineId", &filter.PipelineID},
+		{"teamId", &filter.TeamID},
+		{"userId", &filter.UserID},
+	} {
+		raw := strings.TrimSpace(values.Get(item.name))
+		if raw == "" || strings.EqualFold(raw, "all") {
+			continue
+		}
+		if item.name == "userId" && raw == "unassigned" {
+			*item.target = raw
+			continue
+		}
+		value, ok := normalizeUUID(raw)
+		if !ok {
+			return ConversationListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
+		}
+		*item.target = value
+	}
+	for _, raw := range values["tagIds"] {
+		for _, item := range strings.Split(raw, ",") {
+			value := strings.TrimSpace(item)
+			if value == "" || strings.EqualFold(value, "all") {
+				continue
+			}
+			normalized, ok := normalizeUUID(value)
+			if !ok {
+				return ConversationListFilter{}, fmt.Errorf("%w: tagIds contains invalid uuid", ErrInvalidInput)
+			}
+			filter.TagIDs = append(filter.TagIDs, normalized)
+		}
+	}
+	filter.TagIDs = uniqueConversationFilterValues(filter.TagIDs)
+	if len(filter.TagIDs) > 50 {
+		return ConversationListFilter{}, fmt.Errorf("%w: tagIds contains too many values", ErrInvalidInput)
+	}
+	if status := strings.TrimSpace(values.Get("dealStatus")); status != "" && !strings.EqualFold(status, "all") {
+		if status != "open" && status != "won" && status != "lost" {
+			return ConversationListFilter{}, fmt.Errorf("%w: dealStatus is invalid", ErrInvalidInput)
+		}
+		filter.DealStatus = status
+	}
+	if page := strings.TrimSpace(values.Get("pageId")); page != "" && !strings.EqualFold(page, "all") {
+		if len(page) > 255 {
+			return ConversationListFilter{}, fmt.Errorf("%w: pageId is invalid", ErrInvalidInput)
+		}
+		filter.PageID = page
+	}
+	for _, campaign := range values["campaignIds"] {
+		campaign = strings.TrimSpace(campaign)
+		if campaign == "" || strings.EqualFold(campaign, "all") {
+			continue
+		}
+		if len(campaign) > 255 {
+			return ConversationListFilter{}, fmt.Errorf("%w: campaignIds contains oversized value", ErrInvalidInput)
+		}
+		filter.CampaignIDs = append(filter.CampaignIDs, campaign)
+	}
+	filter.CampaignIDs = uniqueConversationFilterValues(filter.CampaignIDs)
+	if len(filter.CampaignIDs) > 50 {
+		return ConversationListFilter{}, fmt.Errorf("%w: campaignIds contains too many values", ErrInvalidInput)
+	}
+	if filter.WithoutLead && conversationHasLeadFilters(filter) {
+		return ConversationListFilter{}, fmt.Errorf("%w: withoutLead cannot be combined with lead filters", ErrInvalidInput)
+	}
+	if raw := strings.TrimSpace(values.Get("lastMessageFrom")); raw != "" {
+		value, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return ConversationListFilter{}, fmt.Errorf("%w: lastMessageFrom is invalid", ErrInvalidInput)
+		}
+		filter.LastMessageFrom = &value
+	}
+	if raw := strings.TrimSpace(values.Get("lastMessageTo")); raw != "" {
+		value, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return ConversationListFilter{}, fmt.Errorf("%w: lastMessageTo is invalid", ErrInvalidInput)
+		}
+		filter.LastMessageTo = &value
+	}
+	if filter.LastMessageFrom != nil && filter.LastMessageTo != nil && filter.LastMessageFrom.After(*filter.LastMessageTo) {
+		return ConversationListFilter{}, fmt.Errorf("%w: last message period is invalid", ErrInvalidInput)
 	}
 	if raw := strings.TrimSpace(values.Get("sessionId")); raw != "" {
 		value, ok := normalizeUUID(raw)
@@ -917,6 +1034,25 @@ func validEnum(value string, allowed ...string) bool {
 
 func normalizeUUID(value string) (string, bool) {
 	return pgvalue.NormalizeUUID(value)
+}
+
+func uniqueConversationFilterValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
+}
+
+func conversationHasLeadFilters(filter ConversationListFilter) bool {
+	return filter.PipelineID != "" || filter.TeamID != "" || filter.UserID != "" ||
+		filter.LeadSource != "" || len(filter.TagIDs) > 0 || filter.DealStatus != "" ||
+		filter.PageID != "" || len(filter.CampaignIDs) > 0
 }
 
 func validateExpectedLeadID(value string) (string, error) {

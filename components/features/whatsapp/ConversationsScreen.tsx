@@ -25,7 +25,9 @@ import {
   type ScreenConversation,
 } from "@/components/features/whatsapp/conversations";
 import { normalizeSearchText } from "@/lib/search-text";
-import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { isLocalReadOnlyMode } from "@/lib/local-read-only";
+import { getDateRangeFromPreset, type DatePreset } from "@/hooks/use-dashboard-filters";
+import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useWhatsAppConversationFilterOptions, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
@@ -83,6 +85,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const canOperateLeads = hasPermission("lead_operate");
   const canStartAutomations = hasModule("automations") && hasPermission("automations_manage");
   const isMobile = useIsMobile();
+  const localReadOnly = isLocalReadOnlyMode();
   const router = useRouter();
   const currentUserId = profile?.id || user?.id || null;
   const activeTenantKey = `${currentUserId || "anonymous"}:${activeOrganization.organizationId || "none"}`;
@@ -117,6 +120,17 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [activeTenantKey]);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [lastMessageDatePreset, setLastMessageDatePreset] = useState<DatePreset | null>(null);
+  const [lastMessageCustomRange, setLastMessageCustomRange] = useState<{ from: Date; to: Date } | null>(null);
+  const [selectedLeadSource, setSelectedLeadSource] = useState<string | null>(null);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [selectedDealStatus, setSelectedDealStatus] = useState<"open" | "won" | "lost" | null>(null);
+  const [selectedMetaPageFilterId, setSelectedMetaPageFilterId] = useState<string | null>(null);
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState<string[]>([]);
+  const [conversationFiltersOpen, setConversationFiltersOpen] = useState(false);
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
   const selectedMessageDraftKey = useMemo(() => getWhatsAppConversationDraftKey({
     tenantKey: activeTenantKey,
@@ -136,10 +150,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       value,
     ));
   }, [selectedMessageDraftKey]);
-  const [hideGroups, setHideGroups] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem("whatsapp-hide-groups") === "true";
-  });
   const [showArchived, setShowArchived] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("whatsapp-show-archived") === "true";
@@ -166,6 +176,15 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       setSelectedSessionId("all");
       setSelectedPageId("all");
       setActivePlatform("whatsapp");
+      setSelectedLeadSource(null);
+      setSelectedPipelineId(null);
+      setSelectedTeamId(null);
+      setSelectedUserId(null);
+      setSelectedTagIds([]);
+      setSelectedDealStatus(null);
+      setSelectedMetaPageFilterId(null);
+      setSelectedCampaignIds([]);
+      setConversationFiltersOpen(false);
       setMessageDrafts({});
       setMobileConversationListReturnPosition(null);
       lastVisibleMessageIdRef.current = null;
@@ -196,21 +215,44 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const {
     data: sessions,
     isLoading: loadingSessions,
-  } = useAccessibleSessions();
+    isError: sessionsFailed,
+    refetch: refetchSessions,
+  } = useAccessibleSessions({
+    live: activePlatform === "whatsapp" && Boolean(selectedConversationId),
+    retry: false,
+    timeoutMs: 8_000,
+  });
 
   // Extract accessible session IDs for filtering
   const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
   const trimmedSearchTerm = searchTerm.trim();
+  const lastMessageDateRange = lastMessageDatePreset === "custom"
+    ? lastMessageCustomRange
+    : lastMessageDatePreset
+      ? getDateRangeFromPreset(lastMessageDatePreset)
+      : null;
+  const lastMessageFrom = lastMessageDateRange?.from.toISOString();
+  const lastMessageTo = lastMessageDateRange?.to.toISOString();
   const conversationFilters = useMemo(
     () => ({
-      hideGroups,
+      pipelineId: selectedPipelineId ?? undefined,
+      teamId: selectedTeamId ?? undefined,
+      userId: selectedUserId ?? undefined,
+      leadSource: selectedLeadSource ?? undefined,
+      tagIds: selectedTagIds,
+      dealStatus: selectedDealStatus ?? undefined,
+      pageId: selectedMetaPageFilterId ?? undefined,
+      campaignIds: selectedCampaignIds,
+      hideGroups: true,
       showArchived,
       onlyLeads,
       withoutLead: withoutLeadOnly,
       pendingReply: pendingReplyOnly,
       search: activePlatform === 'whatsapp' ? debouncedSearchTerm : '',
+      lastMessageFrom,
+      lastMessageTo,
     }),
-    [activePlatform, debouncedSearchTerm, hideGroups, onlyLeads, pendingReplyOnly, showArchived, withoutLeadOnly],
+    [activePlatform, debouncedSearchTerm, lastMessageFrom, lastMessageTo, onlyLeads, pendingReplyOnly, selectedCampaignIds, selectedDealStatus, selectedLeadSource, selectedMetaPageFilterId, selectedPipelineId, selectedTagIds, selectedTeamId, selectedUserId, showArchived, withoutLeadOnly],
   );
   const conversationSessionFilter = useMemo(
     () => resolveWhatsAppConversationSessionFilter(
@@ -219,28 +261,59 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     ),
     [accessibleSessionIds, loadingSessions, selectedSessionId],
   );
+  const conversationFilterOptionsQuery = useWhatsAppConversationFilterOptions(
+    conversationSessionFilter.sessionId,
+    conversationSessionFilter.accessibleSessionIds,
+    {
+      showArchived,
+      lastMessageFrom,
+      lastMessageTo,
+      pageId: selectedMetaPageFilterId ?? undefined,
+    },
+    conversationFiltersOpen && activePlatform === "whatsapp" &&
+      (selectedSessionId === "all" || (!loadingSessions && !sessionsFailed)),
+  );
   const mobileConversationListPositionKey = useMemo(() => [
     "page-mobile",
     activeTenantKey,
     activePlatform,
     selectedSessionId,
+    selectedLeadSource ?? "all-sources",
+    selectedPipelineId ?? "all-pipelines",
+    selectedTeamId ?? "all-teams",
+    selectedUserId ?? "all-users",
+    JSON.stringify([...selectedTagIds].sort()),
+    selectedDealStatus ?? "all-statuses",
+    selectedMetaPageFilterId ?? "all-meta-pages",
+    JSON.stringify([...selectedCampaignIds].sort()),
     selectedPageId,
     [...accessibleSessionIds].sort().join(","),
-    hideGroups ? "hide-groups" : "show-groups",
+    "hide-groups",
     showArchived ? "archived" : "active",
     onlyLeads ? "only-leads" : "all-leads",
     withoutLeadOnly ? "without-lead" : "with-lead",
     pendingReplyOnly ? "pending-reply" : "all-replies",
+    lastMessageFrom ?? "all-dates",
+    lastMessageTo ?? "all-dates",
     trimmedSearchTerm,
     "80",
   ].join("|"), [
     accessibleSessionIds,
     activePlatform,
     activeTenantKey,
-    hideGroups,
+    lastMessageFrom,
+    lastMessageTo,
     onlyLeads,
     pendingReplyOnly,
     selectedPageId,
+    selectedLeadSource,
+    selectedPipelineId,
+    selectedTeamId,
+    selectedUserId,
+    selectedTagIds,
+    selectedDealStatus,
+    selectedMetaPageFilterId,
+    selectedCampaignIds,
     selectedSessionId,
     showArchived,
     trimmedSearchTerm,
@@ -601,18 +674,21 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     if (activePlatform !== 'whatsapp') return 0;
     return [
       selectedSessionId !== "all",
-      hideGroups,
+      selectedPipelineId !== null,
+      selectedTeamId !== null,
+      selectedUserId !== null,
+      selectedLeadSource !== null,
+      selectedTagIds.length > 0,
+      selectedDealStatus !== null,
+      selectedMetaPageFilterId !== null,
+      selectedCampaignIds.length > 0,
       showArchived,
       onlyLeads,
       withoutLeadOnly,
       pendingReplyOnly,
+      lastMessageDatePreset !== null,
     ].filter(Boolean).length;
-  }, [activePlatform, selectedSessionId, hideGroups, showArchived, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
-
-  // Save hide groups preference
-  useEffect(() => {
-    localStorage.setItem("whatsapp-hide-groups", String(hideGroups));
-  }, [hideGroups]);
+  }, [activePlatform, selectedSessionId, selectedPipelineId, selectedTeamId, selectedUserId, selectedLeadSource, selectedTagIds, selectedDealStatus, selectedMetaPageFilterId, selectedCampaignIds, showArchived, onlyLeads, withoutLeadOnly, pendingReplyOnly, lastMessageDatePreset]);
 
   useEffect(() => {
     localStorage.setItem("whatsapp-show-archived", String(showArchived));
@@ -733,7 +809,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     whatsappMessageInputState.sendSessionId,
   ]);
   const attendanceGate = useWhatsAppAttendanceGate(selectedAttendanceTarget, {
-    enabled: activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
+    enabled: !localReadOnly && activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
     identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
   });
   const messageInputDisabled = attendanceGate.isResolving || !canOperateWhatsApp || (activePlatform === "whatsapp"
@@ -1028,11 +1104,92 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
   const clearConversationFilters = () => {
     setSelectedSessionId("all");
-    setHideGroups(false);
+    setSelectedPipelineId(null);
+    setSelectedTeamId(null);
+    setSelectedUserId(null);
+    setSelectedTagIds([]);
+    setSelectedDealStatus(null);
+    setSelectedMetaPageFilterId(null);
+    setSelectedCampaignIds([]);
     setShowArchived(false);
     setOnlyLeads(false);
     setWithoutLeadOnly(false);
     setPendingReplyOnly(false);
+    setLastMessageDatePreset(null);
+    setLastMessageCustomRange(null);
+    setSelectedLeadSource(null);
+  };
+
+  const conversationToolbarProps = {
+    activePlatform,
+    onSelectWhatsApp: () => setActivePlatform("whatsapp"),
+    sessions,
+    currentChannelValue,
+    onChannelChange: handleChannelChange,
+    options: conversationFilterOptionsQuery.data,
+    optionsLoading: (selectedSessionId !== "all" && loadingSessions) ||
+      (conversationFilterOptionsQuery.isPending && conversationFilterOptionsQuery.isFetching),
+    optionsError: conversationFilterOptionsQuery.isError ||
+      (selectedSessionId !== "all" && (sessionsFailed || conversationSessionFilter.accessibleSessionIds?.length === 0)),
+    optionsRetrying: conversationFilterOptionsQuery.isFetching,
+    onRetryOptions: () => {
+      if (selectedSessionId !== "all" && sessionsFailed) {
+        void refetchSessions();
+      } else {
+        void conversationFilterOptionsQuery.refetch();
+      }
+    },
+    onFiltersOpenChange: setConversationFiltersOpen,
+    activeFilterCount: activeConversationFilterCount,
+    pipelineId: selectedPipelineId,
+    onPipelineChange: setSelectedPipelineId,
+    teamId: selectedTeamId,
+    onTeamChange: setSelectedTeamId,
+    userId: selectedUserId,
+    onUserChange: setSelectedUserId,
+    leadSource: selectedLeadSource,
+    onLeadSourceChange: setSelectedLeadSource,
+    tagIds: selectedTagIds,
+    onTagsChange: setSelectedTagIds,
+    dealStatus: selectedDealStatus,
+    onDealStatusChange: (status: string | null) => setSelectedDealStatus(
+      status === "open" || status === "won" || status === "lost" ? status : null,
+    ),
+    pageId: selectedMetaPageFilterId,
+    onPageChange: setSelectedMetaPageFilterId,
+    campaignIds: selectedCampaignIds,
+    onCampaignsChange: setSelectedCampaignIds,
+    datePreset: lastMessageDatePreset,
+    onDatePresetChange: setLastMessageDatePreset,
+    customDateRange: lastMessageCustomRange,
+    onCustomDateRangeChange: setLastMessageCustomRange,
+    showArchived,
+    onShowArchivedChange: setShowArchived,
+    onlyLeads,
+    onOnlyLeadsChange: (checked: boolean) => {
+      setOnlyLeads(checked);
+      if (checked) setWithoutLeadOnly(false);
+    },
+    withoutLeadOnly,
+    onWithoutLeadOnlyChange: (checked: boolean) => {
+      setWithoutLeadOnly(checked);
+      if (checked) {
+        setOnlyLeads(false);
+        setSelectedPipelineId(null);
+        setSelectedTeamId(null);
+        setSelectedUserId(null);
+        setSelectedLeadSource(null);
+        setSelectedTagIds([]);
+        setSelectedDealStatus(null);
+        setSelectedMetaPageFilterId(null);
+        setSelectedCampaignIds([]);
+      }
+    },
+    pendingReplyOnly,
+    onPendingReplyOnlyChange: setPendingReplyOnly,
+    onClearFilters: clearConversationFilters,
+    searchTerm,
+    onSearchTermChange: setSearchTerm,
   };
 
   const conversationOverlays = (
@@ -1129,32 +1286,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
             <div className="flex flex-col h-full">
               <ConversationFilters
                 layout="mobile"
-                activePlatform={activePlatform}
-                onSelectWhatsApp={() => setActivePlatform("whatsapp")}
-                sessions={sessions}
-                metaIntegrations={metaIntegrations}
-                currentChannelValue={currentChannelValue}
-                onChannelChange={handleChannelChange}
-                activeFilterCount={activeConversationFilterCount}
-                hideGroups={hideGroups}
-                onHideGroupsChange={setHideGroups}
-                showArchived={showArchived}
-                onShowArchivedChange={setShowArchived}
-                onlyLeads={onlyLeads}
-                onOnlyLeadsChange={(next) => {
-                  setOnlyLeads(next);
-                  if (next) setWithoutLeadOnly(false);
-                }}
-                withoutLeadOnly={withoutLeadOnly}
-                onWithoutLeadOnlyChange={(next) => {
-                  setWithoutLeadOnly(next);
-                  if (next) setOnlyLeads(false);
-                }}
-                pendingReplyOnly={pendingReplyOnly}
-                onPendingReplyOnlyChange={setPendingReplyOnly}
-                onClearFilters={clearConversationFilters}
-                searchTerm={searchTerm}
-                onSearchTermChange={setSearchTerm}
+                {...conversationToolbarProps}
               />
               <ConversationList
                 layout="mobile"
@@ -1209,32 +1341,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
         <aside data-tour="conversations-overview" className="app-card flex w-[365px] min-w-[365px] max-w-[365px] flex-col overflow-hidden">
           <ConversationFilters
             layout="desktop"
-            activePlatform={activePlatform}
-            onSelectWhatsApp={() => setActivePlatform("whatsapp")}
-            sessions={sessions}
-            metaIntegrations={metaIntegrations}
-            currentChannelValue={currentChannelValue}
-            onChannelChange={handleChannelChange}
-            activeFilterCount={activeConversationFilterCount}
-            hideGroups={hideGroups}
-            onHideGroupsChange={setHideGroups}
-            showArchived={showArchived}
-            onShowArchivedChange={setShowArchived}
-            onlyLeads={onlyLeads}
-            onOnlyLeadsChange={(next) => {
-              setOnlyLeads(next);
-              if (next) setWithoutLeadOnly(false);
-            }}
-            withoutLeadOnly={withoutLeadOnly}
-            onWithoutLeadOnlyChange={(next) => {
-              setWithoutLeadOnly(next);
-              if (next) setOnlyLeads(false);
-            }}
-            pendingReplyOnly={pendingReplyOnly}
-            onPendingReplyOnlyChange={setPendingReplyOnly}
-            onClearFilters={clearConversationFilters}
-            searchTerm={searchTerm}
-            onSearchTermChange={setSearchTerm}
+            {...conversationToolbarProps}
           />
           <ConversationList
             layout="desktop"

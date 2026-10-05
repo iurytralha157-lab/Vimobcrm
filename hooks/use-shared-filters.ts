@@ -90,6 +90,7 @@ export function useSharedFilters(options?: {
   dateRangeOverride?: { from: Date; to: Date } | null;
   entryMode?: boolean;
   scopeMetaOptionsToBoard?: boolean;
+  multiCampaigns?: boolean;
 }) {
   const { activeOrganization, user, profile, tenantContext, isSuperAdmin, impersonating } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
@@ -112,6 +113,8 @@ export function useSharedFilters(options?: {
     setPageId,
     campaignId,
     setCampaignId,
+    campaignIds,
+    setCampaignIds,
     adSetId,
     setAdSetId,
     adId,
@@ -125,13 +128,24 @@ export function useSharedFilters(options?: {
     clearFilters,
   } = useFilters();
 
+  const multiCampaigns = options?.multiCampaigns === true;
+  const selectedCampaignIds = useMemo(
+    () => multiCampaigns ? campaignIds : campaignId ? [campaignId] : [],
+    [campaignId, campaignIds, multiCampaigns],
+  );
+  const selectedCampaignIdSet = useMemo(
+    () => new Set(selectedCampaignIds),
+    [selectedCampaignIds],
+  );
+  const campaignSelectionKey = JSON.stringify([...selectedCampaignIds].sort());
+
   const requestedDynamicOptions = options?.loadDynamicOptions ?? true;
   const hasHydratedDynamicSelection = isFiltersHydrated && Boolean(
     teamId ||
     (userId && userId !== 'all' && userId !== 'unassigned') ||
     (source && source !== 'all') ||
     (pageId && pageId !== 'all') ||
-    (campaignId && campaignId !== 'all') ||
+    selectedCampaignIds.length > 0 ||
     (adSetId && adSetId !== 'all') ||
     (adId && adId !== 'all') ||
     tagIds.length > 0
@@ -173,7 +187,7 @@ export function useSharedFilters(options?: {
   const wasFiltersHydratedRef = useRef(false);
   const wasMetaFilterCascadeHydratedRef = useRef(false);
   const previousPageIdRef = useRef(pageId);
-  const previousCampaignIdRef = useRef(campaignId);
+  const previousCampaignSelectionRef = useRef(campaignSelectionKey);
   const previousAdSetIdRef = useRef(adSetId);
   const dateFromStr = effectiveDateRange?.from.toISOString();
   const dateToStr = effectiveDateRange?.to.toISOString();
@@ -254,9 +268,9 @@ export function useSharedFilters(options?: {
             name: item.name,
             campaignId: item.campaignId,
           }))
-          .filter((item) => !campaignId || item.campaignId === campaignId),
+          .filter((item) => selectedCampaignIdSet.size === 0 || selectedCampaignIdSet.has(item.campaignId || '')),
       ),
-    [campaignId, leadMetaFiltersQuery.data],
+    [leadMetaFiltersQuery.data, selectedCampaignIdSet],
   );
 
   const ads = useMemo(
@@ -270,11 +284,11 @@ export function useSharedFilters(options?: {
             campaignId: item.campaignId,
           }))
           .filter((item) => (
-            (!campaignId || item.campaignId === campaignId) &&
+            (selectedCampaignIdSet.size === 0 || selectedCampaignIdSet.has(item.campaignId || '')) &&
             (!adSetId || item.adsetId === adSetId)
           )),
       ),
-    [adSetId, campaignId, leadMetaFiltersQuery.data],
+    [adSetId, leadMetaFiltersQuery.data, selectedCampaignIdSet],
   );
 
   const tags = useMemo(() => {
@@ -357,7 +371,7 @@ export function useSharedFilters(options?: {
   ]);
 
   useEffect(() => {
-    if (!isFiltersHydrated || campaignId || (!adSetId && !adId)) return;
+    if (!isFiltersHydrated || selectedCampaignIds.length > 0 || (!adSetId && !adId)) return;
 
     let isActive = true;
     queueMicrotask(() => {
@@ -368,7 +382,7 @@ export function useSharedFilters(options?: {
     return () => {
       isActive = false;
     };
-  }, [adId, adSetId, campaignId, isFiltersHydrated, setAdId, setAdSetId]);
+  }, [adId, adSetId, isFiltersHydrated, selectedCampaignIds.length, setAdId, setAdSetId]);
 
   useEffect(() => {
     if (!isFiltersHydrated || adSetId || !adId) return;
@@ -386,19 +400,19 @@ export function useSharedFilters(options?: {
     if (!isFiltersHydrated) {
       wasMetaFilterCascadeHydratedRef.current = false;
       previousPageIdRef.current = pageId;
-      previousCampaignIdRef.current = campaignId;
+      previousCampaignSelectionRef.current = campaignSelectionKey;
       previousAdSetIdRef.current = adSetId;
       return;
     }
     if (!wasMetaFilterCascadeHydratedRef.current) {
       wasMetaFilterCascadeHydratedRef.current = true;
       previousPageIdRef.current = pageId;
-      previousCampaignIdRef.current = campaignId;
+      previousCampaignSelectionRef.current = campaignSelectionKey;
       previousAdSetIdRef.current = adSetId;
       return;
     }
-    if (previousCampaignIdRef.current === campaignId) return;
-    previousCampaignIdRef.current = campaignId;
+    if (previousCampaignSelectionRef.current === campaignSelectionKey) return;
+    previousCampaignSelectionRef.current = campaignSelectionKey;
 
     let isActive = true;
     queueMicrotask(() => {
@@ -409,7 +423,7 @@ export function useSharedFilters(options?: {
     return () => {
       isActive = false;
     };
-  }, [adSetId, campaignId, isFiltersHydrated, pageId, setAdId, setAdSetId]);
+  }, [adSetId, campaignSelectionKey, isFiltersHydrated, pageId, setAdId, setAdSetId]);
 
   useEffect(() => {
     if (!isFiltersHydrated || !wasMetaFilterCascadeHydratedRef.current) {
@@ -494,7 +508,7 @@ export function useSharedFilters(options?: {
     (userId !== null && userId !== 'all') ||
     source !== null ||
     pageId !== null ||
-    campaignId !== null ||
+    selectedCampaignIds.length > 0 ||
     adSetId !== null ||
     adId !== null ||
     tagIds.length > 0 ||
@@ -520,6 +534,8 @@ export function useSharedFilters(options?: {
     setPageId,
     campaignId,
     setCampaignId,
+    campaignIds,
+    setCampaignIds,
     adSetId,
     setAdSetId,
     adId,

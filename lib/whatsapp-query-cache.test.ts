@@ -194,9 +194,20 @@ test('segrega paginas de conversa por tenant e por filtros aplicados no servidor
     onlyLeads: false,
     withoutLead: true,
   })
+  const keyOtherPeriod = whatsappQueryKeys.conversations(scopeA, {
+    ...baseParams,
+    lastMessageFrom: '2026-10-01T00:00:00.000Z',
+    lastMessageTo: '2026-10-04T23:59:59.999Z',
+  })
+  const keyOtherSource = whatsappQueryKeys.conversations(scopeA, {
+    ...baseParams,
+    leadSource: 'meta',
+  })
 
   assert.notDeepEqual(keyA, keyOtherTenant)
   assert.notDeepEqual(keyA, keyOtherFilter)
+  assert.notDeepEqual(keyA, keyOtherPeriod)
+  assert.notDeepEqual(keyA, keyOtherSource)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
 })
@@ -217,9 +228,19 @@ test('segrega o contador leve pelo tenant e pelos filtros do inbox', () => {
     ...params,
     accessibleSessionKey: 'session-a',
   })
+  const keyOtherPeriod = whatsappQueryKeys.unreadCount(scopeA, {
+    ...params,
+    lastMessageFrom: '2026-10-01T00:00:00.000Z',
+  })
+  const keyOtherSource = whatsappQueryKeys.unreadCount(scopeA, {
+    ...params,
+    leadSource: 'whatsapp',
+  })
 
   assert.notDeepEqual(keyA, keyOtherTenant)
   assert.notDeepEqual(keyA, keyOtherSession)
+  assert.notDeepEqual(keyA, keyOtherPeriod)
+  assert.notDeepEqual(keyA, keyOtherSource)
   assert.deepEqual(keyA.slice(0, 5), whatsappQueryKeys.conversationsScope(scopeA))
 })
 

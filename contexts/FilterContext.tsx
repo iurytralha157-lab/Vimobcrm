@@ -5,6 +5,7 @@ import { DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filter
 type NullableFilter = string | null;
 
 const MAX_FILTER_TAGS = 50;
+const MAX_FILTER_CAMPAIGNS = 50;
 const DATE_PRESET_VALUES = new Set<DatePreset>([
   'today',
   'yesterday',
@@ -26,6 +27,7 @@ interface PersistedFilterState {
   source: NullableFilter;
   pageId: NullableFilter;
   campaignId: NullableFilter;
+  campaignIds: string[];
   adSetId: NullableFilter;
   adId: NullableFilter;
   tagIds: string[];
@@ -53,6 +55,8 @@ interface FilterContextType {
   setPageId: (pageId: NullableFilter) => void;
   campaignId: NullableFilter;
   setCampaignId: (campaignId: NullableFilter) => void;
+  campaignIds: string[];
+  setCampaignIds: (campaignIds: string[]) => void;
   adSetId: NullableFilter;
   setAdSetId: (adSetId: NullableFilter) => void;
   adId: NullableFilter;
@@ -77,6 +81,7 @@ const DEFAULT_FILTER_STATE: PersistedFilterState = {
   source: null,
   pageId: null,
   campaignId: null,
+  campaignIds: [],
   adSetId: null,
   adId: null,
   tagIds: [],
@@ -124,6 +129,21 @@ function normalizeTagIds(value: unknown, legacyValue?: unknown) {
   ).slice(0, MAX_FILTER_TAGS);
 }
 
+function normalizeCampaignIds(value: unknown, legacyValue?: unknown) {
+  const candidates = Array.isArray(value)
+    ? value
+    : typeof legacyValue === 'string'
+      ? [legacyValue]
+      : [];
+
+  return Array.from(new Set(
+    candidates
+      .filter((candidate): candidate is string => typeof candidate === 'string')
+      .map((candidate) => candidate.trim())
+      .filter((candidate) => candidate !== '' && candidate.toLowerCase() !== 'all' && candidate.length <= 255),
+  )).slice(0, MAX_FILTER_CAMPAIGNS);
+}
+
 function serializeRange(range: { from: Date; to: Date } | null) {
   return range ? { from: range.from.toISOString(), to: range.to.toISOString() } : null;
 }
@@ -142,6 +162,8 @@ function parsePersistedState(raw: string | null): PersistedFilterState {
       parsedDatePreset === 'custom' && !hasValidCustomRange
         ? DEFAULT_FILTER_STATE.datePreset
         : parsedDatePreset;
+    const campaignIds = normalizeCampaignIds(parsed.campaignIds, parsed.campaignId);
+    const adSetId = campaignIds.length === 1 ? normalizeNullable(parsed.adSetId) : null;
     return {
       ...DEFAULT_FILTER_STATE,
       datePreset,
@@ -151,9 +173,10 @@ function parsePersistedState(raw: string | null): PersistedFilterState {
       userId: normalizeNullable(parsed.userId),
       source: normalizeNullable(parsed.source),
       pageId: normalizePageId(parsed.pageId),
-      campaignId: normalizeNullable(parsed.campaignId),
-      adSetId: normalizeNullable(parsed.adSetId),
-      adId: normalizeNullable(parsed.adId),
+      campaignId: campaignIds.length === 1 ? campaignIds[0] : null,
+      campaignIds,
+      adSetId,
+      adId: adSetId ? normalizeNullable(parsed.adId) : null,
       tagIds: normalizeTagIds(parsed.tagIds, parsed.tagId),
       dealStatus: normalizeNullable(parsed.dealStatus),
       searchQuery: normalizeSearch(parsed.searchQuery),
@@ -192,6 +215,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [source, setSourceInternal] = useState<NullableFilter>(null);
   const [pageId, setPageIdInternal] = useState<NullableFilter>(null);
   const [campaignId, setCampaignIdInternal] = useState<NullableFilter>(null);
+  const [campaignIds, setCampaignIdsInternal] = useState<string[]>([]);
   const [adSetId, setAdSetIdInternal] = useState<NullableFilter>(null);
   const [adId, setAdIdInternal] = useState<NullableFilter>(null);
   const [tagIds, setTagIdsInternal] = useState<string[]>([]);
@@ -221,6 +245,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setSourceInternal(nextState.source);
     setPageIdInternal(nextState.pageId);
     setCampaignIdInternal(nextState.campaignId);
+    setCampaignIdsInternal(nextState.campaignIds);
     setAdSetIdInternal(nextState.adSetId);
     setAdIdInternal(nextState.adId);
     setTagIdsInternal(nextState.tagIds);
@@ -309,8 +334,23 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
 
   const setCampaignId = useCallback(
     (value: NullableFilter) => {
-      setCampaignIdInternal(value);
-      persist({ campaignId: value });
+      const normalized = normalizeCampaignIds(undefined, value);
+      setCampaignIdInternal(normalized[0] ?? null);
+      setCampaignIdsInternal(normalized);
+      persist({ campaignId: normalized[0] ?? null, campaignIds: normalized });
+    },
+    [persist],
+  );
+
+  const setCampaignIds = useCallback(
+    (value: string[]) => {
+      const normalized = normalizeCampaignIds(value);
+      const legacyCampaignId = normalized.length === 1 ? normalized[0] : null;
+      setCampaignIdInternal(legacyCampaignId);
+      setCampaignIdsInternal(normalized);
+      setAdSetIdInternal(null);
+      setAdIdInternal(null);
+      persist({ campaignId: legacyCampaignId, campaignIds: normalized, adSetId: null, adId: null });
     },
     [persist],
   );
@@ -399,6 +439,8 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setPageId,
       campaignId,
       setCampaignId,
+      campaignIds,
+      setCampaignIds,
       adSetId,
       setAdSetId,
       adId,
@@ -416,6 +458,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       adId,
       adSetId,
       campaignId,
+      campaignIds,
       clearDateFilter,
       clearFilters,
       customDateRange,
@@ -427,6 +470,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setAdId,
       setAdSetId,
       setCampaignId,
+      setCampaignIds,
       setCustomDateRange,
       setDatePreset,
       setDealStatus,

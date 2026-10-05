@@ -16,6 +16,7 @@ import (
 type leadAttributionFilter struct {
 	Page         string
 	Campaign     string
+	Campaigns    []string
 	AdSet        string
 	Ad           string
 	OccurredFrom any
@@ -31,16 +32,33 @@ func normalizedLeadAttributionValue(value string) string {
 	return value
 }
 
+func normalizedLeadAttributionValues(primary string, additional []string) []string {
+	values := make([]string, 0, len(additional)+1)
+	seen := make(map[string]struct{}, len(additional)+1)
+	for _, raw := range append([]string{primary}, additional...) {
+		value := strings.TrimSpace(raw)
+		if value == "" || value == "all" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
+}
+
 // addLeadAttributionFilterCondition keeps one CRM contact per person while
 // matching the exact historical entry that carried the selected attribution.
 // The current lead/lead_meta projection remains as a compatibility fallback for
 // old rows that predate entry-event enrichment.
 func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAlias string, metaAlias string, filter leadAttributionFilter) bool {
 	filter.Page = normalizedLeadAttributionValue(filter.Page)
-	filter.Campaign = normalizedLeadAttributionValue(filter.Campaign)
+	filter.Campaigns = normalizedLeadAttributionValues(filter.Campaign, filter.Campaigns)
 	filter.AdSet = normalizedLeadAttributionValue(filter.AdSet)
 	filter.Ad = normalizedLeadAttributionValue(filter.Ad)
-	if filter.Page == "" && filter.Campaign == "" && filter.AdSet == "" && filter.Ad == "" {
+	if filter.Page == "" && len(filter.Campaigns) == 0 && filter.AdSet == "" && filter.Ad == "" {
 		return false
 	}
 
@@ -53,22 +71,30 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 	atomicLegacyMetaConditions := []string{}
 	pageRequiresAtomicLegacyMeta := filter.Page != ""
 
-	addValue := func(value string, eventColumns []string, leadColumns []string, metaColumns []string) {
-		if value == "" {
+	addValues := func(values []string, eventColumns []string, leadColumns []string, metaColumns []string) {
+		if len(values) == 0 || (len(values) == 1 && values[0] == "") {
 			return
 		}
-		*args = append(*args, value)
+		var argument any = values[0]
+		if len(values) > 1 {
+			argument = values
+		}
+		*args = append(*args, argument)
 		index := len(*args)
+		comparison := fmt.Sprintf("= $%d", index)
+		if len(values) > 1 {
+			comparison = fmt.Sprintf("= any($%d::text[])", index)
+		}
 
 		eventMatches := make([]string, 0, len(eventColumns))
 		for _, column := range eventColumns {
-			eventMatches = append(eventMatches, fmt.Sprintf("entry.%s = $%d", column, index))
+			eventMatches = append(eventMatches, fmt.Sprintf("entry.%s %s", column, comparison))
 		}
 		eventConditions = append(eventConditions, "("+strings.Join(eventMatches, " or ")+")")
 
 		metaMatches := make([]string, 0, len(metaColumns))
 		for _, column := range metaColumns {
-			metaMatches = append(metaMatches, fmt.Sprintf("%s.%s = $%d", metaAlias, column, index))
+			metaMatches = append(metaMatches, fmt.Sprintf("%s.%s %s", metaAlias, column, comparison))
 		}
 		if pageRequiresAtomicLegacyMeta {
 			atomicLegacyMetaConditions = append(atomicLegacyMetaConditions, "("+strings.Join(metaMatches, " or ")+")")
@@ -77,7 +103,7 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 
 		legacyMatches := make([]string, 0, len(leadColumns)+1)
 		for _, column := range leadColumns {
-			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
+			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s %s", leadAlias, column, comparison))
 		}
 		legacyMatches = append(legacyMatches, fmt.Sprintf(`exists (
 			select 1
@@ -89,22 +115,22 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		legacyConditions = append(legacyConditions, "("+strings.Join(legacyMatches, " or ")+")")
 	}
 
-	addValue(filter.Page,
+	addValues([]string{filter.Page},
 		[]string{"page_id"},
 		nil,
 		[]string{"page_id"},
 	)
-	addValue(filter.Campaign,
+	addValues(filter.Campaigns,
 		[]string{"campaign_id", "campaign_name", "utm_campaign"},
 		[]string{"meta_campaign_id", "utm_campaign"},
 		[]string{"campaign_id", "campaign_name"},
 	)
-	addValue(filter.AdSet,
+	addValues([]string{filter.AdSet},
 		[]string{"adset_id", "adset_name"},
 		[]string{"meta_adset_id"},
 		[]string{"adset_id", "adset_name"},
 	)
-	addValue(filter.Ad,
+	addValues([]string{filter.Ad},
 		[]string{"ad_id", "ad_name"},
 		[]string{"meta_ad_id"},
 		[]string{"ad_id", "ad_name"},

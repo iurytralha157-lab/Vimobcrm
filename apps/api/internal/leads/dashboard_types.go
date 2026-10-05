@@ -13,6 +13,7 @@ const (
 	maxDashboardTaskLimit     = 50
 	maxDashboardDateRange     = 5 * 366 * 24 * time.Hour
 	maxDashboardSearchLength  = 180
+	maxDashboardCampaignIDs   = 50
 )
 
 type DashboardFilter struct {
@@ -24,6 +25,7 @@ type DashboardFilter struct {
 	Source         string
 	PageID         string
 	CampaignID     string
+	CampaignIDs    []string
 	AdSetID        string
 	AdID           string
 	TagID          string
@@ -363,6 +365,10 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	if err != nil {
 		return DashboardFilter{}, err
 	}
+	campaignIDs, err := normalizeDashboardCampaignFilterIDs(campaignID, values["campaignIds"])
+	if err != nil {
+		return DashboardFilter{}, err
+	}
 	adSetID, err := normalizeDashboardTextFilter("adSetId", values.Get("adSetId"), 255)
 	if err != nil {
 		return DashboardFilter{}, err
@@ -389,6 +395,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		Source:         source,
 		PageID:         pageID,
 		CampaignID:     campaignID,
+		CampaignIDs:    campaignIDs,
 		AdSetID:        adSetID,
 		AdID:           adID,
 		TagID:          tagID,
@@ -435,4 +442,23 @@ func normalizeDashboardTextFilter(name string, raw string, maxLength int) (strin
 		return "", fmt.Errorf("%w: %s is too long", ErrInvalidInput, name)
 	}
 	return value, nil
+}
+
+func normalizeDashboardCampaignFilterIDs(campaignID string, campaignIDs []string) ([]string, error) {
+	selected := make([]string, 0, len(campaignIDs))
+	for _, campaign := range campaignIDs {
+		if !strings.EqualFold(strings.TrimSpace(campaign), "all") {
+			selected = append(selected, campaign)
+		}
+	}
+	values := normalizedLeadAttributionValues(campaignID, selected)
+	if len(values) > maxDashboardCampaignIDs {
+		return nil, fmt.Errorf("%w: campaignIds can contain at most %d items", ErrInvalidInput, maxDashboardCampaignIDs)
+	}
+	for _, value := range values {
+		if len(value) > 255 {
+			return nil, fmt.Errorf("%w: campaignIds contains an oversized value", ErrInvalidInput)
+		}
+	}
+	return values, nil
 }

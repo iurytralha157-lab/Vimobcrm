@@ -112,7 +112,7 @@ func TestDashboardCampaignsOpenAPIExposesAllDashboardFilters(t *testing.T) {
 	for _, parameter := range []string{
 		"OrganizationIdHeader", "DashboardDateFrom", "DashboardDateTo", "DashboardPipelineId",
 		"DashboardTeamId", "DashboardUserId", "DashboardSource", "DashboardPageId",
-		"DashboardCampaignId", "DashboardAdSetId", "DashboardAdId", "DashboardTagId",
+		"DashboardCampaignId", "DashboardCampaignIds", "DashboardAdSetId", "DashboardAdId", "DashboardTagId",
 		"DashboardTagIds", "DashboardDealStatus", "DashboardSearchQuery",
 	} {
 		if !strings.Contains(section, "#/components/parameters/"+parameter) {

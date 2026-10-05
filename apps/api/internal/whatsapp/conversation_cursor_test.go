@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,6 +61,41 @@ func TestConversationListFilterParsesServerSideInboxFilters(t *testing.T) {
 	}
 	if !filter.OnlyLeads || !filter.PendingReply || filter.WithoutLead {
 		t.Fatalf("unexpected inbox filters: %#v", filter)
+	}
+}
+
+func TestConversationListFilterParsesLastMessagePeriod(t *testing.T) {
+	from := time.Date(2026, time.October, 1, 3, 0, 0, 0, time.UTC)
+	to := time.Date(2026, time.October, 4, 2, 59, 59, 999000000, time.UTC)
+	filter, err := ParseConversationListFilter(url.Values{
+		"lastMessageFrom": {from.Format(time.RFC3339Nano)},
+		"lastMessageTo":   {to.Format(time.RFC3339Nano)},
+	})
+	if err != nil {
+		t.Fatalf("ParseConversationListFilter() error = %v", err)
+	}
+	if filter.LastMessageFrom == nil || !filter.LastMessageFrom.Equal(from) ||
+		filter.LastMessageTo == nil || !filter.LastMessageTo.Equal(to) {
+		t.Fatalf("last message period = %v / %v", filter.LastMessageFrom, filter.LastMessageTo)
+	}
+	for _, values := range []url.Values{
+		{"lastMessageFrom": {"yesterday"}},
+		{"lastMessageTo": {"2026-10-04"}},
+		{"lastMessageFrom": {to.Format(time.RFC3339Nano)}, "lastMessageTo": {from.Format(time.RFC3339Nano)}},
+	} {
+		if _, err := ParseConversationListFilter(values); err == nil {
+			t.Fatalf("ParseConversationListFilter(%v) expected invalid period error", values)
+		}
+	}
+}
+
+func TestConversationListFilterParsesLeadSource(t *testing.T) {
+	filter, err := ParseConversationListFilter(url.Values{"leadSource": {"  Meta Ads  "}})
+	if err != nil || filter.LeadSource != "Meta Ads" {
+		t.Fatalf("lead source filter = %q, error = %v", filter.LeadSource, err)
+	}
+	if _, err := ParseConversationListFilter(url.Values{"leadSource": {strings.Repeat("x", 121)}}); err == nil {
+		t.Fatal("leadSource exceeding contract limit must be rejected")
 	}
 }
 

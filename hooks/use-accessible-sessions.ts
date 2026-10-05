@@ -2,6 +2,9 @@ import { useWhatsAppSessions } from "./use-whatsapp-sessions";
 
 type UseAccessibleSessionsOptions = {
   enabled?: boolean;
+  live?: boolean;
+  retry?: boolean;
+  timeoutMs?: number;
 };
 
 export function useAccessibleSessions(options: UseAccessibleSessionsOptions = {}) {

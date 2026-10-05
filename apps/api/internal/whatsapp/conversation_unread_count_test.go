@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -44,7 +45,10 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 		"wc.session_id in ($5::uuid, $6::uuid)",
 		"wc.is_group = false",
 		"wc.lead_id is not null",
-		"coalesce(wc.unread_count, 0) > 0",
+		"select not wm.from_me",
+		"wm.organization_id = wc.organization_id",
+		"wm.conversation_id = wc.id",
+		"wm.capture_state is distinct from 'suppressed'",
 		"regexp_replace(coalesce(wc.contact_phone, ''), '\\D', '', 'g') like $8",
 	} {
 		if !strings.Contains(joined, clause) {
@@ -56,6 +60,50 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 	}
 	if len(args) != 8 || args[0] != unreadCountOrganizationID || args[1] != unreadCountUserID {
 		t.Fatalf("unexpected canonical arguments: %#v", args)
+	}
+}
+
+func TestConversationPeriodUsesSameScopeForListAndUnreadCount(t *testing.T) {
+	from := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(72 * time.Hour)
+	args, where, empty, err := conversationFilterSQL(tenant.Context{
+		OrganizationID: unreadCountOrganizationID,
+		UserID:         unreadCountUserID,
+	}, ConversationListFilter{LastMessageFrom: &from, LastMessageTo: &to})
+	if err != nil || empty {
+		t.Fatalf("period filter = empty:%v error:%v", empty, err)
+	}
+	joined := strings.Join(where, " and ")
+	for _, clause := range []string{
+		"wc.organization_id = $1::uuid",
+		"wc.deleted_at is null",
+		"wc.last_message_at >= $5::timestamptz",
+		"wc.last_message_at <= $6::timestamptz",
+	} {
+		if !strings.Contains(joined, clause) {
+			t.Fatalf("period scope is missing %q: %s", clause, joined)
+		}
+	}
+	if len(args) != 6 || args[4] != from || args[5] != to {
+		t.Fatalf("period arguments = %#v", args)
+	}
+}
+
+func TestConversationLeadSourceUsesScopedParameterizedFilter(t *testing.T) {
+	source := "Meta Ads' OR true --"
+	args, where, empty, err := conversationFilterSQL(tenant.Context{
+		OrganizationID: unreadCountOrganizationID,
+		UserID:         unreadCountUserID,
+	}, ConversationListFilter{LeadSource: source})
+	if err != nil || empty {
+		t.Fatalf("lead source filter = empty:%v error:%v", empty, err)
+	}
+	joined := strings.Join(where, " and ")
+	if !strings.Contains(joined, "(l.organization_id = wc.organization_id and l.source = $5)") {
+		t.Fatalf("source must match the linked lead in the same organization: %s", joined)
+	}
+	if strings.Contains(joined, source) || len(args) != 5 || args[4] != source {
+		t.Fatalf("source must remain a bound argument: where=%s args=%#v", joined, args)
 	}
 }
 

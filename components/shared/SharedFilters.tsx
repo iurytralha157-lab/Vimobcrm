@@ -70,6 +70,12 @@ interface SharedFiltersProps {
   userId: string | null;
   onUserChange: (userId: string | null) => void;
   includeUnassignedUserOption?: boolean;
+  /** Already scoped by the caller; skips the general team/user catalogs. */
+  scopeTeams?: { id: string; name: string; members?: { user_id: string; is_leader?: boolean }[] }[];
+  scopeUsers?: { id: string; name: string; email?: string | null; avatar_url?: string | null; is_active?: boolean }[];
+  scopeOptionsReady?: boolean;
+  scopeOptionsLoading?: boolean;
+  showEmptyScopeFilters?: boolean;
 
   pipelineId?: string | null;
   onPipelineChange?: (pipelineId: string | null) => void;
@@ -89,6 +95,9 @@ interface SharedFiltersProps {
   isLoadingPages?: boolean;
   campaignId: string | null;
   onCampaignChange: (id: string | null) => void;
+  /** Dashboard-only multi-select; other pages keep the existing single selector. */
+  campaignIds?: string[];
+  onCampaignsChange?: (ids: string[]) => void;
   adSetId: string | null;
   onAdSetChange: (id: string | null) => void;
   adId: string | null;
@@ -97,6 +106,7 @@ interface SharedFiltersProps {
   adSets?: { id: string; name: string }[];
   ads?: { id: string; name: string }[];
   isLoadingCampaigns?: boolean;
+  hasCampaignsError?: boolean;
   isLoadingAdSets?: boolean;
   isLoadingAds?: boolean;
   isLoadingTags?: boolean;
@@ -127,6 +137,7 @@ interface SharedFiltersProps {
   advancedContent?: ReactNode;
   advancedContentOnly?: boolean;
   hasAdvancedContentFilters?: boolean;
+  showAdFilters?: boolean;
 }
 
 export function SharedFilters({
@@ -141,6 +152,11 @@ export function SharedFilters({
   userId,
   onUserChange,
   includeUnassignedUserOption = false,
+  scopeTeams,
+  scopeUsers,
+  scopeOptionsReady = true,
+  scopeOptionsLoading = false,
+  showEmptyScopeFilters = false,
   pipelineId = null,
   onPipelineChange,
   pipelines = [],
@@ -153,6 +169,8 @@ export function SharedFilters({
   onPageChange,
   campaignId,
   onCampaignChange,
+  campaignIds,
+  onCampaignsChange,
   adSetId,
   onAdSetChange,
   adId,
@@ -174,6 +192,7 @@ export function SharedFilters({
   isLoadingSources = false,
   isLoadingPages = false,
   isLoadingCampaigns = false,
+  hasCampaignsError = false,
   isLoadingAdSets = false,
   isLoadingAds = false,
   isLoadingTags = false,
@@ -191,6 +210,7 @@ export function SharedFilters({
   advancedContent,
   advancedContentOnly = false,
   hasAdvancedContentFilters = false,
+  showAdFilters = true,
 }: SharedFiltersProps) {
   const { user, isSuperAdmin } = useAuth();
   const { isHydrated: isFiltersHydrated } = useFilters();
@@ -203,6 +223,8 @@ export function SharedFilters({
     (userId && userId !== "all" && userId !== "unassigned"),
   );
   const shouldLoadScopeOptions =
+    scopeTeams === undefined &&
+    scopeUsers === undefined &&
     isFiltersHydrated &&
     canUseScopeFilters &&
     (loadDynamicOptions || hasPersistedScopeSelection);
@@ -324,7 +346,7 @@ export function SharedFilters({
 
   const isTeamLeader = canViewTeamLeads;
 
-  const showUserFilter = canViewAllLeads || isTeamLeader;
+  const showUserFilter = scopeUsers !== undefined || canViewAllLeads || isTeamLeader;
 
   const activeTeams = useMemo(
     () => teams.filter((team) => team.is_active !== false),
@@ -332,17 +354,20 @@ export function SharedFilters({
   );
   const availableTeams = useMemo(
     () =>
-      canViewAllLeads
+      scopeTeams !== undefined
+        ? scopeTeams
+        : canViewAllLeads
         ? activeTeams
         : activeTeams.filter((team) =>
             team.members?.some(
               (member) => member.user_id === currentUserId && member.is_leader,
             ),
           ),
-    [activeTeams, canViewAllLeads, currentUserId],
+    [activeTeams, canViewAllLeads, currentUserId, scopeTeams],
   );
 
   const availableUsers = useMemo(() => {
+    if (scopeUsers !== undefined) return scopeUsers;
     if (teamId) {
       const team = teams.find((item) => item.id === teamId);
       return users.filter((availableUser) =>
@@ -361,16 +386,19 @@ export function SharedFilters({
     if (currentUserId) ledUserIds.add(currentUserId);
 
     return users.filter((availableUser) => ledUserIds.has(availableUser.id));
-  }, [availableTeams, canViewAllLeads, currentUserId, teamId, teams, users]);
+  }, [availableTeams, canViewAllLeads, currentUserId, scopeUsers, teamId, teams, users]);
 
   useEffect(() => {
     if (
       !isFiltersHydrated ||
-      !shouldLoadScopeOptions ||
-      teamsQuery.isFetching ||
-      usersQuery.isFetching ||
-      !teamsQuery.isSuccess ||
-      !usersQuery.isSuccess ||
+      !scopeOptionsReady ||
+      (scopeUsers === undefined && (
+        !shouldLoadScopeOptions ||
+        teamsQuery.isFetching ||
+        usersQuery.isFetching ||
+        !teamsQuery.isSuccess ||
+        !usersQuery.isSuccess
+      )) ||
       !showUserFilter ||
       !userId ||
       userId === "all" ||
@@ -388,6 +416,8 @@ export function SharedFilters({
     onUserChange,
     shouldLoadScopeOptions,
     showUserFilter,
+    scopeUsers,
+    scopeOptionsReady,
     teamsQuery.isFetching,
     teamsQuery.isSuccess,
     userId,
@@ -427,6 +457,20 @@ export function SharedFilters({
     () => campaigns.find((campaign) => campaign.id === campaignId),
     [campaignId, campaigns],
   );
+  const multiCampaigns = campaignIds !== undefined && onCampaignsChange !== undefined;
+  const campaignPickerOptions = useMemo(() => {
+    const nameCounts = new Map<string, number>();
+    campaigns.forEach((campaign) => {
+      const key = normalizeSearchText(campaign.name);
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    });
+    return campaigns.map((campaign) => ({
+      id: campaign.id,
+      name: (nameCounts.get(normalizeSearchText(campaign.name)) ?? 0) > 1
+        ? `${campaign.name} · …${campaign.id.slice(-6)}`
+        : campaign.name,
+    }));
+  }, [campaigns]);
   const matchingCampaigns = useMemo(() => {
     const normalizedSearch = normalizeSearchText(campaignSearch);
     if (!normalizedSearch) return campaigns;
@@ -443,6 +487,7 @@ export function SharedFilters({
     source !== null ||
     pageId !== null ||
     campaignId !== null ||
+    (multiCampaigns && campaignIds.length > 0) ||
     adSetId !== null ||
     adId !== null ||
     tagIds.length > 0 ||
@@ -655,9 +700,10 @@ export function SharedFilters({
                       </div>
                     )}
 
-                    {onPipelineChange && pipelines.length > 0 && (
+                    {onPipelineChange && (pipelines.length > 0 || showEmptyScopeFilters) && (
                       <Select
                         value={pipelineId || "all"}
+                        disabled={showEmptyScopeFilters && pipelines.length === 0}
                         onOpenChange={markInternalSelectInteraction}
                         onValueChange={(value) => {
                           onPipelineChange(value === "all" ? null : value);
@@ -675,7 +721,9 @@ export function SharedFilters({
                           <SelectValue placeholder="Pipeline" />
                         </SelectTrigger>
                         <SelectContent className={filterSelectContentClass}>
-                          <SelectItem value="all">Todas pipelines</SelectItem>
+                          <SelectItem value="all">{showEmptyScopeFilters && pipelines.length === 0
+                            ? scopeOptionsLoading ? "Carregando pipelines..." : scopeOptionsReady ? "Nenhuma pipeline" : "Pipelines indisponíveis"
+                            : "Todas pipelines"}</SelectItem>
                           {pipelines.map((pipeline) => (
                             <SelectItem key={pipeline.id} value={pipeline.id}>
                               {pipeline.name}
@@ -715,9 +763,10 @@ export function SharedFilters({
                     )}
 
                     {/* Team Filter */}
-                    {availableTeams.length > 0 && (
+                    {(availableTeams.length > 0 || showEmptyScopeFilters) && (
                       <Select
                         value={teamId || "all"}
+                        disabled={showEmptyScopeFilters && availableTeams.length === 0}
                         onOpenChange={markInternalSelectInteraction}
                         onValueChange={(value) => {
                           onTeamChange(value === "all" ? null : value);
@@ -735,7 +784,9 @@ export function SharedFilters({
                           <SelectValue placeholder="Equipe" />
                         </SelectTrigger>
                         <SelectContent className={filterSelectContentClass}>
-                          <SelectItem value="all">Todas equipes</SelectItem>
+                          <SelectItem value="all">{showEmptyScopeFilters && availableTeams.length === 0
+                            ? scopeOptionsLoading ? "Carregando equipes..." : scopeOptionsReady ? "Nenhuma equipe" : "Equipes indisponíveis"
+                            : "Todas equipes"}</SelectItem>
                           {availableTeams.map((team) => (
                             <SelectItem key={team.id} value={team.id}>
                               {team.name}
@@ -756,6 +807,7 @@ export function SharedFilters({
                           <Button
                             variant="outline"
                             role="combobox"
+                            disabled={showEmptyScopeFilters && !scopeOptionsReady && availableUsers.length === 0}
                             aria-expanded={userFilterOpen}
                             onPointerDown={markInternalSelectInteraction}
                             className={cn(
@@ -788,7 +840,9 @@ export function SharedFilters({
                                 </span>
                               )}
                               <span className="truncate">
-                                {selectedUser
+                                {showEmptyScopeFilters && !scopeOptionsReady && availableUsers.length === 0
+                                  ? scopeOptionsLoading ? "Carregando usuários..." : "Usuários indisponíveis"
+                                  : selectedUser
                                   ? getUserFilterLabel(selectedUser)
                                   : isUnassignedUserFilter
                                     ? "Sem responsável"
@@ -1063,6 +1117,36 @@ export function SharedFilters({
                         </Select>
 
                         {/* Campaign */}
+                        {multiCampaigns ? (
+                          <div onPointerDownCapture={markInternalSelectInteraction}>
+                            <SearchableTagPicker
+                              tags={campaignPickerOptions}
+                              selectedTagIds={campaignIds}
+                              onToggleTag={(nextId) => {
+                                onCampaignsChange(
+                                  campaignIds.includes(nextId)
+                                    ? campaignIds.filter((id) => id !== nextId)
+                                    : [...campaignIds, nextId],
+                                );
+                              }}
+                              onClearSelection={() => onCampaignsChange([])}
+                              loading={isLoadingCampaigns}
+                              error={hasCampaignsError}
+                              placeholder="Todas campanhas"
+                              itemNameSingular="campanha"
+                              itemNamePlural="campanhas"
+                              triggerIcon={<Globe className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                              triggerClassName={cn(filterControlClass, campaignIds.length > 0 && "text-primary")}
+                              showColorDot={false}
+                              showUnavailableId
+                              caseSensitiveIds
+                              showSelectedBadges={false}
+                              allowCreate={false}
+                              maxSelected={50}
+                              emptyMessage="Nenhuma campanha disponível"
+                            />
+                          </div>
+                        ) : (
                         <div className="space-y-1">
                           <Popover
                             open={campaignFilterOpen}
@@ -1163,9 +1247,16 @@ export function SharedFilters({
                             </PopoverContent>
                           </Popover>
                         </div>
+                        )}
 
-                        {/* Ad Set — só aparece se campaign selecionada */}
-                        {campaignId && (
+                        {showAdFilters && multiCampaigns && campaignIds.length > 1 && (
+                          <p className="px-1 text-[11px] text-[var(--app-text-tertiary)]">
+                            Para filtrar conjuntos e anúncios, selecione apenas uma campanha.
+                          </p>
+                        )}
+
+                        {/* Ad Set — só aparece se houver uma campanha selecionada */}
+                        {showAdFilters && (multiCampaigns ? campaignIds.length === 1 : Boolean(campaignId)) && (
                           <div className="space-y-1">
                             <Select
                               value={adSetId || "all"}
@@ -1209,7 +1300,7 @@ export function SharedFilters({
                         )}
 
                         {/* Ad — só aparece se adSet selecionado */}
-                        {adSetId && (
+                        {showAdFilters && adSetId && (
                           <div className="space-y-1">
                             <Select
                               value={adId || "all"}

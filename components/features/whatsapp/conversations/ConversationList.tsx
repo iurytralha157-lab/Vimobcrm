@@ -106,7 +106,13 @@ export function ConversationList({
   return (
     <ScrollArea ref={scrollAreaRef} data-tour="conversations-list" className="flex-1">
       <div className="divide-y divide-white/[0.045]">
-        {isError ? (
+        {isError && conversations.length > 0 && (
+          <div className="flex items-center justify-between gap-2 bg-muted/60 px-3 py-2 text-xs text-muted-foreground" role="status">
+            <span>Não foi possível atualizar. Exibindo conversas já carregadas.</span>
+            <Button size="sm" variant="ghost" onClick={onRetry}>Tentar novamente</Button>
+          </div>
+        )}
+        {isError && conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
             <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
             <p className="text-sm font-medium mb-1">Não foi possível carregar as conversas</p>

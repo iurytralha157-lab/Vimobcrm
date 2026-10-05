@@ -94,6 +94,24 @@ func (handler Handler) ShowDashboardCampaigns(w http.ResponseWriter, r *http.Req
 	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardCampaigns{"data": data})
 }
 
+func (handler Handler) ShowDashboardCreatives(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
+		return
+	}
+	filter, err := ParseDashboardFilter(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	data, err := handler.repo.GetDashboardCreatives(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardCreatives{"data": data})
+}
+
 func (handler Handler) ShowDashboardTopBrokers(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := dashboardTenantContext(w, r)
 	if !ok {

@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -125,11 +126,12 @@ func TestDashboardExplicitPeriodKeepsFiltersAndBuildsPreviousWindow(t *testing.T
 	from := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
 	filter := DashboardFilter{
-		DateFrom:   &from,
-		DateTo:     &to,
-		TeamID:     dashboardTestUUID,
-		PageID:     "page-123",
-		CampaignID: "campaign-123",
+		DateFrom:    &from,
+		DateTo:      &to,
+		TeamID:      dashboardTestUUID,
+		PageID:      "page-123",
+		CampaignID:  "campaign-123",
+		CampaignIDs: []string{"campaign-123", "campaign-456"},
 	}
 
 	actualFrom, actualTo, ok := dashboardExplicitDateRange(filter)
@@ -146,7 +148,8 @@ func TestDashboardExplicitPeriodKeepsFiltersAndBuildsPreviousWindow(t *testing.T
 	if !previous.DateTo.Equal(from.Add(-time.Microsecond)) || !previous.DateFrom.Equal(from.Add(-to.Sub(from))) {
 		t.Fatalf("previous period = %v to %v", previous.DateFrom, previous.DateTo)
 	}
-	if previous.TeamID != filter.TeamID || previous.PageID != filter.PageID || previous.CampaignID != filter.CampaignID {
+	if previous.TeamID != filter.TeamID || previous.PageID != filter.PageID || previous.CampaignID != filter.CampaignID ||
+		!reflect.DeepEqual(previous.CampaignIDs, filter.CampaignIDs) {
 		t.Fatalf("previous period lost non-date filters: %#v", previous)
 	}
 

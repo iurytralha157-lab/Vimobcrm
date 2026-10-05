@@ -471,6 +471,8 @@ export const dashboardFiltersSchema = z.object({
   source: dashboardOptionalTextFilterSchema(180),
   pageId: dashboardOptionalTextFilterSchema(255),
   campaignId: dashboardOptionalTextFilterSchema(255),
+  campaignIds: z.array(z.string().trim().min(1).max(255)).max(50)
+    .transform((campaignIds) => Array.from(new Set(campaignIds))).optional(),
   adSetId: dashboardOptionalTextFilterSchema(255),
   adId: dashboardOptionalTextFilterSchema(255),
   tagIds: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
@@ -639,6 +641,42 @@ export const apiDashboardCampaignsSchema = z.object({
   })),
   unattributed: apiDashboardCampaignCountSchema,
 }).passthrough()
+const dashboardCreativeURLSchema = z.string().trim().max(4096).refine((value) => {
+  if (!/^https:\/\//i.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password
+  } catch {
+    return false
+  }
+}).nullable()
+export const apiDashboardCreativeSchema = z.object({
+  key: z.string().trim().min(1),
+  attributionLevel: z.enum(['creative', 'ad']),
+  creativeId: z.string().trim().min(1).nullable(),
+  adId: z.string().trim().min(1).nullable(),
+  name: z.string().trim().min(1),
+  campaignName: z.string().trim().min(1).nullable(),
+  campaignCount: nonNegativeIntegerSchema,
+  leadCount: nonNegativeIntegerSchema,
+  entryCount: nonNegativeIntegerSchema,
+  thumbnailUrl: dashboardCreativeURLSchema,
+  imageUrl: dashboardCreativeURLSchema,
+  videoUrl: dashboardCreativeURLSchema,
+  instagramUrl: dashboardCreativeURLSchema,
+  permalinkUrl: dashboardCreativeURLSchema,
+  isVideo: z.boolean(),
+}).passthrough()
+export const apiDashboardCreativesSchema = z.object({
+  creatives: z.array(apiDashboardCreativeSchema).max(10),
+}).passthrough()
+export const apiDashboardCreativeMediaSchema = z.object({
+  thumbnailUrl: dashboardCreativeURLSchema,
+  imageUrl: dashboardCreativeURLSchema,
+  videoUrl: dashboardCreativeURLSchema,
+  instagramUrl: dashboardCreativeURLSchema,
+  permalinkUrl: dashboardCreativeURLSchema,
+}).passthrough()
 // A pessoa pode participar de várias equipes ativas; cada equipe inclui seus leads.
 // A soma das equipes, portanto, não precisa coincidir com o total único de leads.
 const apiDashboardFirstContactBrokerSchema = z.object({
@@ -717,6 +755,8 @@ export const apiDashboardSourceResponseSchema = apiEnvelopeSchema(apiDashboardSo
 export const apiDashboardTopBrokersResponseSchema = apiEnvelopeSchema(apiDashboardTopBrokersSchema)
 export const apiDashboardLeadDistributionResponseSchema = apiEnvelopeSchema(apiDashboardLeadDistributionSchema)
 export const apiDashboardCampaignsResponseSchema = apiEnvelopeSchema(apiDashboardCampaignsSchema)
+export const apiDashboardCreativesResponseSchema = apiEnvelopeSchema(apiDashboardCreativesSchema)
+export const apiDashboardCreativeMediaResponseSchema = apiEnvelopeSchema(apiDashboardCreativeMediaSchema)
 export const apiDashboardFirstContactResponseSchema = apiEnvelopeSchema(apiDashboardFirstContactSchema)
 export const apiDashboardUpcomingTasksResponseSchema = apiEnvelopeSchema(apiDashboardUpcomingTasksSchema)
 export const apiDashboardDealsEvolutionResponseSchema = apiEnvelopeSchema(apiDashboardDealsEvolutionSchema)

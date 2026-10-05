@@ -149,48 +149,88 @@ export const whatsappQueryKeys = {
     scope: WhatsAppQueryScope,
     params: {
       sessionId?: string
+      pipelineId?: string
+      teamId?: string
+      userId?: string
+      leadSource?: string
+      tagIds?: string
+      dealStatus?: string
+      pageId?: string
+      campaignIds?: string
       hideGroups: boolean
       showArchived: boolean
       onlyLeads: boolean
       withoutLead: boolean
       pendingReply: boolean
       search?: string
+      lastMessageFrom?: string
+      lastMessageTo?: string
       accessibleSessionKey: string
     },
   ) => [
     ...scopedPrefix('whatsapp-conversations', scope),
     'unread-count',
     params.sessionId ?? 'all',
+    params.pipelineId ?? '',
+    params.teamId ?? '',
+    params.userId ?? '',
+    params.leadSource ?? '',
+    params.tagIds ?? '[]',
+    params.dealStatus ?? '',
+    params.pageId ?? '',
+    params.campaignIds ?? '[]',
     params.hideGroups,
     params.showArchived,
     params.onlyLeads,
     params.withoutLead,
     params.pendingReply,
     params.search ?? '',
+    params.lastMessageFrom ?? '',
+    params.lastMessageTo ?? '',
     params.accessibleSessionKey,
   ] as const,
   conversations: (
     scope: WhatsAppQueryScope,
     params: {
       sessionId?: string
+      pipelineId?: string
+      teamId?: string
+      userId?: string
+      leadSource?: string
+      tagIds?: string
+      dealStatus?: string
+      pageId?: string
+      campaignIds?: string
       hideGroups: boolean
       showArchived: boolean
       onlyLeads: boolean
       withoutLead: boolean
       pendingReply: boolean
       search?: string
+      lastMessageFrom?: string
+      lastMessageTo?: string
       accessibleSessionKey: string
       limit: number
     },
   ) => [
     ...scopedPrefix('whatsapp-conversations', scope),
     params.sessionId ?? 'all',
+    params.pipelineId ?? '',
+    params.teamId ?? '',
+    params.userId ?? '',
+    params.leadSource ?? '',
+    params.tagIds ?? '[]',
+    params.dealStatus ?? '',
+    params.pageId ?? '',
+    params.campaignIds ?? '[]',
     params.hideGroups,
     params.showArchived,
     params.onlyLeads,
     params.withoutLead,
     params.pendingReply,
     params.search ?? '',
+    params.lastMessageFrom ?? '',
+    params.lastMessageTo ?? '',
     params.accessibleSessionKey,
     params.limit,
   ] as const,

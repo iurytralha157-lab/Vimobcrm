@@ -41,7 +41,7 @@ let accessTokenGeneration = 0
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
-  query?: Record<string, string | number | boolean | null | undefined>
+  query?: Record<string, string | number | boolean | readonly string[] | null | undefined>
   body?: unknown
   organizationId?: string | null
   signal?: AbortSignal
@@ -560,6 +560,12 @@ export function buildAPIURL(path: string, query?: RequestOptions['query'], baseU
   const url = new URL(`${baseURL}${normalizedPath}`)
 
   Object.entries(query || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== '') url.searchParams.append(key, item)
+      })
+      return
+    }
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
     }

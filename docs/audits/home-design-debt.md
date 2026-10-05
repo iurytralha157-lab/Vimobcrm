@@ -6,13 +6,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 545
-- Arquivos com achados: 43
-- Achados: 117
-- Arquivos protegidos/mistos com achados: 42
-- Achados alcançáveis pelo CRM protegido: 116
-- Distribuição por superfície: protected-only 106, protected-and-public 10, public-only 1, infraestrutura 0
-- P1: 56
+- Arquivos analisados: 546
+- Arquivos com achados: 44
+- Achados: 118
+- Arquivos protegidos/mistos com achados: 43
+- Achados alcançáveis pelo CRM protegido: 117
+- Distribuição por superfície: protected-only 95, protected-and-public 22, public-only 1, infraestrutura 0
+- P1: 57
 - P2: 15
 - P3: 46
 
@@ -24,7 +24,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P2 | Sombra fora do padrão | 7 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
-| P1 | Cor hardcoded | 33 | Usar tokens --app-* ou cores semânticas do domínio. |
+| P1 | Cor hardcoded | 34 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 5 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
 | P3 | Caixa alta/tracking | 46 | Preferir texto natural em 10–12px e peso 300. |
@@ -59,6 +59,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/schedule/dashboard/AgendaWeeklyChart.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/settings/UserPermissionsScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/conversations/ConversationFilters.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
@@ -106,6 +107,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/schedule/dashboard/AgendaWeeklyChart.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/settings/UserPermissionsScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/conversations/ConversationFilters.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |

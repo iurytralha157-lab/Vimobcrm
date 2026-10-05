@@ -376,6 +376,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -408,6 +409,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -447,6 +449,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -487,6 +490,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -521,6 +525,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -534,6 +539,87 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardCampaignsResponse"
+  /v1/dashboard/creatives:
+    get:
+      summary: Get up to ten Meta creatives with the most visible leads
+      description: >-
+        Ranks distinct leads per creative ID, falling back to ad ID when the
+        creative ID was not recorded. Only initial arrivals and countable
+        reentries with recorded Meta provider or leadgen evidence participate;
+        a customized lead source does not remove a Meta arrival. All Dashboard filters
+        apply to the same arrival and current visible card scope as the
+        campaigns chart. Returns safe HTTPS image, video and post URLs when
+        recorded on an arrival. A creative used in multiple campaigns includes
+        one recorded campaign name and the distinct campaign count. Creatives
+        without any attributed arrival are not included.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Up to ten attributed creatives in the selected cohort.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardCreativesResponse"
+  /v1/dashboard/creative-media:
+    get:
+      summary: Refresh a visible Meta creative preview after an image fails
+      description: >-
+        Validates the key against the same visible card and filtered arrival
+        cohort as the creatives ranking, then makes a bounded read-only Graph
+        lookup with an active ads_read integration of the organization. Returns
+        nullable safe HTTPS URLs and never exposes the provider credential.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: key
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^(creative|ad):[0-9]{1,32}$'
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Current media URLs when Graph has an accessible preview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardCreativeMediaResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
   /v1/dashboard/top-brokers:
     get:
       summary: Get top brokers from visible closed leads
@@ -547,6 +633,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -584,6 +671,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -626,6 +714,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -659,6 +748,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -720,6 +810,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -752,6 +843,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -790,6 +882,7 @@ paths:
         - $ref: "#/components/parameters/DashboardSource"
         - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardCampaignIds"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
@@ -6150,8 +6243,23 @@ components:
     DashboardCampaignId:
       name: campaignId
       in: query
+      description: Legacy single campaign identifier or name; combine with campaignIds using OR.
       schema:
         type: string
+        maxLength: 255
+    DashboardCampaignIds:
+      name: campaignIds
+      in: query
+      description: Repeat for each campaign identifier or name. A lead or arrival matches any selected campaign on the same attribution entry as page, ad set and ad.
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 50
+        items:
+          type: string
+          minLength: 1
+          maxLength: 255
     DashboardAdSetId:
       name: adSetId
       in: query
@@ -15428,6 +15536,91 @@ components:
         entryCount:
           type: integer
           format: int64
+    DashboardCreativesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardCreatives"
+    DashboardCreativeMediaResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardCreativeMedia"
+    DashboardCreativeMedia:
+      type: object
+      required: [thumbnailUrl, imageUrl, videoUrl, instagramUrl, permalinkUrl]
+      properties:
+        thumbnailUrl:
+          type: [string, "null"]
+        imageUrl:
+          type: [string, "null"]
+        videoUrl:
+          type: [string, "null"]
+        instagramUrl:
+          type: [string, "null"]
+        permalinkUrl:
+          type: [string, "null"]
+    DashboardCreatives:
+      type: object
+      required: [creatives]
+      properties:
+        creatives:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/DashboardCreativePoint"
+    DashboardCreativePoint:
+      type: object
+      required: [key, attributionLevel, creativeId, adId, name, campaignName, campaignCount, leadCount, entryCount, thumbnailUrl, imageUrl, videoUrl, instagramUrl, permalinkUrl, isVideo]
+      properties:
+        key:
+          type: string
+          description: Stable creative ID or fallback ad ID with a type prefix.
+        attributionLevel:
+          type: string
+          enum: [creative, ad]
+        creativeId:
+          type: [string, "null"]
+        adId:
+          type: [string, "null"]
+          description: Null when a creative is associated with multiple ads.
+        name:
+          type: string
+        campaignName:
+          type: [string, "null"]
+          description: A recorded campaign name, if available; see campaignCount for multi-campaign use.
+        campaignCount:
+          type: integer
+          format: int64
+          description: Distinct campaigns attributed to this creative in the cohort.
+        leadCount:
+          type: integer
+          format: int64
+          description: Distinct leads with an attributed arrival for this creative.
+        entryCount:
+          type: integer
+          format: int64
+          description: Initial arrivals and countable reentries for this creative.
+        thumbnailUrl:
+          type: [string, "null"]
+          description: Static HTTPS image URL from a recorded arrival when available.
+        imageUrl:
+          type: [string, "null"]
+          description: HTTPS image URL from the selected recorded arrival when available.
+        videoUrl:
+          type: [string, "null"]
+          description: HTTPS video media URL from the selected recorded arrival; provider URLs may expire.
+        instagramUrl:
+          type: [string, "null"]
+          description: HTTPS Instagram post URL from the selected recorded arrival when available.
+        permalinkUrl:
+          type: [string, "null"]
+          description: HTTPS creative post permalink from the selected recorded arrival when available.
+        isVideo:
+          type: boolean
+          description: Whether the selected arrival describes a video creative.
     DashboardTopBrokersResponse:
       type: object
       required: [data]

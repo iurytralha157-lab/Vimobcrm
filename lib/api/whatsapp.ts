@@ -14,6 +14,7 @@ import {
   whatsAppAIAutoReplyInputSchema,
   whatsAppConversationResponseSchema,
   whatsAppConversationsResponseSchema,
+  whatsAppConversationFilterOptionsResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessageMediaURLResponseSchema,
   whatsAppMessagesResponseSchema,
@@ -148,6 +149,7 @@ export interface WhatsAppConversation {
   lead?: {
     id: string
     name: string
+    source?: string | null
     whatsapp_avatar_url?: string | null
     pipeline_id?: string | null
     stage_id?: string | null
@@ -223,17 +225,37 @@ export type WhatsAppMediaDownloadRequestResult = {
 }
 
 export interface ConversationFilters {
+  pipelineId?: string
+  teamId?: string
+  userId?: string
+  leadSource?: string
+  tagIds?: string[]
+  dealStatus?: 'open' | 'won' | 'lost'
+  pageId?: string
+  campaignIds?: string[]
   hideGroups?: boolean
   showArchived?: boolean
   onlyLeads?: boolean
   withoutLead?: boolean
   pendingReply?: boolean
   search?: string
+  lastMessageFrom?: string
+  lastMessageTo?: string
 }
 
 export type WhatsAppConversationsPage = {
   conversations: WhatsAppConversation[]
   nextCursor: string | null
+}
+
+export type WhatsAppConversationFilterOptions = {
+  pipelines: { id: string; name: string }[]
+  teams: { id: string; name: string }[]
+  users: { id: string; name: string }[]
+  sources: string[]
+  tags: { id: string; name: string }[]
+  pages: { id: string; name: string }[]
+  campaigns: { id: string; name: string }[]
 }
 
 export type WhatsAppUnreadCountResponse = {
@@ -355,9 +377,10 @@ export interface WhatsAppGroup {
 }
 
 export const whatsappAPI = {
-  async getSessions(organizationId?: string | null) {
+  async getSessions(organizationId?: string | null, timeoutMs?: number) {
     const response = await vimobAPIRequest<WhatsAppSessionsResponse>('/v1/whatsapp/sessions', {
       organizationId,
+      timeoutMs,
     })
     validateDomainResponse(whatsAppSessionsResponseSchema, response, 'whatsapp.sessions.list')
     return response
@@ -506,12 +529,22 @@ export const whatsappAPI = {
       organizationId: params.organizationId,
       query: {
         sessionId: params.sessionId,
+        pipelineId: params.filters?.pipelineId,
+        teamId: params.filters?.teamId,
+        userId: params.filters?.userId,
+        leadSource: params.filters?.leadSource,
+        tagIds: params.filters?.tagIds,
+        dealStatus: params.filters?.dealStatus,
+        pageId: params.filters?.pageId,
+        campaignIds: params.filters?.campaignIds,
         hideGroups: params.filters?.hideGroups,
         showArchived: params.filters?.showArchived,
         onlyLeads: params.filters?.onlyLeads,
         withoutLead: params.filters?.withoutLead,
         pendingReply: params.filters?.pendingReply,
         search: params.filters?.search,
+        lastMessageFrom: params.filters?.lastMessageFrom,
+        lastMessageTo: params.filters?.lastMessageTo,
         sessionIds: params.accessibleSessionIds?.join(','),
         limit: params.limit,
         cursor: params.cursor,
@@ -535,6 +568,35 @@ export const whatsappAPI = {
     return page.conversations
   },
 
+  async getConversationFilterOptions(params: {
+    organizationId?: string | null
+    sessionId?: string
+    accessibleSessionIds?: string[]
+    showArchived?: boolean
+    lastMessageFrom?: string
+    lastMessageTo?: string
+    pageId?: string
+  }) {
+    const response = await vimobAPIRequest<Envelope<WhatsAppConversationFilterOptions>>(
+      '/v1/whatsapp/conversations/filter-options',
+      {
+        organizationId: params.organizationId,
+        timeoutMs: 8_000,
+        query: {
+          sessionId: params.sessionId,
+          sessionIds: params.accessibleSessionIds?.join(','),
+          hideGroups: true,
+          showArchived: params.showArchived,
+          lastMessageFrom: params.lastMessageFrom,
+          lastMessageTo: params.lastMessageTo,
+          pageId: params.pageId,
+        },
+      },
+    )
+    validateDomainResponse(whatsAppConversationFilterOptionsResponseSchema, response, 'whatsapp.conversations.filter-options')
+    return response.data
+  },
+
   async getUnreadCount(params: {
     organizationId?: string | null
     sessionId?: string
@@ -547,12 +609,22 @@ export const whatsappAPI = {
         organizationId: params.organizationId,
         query: {
           sessionId: params.sessionId,
+          pipelineId: params.filters?.pipelineId,
+          teamId: params.filters?.teamId,
+          userId: params.filters?.userId,
+          leadSource: params.filters?.leadSource,
+          tagIds: params.filters?.tagIds,
+          dealStatus: params.filters?.dealStatus,
+          pageId: params.filters?.pageId,
+          campaignIds: params.filters?.campaignIds,
           hideGroups: params.filters?.hideGroups,
           showArchived: params.filters?.showArchived,
           onlyLeads: params.filters?.onlyLeads,
           withoutLead: params.filters?.withoutLead,
           pendingReply: params.filters?.pendingReply,
           search: params.filters?.search,
+          lastMessageFrom: params.filters?.lastMessageFrom,
+          lastMessageTo: params.filters?.lastMessageTo,
           sessionIds: params.accessibleSessionIds?.join(','),
         },
       },

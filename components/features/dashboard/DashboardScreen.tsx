@@ -42,6 +42,7 @@ import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolut
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
 import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
 import { CampaignLeadsChart } from "@/components/features/dashboard/CampaignLeadsChart";
+import { TopCreativesCard } from "@/components/features/dashboard/TopCreativesCard";
 import { FirstContactDialog } from "@/components/features/dashboard/FirstContactDialog";
 import { DashboardLeadEntriesDialog } from "@/components/features/dashboard/DashboardLeadEntriesDialog";
 import { DashboardVisitsDialog } from "@/components/features/dashboard/DashboardVisitsDialog";
@@ -86,6 +87,7 @@ import {
 } from "@/hooks/use-dashboard-filters";
 import {
   getDashboardExtraCounts,
+  getDashboardFiltersQueryKey,
   type DashboardAPIFilters,
 } from "@/lib/api/dashboard";
 import { DASHBOARD_CHART_COLORS } from "@/config/dashboard-chart-colors";
@@ -189,7 +191,8 @@ export default function Dashboard() {
     pageId,
     setPageId,
     campaignId,
-    setCampaignId,
+    campaignIds,
+    setCampaignIds,
     adSetId,
     setAdSetId,
     adId,
@@ -228,12 +231,9 @@ export default function Dashboard() {
     pipelineId,
     dateMode: "origin",
     entryMode: entryFilterMode,
+    multiCampaigns: true,
   });
   const dashboardDateRange = filters.dateRange;
-
-  // Mapeamento de strings de data para chaves de cache estáveis
-  const dateFromStr = dashboardDateRange?.from.toISOString();
-  const dateToStr = dashboardDateRange?.to.toISOString();
 
   const dashboardFilters = useMemo<DashboardAPIFilters>(
     () => ({
@@ -243,14 +243,14 @@ export default function Dashboard() {
       userId: filters.userId,
       source: filters.source,
       pageId: filters.pageId,
-      campaignId: filters.campaignId,
+      campaignIds,
       adSetId: filters.adSetId,
       adId: filters.adId,
       tagIds: filters.tagIds,
       dealStatus: filters.dealStatus,
       searchQuery: filters.searchQuery,
     }),
-    [dashboardDateRange, filters, pipelineId],
+    [campaignIds, dashboardDateRange, filters, pipelineId],
   );
 
   // Data hooks - Imobiliário
@@ -332,19 +332,7 @@ export default function Dashboard() {
       activeOrganizationId,
       dashboardQueryScope.currentUserId,
       dashboardQueryScope.accessSignature,
-      dateFromStr,
-      dateToStr,
-      pipelineId,
-      filters.userId,
-      filters.teamId,
-      filters.source,
-      filters.pageId,
-      filters.campaignId,
-      filters.adSetId,
-      filters.adId,
-      [...filters.tagIds].sort().join(","),
-      filters.dealStatus,
-      filters.searchQuery,
+      getDashboardFiltersQueryKey(dashboardFilters),
     ],
     queryFn: ({ signal }) =>
       getDashboardExtraCounts({
@@ -497,9 +485,14 @@ export default function Dashboard() {
             source={source}
             onSourceChange={setSource}
             pageId={pageId}
-            onPageChange={setPageId}
+            onPageChange={(id) => {
+              setPageId(id);
+              setCampaignIds([]);
+            }}
             campaignId={campaignId}
-            onCampaignChange={setCampaignId}
+            onCampaignChange={(id) => setCampaignIds(id ? [id] : [])}
+            campaignIds={campaignIds}
+            onCampaignsChange={setCampaignIds}
             adSetId={adSetId}
             onAdSetChange={setAdSetId}
             adId={adId}
@@ -521,6 +514,7 @@ export default function Dashboard() {
             isLoadingSources={isLoadingSources}
             isLoadingPages={isLoadingPages}
             isLoadingCampaigns={isLoadingCampaigns}
+            hasCampaignsError={hasLeadMetaFiltersError}
             isLoadingAdSets={isLoadingAdSets}
             isLoadingAds={isLoadingAds}
             isLoadingTags={isLoadingTags}
@@ -653,7 +647,14 @@ export default function Dashboard() {
               </div>
             ) : null}
 
-            <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+              <div className="min-w-0 lg:col-span-8">
+                <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+              </div>
+              <div className="min-w-0 lg:col-span-4">
+                <TopCreativesCard filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+              </div>
+            </div>
           </div>
         ) : (
           <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
@@ -777,7 +778,14 @@ export default function Dashboard() {
               </>
             ) : null}
 
-            <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+              <div className="min-w-0 lg:col-span-8">
+                <CampaignLeadsChart filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+              </div>
+              <div className="min-w-0 lg:col-span-4">
+                <TopCreativesCard filters={dashboardFilters} filtersReady={isFiltersHydrated} />
+              </div>
+            </div>
           </div>
         )}
       </div>

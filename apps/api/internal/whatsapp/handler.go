@@ -365,6 +365,24 @@ func (handler Handler) ListConversations(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (handler Handler) ListConversationFilterOptions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	filter, err := ParseConversationListFilter(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	options, err := handler.repo.ListConversationFilterOptions(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[ConversationFilterOptions]{Data: options})
+}
+
 func (handler Handler) CountUnreadConversations(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := requireTenant(w, r)
 	if !ok {

@@ -1,25 +1,25 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "4ca23fc917b712001a891a51906e7b81f274e9e5f1386c4e8a06a383ad78555a",
-  "surfaceInventoryDigestSha256": "2f071b237291ad4d49b1610437ed2573a209a2983f6dc1950a7058cc2d615749",
+  "sourceDigestSha256": "a240f2d1c02c6582340be3b55e4b60e1fe08db366e70a6bfa0b87861ce171349",
+  "surfaceInventoryDigestSha256": "08ac7805daf902820f0280253e36d294e75bafd4d45dcae6cd60eeffc677e686",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 545,
+    "filesScanned": 546,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 43,
-    "findings": 117,
-    "protectedReachableFilesWithFindings": 42,
-    "protectedReachableFindings": 116,
+    "filesWithFindings": 44,
+    "findings": 118,
+    "protectedReachableFilesWithFindings": 43,
+    "protectedReachableFindings": 117,
     "bySurfaceScope": {
-      "protected-only": 106,
-      "protected-and-public": 10,
+      "protected-only": 95,
+      "protected-and-public": 22,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 56,
+      "P1": 57,
       "P2": 15,
       "P3": 46
     },
@@ -49,7 +49,7 @@
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 33,
+        "count": 34,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
@@ -271,6 +271,14 @@
       "score": 4,
       "rules": {
         "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationFilters.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -627,6 +635,14 @@
       "score": 4,
       "rules": {
         "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationFilters.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -1695,6 +1711,15 @@
       "weight": 1
     },
     {
+      "file": "components/features/whatsapp/conversations/ConversationFilters.tsx",
+      "line": 220,
+      "match": "#ff4b3a",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
       "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
       "line": 309,
       "match": "uppercase",
@@ -1714,7 +1739,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 225,
+      "line": 231,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1741,101 +1766,101 @@
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 36,
+      "line": 37,
       "match": "#3B82F6",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 38,
-      "match": "#3B82F6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 39,
-      "match": "#10B981",
+      "match": "#3B82F6",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 40,
-      "match": "#F59E0B",
+      "match": "#10B981",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 41,
-      "match": "#EF4444",
+      "match": "#F59E0B",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 42,
-      "match": "#8B5CF6",
+      "match": "#EF4444",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 43,
-      "match": "#EC4899",
+      "match": "#8B5CF6",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 44,
-      "match": "#06B6D4",
+      "match": "#EC4899",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 45,
-      "match": "#F97316",
+      "match": "#06B6D4",
       "priority": "P1",
       "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 248,
+      "line": 46,
+      "match": "#F97316",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/shared/SearchableTagPicker.tsx",
+      "line": 271,
       "match": "bg-black/10",
       "priority": "P2",
       "rule": "hardcoded-surface",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 2
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 267,
+      "line": 290,
       "match": "bg-black/10",
       "priority": "P2",
       "rule": "hardcoded-surface",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 2
     }
   ]

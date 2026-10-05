@@ -80,6 +80,7 @@ export interface WhatsAppConversation {
   lead?: {
     id: string;
     name: string;
+    source?: string | null;
     whatsapp_avatar_url?: string | null;
     pipeline_id?: string | null;
     stage_id?: string | null;
@@ -137,12 +138,54 @@ export interface WhatsAppMessage {
 }
 
 export interface ConversationFilters {
+  pipelineId?: string;
+  teamId?: string;
+  userId?: string;
+  leadSource?: string;
+  tagIds?: string[];
+  dealStatus?: 'open' | 'won' | 'lost';
+  pageId?: string;
+  campaignIds?: string[];
   hideGroups?: boolean;
   showArchived?: boolean;
   onlyLeads?: boolean;
   withoutLead?: boolean;
   pendingReply?: boolean;
   search?: string;
+  lastMessageFrom?: string;
+  lastMessageTo?: string;
+}
+
+export function useWhatsAppConversationFilterOptions(
+  sessionId?: string,
+  accessibleSessionIds?: string[],
+  context?: Pick<ConversationFilters, 'showArchived' | 'lastMessageFrom' | 'lastMessageTo' | 'pageId'>,
+  enabled = false,
+) {
+  const scope = useWhatsAppQueryScope();
+  const accessibleSessionKey = accessibleSessionIds
+    ? [...accessibleSessionIds].sort().join(',')
+    : 'backend-visibility';
+
+  return useQuery({
+    queryKey: ['whatsapp-conversation-filter-options', scope, sessionId ?? '', accessibleSessionKey, context?.showArchived ?? false, context?.lastMessageFrom ?? '', context?.lastMessageTo ?? '', context?.pageId ?? ''],
+    queryFn: () => accessibleSessionIds?.length === 0
+      ? Promise.resolve({ pipelines: [], teams: [], users: [], sources: [], tags: [], pages: [], campaigns: [] })
+      : whatsappAPI.getConversationFilterOptions({
+        organizationId: scope.organizationId,
+        sessionId,
+        accessibleSessionIds,
+        showArchived: context?.showArchived,
+        lastMessageFrom: context?.lastMessageFrom,
+        lastMessageTo: context?.lastMessageTo,
+        pageId: context?.pageId,
+      }),
+    enabled: enabled && !!scope.organizationId && !!scope.userId &&
+      accessibleSessionIds?.length !== 0,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    retry: false,
+  });
 }
 
 type WhatsAppConversationsQueryOptions = {
@@ -441,12 +484,22 @@ export function useWhatsAppConversations(
   const query = useInfiniteQuery({
     queryKey: whatsappQueryKeys.conversations(scope, {
       sessionId,
+      pipelineId: filters?.pipelineId ?? '',
+      teamId: filters?.teamId ?? '',
+      userId: filters?.userId ?? '',
+      leadSource: filters?.leadSource ?? "",
+      tagIds: JSON.stringify([...(filters?.tagIds ?? [])].sort()),
+      dealStatus: filters?.dealStatus ?? '',
+      pageId: filters?.pageId ?? '',
+      campaignIds: JSON.stringify([...(filters?.campaignIds ?? [])].sort()),
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
       onlyLeads: filters?.onlyLeads ?? false,
       withoutLead: filters?.withoutLead ?? false,
       pendingReply: filters?.pendingReply ?? false,
       search: filters?.search?.trim() ?? "",
+      lastMessageFrom: filters?.lastMessageFrom ?? "",
+      lastMessageTo: filters?.lastMessageTo ?? "",
       accessibleSessionKey,
       limit,
     }),
@@ -469,6 +522,7 @@ export function useWhatsAppConversations(
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
     refetchInterval: (currentQuery) => {
+      if (currentQuery.state.status === 'error') return false;
       const data = currentQuery.state.data as { pages?: unknown[] } | undefined;
       return (data?.pages?.length ?? 0) <= 1 ? WHATSAPP_CONVERSATIONS_REFETCH_MS : false;
     },
@@ -512,12 +566,22 @@ export function useWhatsAppUnreadCount(
   return useQuery({
     queryKey: whatsappQueryKeys.unreadCount(scope, {
       sessionId,
+      pipelineId: filters?.pipelineId ?? '',
+      teamId: filters?.teamId ?? '',
+      userId: filters?.userId ?? '',
+      leadSource: filters?.leadSource ?? "",
+      tagIds: JSON.stringify([...(filters?.tagIds ?? [])].sort()),
+      dealStatus: filters?.dealStatus ?? '',
+      pageId: filters?.pageId ?? '',
+      campaignIds: JSON.stringify([...(filters?.campaignIds ?? [])].sort()),
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
       onlyLeads: filters?.onlyLeads ?? false,
       withoutLead: filters?.withoutLead ?? false,
       pendingReply: filters?.pendingReply ?? false,
       search: filters?.search?.trim() ?? "",
+      lastMessageFrom: filters?.lastMessageFrom ?? "",
+      lastMessageTo: filters?.lastMessageTo ?? "",
       accessibleSessionKey,
     }),
     queryFn: async () => {
@@ -534,7 +598,8 @@ export function useWhatsAppUnreadCount(
       });
     },
     enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
-    refetchInterval: WHATSAPP_CONVERSATIONS_REFETCH_MS,
+    refetchInterval: (currentQuery) =>
+      currentQuery.state.status === 'error' ? false : WHATSAPP_CONVERSATIONS_REFETCH_MS,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: options?.refetchOnWindowFocus ?? true,

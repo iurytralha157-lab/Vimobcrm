@@ -3,6 +3,7 @@ package leads
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"reflect"
 	"strings"
@@ -81,6 +82,51 @@ func TestParseDashboardFilterPreservesDefaultsAndAllCompatibility(t *testing.T) 
 	}
 	if filter.CountEntries {
 		t.Fatal("dashboard source entry counts must remain opt-in")
+	}
+}
+
+func TestParseDashboardFilterAcceptsRepeatedCampaignsAndLegacySelection(t *testing.T) {
+	filter, err := ParseDashboardFilter(url.Values{
+		"campaignId":  {" legacy-campaign "},
+		"campaignIds": {" campaign-a ", "campaign-b,phase-2", "campaign-a", "all", " "},
+	})
+	if err != nil {
+		t.Fatalf("ParseDashboardFilter() error = %v", err)
+	}
+	want := []string{"legacy-campaign", "campaign-a", "campaign-b,phase-2"}
+	if filter.CampaignID != "legacy-campaign" || !reflect.DeepEqual(filter.CampaignIDs, want) {
+		t.Fatalf("campaign selections = (%q, %#v), want %#v", filter.CampaignID, filter.CampaignIDs, want)
+	}
+
+	all, err := ParseDashboardFilter(url.Values{"campaignId": {"ALL"}, "campaignIds": {"", "all"}})
+	if err != nil || len(all.CampaignIDs) != 0 {
+		t.Fatalf("all campaigns should leave the filter open: %#v, %v", all.CampaignIDs, err)
+	}
+}
+
+func TestParseDashboardFilterBoundsRepeatedCampaigns(t *testing.T) {
+	tooMany := make([]string, maxDashboardCampaignIDs+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("campaign-%d", index)
+	}
+	for name, values := range map[string]url.Values{
+		"too many unique campaigns": {"campaignIds": tooMany},
+		"oversized campaign item":   {"campaignIds": {strings.Repeat("c", 256)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseDashboardFilter(values); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("ParseDashboardFilter() error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+
+	duplicates := make([]string, maxDashboardCampaignIDs+1)
+	for index := range duplicates {
+		duplicates[index] = "campaign-a"
+	}
+	filter, err := ParseDashboardFilter(url.Values{"campaignIds": duplicates})
+	if err != nil || !reflect.DeepEqual(filter.CampaignIDs, []string{"campaign-a"}) {
+		t.Fatalf("duplicate selections should count once: %#v, %v", filter.CampaignIDs, err)
 	}
 }
 

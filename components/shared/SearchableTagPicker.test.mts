@@ -27,6 +27,14 @@ test("criacao de tag depende da permissao e selecoes indisponiveis podem ser rem
   );
   assert.match(source, /Criar nova tag/);
   assert.match(source, /unavailableTagIds\.map\(\(tagId\) =>/);
-  assert.match(source, /aria-label="Remover tag indisponível"/);
-  assert.match(source, /Não foi possível carregar as tags/);
+  assert.match(source, /itemNameSingular = "tag"/);
+  assert.match(source, /itemNamePlural = "tags"/);
+  assert.match(source, /aria-label=\{`Remover \$\{itemNameSingular\} indisponível`\}/);
+  assert.match(source, /Não foi possível carregar as \{itemNamePlural\}/);
+});
+
+test("campanhas podem usar IDs com maiúsculas distintas sem alterar comparação de tags", () => {
+  assert.match(source, /caseSensitiveIds = false/);
+  assert.match(source, /caseSensitiveIds \? value\.trim\(\) : normalizeTagId\(value\)/);
+  assert.match(source, /onClearSelection && selectedCount > 0/);
 });

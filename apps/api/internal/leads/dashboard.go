@@ -1609,11 +1609,15 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		where = append(where, searchtext.AnySQL([]string{"l.name", "l.email", "l.phone"}, fmt.Sprintf("$%d", index)))
 	}
 
+	campaignIDs, err := normalizeDashboardCampaignFilterIDs(filter.CampaignID, filter.CampaignIDs)
+	if err != nil {
+		return nil, nil, err
+	}
 	addLeadAttributionFilterCondition(&args, &where, "l", "dlm", leadAttributionFilter{
-		Page:     filter.PageID,
-		Campaign: filter.CampaignID,
-		AdSet:    filter.AdSetID,
-		Ad:       filter.AdID,
+		Page:      filter.PageID,
+		Campaigns: campaignIDs,
+		AdSet:     filter.AdSetID,
+		Ad:        filter.AdID,
 	})
 
 	return where, args, nil

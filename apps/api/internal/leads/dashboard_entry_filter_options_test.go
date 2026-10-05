@@ -24,6 +24,7 @@ func TestDashboardEntryFilterOptionsUseArrivalDateAndCurrentCardScope(t *testing
 		TagID:       "55555555-5555-4555-8555-555555555555",
 		SearchQuery: "contato",
 		PageID:      "selected-page",
+		CampaignIDs: []string{"campaign-a", "campaign-b"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -45,14 +46,23 @@ func TestDashboardEntryFilterOptionsUseArrivalDateAndCurrentCardScope(t *testing
 			t.Errorf("entry filter option query is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"l.created_at >=", "l.created_at <=", "btrim(entry.page_id) ="} {
+	for _, forbidden := range []string{"l.created_at >=", "l.created_at <=", "btrim(entry.page_id) =", "btrim(entry.campaign_id) = any("} {
 		if strings.Contains(query, forbidden) {
 			t.Errorf("entry filter option query has a card-date or page predicate: %q", forbidden)
 		}
 	}
 	for _, arg := range args {
-		if arg == "selected-page" {
-			t.Fatal("selected page must leave page options available; descendants are narrowed by the same row")
+		switch value := arg.(type) {
+		case string:
+			if value == "selected-page" {
+				t.Fatal("selected page must leave page options available; descendants are narrowed by the same row")
+			}
+		case []string:
+			for _, selected := range value {
+				if selected == "campaign-a" || selected == "campaign-b" {
+					t.Fatalf("selected campaigns must leave campaign options available, found argument %#v", value)
+				}
+			}
 		}
 	}
 }

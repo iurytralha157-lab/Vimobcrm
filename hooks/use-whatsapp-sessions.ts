@@ -48,6 +48,8 @@ export type WhatsAppSessionList = WhatsAppSession[] & {
 type UseWhatsAppSessionsOptions = {
   enabled?: boolean;
   live?: boolean;
+  retry?: boolean;
+  timeoutMs?: number;
 };
 
 export interface WhatsAppSessionAccess {
@@ -119,12 +121,13 @@ export function useWhatsAppSessions(options: UseWhatsAppSessionsOptions = {}) {
     queryKey: whatsappQueryKeys.sessions(scope),
     queryFn: async () => {
       if (!scope.userId || !scope.organizationId) return [] as WhatsAppSessionList;
-      const response = await whatsappAPI.getSessions(scope.organizationId);
+      const response = await whatsappAPI.getSessions(scope.organizationId, options.timeoutMs);
       const sessions = (response.data || []).map((session) => normalizeSession(session as WhatsAppSession)) as WhatsAppSessionList;
       sessions.meta = response.meta;
       return sessions;
     },
     enabled: options.enabled !== false && !!scope.organizationId && !!scope.userId,
+    retry: options.retry,
     refetchInterval: live ? 15_000 : 60_000,
     refetchIntervalInBackground: false,
     staleTime: live ? 0 : 60_000,

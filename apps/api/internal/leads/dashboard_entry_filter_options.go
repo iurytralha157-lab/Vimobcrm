@@ -112,7 +112,8 @@ func (repo Repository) buildDashboardEntryFilterOptionsQuery(tenantContext tenan
 	// still exactly match the KPI. Page is applied to descendants after scanning.
 	optionsFilter := filter
 	optionsFilter.Source, optionsFilter.PageID = "", ""
-	optionsFilter.CampaignID, optionsFilter.AdSetID, optionsFilter.AdID = "", "", ""
+	optionsFilter.CampaignID, optionsFilter.CampaignIDs = "", nil
+	optionsFilter.AdSetID, optionsFilter.AdID = "", ""
 	cte, entryWhere, args, err := repo.buildDashboardEntriesCTE(tenantContext, optionsFilter)
 	if err != nil {
 		return "", nil, err

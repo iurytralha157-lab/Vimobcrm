@@ -68,8 +68,8 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
   const unattributed = data?.unattributed.leadCount ?? 0;
 
   return (
-    <section ref={sectionRef} aria-labelledby="dashboard-campaigns-title">
-      <Card className="min-w-0 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+    <section ref={sectionRef} aria-labelledby="dashboard-campaigns-title" className="h-full min-w-0">
+      <Card className="h-full min-w-0 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
         <CardHeader className="px-4 pb-2 pt-4">
           <div className="flex items-center justify-between gap-3">
             <CardTitle id="dashboard-campaigns-title" className="flex min-w-0 items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
@@ -101,33 +101,36 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
               tabIndex={rows.length > 8 ? 0 : undefined}
               className="app-scrollbar max-h-[448px] overflow-y-auto overscroll-contain rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
             >
-              <div role="list" className="space-y-1 pr-1">
-                {rows.map((campaign) => (
+              <div role="list" className="space-y-1 pr-4 sm:pr-5">
+                {rows.map((campaign, index) => {
+                  const rowKey = `${campaign.key}:${index}`;
+                  const expanded = expandedCampaignKey === rowKey;
+                  return (
                   <div
-                    key={campaign.key}
+                    key={rowKey}
                     role="listitem"
                     aria-label={`${campaign.name}${duplicateNames.has(campaign.name) ? `, ID ${campaign.campaignId ?? campaign.key}` : ""}: ${campaign.leadCount} ${campaign.leadCount === 1 ? "lead" : "leads"}`}
-                    className={`grid grid-cols-[minmax(96px,24%)_minmax(0,1fr)_auto] gap-3 border-b border-[var(--app-border)] last:border-b-0 sm:grid-cols-[minmax(160px,28%)_minmax(0,1fr)_auto] ${expandedCampaignKey === campaign.key ? "min-h-[52px] items-start py-2" : "h-[52px] items-center"}`}
-                    style={rows.length > 40 && expandedCampaignKey !== campaign.key ? { contentVisibility: "auto", containIntrinsicSize: "52px" } : undefined}
+                    className={`grid grid-cols-[minmax(96px,24%)_minmax(0,1fr)_auto] gap-3 border-b border-[var(--app-border)] last:border-b-0 sm:grid-cols-[minmax(160px,28%)_minmax(0,1fr)_auto] ${expanded ? "min-h-[52px] items-start py-2" : "h-[52px] items-center"}`}
+                    style={rows.length > 40 && !expanded ? { contentVisibility: "auto", containIntrinsicSize: "52px" } : undefined}
                   >
                     <button
                       type="button"
                       title="Ver nome completo da campanha"
                       aria-label={`Ver campanha ${campaign.name}${duplicateNames.has(campaign.name) ? `, ID ${campaign.campaignId ?? campaign.key}` : ""}`}
-                      aria-pressed={expandedCampaignKey === campaign.key}
-                      onClick={() => setExpandedCampaignKey((current) => current === campaign.key ? null : campaign.key)}
+                      aria-pressed={expanded}
+                      onClick={() => setExpandedCampaignKey((current) => current === rowKey ? null : rowKey)}
                       className="min-w-0 text-left text-[11px] font-light leading-[14px] text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-[12px]"
                     >
-                      <span className={expandedCampaignKey === campaign.key ? "block break-all" : "line-clamp-2 break-all"}>{campaign.name}</span>
+                      <span className={expanded ? "block break-all" : "line-clamp-2 break-all"}>{campaign.name}</span>
                       {duplicateNames.has(campaign.name) ? (
-                        <span className={`block text-[10px] text-[var(--app-text-tertiary)] ${expandedCampaignKey === campaign.key ? "break-all" : "truncate"}`}>
-                          ID {expandedCampaignKey === campaign.key
+                        <span className={`block text-[10px] text-[var(--app-text-tertiary)] ${expanded ? "break-all" : "truncate"}`}>
+                          ID {expanded
                             ? campaign.campaignId ?? campaign.key
                             : campaign.campaignId ? `…${campaign.campaignId.slice(-8)}` : campaign.key.slice(-8)}
                         </span>
                       ) : null}
                     </button>
-                    <span className="block min-w-0 rounded-[6px] bg-[var(--app-surface-soft)]" style={{ height: barHeight, marginTop: expandedCampaignKey === campaign.key ? 4 : undefined }} aria-hidden="true">
+                    <span className="block min-w-0 rounded-[6px] bg-[var(--app-surface-soft)]" style={{ height: barHeight, marginTop: expanded ? 4 : undefined }} aria-hidden="true">
                       <span
                         className="block rounded-[6px] bg-primary"
                         style={{
@@ -137,11 +140,12 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
                         }}
                       />
                     </span>
-                    <span className="min-w-8 text-right text-[11px] font-medium tabular-nums text-[var(--app-text-primary)] sm:text-[12px]">
+                    <span className="min-w-[44px] justify-self-end rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-center text-[11px] font-medium tabular-nums text-[var(--app-text-primary)] sm:text-[12px]">
                       {campaign.leadCount.toLocaleString("pt-BR")}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

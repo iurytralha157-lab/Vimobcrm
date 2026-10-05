@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,80 @@ func TestDashboardEntriesApplyCurrentCardScopeAndSameOccurrenceAttribution(t *te
 	}
 	if len(args) < 10 || args[0] != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("unexpected scoped arguments: %#v", args)
+	}
+}
+
+func TestDashboardEntriesMatchAnySelectedCampaignOnTheSameArrival(t *testing.T) {
+	cte, entryWhere, args, err := (Repository{}).buildDashboardEntriesCTE(tenant.Context{
+		OrganizationID: dashboardTestUUID,
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, DashboardFilter{
+		PageID:      "page-a",
+		CampaignIDs: []string{"campaign-a", "campaign-b"},
+		AdSetID:     "adset-a",
+		AdID:        "ad-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"btrim(entry.page_id) =", "btrim(entry.campaign_id) = any(",
+		"btrim(entry.campaign_name) = any(", "btrim(entry.utm_campaign) = any(",
+		"btrim(entry.adset_id) =", "btrim(entry.ad_id) =",
+	} {
+		if !strings.Contains(entryWhere, fragment) {
+			t.Errorf("same-entry filter is missing %q: %s", fragment, entryWhere)
+		}
+	}
+	if strings.Contains(cte, "entry.campaign_id = any(") {
+		t.Fatal("campaign selection must not restrict cards before assembling their arrivals")
+	}
+	var selected []string
+	for _, argument := range args {
+		if values, ok := argument.([]string); ok {
+			selected = values
+		}
+	}
+	if !reflect.DeepEqual(selected, []string{"campaign-a", "campaign-b"}) {
+		t.Fatalf("selected campaigns = %#v", selected)
+	}
+}
+
+func TestDashboardCardsMatchAnyCampaignWithinOneAttributionEvent(t *testing.T) {
+	where, args, err := (Repository{}).buildDashboardLeadWhere(tenant.Context{
+		OrganizationID: dashboardTestUUID,
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, DashboardFilter{
+		PageID:      "page-a",
+		CampaignIDs: []string{"campaign-a", "campaign-b"},
+		AdSetID:     "adset-a",
+	}, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := strings.Join(where, " and ")
+	for _, fragment := range []string{
+		"entry.page_id =", "entry.campaign_id = any(", "entry.campaign_name = any(",
+		"entry.utm_campaign = any(", "entry.adset_id =", "dlm.campaign_id = any(",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Errorf("card attribution filter is missing %q: %s", fragment, query)
+		}
+	}
+	if strings.Count(query, "from public.lead_entry_events entry") != 1 ||
+		strings.Count(query, "from public.lead_meta dlm") != 1 {
+		t.Fatalf("selected campaigns must share one attribution entry (with one legacy meta fallback): %s", query)
+	}
+	var selected []string
+	for _, argument := range args {
+		if values, ok := argument.([]string); ok {
+			selected = values
+		}
+	}
+	if !reflect.DeepEqual(selected, []string{"campaign-a", "campaign-b"}) {
+		t.Fatalf("selected campaigns = %#v", selected)
 	}
 }
 

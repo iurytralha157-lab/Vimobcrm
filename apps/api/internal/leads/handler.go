@@ -14,9 +14,10 @@ import (
 )
 
 type Handler struct {
-	repo             Repository
-	publisher        realtime.Publisher
-	moveStageLimiter *moveStageRateLimiter
+	repo                  Repository
+	publisher             realtime.Publisher
+	moveStageLimiter      *moveStageRateLimiter
+	creativeMediaResolver dashboardCreativeMediaResolver
 }
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {

@@ -295,7 +295,7 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 		select `+conversationSelectFields()+`
 		from public.whatsapp_conversations wc
 		left join public.whatsapp_sessions ws on ws.id = wc.session_id
-		left join public.leads l on l.id = wc.lead_id
+		left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
 		left join public.stages stage on stage.id = l.stage_id
 		where `+strings.Join(where, " and ")+`
@@ -349,9 +349,147 @@ func (repo Repository) CountUnreadMessages(ctx context.Context, tenantContext te
 		select coalesce(sum(greatest(wc.unread_count, 0)), 0)::bigint
 		from public.whatsapp_conversations wc
 		left join public.whatsapp_sessions ws on ws.id = wc.session_id
-		left join public.leads l on l.id = wc.lead_id
+		left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 		where `+strings.Join(where, " and "), args...).Scan(&count)
 	return count, err
+}
+
+// ListConversationFilterOptions exposes only values represented by leads on
+// conversations the caller can currently view. Session, archive and date
+// scope are preserved; selected lead filters do not hide other choices.
+func (repo Repository) ListConversationFilterOptions(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) (ConversationFilterOptions, error) {
+	options := ConversationFilterOptions{
+		Pipelines: []ConversationFilterOption{}, Teams: []ConversationFilterOption{},
+		Users: []ConversationFilterOption{}, Sources: []string{},
+		Tags: []ConversationFilterOption{}, Pages: []ConversationFilterOption{},
+		Campaigns: []ConversationFilterOption{},
+	}
+	scope := ConversationListFilter{
+		SessionID: filter.SessionID, SessionIDs: filter.SessionIDs,
+		AccessibleProvided: filter.AccessibleProvided, HideGroups: filter.HideGroups,
+		ShowArchived: filter.ShowArchived, LastMessageFrom: filter.LastMessageFrom,
+		LastMessageTo: filter.LastMessageTo,
+	}
+	args, where, empty, err := conversationFilterSQL(tenantContext, scope)
+	if err != nil || empty {
+		return options, err
+	}
+	campaignOptionWhere := "a.campaign_id is not null"
+	if pageID := strings.TrimSpace(filter.PageID); pageID != "" {
+		if len(pageID) > 255 {
+			return options, fmt.Errorf("%w: pageId is invalid", ErrInvalidInput)
+		}
+		args = append(args, pageID)
+		campaignOptionWhere += fmt.Sprintf(" and a.page_id = $%d", len(args))
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with visible_leads as materialized (
+			select distinct l.id, l.organization_id, l.pipeline_id, l.team_id,
+				l.assigned_user_id, l.source, l.meta_campaign_id, l.utm_campaign
+			from public.whatsapp_conversations wc
+			join public.whatsapp_sessions ws on ws.id = wc.session_id
+			join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
+			where `+strings.Join(where, " and ")+`
+		), attribution as materialized (
+			select nullif(btrim(entry.page_id), '') as page_id,
+				nullif(btrim(entry.page_name), '') as page_name,
+				coalesce(nullif(btrim(entry.campaign_id), ''), nullif(btrim(entry.campaign_name), ''),
+					nullif(btrim(entry.utm_campaign), '')) as campaign_id,
+				coalesce(nullif(btrim(entry.campaign_name), ''), nullif(btrim(entry.utm_campaign), ''),
+					nullif(btrim(entry.campaign_id), '')) as campaign_name
+			from visible_leads l
+			join public.lead_entry_events entry on entry.organization_id = l.organization_id
+				and entry.lead_id = l.id and entry.is_countable = true
+			union all
+			select nullif(btrim(lm.page_id), ''), null,
+				coalesce(nullif(btrim(lm.campaign_id), ''), nullif(btrim(lm.campaign_name), '')),
+				coalesce(nullif(btrim(lm.campaign_name), ''), nullif(btrim(lm.campaign_id), ''))
+			from visible_leads l
+			join public.lead_meta lm on lm.organization_id = l.organization_id and lm.lead_id = l.id
+			union all
+			select null, null,
+				coalesce(nullif(btrim(l.meta_campaign_id), ''), nullif(btrim(l.utm_campaign), '')),
+				coalesce(nullif(btrim(l.utm_campaign), ''), nullif(btrim(l.meta_campaign_id), ''))
+			from visible_leads l
+		)
+		select kind, id, min(name) as name from (
+			(select distinct 'pipeline'::text as kind, p.id::text as id, p.name::text as name
+			 from visible_leads l join public.pipelines p on p.id = l.pipeline_id and p.organization_id = l.organization_id
+			 order by name, id limit 300)
+			union all
+			(select distinct 'team'::text, team.id::text, team.name::text
+			 from visible_leads l
+			 join public.team_members tm on tm.organization_id = l.organization_id
+				and tm.user_id = l.assigned_user_id and coalesce(tm.is_active, true) = true
+			 join public.teams team on team.id = tm.team_id and team.organization_id = tm.organization_id
+				and team.is_active = true
+			 join public.organization_members membership on membership.organization_id = tm.organization_id
+				and membership.user_id = tm.user_id and coalesce(membership.is_active, false) = true
+				and membership.deleted_at is null
+			 order by 3, 2 limit 300)
+			union all
+			(select distinct 'team'::text, team.id::text, team.name::text
+			 from visible_leads l
+			 join public.teams team on team.id = l.team_id and team.organization_id = l.organization_id
+				and team.is_active = true
+			 where l.assigned_user_id is null
+			 order by 3, 2 limit 300)
+			union all
+			(select distinct 'user'::text, member.id::text, member.name::text
+			 from visible_leads l join public.users member on member.id = l.assigned_user_id
+				and member.organization_id = l.organization_id and coalesce(member.is_active, false) = true
+			 order by 3, 2 limit 300)
+			union all
+			(select distinct 'source'::text, btrim(l.source), btrim(l.source)
+			 from visible_leads l where nullif(btrim(l.source), '') is not null
+			 order by 2, 3 limit 300)
+			union all
+			(select distinct 'tag'::text, tag.id::text, tag.name::text
+			 from visible_leads l
+			 join public.lead_tags lt on lt.organization_id = l.organization_id and lt.lead_id = l.id
+			 join public.tags tag on tag.id = lt.tag_id and tag.organization_id = lt.organization_id
+			 order by 3, 2 limit 300)
+			union all
+			(select 'page'::text, a.page_id, min(coalesce(a.page_name, a.page_id))
+			 from attribution a where a.page_id is not null
+			 group by a.page_id order by 3, 2 limit 500)
+			union all
+			(select 'campaign'::text, a.campaign_id, min(coalesce(a.campaign_name, a.campaign_id))
+			 from attribution a where `+campaignOptionWhere+`
+			 group by a.campaign_id order by 3, 2 limit 500)
+		) scoped_options
+		group by kind, id
+		order by kind, name, id
+	`, args...)
+	if err != nil {
+		return options, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, id, name string
+		if err := rows.Scan(&kind, &id, &name); err != nil {
+			return options, err
+		}
+		value := ConversationFilterOption{ID: id, Name: name}
+		switch kind {
+		case "pipeline":
+			options.Pipelines = append(options.Pipelines, value)
+		case "team":
+			options.Teams = append(options.Teams, value)
+		case "user":
+			options.Users = append(options.Users, value)
+		case "source":
+			options.Sources = append(options.Sources, id)
+		case "tag":
+			options.Tags = append(options.Tags, value)
+		case "page":
+			options.Pages = append(options.Pages, value)
+		case "campaign":
+			options.Campaigns = append(options.Campaigns, value)
+		}
+	}
+	return options, rows.Err()
 }
 
 // conversationFilterSQL is the single source of truth for list and unread
@@ -359,6 +497,9 @@ func (repo Repository) CountUnreadMessages(ctx context.Context, tenantContext te
 // client that has not resolved an allowed session never falls back to "all".
 func conversationFilterSQL(tenantContext tenant.Context, filter ConversationListFilter) ([]any, []string, bool, error) {
 	if filter.AccessibleProvided && len(filter.SessionIDs) == 0 {
+		return nil, nil, true, nil
+	}
+	if filter.WithoutLead && conversationHasLeadFilters(filter) {
 		return nil, nil, true, nil
 	}
 
@@ -404,6 +545,82 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 		}
 		where = append(where, "wc.session_id in ("+strings.Join(placeholders, ", ")+")")
 	}
+	if filter.LastMessageFrom != nil {
+		addFilter("wc.last_message_at >= $%d::timestamptz", *filter.LastMessageFrom)
+	}
+	if filter.LastMessageTo != nil {
+		addFilter("wc.last_message_at <= $%d::timestamptz", *filter.LastMessageTo)
+	}
+	if source := strings.TrimSpace(filter.LeadSource); source != "" {
+		addFilter("(l.organization_id = wc.organization_id and l.source = $%d)", source)
+	}
+	for _, item := range []struct {
+		name   string
+		value  string
+		column string
+	}{
+		{"pipelineId", filter.PipelineID, "l.pipeline_id"},
+		{"teamId", filter.TeamID, "l.team_id"},
+	} {
+		if strings.TrimSpace(item.value) == "" {
+			continue
+		}
+		value, ok := normalizeUUID(item.value)
+		if !ok {
+			return nil, nil, false, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
+		}
+		if item.name == "teamId" {
+			// Match the Contacts/Dashboard current-assignee team semantics.
+			// An unassigned lead retains its recorded queue team.
+			if filter.UserID == "unassigned" {
+				addFilter("l.team_id = $%d::uuid", value)
+			} else {
+				addFilter(`exists (
+					select 1 from public.team_members tm
+					join public.teams team on team.id = tm.team_id and team.organization_id = tm.organization_id and team.is_active = true
+					join public.users member on member.id = tm.user_id and member.organization_id = tm.organization_id and coalesce(member.is_active, false) = true
+					join public.organization_members membership on membership.organization_id = tm.organization_id
+						and membership.user_id = tm.user_id and coalesce(membership.is_active, false) = true
+						and membership.deleted_at is null
+					where tm.organization_id = wc.organization_id and tm.team_id = $%d::uuid
+						and tm.user_id = l.assigned_user_id and coalesce(tm.is_active, true) = true
+				)`, value)
+			}
+		} else {
+			addFilter(item.column+" = $%d::uuid", value)
+		}
+	}
+	if userID := strings.TrimSpace(filter.UserID); userID != "" {
+		if userID == "unassigned" {
+			where = append(where, "l.assigned_user_id is null")
+		} else {
+			value, ok := normalizeUUID(userID)
+			if !ok {
+				return nil, nil, false, fmt.Errorf("%w: userId is invalid", ErrInvalidInput)
+			}
+			addFilter("l.assigned_user_id = $%d::uuid", value)
+		}
+	}
+	if len(filter.TagIDs) > 0 {
+		ids, err := normalizedConversationUUIDs(filter.TagIDs, 50, "tagIds")
+		if err != nil {
+			return nil, nil, false, err
+		}
+		addFilter(`exists (
+			select 1 from public.lead_tags lt
+			where lt.organization_id = wc.organization_id and lt.lead_id = l.id
+				and lt.tag_id = any($%d::uuid[])
+		)`, ids)
+	}
+	if status := strings.TrimSpace(filter.DealStatus); status != "" {
+		if status != "open" && status != "won" && status != "lost" {
+			return nil, nil, false, fmt.Errorf("%w: dealStatus is invalid", ErrInvalidInput)
+		}
+		addFilter("l.deal_status = $%d", status)
+	}
+	if err := appendConversationAttributionFilter(&args, &where, filter); err != nil {
+		return nil, nil, false, err
+	}
 	if filter.HideGroups {
 		where = append(where, "wc.is_group = false")
 	}
@@ -414,7 +631,18 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 		where = append(where, "wc.lead_id is null")
 	}
 	if filter.PendingReply {
-		where = append(where, "coalesce(wc.unread_count, 0) > 0")
+		// Reading an inbound message does not answer it. Use the indexed
+		// conversation timeline, excluding suppressed and reaction events.
+		where = append(where, `coalesce((
+			select not wm.from_me
+			from public.whatsapp_messages wm
+			where wm.organization_id = wc.organization_id
+			  and wm.conversation_id = wc.id
+			  and wm.capture_state is distinct from 'suppressed'
+			  and wm.reaction_to_message_id is null
+			order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
+			limit 1
+		), false)`)
 	}
 	search := strings.TrimSpace(filter.Search)
 	if search == "" && filter.ShowArchived {
@@ -446,6 +674,80 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 	}
 
 	return args, where, false, nil
+}
+
+func normalizedConversationUUIDs(values []string, maxItems int, field string) ([]string, error) {
+	if len(values) > maxItems {
+		return nil, fmt.Errorf("%w: %s contains too many values", ErrInvalidInput, field)
+	}
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		value, ok := normalizeUUID(strings.TrimSpace(raw))
+		if !ok {
+			return nil, fmt.Errorf("%w: %s contains invalid uuid", ErrInvalidInput, field)
+		}
+		result = append(result, value)
+	}
+	return uniqueConversationFilterValues(result), nil
+}
+
+// Page and campaign must describe one historical entry, or one legacy
+// lead_meta row. Never satisfy them from separate arrivals on the same lead.
+func appendConversationAttributionFilter(args *[]any, where *[]string, filter ConversationListFilter) error {
+	page := strings.TrimSpace(filter.PageID)
+	if len(page) > 255 {
+		return fmt.Errorf("%w: pageId is invalid", ErrInvalidInput)
+	}
+	campaigns := make([]string, 0, len(filter.CampaignIDs))
+	for _, raw := range filter.CampaignIDs {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if len(value) > 255 {
+			return fmt.Errorf("%w: campaignIds contains oversized value", ErrInvalidInput)
+		}
+		campaigns = append(campaigns, value)
+	}
+	campaigns = uniqueConversationFilterValues(campaigns)
+	if len(campaigns) > 50 {
+		return fmt.Errorf("%w: campaignIds contains too many values", ErrInvalidInput)
+	}
+	if page == "" && len(campaigns) == 0 {
+		return nil
+	}
+	pageClause := ""
+	if page != "" {
+		*args = append(*args, page)
+		pageClause = fmt.Sprintf(" and btrim(%%s.page_id) = $%d", len(*args))
+	}
+	campaignClause := ""
+	if len(campaigns) > 0 {
+		*args = append(*args, campaigns)
+		index := len(*args)
+		campaignClause = fmt.Sprintf(" and (btrim(%%s.campaign_id) = any($%d::text[]) or btrim(%%s.campaign_name) = any($%d::text[])%%s)", index, index)
+	}
+	eventCondition := "entry.organization_id = wc.organization_id and entry.lead_id = l.id and entry.is_countable = true"
+	legacyCondition := "lm.organization_id = wc.organization_id and lm.lead_id = l.id"
+	if pageClause != "" {
+		eventCondition += fmt.Sprintf(pageClause, "entry")
+		legacyCondition += fmt.Sprintf(pageClause, "lm")
+	}
+	if campaignClause != "" {
+		index := len(*args)
+		eventCondition += fmt.Sprintf(campaignClause, "entry", "entry", fmt.Sprintf(" or btrim(entry.utm_campaign) = any($%d::text[])", index))
+		legacyCondition += fmt.Sprintf(campaignClause, "lm", "lm", "")
+	}
+	legacy := fmt.Sprintf("exists (select 1 from public.lead_meta lm where %s)", legacyCondition)
+	if page == "" && len(campaigns) > 0 {
+		index := len(*args)
+		legacy = fmt.Sprintf("(btrim(l.meta_campaign_id) = any($%d::text[]) or btrim(l.utm_campaign) = any($%d::text[]) or %s)", index, index, legacy)
+	}
+	*where = append(*where, fmt.Sprintf(`(l.organization_id = wc.organization_id and (
+		exists (select 1 from public.lead_entry_events entry where %s)
+		or %s
+	))`, eventCondition, legacy))
+	return nil
 }
 
 func encodeConversationCursor(conversation Conversation) string {
@@ -494,7 +796,7 @@ func (repo Repository) GetConversationSnapshot(ctx context.Context, tenantContex
 		select `+conversationSelectFields()+`
 		from public.whatsapp_conversations wc
 		left join public.whatsapp_sessions ws on ws.id = wc.session_id
-		left join public.leads l on l.id = wc.lead_id
+		left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
@@ -535,7 +837,7 @@ func (repo Repository) GetConversationForExpectedLead(ctx context.Context, tenan
 		select `+conversationSelectFields()+`
 		from public.whatsapp_conversations wc
 		left join public.whatsapp_sessions ws on ws.id = wc.session_id
-		left join public.leads l on l.id = wc.lead_id
+		left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
@@ -1081,7 +1383,7 @@ func (repo Repository) ensureCanViewConversationForLead(
 			select 1
 			from public.whatsapp_conversations wc
 			left join public.whatsapp_sessions ws on ws.id = wc.session_id
-			left join public.leads l on l.id = wc.lead_id
+			left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
@@ -1114,7 +1416,7 @@ func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantCont
 			select 1
 			from public.whatsapp_conversations wc
 			left join public.whatsapp_sessions ws on ws.id = wc.session_id
-			left join public.leads l on l.id = wc.lead_id
+			left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
 			  and wc.id = $6::uuid
@@ -1251,6 +1553,7 @@ func conversationSelectFields() string {
 		ws.provider,
 		l.id::text,
 		l.name,
+		l.source,
 		l.whatsapp_avatar_url,
 		l.pipeline_id::text,
 		l.stage_id::text,
@@ -1324,6 +1627,7 @@ func leadHistoryConversationSelectFields() string {
 		ws.provider,
 		l.id::text,
 		l.name,
+		l.source,
 		l.whatsapp_avatar_url,
 		l.pipeline_id::text,
 		l.stage_id::text,
@@ -1473,7 +1777,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	var leadID, contactName, contactPhone, contactPicture, contactPresence, lastMessage pgtype.Text
 	var presenceUpdatedAt, lastMessageAt, archivedAt, deletedAt pgtype.Timestamptz
 	var sessionID, sessionInstanceName, sessionPhone, sessionStatus, sessionOrgID, sessionProvider pgtype.Text
-	var leadRefID, leadName, leadAvatar, leadPipelineID, leadStageID pgtype.Text
+	var leadRefID, leadName, leadSource, leadAvatar, leadPipelineID, leadStageID pgtype.Text
 	var leadAssigneeID, leadAssigneeName, leadAssigneeAvatar pgtype.Text
 	var pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
 	var tagsJSON string
@@ -1504,6 +1808,7 @@ func scanConversation(row scanner) (Conversation, error) {
 		&sessionProvider,
 		&leadRefID,
 		&leadName,
+		&leadSource,
 		&leadAvatar,
 		&leadPipelineID,
 		&leadStageID,
@@ -1547,6 +1852,7 @@ func scanConversation(row scanner) (Conversation, error) {
 		lead := &LeadLite{
 			ID:                leadRefID.String,
 			Name:              textValue(leadName),
+			Source:            textPtr(leadSource),
 			WhatsAppAvatarURL: textPtr(leadAvatar),
 			PipelineID:        textPtr(leadPipelineID),
 			StageID:           textPtr(leadStageID),

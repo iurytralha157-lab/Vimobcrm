@@ -67,6 +67,8 @@ import {
   apiDashboardStatsResponseSchema,
   apiDashboardLeadDistributionResponseSchema,
   apiDashboardCampaignsResponseSchema,
+  apiDashboardCreativesResponseSchema,
+  apiDashboardCreativeMediaResponseSchema,
   apiDashboardFirstContactResponseSchema,
   apiDashboardTopBrokersResponseSchema,
   dashboardDateRangeSchema,
@@ -1703,6 +1705,21 @@ test("admin e dashboard rejeitam referencias inseguras", () => {
   );
 });
 
+test("dashboard valida campanhas múltiplas sem perder maiúsculas ou vírgulas", () => {
+  assert.deepEqual(
+    dashboardFiltersSchema.parse({
+      campaignIds: [" Promo, Setembro ", "promo", "Promo, Setembro"],
+    }).campaignIds,
+    ["Promo, Setembro", "promo"],
+  );
+  assert.equal(
+    dashboardFiltersSchema.safeParse({ campaignIds: Array.from({ length: 51 }, (_, index) => `c${index}`) }).success,
+    false,
+  );
+  assert.equal(dashboardFiltersSchema.safeParse({ campaignIds: [""] }).success, false);
+  assert.equal(dashboardFiltersSchema.safeParse({ campaignIds: ["x".repeat(256)] }).success, false);
+});
+
 test("dashboard valida os detalhes que a UI consome e preserva extensoes", () => {
   const stats = {
     totalLeads: 3,
@@ -2064,6 +2081,74 @@ test("dashboard aceita todas as campanhas, nomes externos longos e contagens sep
     }).success,
     false,
   );
+});
+
+test("dashboard valida até dez criativos e anúncios com links de mídia opcionais", () => {
+  const creative = {
+    key: "creative:123",
+    attributionLevel: "creative",
+    creativeId: "123",
+    adId: "456",
+    name: "Vídeo do imóvel",
+    campaignName: "Campanha A",
+    campaignCount: 1,
+    leadCount: 12,
+    entryCount: 13,
+    thumbnailUrl: "https://example.com/thumb.jpg",
+    imageUrl: "https://example.com/image.jpg",
+    videoUrl: "https://example.com/video.mp4",
+    instagramUrl: null,
+    permalinkUrl: "https://example.com/post",
+    isVideo: true,
+  };
+  const ad = {
+    ...creative,
+    key: "ad:789",
+    attributionLevel: "ad",
+    creativeId: null,
+    adId: "789",
+    name: "Anúncio sem ID de criativo",
+    campaignName: null,
+    campaignCount: 2,
+    leadCount: 3,
+    entryCount: 3,
+    thumbnailUrl: null,
+    imageUrl: null,
+    videoUrl: null,
+    instagramUrl: null,
+    permalinkUrl: null,
+    isVideo: false,
+  };
+
+  const valid = { data: { creatives: [creative, ad] } };
+  assert.equal(apiDashboardCreativesResponseSchema.parse(valid).data.creatives.length, 2);
+  assert.equal(apiDashboardCreativesResponseSchema.safeParse({ data: { creatives: [] } }).success, true);
+  const ten = Array.from({ length: 10 }, (_, index) => ({ ...creative, key: `creative:${index}` }));
+  assert.equal(apiDashboardCreativesResponseSchema.safeParse({
+    data: { creatives: ten },
+  }).success, true);
+  assert.equal(apiDashboardCreativesResponseSchema.safeParse({
+    data: { creatives: [...ten, ad] },
+  }).success, false);
+  assert.equal(apiDashboardCreativesResponseSchema.safeParse({
+    data: { creatives: [{ ...creative, leadCount: -1 }] },
+  }).success, false);
+  assert.equal(apiDashboardCreativesResponseSchema.safeParse({
+    data: { creatives: [{ ...creative, attributionLevel: "unknown" }] },
+  }).success, false);
+  const refreshedMedia = {
+    data: {
+      thumbnailUrl: "https://cdn.example.com/fresh.jpg",
+      imageUrl: null,
+      videoUrl: null,
+      instagramUrl: null,
+      permalinkUrl: null,
+    },
+  };
+  assert.equal(apiDashboardCreativeMediaResponseSchema.safeParse(refreshedMedia).success, true);
+  assert.equal(apiDashboardCreativeMediaResponseSchema.safeParse({
+    data: { ...refreshedMedia.data, thumbnailUrl: "javascript:alert(1)" },
+  }).success, false);
 });
 
 test("dashboard valida média de contato e redistribuições por corretor e origem", () => {

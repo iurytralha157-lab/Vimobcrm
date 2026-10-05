@@ -3,6 +3,10 @@ import {
   apiDashboardDealsEvolutionResponseSchema,
   apiDashboardCampaignsSchema,
   apiDashboardCampaignsResponseSchema,
+  apiDashboardCreativesSchema,
+  apiDashboardCreativesResponseSchema,
+  apiDashboardCreativeMediaSchema,
+  apiDashboardCreativeMediaResponseSchema,
   apiDashboardExtraCountsSchema,
   apiDashboardExtraCountsResponseSchema,
   apiDashboardFirstContactSchema,
@@ -44,6 +48,7 @@ export type DashboardAPIFilters = {
   source?: string | null
   pageId?: string | null
   campaignId?: string | null
+  campaignIds?: string[] | null
   adSetId?: string | null
   adId?: string | null
   tagIds?: string[] | null
@@ -59,6 +64,8 @@ export type DashboardSourcePoint = z.infer<typeof apiDashboardSourceSchema>[numb
 export type DashboardTopBrokersResponse = z.infer<typeof apiDashboardTopBrokersSchema>
 export type DashboardLeadDistributionResponse = z.infer<typeof apiDashboardLeadDistributionSchema>
 export type DashboardCampaignsResponse = z.infer<typeof apiDashboardCampaignsSchema>
+export type DashboardCreativesResponse = z.infer<typeof apiDashboardCreativesSchema>
+export type DashboardCreativeMedia = z.infer<typeof apiDashboardCreativeMediaSchema>
 export type DashboardFirstContactResponse = z.infer<typeof apiDashboardFirstContactSchema>
 export type DashboardFirstContactLeadPageResponse = z.infer<typeof apiDashboardFirstContactLeadPageSchema>
 export type DashboardUpcomingTask = z.infer<typeof apiDashboardUpcomingTasksSchema>[number]
@@ -190,6 +197,50 @@ export async function getDashboardCampaigns(params: DashboardRequestContext & {
     'dashboard.campaigns',
   )
   return validated.data
+}
+
+export async function getDashboardCreatives(params: DashboardRequestContext & {
+  filters?: DashboardAPIFilters
+}) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.creatives')
+  const filters = parseDomainInput(
+    dashboardFiltersSchema,
+    normalizeDashboardFilters(params.filters),
+    'dashboard.creatives',
+  )
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/creatives', {
+    organizationId,
+    query: buildDashboardQuery(filters),
+    signal: params.signal,
+  })
+  return validateDomainResponse(
+    apiDashboardCreativesResponseSchema,
+    response,
+    'dashboard.creatives',
+  ).data
+}
+
+export async function getDashboardCreativeMedia(params: DashboardRequestContext & {
+  key: string
+  filters?: DashboardAPIFilters
+}) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.creative-media')
+  const key = parseDomainInput(z.string().trim().min(1).max(160), params.key, 'dashboard.creative-media.key')
+  const filters = parseDomainInput(
+    dashboardFiltersSchema,
+    normalizeDashboardFilters(params.filters),
+    'dashboard.creative-media',
+  )
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/creative-media', {
+    organizationId,
+    query: { ...buildDashboardQuery(filters), key },
+    signal: params.signal,
+  })
+  return validateDomainResponse(
+    apiDashboardCreativeMediaResponseSchema,
+    response,
+    'dashboard.creative-media',
+  ).data
 }
 
 export async function getDashboardFirstContact(params: DashboardRequestContext & {
@@ -327,6 +378,7 @@ export async function getDashboardTeamLeadIds(params: DashboardRequestContext & 
 }
 
 export function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIFilters {
+  const campaignIds = normalizeDashboardCampaignIds(filters?.campaignIds)
   return {
     ...filters,
     pipelineId: normalizeDashboardFilterValue(filters?.pipelineId),
@@ -334,7 +386,8 @@ export function normalizeDashboardFilters(filters?: DashboardAPIFilters): Dashbo
     userId: normalizeDashboardFilterValue(filters?.userId),
     source: normalizeDashboardFilterValue(filters?.source),
     pageId: normalizeDashboardFilterValue(filters?.pageId),
-    campaignId: normalizeDashboardFilterValue(filters?.campaignId),
+    campaignId: campaignIds ? null : normalizeDashboardFilterValue(filters?.campaignId),
+    campaignIds,
     adSetId: normalizeDashboardFilterValue(filters?.adSetId),
     adId: normalizeDashboardFilterValue(filters?.adId),
     tagIds: normalizeDashboardTagIds(filters?.tagIds),
@@ -356,6 +409,7 @@ export function getDashboardFiltersQueryKey(filters?: DashboardAPIFilters) {
     source: normalized.source ?? null,
     pageId: normalized.pageId ?? null,
     campaignId: normalized.campaignId ?? null,
+    campaignIds: normalized.campaignIds ?? null,
     adSetId: normalized.adSetId ?? null,
     adId: normalized.adId ?? null,
     tagIds: normalizeDashboardTagQueryKey(normalized.tagIds, normalized.tagId),
@@ -383,6 +437,15 @@ function normalizeDashboardSearch(value?: string | null) {
 function normalizeDashboardTagIds(value?: string[] | null) {
   if (!Array.isArray(value)) return undefined
   const normalized = [...new Set(value.map((tagId) => tagId.trim()).filter(Boolean))].sort()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeDashboardCampaignIds(value?: string[] | null) {
+  if (!Array.isArray(value)) return undefined
+  const normalized = [...new Set(value
+    .filter((id): id is string => typeof id === 'string')
+    .map((id) => id.trim())
+    .filter((id) => id && id.toLowerCase() !== 'all'))].sort()
   return normalized.length > 0 ? normalized : undefined
 }
 
@@ -420,7 +483,8 @@ export function buildDashboardQuery(filters?: DashboardAPIFilters) {
     userId: filters?.userId,
     source: filters?.source,
     pageId: filters?.pageId,
-    campaignId: filters?.campaignId,
+    campaignId: filters?.campaignIds?.length ? undefined : filters?.campaignId,
+    campaignIds: filters?.campaignIds?.length ? filters.campaignIds : undefined,
     adSetId: filters?.adSetId,
     adId: filters?.adId,
     tagIds: filters?.tagIds?.join(','),
