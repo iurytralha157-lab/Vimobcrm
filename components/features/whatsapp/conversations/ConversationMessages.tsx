@@ -205,6 +205,7 @@ export function ConversationMessages({
                         && !item.message.media_url}
                       fromMe={item.message.from_me}
                       status={item.message.status ?? "sent"}
+                      deliveryFailureCode={item.message.metadata?.delivery_failure_code}
                       sentAt={item.message.sent_at}
                       senderName={item.message.sender_name ?? null}
                       isGroup={conversation.is_group}

@@ -110,6 +110,35 @@ func TestAutomationOriginIsServerControlled(t *testing.T) {
 	}
 }
 
+func TestWhatsAppOutboxRecipientNotRegisteredRequiresExplicitProviderReason(t *testing.T) {
+	tests := []struct {
+		name      string
+		lastError string
+		want      bool
+	}{
+		{
+			name:      "ambiguous HTTP with explicit rejection",
+			lastError: "Evolution Go operation send.text returned ambiguous HTTP 500: number +5511999991111@s.whatsapp.net is not registered on WhatsApp",
+			want:      true,
+		},
+		{name: "case insensitive", lastError: "NUMBER IS NOT REGISTERED ON WHATSAPP", want: true},
+		{name: "ambiguous outcome only", lastError: "Evolution Go operation send.text returned ambiguous HTTP 500", want: false},
+		{name: "disconnected session", lastError: "WhatsApp session disconnected", want: false},
+		{name: "generic number failure", lastError: "invalid number", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := whatsappOutboxRecipientNotRegistered(test.lastError); got != test.want {
+				t.Fatalf("whatsappOutboxRecipientNotRegistered() = %v, want %v", got, test.want)
+			}
+		})
+	}
+	if strings.Contains(whatsappRecipientNotRegisteredDescription, "5511999991111") ||
+		strings.Contains(whatsappRecipientNotRegisteredDescription, "@s.whatsapp.net") {
+		t.Fatal("customer phone leaked into the history description")
+	}
+}
+
 func TestSendMessageCommitsDurableStoragePathWithoutSigningBeforeOutbox(t *testing.T) {
 	sourceBytes, err := os.ReadFile("message_operations.go")
 	if err != nil {

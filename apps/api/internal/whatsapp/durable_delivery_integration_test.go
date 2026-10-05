@@ -52,6 +52,8 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	var edgeCalls atomic.Int32
 	var timeoutFirstRequest atomic.Bool
 	var timeoutProviderID string
+	var notRegisteredProviderID atomic.Value
+	notRegisteredProviderID.Store("")
 	var providerIDsMu sync.Mutex
 	providerIDs := []string{}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +78,11 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 				time.Sleep(150 * time.Millisecond)
 			}
 			w.Header().Set("Content-Type", "application/json")
+			if requestID == notRegisteredProviderID.Load().(string) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"number +5511999991111@s.whatsapp.net is not registered on WhatsApp"}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"messageId": requestID})
 		case "/message/react":
 			reactionCalls.Add(1)
@@ -1929,5 +1936,102 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	}
 	if !retainedRecentOutbox || !deletedOldSuccess || !deletedOldFailure {
 		t.Fatalf("outbox retention result = recent:%v old-success:%v old-failure:%v", retainedRecentOutbox, deletedOldSuccess, deletedOldFailure)
+	}
+
+	// An explicit provider rejection inside an ambiguous HTTP 500 still remains
+	// dead (no automatic retry). Its safe explanation must survive a fresh read
+	// without exposing the phone or creating duplicate history on recovery.
+	notRegisteredClientID := "not-registered-" + suffix
+	notRegisteredProviderID.Store(deterministicProviderMessageID(notRegisteredClientID))
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
+		Text: "attempt to an unregistered number", ClientMessageID: notRegisteredClientID,
+		ExpectedLeadID: leadID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var notRegisteredOutboxID, notRegisteredStatus, notRegisteredMessageStatus, notRegisteredLastError string
+	var notRegisteredMessageMetadata string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select outbox.id::text, outbox.status, message.status,
+		       coalesce(outbox.last_error, ''), message.metadata::text
+		from public.whatsapp_outbox as outbox
+		join public.whatsapp_messages as message
+		  on message.id = outbox.message_id and message.organization_id = outbox.organization_id
+		where outbox.organization_id = $1::uuid and outbox.client_message_id = $2
+	`, organizationID, notRegisteredClientID).Scan(
+		&notRegisteredOutboxID, &notRegisteredStatus, &notRegisteredMessageStatus,
+		&notRegisteredLastError, &notRegisteredMessageMetadata,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if notRegisteredStatus != "dead" || notRegisteredMessageStatus != "failed" ||
+		!whatsappOutboxRecipientNotRegistered(notRegisteredLastError) ||
+		!strings.Contains(notRegisteredMessageMetadata, whatsappRecipientNotRegisteredFailureCode) {
+		t.Fatalf("provider rejection state = outbox:%s message:%s metadata:%s", notRegisteredStatus, notRegisteredMessageStatus, notRegisteredMessageMetadata)
+	}
+	checkNotRegisteredTimeline := func() {
+		t.Helper()
+		var count int
+		var title, description, metadata string
+		if err := postgres.Pool().QueryRow(ctx, `
+			select count(*)::integer, max(title), max(description), max(metadata::text)
+			from public.lead_timeline_events
+			where organization_id = $1::uuid and lead_id = $2::uuid
+			  and event_type = 'whatsapp_message_failed'
+			  and metadata->>'outbox_id' = $3
+		`, organizationID, leadID, notRegisteredOutboxID).Scan(&count, &title, &description, &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 || title != "Envio não confirmado" ||
+			description != whatsappRecipientNotRegisteredDescription ||
+			!strings.Contains(metadata, whatsappRecipientNotRegisteredFailureCode) ||
+			strings.Contains(metadata, "5511999991111") || strings.Contains(metadata, "last_error") {
+			t.Fatalf("unsafe or missing rejection timeline: count=%d title=%q description=%q metadata=%s", count, title, description, metadata)
+		}
+	}
+	checkNotRegisteredTimeline()
+	terminalSyncTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.syncTerminalWhatsAppOutboxFailuresBatch(ctx, terminalSyncTx, []string{notRegisteredOutboxID}); err != nil {
+		_ = terminalSyncTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := terminalSyncTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	checkNotRegisteredTimeline()
+	// Simulate a terminal row created before the new projection. The safe read
+	// fallback must show its reason without a production backfill.
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_messages as message
+		set metadata = coalesce(message.metadata, '{}'::jsonb) - 'delivery_failure_code'
+		from public.whatsapp_outbox as outbox
+		where outbox.message_id = message.id
+		  and outbox.organization_id = message.organization_id
+		  and outbox.id = $1::uuid
+	`, notRegisteredOutboxID); err != nil {
+		t.Fatal(err)
+	}
+	messagesAfterFailure, err := repo.ListMessages(ctx, tenantContext, conversationID, MessageFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projectedFailureCode string
+	for _, message := range messagesAfterFailure.Messages {
+		if message.ClientMessageID != nil && *message.ClientMessageID == notRegisteredClientID {
+			projectedFailureCode, _ = message.Metadata["delivery_failure_code"].(string)
+			if len(message.Metadata) != 1 {
+				t.Fatalf("message projection exposed internal metadata: %#v", message.Metadata)
+			}
+			break
+		}
+	}
+	if projectedFailureCode != whatsappRecipientNotRegisteredFailureCode {
+		t.Fatalf("message read projection failure code = %q", projectedFailureCode)
 	}
 }

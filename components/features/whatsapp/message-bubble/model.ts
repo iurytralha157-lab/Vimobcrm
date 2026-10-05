@@ -4,6 +4,15 @@ import type { MessageMediaKind } from "../message-media";
 
 export type MessageBubbleMediaKind = MessageMediaKind | "text" | "reaction" | "deleted";
 
+export function getWhatsAppDeliveryFailureNotice(
+  fromMe: boolean,
+  status: string,
+  code: unknown,
+): string | null {
+  if (!fromMe || status !== "failed" || code !== "recipient_not_registered") return null;
+  return "Envio não confirmado. O provedor informou que este número não está cadastrado no WhatsApp.";
+}
+
 export function generateMessageWaveform(seed: string, count = 40): number[] {
   const bars: number[] = [];
   let hash = 0;

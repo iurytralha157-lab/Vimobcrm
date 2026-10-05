@@ -1779,6 +1779,7 @@ export function FloatingChat() {
                           mediaSize={item.message.media_size}
                           fromMe={item.message.from_me}
                           status={item.message.status ?? ''}
+                          deliveryFailureCode={item.message.metadata?.delivery_failure_code}
                           sentAt={item.message.sent_at}
                           senderName={item.message.sender_name ?? null}
                           isGroup={activeConversation!.is_group}

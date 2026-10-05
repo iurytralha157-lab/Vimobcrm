@@ -215,6 +215,9 @@ function getLostReason(event: UnifiedHistoryEvent) {
 
 function getEventDetail(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
+  if (event.type === 'whatsapp_message_failed') {
+    return event.content?.trim() || null;
+  }
   if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     return metadataText(metadata.answer) || event.content || null;
   }
@@ -517,6 +520,10 @@ function getEventTone(event: UnifiedHistoryEvent, plainHistory: boolean) {
     return 'bg-amber-400 !text-amber-950';
   }
 
+  if (event.type === 'whatsapp_message_failed') {
+    return plainHistory ? 'bg-red-700 !text-white' : 'bg-red-500/10 !text-red-700 dark:!text-red-300';
+  }
+
   if (event.type === 'assignee_changed' && metadataText(event.metadata?.reason) === 'manual_transfer') {
     return 'bg-violet-600 !text-white';
   }
@@ -617,6 +624,7 @@ function EventActor({ event }: { event: UnifiedHistoryEvent }) {
 
 function getEventAlignment(event: UnifiedHistoryEvent) {
   if (event.type === 'lead_created') return 'center';
+  if (event.type === 'whatsapp_message_failed') return 'center';
   if (!event.actor && event.type === 'tag_added') return 'center';
   return 'right';
 }
@@ -1654,6 +1662,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       mediaSize={item.message.media_size ?? null}
                       fromMe={item.message.from_me}
                       status={item.message.status || ''}
+                      deliveryFailureCode={item.message.metadata?.delivery_failure_code}
                       sentAt={item.message.sent_at}
                       senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
                       isGroup={conversation?.is_group ?? false}

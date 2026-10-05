@@ -402,6 +402,28 @@ test('eventos técnicos sem tradução conhecida não aparecem em inglês', () =
   assert.deepEqual(history.map(({ label }) => label), ['Responsável alterado', 'Atividade registrada']);
 });
 
+test('falha do destinatário no WhatsApp aparece no histórico sem expor o erro do provedor', () => {
+  const history = buildLeadHistory({
+    timelineEvents: [{
+      id: 'failed-outbound',
+      event_type: 'whatsapp_message_failed',
+      event_at: '2026-10-05T14:36:45.000Z',
+      metadata: { delivery_failure_code: 'recipient_not_registered', outbox_id: 'outbox-1' },
+    }],
+    activityEvents: [{
+      id: 'legacy-duplicate',
+      type: 'whatsapp_message_failed',
+      created_at: '2026-10-05T14:36:45.000Z',
+      metadata: { delivery_failure_code: 'recipient_not_registered' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.type, 'whatsapp_message_failed');
+  assert.equal(history[0]?.label, 'Envio não confirmado (WhatsApp)');
+  assert.equal(history[0]?.content, 'O provedor informou que o número do lead não está cadastrado no WhatsApp.');
+});
+
 test('expande respostas e criativo Meta sem repetir campos padrao', () => {
   const raw: LeadHistoryRaw = {
     activityEvents: [{

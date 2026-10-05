@@ -2084,7 +2084,18 @@ func messageSelectFieldsWithSession(sessionExpression string) string {
 		wm.reaction_emoji,
 		wm.reaction_sender_jid,
 		wm.reaction_sender_name,
-		'{}'::text,
+		case when wm.status = 'failed' and (
+		  wm.metadata->>'delivery_failure_code' = 'recipient_not_registered'
+		  or exists (
+		    select 1 from public.whatsapp_outbox as delivery
+		    where delivery.message_id = wm.id
+		      and delivery.organization_id = wm.organization_id
+		      and delivery.status in ('failed', 'dead')
+		      and position('not registered on whatsapp' in lower(coalesce(delivery.last_error, ''))) > 0
+		  )
+		)
+		then '{"delivery_failure_code":"recipient_not_registered"}'::text
+		else '{}'::text end,
 		wm.status,
 		coalesce(wm.sent_at, wm.created_at),
 		wm.delivered_at,

@@ -879,6 +879,13 @@ func whatsappOutboxProviderOutcomeUnknown(err error) bool {
 		errors.Is(err, context.DeadlineExceeded)
 }
 
+const whatsappRecipientNotRegisteredFailureCode = "recipient_not_registered"
+const whatsappRecipientNotRegisteredDescription = "O provedor informou que o número do lead não está cadastrado no WhatsApp."
+
+func whatsappOutboxRecipientNotRegistered(lastError string) bool {
+	return strings.Contains(strings.ToLower(lastError), "not registered on whatsapp")
+}
+
 func superviseWhatsAppOutboxLease(
 	ctx context.Context,
 	heartbeatInterval time.Duration,
@@ -1709,7 +1716,7 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	// Establish the same deterministic lock hierarchy used everywhere else:
 	// outbox rows first, then their message projections, both ordered by UUID.
 	outboxRows, err := tx.Query(ctx, `
-		select outbox.id::text
+		select outbox.id::text, outbox.status, coalesce(outbox.last_error, '')
 		from public.whatsapp_outbox as outbox
 		where outbox.id in (
 		  select scoped.id_text::uuid
@@ -1721,11 +1728,15 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if err != nil {
 		return err
 	}
+	recipientNotRegisteredOutboxIDs := []string{}
 	for outboxRows.Next() {
-		var ignoredID string
-		if err := outboxRows.Scan(&ignoredID); err != nil {
+		var lockedID, status, lastError string
+		if err := outboxRows.Scan(&lockedID, &status, &lastError); err != nil {
 			outboxRows.Close()
 			return err
+		}
+		if (status == "failed" || status == "dead") && whatsappOutboxRecipientNotRegistered(lastError) {
+			recipientNotRegisteredOutboxIDs = append(recipientNotRegisteredOutboxIDs, lockedID)
 		}
 	}
 	if err := outboxRows.Err(); err != nil {
@@ -1766,39 +1777,114 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages as message
 		set status = 'failed',
+		    metadata = case when outbox.id in (
+		      select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		    ) then coalesce(message.metadata, '{}'::jsonb) || jsonb_build_object(
+		      'delivery_failure_code', $3
+		    ) else message.metadata end,
 		    updated_at = now()
 		from public.whatsapp_outbox as outbox
 		where outbox.message_id = message.id
 		  and outbox.organization_id = message.organization_id
 		  and outbox.status in ('failed', 'dead')
-		  and message.status is distinct from 'failed'
+		  and (
+		    message.status is distinct from 'failed'
+		    or (
+		      outbox.id in (
+		        select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		      )
+		      and message.metadata->>'delivery_failure_code' is distinct from $3
+		    )
+		  )
 		  and outbox.id in (
 		    select scoped.id_text::uuid
 		    from unnest($1::text[]) as scoped(id_text)
 		  )
-	`, outboxIDs); err != nil {
+	`, outboxIDs, recipientNotRegisteredOutboxIDs, whatsappRecipientNotRegisteredFailureCode); err != nil {
 		return err
 	}
 
 	if _, err := tx.Exec(ctx, `
 		update public.lead_timeline_events as timeline
 		set event_type = 'whatsapp_message_failed',
-		    title = 'Falha no envio de mensagem WhatsApp',
-		    metadata = coalesce(timeline.metadata, '{}'::jsonb) || jsonb_build_object(
-		      'delivery_status', outbox.status,
-		      'last_error', left(coalesce(outbox.last_error, 'delivery_failed'), 500)
-		    )
+		    title = case when outbox.id in (
+		      select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		    ) then 'Envio não confirmado' else 'Falha no envio de mensagem WhatsApp' end,
+		    description = case when outbox.id in (
+		      select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		    ) then $3 else timeline.description end,
+		    metadata = (coalesce(timeline.metadata, '{}'::jsonb) - 'last_error' - 'delivery_failure_code') || jsonb_build_object(
+		      'delivery_status', outbox.status
+		    ) || case when outbox.id in (
+		      select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		    ) then jsonb_build_object('delivery_failure_code', $4) else '{}'::jsonb end
 		from public.whatsapp_outbox as outbox
 		where outbox.organization_id = timeline.organization_id
 		  and timeline.metadata->>'outbox_id' = outbox.id::text
 		  and outbox.status in ('failed', 'dead')
-		  and timeline.metadata->>'delivery_status' is distinct from outbox.status
+		  and (
+		    timeline.metadata->>'delivery_status' is distinct from outbox.status
+		    or coalesce(timeline.metadata, '{}'::jsonb) ? 'last_error'
+		    or (
+		      outbox.id in (
+		        select scoped.id_text::uuid from unnest($2::text[]) as scoped(id_text)
+		      )
+		      and (
+		        timeline.event_type is distinct from 'whatsapp_message_failed'
+		        or timeline.title is distinct from 'Envio não confirmado'
+		        or timeline.description is distinct from $3
+		        or timeline.metadata->>'delivery_failure_code' is distinct from $4
+		      )
+		    )
+		  )
 		  and outbox.id in (
 		    select scoped.id_text::uuid
 		    from unnest($1::text[]) as scoped(id_text)
 		  )
-	`, outboxIDs); err != nil {
+	`, outboxIDs, recipientNotRegisteredOutboxIDs,
+		whatsappRecipientNotRegisteredDescription, whatsappRecipientNotRegisteredFailureCode); err != nil {
 		return err
+	}
+
+	// An outbound row without provider acknowledgement has no prior timeline
+	// event. Persist the explicit provider rejection once for the lead history.
+	// The outbox UUID is a stable event identity across worker recovery passes.
+	if len(recipientNotRegisteredOutboxIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			insert into public.lead_timeline_events (
+			  id, organization_id, lead_id, user_id, actor_user_id,
+			  event_type, title, description, metadata, event_at
+			)
+			select outbox.id, outbox.organization_id, message.lead_id,
+			  message.sender_user_id, message.sender_user_id,
+			  'whatsapp_message_failed', 'Envio não confirmado', $2,
+			  jsonb_build_object(
+			    'outbox_id', outbox.id,
+			    'message_row_id', message.id,
+			    'delivery_status', outbox.status,
+			    'delivery_failure_code', $3
+			  ),
+			  coalesce(outbox.dead_lettered_at, outbox.failed_at, outbox.updated_at, now())
+			from public.whatsapp_outbox as outbox
+			join public.whatsapp_messages as message
+			  on message.id = outbox.message_id
+			 and message.organization_id = outbox.organization_id
+			where outbox.id in (
+			  select scoped.id_text::uuid from unnest($1::text[]) as scoped(id_text)
+			)
+			  and outbox.status in ('failed', 'dead')
+			  and message.lead_id is not null
+			  and message.capture_state is distinct from 'suppressed'
+			  and not exists (
+			    select 1 from public.lead_timeline_events as timeline
+			    where timeline.organization_id = outbox.organization_id
+			      and timeline.metadata->>'outbox_id' = outbox.id::text
+			  )
+			on conflict (id) do nothing
+		`, recipientNotRegisteredOutboxIDs, whatsappRecipientNotRegisteredDescription,
+			whatsappRecipientNotRegisteredFailureCode); err != nil {
+			return err
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `

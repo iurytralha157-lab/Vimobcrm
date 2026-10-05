@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { MessageCircleOff } from "lucide-react";
+import { AlertCircle, MessageCircleOff } from "lucide-react";
 
 import type { GroupedWhatsAppReaction } from "@/lib/whatsapp-reactions";
 import { cn } from "@/lib/utils";
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   formatMessageTime,
   getEffectiveMessageMediaKind,
+  getWhatsAppDeliveryFailureNotice,
   MessageMedia,
   MessageReactionBadges,
   MessageReactionPicker,
@@ -28,6 +29,7 @@ export interface MessageBubbleProps {
   mediaSize?: number | null;
   fromMe: boolean;
   status: string;
+  deliveryFailureCode?: unknown;
   sentAt: string;
   senderName: string | null;
   isGroup: boolean;
@@ -58,6 +60,7 @@ const comparableMessageBubbleProps = [
   "mediaSize",
   "fromMe",
   "status",
+  "deliveryFailureCode",
   "sentAt",
   "senderName",
   "isGroup",
@@ -98,6 +101,7 @@ export const MessageBubble = memo(function MessageBubble({
   mediaSize,
   fromMe,
   status,
+  deliveryFailureCode,
   sentAt,
   senderName,
   isGroup,
@@ -126,6 +130,7 @@ export const MessageBubble = memo(function MessageBubble({
   const isMediaMessage = mediaKind !== "text" && mediaKind !== "reaction" && mediaKind !== "deleted";
   const isDeletedMessage = mediaKind === "deleted";
   const isContentUnavailable = plainHistory && mediaKind === "text" && !safeContent.trim();
+  const deliveryFailureNotice = getWhatsAppDeliveryFailureNotice(fromMe, status, deliveryFailureCode);
   const showInsideReactionPicker = reactionPickerPosition === "inside" && Boolean(onReact) && !isDeletedMessage;
   const showOutsideReactionPicker = reactionPickerPosition === "outside" && Boolean(onReact) && !isDeletedMessage;
 
@@ -272,6 +277,16 @@ export const MessageBubble = memo(function MessageBubble({
 
           <MessageReactionBadges fromMe={fromMe} reactions={reactions} />
         </div>
+        {deliveryFailureNotice && (
+          <div
+            role="note"
+            data-delivery-failure-code="recipient_not_registered"
+            className="mt-1 flex max-w-[18rem] items-start gap-1.5 rounded-[6px] bg-red-500/10 px-2.5 py-1.5 text-[10px] leading-snug text-red-700 dark:text-red-300"
+          >
+            <AlertCircle aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>{deliveryFailureNotice}</span>
+          </div>
+        )}
       </div>
       {!fromMe && outsideReactionPicker}
     </div>

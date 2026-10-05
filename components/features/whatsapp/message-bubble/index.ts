@@ -14,6 +14,7 @@ export {
   formatMessageTime,
   generateMessageWaveform,
   getEffectiveMessageMediaKind,
+  getWhatsAppDeliveryFailureNotice,
   getNextReactionEmoji,
   normalizeMessageMediaMimeType,
   toCanonicalMessageMediaKind,

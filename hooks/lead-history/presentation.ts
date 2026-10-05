@@ -66,6 +66,7 @@ export const TIMELINE_AUTHORITY_TYPES = new Set([
   'stage_change',
   'first_response',
   'whatsapp_message_sent',
+  'whatsapp_message_failed',
   'whatsapp_message_received',
   'call_initiated',
   'note_created',
@@ -115,6 +116,10 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       return 'Primeiro contato';
     case 'whatsapp_message_sent':
       return 'Mensagem enviada (WhatsApp)';
+    case 'whatsapp_message_failed':
+      return metadataString(metadata?.delivery_failure_code) === 'recipient_not_registered'
+        ? 'Envio não confirmado (WhatsApp)'
+        : 'Falha no envio de mensagem WhatsApp';
     case 'whatsapp_message_received':
       return 'Mensagem recebida (WhatsApp)';
     case 'call_initiated':
@@ -270,6 +275,10 @@ export function buildContent(
   formatters: LeadHistoryFormatters,
 ): string | undefined {
   switch (type) {
+    case 'whatsapp_message_failed':
+      return metadataString(metadata?.delivery_failure_code) === 'recipient_not_registered'
+        ? 'O provedor informou que o número do lead não está cadastrado no WhatsApp.'
+        : undefined;
     case 'first_response': {
       const secs = metadata?.response_seconds;
       if (secs !== undefined && secs !== null) {

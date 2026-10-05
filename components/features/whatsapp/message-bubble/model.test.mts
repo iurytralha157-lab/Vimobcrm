@@ -9,6 +9,7 @@ const {
   formatMessageTime,
   generateMessageWaveform,
   getEffectiveMessageMediaKind,
+  getWhatsAppDeliveryFailureNotice,
   getNextReactionEmoji,
   normalizeMessageMediaMimeType,
   toCanonicalMessageMediaKind,
@@ -67,4 +68,14 @@ test("selecionar a própria reação alterna para remoção", () => {
   assert.equal(getNextReactionEmoji("👍", "👍"), "");
   assert.equal(getNextReactionEmoji("👍", "❤️"), "❤️");
   assert.equal(getNextReactionEmoji(null, "🙏"), "🙏");
+});
+
+test("aviso de destinatário indisponível aparece só na falha atual da mensagem enviada", () => {
+  const notice = getWhatsAppDeliveryFailureNotice(true, "failed", "recipient_not_registered");
+  assert.match(notice, /Envio não confirmado/);
+  assert.match(notice, /não está cadastrado no WhatsApp/);
+  assert.equal(getWhatsAppDeliveryFailureNotice(true, "delivered", "recipient_not_registered"), null);
+  assert.equal(getWhatsAppDeliveryFailureNotice(true, "read", "recipient_not_registered"), null);
+  assert.equal(getWhatsAppDeliveryFailureNotice(false, "failed", "recipient_not_registered"), null);
+  assert.equal(getWhatsAppDeliveryFailureNotice(true, "failed", "raw provider error"), null);
 });
