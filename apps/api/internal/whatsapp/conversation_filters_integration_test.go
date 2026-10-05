@@ -286,8 +286,8 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	viewer := tenant.Context{
 		OrganizationID: organizationID,
 		UserID:         userID,
-		MemberRole:     "owner",
-		Permissions:    []string{"lead_view_all"},
+		MemberRole:     "agent",
+		Permissions:    []string{"lead_view_own"},
 	}
 	firstPage, cursor, err := repo.listConversationsPage(ctx, viewer, filter)
 	if err != nil {
