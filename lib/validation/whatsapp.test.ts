@@ -168,6 +168,25 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 	}).success, true)
 })
 
+test('aceita a origem de atendimento retornada pela API antes de enviar', () => {
+	for (const entrySource of ['manual', 'implicit', 'ctwa_auto'] as const) {
+		const entry = {
+			id: ID,
+			userId: USER_ID,
+			userName: 'Andre',
+			sessionId: ORG_ID,
+			joinedAt: '2026-10-05T13:00:00.000Z',
+			entrySource,
+		}
+		assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+			data: { joined: true, currentEntry: entry, entries: [entry] },
+		}).success, true)
+	}
+	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+		data: { joined: false, currentEntry: null, entries: [] },
+	}).success, true)
+})
+
 test('valida lista de sessoes e cota', () => {
   const result = whatsAppSessionsResponseSchema.safeParse({
     data: [{

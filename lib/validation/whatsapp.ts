@@ -67,6 +67,7 @@ export const whatsAppAttendanceEntrySchema = z.object({
 	userName: z.string().trim().min(1),
 	sessionId: uuidSchema,
 	joinedAt: timestampSchema,
+	entrySource: z.enum(['manual', 'implicit', 'ctwa_auto']).optional(),
 }).strict()
 
 export const whatsAppAttendanceStateSchema = z.object({
