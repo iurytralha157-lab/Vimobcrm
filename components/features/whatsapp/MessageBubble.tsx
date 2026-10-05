@@ -23,6 +23,8 @@ export interface MessageBubbleProps {
   mediaMimeType: string | null;
   mediaStatus: "pending" | "ready" | "failed" | null;
   mediaError: string | null;
+  storedMedia?: boolean;
+  mediaURLLoading?: boolean;
   mediaSize?: number | null;
   fromMe: boolean;
   status: string;
@@ -51,6 +53,8 @@ const comparableMessageBubbleProps = [
   "mediaMimeType",
   "mediaStatus",
   "mediaError",
+  "storedMedia",
+  "mediaURLLoading",
   "mediaSize",
   "fromMe",
   "status",
@@ -90,6 +94,7 @@ export const MessageBubble = memo(function MessageBubble({
   mediaMimeType,
   mediaStatus,
   mediaError,
+  mediaURLLoading,
   mediaSize,
   fromMe,
   status,
@@ -174,6 +179,7 @@ export const MessageBubble = memo(function MessageBubble({
                 mediaMimeType={mediaMimeType}
                 mediaStatus={mediaStatus}
                 mediaError={mediaError}
+                mediaURLLoading={mediaURLLoading}
                 mediaSize={mediaSize}
                 fromMe={fromMe}
                 status={status}

@@ -37,6 +37,7 @@ type ConversationMessagesProps = {
   canOperateLeads: boolean;
   selectedLeadId: string | null;
   onRetryMedia: (messageId: string) => Promise<void>;
+  onRefreshStoredMediaURL: (messageId: string) => Promise<void>;
   reactionsByMessageId: Map<string, GroupedWhatsAppReaction[]>;
   onReact: (message: WhatsAppMessage, emoji: string) => Promise<unknown>;
   reactingMessageId?: string | null;
@@ -65,6 +66,7 @@ export function ConversationMessages({
   canOperateLeads,
   selectedLeadId,
   onRetryMedia,
+  onRefreshStoredMediaURL,
   reactionsByMessageId,
   onReact,
   reactingMessageId,
@@ -188,12 +190,18 @@ export function ConversationMessages({
                       mediaMimeType={item.message.media_mime_type}
                       mediaStatus={item.message.media_status ?? null}
                       mediaError={item.message.media_error ?? null}
+                      storedMedia={Boolean(item.message.media_storage_path)}
+                      mediaURLLoading={Boolean(item.message.media_storage_path)
+                        && item.message.media_status === "ready"
+                        && !item.message.media_url}
                       fromMe={item.message.from_me}
                       status={item.message.status ?? "sent"}
                       sentAt={item.message.sent_at}
                       senderName={item.message.sender_name ?? null}
                       isGroup={conversation.is_group}
-                      onRetryMedia={canOperateWhatsApp ? () => onRetryMedia(item.message.id) : undefined}
+                      onRetryMedia={item.message.media_storage_path
+                        ? () => onRefreshStoredMediaURL(item.message.id)
+                        : canOperateWhatsApp ? () => onRetryMedia(item.message.id) : undefined}
                       messageId={item.message.id}
                       leadId={canOperateLeads ? selectedLeadId || "" : ""}
                       leadName={conversation.lead?.name || conversation.contact_name || "Contato"}

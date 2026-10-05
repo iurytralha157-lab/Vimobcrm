@@ -2,10 +2,14 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,6 +238,23 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		"55119990000999@s.whatsapp.net", fixtureName+"-private-contact", now).Scan(&privateConversationID); err != nil {
 		t.Fatal(err)
 	}
+	var privateMediaMessageID string
+	privateMediaPath := fmt.Sprintf("orgs/%s/sessions/%s/incoming/%s-private.jpg", organizationID, otherSessionID, fixtureName)
+	if err := tx.QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, session_id, conversation_id, lead_id, message_id,
+			content, message_type, media_status, media_storage_path,
+			from_me, direction, sent_at, capture_state, status
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+			'private media', 'image', 'ready', $6,
+			false, 'inbound', $7, 'recorded', 'received'
+		)
+		returning id::text
+	`, organizationID, otherSessionID, privateConversationID, privateLeadID,
+		fixtureName+"-private-media", privateMediaPath, now).Scan(&privateMediaMessageID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.lead_entry_events (
 			organization_id, lead_id, entry_type, source, provider,
@@ -282,7 +303,14 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := NewRepository(postgres, nil, StorageConfig{})
+	var signingRequests atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signingRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"signedURL":"/object/sign/whatsapp-media/authorized?token=test"}`))
+	}))
+	defer storage.Close()
+	repo := NewRepository(postgres, nil, StorageConfig{ProjectURL: storage.URL, APIKey: "service-role-test-key"})
 	viewer := tenant.Context{
 		OrganizationID: organizationID,
 		UserID:         userID,
@@ -330,6 +358,44 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 			t.Fatal("conversation from another owner leaked into list")
 		}
 	}
+	admin := viewer
+	admin.MemberRole = "admin"
+	admin.Permissions = []string{"lead_view_all"}
+	adminLeads, err := repo.ListConversations(ctx, admin, ConversationListFilter{OnlyLeads: true, HideGroups: true, Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adminLeads) != 6 {
+		t.Fatalf("admin lead conversations = %d, want all six across session owners", len(adminLeads))
+	}
+	foundOtherOwner := false
+	for _, conversation := range adminLeads {
+		if conversation.ID == privateConversationID {
+			foundOtherOwner = true
+		}
+	}
+	if !foundOtherOwner {
+		t.Fatal("admin lead list omitted a conversation from another session owner")
+	}
+	t.Run("media is signed for admin across sessions but denied to agent", func(t *testing.T) {
+		before := signingRequests.Load()
+		if _, err := repo.GetMessageMediaURL(ctx, viewer, privateMediaMessageID); !errors.Is(err, ErrMessageNotFound) {
+			t.Fatalf("agent media access error = %v, want message not found", err)
+		}
+		if got := signingRequests.Load(); got != before {
+			t.Fatalf("denied agent media reached Storage signing: before=%d after=%d", before, got)
+		}
+		media, err := repo.GetMessageMediaURL(ctx, admin, privateMediaMessageID)
+		if err != nil {
+			t.Fatalf("admin cross-session lead media: %v", err)
+		}
+		if media.MessageID != privateMediaMessageID || media.URL == "" || media.ExpiresIn <= 0 {
+			t.Fatalf("admin cross-session lead media = %#v, want temporary signed URL", media)
+		}
+		if got := signingRequests.Load(); got != before+1 {
+			t.Fatalf("admin media signing requests = %d, want %d", got, before+1)
+		}
+	})
 	if allUnread, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || allUnread != 14 {
 		t.Fatalf("visible unread count = %d, error = %v; private unread must be excluded", allUnread, err)
 	}

@@ -51,6 +51,7 @@ export interface MessageMediaProps {
   mediaMimeType: string | null;
   mediaStatus: "pending" | "ready" | "failed" | null;
   mediaError: string | null;
+  mediaURLLoading?: boolean;
   mediaSize?: number | null;
   fromMe: boolean;
   status: string;
@@ -72,6 +73,7 @@ export function MessageMedia({
   mediaMimeType,
   mediaStatus,
   mediaError,
+  mediaURLLoading = false,
   mediaSize,
   fromMe,
   status,
@@ -403,6 +405,18 @@ export function MessageMedia({
 
   const renderMedia = () => {
     const hasValidMedia = Boolean(safeMediaUrl);
+
+    if (mediaURLLoading && !hasValidMedia) {
+      return (
+        <div className={cn(
+          "flex min-w-[180px] items-center gap-3 rounded-[6px] p-4",
+          fromMe ? "bg-primary-foreground/10" : "bg-[var(--app-surface-hover)]",
+        )} role="status">
+          <Loader2 className="h-5 w-5 animate-spin opacity-70" aria-hidden="true" />
+          <span className="text-[12px] font-light opacity-80">Abrindo mídia armazenada...</span>
+        </div>
+      );
+    }
 
     if (mediaStatus === "pending" && !hasValidMedia) {
       return renderMediaPending();

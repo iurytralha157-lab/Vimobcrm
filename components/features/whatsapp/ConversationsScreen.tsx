@@ -62,15 +62,15 @@ import {
   MAX_OUTBOUND_MESSAGE_MEDIA_BYTES,
   OUTBOUND_IMAGE_COMPRESSION_PROFILES,
 } from "@/components/features/whatsapp/message-media";
+import {
+  shouldLoadStoredMediaURL,
+  withStoredMediaURL,
+  type StoredMediaURL,
+} from "@/components/features/whatsapp/stored-media-url";
 
 type ConversationsProps = {
   initialConversationId?: string;
   initialLeadId?: string;
-};
-
-type LazyMediaURL = {
-  url: string;
-  refreshAt: number;
 };
 
 export default function Conversations({ initialConversationId, initialLeadId }: ConversationsProps) {
@@ -166,7 +166,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const conversationChangeScrollTimeoutRef = useRef<number | null>(null);
   const resolvedDeepLinkRef = useRef<string | null>(null);
   const lazyMediaRequestsRef = useRef(new Set<string>());
-  const [lazyMediaURLs, setLazyMediaURLs] = useState<Record<string, LazyMediaURL>>({});
+  const [lazyMediaURLs, setLazyMediaURLs] = useState<Record<string, StoredMediaURL>>({});
+  const mediaScopeRef = useRef(`${activeTenantKey}:${selectedConversationId ?? ""}`);
 
   useEffect(() => {
     let isActive = true;
@@ -519,6 +520,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   );
 
   useEffect(() => {
+    mediaScopeRef.current = `${activeTenantKey}:${selectedConversationId ?? ""}`;
     lazyMediaRequestsRef.current.clear();
     queueMicrotask(() => setLazyMediaURLs({}));
   }, [activeTenantKey, selectedConversationId]);
@@ -528,17 +530,14 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     const pendingRequests = lazyMediaRequestsRef.current;
     const now = Date.now();
     const candidates = whatsappMessages.filter((message) => (
-      message.media_status === "ready"
-      && Boolean(message.media_storage_path)
-      && !message.media_url
-      && (!lazyMediaURLs[message.id] || lazyMediaURLs[message.id].refreshAt <= now)
+      shouldLoadStoredMediaURL(message, lazyMediaURLs[message.id], now)
       && !pendingRequests.has(message.id)
     ));
     if (candidates.length === 0) return;
 
     let cancelled = false;
     let cursor = 0;
-    const resolved: Record<string, LazyMediaURL> = {};
+    const resolved: Record<string, StoredMediaURL> = {};
     for (const message of candidates) pendingRequests.add(message.id);
 
     const hydrateNext = async () => {
@@ -556,6 +555,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
             };
           }
         } catch {
+          if (!cancelled) resolved[message.id] = { url: null, refreshAt: null };
+        } finally {
           pendingRequests.delete(message.id);
         }
       }
@@ -573,25 +574,51 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [activeOrganization.organizationId, activePlatform, lazyMediaURLs, whatsappMessages]);
 
   useEffect(() => {
-    const refreshTimes = Object.values(lazyMediaURLs).map((entry) => entry.refreshAt);
+    const refreshTimes = Object.values(lazyMediaURLs)
+      .map((entry) => entry.refreshAt)
+      .filter((refreshAt): refreshAt is number => refreshAt !== null);
     if (refreshTimes.length === 0) return;
     const nextRefreshAt = Math.min(...refreshTimes);
     const timeout = window.setTimeout(() => {
       const now = Date.now();
       setLazyMediaURLs((current) => Object.fromEntries(
-        Object.entries(current).filter(([, entry]) => entry.refreshAt > now),
+        Object.entries(current).filter(([, entry]) => entry.refreshAt === null || entry.refreshAt > now),
       ));
-    }, Math.max(0, nextRefreshAt - Date.now() + 250));
+    }, Math.max(0, nextRefreshAt - Date.now()));
     return () => window.clearTimeout(timeout);
   }, [lazyMediaURLs]);
 
+  const refreshStoredMediaURL = useCallback(async (messageId: string) => {
+    const organizationId = activeOrganization.organizationId;
+    if (!organizationId || lazyMediaRequestsRef.current.has(messageId)) return;
+
+    const scope = mediaScopeRef.current;
+    lazyMediaRequestsRef.current.add(messageId);
+    try {
+      const media = await whatsappAPI.getMessageMediaURL(messageId, organizationId);
+      if (mediaScopeRef.current === scope) {
+        setLazyMediaURLs((current) => ({
+          ...current,
+          [messageId]: {
+            url: media.url,
+            refreshAt: Date.now() + Math.max(1, media.expiresIn) * 1000,
+          },
+        }));
+      }
+    } catch {
+      if (mediaScopeRef.current === scope) {
+        setLazyMediaURLs((current) => ({
+          ...current,
+          [messageId]: { url: null, refreshAt: null },
+        }));
+      }
+    } finally {
+      if (mediaScopeRef.current === scope) lazyMediaRequestsRef.current.delete(messageId);
+    }
+  }, [activeOrganization.organizationId]);
+
   const whatsappMessagesWithLazyMedia = useMemo<WhatsAppMessage[]>(
-    () => whatsappMessages.map((message) => {
-      const mediaURL = message.media_url || lazyMediaURLs[message.id]?.url;
-      return mediaURL && mediaURL !== message.media_url
-        ? { ...message, media_url: mediaURL }
-        : message;
-    }),
+    () => whatsappMessages.map((message) => withStoredMediaURL(message, lazyMediaURLs[message.id])),
     [lazyMediaURLs, whatsappMessages],
   );
 
@@ -1251,6 +1278,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 canOperateLeads={canOperateLeads}
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
+                onRefreshStoredMediaURL={refreshStoredMediaURL}
                 reactionsByMessageId={reactionsByMessageId}
                 attendanceEntries={attendanceGate.entries}
                 onReact={handleReactToMessage}
@@ -1421,6 +1449,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 canOperateLeads={canOperateLeads}
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
+                onRefreshStoredMediaURL={refreshStoredMediaURL}
                 reactionsByMessageId={reactionsByMessageId}
                 attendanceEntries={attendanceGate.entries}
                 onReact={handleReactToMessage}
