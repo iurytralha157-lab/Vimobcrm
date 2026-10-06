@@ -35,6 +35,22 @@ export interface AppNavigationItem extends NavigationAccessItem {
   children?: AppNavigationItem[];
 }
 
+export const APP_SIDEBAR_DIMENSIONS = {
+  openWidthPx: 208,
+  collapsedWidthPx: 56,
+  popoverWidthPx: 208,
+  mainIconSizePx: 18,
+  groupChevronSizePx: 14,
+  submenuIconSizePx: 14,
+  submenuFontSizePx: 12,
+  submenuLineHeightPx: 18,
+  minItemHeightPx: 32,
+  toggleSizePx: 28,
+  toggleSurfaceSizePx: 20,
+  toggleChevronSizePx: 12,
+  popoverViewportPaddingPx: 8,
+} as const;
+
 export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
   {
     icon: "home",

@@ -187,7 +187,7 @@ export const INTEGRATION_PROVIDER_CATALOG = {
   },
   "google-calendar": {
     title: "Google Agenda",
-    description: "Sincronize atividades e compromissos com sua agenda.",
+    description: "Envie compromissos do Vimob para sua agenda Google.",
     defaultDetail: "Agenda",
     category: "automation-data",
     availability: "feature-flagged",

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { APP_SIDEBAR_DIMENSIONS } from "../../config/navigation";
 import { signInAs } from "./support/auth";
 
 test.describe("navegacao principal", () => {
@@ -11,19 +12,39 @@ test.describe("navegacao principal", () => {
 
     const sidebar = page.locator("aside.app-sidebar");
     await expect(sidebar).toBeVisible();
-    await expect(sidebar).toHaveCSS("width", "64px");
+    await expect(sidebar).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.collapsedWidthPx}px`,
+    );
     await expect(sidebar.locator('a[href="/crm/contacts"]')).toHaveAttribute(
       "aria-label",
       "Contatos",
     );
 
-    await page.getByRole("button", { name: "Expandir menu" }).click();
-    await expect(sidebar).toHaveCSS("width", "224px");
+    const toggle = page.getByRole("button", { name: "Expandir menu" });
+    await expect(toggle).toHaveCSS("width", `${APP_SIDEBAR_DIMENSIONS.toggleSizePx}px`);
+    await expect(toggle).toHaveCSS("border-width", "0px");
+    await expect(toggle.locator("span")).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.toggleSurfaceSizePx}px`,
+    );
+    await expect(toggle.locator("svg")).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx}px`,
+    );
+    await toggle.click();
+    await expect(sidebar).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.openWidthPx}px`,
+    );
 
     await page.evaluate(() =>
       window.history.pushState(null, "", "/crm/pipelines?search=maria"),
     );
-    await expect(sidebar).toHaveCSS("width", "224px");
+    await expect(sidebar).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.openWidthPx}px`,
+    );
 
     const pipelinesLink = sidebar.locator('a[href="/crm/pipelines"]');
     const contactsLink = sidebar.locator('a[href="/crm/contacts"]');
@@ -36,7 +57,80 @@ test.describe("navegacao principal", () => {
     await page.keyboard.press("Escape");
     await contactsLink.click();
     await expect(page).toHaveURL(/\/crm\/contacts/);
-    await expect(sidebar).toHaveCSS("width", "64px");
+    await expect(sidebar).toHaveCSS(
+      "width",
+      `${APP_SIDEBAR_DIMENSIONS.collapsedWidthPx}px`,
+    );
+  });
+
+  test("desktop mantem a sidebar e os menus dentro da viewport estreita", async ({
+    page,
+  }) => {
+    test.setTimeout(process.env.E2E_SUPABASE_WORKDIR ? 180_000 : 90_000);
+    await signInAs(page, "admin");
+    await page.goto("/settings?tab=account");
+
+    const sidebar = page.locator("aside.app-sidebar");
+    const menu = page.locator(".app-sidebar-popover");
+
+    for (const width of [768, 1024]) {
+      await page.setViewportSize({ width, height: 600 });
+      await expect(sidebar).toBeVisible();
+      await expect(sidebar).toHaveCSS(
+        "width",
+        `${APP_SIDEBAR_DIMENSIONS.collapsedWidthPx}px`,
+      );
+
+      await sidebar.getByRole("button", { name: "Expandir menu" }).click();
+      await expect(sidebar).toHaveCSS(
+        "width",
+        `${APP_SIDEBAR_DIMENSIONS.openWidthPx}px`,
+      );
+
+      for (const groupName of ["Imóveis", "Configurações"]) {
+        await sidebar.getByRole("button", { name: groupName, exact: true }).click();
+        await expect(menu).toBeVisible();
+        await expect(menu).toHaveCSS(
+          "width",
+          `${APP_SIDEBAR_DIMENSIONS.popoverWidthPx}px`,
+        );
+        const firstItem = menu.getByRole("menuitem").first();
+        await expect(firstItem).toHaveCSS(
+          "font-size",
+          `${APP_SIDEBAR_DIMENSIONS.submenuFontSizePx}px`,
+        );
+        await expect(firstItem).toHaveCSS(
+          "line-height",
+          `${APP_SIDEBAR_DIMENSIONS.submenuLineHeightPx}px`,
+        );
+        const firstItemBounds = await firstItem.boundingBox();
+        expect(firstItemBounds?.height).toBeGreaterThanOrEqual(
+          APP_SIDEBAR_DIMENSIONS.minItemHeightPx,
+        );
+
+        await expect
+          .poll(async () => {
+            const bounds = await menu.boundingBox();
+            return Boolean(
+              bounds &&
+                bounds.x >= 0 &&
+                bounds.y >= 0 &&
+                bounds.x + bounds.width <= width &&
+                bounds.y + bounds.height <= 600,
+            );
+          })
+          .toBe(true);
+
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeHidden();
+      }
+
+      await sidebar.getByRole("button", { name: "Recolher menu" }).click();
+      await expect(sidebar).toHaveCSS(
+        "width",
+        `${APP_SIDEBAR_DIMENSIONS.collapsedWidthPx}px`,
+      );
+    }
   });
 
   test("desktop conclui a transicao de Pipeline para Agenda", async ({

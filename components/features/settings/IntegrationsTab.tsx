@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Building2,
+  Info,
   Key,
   Lock,
   RefreshCw,
@@ -27,6 +28,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { WebhooksIntegrationSettings } from "@/components/features/integrations/webhooks";
 import { APIAccessIntegrationSettings } from "@/components/features/integrations/api-access";
 import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
@@ -55,7 +62,6 @@ import { FEATURES } from "@/config/constants";
 import {
   INTEGRATION_CAPABILITY_LABELS,
   INTEGRATION_CATEGORY_CATALOG,
-  INTEGRATION_CATEGORY_IDS,
   INTEGRATION_PROVIDER_IDS,
   createIntegrationProviderManifest,
   getIntegrationManageKey,
@@ -211,6 +217,7 @@ interface IntegrationItem {
   requiresAdmin?: boolean;
   locked?: boolean;
   missingModule?: boolean;
+  canInspectUnavailable?: boolean;
   retry?: () => void;
 }
 
@@ -796,6 +803,10 @@ export function IntegrationsTab({
         requiresAdmin: manifest.effectiveRequiresAdmin,
         locked,
         missingModule,
+        canInspectUnavailable:
+          key === "google-calendar" &&
+          availableByRelease &&
+          googleCalendarStatus?.can_connect === false,
         retry,
       };
     });
@@ -860,13 +871,6 @@ export function IntegrationsTab({
     ).includes(query);
   });
 
-  const groupedIntegrations = INTEGRATION_CATEGORY_IDS.map((categoryId) => ({
-    categoryId,
-    definition: INTEGRATION_CATEGORY_CATALOG[categoryId],
-    items: filteredIntegrations.filter((item) => item.category === categoryId),
-  })).filter((group) => group.items.length > 0);
-
-
   const openIntegration = useCallback(
     (item: IntegrationItem) => {
       if (item.management.kind === "route") {
@@ -898,29 +902,16 @@ export function IntegrationsTab({
 
   return (
     <div className="space-y-5">
-      {groupedIntegrations.map((group) => (
-        <section key={group.categoryId} className="space-y-3">
-          <div className="flex items-end justify-between gap-3 px-0.5">
-            <h2 className="text-[13px] font-medium text-[var(--app-text-primary)]">
-              {group.definition.title}
-            </h2>
-            <span className="shrink-0 text-[11px] font-light text-muted-foreground">
-              {group.items.length} {group.items.length === 1 ? "integração" : "integrações"}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {group.items.map((item) => (
-              <IntegrationCard
-                key={item.key}
-                item={item}
-                canManageAdminIntegrations={canManageAdminIntegrations}
-                onManage={() => openIntegration(item)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+        {filteredIntegrations.map((item) => (
+          <IntegrationCard
+            key={item.key}
+            item={item}
+            canManageAdminIntegrations={canManageAdminIntegrations}
+            onManage={() => openIntegration(item)}
+          />
+        ))}
+      </div>
 
       {filteredIntegrations.length === 0 && (
         <div className="app-card rounded-[8px] p-8 text-center">
@@ -1009,7 +1000,10 @@ function IntegrationCard({
     !item.missingModule &&
     item.status !== "loading" &&
     item.management.kind !== "none" &&
-    (!isReleaseUnavailable || isExternalGuidance || isHomologationSurface);
+    (!isReleaseUnavailable ||
+      isExternalGuidance ||
+      isHomologationSurface ||
+      item.canInspectUnavailable);
   const status = getIntegrationStatusPresentation(item, isAccessLocked);
   const tourTarget =
     item.key === "whatsapp"
@@ -1031,46 +1025,63 @@ function IntegrationCard({
   return (
     <Card
       data-tour={tourTarget}
-      className={`flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none ${item.management.kind === "none" ? "opacity-75" : ""}`}
+      className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none"
     >
-      <CardHeader className="p-4 pb-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)]">
+      <CardHeader className="p-3 pb-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-[124px] flex-1 items-center gap-1.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)]">
               {item.icon}
             </div>
-            <div className="min-w-0">
-              <CardTitle className="truncate text-[13px] font-normal">
-                {item.title}
-              </CardTitle>
-              <CardDescription className="mt-0.5 truncate text-[11px] font-light">
-                {item.detail}
-              </CardDescription>
-            </div>
+            <CardTitle className="min-w-0 text-[13px] leading-[18px] font-medium">
+              {item.title}
+            </CardTitle>
+            {item.key === "chaves-na-mao" ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Requisitos de homologação do Chaves na Mão"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--app-text-secondary)] hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-72 text-xs leading-4">
+                    Exige contrato, XML aprovado e credenciais de homologação do portal.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
           </div>
           <Badge
             variant="outline"
-            className={`!rounded-[6px] whitespace-nowrap border-transparent text-[10px] font-medium ${status.className}`}
+            className={`!rounded-[6px] max-w-full shrink-0 whitespace-normal border-transparent px-1.5 text-center text-[10px] leading-4 font-medium ${status.className}`}
           >
             {status.label}
           </Badge>
         </div>
+        <CardDescription className="mt-1 text-[12px] leading-[18px] font-normal text-[var(--app-text-secondary)]">
+          {item.description}
+        </CardDescription>
       </CardHeader>
 
-      <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-2">
-        <div className="min-h-[44px]">
-          <IntegrationCardNotice
-            item={item}
-            isAccessLocked={isAccessLocked}
-          />
-        </div>
+      <CardContent className="flex flex-1 flex-col gap-3 p-3 pt-2">
+        <p className="text-[11px] leading-4 text-[var(--app-text-secondary)]">
+          {item.detail}
+        </p>
+        <IntegrationCardNotice
+          item={item}
+          isAccessLocked={isAccessLocked}
+        />
 
-        <div className="mt-auto flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {item.status === "error" && item.retry ? (
             <Button
               type="button"
               variant="outline"
-              className="h-9 flex-1 gap-2 rounded-[6px] shadow-none"
+              className="h-auto min-h-9 min-w-0 flex-1 gap-2 whitespace-normal rounded-[6px] px-2 py-1.5 text-xs shadow-none"
               onClick={item.retry}
             >
               <RefreshCw className="h-3.5 w-3.5" />
@@ -1080,19 +1091,19 @@ function IntegrationCard({
           <Button
             type="button"
             data-tour={buttonTourTarget}
-            variant={item.status === "connected" ? "outline" : "default"}
-            className="h-9 flex-1 gap-2 rounded-[6px] border-0 shadow-none"
-            disabled={!canManage}
+            variant={
+              canManage
+                ? item.status === "connected"
+                  ? "outline"
+                  : "default"
+                : "secondary"
+            }
+            className={`h-auto min-h-9 min-w-0 flex-1 gap-2 whitespace-normal rounded-[6px] border-0 px-2 py-1.5 text-xs shadow-none ${canManage ? "" : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] disabled:opacity-100"}`}
             onClick={onManage}
+            disabled={!canManage}
           >
-            {isAccessLocked ? (
-              <Lock className="h-4 w-4" />
-            ) : item.status === "loading" ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Settings2 className="h-4 w-4" />
-            )}
-            {getIntegrationActionLabel(item, isAccessLocked)}
+            {canManage ? <Settings2 className="h-4 w-4" /> : null}
+            {canManage ? getIntegrationActionLabel(item) : status.label}
           </Button>
         </div>
       </CardContent>
@@ -1115,37 +1126,7 @@ function IntegrationCardNotice({
       </p>
     );
   }
-  if (item.missingModule) {
-    return (
-      <p className="flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[11px] leading-4 text-muted-foreground">
-        <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        O módulo necessário não está liberado para esta organização.
-      </p>
-    );
-  }
-  if (
-    item.availability === "requires-homologation" &&
-    item.status === "unavailable"
-  ) {
-    return (
-      <p className="flex items-start gap-2 rounded-[6px] bg-amber-500/10 p-2 text-[11px] leading-4 text-amber-800 dark:text-amber-200">
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        Exige contrato, XML aprovado e credenciais de homologação do portal.
-      </p>
-    );
-  }
-  if (item.status === "error") {
-    return (
-      <p
-        role="alert"
-        className="flex items-start gap-2 rounded-[6px] bg-destructive/10 p-2 text-[11px] leading-4 text-destructive"
-      >
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        Não foi possível consultar o status. Tente novamente ou revise a
-        configuração.
-      </p>
-    );
-  }
+  if (item.missingModule) return null;
   if (item.status === "reconnect-required") {
     return (
       <p className="flex items-start gap-2 rounded-[6px] bg-amber-500/10 p-2 text-[11px] leading-4 text-amber-800 dark:text-amber-200">
@@ -1186,7 +1167,7 @@ function getIntegrationStatusPresentation(
   }
   if (item.availability === "coming-soon") {
     return {
-      label: "Em breve",
+      label: item.key === "vista" ? "Indisponível" : "Em breve",
       className:
         "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
     };
@@ -1196,7 +1177,7 @@ function getIntegrationStatusPresentation(
       label: GOOGLE_SITE_CONFIGURATION_IDS.has(item.key)
         ? "Configurado"
         : "Conectado",
-      className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+      className: "bg-emerald-700 text-white dark:bg-emerald-600",
     };
   }
   if (item.status === "reconnect-required") {
@@ -1207,8 +1188,9 @@ function getIntegrationStatusPresentation(
   }
   if (item.status === "error") {
     return {
-      label: "Falha na verificação",
-      className: "bg-destructive/10 text-destructive",
+      label: "Status indisponível",
+      className:
+        "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
     };
   }
   if (item.status === "loading") {
@@ -1231,12 +1213,7 @@ function getIntegrationStatusPresentation(
   };
 }
 
-function getIntegrationActionLabel(
-  item: IntegrationItem,
-  isAccessLocked: boolean,
-) {
-  if (isAccessLocked) return "Sem acesso";
-  if (item.missingModule) return "Módulo indisponível";
+function getIntegrationActionLabel(item: IntegrationItem) {
   if (
     item.availability === "requires-homologation" &&
     item.status === "unavailable"
