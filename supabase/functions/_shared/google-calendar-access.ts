@@ -29,6 +29,12 @@ export type GoogleScheduleCapability =
     status: 402 | 403;
   };
 
+export function googleCalendarOrganizationsMatch(left: unknown, right: unknown) {
+  const leftId = typeof left === "string" ? left.trim().toLowerCase() : "";
+  const rightId = typeof right === "string" ? right.trim().toLowerCase() : "";
+  return Boolean(leftId && rightId && leftId === rightId);
+}
+
 function normalized(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }

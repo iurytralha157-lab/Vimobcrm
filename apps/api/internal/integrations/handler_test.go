@@ -161,6 +161,49 @@ func TestAllowedFunctionAllowsGoogleCalendar(t *testing.T) {
 	}
 }
 
+func TestGoogleCalendarMissingEdgeFunctionIsReportedAsUnavailable(t *testing.T) {
+	tests := []struct {
+		name       string
+		function   string
+		upstream   string
+		wantStatus int
+	}{
+		{name: "runtime msg", function: "google-calendar-oauth", upstream: `{"msg":"Function not found"}`, wantStatus: http.StatusServiceUnavailable},
+		{name: "router message", function: "google-calendar-sync", upstream: `{"message":"Function not found"}`, wantStatus: http.StatusServiceUnavailable},
+		{name: "different not found", function: "google-calendar-oauth", upstream: `{"error":"Connection not found"}`, wantStatus: http.StatusNotFound},
+		{name: "unrelated function", function: "vista-sync", upstream: `{"msg":"Function not found"}`, wantStatus: http.StatusNotFound},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/functions/v1/"+testCase.function {
+					t.Fatalf("upstream path = %q", request.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(testCase.upstream))
+			}))
+			defer upstream.Close()
+
+			handler := NewHandler(NewRepository(nil, ExternalConfig{ProjectURL: upstream.URL}))
+			request := httptest.NewRequest(http.MethodPost, "/v1/integrations/google-calendar/functions/"+testCase.function, strings.NewReader(`{"action":"status"}`))
+			response := httptest.NewRecorder()
+			handler.invokeAuthorizedFunction(response, request, testCase.function, "Bearer user-token", []byte(`{"action":"status"}`))
+
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+			if testCase.wantStatus == http.StatusServiceUnavailable && !strings.Contains(response.Body.String(), `"code":"google_calendar_function_unavailable"`) {
+				t.Fatalf("missing stable error code: %s", response.Body.String())
+			}
+			if testCase.wantStatus == http.StatusNotFound && response.Body.String() != testCase.upstream {
+				t.Fatalf("unrelated 404 changed: %s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestAllowedGoogleCalendarFunctionRejectsOtherProxyFunctions(t *testing.T) {
 	for _, name := range []string{
 		"vista-sync",

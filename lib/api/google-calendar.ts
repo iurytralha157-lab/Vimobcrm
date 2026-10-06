@@ -1,7 +1,5 @@
 import { FEATURES } from "@/config/constants";
-import { vimobAPIRequest } from "@/lib/api/vimob-client";
-
-export type GoogleCalendarSyncAction = "push_upsert" | "push_delete";
+import { VimobAPIError, vimobAPIRequest } from "@/lib/api/vimob-client";
 
 export interface GoogleCalendarConnectionStatus {
   id: string;
@@ -22,6 +20,11 @@ export interface GoogleCalendarConnectionStatus {
   updated_at: string;
 }
 
+export interface GoogleCalendarStatus {
+  connection: GoogleCalendarConnectionStatus | null;
+  can_connect: boolean;
+}
+
 type GoogleCalendarFunctionResponse<T = unknown> = {
   success: boolean;
   error?: string;
@@ -29,8 +32,6 @@ type GoogleCalendarFunctionResponse<T = unknown> = {
 
 const GOOGLE_CALENDAR_OAUTH_PROXY_PATH =
   "/v1/integrations/google-calendar/functions/google-calendar-oauth";
-const GOOGLE_CALENDAR_SYNC_PROXY_PATH =
-  "/v1/integrations/google-calendar/functions/google-calendar-sync";
 const GOOGLE_CALENDAR_DISABLED_MESSAGE =
   "Integração com Google Agenda desativada temporariamente.";
 
@@ -44,6 +45,13 @@ function requireOrganizationId(organizationId?: string | null) {
   const normalized = organizationId?.trim();
   if (!normalized) throw new Error("Organização ativa não encontrada.");
   return normalized;
+}
+
+export function isGoogleCalendarServiceUnavailable(error: unknown) {
+  return error instanceof VimobAPIError && (
+    error.code === "google_calendar_function_unavailable" ||
+    (error.status === 404 && error.code === "api_error")
+  );
 }
 
 async function invokeGoogleCalendar<T>(
@@ -82,10 +90,15 @@ export function buildGoogleCalendarReturnUrl(currentHref: string) {
 
 export const googleCalendarAPI = {
   async getStatus(organizationId: string) {
-    const data = await invokeGoogleCalendar<{
-      connection: GoogleCalendarConnectionStatus | null;
-    }>(GOOGLE_CALENDAR_OAUTH_PROXY_PATH, organizationId, { action: "status" });
-    return data.connection;
+    const data = await invokeGoogleCalendar<GoogleCalendarStatus>(
+      GOOGLE_CALENDAR_OAUTH_PROXY_PATH,
+      organizationId,
+      { action: "status" },
+    );
+    return {
+      connection: data.connection,
+      can_connect: data.can_connect === true,
+    };
   },
 
   getAuthUrl(organizationId: string, returnUrl: string) {
@@ -104,41 +117,4 @@ export const googleCalendarAPI = {
     );
   },
 
-  setSyncEnabled(organizationId: string, syncEnabled: boolean) {
-    return invokeGoogleCalendar(
-      GOOGLE_CALENDAR_OAUTH_PROXY_PATH,
-      organizationId,
-      { action: "set_sync_enabled", sync_enabled: syncEnabled },
-    );
-  },
-
-  syncNow(organizationId: string) {
-    return invokeGoogleCalendar(
-      GOOGLE_CALENDAR_OAUTH_PROXY_PATH,
-      organizationId,
-      { action: "sync_now" },
-      90_000,
-    );
-  },
 };
-
-export async function syncScheduleEventWithGoogle(
-  action: GoogleCalendarSyncAction,
-  eventId: string,
-  organizationId?: string | null,
-) {
-  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return;
-
-  const activeOrganizationId = requireOrganizationId(organizationId);
-  const body = {
-    action: "enqueue_event",
-    event_id: eventId,
-    sync_action: action,
-  };
-
-  await invokeGoogleCalendar(
-    GOOGLE_CALENDAR_SYNC_PROXY_PATH,
-    activeOrganizationId,
-    body,
-  );
-}

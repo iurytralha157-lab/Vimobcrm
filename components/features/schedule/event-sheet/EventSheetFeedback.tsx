@@ -1,4 +1,4 @@
-import { CheckCircle2, Lock, UserRound } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Lock, UserRound } from "lucide-react";
 import { AgendaRow } from "@/components/features/schedule/event-sheet/EventSheetPrimitives";
 import type { ScheduleOutcome } from "@/hooks/use-schedule-events";
 import { getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
@@ -9,6 +9,7 @@ export function EventSheetFeedback({
   isCompleted,
   isMasked,
   status,
+  googleSyncStatus,
   outcome,
   outcomeNotes,
   performedByName,
@@ -18,6 +19,7 @@ export function EventSheetFeedback({
   isCompleted: boolean;
   isMasked: boolean;
   status?: string | null;
+  googleSyncStatus?: string | null;
   outcome?: ScheduleOutcome | null;
   outcomeNotes?: string | null;
   performedByName?: string | null;
@@ -26,6 +28,19 @@ export function EventSheetFeedback({
 }) {
   return (
     <>
+      {!isMasked && (googleSyncStatus === "conflict" || googleSyncStatus === "error") && (
+        <AgendaRow icon={<AlertTriangle size={18} />} align="start">
+          <div role="alert" className="rounded-[6px] bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
+            <span className="font-medium">Envio ao Google Agenda precisa de atenção</span>
+            <p>
+              O último envio não foi concluído. Confira a conexão do Google Agenda
+              e salve o compromisso no Vimob para tentar novamente. Se o aviso
+              continuar, peça uma revisão.
+            </p>
+          </div>
+        </AgendaRow>
+      )}
+
       {isCompleted && (
         <AgendaRow icon={<Lock size={18} />} align="center">
           <span

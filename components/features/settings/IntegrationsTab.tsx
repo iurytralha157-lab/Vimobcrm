@@ -32,6 +32,7 @@ import { APIAccessIntegrationSettings } from "@/components/features/integrations
 import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
 import { GrupoOLXIntegrationSettings } from "@/components/features/integrations/grupo-olx";
 import { GoogleCalendarIntegrationSettings } from "@/components/features/integrations/google-calendar";
+import { isGoogleCalendarServiceUnavailable } from "@/lib/api/google-calendar";
 import { GoogleAnalyticsIntegrationSettings } from "@/components/features/integrations/google-analytics";
 import { GoogleSearchConsoleIntegrationSettings } from "@/components/features/integrations/google-search-console";
 import { GoogleTagManagerIntegrationSettings } from "@/components/features/integrations/google-tag-manager";
@@ -266,6 +267,7 @@ export function IntegrationsTab({
   } = useWhatsAppSessions({ enabled: canViewWhatsApp });
   const {
     data: googleCalendarStatus,
+    error: googleCalendarError,
     isLoading: googleCalendarLoading,
     isError: googleCalendarLoadFailed,
     refetch: refetchGoogleCalendar,
@@ -576,7 +578,7 @@ export function IntegrationsTab({
           ? "reconnect-required"
           : "not-connected";
     const googleCalendarRuntimeStatus =
-      getGoogleCalendarIntegrationStatus(googleCalendarStatus);
+      getGoogleCalendarIntegrationStatus(googleCalendarStatus?.connection);
     const grupoOLXRuntimeStatus =
       getGrupoOLXIntegrationStatus(grupoOLXIntegration);
     const chavesNaMaoRuntimeStatus =
@@ -679,11 +681,17 @@ export function IntegrationsTab({
                 : definition.defaultDetail;
           break;
         case "google-calendar":
-          status = googleCalendarRuntimeStatus;
+          status = googleCalendarStatus?.can_connect === false
+            ? "unavailable"
+            : googleCalendarRuntimeStatus;
           loading = googleCalendarLoading;
           loadError = googleCalendarLoadFailed;
           retry = () => void refetchGoogleCalendar();
-          detail = googleCalendarStatus?.account_email || definition.defaultDetail;
+          detail = googleCalendarStatus?.can_connect === false
+            ? googleCalendarStatus.connection
+              ? "Envio suspenso para sua conta"
+              : "Acesso ainda não liberado para sua conta"
+            : googleCalendarStatus?.connection?.account_email || definition.defaultDetail;
           break;
         case "google-analytics":
           status = googleAnalyticsIntegration?.configured
@@ -765,7 +773,9 @@ export function IntegrationsTab({
         detail = "Verificando status...";
       } else if (loadError) {
         status = "error";
-        detail = "Status não verificado";
+        detail = key === "google-calendar" && isGoogleCalendarServiceUnavailable(googleCalendarError)
+          ? "Serviço temporariamente indisponível"
+          : "Status não verificado";
       }
 
       return {
@@ -802,6 +812,7 @@ export function IntegrationsTab({
     googleAnalyticsLoadFailed,
     googleAnalyticsLoading,
     googleCalendarLoadFailed,
+    googleCalendarError,
     googleCalendarLoading,
     googleCalendarStatus,
     googleSearchConsoleIntegration,
@@ -1234,6 +1245,7 @@ function getIntegrationActionLabel(
   }
   if (item.management.kind === "external") return "Ver requisitos";
   if (item.management.kind === "none") return "Em breve";
+  if (item.key === "google-calendar" && item.status === "unavailable") return "Ver status";
   if (item.status === "loading") return "Verificando";
   if (item.status === "error") return "Revisar";
   if (item.status === "connected") return "Gerenciar";

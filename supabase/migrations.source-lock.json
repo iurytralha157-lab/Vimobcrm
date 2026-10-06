@@ -614,6 +614,14 @@
     {
       "file": "20260928031110_preserve_manual_property_location.sql",
       "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
+    },
+    {
+      "file": "20261006150000_claim_google_calendar_outbound_jobs.sql",
+      "sha256": "063a119aea1a648eb252eb400567e9ca5be9355575a1c32e42740a308338cf39"
+    },
+    {
+      "file": "20261006151000_google_calendar_one_way_help_content.sql",
+      "sha256": "4b8a9c605e927654827ef9c76962c4b1f84c289bcb9cbe8d26988a67720e1402"
     }
   ]
 }
