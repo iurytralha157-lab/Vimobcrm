@@ -65,7 +65,7 @@ export function GoogleCalendarConnect({
   const serviceUnavailable = isGoogleCalendarServiceUnavailable(statusError);
   const statusLabel =
     !canConnect
-      ? "Envio suspenso"
+      ? "Sem permissão"
       : calendarStatus?.sync_status === "error"
       ? "Erro"
       : "Conectado";
@@ -286,14 +286,14 @@ export function GoogleCalendarConnect({
                   "Conta conectada"
                 : canConnect
                   ? "Envie compromissos do Vimob ao Google"
-                  : "Acesso ainda não liberado para sua conta"}
+                  : "Permissão da Agenda necessária"}
             </p>
           </div>
         </div>
 
         {isConnected ? (
           <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-            {canConnect ? "Vimob → Google" : "Envio suspenso"}
+            {canConnect ? "Vimob → Google" : "Permissão da Agenda necessária"}
           </span>
         ) : (
           <Button
@@ -304,7 +304,7 @@ export function GoogleCalendarConnect({
           >
             <Link2 className="h-4 w-4" />
             {!canConnect
-              ? "Aguardando liberação"
+              ? "Sem acesso à Agenda"
               : connectCalendar.isPending
                 ? "Conectando..."
                 : "Conectar"}
@@ -330,7 +330,7 @@ export function GoogleCalendarConnect({
                 ? calendarStatus.account_email || "Sua agenda está conectada"
                 : canConnect
                   ? "Envie compromissos do Vimob ao Google Agenda"
-                  : "Acesso ainda não liberado para sua conta"}
+                  : "Permissão da Agenda necessária"}
             </CardDescription>
           </div>
         </div>
@@ -411,8 +411,8 @@ export function GoogleCalendarConnect({
                 )
               ) : (
                 <>
-                  Esta conta está fora do grupo de testes. Novos envios estão suspensos;
-                  os trabalhos pendentes continuam na fila.
+                  Seu perfil precisa de permissão para usar a Agenda do Vimob.
+                  Peça a um administrador para revisar seu acesso à integração.
                 </>
               )}
             </p>
@@ -444,7 +444,7 @@ export function GoogleCalendarConnect({
             {!canConnect && (
               <p className="flex items-start gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                O acesso ao Google Agenda está sendo liberado gradualmente.
+                Seu perfil precisa de permissão para usar a Agenda do Vimob.
               </p>
             )}
             <Button
@@ -454,7 +454,7 @@ export function GoogleCalendarConnect({
             >
               <Link2 className="mr-2 h-4 w-4" />
               {!canConnect
-                ? "Aguardando liberação"
+                ? "Sem acesso à Agenda"
                 : connectCalendar.isPending
                   ? "Conectando..."
                   : "Conectar Google Agenda"}

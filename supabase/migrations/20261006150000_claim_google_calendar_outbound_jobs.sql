@@ -1,23 +1,21 @@
--- Vimob is the source of schedule events. The pilot claims outbound jobs only
--- for explicitly enabled users and never claims Google -> Vimob jobs.
--- Old jobs without a verifiable owner (and delete jobs without a connection)
--- remain queued for audit instead of being routed to a different owner.
+-- Vimob is the source of schedule events. Claim only outbound jobs for an
+-- active connection belonging to the event owner in the same organization.
+-- Old jobs without a verifiable owner or connection remain queued for audit.
+-- No Google -> Vimob action can be claimed by this worker.
+drop function if exists public.google_calendar_claim_outbound_sync_jobs(integer, text, uuid[]);
+
 create or replace function public.google_calendar_claim_outbound_sync_jobs(
   p_limit integer,
-  p_worker text,
-  p_user_ids uuid[]
+  p_worker text
 )
 returns setof public.google_calendar_sync_jobs
 language plpgsql
 security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog
 as $function$
 begin
   if nullif(btrim(p_worker), '') is null then
     raise exception 'Google Agenda worker name is required';
-  end if;
-  if p_user_ids is null then
-    raise exception 'Google Agenda allowed users are required';
   end if;
   return query
   with candidates as (
@@ -29,10 +27,29 @@ begin
           and exists (
             select 1
             from public.schedule_events event
+            join public.users owner
+              on owner.id = event.user_id
+             and owner.is_active is true
+            join public.google_calendar_tokens connection
+              on connection.organization_id = event.organization_id
+             and connection.user_id = event.user_id
+             and connection.disconnected_at is null
+             and connection.token_secret_ref is not null
             where event.id = jobs.schedule_event_id
               and event.organization_id = jobs.organization_id
-              and event.user_id = any(p_user_ids)
               and event.user_id::text = jobs.payload->>'owner_user_id'
+              and (jobs.connection_id is null or jobs.connection_id = connection.id)
+              and (
+                (owner.role = 'super_admin' and owner.organization_id = jobs.organization_id)
+                or exists (
+                  select 1
+                  from public.organization_members membership
+                  where membership.organization_id = jobs.organization_id
+                    and membership.user_id = owner.id
+                    and membership.is_active is true
+                    and membership.deleted_at is null
+                )
+              )
           )
         )
         or (
@@ -43,8 +60,14 @@ begin
             where connection.organization_id = jobs.organization_id
               and connection.id::text = jobs.payload->>'connection_id'
               and connection.user_id::text = jobs.payload->>'owner_user_id'
-              and connection.user_id = any(p_user_ids)
               and connection.disconnected_at is null
+              and connection.token_secret_ref is not null
+              and (jobs.connection_id is null or jobs.connection_id = connection.id)
+              and nullif(jobs.payload->>'event_id', '') is not null
+              and (
+                jobs.schedule_event_id is null
+                or jobs.schedule_event_id::text = jobs.payload->>'event_id'
+              )
           )
         )
       )
@@ -74,18 +97,18 @@ begin
 end
 $function$;
 
-revoke all on function public.google_calendar_claim_outbound_sync_jobs(integer, text, uuid[])
+revoke all on function public.google_calendar_claim_outbound_sync_jobs(integer, text)
   from public, anon, authenticated;
-grant execute on function public.google_calendar_claim_outbound_sync_jobs(integer, text, uuid[])
+grant execute on function public.google_calendar_claim_outbound_sync_jobs(integer, text)
   to service_role;
 
--- An older deployed worker must not bypass the per-user gate by calling the
--- generic claim RPC. Retire its service-role entry point during the one-way cut.
+-- An older deployed worker must not claim inbound jobs through the generic
+-- entry point during the one-way cut.
 do $block$
 begin
   if to_regprocedure('public.google_calendar_claim_sync_jobs(integer,text)') is not null then
     revoke execute on function public.google_calendar_claim_sync_jobs(integer, text)
-      from service_role;
+      from public, anon, authenticated, service_role;
   end if;
 end
 $block$;

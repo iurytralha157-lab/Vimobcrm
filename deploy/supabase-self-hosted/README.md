@@ -362,11 +362,13 @@ manifesto efetivos antes de substituí-los; não copie o manifesto completo ou o
 roteador versionado sobre esse runtime sem reconciliar as rotas existentes.
 O fluxo atual da Agenda é Vimob → Google; publicar apenas OAuth e worker de
 envio. Não configurar webhook ou jobs de entrada para este corte.
-O canário da Agenda requer `GOOGLE_CALENDAR_CANARY_USER_IDS` no serviço
-Functions: a lista contém UUIDs completos de usuários Vimob separados por
-vírgula, e a ausência da flag bloqueia novas conexões e o worker de envio.
-Verifique o gate local e a ordem de teste no preflight antes de qualquer
-publicação.
+A primeira publicação da Agenda permite conectar a conta Google a todos os
+usuários Vimob com acesso ativo e permissão de gerenciar Agenda; não há lista
+de UUIDs no serviço Functions. Confirme previamente o status do cliente OAuth
+no Google Cloud: em `Testing`, apenas as contas de teste cadastradas conseguem
+autorizar, mesmo que o botão esteja visível no Vimob. Verifique o gate local,
+o banco, o Vault, o Cron e a ordem do teste controlado no
+[preflight](google-calendar-release-readiness.md) antes da publicação.
 
 O comando `supabase secrets list` devolve nomes e hashes, não os valores. Os
 valores reais devem vir do cofre operacional/Portainer ou ser rotacionados nos

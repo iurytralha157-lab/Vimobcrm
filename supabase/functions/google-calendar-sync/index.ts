@@ -14,26 +14,7 @@ import {
   getGoogleScheduleCapability,
   GoogleScheduleCapabilityError,
 } from "../_shared/google-calendar.ts";
-import {
-  GOOGLE_CALENDAR_CANARY_CODE,
-  GOOGLE_CALENDAR_CANARY_MESSAGE,
-  isGoogleCalendarCanaryUser,
-} from "../_shared/google-calendar-canary.ts";
 
-function ownerCanUseGoogleCalendar(userId: unknown) {
-  return isGoogleCalendarCanaryUser(
-    userId,
-    Deno.env.get("GOOGLE_CALENDAR_CANARY_USER_IDS"),
-  );
-}
-
-function canaryDeniedResponse() {
-  return jsonResponse({
-    success: false,
-    error: GOOGLE_CALENDAR_CANARY_MESSAGE,
-    code: GOOGLE_CALENDAR_CANARY_CODE,
-  }, 403);
-}
 async function authenticateServiceOrUser(req: Request, organizationId?: string | null) {
   const authHeader = req.headers.get("Authorization") || "";
   const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
@@ -116,8 +97,6 @@ Deno.serve(async (req) => {
       if (!event || event.organization_id !== auth.profile.organization_id) {
         return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
       }
-      if (!ownerCanUseGoogleCalendar(event.user_id)) return canaryDeniedResponse();
-
       const result = await pushScheduleEventToGoogle(body.event_id, auth.profile.id);
       return jsonResponse({ success: true, result });
     }
@@ -152,8 +131,6 @@ Deno.serve(async (req) => {
       if (!event || event.organization_id !== auth.profile.organization_id) {
         return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
       }
-      if (!ownerCanUseGoogleCalendar(event.user_id)) return canaryDeniedResponse();
-
       if (!(await canManageScheduleEvent(event, auth.profile.id))) {
         return jsonResponse({ success: false, error: "Forbidden" }, 403);
       }

@@ -696,8 +696,8 @@ export function IntegrationsTab({
           retry = () => void refetchGoogleCalendar();
           detail = googleCalendarStatus?.can_connect === false
             ? googleCalendarStatus.connection
-              ? "Envio suspenso para sua conta"
-              : "Acesso ainda não liberado para sua conta"
+              ? "Permissão da Agenda necessária"
+              : "Sem permissão para usar a Agenda"
             : googleCalendarStatus?.connection?.account_email || definition.defaultDetail;
           break;
         case "google-analytics":

@@ -34,12 +34,13 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
     assert.ok(plan.shared_files.includes(dependency), `${dependency} ausente do plano`);
   }
   assert.ok(plan.shared_files.every((name) => name.startsWith("supabase/functions/_shared/")));
-  assert.equal(plan.canary.scope, "auth.users.id");
-  assert.equal(plan.canary.environment_variable, "GOOGLE_CALENDAR_CANARY_USER_IDS");
-  assert.equal(plan.canary.absent_means_denied, true);
+  assert.equal(Object.hasOwn(plan, "canary"), false);
+  assert.equal(plan.access_policy.vimob, "all active users authorized to manage Agenda");
+  assert.equal(plan.access_policy.user_uuid_allowlist_required, false);
+  assert.equal(plan.access_policy.google_cloud_oauth_audience_verified, false);
   assert.equal(
     plan.database_prerequisite.rpc,
-    "public.google_calendar_claim_outbound_sync_jobs(integer, text, uuid[])",
+    "public.google_calendar_claim_outbound_sync_jobs(integer, text)",
   );
   assert.equal(plan.database_prerequisite.required_before_sync_worker, true);
   assert.equal(plan.database_prerequisite.runtime_verified, false);

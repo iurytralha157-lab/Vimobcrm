@@ -137,14 +137,14 @@ async function buildPlan(runtimeSlugs) {
       verify_jwt: bySlug.get(slug).verify_jwt,
     })),
     shared_files: sharedFiles.map((name) => `supabase/functions/${name}`),
-    canary: {
-      scope: "auth.users.id",
-      environment_variable: "GOOGLE_CALENDAR_CANARY_USER_IDS",
-      absent_means_denied: true,
+    access_policy: {
+      vimob: "all active users authorized to manage Agenda",
+      user_uuid_allowlist_required: false,
+      google_cloud_oauth_audience_verified: false,
     },
     database_prerequisite: {
       migration: outboundClaimMigration,
-      rpc: "public.google_calendar_claim_outbound_sync_jobs(integer, text, uuid[])",
+      rpc: "public.google_calendar_claim_outbound_sync_jobs(integer, text)",
       runtime_verified: false,
       required_before_sync_worker: true,
     },
@@ -172,7 +172,7 @@ function printPlan(plan) {
   console.log(`Manifesto historico: ${plan.source_manifest_captured_at}, projeto ${plan.source_project_ref}`);
   console.log(`Diretorios: ${plan.release_directories.map((item) => item.path).join(", ")}`);
   console.log(`Dependencias _shared: ${plan.shared_files.join(", ")}`);
-  console.log(`Canario por pessoa: ${plan.canary.environment_variable} (${plan.canary.scope}); vazio bloqueia conexoes e jobs de envio.`);
+  console.log(`Acesso no Vimob: ${plan.access_policy.vimob}; sem lista de UUID. Confirme o publico e a verificacao do OAuth no Google Cloud.`);
   console.log(`Pre-requisito do worker: ${plan.database_prerequisite.migration} (${plan.database_prerequisite.rpc}), aplicar somente apos reconciliacao do banco.`);
   console.log(`Fora do fluxo de mao unica: ${plan.inbound_webhook.path}, ${plan.legacy_tombstone.path}`);
   if (plan.observed_runtime_slugs) {

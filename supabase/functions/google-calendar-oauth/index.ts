@@ -19,18 +19,6 @@ import {
   redirectResponse,
   upsertConnectionFromOAuth,
 } from "../_shared/google-calendar.ts";
-import {
-  GOOGLE_CALENDAR_CANARY_CODE,
-  GOOGLE_CALENDAR_CANARY_MESSAGE,
-  isGoogleCalendarCanaryUser,
-} from "../_shared/google-calendar-canary.ts";
-
-function canUseGoogleCalendar(userId: unknown) {
-  return isGoogleCalendarCanaryUser(
-    userId,
-    Deno.env.get("GOOGLE_CALENDAR_CANARY_USER_IDS"),
-  );
-}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -75,10 +63,6 @@ Deno.serve(async (req) => {
 
       if (!code) return callbackError("Codigo OAuth ausente.", oauthState.return_url);
 
-      if (!canUseGoogleCalendar(oauthState.user_id)) {
-        return callbackError(GOOGLE_CALENDAR_CANARY_MESSAGE, oauthState.return_url);
-      }
-
       // Membership and Agenda permissions can change while Google shows the
       // consent screen. Do not persist a token for a revoked tenant context.
       try {
@@ -120,9 +104,6 @@ Deno.serve(async (req) => {
     const profile = await getUserProfile(user.id, body.organization_id || body.organizationId || null);
 
     if (action === "get_auth_url") {
-      if (!canUseGoogleCalendar(profile.id)) {
-        return jsonResponse({ success: false, error: GOOGLE_CALENDAR_CANARY_MESSAGE, code: GOOGLE_CALENDAR_CANARY_CODE }, 403);
-      }
       const capability = await getGoogleScheduleCapability(profile.id, profile.organization_id);
       if (!capability.allowed) {
         return jsonResponse({ success: false, error: capability.reason, code: capability.reason }, capability.status);
@@ -137,10 +118,11 @@ Deno.serve(async (req) => {
     }
 
     if (action === "status") {
+      const capability = await getGoogleScheduleCapability(profile.id, profile.organization_id);
       const connection = await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
       return jsonResponse({
         success: true,
-        can_connect: canUseGoogleCalendar(profile.id),
+        can_connect: capability.allowed,
         connection: connection ? {
           id: connection.id,
           organization_id: connection.organization_id,

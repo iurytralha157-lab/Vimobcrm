@@ -29,10 +29,6 @@ import {
   GoogleCalendarConflictError,
   hasUnsyncedVimobChanges,
 } from "./google-calendar-conflict.ts";
-import {
-  googleCalendarCanaryUserIds,
-  isGoogleCalendarCanaryUser,
-} from "./google-calendar-canary.ts";
 
 export type JsonRecord = Record<string, any>;
 
@@ -63,19 +59,6 @@ const GOOGLE_EVENT_TYPES = new Set([
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-function isCanaryUser(userId: unknown) {
-  return isGoogleCalendarCanaryUser(
-    userId,
-    Deno.env.get("GOOGLE_CALENDAR_CANARY_USER_IDS"),
-  );
-}
-
-function canaryUserIds() {
-  return googleCalendarCanaryUserIds(
-    Deno.env.get("GOOGLE_CALENDAR_CANARY_USER_IDS"),
-  );
-}
 
 // The public integration is one-way. Keep legacy helpers inert even if an old
 // Cron invocation or a queued inbound job reaches the new runtime.
@@ -903,9 +886,9 @@ async function getLinkedLead(event: JsonRecord) {
 async function getOutboundEventContext(event: JsonRecord) {
   const lead = await getLinkedLead(event);
 
-  // The pilot writes only to the event owner's Google calendar. Inviting
-  // assignees requires separate membership, canary, and detail-visibility
-  // checks before any lead information can leave this account.
+  // Write only to the event owner's Google calendar. Inviting assignees
+  // requires separate membership and detail-visibility checks before lead
+  // information can leave this account.
   return {
     event: { ...event, lead, property: null },
     attendeeEmails: [],
@@ -1646,9 +1629,7 @@ export async function deleteScheduleEventFromGoogle(
     throw new Error("Evento da agenda nao encontrado.");
   }
   const intendedOwnerUserId = execution.fallbackOwnerUserId || event?.user_id || null;
-  if (!intendedOwnerUserId || !isCanaryUser(intendedOwnerUserId)) {
-    throw new Error("Dono do evento nao liberado para Google Agenda.");
-  }
+  if (!intendedOwnerUserId) throw new Error("Dono do evento nao verificado.");
   if (trustedJobOrganizationId) {
     if (!execution.fallbackOwnerUserId) {
       throw new Error("Job Google Agenda sem dono verificado.");
@@ -2073,9 +2054,6 @@ export async function syncConnectionFromGoogle(
     return { skipped: true, reason: "INBOUND_SYNC_DISABLED" };
   }
   let connection = connectionInput;
-  if (!isCanaryUser(connection.user_id)) {
-    return { skipped: true, reason: "CANARY_NOT_ENABLED" };
-  }
   await assertGoogleScheduleCapability(
     connection.user_id,
     connection.organization_id,
@@ -2182,9 +2160,6 @@ export async function syncConnectionFromGoogle(
 export async function ensureGoogleWatch(connection: JsonRecord) {
   if (googleCalendarInboundDisabled()) {
     return { skipped: true, reason: "INBOUND_SYNC_DISABLED" };
-  }
-  if (!isCanaryUser(connection.user_id)) {
-    return { skipped: true, reason: "CANARY_NOT_ENABLED" };
   }
   if (connection.sync_enabled === false || connection.disconnected_at) {
     return { skipped: true, reason: "SYNC_DISABLED" };
@@ -2439,11 +2414,8 @@ export async function processSyncJob(job: JsonRecord) {
     }
     const currentOwner = await currentScheduleEventOwner(job.schedule_event_id, job.organization_id);
     if (!currentOwner) return { skipped: true, reason: "CANONICAL_EVENT_REMOVED" };
-    if (job.payload?.owner_user_id && job.payload.owner_user_id !== currentOwner) {
+    if (!job.payload?.owner_user_id || job.payload.owner_user_id !== currentOwner) {
       return { skipped: true, reason: "STALE_EVENT_OWNER" };
-    }
-    if (!isCanaryUser(currentOwner)) {
-      return { deferred: true, reason: "CANARY_NOT_ENABLED" };
     }
     if (await hasOutstandingDeleteForEvent(
       job.organization_id,
@@ -2465,9 +2437,6 @@ export async function processSyncJob(job: JsonRecord) {
     }
     const ownerUserId = String(job.payload?.owner_user_id || "");
     if (!ownerUserId) return { deferred: true, reason: "DELETE_OWNER_NOT_VERIFIED" };
-    if (!isCanaryUser(ownerUserId)) {
-      return { deferred: true, reason: "CANARY_NOT_ENABLED" };
-    }
     const durableLinkIds = Array.isArray(job.payload?.link_ids)
       ? job.payload.link_ids.filter(
           (value: unknown): value is string => typeof value === "string",
@@ -2507,11 +2476,7 @@ export async function executeSyncJob(job: JsonRecord) {
         .from("google_calendar_sync_jobs")
         .update({
           status: "queued",
-          next_run_at: addSeconds(
-            ["CANARY_NOT_ENABLED", "DELETE_OWNER_NOT_VERIFIED"].includes(result.reason)
-              ? 3600
-              : 10,
-          ),
+          next_run_at: addSeconds(result.reason === "DELETE_OWNER_NOT_VERIFIED" ? 3600 : 10),
           locked_at: null,
           locked_by: null,
         })
@@ -2597,7 +2562,6 @@ export async function runDueJobs(limit = 10) {
     {
       p_limit: Math.max(1, Math.min(Number(limit) || 10, 100)),
       p_worker: `google-calendar-sync-${crypto.randomUUID()}`,
-      p_user_ids: canaryUserIds(),
     },
   );
 
@@ -2611,101 +2575,12 @@ export async function runDueJobs(limit = 10) {
   return { processed: results.length, results };
 }
 
-export async function enqueueDuePulls(limit = 20, staleAfterMinutes = 6 * 60) {
-  if (googleCalendarInboundDisabled()) {
-    return { queued: 0, job_ids: [], skipped: [], reason: "INBOUND_SYNC_DISABLED" };
-  }
-  const allowedUserIds = canaryUserIds();
-  if (allowedUserIds.length === 0) {
-    return { queued: 0, job_ids: [], skipped: [] };
-  }
-  const boundedLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
-  const boundedStaleMinutes = Math.max(
-    30,
-    Math.min(Number(staleAfterMinutes) || 360, 24 * 60),
-  );
-  const staleBefore = new Date(
-    Date.now() - boundedStaleMinutes * 60 * 1000,
-  ).toISOString();
-  const { data: connections, error } = await supabase
-    .from("google_calendar_tokens")
-    .select("id, organization_id, user_id")
-    .in("user_id", allowedUserIds)
-    .eq("sync_enabled", true)
-    .eq("sync_status", "connected")
-    .is("disconnected_at", null)
-    .or(`last_synced_at.is.null,last_synced_at.lt.${staleBefore}`)
-    .order("last_synced_at", { ascending: true, nullsFirst: true })
-    .limit(boundedLimit);
-  if (error) throw error;
-
-  const jobs = [];
-  const skipped = [];
-  for (const connection of connections || []) {
-    if (!isCanaryUser(connection.user_id)) {
-      skipped.push({ connection_id: connection.id, reason: "CANARY_NOT_ENABLED" });
-      continue;
-    }
-    const capability = await getGoogleScheduleCapability(
-      connection.user_id,
-      connection.organization_id,
-    );
-    if (!capability.allowed) {
-      skipped.push({ connection_id: connection.id, reason: capability.reason });
-      continue;
-    }
-    jobs.push(
-      await enqueueSyncJob({
-        organizationId: connection.organization_id,
-        connectionId: connection.id,
-        action: "pull_incremental",
-        payload: { reason: "safety_reconciliation" },
-      }),
-    );
-  }
-
-  return { queued: jobs.length, job_ids: jobs.map((job) => job.id), skipped };
+export async function enqueueDuePulls() {
+  return { queued: 0, job_ids: [], skipped: [], reason: "INBOUND_SYNC_DISABLED" };
 }
 
 export async function renewDueWatches() {
-  if (googleCalendarInboundDisabled()) {
-    return { renewed: 0, results: [], reason: "INBOUND_SYNC_DISABLED" };
-  }
-  const allowedUserIds = canaryUserIds();
-  if (allowedUserIds.length === 0) {
-    return { renewed: 0, results: [] };
-  }
-  const renewalCutoff = new Date(
-    Date.now() + 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const { data: connections, error } = await supabase
-    .from("google_calendar_tokens")
-    .select("*")
-    .in("user_id", allowedUserIds)
-    .eq("sync_enabled", true)
-    .is("disconnected_at", null)
-    .or(`watch_expires_at.is.null,watch_expires_at.lt.${renewalCutoff}`);
-
-  if (error) throw error;
-  const results = [];
-  for (const connection of connections || []) {
-    try {
-      results.push(await ensureGoogleWatch(connection));
-    } catch (error) {
-      await supabase
-        .from("google_calendar_tokens")
-        .update({ sync_status: "error", last_error: errorMessage(error) })
-        .eq("id", connection.id);
-      results.push({
-        connection_id: connection.id,
-        error: errorMessage(error),
-      });
-    }
-  }
-  return {
-    renewed: results.filter((result) => "channel_id" in result).length,
-    results,
-  };
+  return { renewed: 0, results: [], reason: "INBOUND_SYNC_DISABLED" };
 }
 
 export class GoogleCalendarDisconnectPendingError extends Error {

@@ -25,12 +25,6 @@ import {
   GOOGLE_CALENDAR_CONFLICT_MESSAGE,
   GoogleCalendarConflictError,
 } from "./google-calendar-conflict";
-import {
-  GOOGLE_CALENDAR_CANARY_CODE,
-  GOOGLE_CALENDAR_CANARY_MESSAGE,
-  googleCalendarCanaryUserIds,
-  isGoogleCalendarCanaryUser,
-} from "./google-calendar-canary";
 
 type GoogleCalendarUrlBuilder = (path: string) => string;
 type GoogleCalendarContractHelpers = {
@@ -526,7 +520,6 @@ test("delete worker defers while the same Vimob event is being created in Google
     "processSyncJob",
     {
       hasRunningUpsertForEvent: async () => true,
-      isCanaryUser: () => true,
       deleteScheduleEventFromGoogle: async () => { deleted += 1; },
     },
   );
@@ -539,7 +532,7 @@ test("delete worker defers while the same Vimob event is being created in Google
   assert.equal(deleted, 0);
 });
 
-test("outbound worker fails closed for an owner outside the selected user list", async () => {
+test("outbound worker skips an upsert without a verified owner in its payload", async () => {
   let pushed = 0;
   const processJob = loadIsolatedGoogleFunction<(
     job: Record<string, unknown>,
@@ -548,7 +541,6 @@ test("outbound worker fails closed for an owner outside the selected user list",
     "processSyncJob",
     {
       currentScheduleEventOwner: async () => "owner-b",
-      isCanaryUser: () => false,
       pushScheduleEventToGoogle: async () => { pushed += 1; },
     },
   );
@@ -557,8 +549,8 @@ test("outbound worker fails closed for an owner outside the selected user list",
     organization_id: "organization-a",
     schedule_event_id: "event-a",
     created_by: "actor-a",
-    payload: { event_id: "event-a", owner_user_id: "owner-b" },
-  }), { deferred: true, reason: "CANARY_NOT_ENABLED" });
+    payload: { event_id: "event-a" },
+  }), { skipped: true, reason: "STALE_EVENT_OWNER" });
   assert.equal(pushed, 0);
 });
 
@@ -571,7 +563,6 @@ test("durable upsert ignores a removed audit actor but skips a transferred owner
     "processSyncJob",
     {
       currentScheduleEventOwner: async () => "owner-b",
-      isCanaryUser: () => true,
       hasOutstandingDeleteForEvent: async () => false,
       pushScheduleEventToGoogle: async () => { pushed += 1; return { synced: true }; },
     },
@@ -624,7 +615,7 @@ test("durable upsert does not export after the connection owner leaves the organ
   assert.equal(googleWrites, 0);
 });
 
-test("outbound worker passes only selected user ids to the claim RPC", async () => {
+test("outbound worker claims verified jobs without a user allowlist", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const run = loadIsolatedGoogleFunction<(limit: number) => Promise<Record<string, unknown>>>(
     "supabase/functions/_shared/google-calendar.ts",
@@ -634,7 +625,6 @@ test("outbound worker passes only selected user ids to the claim RPC", async () 
         calls.push({ name, ...args });
         return { data: [], error: null };
       } },
-      canaryUserIds: () => ["selected-user-a"],
       crypto,
     },
   );
@@ -642,7 +632,8 @@ test("outbound worker passes only selected user ids to the claim RPC", async () 
   assert.equal(calls.length, 1);
   const claimArgs = calls[0];
   assert.equal(claimArgs.name, "google_calendar_claim_outbound_sync_jobs");
-  assert.deepEqual(claimArgs.p_user_ids, ["selected-user-a"]);
+  assert.deepEqual(Object.keys(claimArgs).sort(), ["name", "p_limit", "p_worker"]);
+  assert.equal(claimArgs.p_limit, 20);
 });
 
 test("deferred deletion returns to the queue without consuming a retry", async () => {
@@ -709,7 +700,6 @@ test("linkless hard delete removes only the matching deterministic Vimob event",
     {
       supabase,
       assertGoogleScheduleCapability: async () => undefined,
-      isCanaryUser: () => true,
       getConnectionById: async () => connection,
       getConnectionForUser: async () => connection,
       normalizeCalendarId: (value: string) => value,
@@ -784,7 +774,6 @@ test("hard delete removes a verified linked event after a Google-side edit", asy
     "deleteScheduleEventFromGoogle",
     {
       supabase,
-      isCanaryUser: () => true,
       getConnectionById: async () => connection,
       normalizeCalendarId: (value: string) => value,
       buildVimobGoogleEventId,
@@ -1219,7 +1208,6 @@ test("legacy webhook never queues an inbound pull regardless of channel tenant",
 });
 
 test("legacy webhook never queues an inbound pull for a connected user", async () => {
-  const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const organizationB = "e0b1c2d3-e4f5-6789-abcd-ef0123456789";
   let queued = 0;
@@ -1258,8 +1246,6 @@ test("legacy webhook never queues an inbound pull for a connected user", async (
       sha256Hex: async () => "valid-hash",
       constantTimeEqual: (left: string, right: string) => left === right,
       googleCalendarOrganizationsMatch,
-      isGoogleCalendarCanaryUser,
-      Deno: { env: { get: () => userA } },
       getGoogleScheduleCapability: async () => { checkedCapability += 1; return { allowed: true }; },
       enqueueSyncJob: async () => { queued += 1; },
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
@@ -1291,7 +1277,6 @@ test("OAuth callback rejects revoked Agenda access before exchanging a code", as
     {
       handleOptions: () => null,
       consumeOAuthState: async () => ({ user_id: "user-a", organization_id: "organization-a", return_url: null }),
-      canUseGoogleCalendar: () => true,
       getUserProfile: async () => ({ id: "user-a", organization_id: "organization-a" }),
       getGoogleScheduleCapability: async () => ({ allowed: false, reason: "MEMBERSHIP_REQUIRED", status: 403 }),
       callbackError: (message: string) => new Response(message, { status: 400 }),
@@ -1306,29 +1291,6 @@ test("OAuth callback rejects revoked Agenda access before exchanging a code", as
   assert.equal(exchanged, 0);
 });
 
-test("OAuth callback does not exchange a code after its user leaves the canary", async () => {
-  const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
-  const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
-  let exchanged = 0;
-  const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
-    "supabase/functions/google-calendar-oauth/index.ts",
-    {
-      handleOptions: () => null,
-      consumeOAuthState: async () => ({ user_id: userB, organization_id: "organization-a", return_url: null }),
-      canUseGoogleCalendar: (userId: string) => isGoogleCalendarCanaryUser(userId, userA),
-      GOOGLE_CALENDAR_CANARY_MESSAGE,
-      callbackError: (message: string) => new Response(message, { status: 400 }),
-      exchangeOAuthCode: async () => { exchanged += 1; throw new Error("Must not exchange disabled user's code"); },
-      errorMessage: (error: unknown) => String(error),
-      jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
-    },
-  );
-  const response = await handler(new Request("https://example.test/google-calendar-oauth/callback?state=state-a&code=code-a"));
-  assert.equal(response.status, 400);
-  assert.equal(await response.text(), GOOGLE_CALENDAR_CANARY_MESSAGE);
-  assert.equal(exchanged, 0);
-});
-
 test("OAuth start rejects users without Agenda capability before creating a state", async () => {
   let statesCreated = 0;
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
@@ -1337,7 +1299,6 @@ test("OAuth start rejects users without Agenda capability before creating a stat
       handleOptions: () => null,
       authenticateUser: async () => ({ id: "user-a" }),
       getUserProfile: async () => ({ id: "user-a", organization_id: "organization-a" }),
-      canUseGoogleCalendar: () => true,
       getGoogleScheduleCapability: async () => ({ allowed: false, reason: "AGENDA_MODULE_DISABLED", status: 403 }),
       createOAuthState: async () => { statesCreated += 1; return "state-a"; },
       errorMessage: (error: unknown) => String(error),
@@ -1357,20 +1318,34 @@ test("OAuth start rejects users without Agenda capability before creating a stat
   assert.equal(statesCreated, 0);
 });
 
-test("canary allowlist denies missing configuration and matches whole user ids", () => {
-  const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
-  const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
-  assert.equal(isGoogleCalendarCanaryUser(userA, undefined), false);
-  assert.equal(isGoogleCalendarCanaryUser(userA, ""), false);
-  assert.equal(isGoogleCalendarCanaryUser(userA, "not-a-uuid"), false);
-  assert.equal(isGoogleCalendarCanaryUser(userB, userA), false);
-  assert.equal(isGoogleCalendarCanaryUser(userA, ` ${userB}, ${userA.toUpperCase()} `), true);
-  assert.equal(isGoogleCalendarCanaryUser(`${userA}extra`, userA), false);
-  assert.deepEqual(googleCalendarCanaryUserIds(` ${userA},${userA.toUpperCase()},bogus `), [userA]);
+test("OAuth start creates consent URL for an authorized Agenda user without an allowlist", async () => {
+  let statesCreated = 0;
+  const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
+    "supabase/functions/google-calendar-oauth/index.ts",
+    {
+      handleOptions: () => null,
+      authenticateUser: async () => ({ id: "user-b" }),
+      getUserProfile: async () => ({ id: "user-b", organization_id: "organization-b" }),
+      getGoogleScheduleCapability: async () => ({ allowed: true }),
+      createOAuthState: async () => { statesCreated += 1; return "state-b"; },
+      buildGoogleAuthUrl: (state: string) => `https://accounts.google.test/auth?state=${state}`,
+      jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
+      errorMessage: (error: unknown) => String(error),
+    },
+  );
+  const response = await handler(new Request("https://example.test/google-calendar-oauth", {
+    method: "POST",
+    body: JSON.stringify({ action: "get_auth_url", organization_id: "organization-b" }),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    auth_url: "https://accounts.google.test/auth?state=state-b",
+  });
+  assert.equal(statesCreated, 1);
 });
 
-test("OAuth status stays readable while a non-canary user cannot start consent", async () => {
-  const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
+test("OAuth status stays readable while a user without Agenda access cannot start consent", async () => {
   const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
   let statesCreated = 0;
   let disconnects = 0;
@@ -1380,9 +1355,7 @@ test("OAuth status stays readable while a non-canary user cannot start consent",
       handleOptions: () => null,
       authenticateUser: async () => ({ id: userB }),
       getUserProfile: async () => ({ id: userB, organization_id: "organization-b" }),
-      canUseGoogleCalendar: (userId: string) => isGoogleCalendarCanaryUser(userId, userA),
-      GOOGLE_CALENDAR_CANARY_MESSAGE,
-      GOOGLE_CALENDAR_CANARY_CODE,
+      getGoogleScheduleCapability: async () => ({ allowed: false, reason: "SCHEDULE_MANAGE_REQUIRED", status: 403 }),
       getConnectionForUser: async () => null,
       getConnectionById: async () => ({ id: "connection-b", user_id: userB, organization_id: "organization-b" }),
       disconnectConnection: async () => { disconnects += 1; },
@@ -1402,8 +1375,8 @@ test("OAuth status stays readable while a non-canary user cannot start consent",
   assert.equal(start.status, 403);
   assert.deepEqual(await start.json(), {
     success: false,
-    error: GOOGLE_CALENDAR_CANARY_MESSAGE,
-    code: GOOGLE_CALENDAR_CANARY_CODE,
+    error: "SCHEDULE_MANAGE_REQUIRED",
+    code: "SCHEDULE_MANAGE_REQUIRED",
   });
   assert.equal(statesCreated, 0);
   const disconnected = await invoke("disconnect");
@@ -1411,7 +1384,7 @@ test("OAuth status stays readable while a non-canary user cannot start consent",
   assert.equal(disconnects, 1);
 });
 
-test("OAuth status reports connection eligibility for one allowed user", async () => {
+test("OAuth status reports connection eligibility for any user with Agenda access", async () => {
   const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
     "supabase/functions/google-calendar-oauth/index.ts",
@@ -1419,7 +1392,7 @@ test("OAuth status reports connection eligibility for one allowed user", async (
       handleOptions: () => null,
       authenticateUser: async () => ({ id: userA }),
       getUserProfile: async () => ({ id: userA, organization_id: "organization-a" }),
-      canUseGoogleCalendar: (userId: string) => isGoogleCalendarCanaryUser(userId, userA),
+      getGoogleScheduleCapability: async () => ({ allowed: true }),
       getConnectionForUser: async () => null,
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
       errorMessage: (error: unknown) => String(error),
@@ -1445,7 +1418,6 @@ test("OAuth callback connects without importing Google events or creating a watc
         organization_id: "organization-a",
         return_url: "https://app.example.test/settings",
       }),
-      canUseGoogleCalendar: () => true,
       getUserProfile: async () => ({ id: "user-a", organization_id: "organization-a" }),
       getGoogleScheduleCapability: async () => ({ allowed: true }),
       exchangeOAuthCode: async () => ({ access_token: "access" }),
@@ -1552,7 +1524,6 @@ test("legacy pause request cannot silently disable one-way delivery", async () =
 });
 
 test("manual inbound sync is disabled while existing outbound push remains available", async () => {
-  const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const organizationB = "e0b1c2d3-e4f5-6789-abcd-ef0123456789";
   let pulled = 0;
@@ -1567,21 +1538,16 @@ test("manual inbound sync is disabled while existing outbound push remains avail
       }),
       requireUserScheduleManage: async () => null,
       getConnectionById: async () => ({ id: "connection-b", user_id: userB, organization_id: organizationB }),
-      isGoogleCalendarCanaryUser,
-      Deno: { env: { get: () => userA } },
-      GOOGLE_CALENDAR_CANARY_MESSAGE,
-      GOOGLE_CALENDAR_CANARY_CODE,
       syncConnectionFromGoogle: async () => { pulled += 1; },
       supabase: { from: () => {
         const query = {
           select: () => query,
           eq: () => query,
-          maybeSingle: async () => ({ data: { organization_id: organizationB, user_id: userA }, error: null }),
+          maybeSingle: async () => ({ data: { organization_id: organizationB, user_id: userB }, error: null }),
         };
         return query;
       } },
       pushScheduleEventToGoogle: async () => { pushed += 1; return { synced: true }; },
-      ownerCanUseGoogleCalendar: () => true,
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
       errorMessage: (error: unknown) => String(error),
     },
@@ -1599,7 +1565,7 @@ test("manual inbound sync is disabled while existing outbound push remains avail
   assert.equal(pushed, 1);
 });
 
-test("direct outbound push cannot bypass the selected event owner", async () => {
+test("direct outbound push rejects an event outside the requested organization", async () => {
   let pushed = 0;
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
     "supabase/functions/google-calendar-sync/index.ts",
@@ -1615,14 +1581,12 @@ test("direct outbound push cannot bypass the selected event owner", async () => 
           select: () => query,
           eq: () => query,
           maybeSingle: async () => ({
-            data: { organization_id: "organization-a", user_id: "owner-b" },
+            data: { organization_id: "organization-b", user_id: "owner-b" },
             error: null,
           }),
         };
         return query;
       } },
-      ownerCanUseGoogleCalendar: () => false,
-      canaryDeniedResponse: () => new Response(JSON.stringify({ code: "GOOGLE_CALENDAR_CANARY_NOT_ENABLED" }), { status: 403 }),
       pushScheduleEventToGoogle: async () => { pushed += 1; },
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
       errorMessage: (error: unknown) => String(error),
@@ -1632,7 +1596,7 @@ test("direct outbound push cannot bypass the selected event owner", async () => 
     method: "POST",
     body: JSON.stringify({ action: "push_upsert", event_id: "event-b" }),
   }));
-  assert.equal(response.status, 403);
+  assert.equal(response.status, 404);
   assert.equal(pushed, 0);
 });
 
@@ -1821,8 +1785,7 @@ test("durable outbound jobs bind to tenant and owner, not a revoked audit actor"
     /deleteScheduleEventFromGoogle\([\s\S]*?trustedJobOrganizationId: job\.organization_id,[\s\S]*?fallbackOwnerUserId: job\.payload\?\.owner_user_id/,
   );
   assert.match(sharedSource, /event\.organization_id !== trustedJobOrganizationId/);
-  assert.match(sharedSource, /job\.payload\.owner_user_id !== currentOwner/);
-  assert.match(sharedSource, /!isCanaryUser\(currentOwner\)/);
+  assert.match(sharedSource, /!job\.payload\?\.owner_user_id \|\| job\.payload\.owner_user_id !== currentOwner/);
   assert.match(
     sharedSource,
     /else if \(!actorUserId\) \{\s*await assertGoogleScheduleCapability\(event\.user_id, event\.organization_id\)/,
