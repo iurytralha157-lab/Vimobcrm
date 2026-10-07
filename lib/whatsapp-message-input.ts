@@ -8,6 +8,7 @@ type MessageInputConversation = {
 	historical_lead_view?: boolean | null;
   lead?: {
     id?: string | null;
+    assignee?: { id?: string | null } | null;
   } | null;
   session?: {
     id?: string | null;
@@ -18,8 +19,10 @@ type MessageInputConversation = {
 
 type MessageInputSession = {
   id: string;
+  owner_user_id?: string;
   status?: string | null;
   provider?: string | null;
+  can_send?: boolean;
 };
 
 export type WhatsAppMessageInputState = {
@@ -124,90 +127,69 @@ function findSessionById(
   return sessions?.find((session) => session.id === sessionId) || null;
 }
 
-function getConnectedSessions(sessions?: MessageInputSession[] | null) {
+function canSendFromSession(session: MessageInputSession | null, currentUserId?: string | null) {
+  return isUsableWhatsAppSessionStatus(session?.status) && (session?.can_send === true || Boolean(
+    session?.can_send == null && currentUserId && session?.owner_user_id === currentUserId
+  ));
+}
+
+function canStartFromSession(session: MessageInputSession | null, currentUserId?: string | null) {
+  return canSendFromSession(session, currentUserId) && session?.owner_user_id === currentUserId;
+}
+
+function canSendExistingConversation(
+  conversation: MessageInputConversation,
+  session: MessageInputSession | null,
+  currentUserId?: string | null,
+) {
+  if (!session || !canSendFromSession(session, currentUserId)) return false;
+  if (session.owner_user_id === currentUserId) return true;
+  // A delegated send grant applies only to the recipient's assigned lead.
+  // Missing assignee data fails closed; the API validates this again on POST.
+  return Boolean(currentUserId && conversation.lead?.assignee?.id === currentUserId);
+}
+
+function getConnectedSessions(sessions?: MessageInputSession[] | null, currentUserId?: string | null) {
   return (sessions || []).filter((session) =>
+    canStartFromSession(session, currentUserId) &&
     isUsableWhatsAppSessionStatus(session.status) &&
     session.provider !== "evolution"
   );
-}
-
-function getConfiguredSessions(sessions?: MessageInputSession[] | null) {
-  return (sessions || []).filter((session) =>
-    session.status !== "deleted" && session.provider !== "evolution"
-  );
-}
-
-function getConversationSession(
-  conversation?: MessageInputConversation | null,
-  sessions?: MessageInputSession[] | null,
-): MessageInputSession | null {
-  if (!conversation?.session_id) return null;
-
-  // The session list is the shared, actively refreshed source used by the
-  // Integrations screen and every WhatsApp launcher. Conversation payloads can
-  // carry an older nested status and must not override the current session.
-  const currentSession = findSessionById(sessions, conversation.session_id);
-  if (currentSession) return currentSession;
-
-  if (conversation.session?.id === conversation.session_id) {
-    return {
-      id: conversation.session_id,
-      status: conversation.session.status,
-      provider: conversation.session.provider,
-    };
-  }
-
-  return {
-    id: conversation.session_id,
-    status: null,
-  };
 }
 
 export function getWhatsAppSendSessionId(
   conversation?: MessageInputConversation | null,
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
+  currentUserId?: string | null,
 ) {
-  // A persisted conversation without a trusted session is historical-only.
-  // Never redirect it through another connected account.
-  if (conversation?.id && !conversation.session_id) {
-    return undefined;
+  if (conversation?.id) {
+    // A physical conversation belongs to exactly one WhatsApp. Its nested
+    // session status is history, not proof that this user may send on it.
+    const session = findSessionById(sessions, conversation.session_id);
+    if (!session || !canSendExistingConversation(conversation, session, currentUserId) || session.provider === "evolution") return undefined;
+    if (selectedSessionId && selectedSessionId !== "all" && selectedSessionId !== session.id) {
+      return undefined;
+    }
+    return session.id;
   }
 
   if (selectedSessionId && selectedSessionId !== "all") {
-    return selectedSessionId;
+    const session = findSessionById(sessions, selectedSessionId);
+    return canStartFromSession(session, currentUserId) && session?.provider !== "evolution" ? session!.id : undefined;
   }
 
-  const conversationSession = getConversationSession(conversation, sessions);
-  if (conversationSession?.id && isUsableWhatsAppSessionStatus(conversationSession.status)) {
-    return conversationSession.id;
+  const conversationSession = findSessionById(sessions, conversation?.session_id);
+  if (canStartFromSession(conversationSession, currentUserId) && isUsableWhatsAppSessionStatus(conversationSession?.status)) {
+    return conversationSession!.id;
   }
 
-  const connectedSessions = getConnectedSessions(sessions);
+  const connectedSessions = getConnectedSessions(sessions, currentUserId);
   if (connectedSessions.length === 1) {
     return connectedSessions[0].id;
   }
   if (connectedSessions.length > 1) {
     return undefined;
-  }
-
-  // A configured session can have a stale offline status while Integrations
-  // is reconciling it. Let the backend perform the definitive validation when
-  // there is no ambiguity about which account should send.
-  if (conversationSession?.id && findSessionById(sessions, conversationSession.id)) {
-    return conversationSession.id;
-  }
-
-  // Preserve a persisted conversation's trusted account when that account is
-  // absent from the refreshed list. The backend will validate authorization;
-  // the client must not silently redirect history through another account.
-  if (conversationSession?.id && conversationSession.status == null) {
-    return conversationSession.id;
-  }
-
-  const configuredSessions = getConfiguredSessions(sessions);
-  if (configuredSessions.length === 1) {
-    return configuredSessions[0].id;
   }
 
   return undefined;
@@ -217,6 +199,7 @@ export function getWhatsAppMessageInputState(
   conversation?: MessageInputConversation | null,
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
+  currentUserId?: string | null,
 ): WhatsAppMessageInputState {
   if (!conversation) {
     return {
@@ -232,16 +215,49 @@ export function getWhatsAppMessageInputState(
     };
   }
 
-	if (conversation.historical_lead_view) {
-		return {
-			disabled: true,
-			placeholder: "Histórico deste card (somente leitura)",
-		};
-	}
+  if (conversation.historical_lead_view) {
+    return {
+      disabled: true,
+      placeholder: "Histórico deste card (somente leitura)",
+    };
+  }
 
-  const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
+  if (conversation.id && conversation.session_id && !findSessionById(sessions, conversation.session_id)) {
+    return {
+      disabled: true,
+      placeholder: sessions == null
+        ? "Verificando acesso a este WhatsApp..."
+        : "Sem acesso a este WhatsApp. Inicie pelo seu número.",
+    };
+  }
+
+  if (conversation.id && conversation.session_id) {
+    const session = findSessionById(sessions, conversation.session_id);
+    if (!session || !canSendFromSession(session, currentUserId)) {
+      return {
+        disabled: true,
+        placeholder: session && !isUsableWhatsAppSessionStatus(session.status)
+          ? "WhatsApp desconectado. Reconecte ou selecione outra conversa."
+          : "Sem permissão para enviar por este WhatsApp. Inicie pelo seu número.",
+      };
+    }
+    if (!canSendExistingConversation(conversation, session, currentUserId)) {
+      return {
+        disabled: true,
+        placeholder: "Este lead não está sob sua responsabilidade. Inicie pelo seu número.",
+      };
+    }
+    if (selectedSessionId && selectedSessionId !== "all" && selectedSessionId !== session.id) {
+      return {
+        disabled: true,
+        placeholder: "Esta conversa usa outro WhatsApp. Abra a conversa do número selecionado.",
+      };
+    }
+  }
+
+  const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions, currentUserId);
   if (!sendSessionId) {
-    const connectedSessions = getConnectedSessions(sessions);
+    const connectedSessions = getConnectedSessions(sessions, currentUserId);
     return {
       disabled: true,
       placeholder: connectedSessions.length > 1

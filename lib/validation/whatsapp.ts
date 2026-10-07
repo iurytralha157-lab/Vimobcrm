@@ -95,6 +95,7 @@ export const whatsAppSessionSchema = z.object({
   profile_name: z.string().nullable(),
   profile_picture: z.string().nullable(),
   is_active: z.boolean(),
+  can_send: z.boolean().optional(),
   is_notification_session: z.boolean().optional(),
   provider: whatsAppProviderSchema.optional(),
   advanced_settings: z.unknown().nullable().optional(),

@@ -65,6 +65,7 @@ import {
   getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   preserveWhatsAppConversationCardSnapshot,
   updateWhatsAppConversationDraft,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
@@ -514,6 +515,7 @@ export function FloatingChat() {
     activeConversation,
     selectedSessionId,
     sessions,
+    currentUserId,
   );
   const activeAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (
@@ -629,7 +631,7 @@ export function FloatingChat() {
     if (loadingSessions || !accessReady || !canViewWhatsApp) return;
 
     const connectedSessionKey = (sessions || [])
-      .filter((session) => session.status === "connected")
+      .filter((session) => session.status === "connected" && session.owner_user_id === currentUserId && session.can_send !== false)
       .map((session) => `${session.id}:${session.status}`)
       .join("|");
     const pendingStartKey = [pendingPhone, pendingLeadName || "", pendingLeadId || "", connectedSessionKey].join("::");
@@ -637,7 +639,7 @@ export function FloatingChat() {
     pendingStartKeyRef.current = pendingStartKey;
 
     const openPendingConversation = async () => {
-      const connected = sessions?.filter(s => s.status === "connected") || [];
+      const connected = sessions?.filter(s => s.status === "connected" && s.owner_user_id === currentUserId && s.can_send !== false) || [];
 
       if (connected.length === 1) {
         await handleStartConversationWithSession(pendingPhone, connected[0].id, pendingLeadName || undefined, pendingLeadId || undefined);
@@ -667,6 +669,7 @@ export function FloatingChat() {
     pendingPhone,
     pendingLeadName,
     pendingLeadId,
+    currentUserId,
     sessions,
     loadingSessions,
     accessReady,
@@ -820,7 +823,7 @@ export function FloatingChat() {
       return;
     }
 
-    const connectedSession = sessions?.find(session => session.status === "connected");
+    const connectedSession = sessions?.find(session => session.status === "connected" && session.owner_user_id === currentUserId && session.can_send !== false);
     const explicitlySelectedSessionId = selectedSessionId === "all" ? undefined : selectedSessionId;
     if (!explicitlySelectedSessionId && !leadId && !connectedSession) {
       toast({
@@ -857,9 +860,11 @@ export function FloatingChat() {
 		const existingForLead = await whatsappAPI.findConversation({
 		  phone: "",
 		  leadId,
+		  sessionId,
 		  organizationId: activeOrganization.organizationId,
 		}) as WhatsAppConversation | null;
 		if (existingForLead) {
+		  if (sessionId) setSelectedSessionId(sessionId);
 		  openConversation(existingForLead);
 		  return;
 		}
@@ -902,6 +907,7 @@ export function FloatingChat() {
               activeOrganization.organizationId,
             );
           }
+          setSelectedSessionId(sessionId);
           openConversation(conversationToOpen);
           return;
         }
@@ -909,7 +915,7 @@ export function FloatingChat() {
 
       // Fallback: tentar historico via edge function (acesso restrito)
       // Adicionamos um timeout para nao travar o fluxo
-      if (leadId) {
+      if (leadId && !sessionId) {
         try {
           const restrictedData = await withTimeout(
             whatsappAPI.getHistoryAccess({
@@ -957,6 +963,7 @@ export function FloatingChat() {
         expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
       });
 
+      setSelectedSessionId(sessionId);
       openConversation(newConversation);
     } catch (error: unknown) {
       console.error("[WhatsApp Start] Erro final no fluxo:", error);
@@ -1206,7 +1213,13 @@ export function FloatingChat() {
       emoji,
     });
   };
-  const connectedSessions = sessions?.filter(s => s.status === "connected") || [];
+  const connectedSessions = sessions?.filter(s => s.status === "connected" && s.owner_user_id === currentUserId && s.can_send !== false) || [];
+  const activeSessionUnavailable = Boolean(
+    activeConversation?.id
+    && activeConversation.session_id
+    && sessions
+    && getWhatsAppSendSessionId(activeConversation, null, sessions, currentUserId) !== activeConversation.session_id,
+  );
   const activeConversationFilterCount = [
     selectedSessionId !== "all",
     hideGroups,
@@ -1616,9 +1629,43 @@ export function FloatingChat() {
   );
   const renderMessageInput = (mobile = false) => {
     const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;
+    const ownStartPhone = normalizePhoneToE164(activeConversation?.contact_phone);
 
     return (
     <div className={cn("shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3", mobile && "pb-2")}>
+      {activeSessionUnavailable && activeLeadId && !activeConversation?.is_group && (
+        <div className="mb-2 space-y-2 text-xs text-[var(--app-text-secondary)]">
+          <p>Este atendimento não pode enviar pelo WhatsApp atual. O histórico continua visível.</p>
+          {ownStartPhone && connectedSessions.length > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={isStartingConversation}
+              onClick={() => {
+                if (connectedSessions.length === 1) {
+                  void handleStartConversationWithSession(
+                    ownStartPhone,
+                    connectedSessions[0].id,
+                    activeConversation?.lead?.name || undefined,
+                    activeLeadId,
+                  );
+                  return;
+                }
+                setPendingStartData({
+                  phone: ownStartPhone,
+                  leadName: activeConversation?.lead?.name || undefined,
+                  leadId: activeLeadId,
+                });
+                setShowSessionSelector(true);
+              }}
+            >
+              Iniciar pelo meu WhatsApp
+            </Button>
+          ) : (
+            <p>Conecte seu WhatsApp para iniciar uma conversa com este lead.</p>
+          )}
+        </div>
+      )}
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx" className="hidden" disabled={messageInputDisabled} />
       <MessageBox
         value={messageText}
