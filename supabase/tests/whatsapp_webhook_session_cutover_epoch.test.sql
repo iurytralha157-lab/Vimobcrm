@@ -23,7 +23,13 @@ insert into public.users (id, organization_id, name, email, role, is_active) val
   ('e1100000-0000-4000-8000-000000000001',
    'e1200000-0000-4000-8000-000000000001', 'Cutover A', 'wa-cutover-a@example.test', 'admin', true),
   ('e1100000-0000-4000-8000-000000000002',
-   'e1200000-0000-4000-8000-000000000002', 'Cutover B', 'wa-cutover-b@example.test', 'admin', true);
+   'e1200000-0000-4000-8000-000000000002', 'Cutover B', 'wa-cutover-b@example.test', 'admin', true)
+on conflict (id) do update set
+  organization_id = excluded.organization_id,
+  name = excluded.name,
+  email = excluded.email,
+  role = excluded.role,
+  is_active = excluded.is_active;
 
 insert into public.whatsapp_sessions (
   id, organization_id, owner_user_id, instance_name, provider, status, is_active
