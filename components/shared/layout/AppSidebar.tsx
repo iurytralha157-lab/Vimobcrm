@@ -33,6 +33,7 @@ import {
 import {
   APP_BOTTOM_NAVIGATION_ITEMS,
   APP_NAVIGATION_ITEMS,
+  APP_SIDEBAR_DIMENSIONS,
   BILLING_NAVIGATION_ITEM,
   type AppNavigationItem,
 } from "@/config/navigation";
@@ -47,11 +48,24 @@ const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
 const SIDEBAR_NAV_RESET =
-  "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+  "border-0 shadow-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--app-text-primary)]";
 const SIDEBAR_NAV_TEXT =
   "font-sans text-[12px] font-light leading-none";
 const SIDEBAR_NAV_CHILD_TEXT =
-  "font-sans text-[14px] font-light leading-[21px]";
+  "font-sans font-light";
+const SIDEBAR_ITEM_STYLE: React.CSSProperties = {
+  minHeight: APP_SIDEBAR_DIMENSIONS.minItemHeightPx,
+};
+const SIDEBAR_CHILD_STYLE: React.CSSProperties = {
+  ...SIDEBAR_ITEM_STYLE,
+  fontSize: APP_SIDEBAR_DIMENSIONS.submenuFontSizePx,
+  lineHeight: `${APP_SIDEBAR_DIMENSIONS.submenuLineHeightPx}px`,
+};
+const SIDEBAR_POPOVER_STYLE: React.CSSProperties = {
+  width: APP_SIDEBAR_DIMENSIONS.popoverWidthPx,
+  maxHeight: `min(calc(100dvh - ${APP_SIDEBAR_DIMENSIONS.popoverViewportPaddingPx * 2}px), var(--radix-dropdown-menu-content-available-height, calc(100dvh - ${APP_SIDEBAR_DIMENSIONS.popoverViewportPaddingPx * 2}px)))`,
+  overflowY: "auto",
+};
 
 export const AppSidebar = React.memo(function AppSidebar() {
   const pathname = usePathname() || "";
@@ -253,16 +267,13 @@ export const AppSidebar = React.memo(function AppSidebar() {
       ? isActiveParent(item)
       : isPathActive(item.path, { parent: true }) ||
         isPathPending(item.path, { parent: true });
-    const shouldLiftDropdown = item.path === "/settings";
-    const dropdownAlignOffset = shouldLiftDropdown ? -180 : 0;
-
     if (item.children) {
       return (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               className={cn(
-                "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
+                "flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 transition-colors",
                 SIDEBAR_NAV_TEXT,
                 SIDEBAR_NAV_RESET,
                 "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
@@ -273,9 +284,11 @@ export const AppSidebar = React.memo(function AppSidebar() {
               aria-label={getLabel(item.labelKey)}
               aria-current={isActive ? "page" : undefined}
               title={collapsed ? getLabel(item.labelKey) : undefined}
+              style={SIDEBAR_ITEM_STYLE}
             >
               <Icon
-                className="h-5 w-5 flex-shrink-0"
+                className="flex-shrink-0"
+                size={APP_SIDEBAR_DIMENSIONS.mainIconSizePx}
                 strokeWidth={SIDEBAR_ICON_STROKE}
               />
               {!collapsed && (
@@ -284,7 +297,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
                     {getLabel(item.labelKey)}
                   </span>
                   <ChevronRight
-                    className="h-4 w-4 text-[var(--app-text-tertiary)]"
+                    className="text-[var(--app-text-tertiary)]"
+                    size={APP_SIDEBAR_DIMENSIONS.groupChevronSizePx}
                     strokeWidth={SIDEBAR_CHEVRON_STROKE}
                   />
                 </>
@@ -293,10 +307,11 @@ export const AppSidebar = React.memo(function AppSidebar() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side="right"
-            align="start"
-            alignOffset={dropdownAlignOffset}
-            sideOffset={8}
-            className="app-sidebar-popover w-60 space-y-0.5 p-2"
+            align={item.path === "/settings" ? "end" : "start"}
+            sideOffset={APP_SIDEBAR_DIMENSIONS.popoverViewportPaddingPx}
+            collisionPadding={APP_SIDEBAR_DIMENSIONS.popoverViewportPaddingPx}
+            className="app-sidebar-popover space-y-0.5 overflow-x-hidden p-2"
+            style={SIDEBAR_POPOVER_STYLE}
           >
             {item.children.map((child) => {
               const ChildIcon = getNavigationIcon(child.icon);
@@ -310,8 +325,9 @@ export const AppSidebar = React.memo(function AppSidebar() {
               return (
                 <DropdownMenuItem
                   key={child.path}
+                  asChild
                   className={cn(
-                    "cursor-pointer gap-2 rounded-[4px] px-2.5 py-2 text-[14px] font-light leading-[21px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
+                    "cursor-pointer gap-2 rounded-[4px] px-2.5 py-1.5 font-light text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
                     SIDEBAR_NAV_RESET,
                     childActive &&
                       "bg-[var(--app-surface-soft)] text-primary",
@@ -329,10 +345,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
                       setPendingPath(child.path);
                     }
                   }}
-                  asChild={
-                    !child.path.includes("#") ||
-                    pathname !== child.path.split("#")[0]
-                  }
+                  style={SIDEBAR_CHILD_STYLE}
                 >
                   {!child.path.includes("#") ||
                   pathname !== child.path.split("#")[0] ? (
@@ -343,23 +356,28 @@ export const AppSidebar = React.memo(function AppSidebar() {
                         SIDEBAR_NAV_CHILD_TEXT,
                         SIDEBAR_NAV_RESET,
                       )}
+                      style={SIDEBAR_CHILD_STYLE}
                     >
                       <ChildIcon
-                        className="h-3.5 w-3.5 flex-shrink-0"
+                        className="flex-shrink-0"
+                        size={APP_SIDEBAR_DIMENSIONS.submenuIconSizePx}
                         strokeWidth={SIDEBAR_ICON_STROKE}
                       />
                       <span>{getLabel(child.labelKey)}</span>
                     </Link>
                   ) : (
                     <button
+                      type="button"
                       className={cn(
                         "flex w-full items-center gap-2",
                         SIDEBAR_NAV_CHILD_TEXT,
                         SIDEBAR_NAV_RESET,
                       )}
+                      style={SIDEBAR_CHILD_STYLE}
                     >
                       <ChildIcon
-                        className="h-3.5 w-3.5 flex-shrink-0"
+                        className="flex-shrink-0"
+                        size={APP_SIDEBAR_DIMENSIONS.submenuIconSizePx}
                         strokeWidth={SIDEBAR_ICON_STROKE}
                       />
                       <span>{getLabel(child.labelKey)}</span>
@@ -381,16 +399,18 @@ export const AppSidebar = React.memo(function AppSidebar() {
         aria-current={isActive ? "page" : undefined}
         title={collapsed ? getLabel(item.labelKey) : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
+          "flex items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 transition-colors",
           SIDEBAR_NAV_TEXT,
           SIDEBAR_NAV_RESET,
           "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
           isActive && "bg-[var(--app-surface-soft)] font-normal text-primary",
           collapsed && "justify-center",
         )}
+        style={SIDEBAR_ITEM_STYLE}
       >
         <Icon
-          className="h-5 w-5 flex-shrink-0"
+          className="flex-shrink-0"
+          size={APP_SIDEBAR_DIMENSIONS.mainIconSizePx}
           strokeWidth={SIDEBAR_ICON_STROKE}
         />
         {!collapsed && <span>{getLabel(item.labelKey)}</span>}
@@ -400,17 +420,19 @@ export const AppSidebar = React.memo(function AppSidebar() {
 
   return (
     <aside
-      className={cn(
-        "app-sidebar h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-[width] duration-200 ease-out my-2 ml-2 mr-0 flex-shrink-0",
-        collapsed ? "w-16" : "w-56",
-      )}
-      style={{ backgroundColor: SIDEBAR_BACKGROUND }}
+      className="app-sidebar h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-[width] duration-200 ease-out my-2 ml-2 mr-0 flex-shrink-0"
+      style={{
+        backgroundColor: SIDEBAR_BACKGROUND,
+        width: collapsed
+          ? APP_SIDEBAR_DIMENSIONS.collapsedWidthPx
+          : APP_SIDEBAR_DIMENSIONS.openWidthPx,
+      }}
     >
       {/* Header */}
       <div
         className={cn(
           "flex items-center px-3 pt-4 pb-4",
-          collapsed ? "justify-center" : "justify-between",
+          collapsed ? "justify-center" : "justify-start",
         )}
       >
         {collapsed ? (
@@ -421,75 +443,90 @@ export const AppSidebar = React.memo(function AppSidebar() {
                 alt="Icon"
                 width={32}
                 height={32}
-                className="scale-[1.2] object-contain opacity-90"
+                className="object-contain opacity-90"
                 priority
                 unoptimized
               />
             ) : (
-              <div className="flex h-8 w-8 scale-[1.2] items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
+              <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
                 V
               </div>
             )}
           </div>
         ) : (
-          <>
-            <div className="flex items-center">
-              {displayLogoUrl ? (
-                <NextImage
-                  src={displayLogoUrl}
-                  alt="Logo"
-                  width={defaultLogoDimensions?.width ?? logoWidth}
-                  height={defaultLogoDimensions?.height ?? logoHeight}
-                  style={{
-                    width: "auto",
-                    height: "auto",
-                    maxWidth: logoWidth,
-                    maxHeight: logoHeight,
-                  }}
-                  className="object-contain"
-                  priority
-                  unoptimized
-                />
-              ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
-                  V
-                </div>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-[var(--app-text-tertiary)] hover:text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] rounded-[6px]"
-              onClick={toggleCollapsed}
-              aria-label="Recolher menu"
-            >
-              <ChevronLeft
-                className="h-4 w-4"
-                strokeWidth={SIDEBAR_CHEVRON_STROKE}
+          <div className="flex items-center">
+            {displayLogoUrl ? (
+              <NextImage
+                src={displayLogoUrl}
+                alt="Logo"
+                width={defaultLogoDimensions?.width ?? logoWidth}
+                height={defaultLogoDimensions?.height ?? logoHeight}
+                style={{
+                  width: "auto",
+                  height: "auto",
+                  maxWidth: logoWidth,
+                  maxHeight: logoHeight,
+                }}
+                className="object-contain"
+                priority
+                unoptimized
               />
-            </Button>
-          </>
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
+                V
+              </div>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Toggle Flutuante quando fechado */}
-      {collapsed && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="absolute -right-3 top-14 z-50 flex h-6 w-6 items-center justify-center rounded-[6px] border-0 bg-[var(--app-sidebar)] text-[var(--app-text-secondary)] shadow-none outline-none ring-0 hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-0 focus-visible:ring-offset-0"
-          onClick={toggleCollapsed}
-          aria-label="Expandir menu"
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="group absolute -right-4 top-4 z-50 flex items-center justify-center border-0 bg-transparent p-0 text-[var(--app-text-secondary)] shadow-none hover:bg-transparent hover:text-[var(--app-text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--app-text-primary)]"
+        style={{
+          width: APP_SIDEBAR_DIMENSIONS.toggleSizePx,
+          height: APP_SIDEBAR_DIMENSIONS.toggleSizePx,
+        }}
+        onClick={toggleCollapsed}
+        aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+        aria-controls="app-sidebar-navigation"
+        aria-expanded={!collapsed}
+      >
+        <span
+          aria-hidden="true"
+          className="flex items-center justify-center rounded-[5px] bg-[var(--app-surface-hover)] transition-colors group-hover:bg-[var(--app-border-strong)]"
+          style={{
+            width: APP_SIDEBAR_DIMENSIONS.toggleSurfaceSizePx,
+            height: APP_SIDEBAR_DIMENSIONS.toggleSurfaceSizePx,
+          }}
         >
-          <ChevronRight
-            className="h-3 w-3"
-            strokeWidth={SIDEBAR_CHEVRON_STROKE}
-          />
-        </Button>
-      )}
+          {collapsed ? (
+            <ChevronRight
+              size={APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx}
+              style={{
+                width: APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx,
+                height: APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx,
+              }}
+              strokeWidth={SIDEBAR_CHEVRON_STROKE}
+            />
+          ) : (
+            <ChevronLeft
+              size={APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx}
+              style={{
+                width: APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx,
+                height: APP_SIDEBAR_DIMENSIONS.toggleChevronSizePx,
+              }}
+              strokeWidth={SIDEBAR_CHEVRON_STROKE}
+            />
+          )}
+        </span>
+      </Button>
 
       {/* Navegação */}
       <nav
+        id="app-sidebar-navigation"
         className="flex-1 py-4 px-2 overflow-y-auto scrollbar-thin"
         aria-busy={navigationLoading}
       >
@@ -499,9 +536,10 @@ export const AppSidebar = React.memo(function AppSidebar() {
                 <li key={`navigation-loading-${index}`} aria-hidden="true">
                   <div
                     className={cn(
-                      "h-10 animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
+                      "animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
                       collapsed ? "mx-auto w-10" : "w-full",
                     )}
+                    style={{ height: APP_SIDEBAR_DIMENSIONS.minItemHeightPx }}
                   />
                 </li>
               ))
@@ -518,9 +556,10 @@ export const AppSidebar = React.memo(function AppSidebar() {
             <li aria-hidden="true">
               <div
                 className={cn(
-                  "h-10 animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
+                  "animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
                   collapsed ? "mx-auto w-10" : "w-full",
                 )}
+                style={{ height: APP_SIDEBAR_DIMENSIONS.minItemHeightPx }}
               />
             </li>
           ) : (

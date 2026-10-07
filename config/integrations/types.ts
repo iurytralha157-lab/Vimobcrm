@@ -1,7 +1,7 @@
 export const INTEGRATION_PROVIDER_IDS = [
   "whatsapp",
-  "ai",
   "meta",
+  "ai",
   "grupo-olx",
   "zap",
   "viva-real",

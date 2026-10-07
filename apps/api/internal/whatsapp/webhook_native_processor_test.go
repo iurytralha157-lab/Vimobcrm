@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func nativeRoutingSnapshotTestRow(providerMessageID string, ingressSequence int64) map[string]any {
@@ -622,6 +623,110 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 	})
 }
 
+func TestNativeEvolutionTechnicalIgnoreReasonPreservesCustomerAnswers(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "self-read receipt without customer content",
+			payload: `{"event":"ReadSelf","data":{"messageId":"receipt-1","jid":"5511999991111@s.whatsapp.net"}}`,
+			want:    "readself_receipt",
+		},
+		{
+			name:    "receipt with top-level self-read state",
+			payload: `{"event":"Receipt","state":"ReadSelf","data":{"messageId":"receipt-1"}}`,
+			want:    "readself_receipt",
+		},
+		{
+			name:    "receipt with nested self-read state",
+			payload: `{"event":"Receipt","data":{"state":"ReadSelf","messageId":"receipt-1"}}`,
+			want:    "readself_receipt",
+		},
+		{
+			name:    "receipt with provider read-self type and state",
+			payload: `{"event":"Receipt","data":{"Type":"read-self","state":"ReadSelf","messageId":"receipt-1"}}`,
+			want:    "readself_receipt",
+		},
+		{
+			name:    "ordinary read receipt remains eligible",
+			payload: `{"event":"Receipt","state":"Read","data":{"messageId":"receipt-1"}}`,
+		},
+		{
+			name:    "receipt with conflicting states is not ignored",
+			payload: `{"event":"Receipt","state":"ReadSelf","data":{"status":"Delivered","messageId":"receipt-1"}}`,
+		},
+		{
+			name:    "readself receipt with unexpected customer content is not ignored",
+			payload: `{"event":"Receipt","state":"ReadSelf","data":{"messageId":"receipt-1","text":"Mensagem do cliente"}}`,
+		},
+		{
+			name:    "self-read envelope with unexpected customer content is not ignored",
+			payload: `{"event":"ReadSelf","data":{"messageId":"receipt-2","text":"Mensagem do cliente"}}`,
+		},
+		{
+			name:    "empty button callback",
+			payload: `{"event":"ButtonClick","data":{}}`,
+			want:    "buttonclick_empty_control",
+		},
+		{
+			name:    "inbound button text is a real answer",
+			payload: `{"event":"ButtonClick","data":{"buttonText":"Suporte tecnico","buttonId":"support","messageId":"button-1","jid":"5511999991111@s.whatsapp.net","fromMe":false}}`,
+		},
+		{
+			name:    "opaque button ID may still be a real answer",
+			payload: `{"event":"ButtonClick","data":{"buttonId":"support","messageId":"button-2","jid":"5511999991111@s.whatsapp.net","fromMe":false}}`,
+		},
+		{
+			name:    "unknown button subtype remains unclassified",
+			payload: `{"event":"ButtonClick","data":{"type":"unknown_provider_shape"}}`,
+		},
+		{
+			name:    "message text never becomes a technical event",
+			payload: `{"event":"messages.upsert","data":{"text":"ReadSelf"}}`,
+		},
+		{
+			name:    "malformed payload remains unclassified",
+			payload: `{"event":"ReadSelf",`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := pendingEvolutionWebhook{Payload: []byte(tt.payload)}
+			if got := nativeEvolutionTechnicalIgnoreReason(item); got != tt.want {
+				t.Fatalf("ignore reason = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNativeDeferredLoggedOutStateUsesIngressTimeWithoutProviderTimestamp(t *testing.T) {
+	createdAt := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	item := pendingEvolutionWebhook{
+		ID: "loggedout-event", EventType: "loggedout", CreatedAt: createdAt,
+		Payload: []byte(`{"event":"loggedout","data":{}}`),
+	}
+	payload, err := decodeNativeEvolutionPayload(item.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, ok := nativeDeferredLoggedOutState(item, payload)
+	if !ok || !state.Handled || state.Status != "disconnected" || state.ProviderTimestamp ||
+		!state.OccurredAt.Equal(createdAt) || state.EventKey != item.ID {
+		t.Fatalf("unversioned loggedout state = %#v, want ingress-time disconnect", state)
+	}
+	newerConnect := evolutionWebhookSessionState{
+		Status: "connected", OccurredAt: createdAt.Add(time.Second), Rank: evolutionWebhookStateRankTerminal,
+	}
+	if evolutionWebhookSessionStateNewer(state, newerConnect) {
+		t.Fatal("an older loggedout must not supersede a later connection event")
+	}
+	if _, ok := nativeDeferredLoggedOutState(pendingEvolutionWebhook{EventType: "message"}, payload); !ok {
+		t.Fatal("the authenticated payload event should take precedence over the fallback")
+	}
+}
+
 func TestNativeEvolutionReverseReactionBatchOrdersTargetFirst(t *testing.T) {
 	payload, err := decodeNativeEvolutionPayload([]byte(`{
 		"event": "messages.upsert",
@@ -1136,11 +1241,14 @@ func TestNativeEvolutionConnectionStatusUsesTransportAndLoginState(t *testing.T)
 		{name: "explicit connected event state", payload: map[string]any{"data": map[string]any{"status": "open"}}, want: "connected"},
 		{name: "connecting event awaits pairing", payload: map[string]any{"data": map[string]any{"status": "connecting"}}, want: "qr_ready"},
 		{name: "pairing event awaits qr", payload: map[string]any{"data": map[string]any{"status": "pairing"}}, want: "qr_ready"},
+		{name: "loggedout event without transport fields", payload: map[string]any{"event": "loggedout", "data": map[string]any{}}, want: "disconnected"},
+		{name: "loggedout event wins contradictory transport flags", payload: map[string]any{"event": "loggedout", "data": map[string]any{"Connected": true, "LoggedIn": true}}, want: "disconnected"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, recognized, _ := nativeEvolutionConnectionStatus(tt.payload, "connection.update")
+			event := nativeEvolutionEventName(tt.payload, "connection.update")
+			status, recognized, _ := nativeEvolutionConnectionStatus(tt.payload, event)
 			if !recognized || status != tt.want {
 				t.Fatalf("nativeEvolutionConnectionStatus() = (%q, %v), want (%q, true)", status, recognized, tt.want)
 			}

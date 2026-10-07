@@ -223,6 +223,7 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
   });
   const [isEditingAccess, setIsEditingAccess] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [trialDateError, setTrialDateError] = useState(false);
   const accessFormIsValid = isValidNumberInput(accessForm.maxUsers, { integer: true, min: 1 })
     && isValidNumberInput(accessForm.maxWhatsappSessions, { allowEmpty: true, integer: true, min: 0 })
     && isValidNumberInput(accessForm.subscriptionValue, { allowEmpty: true, min: 0 })
@@ -266,6 +267,7 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
   }, [organization, currentPlan, moduleRows, isEditingAccess]);
 
   const updateAccessForm = <K extends keyof OrganizationAccessForm>(key: K, value: OrganizationAccessForm[K]) => {
+    if (key === "trialEndsAt" || key === "subscriptionStatus") setTrialDateError(false);
     setAccessForm((current) => ({ ...current, [key]: value }));
   };
 
@@ -302,6 +304,11 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
 
   const handleSaveAccess = async () => {
     if (!organizationId || !organization || !accessFormIsValid || accessDependenciesLoading || accessErrorMessage) return;
+    if (accessForm.subscriptionStatus === "trial"
+      && !(Date.parse(`${accessForm.trialEndsAt}T00:00:00Z`) > Date.now())) {
+      setTrialDateError(true);
+      return;
+    }
 
     const selectedPlan = plans.find((plan) => plan.id === accessForm.planId);
     const maxUsersFallback = Number(organization.max_users || 1);
@@ -317,7 +324,9 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
       clear_next_billing_date: !accessForm.nextBillingDate,
       trial_ends_at: accessForm.trialEndsAt || null,
       clear_trial_ends_at: !accessForm.trialEndsAt,
-      subscription_type: selectedPlan ? "paid" : getOptionalString(organization, "subscription_type") || null,
+      subscription_type: accessForm.subscriptionStatus === "trial"
+        ? "trial"
+        : selectedPlan ? "paid" : getOptionalString(organization, "subscription_type") || null,
     };
 
     try {
@@ -334,6 +343,7 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
   const handleCancelAccessEdit = () => {
     if (!organization) return;
     setAccessForm(getOrganizationAccessForm(organization, currentPlan, moduleRows));
+    setTrialDateError(false);
     setIsEditingAccess(false);
   };
 
@@ -458,6 +468,9 @@ export function OrganizationDetailManagementContent({ organizationId }: { organi
                 <p className="mt-3 text-sm text-destructive">
                   Revise os limites, o valor mensal e o dia da cobrança antes de salvar.
                 </p>
+              ) : null}
+              {trialDateError ? (
+                <p className="mt-3 text-sm text-destructive">Informe uma data futura para o fim do período de teste.</p>
               ) : null}
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="space-y-2 md:col-span-2">

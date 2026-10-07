@@ -614,6 +614,10 @@
     {
       "file": "20260928031110_preserve_manual_property_location.sql",
       "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
+    },
+    {
+      "file": "20261002191622_whatsapp_webhook_session_cutover_epoch.sql",
+      "sha256": "c6b2ca30564cf8ebe50731fe5bf822d0f60757d2125c91b6de634986417707d9"
     }
   ]
 }
