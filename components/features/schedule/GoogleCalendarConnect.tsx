@@ -61,10 +61,22 @@ export function GoogleCalendarConnect({
 
   const calendarStatus = statusResponse?.connection ?? null;
   const canConnect = statusResponse?.can_connect === true;
+  const canUseSchedule = statusResponse?.can_use_schedule ?? canConnect;
+  const connectRestriction = statusResponse?.connect_restriction;
+  const unavailableMessage = connectRestriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "Conexão disponível apenas para usuários do teste piloto"
+    : connectRestriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+      ? "Novas conexões temporariamente indisponíveis"
+      : "Permissão da Agenda necessária";
+  const unavailableButtonLabel = connectRestriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "Em teste piloto"
+    : connectRestriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+      ? "Indisponível"
+      : "Sem acesso à Agenda";
   const isConnected = !!calendarStatus;
   const serviceUnavailable = isGoogleCalendarServiceUnavailable(statusError);
   const statusLabel =
-    !canConnect
+    !canUseSchedule
       ? "Sem permissão"
       : calendarStatus?.sync_status === "error"
       ? "Erro"
@@ -265,13 +277,13 @@ export function GoogleCalendarConnect({
               {isConnected && (
                 <Badge
                   variant={
-                    canConnect && calendarStatus.sync_status === "error"
+                    canUseSchedule && calendarStatus.sync_status === "error"
                       ? "destructive"
                       : "secondary"
                   }
                   className={cn(
                     "h-5 rounded-[6px] border-0 px-2 text-[11px] font-light",
-                    (!canConnect || calendarStatus.sync_status !== "error") &&
+                    (!canUseSchedule || calendarStatus.sync_status !== "error") &&
                       "bg-[var(--app-surface-solid)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-solid)]",
                   )}
                 >
@@ -286,14 +298,14 @@ export function GoogleCalendarConnect({
                   "Conta conectada"
                 : canConnect
                   ? "Envie compromissos do Vimob ao Google"
-                  : "Permissão da Agenda necessária"}
+                  : unavailableMessage}
             </p>
           </div>
         </div>
 
         {isConnected ? (
           <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-            {canConnect ? "Vimob → Google" : "Permissão da Agenda necessária"}
+            {canUseSchedule ? "Vimob → Google" : "Permissão da Agenda necessária"}
           </span>
         ) : (
           <Button
@@ -304,7 +316,7 @@ export function GoogleCalendarConnect({
           >
             <Link2 className="h-4 w-4" />
             {!canConnect
-              ? "Sem acesso à Agenda"
+              ? unavailableButtonLabel
               : connectCalendar.isPending
                 ? "Conectando..."
                 : "Conectar"}
@@ -330,7 +342,7 @@ export function GoogleCalendarConnect({
                 ? calendarStatus.account_email || "Sua agenda está conectada"
                 : canConnect
                   ? "Envie compromissos do Vimob ao Google Agenda"
-                  : "Permissão da Agenda necessária"}
+                  : unavailableMessage}
             </CardDescription>
           </div>
         </div>
@@ -343,11 +355,11 @@ export function GoogleCalendarConnect({
                 <span
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-white",
-                    canConnect && calendarStatus.sync_status === "error" &&
+                    canUseSchedule && calendarStatus.sync_status === "error" &&
                       "bg-destructive/10 text-destructive",
                   )}
                 >
-                  {canConnect && calendarStatus.sync_status === "error" ? (
+                  {canUseSchedule && calendarStatus.sync_status === "error" ? (
                     <AlertCircle className="h-3.5 w-3.5" />
                   ) : (
                     <Check className="h-3.5 w-3.5" />
@@ -395,7 +407,7 @@ export function GoogleCalendarConnect({
             </div>
 
             <p className="rounded-[8px] bg-[var(--app-surface-solid)] p-3 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-              {canConnect ? (
+              {canUseSchedule ? (
                 calendarStatus.sync_status === "error" ? (
                   <>
                     Um envio ao Google Agenda falhou. Confira o erro abaixo e revise a
@@ -424,7 +436,7 @@ export function GoogleCalendarConnect({
                     variant="outline"
                     className={cn(
                       "h-5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-light text-[var(--app-text-secondary)]",
-                      canConnect && calendarStatus.sync_status === "error" &&
+                      canUseSchedule && calendarStatus.sync_status === "error" &&
                         "bg-destructive/10 text-destructive",
                     )}
                   >
@@ -444,7 +456,7 @@ export function GoogleCalendarConnect({
             {!canConnect && (
               <p className="flex items-start gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                Seu perfil precisa de permissão para usar a Agenda do Vimob.
+                {unavailableMessage}.
               </p>
             )}
             <Button
@@ -454,7 +466,7 @@ export function GoogleCalendarConnect({
             >
               <Link2 className="mr-2 h-4 w-4" />
               {!canConnect
-                ? "Sem acesso à Agenda"
+                ? unavailableButtonLabel
                 : connectCalendar.isPending
                   ? "Conectando..."
                   : "Conectar Google Agenda"}

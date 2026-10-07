@@ -688,17 +688,26 @@ export function IntegrationsTab({
                 : definition.defaultDetail;
           break;
         case "google-calendar":
-          status = googleCalendarStatus?.can_connect === false
+          status = googleCalendarStatus?.connection &&
+            googleCalendarStatus.can_use_schedule !== false
+            ? googleCalendarRuntimeStatus
+            : googleCalendarStatus?.can_connect === false
             ? "unavailable"
             : googleCalendarRuntimeStatus;
           loading = googleCalendarLoading;
           loadError = googleCalendarLoadFailed;
           retry = () => void refetchGoogleCalendar();
-          detail = googleCalendarStatus?.can_connect === false
-            ? googleCalendarStatus.connection
+          detail = googleCalendarStatus?.connection
+            ? googleCalendarStatus.can_use_schedule === false
               ? "Permissão da Agenda necessária"
-              : "Sem permissão para usar a Agenda"
-            : googleCalendarStatus?.connection?.account_email || definition.defaultDetail;
+              : googleCalendarStatus.connection.account_email || definition.defaultDetail
+            : googleCalendarStatus?.connect_restriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+              ? "Conexão em teste piloto"
+              : googleCalendarStatus?.connect_restriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+                ? "Novas conexões temporariamente indisponíveis"
+                : googleCalendarStatus?.can_connect === false
+                  ? "Sem permissão para usar a Agenda"
+                  : definition.defaultDetail;
           break;
         case "google-analytics":
           status = googleAnalyticsIntegration?.configured

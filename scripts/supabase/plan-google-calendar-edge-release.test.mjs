@@ -28,6 +28,7 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
   for (const dependency of [
     "supabase/functions/_shared/google-calendar-access.ts",
     "supabase/functions/_shared/google-calendar-event.ts",
+    "supabase/functions/_shared/google-calendar-pilot.ts",
     "supabase/functions/_shared/google-calendar-time.ts",
     "supabase/functions/_shared/google-calendar.ts",
   ]) {
@@ -35,8 +36,13 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
   }
   assert.ok(plan.shared_files.every((name) => name.startsWith("supabase/functions/_shared/")));
   assert.equal(Object.hasOwn(plan, "canary"), false);
-  assert.equal(plan.access_policy.vimob, "all active users authorized to manage Agenda");
-  assert.equal(plan.access_policy.user_uuid_allowlist_required, false);
+  assert.match(plan.access_policy.vimob, /^pilot users with Agenda access only/);
+  assert.equal(plan.access_policy.connect_mode, "pilot");
+  assert.deepEqual(plan.access_policy.required_edge_env, [
+    "GOOGLE_CALENDAR_CONNECT_MODE=pilot",
+    "GOOGLE_CALENDAR_PILOT_USER_IDS=<Vimob user UUID>",
+  ]);
+  assert.equal(plan.access_policy.user_uuid_allowlist_required, true);
   assert.equal(plan.access_policy.google_cloud_oauth_audience_verified, false);
   assert.equal(
     plan.database_prerequisite.rpc,

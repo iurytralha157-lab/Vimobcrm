@@ -138,8 +138,10 @@ async function buildPlan(runtimeSlugs) {
     })),
     shared_files: sharedFiles.map((name) => `supabase/functions/${name}`),
     access_policy: {
-      vimob: "all active users authorized to manage Agenda",
-      user_uuid_allowlist_required: false,
+      vimob: "pilot users with Agenda access only; existing connections remain readable and continue outbound sync",
+      connect_mode: "pilot",
+      required_edge_env: ["GOOGLE_CALENDAR_CONNECT_MODE=pilot", "GOOGLE_CALENDAR_PILOT_USER_IDS=<Vimob user UUID>"],
+      user_uuid_allowlist_required: true,
       google_cloud_oauth_audience_verified: false,
     },
     database_prerequisite: {
@@ -172,7 +174,7 @@ function printPlan(plan) {
   console.log(`Manifesto historico: ${plan.source_manifest_captured_at}, projeto ${plan.source_project_ref}`);
   console.log(`Diretorios: ${plan.release_directories.map((item) => item.path).join(", ")}`);
   console.log(`Dependencias _shared: ${plan.shared_files.join(", ")}`);
-  console.log(`Acesso no Vimob: ${plan.access_policy.vimob}; sem lista de UUID. Confirme o publico e a verificacao do OAuth no Google Cloud.`);
+  console.log(`Acesso no Vimob: ${plan.access_policy.vimob}. Configure ${plan.access_policy.required_edge_env.join(" e ")}; sem essas variaveis novas conexoes ficam bloqueadas. Confirme o publico e a verificacao do OAuth no Google Cloud.`);
   console.log(`Pre-requisito do worker: ${plan.database_prerequisite.migration} (${plan.database_prerequisite.rpc}), aplicar somente apos reconciliacao do banco.`);
   console.log(`Fora do fluxo de mao unica: ${plan.inbound_webhook.path}, ${plan.legacy_tombstone.path}`);
   if (plan.observed_runtime_slugs) {

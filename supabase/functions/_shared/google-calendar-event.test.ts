@@ -25,6 +25,7 @@ import {
   GOOGLE_CALENDAR_CONFLICT_MESSAGE,
   GoogleCalendarConflictError,
 } from "./google-calendar-conflict";
+import { resolveGoogleCalendarConnectGate } from "./google-calendar-pilot";
 
 type GoogleCalendarUrlBuilder = (path: string) => string;
 type GoogleCalendarContractHelpers = {
@@ -1318,15 +1319,17 @@ test("OAuth start rejects users without Agenda capability before creating a stat
   assert.equal(statesCreated, 0);
 });
 
-test("OAuth start creates consent URL for an authorized Agenda user without an allowlist", async () => {
+test("OAuth start creates consent URL for an authorized pilot user", async () => {
   let statesCreated = 0;
+  const pilotUserId = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
     "supabase/functions/google-calendar-oauth/index.ts",
     {
       handleOptions: () => null,
-      authenticateUser: async () => ({ id: "user-b" }),
-      getUserProfile: async () => ({ id: "user-b", organization_id: "organization-b" }),
+      authenticateUser: async () => ({ id: pilotUserId }),
+      getUserProfile: async () => ({ id: pilotUserId, organization_id: "organization-b" }),
       getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: (userId: string) => resolveGoogleCalendarConnectGate(userId, "pilot", pilotUserId),
       createOAuthState: async () => { statesCreated += 1; return "state-b"; },
       buildGoogleAuthUrl: (state: string) => `https://accounts.google.test/auth?state=${state}`,
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
@@ -1345,6 +1348,61 @@ test("OAuth start creates consent URL for an authorized Agenda user without an a
   assert.equal(statesCreated, 1);
 });
 
+test("OAuth pilot refuses an unlisted Vimob user before creating state", async () => {
+  const userId = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
+  const pilotUserId = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
+  let statesCreated = 0;
+  const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
+    "supabase/functions/google-calendar-oauth/index.ts",
+    {
+      handleOptions: () => null,
+      authenticateUser: async () => ({ id: userId }),
+      getUserProfile: async () => ({ id: userId, organization_id: "organization-a" }),
+      getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: (id: string) => resolveGoogleCalendarConnectGate(id, "pilot", pilotUserId),
+      connectGateMessage: () => "Piloto restrito",
+      createOAuthState: async () => { statesCreated += 1; return "state-a"; },
+      errorMessage: (error: unknown) => String(error),
+      jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
+    },
+  );
+  const response = await handler(new Request("https://example.test/google-calendar-oauth", {
+    method: "POST",
+    body: JSON.stringify({ action: "get_auth_url" }),
+  }));
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    error: "Piloto restrito",
+    code: "GOOGLE_CALENDAR_PILOT_ONLY",
+  });
+  assert.equal(statesCreated, 0);
+});
+
+test("OAuth callback refuses a user removed from the pilot before exchanging code", async () => {
+  const userId = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
+  let exchanged = 0;
+  const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
+    "supabase/functions/google-calendar-oauth/index.ts",
+    {
+      handleOptions: () => null,
+      consumeOAuthState: async () => ({ user_id: userId, organization_id: "organization-a", return_url: null }),
+      getUserProfile: async () => ({ id: userId, organization_id: "organization-a" }),
+      getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: (id: string) => resolveGoogleCalendarConnectGate(id, "disabled", userId),
+      connectGateMessage: () => "Conexoes desativadas",
+      callbackError: (message: string) => new Response(message, { status: 400 }),
+      exchangeOAuthCode: async () => { exchanged += 1; throw new Error("Must not exchange blocked code"); },
+      errorMessage: (error: unknown) => String(error),
+      jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
+    },
+  );
+  const response = await handler(new Request("https://example.test/google-calendar-oauth/callback?state=state-a&code=code-a"));
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /Conexoes desativadas/);
+  assert.equal(exchanged, 0);
+});
+
 test("OAuth status stays readable while a user without Agenda access cannot start consent", async () => {
   const userB = "b0b1c2d3-e4f5-6789-abcd-ef0123456789";
   let statesCreated = 0;
@@ -1356,6 +1414,7 @@ test("OAuth status stays readable while a user without Agenda access cannot star
       authenticateUser: async () => ({ id: userB }),
       getUserProfile: async () => ({ id: userB, organization_id: "organization-b" }),
       getGoogleScheduleCapability: async () => ({ allowed: false, reason: "SCHEDULE_MANAGE_REQUIRED", status: 403 }),
+      connectGate: (userId: string) => resolveGoogleCalendarConnectGate(userId, "pilot", userB),
       getConnectionForUser: async () => null,
       getConnectionById: async () => ({ id: "connection-b", user_id: userB, organization_id: "organization-b" }),
       disconnectConnection: async () => { disconnects += 1; },
@@ -1370,7 +1429,13 @@ test("OAuth status stays readable while a user without Agenda access cannot star
   }));
   const status = await invoke("status");
   assert.equal(status.status, 200);
-  assert.deepEqual(await status.json(), { success: true, can_connect: false, connection: null });
+  assert.deepEqual(await status.json(), {
+    success: true,
+    can_connect: false,
+    can_use_schedule: false,
+    connect_restriction: "SCHEDULE_ACCESS_REQUIRED",
+    connection: null,
+  });
   const start = await invoke("get_auth_url");
   assert.equal(start.status, 403);
   assert.deepEqual(await start.json(), {
@@ -1384,7 +1449,7 @@ test("OAuth status stays readable while a user without Agenda access cannot star
   assert.equal(disconnects, 1);
 });
 
-test("OAuth status reports connection eligibility for any user with Agenda access", async () => {
+test("OAuth status reports connection eligibility for an authorized pilot user", async () => {
   const userA = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
     "supabase/functions/google-calendar-oauth/index.ts",
@@ -1393,6 +1458,7 @@ test("OAuth status reports connection eligibility for any user with Agenda acces
       authenticateUser: async () => ({ id: userA }),
       getUserProfile: async () => ({ id: userA, organization_id: "organization-a" }),
       getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: (userId: string) => resolveGoogleCalendarConnectGate(userId, "pilot", userA),
       getConnectionForUser: async () => null,
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
       errorMessage: (error: unknown) => String(error),
@@ -1403,7 +1469,51 @@ test("OAuth status reports connection eligibility for any user with Agenda acces
     body: JSON.stringify({ action: "status" }),
   }));
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { success: true, can_connect: true, connection: null });
+  assert.deepEqual(await response.json(), {
+    success: true,
+    can_connect: true,
+    can_use_schedule: true,
+    connect_restriction: null,
+    connection: null,
+  });
+});
+
+test("existing connection status and disconnect remain available when new OAuth is disabled", async () => {
+  const userId = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
+  const connection = {
+    id: "connection-a", user_id: userId, organization_id: "organization-a",
+    account_email: "existing@example.test", sync_status: "connected",
+  };
+  let disconnects = 0;
+  const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
+    "supabase/functions/google-calendar-oauth/index.ts",
+    {
+      handleOptions: () => null,
+      authenticateUser: async () => ({ id: userId }),
+      getUserProfile: async () => ({ id: userId, organization_id: "organization-a" }),
+      getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: (id: string) => resolveGoogleCalendarConnectGate(id, "disabled", userId),
+      getConnectionForUser: async () => connection,
+      getConnectionById: async () => connection,
+      disconnectConnection: async () => { disconnects += 1; },
+      errorMessage: (error: unknown) => String(error),
+      jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
+    },
+  );
+  const invoke = (action: string) => handler(new Request("https://example.test/google-calendar-oauth", {
+    method: "POST",
+    body: JSON.stringify({ action, connection_id: connection.id }),
+  }));
+  const status = await invoke("status");
+  assert.equal(status.status, 200);
+  const payload = await status.json();
+  assert.equal(payload.can_connect, false);
+  assert.equal(payload.can_use_schedule, true);
+  assert.equal(payload.connect_restriction, "GOOGLE_CALENDAR_CONNECT_DISABLED");
+  assert.equal(payload.connection.id, connection.id);
+  const disconnected = await invoke("disconnect");
+  assert.equal(disconnected.status, 200);
+  assert.equal(disconnects, 1);
 });
 
 test("OAuth callback connects without importing Google events or creating a watch", async () => {
@@ -1420,6 +1530,7 @@ test("OAuth callback connects without importing Google events or creating a watc
       }),
       getUserProfile: async () => ({ id: "user-a", organization_id: "organization-a" }),
       getGoogleScheduleCapability: async () => ({ allowed: true }),
+      connectGate: () => ({ allowed: true, restriction: null }),
       exchangeOAuthCode: async () => ({ access_token: "access" }),
       fetchGoogleUserInfo: async () => ({ email: "user@example.test" }),
       upsertConnectionFromOAuth: async () => ({ id: "connection-a" }),

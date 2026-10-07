@@ -11,27 +11,38 @@ migrações e não publicam funções. Os testes podem gerar artefatos locais.
 
 ## Evidência observada e limites
 
-Na leitura de 2026-10-06 em `https://supabase.vimobcrm.com.br`, o runtime
-apresentava cinco slugs: `asaas-create-charge`, `asaas-webhook`,
+Na leitura de 2026-10-06 em `https://supabase.vimobcrm.com.br`, o volume
+continha cinco slugs: `asaas-create-charge`, `asaas-webhook`,
 `evolution-go-webhook`, `hello` e `meta-oauth`. As URLs de
 `google-calendar-oauth`, `google-calendar-sync` e `google-calendar-webhook`
-respondiam `404`. Reconfirme o inventário antes do corte. O roteador, os mounts,
-as variáveis reais do serviço Functions e o ambiente efetivo do processo da API
-não foram confirmados. O editor da stack do
-Portainer guarda `SUPABASE_PROJECT_URL=https://supabase.vimobcrm.com.br`, mas
-os valores de imagem Web/API salvos nele diferem das imagens em execução; não
-atualizar a stack sem reconciliar essa divergência.
+respondiam `404`. O roteador efetivo lê `main/function-policy.json` somente
+no startup e tem entradas apenas para `asaas-create-charge`, `asaas-webhook`,
+`evolution-go-webhook` e `meta-oauth`. `hello` está no volume, mas responde
+`404` por não constar na policy. O serviço `supabase-edge-functions` usa
+`supabase/edge-runtime:v1.74.0` e monta
+`/srv/vimob-supabase/stack/volumes/functions` em `/home/deno/functions`.
+Os diretórios Google não existem nesse volume. As cinco variáveis Google do
+OAuth/worker estão ausentes do ambiente efetivo do container e dos seus
+`env_file` ativos. A especificação atual do serviço API Go no Portainer aponta
+`SUPABASE_PROJECT_URL=https://supabase.vimobcrm.com.br`; seu `DATABASE_URL`
+usa o usuário `postgres.your-tenant-id` via pooler, com senha presente, sem
+expor seu valor. Isso sugere role Postgres `postgres` na conexão, mas a role
+efetiva de uma transação da API ainda não foi provada. A especificação não
+lista variáveis Google. Os serviços em execução usam Web
+`ce4a1193ff1f7dc59d087209662ce01a340da1ab` e API
+`cbf7fcbbf7eca363b71a37292717d897b444d7a8`. As variáveis de imagem
+salvas no editor da stack ainda apontam ambas para `a231c82e...` por digest;
+não atualizar a stack sem reconciliar essa divergência.
 
 No Google Cloud, o projeto **Vimob** (`genial-charter-485603-h0`) foi lido em
-2026-10-06. O único cliente OAuth listado é do tipo **Aplicativo da Web**;
-não há URI de redirecionamento autorizada. O público é **Externo / Testando**,
-com **zero usuários de teste**, e o botão **Publicar app** está desabilitado
-porque o branding está incompleto. A página de Acesso a dados não lista
-escopos, e a Google Calendar API não aparece entre as 23 APIs ativadas. No
-branding estão vazios a página inicial, a Política de Privacidade, os Termos
-de Uso e os domínios autorizados. O cliente mostra dois secrets ativos; não
-foram revelados nem comparados ao runtime. Enquanto esses pontos persistirem,
-o primeiro deploy não pode oferecer conexão funcional a todos os usuários.
+2026-10-06. O único cliente OAuth listado é do tipo **Aplicativo da Web**.
+Foram salvos nesse cliente o callback exato, o branding com as URLs públicas
+abaixo, o domínio autorizado `vimobcrm.com.br` e os três escopos pedidos pelo
+código. O público permanece **Externo / Testando**, com apenas
+`andrezinho.primo@gmail.com` como usuário de teste. A Google Calendar API
+ainda não estava ativada na última leitura. O cliente mostra dois secrets
+ativos; não foram revelados nem comparados ao runtime. Portanto, a conexão
+geral ainda depende da verificação e publicação do app no Google.
 As páginas públicas existentes, confirmadas por GET sem login, são
 `https://vimobcrm.com.br/`,
 `https://app.vimobcrm.com.br/politica-de-privacidade` e
@@ -43,13 +54,23 @@ No banco consultado apenas por `SELECT`, existem cinco tabelas
 três estados OAuth, zero jobs `failed` e 24 jobs `dead`, todos de
 `pull_incremental` legado. O Vault tem `google_calendar_cron_secret`, mas não
 tem `google_calendar_sync_base_url`; não havia nenhum dos três Cron jobs da
-Agenda nem a RPC filtrada de saída. Esses números são o retrato de
-2026-10-06, anterior ao corte, e precisam ser relidos.
+Agenda nem a RPC filtrada de saída. A RPC antiga de claim é
+`SECURITY DEFINER`, pertence a `postgres` e concede `EXECUTE` a `anon`,
+`authenticated` e `service_role`; a migração de saída revoga esses grants.
+Há quatro canais vencidos, um ainda sem `stopped_at`. Esses números são o
+retrato de 2026-10-06, anterior ao corte, e precisam ser relidos.
+A conta Vimob com e-mail `andrezinho.primo@gmail.com` existe e está ativa,
+mas sua organização padrão está `is_active=false`; a capacidade de Agenda
+retorna `ORGANIZATION_INACTIVE`. Seu UUID não serve para o primeiro teste
+OAuth enquanto essa condição persistir. A única conexão Google existente
+pertence a outra conta, permanece conectada e está em `sync_status=error`.
+Não havia jobs de saída prontos na leitura. O gate de novas conexões não
+impede futuros envios dessa conexão antiga, se ela voltar a funcionar.
 
-O manifesto local tem slugs que não coincidem com o runtime observado:
-`hello` não existe nele e `meta-oauth` está `RETIRED`. Substituir o roteador ou
-o manifesto completo sem reconciliação pode derrubar essas rotas. Para o fluxo
-de mão única, o plano de publicação seleciona **somente**
+O manifesto local tem slugs que não coincidem com o volume e com a policy
+efetivos: `hello` não existe nele e `meta-oauth` está `RETIRED`. Substituir o
+roteador ou o manifesto completo sem reconciliação pode derrubar rotas ativas.
+Para o fluxo de mão única, o plano de publicação seleciona **somente**
 `google-calendar-oauth` e `google-calendar-sync`. O webhook e o legado
 `google-calendar-auth` não são necessários para este corte.
 
@@ -74,16 +95,33 @@ formato estruturado. A verificação de manifesto compara hashes, lifecycle e
 
 ## Preparação do ambiente
 
-1. No **host Supabase**, identificar a imagem, o roteador efetivo, os mounts e
-   a raiz que serve as funções. Confirmar a presença/ausência dos dois diretórios
-   Google e de `_shared`, além das versões das cinco rotas preexistentes.
-   Preservar essas rotas durante o corte. O Portainer da API Go pode estar em
-   outro host.
-2. Conferir a presença no serviço Functions de `SUPABASE_URL`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+1. No **host Supabase**, preservar os cinco diretórios existentes e as quatro
+   entradas de `main/function-policy.json`. A leitura do host confirmou
+   `/srv/vimob-supabase/stack/volumes/functions` como bind mount e `_shared`
+   presente, sem os seis módulos `_shared/google-calendar*` necessários,
+   inclusive `google-calendar-pilot.ts`.
+   Publicar seletivamente os diretórios `google-calendar-oauth` e
+   `google-calendar-sync` e esses seis módulos; adicionar à policy apenas
+   essas duas rotas com `verify_jwt=false`. O callback precisa chegar ao
+   handler, que faz sua própria validação. Revalidar as quatro rotas antigas
+   da policy e reconhecer que `hello` já respondia `404` antes do corte.
+   O Portainer da API Go pode estar em outro host.
+2. Conferir no serviço Functions `SUPABASE_URL` e
+   `SUPABASE_SERVICE_ROLE_KEY` e configurar, por `env_file` separado,
+   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
    `GOOGLE_CALENDAR_REDIRECT_URI` e
-   `GOOGLE_CALENDAR_POST_CONNECT_REDIRECT_URL`. Não registrar valores de segredo.
-   `GOOGLE_CALENDAR_WEBHOOK_URL` não é necessário no modo de mão única.
+   `GOOGLE_CALENDAR_POST_CONNECT_REDIRECT_URL`. As quatro variáveis Google
+   estavam ausentes do container e dos `env_file` ativos na leitura do host.
+   O retorno pós-conexão deve usar a mesma origem da Web/PWA, por exemplo
+   `https://app.vimobcrm.com.br/settings?tab=integrations&integration=google-calendar`.
+   Sem esse fallback, `return_url` é descartada no callback. Não registrar
+   valores de segredo. `GOOGLE_CALENDAR_WEBHOOK_URL` não é necessário no modo
+   de mão única. A entrada de `env_file` requer recriar somente o serviço
+   `functions` com os cinco arquivos Compose efetivos, nesta ordem:
+   `docker-compose.yml`, `docker-compose.caddy.yml`,
+   `docker-compose.pin.yml`, `docker-compose.evolution-function.yml` e
+   `docker-compose.wireguard.yml`. Um restart simples não atualiza o ambiente
+   do container. Essa operação ainda não foi executada.
 3. No Google Cloud, ativar a **Google Calendar API**; preencher o branding
    com as URLs públicas observadas e autorizar o domínio `vimobcrm.com.br`;
    declarar os escopos efetivamente pedidos pelo código (`openid`, `email` e
@@ -91,32 +129,45 @@ formato estruturado. A verificação de manifesto compara hashes, lifecycle e
    cliente Web a URI de retorno exata
    `https://supabase.vimobcrm.com.br/functions/v1/google-calendar-oauth/callback`.
    Conferir que o Client ID do runtime é o desse cliente, comparando apenas
-   prefixo e sufixo. Preparar e solicitar a verificação do escopo de Agenda,
-   completar o branding e mudar o público para `In production` antes de
+   prefixo e sufixo. Preparar e solicitar a verificação do escopo de Agenda
+   e mudar o público para `In production` antes de
    prometer acesso geral. Em `Testing`, só usuários de teste cadastrados
    autorizam, e o refresh token com esse escopo pode expirar em sete dias.
    Mesmo após publicar, um app que pede escopo sensível sem verificação pode
    exibir aviso de app não verificado e ficar sujeito ao limite de 100 usuários.
-   A primeira publicação no Vimob pretende disponibilizar a conexão a todos
-   os usuários com permissão de Agenda, mas ela depende desse preparo no
-   Google. O app nativo ainda requer teste separado de retorno/deep link; o
-   fluxo web/PWA retorna à URL web.
+   O primeiro teste será limitado no backend a um UUID Vimob com Agenda
+   efetivamente ativa: `GOOGLE_CALENDAR_CONNECT_MODE=pilot` e
+   `GOOGLE_CALENDAR_PILOT_USER_IDS=<UUID_VALIDADO_POR_SELECT>`.
+   O Gmail de teste Google pode ser diferente do login Vimob. Não usar o UUID
+   da conta `andrezinho.primo@gmail.com` enquanto sua organização padrão
+   estiver inativa.
+   O padrão sem configuração é `disabled`. O modo `all` só deve ser usado
+   depois da verificação e da liberação geral no Google. O app nativo ainda
+   requer teste separado de retorno/deep link; o fluxo web/PWA retorna à URL
+   web.
 4. Conciliar no banco, por `SELECT`, as tabelas `google_calendar_*`, o Vault,
    a RPC antiga `google_calendar_claim_sync_jobs`, a nova RPC e os Cron jobs.
    A migração local `20261006150000_claim_google_calendar_outbound_jobs.sql`
    define `google_calendar_claim_outbound_sync_jobs(integer,text)`, que
    reivindica **apenas** `push_upsert` e `push_delete` com dono verificável.
-   Ela também revoga de `service_role` a execução da RPC antiga de claim,
-   quando presente; verificar os privilégios efetivos e identificar qualquer
-   consumidor antigo antes do corte.
+   Ela também revoga de `PUBLIC`, `anon`, `authenticated` e `service_role` a
+   execução da RPC antiga de claim, quando presente; verificar os privilégios
+   efetivos e identificar qualquer consumidor antigo antes do corte. A leitura
+   de produção encontrou grants explícitos para as três roles, inclusive as
+   duas acessíveis aos clientes. A função é `SECURITY DEFINER`, então essa
+   exposição deve ser corrigida na reconciliação isolada antes de ativar o
+   worker.
    Jobs de exclusão antigos sem dono e conexão verificáveis ficam na fila para
    auditoria. Ela não foi aplicada em
    produção. Reconciliar o objeto antes de uma aplicação isolada; não usar
    `db push` em lote sem ledger confiável.
-   Conferir também o artigo `como-conectar-o-google-agenda` da Central de
-   Ajuda. A migração local `20261006151000_google_calendar_one_way_help_content.sql`
-   atualiza somente o texto padrão antigo; um artigo personalizado exige
-   revisão manual antes do corte. Nenhuma dessas migrações foi aplicada.
+   **Não aplicar** a migração local
+   `20261006151000_google_calendar_one_way_help_content.sql` neste corte.
+   O `public.help_articles` real não tem `slug`, `summary`, `steps` nem
+   `last_reviewed_at`, e não contém o artigo alvo; o `UPDATE` falharia. A
+   migração de expansão da Ajuda `20260729110946_expand_help_center.sql`
+   também está ausente no schema. A Central de Ajuda exige reconciliação
+   separada; não incluir um sweep de migrações neste piloto.
    Conferir separadamente a chave estrangeira dos vínculos. A leitura de
    produção em 2026-10-06 encontrou
    `google_calendar_event_links_schedule_event_id_fkey ON DELETE CASCADE`,
@@ -171,21 +222,24 @@ formato estruturado. A verificação de manifesto compara hashes, lifecycle e
    pode esperar o próximo minuto e não atende à expectativa de despacho logo
    após a ação. Medir a latência real até a mudança aparecer no Google.
 
-## Ordem da liberação geral em produção, ainda não executada
+## Ordem do piloto em produção, ainda não executado
 
 1. Preparar rollback dos arquivos e configurações efetivos, após inspecionar o
    runtime. Reconciliar a FK dos vínculos para `ON DELETE SET NULL` antes de
-   testar exclusões. Aplicar a nova RPC e o ajuste guardado da Central de Ajuda
-   somente depois de revisar os objetos e o artigo no banco real.
+   testar exclusões. Aplicar isoladamente a nova RPC após revisar seu objeto
+   e seus grants no banco real. Deixar a migração de Ajuda fora deste corte.
 2. Publicar API Go, Web e os dois diretórios Edge compatíveis, preservando as
-   rotas existentes. A conexão fica disponível a todos os usuários Vimob com
-   acesso ativo à Agenda e permissão `schedule_manage` assim que o fluxo for
-   publicado. Status e desconexão continuam disponíveis para contas conectadas.
+   rotas existentes. Configurar o gate `pilot` somente para o UUID Vimob cuja
+   capacidade de Agenda foi confirmada por `SELECT`. Pessoas fora do piloto
+   não devem receber URL de
+   conexão nem ver o botão Conectar. Status e desconexão continuam disponíveis
+   para contas conectadas.
 3. Confirmar que `POST` anônimo em `google-calendar-oauth` com
    `{"action":"status"}` passou de `404` a `401`, que o status autenticado
-   informa `can_connect=true` para uma pessoa autorizada e
-   `can_connect=false` para uma pessoa sem permissão de Agenda, cujo pedido de
-   conexão deve receber `403`. Revalidar as cinco rotas preexistentes.
+   informa `can_connect=true` para a conta piloto autorizada e
+   `can_connect=false` para alguém fora do piloto ou sem permissão de Agenda,
+   cujo pedido de conexão deve receber `403`. Revalidar as quatro rotas
+   preexistentes da policy e comparar `hello` com seu `404` anterior.
 4. Auditar o backlog e ativar apenas `google-calendar-sync-jobs`. Confirmar
    que não há worker antigo executando a RPC sem filtro e que a RPC antiga
    nega `service_role`. Verificar que nenhuma ação de pull/watch é executada
@@ -216,9 +270,11 @@ recusados pelo worker para evitar sobrescrever ou apagar evento alheio. Usar
 eventos novos na primeira validação e reconciliar esses vínculos antes de
 prometer atualização e exclusão de compromissos já vinculados.
 
-Não há lista de usuários para pausar novas conexões. Uma interrupção exige
-rollback coordenado da entrada Web/API/Functions e suspensão do Cron de saída
-e do despacho imediato; isso não revoga tokens das contas já conectadas.
+O gate `GOOGLE_CALENDAR_CONNECT_MODE=disabled` pausa novas conexões; não
+interrompe envio, status nem desconexão das contas já conectadas. Uma
+interrupção mais ampla exige rollback coordenado da entrada Web/API/Functions
+e suspensão do Cron de saída e do despacho imediato; isso não revoga tokens
+das contas já conectadas.
 Confirmar que não há workers antigos; a desconexão individual continua
 disponível pela interface. A desconexão rejeita jobs de saída
 pendentes com `409`, mas a leitura desses jobs e a revogação do token ainda não

@@ -23,6 +23,12 @@ export interface GoogleCalendarConnectionStatus {
 export interface GoogleCalendarStatus {
   connection: GoogleCalendarConnectionStatus | null;
   can_connect: boolean;
+  can_use_schedule?: boolean;
+  connect_restriction?:
+    | "GOOGLE_CALENDAR_PILOT_ONLY"
+    | "GOOGLE_CALENDAR_CONNECT_DISABLED"
+    | "SCHEDULE_ACCESS_REQUIRED"
+    | null;
 }
 
 type GoogleCalendarFunctionResponse<T = unknown> = {
@@ -98,6 +104,8 @@ export const googleCalendarAPI = {
     return {
       connection: data.connection,
       can_connect: data.can_connect === true,
+      can_use_schedule: data.can_use_schedule,
+      connect_restriction: data.connect_restriction,
     };
   },
 

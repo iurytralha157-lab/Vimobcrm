@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "26afc39f2714875b4f68c68c0b79c0af7ab7771a3eb1cc886090f0ca76f6e12a",
+  "shared_source_sha256": "0aa9b83ebe46f0bf79d3ed49afd9c9e20cb967c11bb38a97355911c2974fc458",
   "functions": [
     {
       "slug": "ai-agent-responder",
@@ -354,7 +354,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91",
-      "source_sha256": "adc4696b30a3cfcea5446558afd8696ec060a55eefe36b4e034e407267afce05"
+      "source_sha256": "4d8e523380b23dd4add8bbc21bfb1ab6a3cc28dddcbc9b3cb50ce0edb2f9d6e2"
     },
     {
       "slug": "google-calendar-sync",

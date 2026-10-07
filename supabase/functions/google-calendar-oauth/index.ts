@@ -19,6 +19,24 @@ import {
   redirectResponse,
   upsertConnectionFromOAuth,
 } from "../_shared/google-calendar.ts";
+import {
+  resolveGoogleCalendarConnectGate,
+  type GoogleCalendarConnectGate,
+} from "../_shared/google-calendar-pilot.ts";
+
+function connectGate(userId: string): GoogleCalendarConnectGate {
+  return resolveGoogleCalendarConnectGate(
+    userId,
+    Deno.env.get("GOOGLE_CALENDAR_CONNECT_MODE"),
+    Deno.env.get("GOOGLE_CALENDAR_PILOT_USER_IDS"),
+  );
+}
+
+function connectGateMessage(gate: Exclude<GoogleCalendarConnectGate, { allowed: true }>) {
+  return gate.restriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "A conexao com o Google Agenda esta limitada aos usuarios do teste piloto."
+    : "Novas conexoes com o Google Agenda estao desativadas temporariamente.";
+}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -74,6 +92,10 @@ Deno.serve(async (req) => {
         if (!capability.allowed) {
           return callbackError("Acesso a Agenda revogado. Inicie a conexao novamente.", oauthState.return_url);
         }
+        const gate = connectGate(oauthState.user_id);
+        if (!gate.allowed) {
+          return callbackError(connectGateMessage(gate), oauthState.return_url);
+        }
       } catch {
         return callbackError("Acesso a Agenda revogado. Inicie a conexao novamente.", oauthState.return_url);
       }
@@ -108,6 +130,10 @@ Deno.serve(async (req) => {
       if (!capability.allowed) {
         return jsonResponse({ success: false, error: capability.reason, code: capability.reason }, capability.status);
       }
+      const gate = connectGate(profile.id);
+      if (!gate.allowed) {
+        return jsonResponse({ success: false, error: connectGateMessage(gate), code: gate.restriction }, 403);
+      }
       const state = await createOAuthState({
         userId: profile.id,
         organizationId: profile.organization_id,
@@ -119,10 +145,15 @@ Deno.serve(async (req) => {
 
     if (action === "status") {
       const capability = await getGoogleScheduleCapability(profile.id, profile.organization_id);
+      const gate = connectGate(profile.id);
       const connection = await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
       return jsonResponse({
         success: true,
-        can_connect: capability.allowed,
+        can_connect: capability.allowed && gate.allowed,
+        can_use_schedule: capability.allowed,
+        connect_restriction: !capability.allowed
+          ? "SCHEDULE_ACCESS_REQUIRED"
+          : gate.restriction,
         connection: connection ? {
           id: connection.id,
           organization_id: connection.organization_id,

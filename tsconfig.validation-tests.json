@@ -165,6 +165,8 @@
     "lib/schedule-time-zone.test.ts",
     "supabase/functions/_shared/google-calendar-event.ts",
     "supabase/functions/_shared/google-calendar-event.test.ts",
+    "supabase/functions/_shared/google-calendar-pilot.ts",
+    "supabase/functions/_shared/google-calendar-pilot.test.ts",
     "supabase/functions/_shared/asaas-billing-intent.ts",
     "supabase/functions/_shared/asaas-billing-intent.test.ts",
     "supabase/functions/_shared/billing-payment-receipt.ts",
