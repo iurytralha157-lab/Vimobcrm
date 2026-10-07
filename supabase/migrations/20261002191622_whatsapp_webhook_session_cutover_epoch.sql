@@ -914,8 +914,9 @@ begin
   where session.id = p_session_id
     and session.organization_id = p_organization_id
     and session.provider = 'evolution_go'
-    and coalesce(session.is_active, true) = true
-    and lower(btrim(coalesce(session.status, ''))) not in ('deleted', 'disabled')
+    -- Include inactive and disabled sessions before they can be reactivated;
+    -- otherwise their retained epoch-zero backlog becomes eligible again.
+    and lower(btrim(coalesce(session.status, ''))) <> 'deleted'
   for update;
   if not found then
     raise exception using errcode = '23503', message = 'whatsapp_cutover_session_not_found';

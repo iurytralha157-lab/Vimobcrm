@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(25);
+select plan(32);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -39,7 +39,31 @@ insert into public.whatsapp_sessions (
    'e1100000-0000-4000-8000-000000000001', 'cutover-a', 'evolution_go', 'connected', true),
   ('e1500000-0000-4000-8000-000000000002',
    'e1200000-0000-4000-8000-000000000002',
-   'e1100000-0000-4000-8000-000000000002', 'cutover-b', 'evolution_go', 'connected', true);
+   'e1100000-0000-4000-8000-000000000002', 'cutover-b', 'evolution_go', 'connected', true),
+  ('e1500000-0000-4000-8000-000000000003',
+   'e1200000-0000-4000-8000-000000000001',
+   'e1100000-0000-4000-8000-000000000001', 'cutover-inactive', 'evolution_go', 'disconnected', false),
+  ('e1500000-0000-4000-8000-000000000004',
+   'e1200000-0000-4000-8000-000000000001',
+   'e1100000-0000-4000-8000-000000000001', 'cutover-disabled', 'evolution_go', 'disabled', true),
+  ('e1500000-0000-4000-8000-000000000005',
+   'e1200000-0000-4000-8000-000000000001',
+   'e1100000-0000-4000-8000-000000000001', 'cutover-deleted', 'evolution_go', 'deleted', false);
+
+insert into public.whatsapp_webhook_inbox (
+  organization_id, session_id, event_key, event_type, payload,
+  processing_lane, status, attempts, next_attempt_at
+)
+select
+  'e1200000-0000-4000-8000-000000000001', session.id,
+  'cutover-retained-' || session.instance_name, 'message',
+  '{"__vimob_ingress":{"routing_key":"__session__","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
+  'backlog', 'pending', 0, now() - interval '1 minute'
+from public.whatsapp_sessions as session
+where session.id in (
+  'e1500000-0000-4000-8000-000000000003',
+  'e1500000-0000-4000-8000-000000000004'
+);
 
 insert into public.leads (id, organization_id, assigned_user_id, name, phone, source)
 values (
@@ -141,6 +165,75 @@ select is(
   (select active_epoch from private.whatsapp_webhook_session_cutovers
    where session_id = 'e1500000-0000-4000-8000-000000000001'),
   1, 'the cutover is stored for this session only'
+);
+
+select lives_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000003'
+  )$$,
+  'an inactive non-deleted session can be cut over before reactivation'
+);
+
+select lives_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000004'
+  )$$,
+  'a disabled session can be cut over before reactivation'
+);
+
+select throws_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000005'
+  )$$,
+  '23503', 'whatsapp_cutover_session_not_found',
+  'a deleted session cannot be cut over'
+);
+
+select is(
+  (select count(*) from private.whatsapp_webhook_session_cutovers
+   where session_id in (
+     'e1500000-0000-4000-8000-000000000003',
+     'e1500000-0000-4000-8000-000000000004'
+   ) and active_epoch = 1),
+  2::bigint, 'inactive and disabled sessions both use epoch one'
+);
+
+update public.whatsapp_sessions
+set status = 'connected', is_active = true
+where id in (
+  'e1500000-0000-4000-8000-000000000003',
+  'e1500000-0000-4000-8000-000000000004'
+);
+
+select is(
+  (select count(*) from public.whatsapp_sessions as session
+   join private.whatsapp_webhook_session_cutovers as cutover
+     on cutover.session_id = session.id and cutover.active_epoch = 1
+   where session.id in (
+     'e1500000-0000-4000-8000-000000000003',
+     'e1500000-0000-4000-8000-000000000004'
+   ) and session.is_active and session.status = 'connected'),
+  2::bigint, 'reactivation retains the epoch-one processing fence'
+);
+
+select is(
+  (select count(*) from public.whatsapp_webhook_inbox as inbox
+   join private.whatsapp_webhook_session_cutovers as cutover
+     on cutover.session_id = inbox.session_id and cutover.active_epoch = 1
+   where inbox.event_key in (
+     'cutover-retained-cutover-inactive',
+     'cutover-retained-cutover-disabled'
+   ) and inbox.processing_epoch = 0 and inbox.status = 'pending'),
+  2::bigint, 'reactivation does not change retained epoch-zero inbox rows'
+);
+
+select is(
+  (select count(*) from private.whatsapp_webhook_session_cutovers
+   where session_id = 'e1500000-0000-4000-8000-000000000005'),
+  0::bigint, 'deleted session receives no cutover row'
 );
 
 select throws_ok(
