@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `c381150a7a9da55aaff3fff9ba54880fc2faeffdfac937188db29f90dd349e7b`.
+O conteudo e deterministico para o digest `b9746870221ca034c7a969020b4d4b29ba7a73b1ddb24cd68cfd613e7ba010ff`.
 
 ## Denominadores
 
@@ -16,23 +16,23 @@ O conteudo e deterministico para o digest `c381150a7a9da55aaff3fff9ba54880fc2fae
 | Rotas dinamicas | 17 |
 | Overlays unicos | 223 |
 | Formularios HTML unicos | 50 |
-| CTAs internos unicos | 1358 |
+| CTAs internos unicos | 1359 |
 | Controles complementares de overlay/tab | 284 |
 
 Overlays: `alertDialog` 62, `dialog` 84, `dropdownMenu` 30, `popover` 34, `sheet` 13.
 
-CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1249, `external` 6, `internal` 31, `internalDynamic` 78, `unknownDynamic` 48.
+CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1250, `external` 6, `internal` 31, `internalDynamic` 78, `unknownDynamic` 48.
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `c66cdf3e85620493cd3f4867329b8290cfa07c8983b9ccaf866e068acb4c1670`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `534901fd364fd986301b1cf7a75676027d3d2dc59fff6fc30255521b61fec31a`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
 | Rotas renderizaveis e aliases | 89 |
 | Overlays alcancaveis | 216 |
 | Formularios alcancaveis | 50 |
-| CTAs internos alcancaveis | 1322 |
+| CTAs internos alcancaveis | 1323 |
 | Controles complementares alcancaveis | 277 |
 
 Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associadas, permitindo que um caso E2E declare exatamente o ID coberto sem criar uma segunda contagem.
@@ -46,7 +46,7 @@ Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associa
 | Contrato dos aliases | 6 |
 | Overlays alcancaveis por implementacao | 216 |
 | Formularios alcancaveis por implementacao | 50 |
-| CTAs internos alcancaveis por implementacao | 1322 |
+| CTAs internos alcancaveis por implementacao | 1323 |
 | CTAs das telas de erro/infraestrutura | 2 |
 
 Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve ser informada por categoria e, para o corte de 90%, tambem como `aprovados / planejados` com todo P0/P1 obrigatoriamente aprovado.
