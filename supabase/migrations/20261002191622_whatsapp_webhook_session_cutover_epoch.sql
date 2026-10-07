@@ -1,24 +1,37 @@
 -- Additive only. Activation is a separate, explicit service-only call after
 -- every API replica understands the epoch contract. Existing rows are epoch 0.
+-- Commit each large-table ALTER immediately so its ACCESS EXCLUSIVE lock is
+-- not held while functions and guards are installed below.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '5min';
 
 alter table public.whatsapp_webhook_inbox
   add column if not exists processing_epoch integer not null default 0;
-alter table public.whatsapp_webhook_routing_snapshots
-  add column if not exists processing_epoch integer not null default 0;
-
 alter table public.whatsapp_webhook_inbox
   add constraint whatsapp_webhook_inbox_processing_epoch_check
   check (processing_epoch in (0, 1)) not valid;
+comment on column public.whatsapp_webhook_inbox.processing_epoch is
+  '0 is pre-cutover or retained delivery; 1 is the explicitly activated session generation.';
+commit;
+
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
+
+alter table public.whatsapp_webhook_routing_snapshots
+  add column if not exists processing_epoch integer not null default 0;
 alter table public.whatsapp_webhook_routing_snapshots
   add constraint whatsapp_webhook_routing_epoch_check
   check (processing_epoch in (0, 1)) not valid;
-comment on column public.whatsapp_webhook_inbox.processing_epoch is
-  '0 is pre-cutover or retained delivery; 1 is the explicitly activated session generation.';
 comment on column public.whatsapp_webhook_routing_snapshots.processing_epoch is
   'Frozen routing generation; a predecessor must belong to this same generation.';
+commit;
+
+-- These new private objects do not lock the existing inbox or snapshot tables.
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
 
 create table if not exists private.whatsapp_webhook_session_cutovers (
   session_id uuid primary key references public.whatsapp_sessions(id) on delete cascade,
@@ -73,72 +86,12 @@ from public, anon, authenticated, service_role;
 create trigger guard_whatsapp_webhook_ignored_tenant_before_insert
 before insert on private.whatsapp_webhook_ignored_events
 for each row execute function private.guard_whatsapp_webhook_ignored_tenant();
+commit;
 
-create or replace function private.activate_whatsapp_webhook_session_cutover(
-  p_organization_id uuid,
-  p_session_id uuid
-)
-returns timestamptz
-language plpgsql
-volatile
-security definer
-set search_path = ''
-as $$
-declare
-  v_cutover_at timestamptz;
-begin
-  if p_organization_id is null or p_session_id is null then
-    raise exception using errcode = '22023', message = 'whatsapp_cutover_scope_required';
-  end if;
-
-  -- The claim takes FOR NO KEY UPDATE on this same session. New ingress must
-  -- take FOR KEY SHARE before snapshot/insert. FOR UPDATE closes both races.
-  perform 1
-  from public.whatsapp_sessions as session
-  where session.id = p_session_id
-    and session.organization_id = p_organization_id
-    and session.provider = 'evolution_go'
-    and coalesce(session.is_active, true) = true
-    and lower(btrim(coalesce(session.status, ''))) not in ('deleted', 'disabled')
-  for update;
-  if not found then
-    raise exception using errcode = '23503', message = 'whatsapp_cutover_session_not_found';
-  end if;
-
-  select cutover.cutover_at into v_cutover_at
-  from private.whatsapp_webhook_session_cutovers as cutover
-  where cutover.session_id = p_session_id;
-  if found then
-    return v_cutover_at;
-  end if;
-
-  -- A native transaction holds the inbox in processing until all its
-  -- post-commit jobs are queued. Do not cut over while any legacy execution
-  -- is active. Edge HTTP timeouts need a separate execution fence and must
-  -- not be enabled for a cutover session.
-  if exists (
-    select 1
-    from public.whatsapp_webhook_inbox as inbox
-    where inbox.organization_id = p_organization_id
-      and inbox.session_id = p_session_id
-      and inbox.processing_epoch = 0
-      and inbox.status = 'processing'
-  ) then
-    raise exception using errcode = '55000', message = 'whatsapp_cutover_legacy_inflight';
-  end if;
-
-  v_cutover_at := clock_timestamp();
-  insert into private.whatsapp_webhook_session_cutovers (
-    session_id, active_epoch, cutover_at, activated_at
-  ) values (p_session_id, 1, v_cutover_at, v_cutover_at);
-  return v_cutover_at;
-end;
-$$;
-revoke all on function private.activate_whatsapp_webhook_session_cutover(uuid, uuid)
-from public, anon, authenticated;
-grant execute on function private.activate_whatsapp_webhook_session_cutover(uuid, uuid)
-to service_role;
-
+-- Build the guard before taking the brief trigger lock on the inbox.
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
 create or replace function private.guard_whatsapp_webhook_inbox_epoch()
 returns trigger
 language plpgsql
@@ -240,11 +193,16 @@ on public.whatsapp_webhook_inbox;
 create trigger guard_whatsapp_webhook_inbox_epoch_before_write
 before insert or update of status, attempts, processing_epoch on public.whatsapp_webhook_inbox
 for each row execute function private.guard_whatsapp_webhook_inbox_epoch();
+commit;
 
 -- The legacy ingress captures a route before inserting the inbox row. If it
 -- could capture a fresh epoch-zero route after activation, the retry on the
 -- new API would reuse that snapshot and retain a genuinely new event. Fence
 -- the snapshot first, while allowing a read of an existing old snapshot.
+-- This trigger takes its own short transaction on the snapshot table.
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
 create or replace function private.guard_whatsapp_webhook_routing_snapshot_epoch()
 returns trigger
 language plpgsql
@@ -282,7 +240,13 @@ on public.whatsapp_webhook_routing_snapshots;
 create trigger guard_whatsapp_webhook_routing_snapshot_epoch_before_insert
 before insert on public.whatsapp_webhook_routing_snapshots
 for each row execute function private.guard_whatsapp_webhook_routing_snapshot_epoch();
+commit;
 
+-- Create v2 separately from the transactions that alter or add triggers to
+-- the large tables.
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
 create or replace function private.capture_whatsapp_webhook_routing_snapshot_v2(
   p_organization_id uuid,
   p_session_id uuid,
@@ -916,5 +880,79 @@ grant execute on function private.capture_whatsapp_webhook_routing_snapshot_v2(
   uuid, uuid, text, text, text, text, boolean, text[], text, text, text,
   boolean, boolean, boolean, uuid, uuid, uuid, integer
 ) to service_role;
+
+commit;
+
+-- Publish activation only after both write guards and v2 capture exist.
+-- Creating the function does not activate any session; that remains an
+-- explicit service-only call after every API replica uses v2 ingress.
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
+
+create or replace function private.activate_whatsapp_webhook_session_cutover(
+  p_organization_id uuid,
+  p_session_id uuid
+)
+returns timestamptz
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_cutover_at timestamptz;
+begin
+  if p_organization_id is null or p_session_id is null then
+    raise exception using errcode = '22023', message = 'whatsapp_cutover_scope_required';
+  end if;
+
+  -- The claim takes FOR NO KEY UPDATE on this same session. New ingress must
+  -- take FOR KEY SHARE before snapshot/insert. FOR UPDATE closes both races.
+  perform 1
+  from public.whatsapp_sessions as session
+  where session.id = p_session_id
+    and session.organization_id = p_organization_id
+    and session.provider = 'evolution_go'
+    and coalesce(session.is_active, true) = true
+    and lower(btrim(coalesce(session.status, ''))) not in ('deleted', 'disabled')
+  for update;
+  if not found then
+    raise exception using errcode = '23503', message = 'whatsapp_cutover_session_not_found';
+  end if;
+
+  select cutover.cutover_at into v_cutover_at
+  from private.whatsapp_webhook_session_cutovers as cutover
+  where cutover.session_id = p_session_id;
+  if found then
+    return v_cutover_at;
+  end if;
+
+  -- A native transaction holds the inbox in processing until all its
+  -- post-commit jobs are queued. Do not cut over while any legacy execution
+  -- is active. Edge HTTP timeouts need a separate execution fence and must
+  -- not be enabled for a cutover session.
+  if exists (
+    select 1
+    from public.whatsapp_webhook_inbox as inbox
+    where inbox.organization_id = p_organization_id
+      and inbox.session_id = p_session_id
+      and inbox.processing_epoch = 0
+      and inbox.status = 'processing'
+  ) then
+    raise exception using errcode = '55000', message = 'whatsapp_cutover_legacy_inflight';
+  end if;
+
+  v_cutover_at := clock_timestamp();
+  insert into private.whatsapp_webhook_session_cutovers (
+    session_id, active_epoch, cutover_at, activated_at
+  ) values (p_session_id, 1, v_cutover_at, v_cutover_at);
+  return v_cutover_at;
+end;
+$$;
+revoke all on function private.activate_whatsapp_webhook_session_cutover(uuid, uuid)
+from public, anon, authenticated;
+grant execute on function private.activate_whatsapp_webhook_session_cutover(uuid, uuid)
+to service_role;
 
 commit;
