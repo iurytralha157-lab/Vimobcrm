@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ee813bc28cc3b80aa5568a25e41a018b49f257e096f776c79973507323a30de4",
-  "surfaceInventoryDigestSha256": "e59fa1955cb79372c63dcaba0b3b5b04aa5c1674943a4ab839731c3cb8ece642",
+  "sourceDigestSha256": "ab11b003da42999d5bcfd326c95527aa500f02ea324ff155ca5377d2a18186f7",
+  "surfaceInventoryDigestSha256": "bae67650128b2be22314dd42d4d75831124e4b9598c549688f2d2c11eaf2db0b",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 546,
@@ -830,7 +830,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1607,
+      "line": 1609,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1640,7 +1640,7 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1321,
+      "line": 1287,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",
@@ -1739,7 +1739,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 239,
+      "line": 241,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",

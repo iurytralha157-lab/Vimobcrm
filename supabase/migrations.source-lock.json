@@ -618,6 +618,10 @@
     {
       "file": "20261002191622_whatsapp_webhook_session_cutover_epoch.sql",
       "sha256": "c6b2ca30564cf8ebe50731fe5bf822d0f60757d2125c91b6de634986417707d9"
+    },
+    {
+      "file": "20261007164309_separate_whatsapp_attendance_marker_confirmation.sql",
+      "sha256": "86beb774114cf477b5d5f8ad139c3f0c1705079b8423984473068dde90eb53fb"
     }
   ]
 }
