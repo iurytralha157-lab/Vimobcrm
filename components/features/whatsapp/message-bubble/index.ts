@@ -9,6 +9,7 @@ export { MessageStatus, type MessageStatusProps } from "./MessageStatus";
 export { MessageText, type MessageTextProps } from "./MessageText";
 export {
   cleanMessageMimeType,
+  formatDeliveryFailureTime,
   formatMessageAudioDuration,
   formatMessageFileSize,
   formatMessageTime,

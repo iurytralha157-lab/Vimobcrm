@@ -68,6 +68,8 @@ export const whatsAppAttendanceEntrySchema = z.object({
 	sessionId: uuidSchema,
 	joinedAt: timestampSchema,
 	entrySource: z.enum(['manual', 'implicit', 'ctwa_auto']).optional(),
+	markerAt: timestampSchema.nullable().optional(),
+	markerKind: z.enum(['started', 'joined']).nullable().optional(),
 }).strict()
 
 export const whatsAppAttendanceStateSchema = z.object({
@@ -221,6 +223,8 @@ export const whatsAppMessageSchema = z.object({
   reaction_sender_name: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   status: z.string(),
+  delivery_error_code: z.enum(['recipient_not_registered', 'outcome_unknown', 'send_failed']).nullable().optional(),
+  delivery_failed_at: timestampSchema.nullable().optional(),
   sent_at: timestampSchema,
   delivered_at: timestampSchema.nullable(),
   read_at: timestampSchema.nullable(),

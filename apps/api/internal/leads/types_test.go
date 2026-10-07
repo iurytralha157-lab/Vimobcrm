@@ -607,27 +607,6 @@ func TestWonPropertyUnavailableMessage(t *testing.T) {
 	}
 }
 
-func TestReopenedPropertyRestoreStatus(t *testing.T) {
-	tests := []struct {
-		status string
-		want   string
-	}{
-		{status: "active", want: "active"},
-		{status: "Disponivel", want: "Disponivel"},
-		{status: "reserved", want: "active"},
-		{status: "Reservado", want: "active"},
-		{status: "sold", want: "active"},
-		{status: "inactive", want: "active"},
-		{status: "", want: "active"},
-	}
-
-	for _, test := range tests {
-		if got := reopenedPropertyRestoreStatus(test.status); got != test.want {
-			t.Fatalf("reopenedPropertyRestoreStatus(%q) = %q, want %q", test.status, got, test.want)
-		}
-	}
-}
-
 func TestIsReservedLeadPropertyStatus(t *testing.T) {
 	tests := []struct {
 		status string

@@ -552,7 +552,7 @@ export function FloatingChat() {
     ...attendanceGate.entries.map((entry): FloatingTimelineItem => ({
       kind: "attendance",
       id: `attendance-${entry.id}`,
-      timestamp: entry.joinedAt,
+      timestamp: entry.markerAt ?? entry.joinedAt,
       entry,
     })),
   ].sort((left, right) => (
@@ -1568,6 +1568,8 @@ export function FloatingChat() {
                           fromMe={item.message.from_me}
                           status={item.message.status ?? ''}
                           sentAt={item.message.sent_at}
+                          deliveryErrorCode={item.message.delivery_error_code ?? null}
+                          deliveryFailedAt={item.message.delivery_failed_at ?? null}
                           senderName={item.message.sender_name ?? null}
                           isGroup={activeConversation!.is_group}
                           onRetryMedia={canMutateActiveConversation ? () => retryMediaDownload(item.message.id) : undefined}

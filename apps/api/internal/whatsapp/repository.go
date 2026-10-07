@@ -1690,6 +1690,20 @@ func messageSelectFieldsWithSession(sessionExpression string) string {
 		wm.reaction_sender_name,
 		'{}'::text,
 		wm.status,
+		case when wm.from_me and wm.status = 'failed' then (
+			coalesce((select jsonb_build_object(
+				'last_error', outbound.last_error,
+				'status', outbound.status,
+				'failed_at', coalesce(outbound.failed_at, outbound.dead_lettered_at)
+			)
+			from public.whatsapp_outbox outbound
+			where outbound.organization_id = wm.organization_id
+			  and outbound.message_id = wm.id
+			limit 1), '{}'::jsonb) || jsonb_build_object(
+			  'persisted_code', wm.metadata->>'delivery_error_code',
+			  'persisted_at', wm.metadata->>'delivery_failed_at'
+			)
+		)::text else null end,
 		coalesce(wm.sent_at, wm.created_at),
 		wm.delivered_at,
 		wm.read_at,
@@ -1876,6 +1890,7 @@ func scanConversation(row scanner) (Conversation, error) {
 func scanMessage(row scanner) (Message, error) {
 	var message Message
 	var sessionID, clientMessageID, content, mediaURL, mediaMimeType, mediaStatus, mediaError, mediaStoragePath pgtype.Text
+	var deliveryFailureJSON pgtype.Text
 	var remoteJID, reactionToMessageID, reactionEmoji, reactionSenderJID, reactionSenderName pgtype.Text
 	var mediaSize pgtype.Int8
 	var deliveredAt, readAt pgtype.Timestamptz
@@ -1904,6 +1919,7 @@ func scanMessage(row scanner) (Message, error) {
 		&reactionSenderName,
 		&metadataJSON,
 		&message.Status,
+		&deliveryFailureJSON,
 		&message.SentAt,
 		&deliveredAt,
 		&readAt,
@@ -1928,6 +1944,38 @@ func scanMessage(row scanner) (Message, error) {
 	message.ReactionSenderJID = textPtr(reactionSenderJID)
 	message.ReactionSenderName = textPtr(reactionSenderName)
 	message.Metadata = decodeObjectJSON(metadataJSON)
+	if message.FromMe && message.Status == "failed" {
+		code := deliveryErrorSendFailed
+		if deliveryFailureJSON.Valid {
+			var failure struct {
+				LastError     string     `json:"last_error"`
+				Status        string     `json:"status"`
+				FailedAt      *time.Time `json:"failed_at"`
+				PersistedCode string     `json:"persisted_code"`
+				PersistedAt   string     `json:"persisted_at"`
+			}
+			if err := json.Unmarshal([]byte(deliveryFailureJSON.String), &failure); err != nil {
+				return Message{}, fmt.Errorf("decode WhatsApp delivery failure: %w", err)
+			}
+			code = messageDeliveryErrorCode(failure.LastError)
+			if failure.Status == "dead" && code == deliveryErrorSendFailed {
+				// Exhausted retries do not prove the provider never received the
+				// stanza. Report uncertainty rather than a definitive rejection.
+				code = deliveryErrorOutcomeUnknown
+			}
+			switch failure.PersistedCode {
+			case deliveryErrorRecipientNotRegistered, deliveryErrorOutcomeUnknown, deliveryErrorSendFailed:
+				code = failure.PersistedCode
+			}
+			message.DeliveryFailedAt = failure.FailedAt
+			if message.DeliveryFailedAt == nil && failure.PersistedAt != "" {
+				if persistedAt, err := time.Parse(time.RFC3339Nano, failure.PersistedAt); err == nil {
+					message.DeliveryFailedAt = &persistedAt
+				}
+			}
+		}
+		message.DeliveryErrorCode = &code
+	}
 	message.DeliveredAt = timePtr(deliveredAt)
 	message.ReadAt = timePtr(readAt)
 	message.SenderJID = textPtr(senderJID)

@@ -211,7 +211,7 @@ export function useDealStatusChange() {
         deal_status: newStatus,
         lost_reason: validatedLostReason,
       };
-      if (params.propertyId && newStatus !== 'open') {
+      if (params.propertyId && newStatus === 'won') {
         updateData.property_id = params.propertyId;
         updateData.interest_property_id = params.propertyId;
       }
@@ -302,7 +302,8 @@ export function useDealStatusChange() {
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: ['home'], refetchType: 'none' });
 
-      const propertyAvailabilityChanged = newStatus === 'won' || newStatus === 'open';
+      // A won lead can now release its proven property reservation when lost.
+      const propertyAvailabilityChanged = newStatus === 'won' || newStatus === 'open' || newStatus === 'lost';
       if (propertyAvailabilityChanged) {
         queryClient.invalidateQueries({ queryKey: ['properties'], refetchType: 'none' });
         queryClient.invalidateQueries({ queryKey: ['properties-infinite'], refetchType: 'none' });

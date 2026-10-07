@@ -340,7 +340,9 @@ export function useWhatsAppAttendanceGate(
 
   return {
     attendance,
-    entries: attendance?.entries ?? [],
+    // Old API replicas do not return markerAt. Hide those rows rather than
+    // displaying a capture authorization as a provider-accepted send.
+    entries: (attendance?.entries ?? []).filter((entry) => Boolean(entry.markerAt)),
     ensureJoined,
     isChecking,
     isJoining: joinAttendance.isPending,

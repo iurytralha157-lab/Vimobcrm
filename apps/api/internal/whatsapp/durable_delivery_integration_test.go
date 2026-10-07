@@ -25,6 +25,12 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
 	}
+	target, err := url.Parse(databaseURL)
+	if err != nil ||
+		(target.Hostname() != "127.0.0.1" && target.Hostname() != "localhost") ||
+		!strings.Contains(strings.ToLower(target.Path), "test") {
+		t.Fatal("WHATSAPP_TEST_DATABASE_URL must point to an isolated loopback test database")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -39,6 +45,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	var edgeCalls atomic.Int32
 	var timeoutFirstRequest atomic.Bool
 	var timeoutProviderID string
+	var recipientRejectedProviderID atomic.Value
 	var providerIDsMu sync.Mutex
 	providerIDs := []string{}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +70,11 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 				time.Sleep(150 * time.Millisecond)
 			}
 			w.Header().Set("Content-Type", "application/json")
+			if rejectedID, ok := recipientRejectedProviderID.Load().(string); ok && requestID == rejectedID {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"number 5511999999999@s.whatsapp.net is not registered on WhatsApp"}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"messageId": requestID})
 		case "/message/react":
 			reactionCalls.Add(1)
@@ -102,7 +114,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	defer provider.Close()
 
 	suffix := fmt.Sprintf("wa-durable-%d", time.Now().UnixNano())
-	var organizationID, foreignHistoryOrganizationID, userID, otherUserID, leadID, otherLeadID string
+	var organizationID, foreignHistoryOrganizationID, userID, otherUserID, foreignUserID, leadID, otherLeadID string
 	var sessionID, legacySessionID, deletedSessionID, foreignHistorySessionID, conversationID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.organizations (name, slug)
@@ -125,7 +137,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = any($1::uuid[])`, []string{organizationID, foreignHistoryOrganizationID})
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = any($1::uuid[])`, []string{userID, otherUserID})
+		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = any($1::uuid[])`, []string{userID, otherUserID, foreignUserID})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -142,6 +154,12 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
@@ -162,19 +180,69 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, otherUserID, organizationID, suffix+" other user", suffix+"-other-user@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, otherUserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&foreignUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into auth.users (
+			id, aud, role, email, encrypted_password, email_confirmed_at,
+			raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		) values (
+			$1::uuid, 'authenticated', 'authenticated', $2, '', now(),
+			'{}'::jsonb, '{}'::jsonb, now(), now()
+		)
+	`, foreignUserID, suffix+"-foreign-user@example.invalid"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.users (id, organization_id, name, email, role, is_active)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
+	`, foreignUserID, foreignHistoryOrganizationID, suffix+" foreign user", suffix+"-foreign-user@example.invalid"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.organization_members (organization_id, user_id, role, is_active)
+		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
+	`, foreignHistoryOrganizationID, foreignUserID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -229,12 +297,14 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_sessions (
-			organization_id, instance_name, instance_id, provider, status, is_active, advanced_settings
+			organization_id, instance_name, instance_id, owner_user_id,
+			provider, status, is_active, advanced_settings
 		) values (
-			$1::uuid, $2, $2, 'evolution_go', 'connected', true, '{}'::jsonb
+			$1::uuid, $2, $2, $3::uuid,
+			'evolution_go', 'connected', true, '{}'::jsonb
 		)
 		returning id::text
-	`, foreignHistoryOrganizationID, suffix+"-foreign-history-session").Scan(&foreignHistorySessionID); err != nil {
+	`, foreignHistoryOrganizationID, suffix+"-foreign-history-session", foreignUserID).Scan(&foreignHistorySessionID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -243,6 +313,13 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '5511999991111@s.whatsapp.net', $5)
 		returning id::text
 	`, organizationID, sessionID, leadID, userID, suffix).Scan(&conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding(
+			$1::uuid, $2::uuid, $3::uuid, null
+		)
+	`, organizationID, conversationID, leadID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,7 +331,18 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 			APIKey: "global-provider-key",
 		},
 	})
-	tenantContext := tenant.Context{OrganizationID: organizationID, UserID: userID, MemberRole: "user"}
+	tenantContext := tenant.Context{
+		OrganizationID: organizationID,
+		UserID:         userID,
+		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own"},
+	}
+	if _, err := repo.JoinConversationAttendance(ctx, tenantContext, conversationID, attendanceInput{
+		ExpectedLeadID: leadID,
+		SendSessionID:  sessionID,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Simulate a browser that still holds card A after the physical conversation
 	// is already bound to card B. The stale snapshot must fail before creating a
@@ -957,15 +1045,36 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
 		t.Fatalf("first ambiguous ProcessWhatsAppOutbox() returned error: %v", err)
 	}
-	var timeoutStatus string
+	var timeoutStatus, timeoutLastError, timeoutTimelineCode, timeoutEffectCode string
+	var timeoutTimelineHasRawError, timeoutEffectHasRawError bool
 	if err := postgres.Pool().QueryRow(ctx, `
-		select status from public.whatsapp_outbox
-		where organization_id = $1::uuid and client_message_id = $2
-	`, organizationID, timeoutClientID).Scan(&timeoutStatus); err != nil {
+		select outbox.status,
+		       coalesce(outbox.last_error, ''),
+		       timeline.metadata ? 'last_error',
+		       coalesce(timeline.metadata->>'delivery_error_code', ''),
+		       dispatch.response ? 'last_error',
+		       coalesce(dispatch.response->>'delivery_error_code', '')
+		from public.whatsapp_outbox outbox
+		join public.lead_timeline_events timeline
+		  on timeline.organization_id = outbox.organization_id
+		 and timeline.metadata->>'outbox_id' = outbox.id::text
+		join public.automation_effect_dispatches dispatch on dispatch.id = $3::uuid
+		where outbox.organization_id = $1::uuid and outbox.client_message_id = $2
+	`, organizationID, timeoutClientID, timeoutEffect.dispatchID).Scan(
+		&timeoutStatus, &timeoutLastError, &timeoutTimelineHasRawError,
+		&timeoutTimelineCode, &timeoutEffectHasRawError, &timeoutEffectCode,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if timeoutStatus != "dead" {
 		t.Fatalf("ambiguous timeout status = %q, want dead/unknown without automatic resend", timeoutStatus)
+	}
+	if timeoutLastError != whatsappOutboxProviderUnknownMarker ||
+		timeoutTimelineHasRawError || timeoutEffectHasRawError ||
+		timeoutTimelineCode != deliveryErrorOutcomeUnknown || timeoutEffectCode != deliveryErrorOutcomeUnknown {
+		t.Fatalf("ambiguous timeout projection was not safely classified: marker=%q timeline=%q/%t effect=%q/%t",
+			timeoutLastError, timeoutTimelineCode, timeoutTimelineHasRawError,
+			timeoutEffectCode, timeoutEffectHasRawError)
 	}
 	var timeoutEffectStatus, timeoutNotificationBody string
 	var timeoutCompletedAt time.Time
@@ -1079,6 +1188,85 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	}
 	if timeoutStatus != "sent" || timeoutMessageStatus != "sent" || timeoutEffectStatus != "succeeded" {
 		t.Fatalf("late signed acknowledgement did not heal ambiguous delivery: %s/%s/%s", timeoutStatus, timeoutMessageStatus, timeoutEffectStatus)
+	}
+
+	// Evolution Go has returned this exact recipient rejection inside HTTP 500.
+	// It is definitive, must not be resent, and only a safe code may reach the
+	// history API (the provider response includes the phone number).
+	rejectedClientID := "client-no-whatsapp-" + suffix
+	rejectedProviderID := deterministicProviderMessageID(rejectedClientID)
+	recipientRejectedProviderID.Store(rejectedProviderID)
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
+		Text: "recipient rejection", ClientMessageID: rejectedClientID, ExpectedLeadID: leadID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var rejectedOutboxStatus, rejectedMessageStatus, rejectedLastError string
+	var rejectedAttempts int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select outbox.status, outbox.attempts, coalesce(outbox.last_error, ''), message.status
+		from public.whatsapp_outbox outbox
+		join public.whatsapp_messages message on message.id = outbox.message_id
+		where outbox.organization_id = $1::uuid and outbox.client_message_id = $2
+	`, organizationID, rejectedClientID).Scan(
+		&rejectedOutboxStatus, &rejectedAttempts, &rejectedLastError, &rejectedMessageStatus,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedOutboxStatus != "failed" || rejectedAttempts != 1 ||
+		rejectedLastError != deliveryErrorRecipientNotRegistered || rejectedMessageStatus != "failed" {
+		t.Fatalf("recipient rejection = %s/%d/%s/%s, want failed/1/safe code/failed",
+			rejectedOutboxStatus, rejectedAttempts, rejectedLastError, rejectedMessageStatus)
+	}
+	rejectedHistory, err := repo.getOutboundMessageByClientID(ctx, organizationID, sessionID, rejectedClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejectedHistory.DeliveryErrorCode == nil || *rejectedHistory.DeliveryErrorCode != deliveryErrorRecipientNotRegistered ||
+		rejectedHistory.DeliveryFailedAt == nil {
+		t.Fatalf("recipient rejection history is missing safe code/time: %#v/%v",
+			rejectedHistory.DeliveryErrorCode, rejectedHistory.DeliveryFailedAt)
+	}
+	cleanupSimulation, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanupSimulation.Exec(ctx, `
+		delete from public.whatsapp_outbox
+		where organization_id = $1::uuid and client_message_id = $2
+	`, organizationID, rejectedClientID); err != nil {
+		_ = cleanupSimulation.Rollback(ctx)
+		t.Fatal(err)
+	}
+	postCleanupHistory, err := scanMessage(cleanupSimulation.QueryRow(ctx, `
+		select `+messageSelectFields()+`
+		from public.whatsapp_messages wm
+		where wm.organization_id = $1::uuid and wm.session_id = $2::uuid
+		  and wm.client_message_id = $3
+	`, organizationID, sessionID, rejectedClientID))
+	_ = cleanupSimulation.Rollback(ctx)
+	if err != nil || postCleanupHistory.DeliveryErrorCode == nil ||
+		*postCleanupHistory.DeliveryErrorCode != deliveryErrorRecipientNotRegistered ||
+		postCleanupHistory.DeliveryFailedAt == nil {
+		t.Fatalf("recipient history lost its safe reason after outbox cleanup: code=%#v time=%v err=%v",
+			postCleanupHistory.DeliveryErrorCode, postCleanupHistory.DeliveryFailedAt, err)
+	}
+	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	providerIDsMu.Lock()
+	rejectedCalls := 0
+	for _, id := range providerIDs {
+		if id == rejectedProviderID {
+			rejectedCalls++
+		}
+	}
+	providerIDsMu.Unlock()
+	if rejectedCalls != 1 {
+		t.Fatalf("recipient rejection provider calls = %d, want one", rejectedCalls)
 	}
 
 	// A signed provider receipt that definitively rejects an already acknowledged

@@ -1747,8 +1747,12 @@ func reconcileNativeOutboundOutbox(
 		pendingMessageRowID == messageRowID {
 		return nil
 	}
-	if outboxStatus != "processing" &&
-		!(outboxStatus == "dead" && outboxLastError == whatsappOutboxProviderUnknownMarker) {
+	// The row is locked above. An older worker could have persisted the unknown
+	// outcome with context in last_error; require that precise classification and
+	// retain the locked value in the final compare-and-set below.
+	unknownDead := outboxStatus == "dead" &&
+		messageDeliveryErrorCode(outboxLastError) == deliveryErrorOutcomeUnknown
+	if outboxStatus != "processing" && !unknownDead {
 		return fmt.Errorf(
 			"%w: signed outbound webhook cannot reconcile outbox status %s",
 			ErrProviderFailed,
@@ -1822,7 +1826,12 @@ func reconcileNativeOutboundOutbox(
 			    media_mime_type = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_mime_type, pending.media_mime_type) end,
 			    media_storage_path = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_storage_path, pending.media_storage_path) end,
 			    media_size = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_size, pending.media_size) end,
-			    metadata = case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else coalesce(pending.metadata, '{}'::jsonb) || coalesce(canonical.metadata, '{}'::jsonb) end,
+			    metadata = case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else
+			      (coalesce(pending.metadata, '{}'::jsonb) || coalesce(canonical.metadata, '{}'::jsonb) ||
+			      jsonb_strip_nulls(jsonb_build_object(
+			        'attendance_entry_id', pending.metadata->>'attendance_entry_id',
+			        'attendance_send_origin', pending.metadata->>'attendance_send_origin'
+			      ))) - 'delivery_error_code' - 'delivery_failed_at' end,
 			    capture_state = coalesce(pending.capture_state, canonical.capture_state),
 			    provider_message_id = $6,
 			    message_id = $6,
@@ -1859,6 +1868,7 @@ func reconcileNativeOutboundOutbox(
 			set provider_message_id = $5,
 			    message_id = $5,
 			    status = case when message.status in ('delivered', 'read') then message.status else 'sent' end,
+			    metadata = coalesce(message.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at',
 			    sent_at = coalesce(message.sent_at, $6),
 			    updated_at = now()
 			where message.id = $1::uuid
@@ -1905,7 +1915,7 @@ func reconcileNativeOutboundOutbox(
 		  )
 	`, outboxID, session.OrganizationID, session.ID, messageRowID, message.SentAt,
 		outboxConversationID, pendingMessageRowID, clientMessageID,
-		message.ProviderMessageID, whatsappOutboxProviderUnknownMarker)
+		message.ProviderMessageID, outboxLastError)
 	if err != nil {
 		return err
 	}
@@ -1928,6 +1938,9 @@ func reconcileNativeOutboundOutbox(
 		if deleted.RowsAffected() != 1 {
 			return fmt.Errorf("%w: WhatsApp webhook reconciliation losing projection survived", ErrProviderFailed)
 		}
+	}
+	if err := confirmHumanWhatsAppAttendance(ctx, tx, session.OrganizationID, messageRowID); err != nil {
+		return err
 	}
 
 	if _, err := tx.Exec(ctx, `

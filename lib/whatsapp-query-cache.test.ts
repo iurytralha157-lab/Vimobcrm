@@ -8,6 +8,7 @@ import {
   isWhatsAppQueryKeyForScope,
   isWhatsAppInboxWakePayload,
   matchesLeadMessagesQueryKey,
+  matchesWhatsAppAttendanceQueryKey,
   matchesPaginatedWhatsAppMessagesQueryKey,
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
@@ -134,6 +135,10 @@ test('segrega o atendimento por tenant, conversa, card e WhatsApp selecionado', 
   assert.notDeepEqual(keyA, otherSession)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
+  assert.equal(matchesWhatsAppAttendanceQueryKey(keyA, scopeA, ['conversation-a'], []), true)
+  assert.equal(matchesWhatsAppAttendanceQueryKey(keyA, scopeA, [], ['lead-a']), true)
+  assert.equal(matchesWhatsAppAttendanceQueryKey(keyA, scopeA, ['conversation-b'], ['lead-b']), false)
+  assert.equal(matchesWhatsAppAttendanceQueryKey(keyA, scopeB, ['conversation-a'], ['lead-a']), false)
 })
 
 test('reconcilia o envio nas consultas simples e paginadas da conversa ativa', () => {
@@ -473,7 +478,7 @@ test('detecta salto sem sobreposicao para rebase controlado', () => {
   )
 })
 
-test('encerra confirmacao local sem resposta depois do TTL e ainda aceita a linha canonica', () => {
+test('mantem envio local sem confirmacao apos TTL e ainda aceita a linha canonica', () => {
   const sentAt = '2026-07-12T12:00:00.000Z'
   const sentAtMs = Date.parse(sentAt)
   const local: {
@@ -483,6 +488,8 @@ test('encerra confirmacao local sem resposta depois do TTL e ainda aceita a linh
     status: string
     sent_at: string
     media_error?: string | null
+    delivery_error_code?: string | null
+    delivery_failed_at?: string | null
     metadata?: Record<string, unknown>
   } = {
     id: 'client-timeout',
@@ -500,8 +507,10 @@ test('encerra confirmacao local sem resposta depois do TTL e ainda aceita a linh
   const afterTimeout = mergeWhatsAppMessagesWithLocalState([], [local], {
     nowMs: sentAtMs + WHATSAPP_UNCERTAIN_SEND_TTL_MS,
   })
-  assert.equal(afterTimeout[0]?.status, 'failed')
-  assert.equal(afterTimeout[0]?.media_error, 'SEND_CONFIRMATION_TIMEOUT')
+  assert.equal(afterTimeout[0]?.status, 'unconfirmed')
+  assert.equal(afterTimeout[0]?.media_error, undefined)
+  assert.equal(afterTimeout[0]?.delivery_error_code, 'outcome_unknown')
+  assert.equal(afterTimeout[0]?.delivery_failed_at, null)
   assert.equal(afterTimeout[0]?.metadata?.local_delivery_state, 'confirmation_timeout')
 
   const canonical = {
@@ -514,6 +523,31 @@ test('encerra confirmacao local sem resposta depois do TTL e ainda aceita a linh
     nowMs: sentAtMs + WHATSAPP_UNCERTAIN_SEND_TTL_MS + 1,
   })
   assert.deepEqual(reconciled, [canonical])
+})
+
+test('na pagina mais recente, ausência de confirmação não vira falha nem duplica a mensagem canônica', () => {
+  const sentAt = '2026-07-12T12:00:00.000Z'
+  const local = {
+    id: 'client-delayed',
+    message_id: 'client-delayed',
+    client_message_id: 'client-delayed',
+    status: 'confirming',
+    sent_at: sentAt,
+  }
+  const latestEmpty = { messages: [] as typeof local[], nextCursor: null }
+  const [stillLocal] = mergeWhatsAppLatestMessagePage([{
+    messages: [local],
+    nextCursor: null,
+  }], latestEmpty, { nowMs: Date.parse(sentAt) + WHATSAPP_UNCERTAIN_SEND_TTL_MS })
+  assert.equal(stillLocal.messages[0]?.status, 'unconfirmed')
+
+  const canonical = { ...local, id: 'canonical-delayed', message_id: 'provider-delayed', status: 'sent' }
+  const [confirmed] = mergeWhatsAppLatestMessagePage([stillLocal], {
+    messages: [canonical],
+    nextCursor: null,
+  })
+  assert.equal(confirmed.messages.length, 1)
+  assert.deepEqual(confirmed.messages[0], canonical)
 })
 
 test('distingue falha definitiva de entrega incerta', () => {
@@ -550,6 +584,10 @@ test('distingue falha definitiva de entrega incerta', () => {
     'confirming',
   )
   assert.equal(getWhatsAppSendFailureStatus('api_timeout'), 'confirming')
+  assert.equal(getWhatsAppSendFailureStatus({
+    message: 'number 5511999999999@s.whatsapp.net is not registered on WhatsApp',
+    status: 500,
+  }), 'confirming')
   assert.equal(
     getWhatsAppSendFailureStatus('Mensagem enviada no WhatsApp, mas nao foi salva'),
     'confirming',

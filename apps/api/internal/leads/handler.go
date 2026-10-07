@@ -428,6 +428,10 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_phone_conflict", "Este telefone ja esta cadastrado em outro lead.")
 	case errors.Is(err, ErrLeadPropertyUnavailable):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
+	case errors.Is(err, ErrLeadPropertyRelinkWhileWon):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_relink_while_won", "Reabra o lead antes de trocar o imóvel vinculado.")
+	case errors.Is(err, ErrLeadReservationUnverified):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_reservation_unverified", "Não foi possível confirmar a reserva deste imóvel. Peça uma conferência ao administrador antes de alterar o resultado do lead.")
 	case errors.Is(err, ErrConversationBindingChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
 	case errors.Is(err, ErrInvalidReference):

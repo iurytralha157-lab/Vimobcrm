@@ -180,11 +180,12 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	args = append(args, filter.Limit, filter.Offset)
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 
 	query := `
 		select
 			count(*) over() as total_count,
-			` + leadSelectFields() + `
+			` + leadSelectFields(propertyVisibility) + `
 		from public.leads l
 		left join public.stages s on s.id = l.stage_id
 		left join public.users u on u.id = l.assigned_user_id
@@ -230,8 +231,16 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 		return Lead{}, ErrLeadNotFound
 	}
 
+	args := []any{
+		tenantContext.OrganizationID,
+		canViewAllLeads(tenantContext),
+		tenantContext.UserID,
+		tenantContext.HasPermission("lead_view_team"),
+		leadID,
+	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 	query := `
-		select ` + leadSelectFields() + `
+		select ` + leadSelectFields(propertyVisibility) + `
 		from public.leads l
 		left join public.stages s on s.id = l.stage_id
 		left join public.users u on u.id = l.assigned_user_id
@@ -240,15 +249,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 		  and l.id = $5::uuid
 		limit 1`
 
-	lead, err := scanLead(repo.db.Pool().QueryRow(
-		ctx,
-		query,
-		tenantContext.OrganizationID,
-		canViewAllLeads(tenantContext),
-		tenantContext.UserID,
-		tenantContext.HasPermission("lead_view_team"),
-		leadID,
-	))
+	lead, err := scanLead(repo.db.Pool().QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrLeadNotFound
 	}
@@ -445,7 +446,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := validateLostReasonContract(current, input); err != nil {
 		return Lead{}, err
 	}
-	if err := repo.validateUpdatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
+	if current.DealStatus == "won" && leadPropertyLinkChanged(current, input) {
+		return Lead{}, ErrLeadPropertyRelinkWhileWon
+	}
+	if err := repo.validateUpdatePropertyReferences(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
 	if err := repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext, current, &input); err != nil {
@@ -691,7 +695,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	sideEffectsDuration = time.Since(sideEffectsStartedAt)
 
 	finalReadStartedAt := time.Now()
-	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext, updatedID)
 	finalReadDuration = time.Since(finalReadStartedAt)
 	if err != nil {
 		return Lead{}, err
@@ -842,7 +846,7 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		return moveStageResult{}, err
 	}
 
-	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext, updatedID)
 	if err != nil {
 		return moveStageResult{}, err
 	}
@@ -964,7 +968,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
-	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, leadID)
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext, leadID)
 	if err != nil {
 		return Lead{}, err
 	}
@@ -2781,14 +2785,34 @@ func (repo Repository) validateCreatePropertyReferences(ctx context.Context, tx 
 	return nil
 }
 
-func (repo Repository) validateUpdatePropertyReferences(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, input updateInput) error {
+func (repo Repository) validateUpdatePropertyReferences(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+	validate := func(currentID string, requestedID *string) error {
+		if requestedID == nil || *requestedID != currentID {
+			return repo.validateProperty(ctx, tx, tenantContext, requestedID)
+		}
+		// An unchanged lead link is already part of this lead. Check its tenant,
+		// but do not require new property access for an unrelated lead edit.
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from public.properties
+				where organization_id = $1::uuid and id = $2::uuid
+			)
+		`, tenantContext.OrganizationID, *requestedID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrInvalidReference
+		}
+		return nil
+	}
 	if input.PropertyID.Set {
-		if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID.Value); err != nil {
+		if err := validate(current.PropertyID, input.PropertyID.Value); err != nil {
 			return err
 		}
 	}
 	if input.InterestPropertyID.Set {
-		if err := repo.validateProperty(ctx, tx, tenantContext, input.InterestPropertyID.Value); err != nil {
+		if err := validate(current.InterestPropertyID, input.InterestPropertyID.Value); err != nil {
 			return err
 		}
 	}
@@ -2948,9 +2972,10 @@ func leadAuditBoolValue(value any) bool {
 	return err == nil && parsed
 }
 
-func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (Lead, error) {
+func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, leadID string) (Lead, error) {
+	args, propertyVisibility := appendCanonicalPropertyVisibility([]any{tenantContext.OrganizationID, leadID}, tenantContext, "visible_property")
 	lead, err := scanLead(tx.QueryRow(ctx, `
-		select `+leadSelectFields()+`
+		select `+leadSelectFields(propertyVisibility)+`
 		from public.leads l
 		left join public.stages s
 		  on s.id = l.stage_id
@@ -2959,7 +2984,7 @@ func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, organi
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
-	`, organizationID, leadID))
+	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrLeadNotFound
 	}
@@ -3483,23 +3508,37 @@ func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx
 }
 
 type propertyReservationSnapshot struct {
+	EventID            string
 	LeadID             string
-	OldStatus          string
+	OldStatus          *string
 	OldPublishedOnSite *bool
 	OldAnnounce        *bool
+	Active             bool
+	ExactRestore       bool
 }
+
+// This marker is written in the same transaction as the reservation event.
+// Unlike properties.updated_at, it is unaffected by publication revision triggers.
+const activeWonLeadReservationEventIDKey = "_vimob_won_lead_reservation_event_id"
 
 type wonLeadPropertyReservation struct {
-	PropertyID         string
-	Title              string
-	Code               string
-	OldStatus          string
-	OldPublishedOnSite bool
-	OldAnnounce        bool
-	AlreadyReserved    bool
+	EventID               string
+	PropertyID            string
+	Title                 string
+	Code                  string
+	OldStatus             string
+	OldPublishedOnSite    bool
+	OldAnnounce           bool
+	OldStatusRaw          *string
+	OldPublishedOnSiteRaw *bool
+	OldAnnounceRaw        *bool
+	AlreadyReserved       bool
 }
 
-func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertyReservationSnapshot, bool, error) {
+func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string, reservationEventID string) (propertyReservationSnapshot, bool, error) {
+	if _, ok := normalizeUUID(reservationEventID); !ok {
+		return propertyReservationSnapshot{}, false, nil
+	}
 	var hasEventsTable bool
 	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
 		return propertyReservationSnapshot{}, false, err
@@ -3509,36 +3548,56 @@ func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx,
 	}
 
 	var snapshot propertyReservationSnapshot
+	var oldStatus pgtype.Text
 	var oldPublishedOnSite, oldAnnounce pgtype.Bool
 	err := tx.QueryRow(ctx, `
-		select coalesce(payload->>'reserved_by_lead_id', payload->>'lead_id', ''),
-		       coalesce(payload->>'old_status', 'active'),
+		select reservation.id::text,
+		       coalesce(reservation.payload->>'reserved_by_lead_id', reservation.payload->>'lead_id', ''),
+		       reservation.payload->>'old_status',
 		       case
-		         when lower(payload->>'old_published_on_site') in ('true', 'false')
-		         then (payload->>'old_published_on_site')::boolean
+		         when lower(reservation.payload->>'old_published_on_site') in ('true', 'false')
+		         then (reservation.payload->>'old_published_on_site')::boolean
 		       end,
 		       case
-		         when lower(payload->>'old_anunciar') in ('true', 'false')
-		         then (payload->>'old_anunciar')::boolean
-		       end
-		from public.events
-		where organization_id = $1::uuid
-		  and entity_type = 'property'
-		  and entity_id = $2::uuid
-		  and event_type = 'property_reserved_by_won_lead'
-		order by created_at desc
-		limit 1
-	`, organizationID, propertyID).Scan(
+		         when lower(reservation.payload->>'old_anunciar') in ('true', 'false')
+		         then (reservation.payload->>'old_anunciar')::boolean
+		       end,
+		       coalesce(reservation.payload->>'exact_restore_snapshot', 'false') = 'true'
+		from public.events reservation
+		where reservation.organization_id = $1::uuid
+		  and reservation.entity_type = 'property'
+		  and reservation.entity_id = $2::uuid
+		  and reservation.event_type = 'property_reserved_by_won_lead'
+		  and reservation.id = $3::uuid
+		  and not exists (
+		    select 1 from public.events release
+		    where release.organization_id = reservation.organization_id
+		      and release.entity_type = 'property'
+		      and release.entity_id = reservation.entity_id
+		      and release.event_type in (
+		        'property_republished_by_reopened_lead',
+		        'property_released_by_lost_lead'
+		      )
+		      and release.payload->>'reservation_event_id' = reservation.id::text
+		  )
+	`, organizationID, propertyID, reservationEventID).Scan(
+		&snapshot.EventID,
 		&snapshot.LeadID,
-		&snapshot.OldStatus,
+		&oldStatus,
 		&oldPublishedOnSite,
 		&oldAnnounce,
+		&snapshot.ExactRestore,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return propertyReservationSnapshot{}, false, nil
 	}
 	if err != nil {
 		return propertyReservationSnapshot{}, false, err
+	}
+	snapshot.Active = true
+	if oldStatus.Valid {
+		value := oldStatus.String
+		snapshot.OldStatus = &value
 	}
 	if oldPublishedOnSite.Valid {
 		value := oldPublishedOnSite.Bool
@@ -3550,6 +3609,12 @@ func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx,
 	}
 
 	return snapshot, true, nil
+}
+
+func propertyReservationIsCurrent(snapshot propertyReservationSnapshot, leadID string, reservationEventID string, publishedOnSite pgtype.Bool, announce pgtype.Bool) bool {
+	return snapshot.Active && snapshot.ExactRestore && snapshot.LeadID == leadID &&
+		reservationEventID != "" && snapshot.EventID == reservationEventID &&
+		publishedOnSite.Valid && !publishedOnSite.Bool && announce.Valid && !announce.Bool
 }
 
 func selectedLeadPropertyID(current leadSnapshot, input updateInput) string {
@@ -3574,6 +3639,13 @@ func selectedLeadPropertyID(current leadSnapshot, input updateInput) string {
 	return propertyID
 }
 
+func leadPropertyLinkChanged(current leadSnapshot, input updateInput) bool {
+	if input.PropertyID.Set && nullablePatchString(input.PropertyID) != nullableString(current.PropertyID) {
+		return true
+	}
+	return input.InterestPropertyID.Set && nullablePatchString(input.InterestPropertyID) != nullableString(current.InterestPropertyID)
+}
+
 func wonLeadReservationPropertyID(current leadSnapshot, input updateInput) (string, bool) {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
 		return "", false
@@ -3592,7 +3664,22 @@ func (repo Repository) lockWonLeadPropertyForUpdate(
 	if !movingToWon || propertyID == "" {
 		return nil, nil
 	}
-	if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+	if propertyID == selectedLeadPropertyID(current, updateInput{}) {
+		// The lead operator may reserve only the property already linked to this
+		// lead. This does not grant access to choose or inspect another property.
+		var belongsToOrganization bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from public.properties
+				where organization_id = $1::uuid and id = $2::uuid
+			)
+		`, tenantContext.OrganizationID, propertyID).Scan(&belongsToOrganization); err != nil {
+			return nil, err
+		}
+		if !belongsToOrganization {
+			return nil, ErrInvalidReference
+		}
+	} else if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
 		return nil, err
 	}
 	return repo.lockWonLeadPropertyForTrustedSystem(ctx, tx, tenantContext.OrganizationID, current.ID, propertyID)
@@ -3611,6 +3698,8 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 	retryDelay := propertyReservationRetryDelay(leadID)
 	for {
 		reservation := wonLeadPropertyReservation{PropertyID: propertyID}
+		var oldStatusRaw pgtype.Text
+		var oldPublishedOnSiteRaw, oldAnnounceRaw pgtype.Bool
 		err := tx.QueryRow(ctx, `
 			with candidate as materialized (
 				select
@@ -3619,10 +3708,16 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 					coalesce(property.code, '') as code,
 					coalesce(property.status, 'active') as old_status,
 					coalesce(property.published_on_site, false) as old_published_on_site,
-					coalesce(property.anunciar, false) as old_anunciar
+					coalesce(property.anunciar, false) as old_anunciar,
+					property.status as old_status_raw,
+					property.published_on_site as old_published_on_site_raw,
+					property.anunciar as old_anunciar_raw,
+					gen_random_uuid() as reservation_event_id
 				from public.properties property
 				where property.organization_id = $1::uuid
 				  and property.id = $2::uuid
+				  and jsonb_typeof(coalesce(property.metadata, '{}'::jsonb)) = 'object'
+				  and not (coalesce(property.metadata, '{}'::jsonb) ? $3::text)
 				  and lower(btrim(coalesce(property.status, 'active'))) not in (
 				    'reserved', 'reservado',
 				    'sold', 'vendido',
@@ -3639,6 +3734,8 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 				set status = 'reserved',
 				    published_on_site = false,
 				    anunciar = false,
+				    metadata = coalesce(property.metadata, '{}'::jsonb) ||
+				      jsonb_build_object($3::text, candidate.reservation_event_id::text),
 				    updated_at = now()
 				from candidate
 				where property.organization_id = $1::uuid
@@ -3649,7 +3746,11 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 					candidate.code,
 					candidate.old_status,
 					candidate.old_published_on_site,
-					candidate.old_anunciar
+					candidate.old_anunciar,
+					candidate.old_status_raw,
+					candidate.old_published_on_site_raw,
+					candidate.old_anunciar_raw,
+					candidate.reservation_event_id::text
 			)
 			select
 				id,
@@ -3657,17 +3758,37 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 				code,
 				old_status,
 				old_published_on_site,
-				old_anunciar
+				old_anunciar,
+				old_status_raw,
+				old_published_on_site_raw,
+				old_anunciar_raw,
+				reservation_event_id
 			from reserved
-		`, organizationID, propertyID).Scan(
+		`, organizationID, propertyID, activeWonLeadReservationEventIDKey).Scan(
 			&reservation.PropertyID,
 			&reservation.Title,
 			&reservation.Code,
 			&reservation.OldStatus,
 			&reservation.OldPublishedOnSite,
 			&reservation.OldAnnounce,
+			&oldStatusRaw,
+			&oldPublishedOnSiteRaw,
+			&oldAnnounceRaw,
+			&reservation.EventID,
 		)
 		if err == nil {
+			if oldStatusRaw.Valid {
+				value := oldStatusRaw.String
+				reservation.OldStatusRaw = &value
+			}
+			if oldPublishedOnSiteRaw.Valid {
+				value := oldPublishedOnSiteRaw.Bool
+				reservation.OldPublishedOnSiteRaw = &value
+			}
+			if oldAnnounceRaw.Valid {
+				value := oldAnnounceRaw.Bool
+				reservation.OldAnnounceRaw = &value
+			}
 			return &reservation, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -3681,29 +3802,43 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 		}
 
 		var propertyStatus string
+		var reservationEventID, metadataType string
+		var publishedOnSite, announce pgtype.Bool
 		err = tx.QueryRow(ctx, `
-			select coalesce(status, 'active')
+			select coalesce(status, 'active'),
+			       coalesce(metadata->>$3::text, ''),
+			       coalesce(jsonb_typeof(metadata), 'object'),
+			       published_on_site, anunciar
 			from public.properties
 			where organization_id = $1::uuid
 			  and id = $2::uuid
-		`, organizationID, propertyID).Scan(&propertyStatus)
+		`, organizationID, propertyID, activeWonLeadReservationEventIDKey).Scan(&propertyStatus, &reservationEventID, &metadataType, &publishedOnSite, &announce)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
 		}
 		if err != nil {
 			return nil, err
 		}
+		if metadataType != "object" {
+			return nil, ErrLeadReservationUnverified
+		}
 		if isReservedLeadPropertyStatus(propertyStatus) {
-			latest, found, reservationErr := repo.latestPropertyReservation(ctx, tx, organizationID, propertyID)
+			latest, found, reservationErr := repo.latestPropertyReservation(ctx, tx, organizationID, propertyID, reservationEventID)
 			if reservationErr != nil {
 				return nil, reservationErr
 			}
-			if found && latest.LeadID == leadID {
+			if found && propertyReservationIsCurrent(latest, leadID, reservationEventID, publishedOnSite, announce) {
 				return &wonLeadPropertyReservation{
 					PropertyID:      propertyID,
 					AlreadyReserved: true,
 				}, nil
 			}
+			if found && latest.LeadID != "" && latest.LeadID != leadID {
+				return nil, fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, wonPropertyUnavailableMessage(propertyStatus))
+			}
+		}
+		if reservationEventID != "" {
+			return nil, ErrLeadReservationUnverified
 		}
 		if message := wonPropertyUnavailableMessage(propertyStatus); message != "" {
 			return nil, fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)
@@ -3787,17 +3922,22 @@ func (repo Repository) reserveWonLeadProperty(
 	}
 
 	jobID, eventsAvailable, err := repo.enqueuePropertyReservationNotificationJob(ctx, tx, propertyReservationNotificationJob{
-		OrganizationID:     tenantContext.OrganizationID,
-		PropertyID:         reservation.PropertyID,
-		PropertyTitle:      reservation.Title,
-		PropertyCode:       reservation.Code,
-		ReservedByUserID:   tenantContext.UserID,
-		ReservedByUserName: actorName,
-		ReservedByLeadID:   current.ID,
-		ReservedByLeadName: current.Name,
-		OldStatus:          reservation.OldStatus,
-		OldPublishedOnSite: reservation.OldPublishedOnSite,
-		OldAnnounce:        reservation.OldAnnounce,
+		ID:                    reservation.EventID,
+		OrganizationID:        tenantContext.OrganizationID,
+		PropertyID:            reservation.PropertyID,
+		PropertyTitle:         reservation.Title,
+		PropertyCode:          reservation.Code,
+		ReservedByUserID:      tenantContext.UserID,
+		ReservedByUserName:    actorName,
+		ReservedByLeadID:      current.ID,
+		ReservedByLeadName:    current.Name,
+		OldStatus:             reservation.OldStatus,
+		OldPublishedOnSite:    reservation.OldPublishedOnSite,
+		OldAnnounce:           reservation.OldAnnounce,
+		OldStatusRaw:          reservation.OldStatusRaw,
+		OldPublishedOnSiteRaw: reservation.OldPublishedOnSiteRaw,
+		OldAnnounceRaw:        reservation.OldAnnounceRaw,
+		ExactRestoreSnapshot:  true,
 	})
 	if err != nil {
 		return "", err
@@ -3805,91 +3945,98 @@ func (repo Repository) reserveWonLeadProperty(
 	if eventsAvailable {
 		return jobID, nil
 	}
-
-	// Compatibility fallback for installations that have not created
-	// public.events yet. The durable path above is used everywhere else.
-	if _, err := repo.notifyInterestedLeadsForReservedProperty(
-		ctx,
-		tx,
-		tenantContext,
-		current,
-		reservation.PropertyID,
-		reservation.Title,
-		reservation.Code,
-		reservation.OldStatus,
-		"",
-	); err != nil {
-		return "", err
-	}
-	return "", nil
+	// The transaction rolls back the property update when the provenance
+	// event cannot be written. Without it, a later release cannot be proved.
+	return "", ErrLeadReservationUnverified
 }
 
 func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
-	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "open" || current.DealStatus == "open" {
+	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value == current.DealStatus {
+		return nil
+	}
+	nextStatus := *input.DealStatus.Value
+	if nextStatus != "open" && nextStatus != "lost" {
+		return nil
+	}
+	if current.DealStatus != "won" && current.DealStatus != "lost" {
 		return nil
 	}
 
-	propertyID := selectedLeadPropertyID(current, input)
+	// The reservation belongs to the original link. A concurrent or combined
+	// property relink must never redirect its release to a different property.
+	propertyID := selectedLeadPropertyID(current, updateInput{})
 	if propertyID == "" {
 		return nil
 	}
-	if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
-		return err
-	}
-
 	var title, code, currentStatus string
+	var reservationEventID string
+	var publishedOnSite, announce pgtype.Bool
 	err := tx.QueryRow(ctx, `
 		select coalesce(title, 'Imovel'),
 		       coalesce(code, ''),
-		       coalesce(status, 'active')
+		       coalesce(status, 'active'),
+		       coalesce(metadata->>$3::text, ''),
+		       published_on_site,
+		       anunciar
 		from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		for update
-	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &currentStatus)
+	`, tenantContext.OrganizationID, propertyID, activeWonLeadReservationEventIDKey).Scan(&title, &code, &currentStatus, &reservationEventID, &publishedOnSite, &announce)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return ErrInvalidReference
 	}
 	if err != nil {
 		return err
 	}
 	if !isReservedLeadPropertyStatus(currentStatus) {
+		if current.DealStatus == "won" {
+			return ErrLeadReservationUnverified
+		}
 		return nil
 	}
 
-	restoreStatus := "active"
-	restorePublishedOnSite := true
-	restoreAnnounce := true
-	reservation, found, err := repo.latestPropertyReservation(ctx, tx, tenantContext.OrganizationID, propertyID)
+	reservation, found, err := repo.latestPropertyReservation(ctx, tx, tenantContext.OrganizationID, propertyID, reservationEventID)
 	if err != nil {
 		return err
 	}
-	if found {
-		if reservation.LeadID != "" && reservation.LeadID != current.ID {
-			return nil
-		}
-		restoreStatus = reopenedPropertyRestoreStatus(reservation.OldStatus)
-		if reservation.OldPublishedOnSite != nil {
-			restorePublishedOnSite = *reservation.OldPublishedOnSite
-		}
-		if reservation.OldAnnounce != nil {
-			restoreAnnounce = *reservation.OldAnnounce
-		}
-	} else if current.DealStatus != "won" {
-		// Sem trilha de reserva, somente uma reabertura direta de ganho oferece
-		// evidencia suficiente para liberar o imovel com seguranca.
+	if found && reservation.Active && reservation.LeadID != "" && reservation.LeadID != current.ID {
+		// Another lead owns this reservation; changing this lead's status must
+		// never change that property's stock or publication flags.
 		return nil
 	}
+	if !found || !propertyReservationIsCurrent(reservation, current.ID, reservationEventID, publishedOnSite, announce) {
+		if current.DealStatus == "lost" && (!found || !reservation.Active) {
+			return nil
+		}
+		// Legacy rows without exact provenance require a separate inspection.
+		// A status transition must not silently release or republish the property.
+		return ErrLeadReservationUnverified
+	}
 
-	if _, err := tx.Exec(ctx, `
+	var restoreStatus, restorePublishedOnSite, restoreAnnounce any
+	if reservation.OldStatus != nil {
+		restoreStatus = *reservation.OldStatus
+	}
+	if reservation.OldPublishedOnSite != nil {
+		restorePublishedOnSite = *reservation.OldPublishedOnSite
+	}
+	if reservation.OldAnnounce != nil {
+		restoreAnnounce = *reservation.OldAnnounce
+	}
+
+	tag, err := tx.Exec(ctx, `
 		update public.properties
 		set status = $3,
 		    published_on_site = $4,
 		    anunciar = $5,
+		    metadata = metadata - $6::text,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, propertyID, restoreStatus, restorePublishedOnSite, restoreAnnounce); err != nil {
+		  and metadata->>$6::text = $7::text
+	`, tenantContext.OrganizationID, propertyID, restoreStatus, restorePublishedOnSite, restoreAnnounce, activeWonLeadReservationEventIDKey, reservation.EventID)
+	if err != nil {
 		if isLinkedDevelopmentPropertyConsistencyViolation(err) {
 			return fmt.Errorf(
 				"%w: Este im\u00f3vel pertence ao espelho de um empreendimento. Reabra a disponibilidade pela unidade vinculada.",
@@ -3898,15 +4045,14 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 		}
 		return err
 	}
-
-	var hasEventsTable bool
-	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
-		return err
-	}
-	if !hasEventsTable {
-		return nil
+	if tag.RowsAffected() != 1 {
+		return ErrLeadReservationUnverified
 	}
 
+	eventType := "property_republished_by_reopened_lead"
+	if nextStatus == "lost" {
+		eventType = "property_released_by_lost_lead"
+	}
 	_, err = tx.Exec(ctx, `
 		insert into public.events (
 			organization_id,
@@ -3918,25 +4064,28 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 		)
 		values (
 			$1::uuid,
-			'property_republished_by_reopened_lead',
+			$3::text,
 			'property',
 			$2::uuid,
-			$3::jsonb,
+			$4::jsonb,
 			'processed'
 		)
-	`, tenantContext.OrganizationID, propertyID, jsonb(map[string]any{
-		"user_id":            tenantContext.UserID,
-		"reopened_lead_id":   current.ID,
-		"reopened_lead_name": current.Name,
-		"property_id":        propertyID,
-		"property_code":      code,
-		"title":              title,
-		"old_status":         currentStatus,
-		"new_status":         restoreStatus,
-		"published_on_site":  restorePublishedOnSite,
-		"anunciar":           restoreAnnounce,
-		"organization_id":    tenantContext.OrganizationID,
-		"message":            fmt.Sprintf(`Imovel "%s" republicado ao reabrir o lead "%s"`, title, current.Name),
+	`, tenantContext.OrganizationID, propertyID, eventType, jsonb(map[string]any{
+		"user_id":              tenantContext.UserID,
+		"reopened_lead_id":     current.ID,
+		"reopened_lead_name":   current.Name,
+		"reservation_event_id": reservation.EventID,
+		"from_deal_status":     current.DealStatus,
+		"to_deal_status":       nextStatus,
+		"property_id":          propertyID,
+		"property_code":        code,
+		"title":                title,
+		"old_status":           currentStatus,
+		"new_status":           restoreStatus,
+		"published_on_site":    restorePublishedOnSite,
+		"anunciar":             restoreAnnounce,
+		"organization_id":      tenantContext.OrganizationID,
+		"message":              fmt.Sprintf(`Reserva do imovel "%s" liberada ao alterar o lead "%s"`, title, current.Name),
 	}))
 	return err
 }
@@ -3953,16 +4102,6 @@ func wonPropertyUnavailableMessage(status string) string {
 		return "Este imovel nao esta disponivel para ser marcado como ganho."
 	default:
 		return ""
-	}
-}
-
-func reopenedPropertyRestoreStatus(status string) string {
-	status = strings.TrimSpace(status)
-	switch normalizeLeadPropertyStatus(status) {
-	case "", "reserved", "reservado", "sold", "vendido", "rented", "alugado", "locado", "draft", "rascunho", "inactive", "inativo", "archived", "arquivado":
-		return "active"
-	default:
-		return status
 	}
 }
 
@@ -4831,7 +4970,9 @@ func (repo Repository) getUserDisplayName(ctx context.Context, tx pgx.Tx, userID
 	return userID, nil
 }
 
-func leadSelectFields() string {
+func leadSelectFields(propertyVisibility string) string {
+	propertyID := pipelineBoardVisiblePropertyIDSQL("property_id", propertyVisibility)
+	interestPropertyID := pipelineBoardVisiblePropertyIDSQL("interest_property_id", propertyVisibility)
 	return `
 		l.id::text,
 		l.organization_id::text,
@@ -4844,8 +4985,8 @@ func leadSelectFields() string {
 		l.priority,
 		l.message,
 		l.property_code,
-		l.property_id::text,
-		l.interest_property_id::text,
+		` + propertyID + `,
+		` + interestPropertyID + `,
 		l.pipeline_id::text,
 		l.stage_id::text,
 		l.assigned_user_id::text,

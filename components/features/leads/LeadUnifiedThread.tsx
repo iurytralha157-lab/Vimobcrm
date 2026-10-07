@@ -10,6 +10,7 @@ import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorde
 import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
+import { getWhatsAppSendFailureStatus } from '@/lib/whatsapp-query-cache';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
@@ -1047,7 +1048,17 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, readOnly, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
-    const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
+    const renderedMessages = visibleMessages.filter((message) => !isInternalNotificationMessage(message));
+    const renderedMessageIds = new Set(renderedMessages.map((message) => message.id));
+    const visibleEvents = removeRedundantEvents(history.filter((event) => {
+      if (!shouldShowEvent(event)) return false;
+      if (!['whatsapp_message_queued', 'whatsapp_message_sent', 'whatsapp_message_failed'].includes(event.type)) {
+        return true;
+      }
+      const messageRowId = metadataText(event.metadata?.message_row_id);
+      // Keep the timeline fallback when the actual message is not loaded.
+      return !messageRowId || !renderedMessageIds.has(messageRowId);
+    }));
     const hasLeadCreated = visibleEvents.some(
       (e) => e.type === 'lead_created' || /foi criado/i.test(e.label || '')
     );
@@ -1076,8 +1087,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       });
     }
 
-    const messageItems: ThreadItem[] = visibleMessages
-      .filter((message) => !isInternalNotificationMessage(message))
+    const messageItems: ThreadItem[] = renderedMessages
       .map((message) => ({
         id: `message-${message.id}`,
         kind: 'message',
@@ -1169,8 +1179,13 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         text: content,
         sendSessionId: whatsappMessageInputState.sendSessionId,
       });
-    } catch {
-      setText(content);
+    } catch (error) {
+      // A timeout after enqueue does not prove the provider rejected the
+      // message. Keep its pending history row instead of inviting a duplicate
+      // send from a restored draft.
+      if (getWhatsAppSendFailureStatus(error) !== 'confirming') {
+        setText(content);
+      }
     }
   };
 
@@ -1389,6 +1404,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       fromMe={item.message.from_me}
                       status={item.message.status || ''}
                       sentAt={item.message.sent_at}
+                      deliveryErrorCode={item.message.delivery_error_code ?? null}
+                      deliveryFailedAt={item.message.delivery_failed_at ?? null}
                       senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
                       isGroup={conversation?.is_group ?? false}
                       onRetryMedia={!readOnly

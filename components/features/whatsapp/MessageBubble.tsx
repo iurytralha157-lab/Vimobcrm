@@ -1,10 +1,11 @@
 import { memo } from "react";
-import { MessageCircleOff } from "lucide-react";
+import { AlertCircle, MessageCircleOff } from "lucide-react";
 
 import type { GroupedWhatsAppReaction } from "@/lib/whatsapp-reactions";
 import { cn } from "@/lib/utils";
 
 import {
+  formatDeliveryFailureTime,
   formatMessageTime,
   getEffectiveMessageMediaKind,
   MessageMedia,
@@ -29,6 +30,8 @@ export interface MessageBubbleProps {
   fromMe: boolean;
   status: string;
   sentAt: string;
+  deliveryErrorCode?: "recipient_not_registered" | "outcome_unknown" | "send_failed" | null;
+  deliveryFailedAt?: string | null;
   senderName: string | null;
   isGroup: boolean;
   onRetryMedia?: () => void | Promise<void>;
@@ -59,6 +62,8 @@ const comparableMessageBubbleProps = [
   "fromMe",
   "status",
   "sentAt",
+  "deliveryErrorCode",
+  "deliveryFailedAt",
   "senderName",
   "isGroup",
   "messageId",
@@ -99,6 +104,8 @@ export const MessageBubble = memo(function MessageBubble({
   fromMe,
   status,
   sentAt,
+  deliveryErrorCode,
+  deliveryFailedAt,
   senderName,
   isGroup,
   onRetryMedia,
@@ -128,6 +135,14 @@ export const MessageBubble = memo(function MessageBubble({
   const isContentUnavailable = plainHistory && mediaKind === "text" && !safeContent.trim();
   const showInsideReactionPicker = reactionPickerPosition === "inside" && Boolean(onReact) && !isDeletedMessage;
   const showOutsideReactionPicker = reactionPickerPosition === "outside" && Boolean(onReact) && !isDeletedMessage;
+  const unconfirmedOutgoing = fromMe && deliveryErrorCode === "outcome_unknown" &&
+    (status === "failed" || status === "error" || status === "unconfirmed");
+  const failedOutgoing = fromMe && !unconfirmedOutgoing &&
+    (status === "failed" || status === "error") && Boolean(deliveryErrorCode);
+  const deliveryFailureText = deliveryErrorCode === "recipient_not_registered"
+    ? "Não enviada: este número não possui WhatsApp."
+    : "Não enviada. Houve uma falha no envio.";
+  const deliveryFailureTime = deliveryFailedAt ? formatDeliveryFailureTime(deliveryFailedAt) : "";
 
   const outsideReactionPicker = showOutsideReactionPicker ? (
     <div
@@ -182,7 +197,7 @@ export const MessageBubble = memo(function MessageBubble({
                 mediaURLLoading={mediaURLLoading}
                 mediaSize={mediaSize}
                 fromMe={fromMe}
-                status={status}
+                status={unconfirmedOutgoing ? "unconfirmed" : status}
                 sentAt={sentAt}
                 onRetryMedia={onRetryMedia}
                 messageId={messageId}
@@ -247,7 +262,7 @@ export const MessageBubble = memo(function MessageBubble({
                     className="mr-auto flex items-center justify-start gap-0.5 whitespace-nowrap text-primary-foreground/60"
                   >
                     <span className="text-[11px] leading-none">{formatMessageTime(sentAt)}</span>
-                    <MessageStatus fromMe={fromMe} status={status} />
+                    <MessageStatus fromMe={fromMe} status={unconfirmedOutgoing ? "unconfirmed" : status} />
                   </span>
                 )}
                 {showInsideReactionPicker && (
@@ -272,6 +287,22 @@ export const MessageBubble = memo(function MessageBubble({
 
           <MessageReactionBadges fromMe={fromMe} reactions={reactions} />
         </div>
+        {(failedOutgoing || unconfirmedOutgoing) && (
+          <div role="status" className={cn(
+            "mt-1 flex max-w-full items-start gap-1 text-xs",
+            unconfirmedOutgoing ? "text-amber-600" : "text-destructive",
+          )}>
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              {unconfirmedOutgoing
+                ? "Envio não confirmado. Confira o WhatsApp antes de tentar novamente."
+                : deliveryFailureText}
+              {deliveryFailureTime && (
+                <> {unconfirmedOutgoing ? "Estado registrado" : "Falha registrada"} em {deliveryFailureTime}.</>
+              )}
+            </span>
+          </div>
+        )}
       </div>
       {!fromMe && outsideReactionPicker}
     </div>

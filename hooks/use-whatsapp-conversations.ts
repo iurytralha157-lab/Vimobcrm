@@ -22,6 +22,7 @@ import {
 import {
   getWhatsAppSendFailureStatus,
   matchesLeadMessagesQueryKey,
+  matchesWhatsAppAttendanceQueryKey,
   matchesPaginatedWhatsAppMessagesQueryKey,
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
@@ -130,6 +131,8 @@ export interface WhatsAppMessage {
   reaction_sender_name?: string | null;
   metadata?: Record<string, unknown>;
   status: string;
+  delivery_error_code?: "recipient_not_registered" | "outcome_unknown" | "send_failed" | null;
+  delivery_failed_at?: string | null;
   sent_at: string;
   delivered_at: string | null;
   read_at: string | null;
@@ -287,6 +290,8 @@ const upsertOptimisticWhatsAppMessage = (
     status: "pending",
     sent_at: optimisticMessage.sent_at,
     media_error: null,
+    delivery_error_code: null,
+    delivery_failed_at: null,
     metadata: {
       ...(next[existingIndex].metadata ?? {}),
       local_delivery_state: "retrying_same_client_id",
@@ -331,6 +336,17 @@ function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
     }
 
     if (batch.refreshMessages) {
+      if (batch.conversationIds.length || batch.leadIds.length) {
+        void queryClient.invalidateQueries({
+          predicate: (query) => query.isActive() && matchesWhatsAppAttendanceQueryKey(
+            query.queryKey,
+            scope,
+            batch.conversationIds,
+            batch.leadIds,
+          ),
+          refetchType: "active",
+        });
+      }
       if (batch.allMessages) {
         void queryClient.invalidateQueries({
           queryKey: whatsappQueryKeys.messagesScope(scope),
@@ -404,6 +420,15 @@ function reconcileWhatsAppMessageQueries(
   leadId?: string | null,
 ) {
   const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))];
+  void queryClient.invalidateQueries({
+    predicate: (query) => query.isActive() && matchesWhatsAppAttendanceQueryKey(
+      query.queryKey,
+      scope,
+      uniqueConversationIds,
+      leadId ? [leadId] : [],
+    ),
+    refetchType: "active",
+  });
   void queryClient.invalidateQueries({
     predicate: (query) => uniqueConversationIds.some((conversationId) =>
       matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
@@ -1009,12 +1034,16 @@ export function useSendWhatsAppMessage() {
       const failureStatus = getWhatsAppSendFailureStatus(error);
 
       if (context?.optimisticId) {
-        const updateFailedMessage = (msg: WhatsAppMessage) =>
+        const updateFailedMessage = (msg: WhatsAppMessage): WhatsAppMessage =>
           msg.id === context.optimisticId
             ? {
                 ...msg,
                 status: failureStatus,
-                media_error: errorMessage,
+                // A send error is not a media-processing error, and its raw
+                // provider text can contain the recipient phone.
+                media_error: msg.media_error,
+                delivery_error_code: failureStatus === "failed" ? "send_failed" : null,
+                delivery_failed_at: failureStatus === "failed" ? new Date().toISOString() : null,
                 metadata: {
                   ...(msg.metadata ?? {}),
                   local_delivery_state: failureStatus === "confirming"
@@ -1094,9 +1123,12 @@ export function useSendWhatsAppMessage() {
                                 normalizedErrorMessage.includes("invalid number");
 
       let title = "Erro ao enviar mensagem";
-      let description = errorMessage;
+      let description = "Não foi possível enviar esta mensagem. Confira a conexão e tente novamente.";
 
-      if (isDisconnected) {
+      if (failureStatus === "confirming") {
+        title = "Confirmando envio";
+        description = "Ainda não recebemos a confirmação. A mensagem continuará visível; não reenvie agora.";
+      } else if (isDisconnected) {
         title = "WhatsApp Desconectado";
         description = "Vá em Configurações > WhatsApp e escaneie o QR Code novamente.";
       } else if (isNumberNotExists) {
@@ -1105,9 +1137,6 @@ export function useSendWhatsAppMessage() {
       } else if (isRateLimited) {
         title = "Aguarde um instante";
         description = "Você está enviando mensagens muito rápido. Tente novamente em alguns segundos.";
-      } else if (failureStatus === "confirming") {
-        title = "Confirmando envio";
-        description = "Ainda nao recebemos a confirmacao. A mensagem continuara visivel; nao reenvie agora.";
       }
 
       toast({
@@ -1301,17 +1330,15 @@ export function useReactToWhatsAppMessage() {
     },
     onError: (error: Error, variables, context) => {
       if (!context?.clientReactionId) return;
-      const errorMessage = error.message || '';
       const status = getWhatsAppSendFailureStatus(error);
-      const isDefinitive = status === 'failed'
-        || /not found|invalid|nao encontrad|não encontrad/i.test(errorMessage);
+      const isDefinitive = status === 'failed';
       updateReactionCaches(
         context.conversationId,
         context.leadId,
         (messages) => isDefinitive
           ? messages.filter((message) => message.id !== context.clientReactionId)
           : messages.map((message) => message.id === context.clientReactionId
-            ? { ...message, status: 'confirming', media_error: errorMessage }
+            ? { ...message, status: 'confirming' }
             : message),
       );
       refreshReactionCaches(context.conversationId, context.leadId);

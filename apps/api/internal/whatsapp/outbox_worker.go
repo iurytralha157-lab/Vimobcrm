@@ -783,7 +783,7 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 	sendErr := providerCallErr
 	if sendErr != nil {
 		recordWhatsAppOutboxDeliveryFailure(lane)
-		return repo.failWhatsAppOutbox(ctx, item, sendErr, false, whatsappOutboxProviderOutcomeUnknown(sendErr))
+		return repo.failWhatsAppOutbox(ctx, item, sendErr, errors.Is(sendErr, ErrRecipientNotRegistered), whatsappOutboxProviderOutcomeUnknown(sendErr))
 	}
 
 	providerID := stripNullBytes(providerMessageID(providerResult))
@@ -1471,6 +1471,11 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			    content = coalesce(existing.content, pending.content),
 			    media_url = coalesce(existing.media_url, pending.media_url),
 			    media_storage_path = coalesce(existing.media_storage_path, pending.media_storage_path),
+			    metadata = (coalesce(existing.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
+			      jsonb_strip_nulls(jsonb_build_object(
+			        'attendance_entry_id', pending.metadata->>'attendance_entry_id',
+			        'attendance_send_origin', pending.metadata->>'attendance_send_origin'
+			      )),
 			    provider_message_id = $3,
 			    message_id = $3,
 			    status = case when existing.status in ('delivered', 'read') then existing.status else 'sent' end,
@@ -1500,6 +1505,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			set provider_message_id = $2,
 			    message_id = $2,
 			    status = case when status in ('delivered', 'read') then status else 'sent' end,
+			    metadata = coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at',
 			    sent_at = coalesce(sent_at, now()),
 			    updated_at = now()
 			where id = $1::uuid
@@ -1527,6 +1533,9 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	}
 	if result.RowsAffected() != 1 {
 		return errWhatsAppOutboxLeaseLost
+	}
+	if err := confirmHumanWhatsAppAttendance(ctx, tx, item.OrganizationID, canonicalMessageID); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(stringFromAny(item.Payload["action"])) != "message.react" {
@@ -1680,13 +1689,22 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 
 func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, cause error, permanent bool, outcomeUnknown bool) error {
 	status := "retry"
+	lastError := cause.Error()
 	if outcomeUnknown {
 		// A timeout or broken response can happen after WhatsApp accepted the
 		// stanza. Evolution Go documents the custom message ID but does not
 		// guarantee exactly-once delivery, so automatic resend is unsafe.
 		status = "dead"
+		// Keep the canonical marker intact: the signed outbound webhook may
+		// arrive later and is the only safe proof that this send succeeded.
+		lastError = whatsappOutboxProviderUnknownMarker
 	} else if permanent {
 		status = "failed"
+		if errors.Is(cause, ErrRecipientNotRegistered) {
+			// The provider response contains the recipient phone. Never persist it
+			// in an error that may be projected into CRM history.
+			lastError = deliveryErrorRecipientNotRegistered
+		}
 	} else if item.Attempts >= item.MaxAttempts {
 		status = "dead"
 	}
@@ -1712,7 +1730,7 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $4
-	`, item.ID, status, cause.Error(), item.LeaseToken)
+	`, item.ID, status, lastError, item.LeaseToken)
 	if err != nil {
 		return err
 	}
@@ -1720,13 +1738,19 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		return errWhatsAppOutboxLeaseLost
 	}
 	if status == "dead" || status == "failed" {
+		deliveryCode := messageDeliveryErrorCode(lastError)
+		if status == "dead" && deliveryCode == deliveryErrorSendFailed {
+			deliveryCode = deliveryErrorOutcomeUnknown
+		}
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_messages
 			set status = 'failed',
+			    metadata = (coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
+			      jsonb_build_object('delivery_error_code', $3, 'delivery_failed_at', now()),
 			    updated_at = now()
 			where id = $1::uuid
 			  and organization_id = $2::uuid
-		`, item.MessageRowID, item.OrganizationID); err != nil {
+		`, item.MessageRowID, item.OrganizationID, deliveryCode); err != nil {
 			return err
 		}
 		if err := repo.syncTerminalWhatsAppOutboxFailures(ctx, tx, item.ID); err != nil {
@@ -1814,12 +1838,24 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages as message
 		set status = 'failed',
+		    metadata = (coalesce(message.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
+		      jsonb_build_object(
+		        'delivery_error_code', case
+		          when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'
+		            or lower(coalesce(outbox.last_error, '')) like '%is not registered on whatsapp%'
+		            then 'recipient_not_registered'
+		          when outbox.status = 'dead' then 'outcome_unknown'
+		          else 'send_failed'
+		        end,
+		        'delivery_failed_at', coalesce(outbox.failed_at, outbox.dead_lettered_at, now())
+		      ),
 		    updated_at = now()
 		from public.whatsapp_outbox as outbox
 		where outbox.message_id = message.id
 		  and outbox.organization_id = message.organization_id
 		  and outbox.status in ('failed', 'dead')
-		  and message.status is distinct from 'failed'
+		  and (message.status is distinct from 'failed'
+		    or message.metadata->>'delivery_error_code' is null)
 		  and outbox.id in (
 		    select scoped.id_text::uuid
 		    from unnest($1::text[]) as scoped(id_text)
@@ -1831,10 +1867,18 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if _, err := tx.Exec(ctx, `
 		update public.lead_timeline_events as timeline
 		set event_type = 'whatsapp_message_failed',
-		    title = 'Falha no envio de mensagem WhatsApp',
-		    metadata = coalesce(timeline.metadata, '{}'::jsonb) || jsonb_build_object(
+		    title = case when outbox.status = 'dead'
+		      then 'Envio WhatsApp sem confirmação'
+		      else 'Falha no envio de mensagem WhatsApp' end,
+		    metadata = (coalesce(timeline.metadata, '{}'::jsonb) - 'last_error') || jsonb_build_object(
 		      'delivery_status', outbox.status,
-		      'last_error', left(coalesce(outbox.last_error, 'delivery_failed'), 500)
+		      'delivery_error_code', case
+		        when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'
+		          or lower(coalesce(outbox.last_error, '')) like '%is not registered on whatsapp%'
+		          then 'recipient_not_registered'
+		        when outbox.status = 'dead' then 'outcome_unknown'
+		        else 'send_failed'
+		      end
 		    )
 		from public.whatsapp_outbox as outbox
 		where outbox.organization_id = timeline.organization_id
@@ -1852,16 +1896,25 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if _, err := tx.Exec(ctx, `
 		update public.automation_effect_dispatches as dispatch
 		set status = case when outbox.status = 'dead' then 'unknown' else 'failed' end,
-		    error_message = left(case
-		      when outbox.status = 'dead' then 'whatsapp_delivery_not_confirmed: ' || coalesce(outbox.last_error, 'retry_exhausted')
-		      else coalesce(outbox.last_error, 'whatsapp_delivery_failed')
-		    end, 4000),
-		    response = coalesce(dispatch.response, '{}'::jsonb) || jsonb_build_object(
+		    error_message = case
+		      when outbox.status = 'dead' then 'whatsapp_delivery_not_confirmed'
+		      when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'
+		        or lower(coalesce(outbox.last_error, '')) like '%is not registered on whatsapp%'
+		        then 'recipient_not_registered'
+		      else 'whatsapp_delivery_failed'
+		    end,
+		    response = (coalesce(dispatch.response, '{}'::jsonb) - 'last_error') || jsonb_build_object(
 		      'status', case when outbox.status = 'dead' then 'unknown' else 'failed' end,
 		      'delivery_status', outbox.status,
 		      'outbox_id', outbox.id,
 		      'message_id', outbox.message_id,
-		      'last_error', left(coalesce(outbox.last_error, 'whatsapp_delivery_failed'), 4000)
+		      'delivery_error_code', case
+		        when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'
+		          or lower(coalesce(outbox.last_error, '')) like '%is not registered on whatsapp%'
+		          then 'recipient_not_registered'
+		        when outbox.status = 'dead' then 'outcome_unknown'
+		        else 'send_failed'
+		      end
 		    ),
 		    completed_at = coalesce(dispatch.completed_at, now())
 		from public.whatsapp_outbox as outbox
@@ -1905,7 +1958,13 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 		    'effect_id', dispatch.id,
 		    'outbox_id', outbox.id,
 		    'delivery_status', outbox.status,
-		    'last_error', left(coalesce(outbox.last_error, 'whatsapp_delivery_failed'), 500)
+		    'delivery_error_code', case
+		      when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'
+		        or lower(coalesce(outbox.last_error, '')) like '%is not registered on whatsapp%'
+		        then 'recipient_not_registered'
+		      when outbox.status = 'dead' then 'outcome_unknown'
+		      else 'send_failed'
+		    end
 		  )
 		from public.whatsapp_outbox as outbox
 		join public.automation_effect_dispatches as dispatch

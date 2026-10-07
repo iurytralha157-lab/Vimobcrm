@@ -25,6 +25,8 @@ var (
 	ErrInvalidInput               = errors.New("invalid lead input")
 	ErrInvalidReference           = errors.New("invalid lead reference")
 	ErrLeadPropertyUnavailable    = errors.New("lead property unavailable")
+	ErrLeadPropertyRelinkWhileWon = errors.New("won lead property link cannot be changed")
+	ErrLeadReservationUnverified  = errors.New("lead property reservation could not be verified")
 	ErrLeadAlreadyExists          = errors.New("lead already exists")
 	ErrLeadPhoneConflict          = errors.New("lead phone already exists")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")

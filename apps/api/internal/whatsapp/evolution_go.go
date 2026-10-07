@@ -228,6 +228,9 @@ func (client functionsClient) invokeEvolutionDirectWithResponseLimit(
 	if !ok {
 		response["error"] = evolutionErrorMessage(result.Data, result.RawText)
 	}
+	if !ok && isEvolutionSendAction(action) && isEvolutionRecipientNotRegistered(evolutionErrorMessage(result.Data, result.RawText)) {
+		return response, fmt.Errorf("%w: %w", ErrProviderFailed, ErrRecipientNotRegistered)
+	}
 	if !ok && evolutionHTTPOutcomeUnknown(action, result.Status) {
 		client.runtimeStats.providerOutcomeBecameUnknown()
 		return response, fmt.Errorf(

@@ -3,7 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
-	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -84,7 +84,7 @@ func (repo Repository) JoinConversationAttendance(
 		return AttendanceResponse{}, err
 	}
 
-	entry, created, err := insertAttendanceEntry(
+	_, created, err := insertAttendanceEntry(
 		ctx,
 		tx,
 		tenantContext,
@@ -94,30 +94,8 @@ func (repo Repository) JoinConversationAttendance(
 	if err != nil {
 		return AttendanceResponse{}, err
 	}
-	if created {
-		title := fmt.Sprintf("%s entrou no atendimento", scope.ActorName)
-		if _, err := tx.Exec(ctx, `
-			insert into public.lead_timeline_events (
-				organization_id, lead_id, user_id, actor_user_id,
-				event_type, title, description, event_at, metadata
-			) values (
-				$1::uuid, $2::uuid, $3::uuid, $3::uuid,
-				'whatsapp_attendance_joined', $4, $5, $6::timestamptz,
-				jsonb_build_object(
-					'attendance_entry_id', $7::uuid,
-					'conversation_id', $8::uuid,
-					'session_id', $9::uuid,
-					'binding_id', $10::uuid,
-					'ingress_sequence_cutoff', $11::bigint
-				)
-			)
-		`, tenantContext.OrganizationID, scope.LeadID, tenantContext.UserID,
-			title, "Atendimento pelo WhatsApp iniciado.", entry.JoinedAt,
-			entry.ID, scope.ConversationID, scope.SessionID, scope.BindingID,
-			entry.IngressSequenceCutoff); err != nil {
-			return AttendanceResponse{}, err
-		}
-	}
+	// The append-only entry authorizes capture and sending. A visible marker is
+	// recorded separately only after the first human outbound is accepted.
 
 	response, err := loadAttendanceResponse(ctx, tx, tenantContext, scope)
 	if err != nil {
@@ -294,11 +272,25 @@ func loadAttendanceResponse(
 	scope attendanceScope,
 ) (AttendanceResponse, error) {
 	rows, err := tx.Query(ctx, `
-		select `+attendanceEntrySelectFields()+`
-		from public.whatsapp_attendance_entries
-		where organization_id = $1::uuid
-		  and lead_id = $2::uuid
-		order by joined_at, id
+		select `+attendanceEntrySelectFields()+`,
+		       marker.event_at,
+		       case when marker.event_at is null then null
+		            else coalesce(nullif(marker.metadata->>'marker_kind', ''), 'joined')
+		       end
+		from public.whatsapp_attendance_entries as attendance
+		left join lateral (
+		  select event.event_at, event.metadata
+		  from public.lead_timeline_events as event
+		  where event.organization_id = attendance.organization_id
+		    and event.lead_id = attendance.lead_id
+		    and event.event_type = 'whatsapp_attendance_joined'
+		    and event.metadata->>'attendance_entry_id' = attendance.id::text
+		  order by event.event_at, event.id
+		  limit 1
+		) as marker on true
+		where attendance.organization_id = $1::uuid
+		  and attendance.lead_id = $2::uuid
+		order by attendance.joined_at, attendance.id
 	`, tenantContext.OrganizationID, scope.LeadID)
 	if err != nil {
 		return AttendanceResponse{}, err
@@ -307,11 +299,13 @@ func loadAttendanceResponse(
 
 	response := AttendanceResponse{Entries: []AttendanceEntry{}}
 	for rows.Next() {
-		entry, err := scanAttendanceEntry(rows)
+		entry, err := scanAttendanceEntryWithMarker(rows)
 		if err != nil {
 			return AttendanceResponse{}, err
 		}
-		response.Entries = append(response.Entries, entry)
+		if entry.MarkerAt != nil {
+			response.Entries = append(response.Entries, entry)
+		}
 		if entry.ConversationID == scope.ConversationID &&
 			entry.BindingID == scope.BindingID &&
 			entry.SessionID == scope.SessionID &&
@@ -358,5 +352,29 @@ func scanAttendanceEntry(row scanner) (AttendanceEntry, error) {
 		&entry.EntrySource,
 		&entry.IngressSequenceCutoff,
 	)
+	return entry, err
+}
+
+func scanAttendanceEntryWithMarker(row scanner) (AttendanceEntry, error) {
+	var entry AttendanceEntry
+	var markerAt *time.Time
+	var markerKind *string
+	err := row.Scan(
+		&entry.ID,
+		&entry.OrganizationID,
+		&entry.ConversationID,
+		&entry.SessionID,
+		&entry.LeadID,
+		&entry.BindingID,
+		&entry.UserID,
+		&entry.ActorNameSnapshot,
+		&entry.JoinedAt,
+		&entry.EntrySource,
+		&entry.IngressSequenceCutoff,
+		&markerAt,
+		&markerKind,
+	)
+	entry.MarkerAt = markerAt
+	entry.MarkerKind = markerKind
 	return entry, err
 }

@@ -117,6 +117,23 @@ func TestLeadPropertyReferencesRespectCanonicalScopeWithRollback(t *testing.T) {
 		})
 	}
 
+	unchangedHidden := updateInput{
+		PropertyID:         patchString{Set: true, Value: &outsiderPropertyID},
+		InterestPropertyID: patchString{Set: true, Value: &outsiderPropertyID},
+	}
+	if err := repository.validateUpdatePropertyReferences(ctx, tx, ownContext, leadSnapshot{
+		PropertyID: outsiderPropertyID, InterestPropertyID: outsiderPropertyID,
+	}, unchangedHidden); err != nil {
+		t.Fatalf("unchanged hidden property rejected during lead edit: %v", err)
+	}
+	if err := repository.validateUpdatePropertyReferences(ctx, tx, ownContext, leadSnapshot{}, unchangedHidden); !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("new hidden property link error = %v, want ErrInvalidReference", err)
+	}
+	otherOrganizationLink := updateInput{PropertyID: patchString{Set: true, Value: &otherOrganizationPropertyID}}
+	if err := repository.validateUpdatePropertyReferences(ctx, tx, ownContext, leadSnapshot{PropertyID: otherOrganizationPropertyID}, otherOrganizationLink); !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("unchanged cross-organization property link error = %v, want ErrInvalidReference", err)
+	}
+
 	commercialInput := updateInput{PropertyID: patchString{Set: true, Value: &outsiderPropertyID}}
 	if err := repository.applySelectedPropertyCommercialValues(ctx, tx, ownContext, leadSnapshot{}, &commercialInput); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("invisible commercial property read error = %v, want ErrInvalidReference", err)
@@ -169,6 +186,25 @@ func TestLeadPropertyReferencesRespectCanonicalScopeWithRollback(t *testing.T) {
 	}
 	assertProjectedProperty(t, ownContext, outsiderPropertyID, false)
 	assertProjectedProperty(t, manageContext, outsiderPropertyID, true)
+	assertLeadResponseProperty := func(t *testing.T, viewer tenant.Context, wantVisible bool) {
+		t.Helper()
+		args, visibility := appendCanonicalPropertyVisibility([]any{organizationID, consumerLeadID}, viewer, "visible_property")
+		lead, err := scanLead(tx.QueryRow(ctx, `
+			select `+leadSelectFields(visibility)+`
+			from public.leads l
+			left join public.stages s on s.id = l.stage_id
+			left join public.users u on u.id = l.assigned_user_id
+			where l.organization_id = $1::uuid and l.id = $2::uuid
+		`, args...))
+		if err != nil {
+			t.Fatalf("project lead response: %v", err)
+		}
+		if (lead.PropertyID == outsiderPropertyID) != wantVisible || lead.InterestPropertyID != "" {
+			t.Fatalf("lead response property visibility = property %q interest %q, want visible=%t", lead.PropertyID, lead.InterestPropertyID, wantVisible)
+		}
+	}
+	assertLeadResponseProperty(t, ownContext, false)
+	assertLeadResponseProperty(t, manageContext, true)
 
 	assertEnrichedProperty := func(t *testing.T, tenantContext tenant.Context, propertyID string, wantVisible bool) {
 		t.Helper()
@@ -277,8 +313,8 @@ func TestLeadPropertyReferencesRespectCanonicalScopeWithRollback(t *testing.T) {
 		DealStatus:         "open",
 		InterestPropertyID: outsiderPropertyID,
 	}, updateInput{DealStatus: patchString{Set: true, Value: &won}})
-	if !errors.Is(err, ErrInvalidReference) || reservation != nil {
-		t.Fatalf("invisible won reservation = %#v, error %v", reservation, err)
+	if err != nil || reservation == nil || reservation.PropertyID != outsiderPropertyID {
+		t.Fatalf("existing same-organization hidden lead property reservation = %#v, error %v", reservation, err)
 	}
 	var status string
 	var publishedOnSite, announce bool
@@ -289,8 +325,140 @@ func TestLeadPropertyReferencesRespectCanonicalScopeWithRollback(t *testing.T) {
 	`, outsiderPropertyID).Scan(&status, &publishedOnSite, &announce); err != nil {
 		t.Fatalf("read rejected won property state: %v", err)
 	}
-	if status != "active" || !publishedOnSite || !announce {
-		t.Fatalf("rejected won changed property/publication state: status=%q published=%t announce=%t", status, publishedOnSite, announce)
+	if status != "reserved" || publishedOnSite || announce {
+		t.Fatalf("won reservation state: status=%q published=%t announce=%t", status, publishedOnSite, announce)
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set status = 'active', published_on_site = true, anunciar = true,
+		    metadata = metadata - $2::text
+		where id = $1::uuid
+	`, outsiderPropertyID, activeWonLeadReservationEventIDKey); err != nil {
+		t.Fatalf("restore rollback-only fixture before reopen checks: %v", err)
+	}
+
+	open := "open"
+	reopenInput := updateInput{DealStatus: patchString{Set: true, Value: &open}}
+	reopenCurrent := leadSnapshot{ID: consumerLeadID, DealStatus: "lost", InterestPropertyID: outsiderPropertyID}
+	for _, inactiveStatus := range []string{"active", "inactive"} {
+		if _, err := tx.Exec(ctx, `update public.properties set status = $2 where id = $1::uuid`, outsiderPropertyID, inactiveStatus); err != nil {
+			t.Fatalf("prepare hidden %s property: %v", inactiveStatus, err)
+		}
+		if err := repository.releaseReopenedLeadProperty(ctx, tx, ownContext, reopenCurrent, reopenInput); err != nil {
+			t.Fatalf("reopen lead with hidden %s property: %v", inactiveStatus, err)
+		}
+		if err := tx.QueryRow(ctx, `select status from public.properties where id = $1::uuid`, outsiderPropertyID).Scan(&status); err != nil {
+			t.Fatalf("read hidden property after reopen: %v", err)
+		}
+		if status != inactiveStatus {
+			t.Fatalf("reopen changed hidden property status to %q, want %q", status, inactiveStatus)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set status = 'reserved', published_on_site = false, anunciar = false
+		where id = $1::uuid
+	`, outsiderPropertyID); err != nil {
+		t.Fatalf("prepare hidden reserved property: %v", err)
+	}
+	if err := repository.releaseReopenedLeadProperty(ctx, tx, ownContext, reopenCurrent, reopenInput); err != nil {
+		t.Fatalf("lost lead must not release unowned hidden reservation: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `select status from public.properties where id = $1::uuid`, outsiderPropertyID).Scan(&status); err != nil || status != "reserved" {
+		t.Fatalf("hidden reserved property after rejected reopen: status=%q error=%v", status, err)
+	}
+
+	for _, invalidPropertyID := range []string{otherOrganizationPropertyID, "40000000-0000-4000-8000-000000000002"} {
+		invalidCurrent := reopenCurrent
+		invalidCurrent.InterestPropertyID = invalidPropertyID
+		if err := repository.releaseReopenedLeadProperty(ctx, tx, ownContext, invalidCurrent, reopenInput); !errors.Is(err, ErrInvalidReference) {
+			t.Fatalf("reopen with invalid linked property %q error = %v, want ErrInvalidReference", invalidPropertyID, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set status = 'available', published_on_site = false, anunciar = null
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, outsiderPropertyID); err != nil {
+		t.Fatalf("prepare exact restore fixture: %v", err)
+	}
+	winningLead := leadSnapshot{ID: consumerLeadID, Name: "winning lead", DealStatus: "open", InterestPropertyID: outsiderPropertyID}
+	exactReservation, err := repository.lockWonLeadPropertyForUpdate(ctx, tx, ownContext, winningLead, updateInput{DealStatus: patchString{Set: true, Value: &won}})
+	if err != nil || exactReservation == nil {
+		t.Fatalf("reserve already-linked hidden property: %#v / %v", exactReservation, err)
+	}
+	if _, err := repository.reserveWonLeadProperty(ctx, tx, ownContext, winningLead, updateInput{DealStatus: patchString{Set: true, Value: &won}}, exactReservation); err != nil {
+		t.Fatalf("record exact reservation provenance: %v", err)
+	}
+	var marker string
+	var propertyUpdatedAt, reservationCreatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+		select coalesce(property.metadata->>$3::text, ''), property.updated_at, reservation.created_at
+		from public.properties property
+		join public.events reservation on reservation.id = $4::uuid
+		where property.organization_id = $1::uuid and property.id = $2::uuid
+	`, organizationID, outsiderPropertyID, activeWonLeadReservationEventIDKey, exactReservation.EventID).Scan(&marker, &propertyUpdatedAt, &reservationCreatedAt); err != nil {
+		t.Fatalf("inspect reservation event marker: %v", err)
+	}
+	if marker != exactReservation.EventID {
+		t.Fatalf("property marker = %q, want reservation event %q", marker, exactReservation.EventID)
+	}
+	if !propertyUpdatedAt.After(reservationCreatedAt) {
+		t.Fatalf("expected monotonic publication trigger to advance updated_at beyond event.created_at: property=%v event=%v", propertyUpdatedAt, reservationCreatedAt)
+	}
+	winningLead.DealStatus = "won"
+	lost := "lost"
+	otherReservationID := "88888888-8888-4888-8888-888888888888"
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set metadata = jsonb_set(metadata, array[$3::text], to_jsonb($4::text))
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, outsiderPropertyID, activeWonLeadReservationEventIDKey, otherReservationID); err != nil {
+		t.Fatalf("replace reservation marker for false release check: %v", err)
+	}
+	if err := repository.releaseReopenedLeadProperty(ctx, tx, ownContext, winningLead, updateInput{DealStatus: patchString{Set: true, Value: &lost}}); !errors.Is(err, ErrLeadReservationUnverified) {
+		t.Fatalf("mismatched reservation marker must fail closed: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `select status from public.properties where organization_id = $1::uuid and id = $2::uuid`, organizationID, outsiderPropertyID).Scan(&status); err != nil || status != "reserved" {
+		t.Fatalf("false release changed property: status=%q error=%v", status, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set metadata = jsonb_set(metadata, array[$3::text], to_jsonb($4::text))
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, outsiderPropertyID, activeWonLeadReservationEventIDKey, exactReservation.EventID); err != nil {
+		t.Fatalf("restore reservation marker for proven release: %v", err)
+	}
+	if err := repository.releaseReopenedLeadProperty(ctx, tx, ownContext, winningLead, updateInput{DealStatus: patchString{Set: true, Value: &lost}}); err != nil {
+		t.Fatalf("release proven hidden property on won-to-lost: %v", err)
+	}
+	var restoredStatus string
+	var restoredPublished, restoredAnnounce pgtype.Bool
+	if err := tx.QueryRow(ctx, `
+		select status, published_on_site, anunciar
+		from public.properties
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, outsiderPropertyID).Scan(&restoredStatus, &restoredPublished, &restoredAnnounce); err != nil {
+		t.Fatalf("inspect exact property restoration: %v", err)
+	}
+	if restoredStatus != "available" || !restoredPublished.Valid || restoredPublished.Bool || restoredAnnounce.Valid {
+		t.Fatalf("restoration changed original values: status=%q published=%#v announce=%#v", restoredStatus, restoredPublished, restoredAnnounce)
+	}
+	var activeReservationID string
+	if err := tx.QueryRow(ctx, `
+		select coalesce(metadata->>$3::text, '') from public.properties
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, outsiderPropertyID, activeWonLeadReservationEventIDKey).Scan(&activeReservationID); err != nil || activeReservationID != "" {
+		t.Fatalf("release left reservation marker %q: %v", activeReservationID, err)
+	}
+	var releaseEvents int
+	if err := tx.QueryRow(ctx, `
+		select count(*) from public.events
+		where organization_id = $1::uuid and entity_id = $2::uuid
+		  and event_type = 'property_released_by_lost_lead'
+	`, organizationID, outsiderPropertyID).Scan(&releaseEvents); err != nil || releaseEvents != 1 {
+		t.Fatalf("won-to-lost release events = %d, error %v", releaseEvents, err)
 	}
 
 	if err := tx.Rollback(ctx); err != nil {
