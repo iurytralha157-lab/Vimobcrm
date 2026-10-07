@@ -114,11 +114,12 @@ func TestOutboxWorkerDefaultsDrainImmediateTextWithBoundedConcurrency(t *testing
 	}
 }
 
-func TestOutboxClaimUsesConversationFIFOAndExplicitCursorWrap(t *testing.T) {
+func TestOutboxClaimSkipsDeferredAndProcessingPredecessors(t *testing.T) {
 	query := strings.ToLower(strings.Join(strings.Fields(claimWhatsAppOutboxQuery), " "))
 	for _, required := range []string{
 		"'00000000-0000-0000-0000-000000000000'::uuid",
 		"select distinct on (queued.conversation_id)",
+		"queued.next_attempt_at <= now()",
 		"queued.conversation_id > params.after_conversation_id",
 		"order by queued.conversation_id, queued.created_at, queued.id",
 		"from conversation_heads head join public.whatsapp_conversations wc on wc.id = head.conversation_id",
@@ -126,10 +127,6 @@ func TestOutboxClaimUsesConversationFIFOAndExplicitCursorWrap(t *testing.T) {
 		"for no key update of wc skip locked",
 		"join public.whatsapp_outbox queued on queued.id = selected.event_id",
 		"for update of queued skip locked",
-		"where active.conversation_id = wc.id",
-		"active.status = 'processing'",
-		"$4::text as requested_lane",
-		"$5::double precision as media_ordering_grace_millis",
 		"current_message.lead_id = current_conversation.lead_id",
 		"current_binding.lead_id = current_conversation.lead_id",
 		"current_binding.active_to is null",
@@ -152,14 +149,11 @@ func TestOutboxClaimUsesConversationFIFOAndExplicitCursorWrap(t *testing.T) {
 	if headStart < 0 || candidateStart <= headStart {
 		t.Fatal("outbox claim must expose separate FIFO-head and due-candidate stages")
 	}
-	if strings.Contains(query[headStart:candidateStart], "next_attempt_at <= now()") {
-		t.Fatal("lane head must be selected before checking its retry deadline, or a newer operation in the same lane can bypass backoff")
+	if !strings.Contains(query[headStart:candidateStart], "queued.next_attempt_at <= now()") {
+		t.Fatal("lane head must skip a deferred retry so a newer ready message can advance")
 	}
-	if strings.Contains(query, "params.lane") || strings.Contains(query, "older_media") || strings.Contains(query, "older_fast") {
-		t.Fatal("compatibility any claim must use the predicate-free v2 head path")
-	}
-	if whatsappOutboxMediaOrderingGrace != 2*time.Second {
-		t.Fatalf("cross-lane media ordering grace = %s, want explicit 2s bound", whatsappOutboxMediaOrderingGrace)
+	if strings.Contains(query, "active.status = 'processing'") || strings.Contains(query, "older_media") || strings.Contains(query, "older_fast") {
+		t.Fatal("a processing or cross-lane predecessor must not block another ready message")
 	}
 }
 
@@ -203,8 +197,6 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 	}
 	for _, token := range []string{
 		whatsappOutboxQueuedLanePredicateToken,
-		whatsappOutboxActiveLanePredicateToken,
-		whatsappOutboxCrossLaneOrderingToken,
 	} {
 		if strings.Contains(anyQuery, token) {
 			t.Fatalf("compatibility claim leaked internal SQL token %q", token)
@@ -217,8 +209,9 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 			"params.lane = case",
 			"params.lane <>",
 			whatsappOutboxQueuedLanePredicateToken,
-			whatsappOutboxActiveLanePredicateToken,
-			whatsappOutboxCrossLaneOrderingToken,
+			"active.status = 'processing'",
+			"from public.whatsapp_outbox older_media",
+			"from public.whatsapp_outbox older_fast",
 		} {
 			if strings.Contains(query, forbidden) {
 				t.Fatalf("%s hot claim still contains parameterized lane branch %q", lane, forbidden)
@@ -241,30 +234,12 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 
 	const fastQueuedPredicate = `and not ( lower(coalesce(queued.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker') or lower(coalesce(queued.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker') )`
 	const mediaQueuedPredicate = `and ( lower(coalesce(queued.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker') or lower(coalesce(queued.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker') )`
-	const fastActivePredicate = `and not ( lower(coalesce(active.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker') or lower(coalesce(active.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker') )`
-	const mediaActivePredicate = `and ( lower(coalesce(active.payload->>'action', '')) in ('send.media', 'send.audio', 'send.sticker') or lower(coalesce(active.message_type, '')) in ('image', 'audio', 'video', 'document', 'sticker') )`
 
 	if got := strings.Count(fastQuery, fastQueuedPredicate); got != 1 {
 		t.Fatalf("fast literal queued predicate count = %d, want one hot head predicate", got)
 	}
-	if got := strings.Count(fastQuery, fastActivePredicate); got != 3 {
-		t.Fatalf("fast literal active predicate count = %d, want all three race guards", got)
-	}
-	if !strings.Contains(fastQuery, "from public.whatsapp_outbox older_media") ||
-		strings.Contains(fastQuery, "from public.whatsapp_outbox older_fast") ||
-		!strings.Contains(fastQuery, "make_interval(secs => params.media_ordering_grace_millis / 1000.0)") {
-		t.Fatal("fast claim lost its bounded older-media ordering guard")
-	}
-
 	if got := strings.Count(mediaQuery, mediaQueuedPredicate); got != 1 {
 		t.Fatalf("media literal queued predicate count = %d, want one hot head predicate", got)
-	}
-	if got := strings.Count(mediaQuery, mediaActivePredicate); got != 3 {
-		t.Fatalf("media literal active predicate count = %d, want all three race guards", got)
-	}
-	if !strings.Contains(mediaQuery, "from public.whatsapp_outbox older_fast") ||
-		strings.Contains(mediaQuery, "from public.whatsapp_outbox older_media") {
-		t.Fatal("media claim lost its older-fast FIFO guard")
 	}
 }
 
@@ -400,7 +375,7 @@ func TestOutboxWakeSignalsOnlyConfiguredFastWorkers(t *testing.T) {
 func TestOutboxClaimCreatesFencedLeaseWithoutConsumingDeliveryAttempt(t *testing.T) {
 	query := strings.ToLower(strings.Join(strings.Fields(claimWhatsAppOutboxQuery), " "))
 	for _, required := range []string{
-		"locked_by = concat($2::text, ':', $6::text, ':', queued.id::text)",
+		"locked_by = concat($2::text, ':', $4::text, ':', queued.id::text)",
 		"coalesce(claimed.locked_by, '')",
 		"coalesce(claimed.last_error, '')",
 		"or queued.last_error = '" + whatsappOutboxProviderAcceptedMarker + "'",

@@ -162,4 +162,74 @@ func TestWhatsAppDeliveryFailureProjectionOnIsolatedDatabase(t *testing.T) {
 			}
 		})
 	}
+
+	// Rows written before delivery_error_code existed must still render a
+	// definitive, phone-free result from the outbox on a fresh history read.
+	for _, scenario := range []struct {
+		name      string
+		lastError string
+		wantCode  string
+	}{
+		{
+			name:      "legacy unregistered recipient with plus prefix",
+			lastError: "Evolution Go operation send.text returned ambiguous HTTP 500: number +5511999999999@s.whatsapp.net is not registered on WhatsApp",
+			wantCode:  deliveryErrorRecipientNotRegistered,
+		},
+		{
+			name:      "legacy ambiguous provider error",
+			lastError: "whatsapp provider outcome is unknown: Evolution Go operation send.text returned ambiguous HTTP 500: upstream error",
+			wantCode:  deliveryErrorOutcomeUnknown,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			clientID := fmt.Sprintf("legacy-delivery-failure-%d", time.Now().UnixNano())
+			var messageID string
+			if err := postgres.Pool().QueryRow(ctx, `
+				insert into public.whatsapp_messages (
+					organization_id, conversation_id, session_id, lead_id,
+					sender_user_id, message_id, client_message_id,
+					from_me, direction, content, message_type, remote_jid,
+					status, capture_state, metadata
+				) values (
+					$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+					$5::uuid, $6, $6, true, 'outbound', 'Teste',
+					'text', $7, 'failed', 'captured', '{}'::jsonb
+				) returning id::text
+			`, fixture.organizationID, fixture.conversationID,
+				fixture.sessionID, fixture.leadID, fixture.userID,
+				clientID, fixture.remoteJID).Scan(&messageID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := postgres.Pool().Exec(ctx, `
+				insert into public.whatsapp_outbox (
+					organization_id, session_id, conversation_id,
+					message_id, client_message_id, recipient_jid,
+					message_type, payload, status, attempts,
+					max_attempts, dead_lettered_at, last_error
+				) values (
+					$1::uuid, $2::uuid, $3::uuid,
+					$4::uuid, $5, $6,
+					'text', '{"action":"send.text"}'::jsonb, 'dead', 1,
+					12, now(), $7
+				)
+			`, fixture.organizationID, fixture.sessionID,
+				fixture.conversationID, messageID, clientID,
+				fixture.remoteJID, scenario.lastError); err != nil {
+				t.Fatal(err)
+			}
+			message, err := scanMessage(postgres.Pool().QueryRow(ctx, `
+				select `+messageSelectFields()+`
+				from public.whatsapp_messages as wm
+				where wm.id = $1::uuid
+			`, messageID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if message.DeliveryErrorCode == nil || *message.DeliveryErrorCode != scenario.wantCode ||
+				message.DeliveryFailedAt == nil {
+				t.Fatalf("legacy history failure = code %v, at %v; want %q and timestamp",
+					message.DeliveryErrorCode, message.DeliveryFailedAt, scenario.wantCode)
+			}
+		})
+	}
 }

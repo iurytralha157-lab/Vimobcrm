@@ -1072,6 +1072,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
 	case errors.Is(err, ErrAttendanceRequired):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Confirme o início do atendimento antes de enviar mensagens por este WhatsApp.")
+	case errors.Is(err, ErrSessionAccessRevoked):
+		httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_session_access_revoked", "Você não tem mais acesso a este WhatsApp. Inicie uma nova conversa pelo seu número ou conecte um WhatsApp.")
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):

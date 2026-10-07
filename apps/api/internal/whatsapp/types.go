@@ -25,6 +25,7 @@ var (
 	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
 	ErrAttendanceRequired         = errors.New("whatsapp attendance confirmation is required")
+	ErrSessionAccessRevoked       = errors.New("whatsapp session access revoked")
 )
 
 type Session struct {
@@ -39,6 +40,7 @@ type Session struct {
 	ProfileName           *string        `json:"profile_name"`
 	ProfilePicture        *string        `json:"profile_picture"`
 	IsActive              bool           `json:"is_active"`
+	CanSend               *bool          `json:"can_send,omitempty"`
 	IsNotificationSession bool           `json:"is_notification_session"`
 	Provider              string         `json:"provider"`
 	AdvancedSettings      map[string]any `json:"advanced_settings,omitempty"`
@@ -98,6 +100,8 @@ type SessionAccess struct {
 	CanSend         bool        `json:"can_send"`
 	OnlyLeadsAccess bool        `json:"only_leads_access"`
 	GrantedBy       *string     `json:"granted_by"`
+	GrantScope      *string     `json:"grant_scope,omitempty"`
+	GrantTeamID     *string     `json:"grant_team_id,omitempty"`
 	CreatedAt       time.Time   `json:"created_at"`
 	User            *AccessUser `json:"user,omitempty"`
 }

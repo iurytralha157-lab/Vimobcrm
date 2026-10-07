@@ -63,6 +63,33 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 	}
 }
 
+func TestOperationalInboxRequiresOwnedOrGrantedAssignedNumber(t *testing.T) {
+	_, where, empty, err := conversationFilterSQL(tenant.Context{
+		OrganizationID: unreadCountOrganizationID,
+		UserID:         unreadCountUserID,
+		Permissions:    []string{"lead_view_all"},
+	}, ConversationListFilter{})
+	if err != nil || empty {
+		t.Fatalf("inbox filter = empty:%v error:%v", empty, err)
+	}
+	joined := strings.Join(where, " and ")
+	for _, required := range []string{
+		"ws.owner_user_id = $2::uuid",
+		"l.assigned_user_id = $2::uuid",
+		"access.session_id = ws.id",
+		"access.can_view = true",
+		"access.can_read = true",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("inbox missing shared-session boundary %q", required)
+		}
+	}
+	if strings.Contains(conversationVisibilitySQL(true), "sessionGrantExistsSQL") ||
+		strings.Contains(conversationVisibilitySQL(true), "whatsapp_session_access") {
+		t.Fatal("direct lead history visibility must not depend on a session grant")
+	}
+}
+
 func TestConversationPeriodUsesSameScopeForListAndUnreadCount(t *testing.T) {
 	from := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)
 	to := from.Add(72 * time.Hour)

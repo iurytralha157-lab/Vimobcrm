@@ -365,17 +365,16 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(adminLeads) != 6 {
-		t.Fatalf("admin lead conversations = %d, want all six across session owners", len(adminLeads))
+	if len(adminLeads) != 5 {
+		t.Fatalf("admin operational inbox = %d, want only the five conversations on the owned number", len(adminLeads))
 	}
-	foundOtherOwner := false
 	for _, conversation := range adminLeads {
 		if conversation.ID == privateConversationID {
-			foundOtherOwner = true
+			t.Fatal("admin inbox exposed another owner's ungranted number")
 		}
 	}
-	if !foundOtherOwner {
-		t.Fatal("admin lead list omitted a conversation from another session owner")
+	if snapshot, err := repo.GetConversationSnapshot(ctx, admin, privateConversationID); err != nil || snapshot.ID != privateConversationID {
+		t.Fatalf("admin lost direct lead history across numbers: %+v, %v", snapshot, err)
 	}
 	t.Run("media is signed for admin across sessions but denied to agent", func(t *testing.T) {
 		before := signingRequests.Load()

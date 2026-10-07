@@ -88,6 +88,11 @@ func TestHistoricalOutboxFailureClassificationKeepsDefinitiveAndUnknownApart(t *
 			want:      deliveryErrorRecipientNotRegistered,
 		},
 		{
+			name:      "old explicit nonregistered number with plus prefix",
+			lastError: "whatsapp provider outcome is unknown: Evolution Go operation send.text returned ambiguous HTTP 500: number +5511999999999@s.whatsapp.net is not registered on WhatsApp",
+			want:      deliveryErrorRecipientNotRegistered,
+		},
+		{
 			name:      "unknown with recipient phrase remains definitive",
 			lastError: "whatsapp provider outcome is unknown: number 5511999999999@s.whatsapp.net is not registered on WhatsApp",
 			want:      deliveryErrorRecipientNotRegistered,

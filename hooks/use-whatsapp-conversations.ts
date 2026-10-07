@@ -5,6 +5,7 @@ import { toast } from "@/hooks/use-toast";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { whatsappAPI, type SendWhatsAppMessageResult } from "@/lib/api/whatsapp";
+import { VimobAPIError } from "@/lib/api/vimob-error";
 import { reportErrorEvent } from "@/lib/api/telemetry";
 import { canSubscribeToWhatsAppRealtime } from "@/lib/access/whatsapp-realtime";
 import { createClientId } from "@/lib/client-id";
@@ -1032,6 +1033,15 @@ export function useSendWhatsAppMessage() {
       const errorMessage = error.message || "";
       const leadId = getConversationLeadId(variables.conversation);
       const failureStatus = getWhatsAppSendFailureStatus(error);
+      const accessRevoked = error instanceof VimobAPIError && error.code === "whatsapp_session_access_revoked";
+      if (accessRevoked) {
+        // The active composer must reflect the revocation immediately. The
+        // caller keeps its draft after this definite send failure.
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessions(scope) }),
+          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.accessibleSessions(scope) }),
+        ]);
+      }
 
       if (context?.optimisticId) {
         const updateFailedMessage = (msg: WhatsAppMessage): WhatsAppMessage =>
@@ -1128,6 +1138,9 @@ export function useSendWhatsAppMessage() {
       if (failureStatus === "confirming") {
         title = "Confirmando envio";
         description = "Ainda não recebemos a confirmação. A mensagem continuará visível; não reenvie agora.";
+      } else if (accessRevoked) {
+        title = "Acesso ao WhatsApp revogado";
+        description = "Você não tem mais acesso a este número. Inicie pelo seu WhatsApp ou conecte um número.";
       } else if (isDisconnected) {
         title = "WhatsApp Desconectado";
         description = "Vá em Configurações > WhatsApp e escaneie o QR Code novamente.";

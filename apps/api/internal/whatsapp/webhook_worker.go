@@ -44,6 +44,13 @@ const claimEvolutionWebhooksQuery = `
 			cross join lateral (
 			  select
 			    wi.id,
+			    wi.organization_id,
+			    wi.event_key,
+			    wi.event_type,
+			    wi.provider,
+			    wi.payload,
+			    wi.created_at,
+			    wi.processing_epoch,
 			    wi.next_attempt_at,
 			    coalesce(
 			      nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''),
@@ -190,6 +197,111 @@ const claimEvolutionWebhooksQuery = `
 				                  routing_message.snapshot->>'predecessor_provider_message_id'
 				            )
 			        )
+			    )
+			    -- A current-epoch live message can require the root of this backlog
+			    -- route. Claim only that exact root despite unrelated live work.
+			    or (
+			      head.event_type = 'message'
+			      and head.provider = 'evolution_go'
+			      and head.routing_key <> '__session__'
+			      and case when pg_catalog.jsonb_typeof(
+			        head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			      ) = 'array'
+			      then pg_catalog.jsonb_array_length(
+			        head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			      ) else 0 end = 1
+			      and not exists (
+			        select 1 from public.whatsapp_webhook_inbox live_session_control
+			        where live_session_control.session_id = ws.id
+			          and live_session_control.processing_epoch = head.processing_epoch
+			          and live_session_control.processing_lane = 'live'
+			          and live_session_control.status in ('pending', 'retry')
+			          and live_session_control.attempts < live_session_control.max_attempts
+			          and live_session_control.next_attempt_at <= now()
+			          and coalesce(
+			            live_session_control.payload #>> '{__vimob_ingress,routing_snapshot,version}', ''
+			          ) = '1'
+			          and coalesce(nullif(
+			            live_session_control.payload #>> '{__vimob_ingress,routing_key}', ''
+			          ), '__session__') = '__session__'
+			      )
+			      and exists (
+			        select 1
+			        from public.whatsapp_webhook_inbox live_dependent
+			        cross join lateral pg_catalog.jsonb_array_elements(
+			          case when pg_catalog.jsonb_typeof(
+			            live_dependent.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) = 'array'
+			          then live_dependent.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          else '[]'::jsonb end
+			        ) dependent_route(snapshot)
+			        where live_dependent.organization_id = head.organization_id
+			          and live_dependent.session_id = ws.id
+			          and live_dependent.processing_epoch = head.processing_epoch
+			          and live_dependent.processing_lane = 'live'
+			          and live_dependent.event_type = 'message'
+			          and live_dependent.status in ('pending', 'retry')
+			          and live_dependent.attempts < live_dependent.max_attempts
+			          and live_dependent.next_attempt_at <= now()
+			          and live_dependent.created_at > head.created_at
+			          and coalesce(
+			            live_dependent.payload #>> '{__vimob_ingress,routing_snapshot,version}', ''
+			          ) = '1'
+			          and case when pg_catalog.jsonb_typeof(
+			            live_dependent.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) = 'array'
+			          then pg_catalog.jsonb_array_length(
+			            live_dependent.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) else 0 end = 1
+			          and coalesce(nullif(
+			            live_dependent.payload #>> '{__vimob_ingress,routing_key}', ''
+			          ), '__session__') = head.routing_key
+			          and dependent_route.snapshot->>'binding_eligible' = 'true'
+			          and dependent_route.snapshot->>'predecessor_inbox_event_key' = head.event_key
+			          and nullif(
+			            dependent_route.snapshot->>'predecessor_provider_message_id', ''
+			          ) is not null
+			          and exists (
+			            select 1 from pg_catalog.jsonb_array_elements(
+			              case when pg_catalog.jsonb_typeof(
+			                head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			              ) = 'array'
+			              then head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			              else '[]'::jsonb end
+			            ) root_route(snapshot)
+			            where root_route.snapshot->>'binding_eligible' = 'true'
+			              and root_route.snapshot->>'provider_message_id' =
+			                dependent_route.snapshot->>'predecessor_provider_message_id'
+			          )
+			          and not exists (
+			            select 1 from public.whatsapp_webhook_routing_outcomes predecessor_outcome
+			            where predecessor_outcome.organization_id = head.organization_id
+			              and predecessor_outcome.session_id = ws.id
+			              and predecessor_outcome.provider_message_id =
+			                dependent_route.snapshot->>'predecessor_provider_message_id'
+			          )
+			          and not exists (
+			            select 1 from public.whatsapp_webhook_inbox older_live
+			            where older_live.session_id = live_dependent.session_id
+			              and older_live.processing_epoch = live_dependent.processing_epoch
+			              and older_live.processing_lane = 'live'
+			              and older_live.status in ('pending', 'retry')
+			              and older_live.attempts < older_live.max_attempts
+			              and coalesce(
+			                older_live.payload #>> '{__vimob_ingress,routing_snapshot,version}', ''
+			              ) = '1'
+			              and (older_live.created_at, older_live.id) <
+			                (live_dependent.created_at, live_dependent.id)
+			              and (
+			                coalesce(nullif(
+			                  older_live.payload #>> '{__vimob_ingress,routing_key}', ''
+			                ), '__session__') = '__session__'
+			                or coalesce(nullif(
+			                  older_live.payload #>> '{__vimob_ingress,routing_key}', ''
+			                ), '__session__') = head.routing_key
+			              )
+			          )
+			      )
 			    )
 			  )
 			order by ws.id
