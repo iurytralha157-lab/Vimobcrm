@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "df768628448336ce4f2ed7d96cf3918df5141efdf6e24fe413b686f43df34b38",
+  "sourceDigestSha256": "718ec9f7a365e6105f958e5ded755d927b7f941b81ed8dd9fd8250414f4cabf8",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3109,10 +3109,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:5d608a1478b8d1f4647e",
+          "id": "overlay:e14c3460a7fdbd14ba4a",
           "column": 15,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 367,
+          "line": 379,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -3179,10 +3179,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:ea6bfe328b39333ed4dd",
+          "id": "overlay:1627905e76970c7a04af",
           "column": 7,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 927,
+          "line": 936,
           "owner": "IntegrationsTab",
           "routes": [
             "/settings"
@@ -21928,10 +21928,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fe334b9e3bc51df94930",
+          "id": "cta:ef1816f71c9f3801c245",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 127,
+          "line": 139,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -21941,10 +21941,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:148e61ec2a00eb2017bd",
+          "id": "cta:190e9703d768f7943480",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 164,
+          "line": 176,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -21954,10 +21954,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6ce9f8f0b4e35e69bee1",
+          "id": "cta:cebe320ac5a495165181",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 213,
+          "line": 225,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -21967,10 +21967,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4a8e5f7b93ce13ef5536",
+          "id": "cta:1f9880b2f51e16948d02",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 240,
+          "line": 252,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -21980,10 +21980,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:32a4d7f87640e49476aa",
+          "id": "cta:311aec0223d832e96cab",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 299,
+          "line": 311,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -21993,10 +21993,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c4abb805c77d1fea8a31",
+          "id": "cta:fe48df4a2657e47fa467",
           "column": 19,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 369,
+          "line": 381,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -22006,10 +22006,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0393dd8a60ef2bd42b25",
+          "id": "cta:fd0f5bb858ec15fb89d2",
           "column": 13,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 450,
+          "line": 462,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -22494,10 +22494,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:78f390fbef6bf06d840c",
+          "id": "cta:5db60d7fa23b14ca8903",
           "column": 21,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1043,
+          "line": 1052,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -22506,10 +22506,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8344ef616f828c63419a",
+          "id": "cta:3923a6797399087153fb",
           "column": 13,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1081,
+          "line": 1090,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -22518,10 +22518,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c14c225ed0d9f6c4bdbe",
+          "id": "cta:377260684dcb9015c2a8",
           "column": 11,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1091,
+          "line": 1100,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -33507,10 +33507,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:7dd7c2b39edf49a8d608",
+          "id": "control:9462a188e6d23695f35e",
           "column": 21,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 388,
+          "line": 400,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -33520,10 +33520,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:980bc3de4ebdca5b5d81",
+          "id": "control:29fc5867b4686894cada",
           "column": 21,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 389,
+          "line": 401,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -35334,7 +35334,7 @@
         }
       ]
     },
-    "digestSha256": "d158a44f9ed4c851b07cecafeb962301d80050ad88acdbf857524ac412f137dc"
+    "digestSha256": "57d7d21d8aca987a02c096d7ec4c6392d903d68d917e6ed47bd7466a662d4351"
   },
   "routes": [
     {
