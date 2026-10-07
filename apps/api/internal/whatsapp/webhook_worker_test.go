@@ -157,6 +157,29 @@ func TestWebhookWorkerKeepsEveryClaimGateWithinActiveProcessingEpoch(t *testing.
 	}
 }
 
+func TestWebhookWorkerKeepsCurrentEpochDependentRootException(t *testing.T) {
+	// The database integration scenario is optional locally; this contract
+	// catches accidental removal of the dependency exception during cutovers.
+	normalized := strings.Join(strings.Fields(strings.ToLower(claimEvolutionWebhooksQuery)), " ")
+	for _, required := range []string{
+		"wi.processing_epoch = coalesce(cutover.active_epoch, 0)",
+		"head.event_type = 'message'",
+		"head.provider = 'evolution_go'",
+		"head.routing_key <> '__session__'",
+		"live_session_control.processing_epoch = head.processing_epoch",
+		"live_dependent.processing_epoch = head.processing_epoch",
+		"live_dependent.processing_lane = 'live'",
+		"live_dependent.next_attempt_at <= now()",
+		"dependent_route.snapshot->>'predecessor_inbox_event_key' = head.event_key",
+		"root_route.snapshot->>'provider_message_id' = dependent_route.snapshot->>'predecessor_provider_message_id'",
+		"older_live.processing_epoch = live_dependent.processing_epoch",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Errorf("current-epoch backlog root exception is missing %q", required)
+		}
+	}
+}
+
 func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t *testing.T) {
 	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessed`)
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))

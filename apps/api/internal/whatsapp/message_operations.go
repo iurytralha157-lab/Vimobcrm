@@ -176,8 +176,11 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	// joined FOR UPDATE lets the executor choose the opposite order and can
 	// deadlock with signed native ingress, which necessarily resolves a session
 	// before it can identify the conversation.
-	if err := lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, session.ID); err != nil {
+	if err := lockConversationSendSession(ctx, tx, tenantContext, session.ID); err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
+			if session.OwnerUserID != tenantContext.UserID {
+				return SendMessageResponse{}, ErrSessionAccessRevoked
+			}
 			return SendMessageResponse{}, ErrConversationNotFound
 		}
 		return SendMessageResponse{}, err
@@ -211,20 +214,23 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		return SendMessageResponse{}, err
 	}
 	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID)
-	var lockedLeadVisible bool
+	var lockedLeadVisible, leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select true
+		select true, coalesce(l.assigned_user_id = $2::uuid, false)
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		for share of l
-	`, visibilityArgs...).Scan(&lockedLeadVisible)
+	`, visibilityArgs...).Scan(&lockedLeadVisible, &leadAssigned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SendMessageResponse{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return SendMessageResponse{}, err
+	}
+	if !input.InternalAutomation && session.OwnerUserID != tenantContext.UserID && !leadAssigned {
+		return SendMessageResponse{}, ErrSessionAccessRevoked
 	}
 	if lockedSessionID != session.ID || lockedRemoteJID != conversation.RemoteJID || lockedIsGroup != conversation.IsGroup {
 		return SendMessageResponse{}, fmt.Errorf("%w: identidade da conversa mudou; recarregue antes de enviar", ErrInvalidReference)
@@ -247,6 +253,14 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		// Automation has no human sender to confirm on its own. It may only
 		// participate after a person joined this exact card/session binding.
 		return SendMessageResponse{}, ErrAttendanceRequired
+	}
+	accessGrantID := ""
+	if !input.InternalAutomation {
+		accessGrantID, err = outboundSessionAccessGrantID(ctx, tx,
+			session.OrganizationID, session.ID, tenantContext.UserID)
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
 	}
 	captureState := "captured"
 
@@ -303,9 +317,10 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		do nothing
 		returning id::text
 	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{
-		"delivery":               "outbox",
-		"attendance_send_origin": attendanceSendOrigin(input.InternalAutomation),
-		"attendance_entry_id":    attendanceEntryID,
+		"delivery":                "outbox",
+		"attendance_send_origin":  attendanceSendOrigin(input.InternalAutomation),
+		"attendance_entry_id":     attendanceEntryID,
+		"session_access_grant_id": accessGrantID,
 		"whatsapp_attendance_capture": map[string]any{
 			"state":               "captured",
 			"attendance_entry_id": attendanceEntryID,
@@ -365,9 +380,10 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	}
 
 	outboxPayload := jsonb(map[string]any{
-		"action":                 action,
-		"body":                   body,
-		"attendance_send_origin": attendanceSendOrigin(input.InternalAutomation),
+		"action":                  action,
+		"body":                    body,
+		"attendance_send_origin":  attendanceSendOrigin(input.InternalAutomation),
+		"session_access_grant_id": accessGrantID,
 	})
 	if _, err := tx.Exec(ctx, `
 		insert into public.whatsapp_outbox (
@@ -834,14 +850,56 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		}
 	}
 
-	session, err := repo.getCanSendSession(ctx, tenantContext, conversationSessionID)
+	session, err := repo.getConversationSendSession(ctx, tenantContext, conversation)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return Session{}, repo.revokedConversationErrorIfAssigned(ctx, tenantContext,
+				conversation.ID, conversation.SessionID, pointerValue(conversation.LeadID), ErrConversationNotFound)
+		}
 		return Session{}, err
 	}
 	if session.Status != "connected" {
 		return Session{}, fmt.Errorf("%w: WhatsApp desta conversa esta desconectado.", ErrInvalidInput)
 	}
 	return session, nil
+}
+
+// A shared number is usable only for this existing physical conversation and
+// the recipient's currently assigned lead. General session operations remain
+// owner-only through getCanSendSession.
+func (repo Repository) getConversationSendSession(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Session, error) {
+	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
+		select `+sessionSelectFields()+`
+		from public.whatsapp_sessions ws
+		join public.whatsapp_conversations wc
+		  on wc.organization_id = ws.organization_id
+		 and wc.session_id = ws.id
+		join public.leads l
+		  on l.organization_id = wc.organization_id
+		 and l.id = wc.lead_id
+		left join public.users owner on owner.id = ws.owner_user_id
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and wc.id = $3::uuid
+		  and wc.lead_id = $4::uuid
+		  and wc.deleted_at is null
+		  and ws.is_active is not false
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and ws.provider = 'evolution_go'
+		  and (
+		    ws.owner_user_id = $5::uuid
+		    or (
+		      l.assigned_user_id = $5::uuid
+		      and `+sessionGrantExistsSQL("ws", "$5::uuid", true)+`
+		    )
+		  )
+		limit 1
+	`, tenantContext.OrganizationID, conversation.SessionID, conversation.ID,
+		pointerValue(conversation.LeadID), tenantContext.UserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	return session, err
 }
 
 func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenantContext tenant.Context, purpose string) (Session, error) {

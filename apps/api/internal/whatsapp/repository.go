@@ -135,14 +135,16 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Context) ([]Session, error) {
 	args := []any{tenantContext.OrganizationID, tenantContext.UserID}
 	rows, err := repo.db.Pool().Query(ctx, `
-		select `+sessionSelectFields()+`
+		select `+sessionSelectFields()+`,
+		       (ws.status = 'connected' and
+		        (ws.owner_user_id = $2::uuid or `+sessionGrantExistsSQL("ws", "$2::uuid", true)+`)) as can_send
 		from public.whatsapp_sessions ws
 		left join public.users owner on owner.id = ws.owner_user_id
 		where ws.organization_id = $1::uuid
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ws.provider = 'evolution_go'
-		  and ws.owner_user_id = $2::uuid
+		  and (ws.owner_user_id = $2::uuid or `+sessionGrantExistsSQL("ws", "$2::uuid", false)+`)
 		order by ws.created_at desc, ws.id desc
 	`, args...)
 	if err != nil {
@@ -152,9 +154,15 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 
 	sessions := []Session{}
 	for rows.Next() {
-		session, err := scanSession(rows)
+		session, err := scanSessionWithCanSend(rows)
 		if err != nil {
 			return nil, err
+		}
+		if session.OwnerUserID != tenantContext.UserID {
+			// A recipient sees connection state, never owner-only provider settings.
+			session.InstanceID = nil
+			session.AdvancedSettings = nil
+			session.Owner = nil
 		}
 		sessions = append(sessions, session)
 	}
@@ -189,6 +197,8 @@ func (repo Repository) GetSession(ctx context.Context, tenantContext tenant.Cont
 	if err != nil {
 		return Session{}, err
 	}
+	canSend := session.Status == "connected"
+	session.CanSend = &canSend
 
 	return session, nil
 }
@@ -202,7 +212,45 @@ func (repo Repository) ListSessionAccess(ctx context.Context, tenantContext tena
 		return nil, err
 	}
 
-	return []SessionAccess{}, nil
+	rows, err := repo.db.Pool().Query(ctx, `
+		select access.id::text, access.session_id::text, access.user_id::text,
+		       access.access_mode, coalesce(access.can_view, false),
+		       access.can_read, coalesce(access.can_send, false),
+		       access.only_leads_access, access.granted_by::text,
+		       access.grant_scope, access.grant_team_id::text,
+		       access.created_at,
+		       recipient.id::text,
+		       coalesce(recipient.name, ''), coalesce(recipient.email, '')
+		from public.whatsapp_session_access access
+		join public.users recipient on recipient.id = access.user_id
+		where access.organization_id = $1::uuid
+		  and access.session_id = $2::uuid
+		  and access.grant_scope in ('organization', 'team')
+		order by lower(coalesce(recipient.name, '')), access.user_id
+	`, tenantContext.OrganizationID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	accesses := []SessionAccess{}
+	for rows.Next() {
+		var access SessionAccess
+		var grantedBy, grantScope, grantTeamID pgtype.Text
+		var recipient AccessUser
+		if err := rows.Scan(&access.ID, &access.SessionID, &access.UserID,
+			&access.AccessMode, &access.CanView, &access.CanRead, &access.CanSend,
+			&access.OnlyLeadsAccess, &grantedBy, &grantScope, &grantTeamID,
+			&access.CreatedAt, &recipient.ID, &recipient.Name, &recipient.Email); err != nil {
+			return nil, err
+		}
+		access.GrantedBy = textPtr(grantedBy)
+		access.GrantScope = textPtr(grantScope)
+		access.GrantTeamID = textPtr(grantTeamID)
+		access.User = &recipient
+		accesses = append(accesses, access)
+	}
+	return accesses, rows.Err()
 }
 
 func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, input grantAccessInput) error {
@@ -210,11 +258,164 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 	if !ok {
 		return ErrSessionNotFound
 	}
-	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
+	if input.UserID == tenantContext.UserID || (!input.CanView && !input.CanSend) || (input.CanSend && !input.CanView) {
+		return ErrInvalidInput
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// The session fence is held through the grant write. Revocation and a
+	// concurrent send use the same session-first lock order.
+	var lockedSessionID string
+	err = tx.QueryRow(ctx, `
+		select ws.id::text
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.owner_user_id = $3::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		for share of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
 		return err
 	}
 
-	return fmt.Errorf("%w: compartilhamento de conexoes WhatsApp desativado por privacidade", ErrFeatureUnavailable)
+	// Resolve current database membership instead of cached permissions. A
+	// normal user may have WhatsAppManage for their own connection but cannot
+	// grant another person access to it.
+	var ownerRole string
+	err = tx.QueryRow(ctx, `
+		select lower(btrim(member.role))
+		from public.organization_members member
+		join public.users actor on actor.id = member.user_id
+		where member.organization_id = $1::uuid
+		  and member.user_id = $2::uuid
+		  and coalesce(member.is_active, false) = true
+		  and member.deleted_at is null
+		  and coalesce(actor.is_active, false) = true
+		for share of member, actor
+	`, tenantContext.OrganizationID, tenantContext.UserID).Scan(&ownerRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if err != nil {
+		return err
+	}
+	var recipientID string
+	err = tx.QueryRow(ctx, `
+		select recipient.id::text
+		from public.users recipient
+		join public.organization_members member
+		  on member.user_id = recipient.id
+		where member.organization_id = $1::uuid
+		  and recipient.id = $2::uuid
+		  and coalesce(recipient.is_active, false) = true
+		  and coalesce(member.is_active, false) = true
+		  and member.deleted_at is null
+		for share of recipient, member
+	`, tenantContext.OrganizationID, input.UserID).Scan(&recipientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidReference
+	}
+	if err != nil {
+		return err
+	}
+
+	grantScope := ""
+	var grantTeamID *string
+	if ownerRole == "owner" || ownerRole == "admin" || ownerRole == "manager" {
+		grantScope = "organization"
+	} else {
+		var teamID string
+		err = tx.QueryRow(ctx, `
+			select team.id::text
+			from public.teams team
+			join public.team_members leader
+			  on leader.organization_id = team.organization_id
+			 and leader.team_id = team.id
+			 and leader.user_id = $2::uuid
+			 and coalesce(leader.is_active, true) = true
+			 and coalesce(leader.is_leader, false) = true
+			join public.team_members member
+			  on member.organization_id = team.organization_id
+			 and member.team_id = team.id
+			 and member.user_id = $3::uuid
+			 and coalesce(member.is_active, true) = true
+			where team.organization_id = $1::uuid
+			  and coalesce(team.is_active, true) = true
+			order by team.id
+			limit 1
+			for share of team, leader, member
+		`, tenantContext.OrganizationID, tenantContext.UserID, input.UserID).Scan(&teamID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tenant.ErrOrganizationAccessDenied
+		}
+		if err != nil {
+			return err
+		}
+		grantScope = "team"
+		grantTeamID = &teamID
+	}
+
+	// A repeated, identical grant must not rotate its identity and invalidate
+	// already queued messages. Any change to its effective authority does.
+	_, err = tx.Exec(ctx, `
+		insert into public.whatsapp_session_access (
+			organization_id, session_id, user_id, can_view, can_read,
+			can_send, only_leads_access, access_mode, granted_by,
+			grant_scope, grant_team_id
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::boolean, $4::boolean,
+			$5::boolean, true, 'assigned_leads_only', $6::uuid,
+			$7, $8::uuid
+		)
+		on conflict (session_id, user_id) do update set
+			id = gen_random_uuid(),
+			organization_id = excluded.organization_id,
+			can_view = excluded.can_view,
+			can_read = excluded.can_read,
+			can_send = excluded.can_send,
+			only_leads_access = true,
+			access_mode = 'assigned_leads_only',
+			granted_by = excluded.granted_by,
+			grant_scope = excluded.grant_scope,
+			grant_team_id = excluded.grant_team_id,
+			created_at = now()
+		where (
+			whatsapp_session_access.organization_id,
+			whatsapp_session_access.can_view,
+			whatsapp_session_access.can_read,
+			whatsapp_session_access.can_send,
+			whatsapp_session_access.only_leads_access,
+			whatsapp_session_access.access_mode,
+			whatsapp_session_access.granted_by,
+			whatsapp_session_access.grant_scope,
+			whatsapp_session_access.grant_team_id
+		) is distinct from (
+			excluded.organization_id,
+			excluded.can_view,
+			excluded.can_read,
+			excluded.can_send,
+			excluded.only_leads_access,
+			excluded.access_mode,
+			excluded.granted_by,
+			excluded.grant_scope,
+			excluded.grant_team_id
+		)
+	`, tenantContext.OrganizationID, sessionID, input.UserID,
+		input.CanView, input.CanSend, tenantContext.UserID, grantScope, grantTeamID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, userID string) error {
@@ -226,17 +427,39 @@ func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext te
 	if !ok {
 		return ErrInvalidInput
 	}
-	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
 		return err
 	}
-
-	_, err := repo.db.Pool().Exec(ctx, `
+	defer tx.Rollback(ctx)
+	var lockedSessionID string
+	err = tx.QueryRow(ctx, `
+		select ws.id::text
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.owner_user_id = $3::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		for update of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 		delete from public.whatsapp_session_access
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
 		  and user_id = $3::uuid
 	`, tenantContext.OrganizationID, sessionID, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) ListConversations(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) ([]Conversation, error) {
@@ -508,6 +731,10 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
 		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
+		// The operational inbox follows owned numbers or a current explicit
+		// grant for a lead assigned to this recipient. Lead history and direct
+		// reads keep their separate, existing lead visibility rules.
+		"(ws.owner_user_id = $2::uuid or (l.assigned_user_id = $2::uuid and " + sessionGrantExistsSQL("ws", "$2::uuid", false) + "))",
 	}
 
 	addFilter := func(clause string, value any) {
@@ -1712,13 +1939,22 @@ func messageSelectFieldsWithSession(sessionExpression string) string {
 }
 
 func scanSession(row scanner) (Session, error) {
+	return scanSessionFields(row, false)
+}
+
+func scanSessionWithCanSend(row scanner) (Session, error) {
+	return scanSessionFields(row, true)
+}
+
+func scanSessionFields(row scanner, includeCanSend bool) (Session, error) {
 	var session Session
 	var ownerID, ownerName, ownerEmail pgtype.Text
 	var displayName, instanceID, phoneNumber, profileName, profilePicture pgtype.Text
 	var lastConnectedAt pgtype.Timestamptz
 	var settingsJSON string
+	var canSend bool
 
-	if err := row.Scan(
+	dest := []any{
 		&session.ID,
 		&session.OrganizationID,
 		&session.OwnerUserID,
@@ -1739,8 +1975,15 @@ func scanSession(row scanner) (Session, error) {
 		&ownerID,
 		&ownerName,
 		&ownerEmail,
-	); err != nil {
+	}
+	if includeCanSend {
+		dest = append(dest, &canSend)
+	}
+	if err := row.Scan(dest...); err != nil {
 		return Session{}, err
+	}
+	if includeCanSend {
+		session.CanSend = &canSend
 	}
 
 	session.DisplayName = textPtr(displayName)

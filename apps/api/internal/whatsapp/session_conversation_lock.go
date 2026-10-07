@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -56,4 +57,37 @@ func lockOwnedConnectedEvolutionSession(
 		return ErrSessionNotFound
 	}
 	return err
+}
+
+// Send acquires the session fence before locking the conversation and lead.
+// A grant alone is insufficient: SendMessage rechecks assignment under the
+// lead lock before writing the durable outbound.
+func lockConversationSendSession(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	sessionID string,
+) error {
+	var lockedSessionID, lockedStatus string
+	err := tx.QueryRow(ctx, `
+		select ws.id::text, coalesce(ws.status, '')
+		from public.whatsapp_sessions as ws
+		where ws.organization_id = $1::uuid
+		  and ws.id = $2::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and (ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
+		for share of ws
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID, &lockedStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if lockedStatus != "connected" {
+		return fmt.Errorf("%w: WhatsApp desconectado. Reconecte ou selecione uma conexao ativa.", ErrInvalidInput)
+	}
+	return nil
 }

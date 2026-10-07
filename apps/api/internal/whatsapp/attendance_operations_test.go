@@ -48,7 +48,7 @@ func TestAttendanceCaptureStopsWhenSessionOwnerOrMembershipChanges(t *testing.T)
 		for _, required := range []string{
 			"session.organization_id = entry.organization_id",
 			"session.id = entry.session_id",
-			"session.owner_user_id = entry.user_id",
+			"attendanceActorEligibleSQL()",
 			"actor.id = entry.user_id",
 			"coalesce(actor.is_active, false) = true",
 			"member.organization_id = entry.organization_id",
@@ -58,6 +58,17 @@ func TestAttendanceCaptureStopsWhenSessionOwnerOrMembershipChanges(t *testing.T)
 			if !strings.Contains(section, required) {
 				t.Fatalf("%s must reject a transferred or deactivated owner: missing %q", functionName, required)
 			}
+		}
+	}
+	for _, required := range []string{
+		"session.owner_user_id = entry.user_id",
+		"assigned_lead.organization_id = entry.organization_id",
+		"assigned_lead.id = entry.lead_id",
+		"assigned_lead.assigned_user_id = entry.user_id",
+		`sessionGrantExistsSQL("session", "entry.user_id", true)`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("shared attendance must require a current grant and assigned lead: missing %q", required)
 		}
 	}
 }
@@ -420,11 +431,12 @@ func TestAttendanceReadDoesNotRequireSessionOwnership(t *testing.T) {
 	}
 	if !strings.Contains(source,
 		"lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)") {
-		t.Fatal("attendance POST must continue requiring session ownership and a connected session")
+		t.Fatal("attendance POST must require ownership or an explicit grant and a connected session")
 	}
 	if !strings.Contains(source,
-		"and (not $4::boolean or ws.owner_user_id = $3::uuid)") {
-		t.Fatal("session ownership must be conditional so managers can read attendance for visible cards")
+		"and (not $4::boolean or ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL(\"ws\", \"$3::uuid\", true)+`)") ||
+		!strings.Contains(source, "lockedOwnerUserID != tenantContext.UserID && !leadAssigned") {
+		t.Fatal("GET must preserve visible-card reads; delegated POST needs grant and assignment")
 	}
 	if !strings.Contains(source, "IsoLevel:   pgx.RepeatableRead") ||
 		!strings.Contains(source, "AccessMode: pgx.ReadOnly") {

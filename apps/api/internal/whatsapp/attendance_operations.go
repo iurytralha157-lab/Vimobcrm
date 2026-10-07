@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -73,6 +74,10 @@ func (repo Repository) JoinConversationAttendance(
 
 	scope, err := lockAttendanceScope(ctx, tx, tenantContext, conversationID, input, true, true, true)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			err = repo.revokedConversationErrorIfAssigned(ctx, tenantContext,
+				conversationID, input.SendSessionID, input.ExpectedLeadID, ErrConversationNotFound)
+		}
 		return AttendanceResponse{}, err
 	}
 
@@ -139,23 +144,25 @@ func lockAttendanceScope(
 		bindingLock = " for share of binding"
 	}
 
-	var lockedSessionID string
+	var lockedSessionID, lockedOwnerUserID, lockedStatus string
 	err := tx.QueryRow(ctx, `
-		select ws.id::text
+		select ws.id::text, ws.owner_user_id::text, coalesce(ws.status, '')
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (not $4::boolean or ws.owner_user_id = $3::uuid)
-		  and (not $5::boolean or ws.status = 'connected')
-	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireOwner, requireConnected).Scan(&lockedSessionID)
+		  and (not $4::boolean or ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
+	`+sessionLock, tenantContext.OrganizationID, scope.SessionID, tenantContext.UserID, requireOwner).Scan(&lockedSessionID, &lockedOwnerUserID, &lockedStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrSessionNotFound
 	}
 	if err != nil {
 		return attendanceScope{}, err
+	}
+	if requireConnected && lockedStatus != "connected" {
+		return attendanceScope{}, fmt.Errorf("%w: WhatsApp desconectado. Reconecte ou selecione uma conexao ativa.", ErrInvalidInput)
 	}
 
 	var lockedConversationID string
@@ -177,18 +184,22 @@ func lockAttendanceScope(
 
 	visibilityArgs := append(baseConversationArgs(tenantContext), scope.LeadID)
 	var lockedLeadID string
+	var leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select l.id::text
+		select l.id::text, coalesce(l.assigned_user_id = $2::uuid, false)
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-	`+leadLock, visibilityArgs...).Scan(&lockedLeadID)
+	`+leadLock, visibilityArgs...).Scan(&lockedLeadID, &leadAssigned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return attendanceScope{}, err
+	}
+	if requireOwner && lockedOwnerUserID != tenantContext.UserID && !leadAssigned {
+		return attendanceScope{}, ErrSessionNotFound
 	}
 
 	err = tx.QueryRow(ctx, `

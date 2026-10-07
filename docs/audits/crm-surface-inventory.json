@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "b9746870221ca034c7a969020b4d4b29ba7a73b1ddb24cd68cfd613e7ba010ff",
+  "sourceDigestSha256": "7dffc4f205cee3e36a743db856e8f98e47bce368eb92e9be753b9cc91ef3781f",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1705,6 +1705,17 @@
           "kind": "dialog"
         },
         {
+          "id": "overlay:db39ba93cecae4d239c9",
+          "column": 5,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 97,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "dialog"
+        },
+        {
           "id": "overlay:19e625fc964ae13e571c",
           "column": 5,
           "file": "components/features/leads/CreateLeadDialog.tsx",
@@ -3344,10 +3355,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:8146ca30df507af53251",
+          "id": "overlay:90be5cd88ed9f819ff16",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 610,
+          "line": 647,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3355,10 +3366,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:887122d380d854063253",
+          "id": "overlay:30759309f8ae10be6670",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 640,
+          "line": 677,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3366,10 +3377,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f3e0a160da637ce7edc2",
+          "id": "overlay:fc67f2224a3125c7bf9e",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 703,
+          "line": 740,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -3377,10 +3388,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:1d60afa1f297036d43b2",
+          "id": "overlay:f4c7bd7b0ce9de59ca62",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 737,
+          "line": 774,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -14126,6 +14137,42 @@
           "tag": "Button"
         },
         {
+          "id": "cta:876fce0919ddc9e051c3",
+          "column": 21,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 121,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:d153c0b9f4427b18ccf4",
+          "column": 17,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 157,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:1da693ee67f6119337ed",
+          "column": 11,
+          "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+          "line": 170,
+          "owner": "WhatsAppSessionAccessDialog",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
           "id": "cta:54efa486a1d919ee4b7d",
           "column": 13,
           "file": "components/features/integrations/whatsapp/WhatsAppSessionStatusPanel.tsx",
@@ -23284,10 +23331,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a15012c4dcbf167a8450",
+          "id": "cta:3e39319c816f47b59375",
           "column": 7,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 426,
+          "line": 444,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23296,10 +23343,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:466a0488865f58212646",
+          "id": "cta:a5de3d7c1e9f4ba3f54c",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 453,
+          "line": 471,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23308,10 +23355,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:283732660fd69561206a",
+          "id": "cta:4227c834c2b545e793b3",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 476,
+          "line": 494,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23320,10 +23367,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef7430a61964e9c59ee2",
+          "id": "cta:93a63ac0c1d4333cf2d3",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 487,
+          "line": 505,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23332,10 +23379,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:07dd1a77f7d7977cf3c7",
-          "column": 21,
+          "id": "cta:6518e7415ed6978ec2c1",
+          "column": 23,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 556,
+          "line": 582,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23344,10 +23391,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e53740035a66ebc44976",
+          "id": "cta:074c8b9ca9cd34c9273f",
+          "column": 46,
+          "file": "components/features/settings/WhatsAppTab.tsx",
+          "line": 587,
+          "owner": "WhatsAppTab",
+          "routes": [
+            "/settings/integrations/whatsapp"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:b05f512ddb3919021456",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 569,
+          "line": 600,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23356,10 +23415,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ffb7cbeba1fb5fb9b3ce",
+          "id": "cta:64622288dceb74cfd863",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 573,
+          "line": 604,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23368,10 +23427,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a1c357bc7b1950279417",
+          "id": "cta:1cf58e106c16c74bb1a9",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 586,
+          "line": 617,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23380,10 +23439,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a1fe406a33ca3b1126d5",
+          "id": "cta:fbb89b9d59be3499ff81",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 590,
+          "line": 621,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23392,10 +23451,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a798fa60e4e77d0df57d",
+          "id": "cta:d46458f945957735ea30",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 626,
+          "line": 663,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23404,10 +23463,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7acebe5d6af71dfb0034",
+          "id": "cta:ca1217020ba0e844da04",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 629,
+          "line": 666,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23416,10 +23475,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:08db99d8dbb80c3af56c",
+          "id": "cta:23585a1745f0ab26f3fe",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 683,
+          "line": 720,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -23428,10 +23487,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:54e11be5d7d899e4bd16",
+          "id": "cta:ad06efc22236b3260eaf",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 691,
+          "line": 728,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33876,10 +33935,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:fc3724068ac69977f602",
+          "id": "control:9977f65e4f26a19dbbd2",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 720,
+          "line": 757,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33888,10 +33947,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:7b6b5bbdbcd7868ef1df",
+          "id": "control:ae72ac1bf82d83d10dd3",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 723,
+          "line": 760,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33900,10 +33959,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:3dbff698e5490a6b1a37",
+          "id": "control:493447edd98cc0d3761f",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 749,
+          "line": 786,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -33912,10 +33971,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:3d541ca11a5e079c09f0",
+          "id": "control:596185f5257651fce194",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 750,
+          "line": 787,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings/integrations/whatsapp"
@@ -35389,7 +35448,7 @@
         }
       ]
     },
-    "digestSha256": "534901fd364fd986301b1cf7a75676027d3d2dc59fff6fc30255521b61fec31a"
+    "digestSha256": "336b8134e142368b849bc82540482bc52315febc9d8b003dfd7d95a6aa208a12"
   },
   "routes": [
     {
@@ -39631,6 +39690,15 @@
       "file": "components/features/integrations/MetaSettingsScreen.tsx",
       "routes": [
         "/settings/integrations/meta"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/integrations/whatsapp/WhatsAppSessionAccessDialog.tsx",
+      "routes": [
+        "/settings/integrations/whatsapp"
       ]
     },
     {
@@ -45265,9 +45333,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1413,
+      "ctasAll": 1417,
       "ctasByKind": {
-        "actionButton": 1250,
+        "actionButton": 1254,
         "external": 6,
         "internal": 31,
         "internalDynamic": 78,
@@ -45276,17 +45344,17 @@
       "forms": 50,
       "formsRouteReachable": 50,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1359,
-      "internalCtasRouteReachable": 1323,
-      "overlays": 223,
+      "internalCtas": 1363,
+      "internalCtasRouteReachable": 1327,
+      "overlays": 224,
       "overlaysByKind": {
         "alertDialog": 62,
-        "dialog": 84,
+        "dialog": 85,
         "dropdownMenu": 30,
         "popover": 34,
         "sheet": 13
       },
-      "overlaysRouteReachable": 216,
+      "overlaysRouteReachable": 217,
       "supplementalControls": 284,
       "supplementalControlsByKind": {
         "AlertDialogAction": 59,
@@ -45305,8 +45373,8 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 166,
     "routeReachableFormImplementations": 50,
-    "routeReachableInternalCtaImplementations": 1323,
-    "routeReachableOverlayImplementations": 216,
+    "routeReachableInternalCtaImplementations": 1327,
+    "routeReachableOverlayImplementations": 217,
     "routeReachableSupplementalOverlayAndTabControls": 277
   },
   "diagnostics": {

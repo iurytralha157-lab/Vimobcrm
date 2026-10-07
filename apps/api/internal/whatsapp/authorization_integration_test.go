@@ -327,8 +327,8 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lead-scoped conversations without an owned session: %v", err)
 	}
-	if len(visibleConversations) != 1 || visibleConversations[0].ID != ownConversationID {
-		t.Fatalf("lead-scoped conversations = %#v, want assigned lead on another owner's session", visibleConversations)
+	if len(visibleConversations) != 0 {
+		t.Fatalf("operational inbox without access to the other owner's number = %#v, want no row", visibleConversations)
 	}
 	conversationSnapshot, err := repo.GetConversationSnapshot(ctx, broker, ownConversationID)
 	if err != nil || conversationSnapshot.ID != ownConversationID || pointerValue(conversationSnapshot.LeadID) != ownLeadID {

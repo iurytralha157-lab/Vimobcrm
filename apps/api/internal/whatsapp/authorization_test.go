@@ -360,6 +360,7 @@ func TestReactionTargetAuthorizationIsConversationAndLeadBound(t *testing.T) {
 		"ws.owner_user_id = $2::uuid",
 		"l.organization_id = wc.organization_id",
 		"l.assigned_user_id = $2::uuid",
+		sessionGrantExistsSQL("ws", "$2::uuid", true),
 	}
 	for _, fragment := range required {
 		if !strings.Contains(query, fragment) {

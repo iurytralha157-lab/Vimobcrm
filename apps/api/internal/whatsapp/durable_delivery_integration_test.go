@@ -377,6 +377,20 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_sessions set status = 'disconnected' where id = $1::uuid`, sessionID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repo.JoinConversationAttendance(ctx, tenantContext, conversationID, attendanceInput{
+		ExpectedLeadID: leadID,
+		SendSessionID:  sessionID,
+	}); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "desconectado") {
+		t.Fatalf("disconnected attendance error = %v, want actionable ErrInvalidInput", err)
+	}
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
+		Text:            "must stay unsent while disconnected",
+		SendSessionID:   sessionID,
+		ClientMessageID: "disconnected-owner-send-" + suffix,
+		ExpectedLeadID:  leadID,
+	}); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "desconectado") {
+		t.Fatalf("disconnected owner SendMessage() error = %v, want actionable ErrInvalidInput", err)
+	}
 	if permanent, err := repo.validateWhatsAppOutboxSession(ctx, validationItem); err == nil || permanent {
 		t.Fatalf("disconnected outbox session validation = permanent:%v error:%v", permanent, err)
 	}

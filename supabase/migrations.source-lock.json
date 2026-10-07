@@ -634,6 +634,10 @@
     {
       "file": "20261007164309_separate_whatsapp_attendance_marker_confirmation.sql",
       "sha256": "86beb774114cf477b5d5f8ad139c3f0c1705079b8423984473068dde90eb53fb"
+    },
+    {
+      "file": "20261007211500_enforce_whatsapp_session_sharing_scope.sql",
+      "sha256": "e402e275b7d6d71b5d1fd87bc3caa5811710e62758dbc1601423ec59746b2232"
     }
   ]
 }

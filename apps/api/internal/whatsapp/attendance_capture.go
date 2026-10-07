@@ -99,6 +99,21 @@ func attendanceBindingID(ctx context.Context, tx pgx.Tx, organizationID, convers
 	return bindingID, err
 }
 
+// A recipient using a shared session may join only the lead assigned to them.
+// Recheck the effective grant here too: an old attendance entry is not a
+// permanent right to send or capture after access is revoked.
+func attendanceActorEligibleSQL() string {
+	return `(session.owner_user_id = entry.user_id or (
+		exists (
+		  select 1 from public.leads assigned_lead
+		  where assigned_lead.organization_id = entry.organization_id
+		    and assigned_lead.id = entry.lead_id
+		    and assigned_lead.assigned_user_id = entry.user_id
+		)
+		and ` + sessionGrantExistsSQL("session", "entry.user_id", true) + `
+	))`
+}
+
 // currentAttendanceEntry is used for an authenticated CRM send. The caller
 // holds session -> conversation -> lead locks, so a concurrent card rebind
 // cannot authorize an outbound message for the previous card.
@@ -110,7 +125,7 @@ func currentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, conv
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
+		 and `+attendanceActorEligibleSQL()+`
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor
@@ -156,7 +171,7 @@ func eventAttendanceEntry(
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
+		 and `+attendanceActorEligibleSQL()+`
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor
@@ -224,7 +239,7 @@ func anyCurrentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, c
 		join public.whatsapp_sessions session
 		  on session.organization_id = entry.organization_id
 		 and session.id = entry.session_id
-		 and session.owner_user_id = entry.user_id
+		 and `+attendanceActorEligibleSQL()+`
 		 and coalesce(session.is_active, true) = true
 		 and session.status not in ('disabled', 'deleted')
 		join public.users actor

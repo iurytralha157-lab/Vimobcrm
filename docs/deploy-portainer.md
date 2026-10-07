@@ -110,8 +110,8 @@ EVOLUTION_GO_API_KEY=sua-chave-evolution-go
 EVOLUTION_GO_IMAGE_DIGEST=sha256:<digest-real-de-64-hex>
 EVOLUTION_GO_WEBHOOK_URL=https://seu-projeto.supabase.co/functions/v1/evolution-go-webhook
 EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go
-WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback
-WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=13eea7e8-a74f-4bfb-bb36-024e3d26ccc9
+WHATSAPP_WEBHOOK_PROCESSOR_MODE=native
+WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=*
 WHATSAPP_OUTBOX_WORKER_INTERVAL=1s
 WHATSAPP_OUTBOX_WORKER_BATCH=10
 WHATSAPP_OUTBOX_WORKER_CONCURRENCY=4
@@ -207,9 +207,9 @@ O valor de `DATABASE_MAX_CONNS` e **por replica**. O padrao operacional e 8 cone
 
 `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` controla o processador nativo, as configuracoes avancadas e qualquer reconciliacao do callback que o supervisor faria no provider. Criacao e recriacao usam o ingresso seguro da API; uma sessao existente nao sofre mutacao de configuracao pelo supervisor fora da allowlist. Com a lista vazia e modo `edge`, a Evolution chama a API, a API grava a fila duravel e o worker encaminha o evento para a Edge usando header. Uma lista de UUIDs libera `native_fallback`/`native` apenas para aquelas sessoes; `*` libera o processador nativo para todas.
 
-Antes de publicar uma API que grave `processing_lane`, execute, com cliente em autocommit, `supabase/cutovers/20260909_prepare_whatsapp_webhook_fair_claim_indexes.sql`; em seguida registre/aplique `20260909152547_optimize_whatsapp_webhook_fair_claim.sql` e somente depois troque a imagem da API. A API nova devolve `503` no ingresso e nao inicia o worker enquanto as colunas e os dois indices de claim nao estiverem prontos e validos. Linhas anteriores ao corte permanecem em `backlog`, sem backfill nem exclusao. O worker preserva FIFO estrito em `backlog`; em `live`, um retry ainda fora do prazo nao bloqueia eventos atuais que ja podem rodar. `live` tambem pode ultrapassar ou coexistir com `backlog` da mesma sessao: essa concessao de ordem entre lanes e intencional para uma mensagem atual nao aguardar milhares de eventos historicos. Com a concorrencia padrao 4, dois slots sao exclusivos de `live` e dois de `backlog`; cada slot reivindica somente o item que pode iniciar imediatamente.
+Antes de publicar uma API que grave `processing_lane`, execute, com cliente em autocommit, `supabase/cutovers/20260909_prepare_whatsapp_webhook_fair_claim_indexes.sql`; em seguida registre/aplique `20260909152547_optimize_whatsapp_webhook_fair_claim.sql` e somente depois troque a imagem da API. A API nova devolve `503` no ingresso e nao inicia o worker enquanto as colunas e os dois indices de claim nao estiverem prontos e validos. Linhas anteriores ao corte permanecem em `backlog`, sem backfill nem exclusao. O worker normalmente preserva FIFO por rota em `backlog`; a excecao e a raiz da propria rota da qual uma mensagem `live` do epoch atual depende, para evitar que as duas lanes travem uma a outra. Em `live`, um retry ainda fora do prazo nao bloqueia eventos atuais que ja podem rodar. `live` tambem pode ultrapassar ou coexistir com `backlog` da mesma sessao: essa concessao de ordem entre lanes e intencional para uma mensagem atual nao aguardar milhares de eventos historicos. Com a concorrencia padrao 4, dois slots sao exclusivos de `live` e dois de `backlog`; cada slot reivindica somente o item que pode iniciar imediatamente.
 
-O mesmo release exige o preparo online da outbox: execute `supabase/cutovers/20260909_prepare_whatsapp_outbox_fast_lane_indexes.sql` e depois registre/aplique `20260909164702_optimize_whatsapp_outbox_fast_lane.sql` antes da imagem nova. Texto e midia mantem FIFO estrito dentro de suas lanes; texto espera no maximo dois segundos por uma midia anterior e depois pode prosseguir em paralelo, portanto a ordem visivel entre lanes passa a ser best-effort quando o provider de midia demora. Para a fila de midia, aposente primeiro o `media-worker` Edge, confirme zero jobs em `processing`, execute `supabase/cutovers/20260909_prepare_whatsapp_media_queue.sql` e aplique `20260904225214_harden_whatsapp_media_queue.sql`. Em uma fila populada, execute depois `supabase/cutovers/20260912_scale_whatsapp_media_queue.sql` em autocommit e aplique `20260912152432_scale_whatsapp_media_queue_safely.sql`. Nao rode workers de imagens antiga e nova ao mesmo tempo nesse corte: pause temporariamente os workers mantendo o ingresso duravel ativo, substitua todas as replicas da API pelo mesmo tag SHA e reative os workers somente depois de confirmar que nenhuma replica antiga permanece.
+O preparo inicial da outbox exige os indices de `supabase/cutovers/20260909_prepare_whatsapp_outbox_fast_lane_indexes.sql` e a migration `20260909164702_optimize_whatsapp_outbox_fast_lane.sql`. No release atual, cada lane reivindica mensagens prontas independentemente de mensagens anteriores ainda pendentes, em retry ou em processamento; texto e midia podem ser enviados em paralelo e a ordem em que chegam ao cliente e eventual. Para a fila de midia, aposente primeiro o `media-worker` Edge, confirme zero jobs em `processing`, execute `supabase/cutovers/20260909_prepare_whatsapp_media_queue.sql` e aplique `20260904225214_harden_whatsapp_media_queue.sql`. Em uma fila populada, execute depois `supabase/cutovers/20260912_scale_whatsapp_media_queue.sql` em autocommit e aplique `20260912152432_scale_whatsapp_media_queue_safely.sql`. Estas instrucoes de preparo pertencem ao corte inicial dessas filas; nao reaplique migrations ja registradas durante uma atualizacao comum. Em uma troca de algoritmo da outbox, confirme compatibilidade antes de deixar workers de duas versoes processarem ao mesmo tempo.
 
 `WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS` controla mutacoes de reconexao no provider. Vazio desativa a reconexao automatica e mantem a sincronizacao de status em segundo plano; a manutencao ja existente de webhook/configuracao em sessoes conectadas continua independente. Comece com um UUID canario e monitore o PostgreSQL do Evolution Go; o supervisor aplica espera progressiva e abre o circuito depois de tres falhas. Nao use `*` enquanto a imagem implantada do Evolution Go nao tiver a correcao de ciclo de vida dos pools de reconnect validada.
 
@@ -240,18 +240,42 @@ Antes de ampliar o rollout, confirme que `attempts` nunca passa de 2, que jobs n
 
 Nunca use `latest` no canario. Antes do deploy, registre os dois tags atualmente executados e fixe `VIMOB_API_IMAGE` e `VIMOB_WEB_IMAGE` no mesmo tag imutavel `${github.sha}` publicado pelo workflow. Guarde os tags anteriores como par de rollback; nao misture uma API nova com um web antigo sem uma validacao especifica dessa combinacao.
 
-Para iniciar o canario do processador, mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` e coloque somente o UUID aprovado em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`. O callback permanece na API tanto durante o canario quanto durante o rollback.
+Antes de editar a stack, rode o preflight **no checkout canonico** `D:\Vimob\workspaces\vimob-crm` no PowerShell. Copie o SHA completo aprovado do commit/CI; nao o calcule a partir do checkout para preencher `--expected-sha`. Informe as tres referencias que pretende usar, inclusive a do servico manual de webhook bridge, que deve ser exatamente a mesma da API:
 
-O rollback do processador deve ocorrer nesta ordem:
+```powershell
+$releaseSha = '<SHA completo aprovado de 40 caracteres>'
+$webImage = "ghcr.io/iurytralha157-lab/vimob-crm-web:$releaseSha"
+$apiImage = "ghcr.io/iurytralha157-lab/vimob-crm-api:$releaseSha"
+node scripts/qa/release-image-preflight.mjs `
+  --expected-sha $releaseSha `
+  --web-image $webImage `
+  --api-image $apiImage `
+  --bridge-image $apiImage
+```
 
-1. Mude `WHATSAPP_WEBHOOK_PROCESSOR_MODE` para `edge`, mantendo a imagem que conhece a fila duravel. Eventos continuam chegando ao backend e passam a ser encaminhados para a Edge via header.
-2. Aguarde as filas de inbox e outbox abaixo chegarem a zero. Nao remova a imagem que conhece essas filas enquanto existir trabalho pendente.
-3. Esvazie `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`; isso desativa o processador nativo, mas nao devolve credenciais para a URL.
-4. Confirme que a primeira consulta abaixo nao retorna nenhuma URL com segredo e que as duas filas continuam vazias.
-5. Restaure somente uma imagem que mantenha o callback tokenless da API e rejeite autenticacao por query. Imagens anteriores a esse contrato nao sao rollback seguro.
-6. Valide `/readyz`, envio, recebimento e historico antes de encerrar o rollback.
+O comando le Git local e consulta `origin/main` com `git ls-remote` (somente leitura): exige checkout canonico limpo, HEAD e `main` remota no mesmo SHA aprovado, e os tres tags desse commit. Se a consulta remota falhar ou `main` avancar, o preflight falha; execute-o novamente imediatamente antes de editar a stack. Para usar referencias `tag@sha256:<digest>` no Portainer, acrescente os digests de Web e API (a bridge usa a mesma referencia da API) e `--require-digests`. A checagem nao consulta o CI, o registro de imagens nem o Portainer: depois dela, ainda confirme o CI aprovado e os dois builds publicados, os digests reais no GHCR e a versao de cada replica no Portainer. Ela tambem nao prova que uma funcionalidade de outro branch foi incluida, que o banco esta compativel ou que o fluxo de mensagem funciona.
 
-Durante o canario, mantenha a acao de falha do update do Swarm em `pause`; nao habilite rollback automatico da imagem da API. A stack fixa atualizacao `start-first`, uma replica por vez e monitor de oito minutos, suficiente para o healthcheck atravessar o retry inicial do banco. O `pause` e intencional: a ordem acima e obrigatoria porque a imagem anterior nao deve receber uma instancia que ainda aponta para o webhook novo.
+Para esta atualizacao de compartilhamento, envio e selecao da inbox, preserve explicitamente os valores em uso em producao: `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native` e `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=*`. O canario funcional usa uma sessao de teste nesse modo existente; trocar para `native_fallback`, `edge` ou uma lista de um UUID alteraria o processamento das demais sessoes. O callback permanece na API.
+
+Se for necessario reverter esta atualizacao:
+
+1. Registre as imagens Web, API e webhook bridge anteriores com tag e digest; confira que a API anterior conhece a inbox e a outbox duraveis e o callback sem credenciais na URL. A migration aditiva de compartilhamento permanece no banco.
+2. Antes de trocar a API, verifique se existe outbox `pending`, `retry` ou `processing` de envios com `session_access_grant_id`. A API anterior nao aplica a nova trava de revogacao; se houver trabalho compartilhado pendente, pare a reversao da API e corrija para frente ou conclua a situacao com um plano especifico. Nao reenvie nem descarte mensagens para forcar a reversao.
+3. Troque Web, API e webhook bridge pelo mesmo par de imagens anterior compativel. Preserve `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native` e `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=*`; nao use `edge` como fallback generico.
+4. Confirme a imagem em cada replica, `/readyz`, envio, recebimento e historico com a sessao de teste. Se o banco ou a fila nao estiverem compativeis com a API anterior, pare e prepare uma correcao na versao nova em vez de forcar o rollback.
+
+Durante a atualizacao, mantenha a acao de falha do Swarm em `pause` e verifique as duas replicas da API antes de liberar novos compartilhamentos. A stack usa `start-first`, uma replica por vez, com monitor de oito minutos; por alguns instantes podem existir versoes diferentes da API, por isso a migration deve entrar primeiro e nenhuma concessao nova deve ser feita antes de ambas estarem na mesma imagem.
+
+Consulta de leitura para a trava do passo 2 (zero e necessario, mas nao prova sozinho que a reversao e segura):
+
+```sql
+select status, count(*) as shared_outbox_items
+from public.whatsapp_outbox
+where status in ('pending', 'retry', 'processing')
+  and nullif(payload->>'session_access_grant_id', '') is not null
+group by status
+order by status;
+```
 
 ```sql
 select id, instance_name, status
