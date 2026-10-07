@@ -6,6 +6,7 @@ import {
 	getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
   getWhatsAppSendSessionId,
+	shouldOfferOwnWhatsAppStart,
 	preserveWhatsAppConversationCardSnapshot,
 	updateWhatsAppConversationDraft,
 } from './whatsapp-message-input'
@@ -163,6 +164,27 @@ test('historical conversation without a trusted session cannot fall back to anot
   )
 
   assert.equal(result, undefined)
+})
+
+test('conversa antiga sem sessao mostra caminho pelo numero proprio sem reutilizar canal legado', () => {
+  const historical = {
+    id: 'conversation-old', lead_id: 'lead-1', session_id: null,
+    contact_phone: '5511999999999', is_group: false,
+  }
+  const ownSession = {
+    id: 'session-own', owner_user_id: 'user-1', status: 'connected', can_send: true,
+    provider: 'evolution_go',
+  }
+  assert.equal(getWhatsAppSendSessionId(historical, 'session-own', [ownSession], 'user-1'), undefined)
+  assert.equal(getWhatsAppMessageInputState(historical, null, [ownSession], 'user-1').disabled, true)
+  assert.equal(shouldOfferOwnWhatsAppStart(historical, [ownSession], 'user-1'), true)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, session_id: undefined }, [ownSession], 'user-1'), true)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, is_group: true }, [ownSession], 'user-1'), false)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, lead_id: null }, [ownSession], 'user-1'), false)
+  assert.equal(getWhatsAppSendSessionId(
+    { lead_id: 'lead-1', session_id: null, contact_phone: historical.contact_phone },
+    'session-own', [ownSession], 'user-1',
+  ), 'session-own')
 })
 
 test('conversation from a session absent from the authorized list is not sendable', () => {

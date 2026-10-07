@@ -195,6 +195,17 @@ export function getWhatsAppSendSessionId(
   return undefined;
 }
 
+export function shouldOfferOwnWhatsAppStart(
+  conversation: MessageInputConversation | null | undefined,
+  sessions: MessageInputSession[] | null | undefined,
+  currentUserId?: string | null,
+) {
+  if (!conversation?.id || !sessions || conversation.is_group) return false;
+  if (!conversation.lead_id && !conversation.lead?.id) return false;
+  if (!conversation.session_id) return true;
+  return getWhatsAppSendSessionId(conversation, null, sessions, currentUserId) !== conversation.session_id;
+}
+
 export function getWhatsAppMessageInputState(
   conversation?: MessageInputConversation | null,
   selectedSessionId?: string | null,

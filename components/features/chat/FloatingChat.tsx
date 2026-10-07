@@ -65,7 +65,7 @@ import {
   getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
-  getWhatsAppSendSessionId,
+  shouldOfferOwnWhatsAppStart,
   preserveWhatsAppConversationCardSnapshot,
   updateWhatsAppConversationDraft,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
@@ -1214,12 +1214,7 @@ export function FloatingChat() {
     });
   };
   const connectedSessions = sessions?.filter(s => s.status === "connected" && s.owner_user_id === currentUserId && s.can_send !== false) || [];
-  const activeSessionUnavailable = Boolean(
-    activeConversation?.id
-    && activeConversation.session_id
-    && sessions
-    && getWhatsAppSendSessionId(activeConversation, null, sessions, currentUserId) !== activeConversation.session_id,
-  );
+  const activeSessionUnavailable = shouldOfferOwnWhatsAppStart(activeConversation, sessions, currentUserId);
   const activeConversationFilterCount = [
     selectedSessionId !== "all",
     hideGroups,
@@ -1662,7 +1657,7 @@ export function FloatingChat() {
               Iniciar pelo meu WhatsApp
             </Button>
           ) : (
-            <p>Conecte seu WhatsApp para iniciar uma conversa com este lead.</p>
+            <p>{ownStartPhone ? "Conecte seu WhatsApp para iniciar uma conversa com este lead." : "Cadastre um telefone válido para iniciar uma conversa com este lead."}</p>
           )}
         </div>
       )}
