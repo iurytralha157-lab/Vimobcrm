@@ -15,7 +15,10 @@ func TestEvolutionWebhookSchemaCompatibilityRequiresPreB1LiveLaneContract(t *tes
 		"to_regclass('public.whatsapp_webhook_inbox') is not null",
 		"attname = 'processing_lane'",
 		"attname = 'provider_occurred_at'",
-		"private.capture_whatsapp_webhook_routing_snapshot(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid)",
+		"attname = 'processing_epoch'",
+		"to_regclass('private.whatsapp_webhook_session_cutovers') is not null",
+		"to_regclass('private.whatsapp_webhook_ignored_events') is not null",
+		"private.capture_whatsapp_webhook_routing_snapshot_v2(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid,integer)",
 		"to_regclass('public.whatsapp_webhook_routing_outcomes') is not null",
 		"public.resolve_whatsapp_webhook_inherited_routing_target(uuid,uuid,text)",
 		"private.cleanup_whatsapp_webhook_routing_provenance(integer,timestamp with time zone)",
@@ -37,11 +40,13 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
-		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts)",
+		"processingepoch, err := currentevolutionwebhookprocessingepoch(ctx, tx, session)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch)",
+		"processing_epoch",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",
 		"clock_timestamp()",
-		"payload #> '{__vimob_ingress}' = $5::jsonb #> '{__vimob_ingress}'",
+		"(payload #> '{__vimob_ingress}') - 'epoch_capable' = ($5::jsonb #> '{__vimob_ingress}') - 'epoch_capable'",
 		"if err == nil && !exactroutingreplay",
 		"event key routing provenance conflict",
 		"if receipt.duplicate",
@@ -76,7 +81,8 @@ func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *
 	for _, required := range []string{
 		"routingkey := evolutionwebhookmessagebindingroutingkey(message)",
 		"bindingeligible := !message.fromme && !message.isreaction && !message.isdeletion && !message.unsupportedmessage",
-		"select private.capture_whatsapp_webhook_routing_snapshot(",
+		"select private.capture_whatsapp_webhook_routing_snapshot_v2(",
+		"snapshot[\"processing_epoch\"]",
 		"message.providermessageid",
 		"result[index].eventkey",
 		"result[index].processinglane",
@@ -98,7 +104,7 @@ func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *
 	}
 	resolution := strings.Index(normalized, "resolvenativectwaintakedestination(")
 	managedLock := strings.Index(normalized, "locknativemanagedinboundruleforsnapshot(")
-	capture := strings.Index(normalized, "select private.capture_whatsapp_webhook_routing_snapshot(")
+	capture := strings.Index(normalized, "select private.capture_whatsapp_webhook_routing_snapshot_v2(")
 	if resolution < 0 || capture < 0 || resolution >= capture {
 		t.Fatalf("canonical CTWA intake must be frozen before the immutable routing snapshot\n%s", source)
 	}

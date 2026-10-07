@@ -283,12 +283,12 @@ func TestAttendanceResponseExposesOnlyPublicParticipantFields(t *testing.T) {
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"id", "userId", "userName", "sessionId", "joinedAt", "entrySource"} {
+	for _, key := range []string{"id", "userId", "userName", "sessionId", "joinedAt", "entrySource", "markerAt", "markerKind"} {
 		if _, ok := fields[key]; !ok {
 			t.Fatalf("public attendance entry missing %q: %s", key, encoded)
 		}
 	}
-	if len(fields) != 6 {
+	if len(fields) != 8 {
 		t.Fatalf("attendance entry exposed internal identifiers: %s", encoded)
 	}
 }
@@ -386,13 +386,24 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 		"case when is_called then last_value::bigint else 0::bigint end",
 		"clock_timestamp()",
 		"on conflict (organization_id, conversation_id, binding_id, session_id, user_id)",
-		"'whatsapp_attendance_joined'",
-		"'attendance_entry_id'",
-		"'ingress_sequence_cutoff'",
+		"event.event_type = 'whatsapp_attendance_joined'",
+		"marker.event_at",
+		"response.Entries = append(response.Entries, entry)",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("attendance repository is missing contract token %q", required)
 		}
+	}
+	joinStart := strings.Index(source, "func (repo Repository) JoinConversationAttendance(")
+	joinEnd := -1
+	if joinStart >= 0 {
+		if relativeEnd := strings.Index(source[joinStart:], "func lockAttendanceScope("); relativeEnd >= 0 {
+			joinEnd = joinStart + relativeEnd
+		}
+	}
+	if joinStart < 0 || joinEnd <= joinStart ||
+		strings.Contains(source[joinStart:joinEnd], "insert into public.lead_timeline_events") {
+		t.Fatal("joining must authorize capture without creating a visible timeline marker")
 	}
 }
 

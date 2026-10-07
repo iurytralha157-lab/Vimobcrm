@@ -10,6 +10,7 @@ import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorde
 import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
+import { getWhatsAppSendFailureStatus } from '@/lib/whatsapp-query-cache';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
@@ -31,6 +32,7 @@ import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import {
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from '@/lib/whatsapp-message-input';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
@@ -888,7 +890,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const lastThreadItemIdRef = useRef<string | null>(null);
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, profile, user } = useAuth();
+  const currentUserId = profile?.id || user?.id || null;
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasWhatsAppModule = hasModule('whatsapp');
@@ -916,9 +919,21 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     reconcileOnSubscribe: !readOnly,
   });
 
+  const linkedConversations = useMemo(
+    () => conversations.filter((item) => item.lead_id === leadId || item.lead?.id === leadId),
+    [conversations, leadId],
+  );
+  const displayConversation = linkedConversations[0] || null;
   const conversation = useMemo<WhatsAppConversation | null>(() => {
-    return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
-  }, [conversations, leadId]);
+    const linked = linkedConversations;
+    const sendable = linked.filter((item) => (
+      Boolean(item.session_id)
+      && getWhatsAppSendSessionId(item, null, sessions, currentUserId) === item.session_id
+    ));
+    return sendable.find((item) => sessions.some((session) => (
+      session.id === item.session_id && session.owner_user_id === currentUserId
+    ))) || sendable[0] || null;
+  }, [currentUserId, linkedConversations, sessions]);
 
   const {
     data: messages = [],
@@ -964,8 +979,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     [conversation, hasLeadPhone, leadId, leadPhone],
   );
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
-    [messageInputConversation, sessions],
+    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions, currentUserId),
+    [messageInputConversation, sessions, currentUserId],
   );
   const canSendMessage = Boolean(
     canOperateWhatsApp &&
@@ -1047,7 +1062,17 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, readOnly, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
-    const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
+    const renderedMessages = visibleMessages.filter((message) => !isInternalNotificationMessage(message));
+    const renderedMessageIds = new Set(renderedMessages.map((message) => message.id));
+    const visibleEvents = removeRedundantEvents(history.filter((event) => {
+      if (!shouldShowEvent(event)) return false;
+      if (!['whatsapp_message_queued', 'whatsapp_message_sent', 'whatsapp_message_failed'].includes(event.type)) {
+        return true;
+      }
+      const messageRowId = metadataText(event.metadata?.message_row_id);
+      // Keep the timeline fallback when the actual message is not loaded.
+      return !messageRowId || !renderedMessageIds.has(messageRowId);
+    }));
     const hasLeadCreated = visibleEvents.some(
       (e) => e.type === 'lead_created' || /foi criado/i.test(e.label || '')
     );
@@ -1076,8 +1101,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       });
     }
 
-    const messageItems: ThreadItem[] = visibleMessages
-      .filter((message) => !isInternalNotificationMessage(message))
+    const messageItems: ThreadItem[] = renderedMessages
       .map((message) => ({
         id: `message-${message.id}`,
         kind: 'message',
@@ -1169,8 +1193,13 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         text: content,
         sendSessionId: whatsappMessageInputState.sendSessionId,
       });
-    } catch {
-      setText(content);
+    } catch (error) {
+      // A timeout after enqueue does not prove the provider rejected the
+      // message. Keep its pending history row instead of inviting a duplicate
+      // send from a restored draft.
+      if (getWhatsAppSendFailureStatus(error) !== 'confirming') {
+        setText(content);
+      }
     }
   };
 
@@ -1244,7 +1273,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   };
 
   const handleReactToMessage = async (message: WhatsAppMessage, emoji: string) => {
-    const reactionSessionId = message.session_id || conversation?.session_id;
+    if (!conversation || conversation.id !== message.conversation_id) return;
+    const reactionSessionId = message.session_id || conversation.session_id;
     if (!reactionSessionId) return;
     const joined = await attendanceGate.ensureJoined({
       target: {
@@ -1389,8 +1419,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       fromMe={item.message.from_me}
                       status={item.message.status || ''}
                       sentAt={item.message.sent_at}
+                      deliveryErrorCode={item.message.delivery_error_code ?? null}
+                      deliveryFailedAt={item.message.delivery_failed_at ?? null}
                       senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
-                      isGroup={conversation?.is_group ?? false}
+                      isGroup={displayConversation?.is_group ?? false}
                       onRetryMedia={!readOnly
                         ? () => retryMediaDownload(item.message.id)
                         : undefined}
@@ -1398,8 +1430,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       leadId={leadId}
                       leadName={leadName}
                       contactAvatarUrl={leadAvatarUrl}
-                      conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
-                      conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
+                      conversationRemoteJid={item.message.remote_jid ?? displayConversation?.remote_jid ?? null}
+                      conversationSessionId={item.message.session_id ?? displayConversation?.session_id ?? null}
                       compact
                       plainHistory={readOnly}
                       reactionPickerPosition="outside"
@@ -1408,7 +1440,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                         : undefined)
                         || reactionsByMessageId.get(item.message.id)
                         || []}
-                      onReact={!readOnly && canOperateWhatsApp && item.message.session_id
+                      onReact={!readOnly && canOperateWhatsApp && conversation?.id === item.message.conversation_id && item.message.session_id
                         ? (emoji) => handleReactToMessage(item.message as WhatsAppMessage, emoji)
                         : undefined}
                       isReacting={reactToMessage.isPending}

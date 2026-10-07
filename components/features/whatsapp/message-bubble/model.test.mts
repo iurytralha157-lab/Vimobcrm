@@ -4,6 +4,7 @@ import test from "node:test";
 const modelModulePath = "./model.ts";
 const {
   cleanMessageMimeType,
+  formatDeliveryFailureTime,
   formatMessageAudioDuration,
   formatMessageFileSize,
   formatMessageTime,
@@ -56,6 +57,8 @@ test("preserva texto defensivo, horários, duração e tamanho exibidos", () => 
   assert.equal(toSafeMessageText(circular), "[conteúdo indisponível]");
   assert.equal(formatMessageTime("data inválida"), "");
   assert.equal(formatMessageTime("2026-09-06T12:34:00"), "12:34");
+  assert.equal(formatDeliveryFailureTime("2026-09-06T12:34:00"), "06/09 às 12:34");
+  assert.equal(formatDeliveryFailureTime("data inválida"), "");
   assert.equal(formatMessageAudioDuration(Number.NaN), "0:00");
   assert.equal(formatMessageAudioDuration(65.9), "1:05");
   assert.equal(formatMessageFileSize(512), "512 B");

@@ -21,6 +21,8 @@ export type DisplayMessage = Pick<
     Pick<
       WhatsAppMessage,
       | "media_error"
+      | "delivery_error_code"
+      | "delivery_failed_at"
       | "media_storage_path"
       | "media_status"
       | "message_id"

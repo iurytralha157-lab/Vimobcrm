@@ -50,7 +50,6 @@ func (repo Repository) Reschedule(ctx context.Context, tenantContext tenant.Cont
 	if normalizeScheduleStatus(current.Status) != "scheduled" {
 		return RescheduleResult{}, fmt.Errorf("%w: only open events can be rescheduled", ErrInvalidInput)
 	}
-
 	var newEventID string
 	err = tx.QueryRow(ctx, `
 		insert into public.schedule_events (
@@ -191,7 +190,7 @@ func (repo Repository) Reschedule(ctx context.Context, tenantContext tenant.Cont
 	); err != nil {
 		return RescheduleResult{}, err
 	}
-	if err := repo.enqueueRescheduleGoogleSyncJobs(
+	googleJobsEnqueued, err := repo.enqueueRescheduleGoogleSyncJobs(
 		ctx,
 		tx,
 		tenantContext.OrganizationID,
@@ -199,12 +198,16 @@ func (repo Repository) Reschedule(ctx context.Context, tenantContext tenant.Cont
 		tenantContext.UserID,
 		eventID,
 		newEventID,
-	); err != nil {
+	)
+	if err != nil {
 		return RescheduleResult{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return RescheduleResult{}, err
+	}
+	if googleJobsEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 	return repo.loadRescheduleResult(ctx, tenantContext, eventID, newEventID, false)
 }
@@ -217,7 +220,7 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 	actorID string,
 	previousEventID string,
 	newEventID string,
-) error {
+) (bool, error) {
 	var hasConnection bool
 	if err := tx.QueryRow(ctx, `
 		select exists (
@@ -228,10 +231,10 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 			  and connection.disconnected_at is null
 		)
 	`, organizationID, ownerID).Scan(&hasConnection); err != nil {
-		return err
+		return false, err
 	}
 	if !hasConnection {
-		return nil
+		return false, nil
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -248,6 +251,15 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 			'push_delete',
 			jsonb_build_object(
 				'event_id', $2::text,
+				'owner_user_id', $5::text,
+				'connection_id', (
+					select connection.id::text
+					from public.google_calendar_tokens connection
+					where connection.organization_id = $1::uuid
+					  and connection.user_id = $5::uuid
+					  and connection.disconnected_at is null
+					limit 1
+				),
 				'link_ids', coalesce((
 					select jsonb_agg(link.id::text order by link.id::text)
 					from public.google_calendar_event_links link
@@ -262,10 +274,10 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 			$1::uuid,
 			$3::uuid,
 			'push_upsert',
-			'{}'::jsonb,
+			jsonb_build_object('event_id', $3::text, 'owner_user_id', $5::text),
 			$4::uuid
-	`, organizationID, previousEventID, newEventID, actorID); err != nil {
-		return err
+	`, organizationID, previousEventID, newEventID, actorID, ownerID); err != nil {
+		return false, err
 	}
 
 	_, err := tx.Exec(ctx, `
@@ -276,7 +288,7 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 		where organization_id = $1::uuid
 		  and id = any(array[$2::uuid, $3::uuid])
 	`, organizationID, previousEventID, newEventID)
-	return err
+	return err == nil, err
 }
 
 func findReplacementEventID(ctx context.Context, tx pgx.Tx, organizationID string, previousEventID string) (string, bool, error) {

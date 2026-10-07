@@ -4,23 +4,39 @@ import {
   consumeOAuthState,
   createOAuthState,
   disconnectConnection,
-  ensureGoogleWatch,
   errorMessage,
   exchangeOAuthCode,
   fetchGoogleUserInfo,
   getConnectionById,
   getConnectionForUser,
+  getGoogleScheduleCapability,
   getGoogleOAuthConfig,
   getUserProfile,
+  GoogleCalendarDisconnectPendingError,
   handleOptions,
   htmlResponse,
   jsonResponse,
   redirectResponse,
-  stopGoogleWatches,
-  supabase,
-  syncConnectionFromGoogle,
   upsertConnectionFromOAuth,
 } from "../_shared/google-calendar.ts";
+import {
+  resolveGoogleCalendarConnectGate,
+  type GoogleCalendarConnectGate,
+} from "../_shared/google-calendar-pilot.ts";
+
+function connectGate(userId: string): GoogleCalendarConnectGate {
+  return resolveGoogleCalendarConnectGate(
+    userId,
+    Deno.env.get("GOOGLE_CALENDAR_CONNECT_MODE"),
+    Deno.env.get("GOOGLE_CALENDAR_PILOT_USER_IDS"),
+  );
+}
+
+function connectGateMessage(gate: Exclude<GoogleCalendarConnectGate, { allowed: true }>) {
+  return gate.restriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "A conexao com o Google Agenda esta limitada aos usuarios do teste piloto."
+    : "Novas conexoes com o Google Agenda estao desativadas temporariamente.";
+}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -41,16 +57,6 @@ function callbackError(message: string, returnUrl?: string | null) {
     `<html><body><h1>Google Calendar</h1><p>${escapeHtml(message)}</p></body></html>`,
     400,
   );
-}
-
-async function recordConnectionError(connectionId: string, error: unknown) {
-  const message = errorMessage(error).slice(0, 2_000);
-  const { error: updateError } = await supabase
-    .from("google_calendar_tokens")
-    .update({ sync_status: "error", last_error: message })
-    .eq("id", connectionId);
-  if (updateError) console.error("google connection error persistence failed", updateError);
-  return message;
 }
 
 Deno.serve(async (req) => {
@@ -75,28 +81,35 @@ Deno.serve(async (req) => {
 
       if (!code) return callbackError("Codigo OAuth ausente.", oauthState.return_url);
 
+      // Membership and Agenda permissions can change while Google shows the
+      // consent screen. Do not persist a token for a revoked tenant context.
+      try {
+        await getUserProfile(oauthState.user_id, oauthState.organization_id);
+        const capability = await getGoogleScheduleCapability(
+          oauthState.user_id,
+          oauthState.organization_id,
+        );
+        if (!capability.allowed) {
+          return callbackError("Acesso a Agenda revogado. Inicie a conexao novamente.", oauthState.return_url);
+        }
+        const gate = connectGate(oauthState.user_id);
+        if (!gate.allowed) {
+          return callbackError(connectGateMessage(gate), oauthState.return_url);
+        }
+      } catch {
+        return callbackError("Acesso a Agenda revogado. Inicie a conexao novamente.", oauthState.return_url);
+      }
+
       const tokenResponse = await exchangeOAuthCode(code);
       const userInfo = await fetchGoogleUserInfo(tokenResponse.access_token);
-      const connection = await upsertConnectionFromOAuth({ state: oauthState, tokenResponse, userInfo });
-      let setupWarning: string | null = null;
-
-      await syncConnectionFromGoogle(connection, true).catch(async (syncError) => {
-        console.error("google initial sync failed", syncError);
-        setupWarning = await recordConnectionError(connection.id, syncError);
-      });
-
-      await ensureGoogleWatch(connection).catch(async (watchError) => {
-        console.error("google watch creation failed", watchError);
-        setupWarning = await recordConnectionError(connection.id, watchError);
-      });
+      // Connecting Google only enables Vimob -> Google writes. Never read or
+      // subscribe to the user's existing Google events during OAuth callback.
+      await upsertConnectionFromOAuth({ state: oauthState, tokenResponse, userInfo });
 
       const destination = oauthState.return_url || getGoogleOAuthConfig().postConnectRedirectUrl;
       if (destination) {
         const redirectUrl = new URL(destination);
         redirectUrl.searchParams.set("google_calendar_connected", "1");
-        if (setupWarning) {
-          redirectUrl.searchParams.set("google_calendar_warning", setupWarning);
-        }
         return redirectResponse(redirectUrl.toString());
       }
 
@@ -113,6 +126,14 @@ Deno.serve(async (req) => {
     const profile = await getUserProfile(user.id, body.organization_id || body.organizationId || null);
 
     if (action === "get_auth_url") {
+      const capability = await getGoogleScheduleCapability(profile.id, profile.organization_id);
+      if (!capability.allowed) {
+        return jsonResponse({ success: false, error: capability.reason, code: capability.reason }, capability.status);
+      }
+      const gate = connectGate(profile.id);
+      if (!gate.allowed) {
+        return jsonResponse({ success: false, error: connectGateMessage(gate), code: gate.restriction }, 403);
+      }
       const state = await createOAuthState({
         userId: profile.id,
         organizationId: profile.organization_id,
@@ -123,9 +144,16 @@ Deno.serve(async (req) => {
     }
 
     if (action === "status") {
+      const capability = await getGoogleScheduleCapability(profile.id, profile.organization_id);
+      const gate = connectGate(profile.id);
       const connection = await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
       return jsonResponse({
         success: true,
+        can_connect: capability.allowed && gate.allowed,
+        can_use_schedule: capability.allowed,
+        connect_restriction: !capability.allowed
+          ? "SCHEDULE_ACCESS_REQUIRED"
+          : gate.restriction,
         connection: connection ? {
           id: connection.id,
           organization_id: connection.organization_id,
@@ -164,70 +192,28 @@ Deno.serve(async (req) => {
     }
 
     if (action === "set_sync_enabled") {
-      const connection = body.connection_id
-        ? await getConnectionById(body.connection_id)
-        : await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
-      if (
-        !connection
-        || connection.user_id !== profile.id
-        || connection.organization_id !== profile.organization_id
-      ) {
-        return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
-      }
-
-      const enabled = body.sync_enabled !== false;
-      const { error } = await supabase
-        .from("google_calendar_tokens")
-        .update({
-          sync_enabled: enabled,
-          sync_status: enabled ? "connected" : "idle",
-          last_error: null,
-        })
-        .eq("id", connection.id);
-      if (error) throw error;
-
-      if (enabled) {
-        try {
-          await ensureGoogleWatch({ ...connection, sync_enabled: true });
-        } catch (watchError) {
-          await recordConnectionError(connection.id, watchError);
-          throw watchError;
-        }
-      } else {
-        await stopGoogleWatches({ ...connection, sync_enabled: false });
-      }
-
-      return jsonResponse({ success: true, sync_enabled: enabled });
+      return jsonResponse({
+        success: false,
+        error: "O envio ao Google funciona enquanto a conta estiver conectada. Desconecte a conta para interromper novos envios.",
+        code: "ONE_WAY_SYNC_CONTROL_UNSUPPORTED",
+      }, 410);
     }
 
     if (action === "sync_now") {
-      const connection = body.connection_id
-        ? await getConnectionById(body.connection_id)
-        : await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
-      if (
-        !connection
-        || connection.user_id !== profile.id
-        || connection.organization_id !== profile.organization_id
-      ) {
-        return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
-      }
-
-      const result = await syncConnectionFromGoogle(connection, body.full === true);
-      if (connection.sync_enabled) {
-        try {
-          await ensureGoogleWatch(connection);
-        } catch (watchError) {
-          await recordConnectionError(connection.id, watchError);
-          throw watchError;
-        }
-      }
-      return jsonResponse({ success: true, result });
+      return jsonResponse({
+        success: false,
+        error: "Importacao de eventos do Google para o Vimob nao disponivel.",
+        code: "INBOUND_SYNC_DISABLED",
+      }, 410);
     }
 
     return jsonResponse({ success: false, error: "Acao invalida." }, 400);
   } catch (error) {
     console.error("google-calendar-oauth error", error);
     const message = errorMessage(error);
+    if (error instanceof GoogleCalendarDisconnectPendingError) {
+      return jsonResponse({ success: false, error: message, code: "GOOGLE_CALENDAR_SYNC_PENDING" }, 409);
+    }
     return jsonResponse({ success: false, error: message }, message === "Unauthorized" ? 401 : 500);
   }
 });

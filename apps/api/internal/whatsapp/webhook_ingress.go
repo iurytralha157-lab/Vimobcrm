@@ -42,8 +42,43 @@ const evolutionWebhookSchemaCompatibilityQuery = `
 			  and attnum > 0
 			  and not attisdropped
 		)
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and attname = 'processing_epoch'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_routing_snapshots')
+			  and attname = 'processing_epoch'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and exists (
+			select 1
+			from pg_catalog.pg_trigger
+			where tgrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and tgname = 'guard_whatsapp_webhook_inbox_epoch_before_write'
+			  and tgenabled in ('O', 'A')
+		)
+		and exists (
+			select 1
+			from pg_catalog.pg_trigger
+			where tgrelid = to_regclass('public.whatsapp_webhook_routing_snapshots')
+			  and tgname = 'guard_whatsapp_webhook_routing_snapshot_epoch_before_insert'
+			  and tgenabled in ('O', 'A')
+		)
+		and to_regclass('private.whatsapp_webhook_session_cutovers') is not null
+		and to_regclass('private.whatsapp_webhook_ignored_events') is not null
 		and to_regprocedure(
-			'private.capture_whatsapp_webhook_routing_snapshot(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid)'
+			'private.activate_whatsapp_webhook_session_cutover(uuid,uuid)'
+		) is not null
+		and to_regprocedure(
+			'private.capture_whatsapp_webhook_routing_snapshot_v2(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid,integer)'
 		) is not null
 		and to_regclass('public.whatsapp_webhook_routing_outcomes') is not null
 		and to_regprocedure(
@@ -296,11 +331,70 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	// mixed batch, persist only its direct members so a lead is not discarded
 	// together with group traffic.
 	envelope.Payload = filteredItem.Payload
+	if reason := nativeEvolutionTechnicalIgnoreReason(pendingEvolutionWebhook{
+		EventType: envelope.EventType,
+		Payload:   envelope.Payload,
+	}); reason != "" {
+		if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		var inserted bool
+		err := repo.db.Pool().QueryRow(ctx, `
+			with recorded as (
+			  insert into private.whatsapp_webhook_ignored_events (
+			    organization_id, session_id, event_key, reason
+			  ) values ($1::uuid, $2::uuid, $3, $4)
+			  on conflict (organization_id, session_id, event_key) do nothing
+			  returning 1
+			)
+			select exists (select 1 from recorded)
+		`, session.OrganizationID, session.ID, eventKey, reason).Scan(&inserted)
+		if err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("record ignored Evolution webhook: %w", err)
+		}
+		return evolutionWebhookReceipt{
+			ID:        eventKey,
+			SessionID: session.ID,
+			EventType: envelope.EventType,
+			Status:    "processed",
+			Duplicate: !inserted,
+			Inline:    true,
+		}, nil
+	}
 	inlineState, err := evolutionWebhookInlineSessionState(envelope)
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
 	if inlineState.Handled {
+		if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		// An old callback may be redelivered after the session cutover. If its
+		// original event key already exists in the inbox, acknowledge the replay
+		// without applying a stale connection state to the live session. This
+		// also closes the race where cutover activates just after the lookup.
+		var retainedID, retainedStatus string
+		err := repo.db.Pool().QueryRow(ctx, `
+			select inbox.id::text, inbox.status
+			from public.whatsapp_webhook_inbox inbox
+			where inbox.organization_id = $1::uuid
+			  and inbox.session_id = $2::uuid
+			  and inbox.event_key = $3
+			limit 1
+		`, session.OrganizationID, session.ID, eventKey).Scan(&retainedID, &retainedStatus)
+		if err == nil {
+			return evolutionWebhookReceipt{
+				ID:        retainedID,
+				SessionID: session.ID,
+				EventType: envelope.EventType,
+				Status:    retainedStatus,
+				Duplicate: true,
+				Inline:    true,
+			}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return evolutionWebhookReceipt{}, fmt.Errorf("check retained Evolution webhook state replay: %w", err)
+		}
 		if err := repo.applyEvolutionWebhookSessionState(ctx, session, inlineState); err != nil {
 			return evolutionWebhookReceipt{}, err
 		}
@@ -329,7 +423,11 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts)
+	processingEpoch, err := currentEvolutionWebhookProcessingEpoch(ctx, tx, session)
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch)
 	if err != nil {
 		return evolutionWebhookReceipt{}, fmt.Errorf("capture Evolution webhook routing provenance: %w", err)
 	}
@@ -355,7 +453,8 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			status,
 			next_attempt_at,
 			created_at,
-			expires_at
+			expires_at,
+			processing_epoch
 		)
 		values (
 			$1::uuid,
@@ -370,11 +469,12 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			'pending',
 			now(),
 			clock_timestamp(),
-			now() + interval '30 days'
+			now() + interval '30 days',
+			$9::integer
 		)
 		on conflict (event_key) do nothing
 		returning id::text, session_id::text, event_type, status, created_at
-	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), first.EventKey, first.EventType, string(first.Payload), first.ProcessingLane, first.ProviderOccurredAt).Scan(
+	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), first.EventKey, first.EventType, string(first.Payload), first.ProcessingLane, first.ProviderOccurredAt, first.ProcessingEpoch).Scan(
 		&receipt.ID,
 		&receipt.SessionID,
 		&receipt.EventType,
@@ -394,8 +494,8 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			  provider = 'evolution_go'
 			    and event_type = $4
 			    and coalesce(
-			      payload #> '{__vimob_ingress}' =
-			        $5::jsonb #> '{__vimob_ingress}',
+			      (payload #> '{__vimob_ingress}') - 'epoch_capable' =
+			        ($5::jsonb #> '{__vimob_ingress}') - 'epoch_capable',
 			      false
 			    ) as exact_routing_replay
 			from public.whatsapp_webhook_inbox
@@ -449,7 +549,8 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				status,
 				next_attempt_at,
 				created_at,
-				expires_at
+				expires_at,
+				processing_epoch
 			)
 			  select
 				$1::uuid,
@@ -464,12 +565,14 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				'pending',
 				now(),
 				$5::timestamptz + (part.ordinal::double precision * interval '1 microsecond'),
-				now() + interval '30 days'
+				now() + interval '30 days',
+				part.processing_epoch
 			  from jsonb_to_recordset($4::jsonb) as part (
 				event_key text,
 				event_type text,
 				payload jsonb,
 				processing_lane text,
+				processing_epoch integer,
 				provider_occurred_at timestamptz,
 				ordinal integer
 			)
@@ -494,6 +597,45 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	return receipt, nil
 }
 
+// The session lock serializes ingress with an explicit cutover. Read the epoch
+// in a separate statement after taking the lock so a concurrent activation
+// cannot leave this transaction with a stale cutover-table snapshot.
+func currentEvolutionWebhookProcessingEpoch(
+	ctx context.Context,
+	tx pgx.Tx,
+	session evolutionWebhookSession,
+) (int, error) {
+	var locked bool
+	err := tx.QueryRow(ctx, `
+		select true
+		from public.whatsapp_sessions
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and provider = 'evolution_go'
+		  and coalesce(is_active, true) = true
+		  and lower(btrim(coalesce(status, ''))) not in ('deleted', 'disabled')
+		for key share
+	`, session.OrganizationID, session.ID).Scan(&locked)
+	if err != nil {
+		return 0, fmt.Errorf("lock Evolution webhook session for ingress: %w", err)
+	}
+	var epoch int
+	err = tx.QueryRow(ctx, `
+		select coalesce((
+		  select active_epoch
+		  from private.whatsapp_webhook_session_cutovers
+		  where session_id = $1::uuid
+		), 0)
+	`, session.ID).Scan(&epoch)
+	if err != nil {
+		return 0, fmt.Errorf("read Evolution webhook processing epoch: %w", err)
+	}
+	if epoch != 0 && epoch != 1 {
+		return 0, fmt.Errorf("unsupported Evolution webhook processing epoch %d", epoch)
+	}
+	return epoch, nil
+}
+
 const (
 	evolutionWebhookLiveWindow       = 10 * time.Minute
 	evolutionWebhookMaxSplitMessages = 128
@@ -507,6 +649,7 @@ type evolutionWebhookDurablePart struct {
 	EventType          string          `json:"event_type"`
 	Payload            json.RawMessage `json:"payload"`
 	ProcessingLane     string          `json:"processing_lane"`
+	ProcessingEpoch    int             `json:"processing_epoch"`
 	ProviderOccurredAt *time.Time      `json:"provider_occurred_at"`
 	Ordinal            int             `json:"ordinal"`
 }
@@ -646,7 +789,8 @@ func annotateEvolutionWebhookRouting(payload []byte) ([]byte, error) {
 	}
 	delete(decoded, evolutionWebhookRoutingMetaKey)
 	decoded[evolutionWebhookRoutingMetaKey] = map[string]any{
-		"routing_key": evolutionWebhookPayloadRoutingKey(decoded),
+		"routing_key":   evolutionWebhookPayloadRoutingKey(decoded),
+		"epoch_capable": true,
 	}
 	return json.Marshal(decoded)
 }
@@ -656,6 +800,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 	tx pgx.Tx,
 	session evolutionWebhookSession,
 	parts []evolutionWebhookDurablePart,
+	processingEpoch int,
 ) ([]evolutionWebhookDurablePart, error) {
 	result := make([]evolutionWebhookDurablePart, len(parts))
 	copy(result, parts)
@@ -676,6 +821,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 			return nil, errors.New("direct WhatsApp provider message is missing a routing key")
 		}
 		snapshots := make([]map[string]any, 0, len(messages))
+		partEpoch := processingEpoch
 		for _, message := range messages {
 			if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
 				return nil, errors.New("direct WhatsApp provider message is missing an immutable provider id")
@@ -767,7 +913,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 				routingKey != evolutionWebhookSessionRoute
 			var snapshotJSON string
 			err = tx.QueryRow(ctx, `
-				select private.capture_whatsapp_webhook_routing_snapshot(
+				select private.capture_whatsapp_webhook_routing_snapshot_v2(
 				  $1::uuid,
 				  $2::uuid,
 				  $3,
@@ -784,7 +930,8 @@ func attachEvolutionWebhookRoutingSnapshots(
 				  $14,
 				  nullif($15, '')::uuid,
 				  nullif($16, '')::uuid,
-				  nullif($17, '')::uuid
+				  nullif($17, '')::uuid,
+				  $18::integer
 				)::text
 			`,
 				session.OrganizationID,
@@ -804,6 +951,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 				rule.ID,
 				rule.TargetRoundRobinID,
 				rule.ManagedProviderEventLeadID,
+				processingEpoch,
 			).Scan(&snapshotJSON)
 			if err != nil {
 				return nil, err
@@ -815,6 +963,21 @@ func attachEvolutionWebhookRoutingSnapshots(
 			if version, ok := snapshot["version"].(float64); !ok || version != 1 {
 				return nil, errors.New("immutable WhatsApp routing snapshot has an unsupported version")
 			}
+			// A provider replay can return a snapshot captured before cutover.
+			// Keep that event in its original epoch instead of giving old work
+			// a new path to processing.
+			snapshotEpoch := 0
+			if value, exists := snapshot["processing_epoch"]; exists {
+				parsed, ok := value.(float64)
+				if !ok || (parsed != 0 && parsed != 1) {
+					return nil, errors.New("immutable WhatsApp routing snapshot has an invalid processing epoch")
+				}
+				snapshotEpoch = int(parsed)
+			}
+			if len(snapshots) > 0 && snapshotEpoch != partEpoch {
+				return nil, errors.New("Evolution webhook callback mixes processing epochs in one inbox part")
+			}
+			partEpoch = snapshotEpoch
 			snapshots = append(snapshots, snapshot)
 		}
 
@@ -828,6 +991,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 			return nil, err
 		}
 		result[index].Payload = encoded
+		result[index].ProcessingEpoch = partEpoch
 	}
 	return result, nil
 }

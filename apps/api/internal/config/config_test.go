@@ -19,6 +19,30 @@ func TestNormalizeDotEnvValuePreservesEscapedLiteralDollar(t *testing.T) {
 	}
 }
 
+func TestGoogleCalendarImmediateDispatchIsOptIn(t *testing.T) {
+	t.Setenv("API_ENV", "development")
+	t.Setenv("SUPABASE_PROJECT_URL", "https://supabase.example.test")
+	t.Setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+	t.Setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+	t.Setenv("GOOGLE_CALENDAR_IMMEDIATE_DISPATCH_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.GoogleCalendar.ImmediateDispatchEnabled {
+		t.Fatal("Google Calendar immediate dispatch must default to disabled")
+	}
+
+	t.Setenv("GOOGLE_CALENDAR_IMMEDIATE_DISPATCH_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load enabled config: %v", err)
+	}
+	if !cfg.GoogleCalendar.ImmediateDispatchEnabled {
+		t.Fatal("Google Calendar immediate dispatch flag was ignored")
+	}
+}
+
 func testVAPIDKeyPair(t *testing.T, scalar byte) (string, string) {
 	t.Helper()
 	privateBytes := make([]byte, 32)

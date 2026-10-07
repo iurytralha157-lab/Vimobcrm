@@ -614,6 +614,26 @@
     {
       "file": "20260928031110_preserve_manual_property_location.sql",
       "sha256": "c87aaa47a11021f264a102cf18e368ae6ba88ff5a45535686a4908d19aa76e12"
+    },
+    {
+      "file": "20261002191622_whatsapp_webhook_session_cutover_epoch.sql",
+      "sha256": "5d1efcd90dcbeb294d86fa454263b1e2abe64a91ef95a0eee2e929d357bc27c2"
+    },
+    {
+      "file": "20261006150000_claim_google_calendar_outbound_jobs.sql",
+      "sha256": "0ae2df643fa3fa585772d3062e0310cfb60a2520fec1f9926a98756e814068c7"
+    },
+    {
+      "file": "20261006151000_google_calendar_one_way_help_content.sql",
+      "sha256": "4b8a9c605e927654827ef9c76962c4b1f84c289bcb9cbe8d26988a67720e1402"
+    },
+    {
+      "file": "20261007160000_whatsapp_webhook_epoch_claim_index.sql",
+      "sha256": "7597ae44c5d900e81862c4aedee1ba40fae87af14b7122e1709da2729d0497ec"
+    },
+    {
+      "file": "20261007164309_separate_whatsapp_attendance_marker_confirmation.sql",
+      "sha256": "86beb774114cf477b5d5f8ad139c3f0c1705079b8423984473068dde90eb53fb"
     }
   ]
 }

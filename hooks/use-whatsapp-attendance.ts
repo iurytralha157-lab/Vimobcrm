@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { VimobAPIError } from "@/lib/api/vimob-error";
 import {
   whatsappAPI,
   type WhatsAppAttendanceState,
@@ -175,6 +176,16 @@ export function useWhatsAppAttendanceGate(
   const requestIdentityKey = options.identityKey ?? targetKey ?? "none";
   const requestIdentityRef = useRef(requestIdentityKey);
 
+  const refreshSessionsAfterRevocation = useCallback((error: unknown) => {
+    if (!(error instanceof VimobAPIError) || error.code !== "whatsapp_session_access_revoked") return;
+    // Let the dialog close immediately; the active, tenant-scoped session
+    // query then removes the revoked number and exposes the own-number path.
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.sessions(scope) }),
+      queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.accessibleSessions(scope) }),
+    ]);
+  }, [queryClient, scope]);
+
   const settlePendingRequest = useCallback((joined: boolean) => {
     const pending = pendingRequestRef.current;
     if (!pending) return;
@@ -234,7 +245,8 @@ export function useWhatsAppAttendanceGate(
           );
           if (requestIdentityRef.current !== operationIdentityKey) return false;
           if (attendance.joined) return true;
-        } catch {
+        } catch (error) {
+          refreshSessionsAfterRevocation(error);
           toast({
             title: "Não foi possível verificar o atendimento",
             description: "Atualize a conversa e tente novamente antes de enviar a mensagem.",
@@ -278,7 +290,7 @@ export function useWhatsAppAttendanceGate(
       }
     });
     return operation;
-  }, [queryClient, scope, target, toast]);
+  }, [queryClient, refreshSessionsAfterRevocation, scope, target, toast]);
 
   const confirmAttendance = useCallback(async () => {
     const pending = pendingRequestRef.current;
@@ -313,15 +325,21 @@ export function useWhatsAppAttendanceGate(
       });
       settlePendingRequest(true);
     } catch (error) {
-      toast({
-        title: "Não foi possível entrar no atendimento",
-        description: error instanceof Error && error.message.length < 180
-          ? error.message
-          : "Tente novamente antes de enviar a mensagem.",
-        variant: "destructive",
-      });
+      if (pendingRequestRef.current === pending) {
+        refreshSessionsAfterRevocation(error);
+        toast({
+          title: "Não foi possível entrar no atendimento",
+          description: error instanceof Error && error.message.length < 180
+            ? error.message
+            : "Tente novamente antes de enviar a mensagem.",
+          variant: "destructive",
+        });
+        // A failed confirmation must release the original send and its input.
+        // The user can retry without leaving an unresolved gate behind.
+        settlePendingRequest(false);
+      }
     }
-  }, [joinAttendance, settlePendingRequest, toast]);
+  }, [joinAttendance, refreshSessionsAfterRevocation, settlePendingRequest, toast]);
 
   const cancelAttendance = useCallback(() => {
     if (joinAttendance.isPending) return;
@@ -340,7 +358,9 @@ export function useWhatsAppAttendanceGate(
 
   return {
     attendance,
-    entries: attendance?.entries ?? [],
+    // Old API replicas do not return markerAt. Hide those rows rather than
+    // displaying a capture authorization as a provider-accepted send.
+    entries: (attendance?.entries ?? []).filter((entry) => Boolean(entry.markerAt)),
     ensureJoined,
     isChecking,
     isJoining: joinAttendance.isPending,

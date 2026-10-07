@@ -409,6 +409,18 @@ export function matchesLeadMessagesQueryKey(
     && queryKey[5] === leadId
 }
 
+export function matchesWhatsAppAttendanceQueryKey(
+  queryKey: QueryKey,
+  scope: WhatsAppQueryScope,
+  conversationIds: readonly string[],
+  leadIds: readonly string[],
+): boolean {
+  return queryKey[0] === 'whatsapp-attendance'
+    && isWhatsAppQueryKeyForScope(queryKey, scope)
+    && (conversationIds.includes(String(queryKey[5] ?? ''))
+      || leadIds.includes(String(queryKey[6] ?? '')))
+}
+
 type PendingMessageIdentity = {
   id: string
   message_id?: string | null
@@ -416,6 +428,8 @@ type PendingMessageIdentity = {
   status?: string | null
   sent_at?: string | null
   media_error?: string | null
+  delivery_error_code?: string | null
+  delivery_failed_at?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -430,6 +444,7 @@ const TRANSIENT_LOCAL_MESSAGE_STATUSES = new Set([
 
 const LOCAL_MESSAGE_STATUSES = new Set([
   ...TRANSIENT_LOCAL_MESSAGE_STATUSES,
+  'unconfirmed',
   'failed',
   'error',
 ])
@@ -459,8 +474,11 @@ function settleExpiredWhatsAppLocalMessage<T extends PendingMessageIdentity>(
 
   return {
     ...message,
-    status: 'failed',
-    media_error: message.media_error || 'SEND_CONFIRMATION_TIMEOUT',
+    // Absence from a bounded server page does not prove the send failed.
+    // Keep this optimistic row visible until a canonical id replaces it.
+    status: 'unconfirmed',
+    delivery_error_code: 'outcome_unknown',
+    delivery_failed_at: null,
     metadata: {
       ...(message.metadata ?? {}),
       local_delivery_state: 'confirmation_timeout',
@@ -652,6 +670,11 @@ export function getWhatsAppSendFailureStatus(error: unknown): 'confirming' | 'fa
     && status !== 408
 
   if (isInputContractFailure || isDefinitiveHTTPRejection) return 'failed'
+
+  // The browser cannot prove whether a provider-facing 5xx happened before
+  // or after the stanza was accepted. Only the durable worker may classify an
+  // explicit recipient rejection as definitive.
+  if (status !== null && status >= 500) return 'confirming'
 
   return DEFINITIVE_SEND_FAILURES.some((token) => normalizedMessage.includes(token))
     ? 'failed'

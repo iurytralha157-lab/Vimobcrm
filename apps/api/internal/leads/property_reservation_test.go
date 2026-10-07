@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -27,7 +28,7 @@ func (tx *propertyReservationLockTx) QueryRow(_ context.Context, query string, a
 type propertyReservationLockRow struct{}
 
 func (propertyReservationLockRow) Scan(destinations ...any) error {
-	if len(destinations) != 6 {
+	if len(destinations) != 10 {
 		return errors.New("unexpected lock scan")
 	}
 	for index, value := range []string{
@@ -49,6 +50,10 @@ func (propertyReservationLockRow) Scan(destinations ...any) error {
 		}
 		*destination = true
 	}
+	*destinations[6].(*pgtype.Text) = pgtype.Text{String: "active", Valid: true}
+	*destinations[7].(*pgtype.Bool) = pgtype.Bool{Bool: true, Valid: true}
+	*destinations[8].(*pgtype.Bool) = pgtype.Bool{Bool: true, Valid: true}
+	*destinations[9].(*string) = "55555555-5555-4555-8555-555555555555"
 	return nil
 }
 
@@ -78,6 +83,8 @@ func TestWonLeadPropertyIsLockedBeforeMutation(t *testing.T) {
 		"update public.properties property",
 		"set status = 'reserved'",
 		"candidate.old_status",
+		"candidate.reservation_event_id::text",
+		"metadata = coalesce(property.metadata",
 	} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("conditional won property lock missing %q: %s", required, query)
@@ -86,7 +93,7 @@ func TestWonLeadPropertyIsLockedBeforeMutation(t *testing.T) {
 	if strings.Contains(query, "pg_try_advisory") {
 		t.Fatalf("conditional won property lock must preserve rollback handoff: %s", query)
 	}
-	if len(tx.args) != 2 || tx.args[1] != "44444444-4444-4444-8444-444444444444" {
+	if len(tx.args) != 3 || tx.args[1] != "44444444-4444-4444-8444-444444444444" || tx.args[2] != activeWonLeadReservationEventIDKey {
 		t.Fatalf("won property lock args = %#v", tx.args)
 	}
 }
@@ -113,7 +120,7 @@ func (row propertyReservationRetryRow) Scan(destinations ...any) error {
 	if row.err != nil {
 		return row.err
 	}
-	if len(destinations) != 1 {
+	if len(destinations) != 5 {
 		return errors.New("unexpected retry status scan")
 	}
 	destination, ok := destinations[0].(*string)
@@ -121,6 +128,10 @@ func (row propertyReservationRetryRow) Scan(destinations ...any) error {
 		return errors.New("unexpected retry status destination")
 	}
 	*destination = row.status
+	*destinations[1].(*string) = ""
+	*destinations[2].(*string) = "object"
+	*destinations[3].(*pgtype.Bool) = pgtype.Bool{Bool: false, Valid: true}
+	*destinations[4].(*pgtype.Bool) = pgtype.Bool{Bool: false, Valid: true}
 	return nil
 }
 
@@ -141,6 +152,45 @@ func TestWonLeadPropertyRetryRespectsContextCancellation(t *testing.T) {
 	}
 	if tx.queries != 2 {
 		t.Fatalf("retry queries = %d, want one candidate and one visible-status query", tx.queries)
+	}
+}
+
+func TestPropertyReleaseRequiresCurrentOwnedExactReservation(t *testing.T) {
+	const eventID = "55555555-5555-4555-8555-555555555555"
+	const leadID = "33333333-3333-4333-8333-333333333333"
+	snapshot := propertyReservationSnapshot{
+		EventID:      eventID,
+		LeadID:       leadID,
+		Active:       true,
+		ExactRestore: true,
+	}
+	falseFlag := pgtype.Bool{Bool: false, Valid: true}
+	if !propertyReservationIsCurrent(snapshot, leadID, eventID, falseFlag, falseFlag) {
+		t.Fatal("exact active reservation by the lead was not recognized")
+	}
+	checks := []struct {
+		name     string
+		adjust   func(*propertyReservationSnapshot)
+		leadID   string
+		eventID  string
+		announce pgtype.Bool
+	}{
+		{name: "another lead", leadID: "44444444-4444-4444-8444-444444444444", eventID: eventID, announce: falseFlag},
+		{name: "released event", adjust: func(s *propertyReservationSnapshot) { s.Active = false }, leadID: leadID, eventID: eventID, announce: falseFlag},
+		{name: "legacy event without exact snapshot", adjust: func(s *propertyReservationSnapshot) { s.ExactRestore = false }, leadID: leadID, eventID: eventID, announce: falseFlag},
+		{name: "property marker replaced", leadID: leadID, eventID: "66666666-6666-4666-8666-666666666666", announce: falseFlag},
+		{name: "publication changed", leadID: leadID, eventID: eventID, announce: pgtype.Bool{Bool: true, Valid: true}},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			candidate := snapshot
+			if check.adjust != nil {
+				check.adjust(&candidate)
+			}
+			if propertyReservationIsCurrent(candidate, check.leadID, check.eventID, falseFlag, check.announce) {
+				t.Fatal("unproven reservation was treated as active")
+			}
+		})
 	}
 }
 
@@ -213,12 +263,13 @@ func TestNotifyInterestedLeadsUsesOneSetBasedWrite(t *testing.T) {
 
 type propertyReservationOutboxTx struct {
 	pgx.Tx
-	tableAvailable bool
-	jobAvailable   bool
-	queries        []string
-	queryArgs      [][]any
-	execQueries    []string
-	execArgs       [][]any
+	tableAvailable   bool
+	jobAvailable     bool
+	propertyReleased bool
+	queries          []string
+	queryArgs        [][]any
+	execQueries      []string
+	execArgs         [][]any
 }
 
 func (tx *propertyReservationOutboxTx) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
@@ -259,6 +310,15 @@ func (tx *propertyReservationOutboxTx) QueryRow(_ context.Context, query string,
 			}
 			return nil
 		}}
+	case strings.Contains(query, "from public.properties property"):
+		return propertyReservationOutboxRow{scan: func(destinations ...any) error {
+			if tx.propertyReleased {
+				return pgx.ErrNoRows
+			}
+			*destinations[0].(*string) = "reserved"
+			*destinations[1].(*string) = "55555555-5555-4555-8555-555555555555"
+			return nil
+		}}
 	default:
 		return propertyReservationOutboxRow{scan: func(...any) error {
 			return errors.New("unexpected outbox query")
@@ -289,6 +349,7 @@ func TestEnqueuePropertyReservationNotificationJobCreatesOnePendingHistoricalEve
 		context.Background(),
 		tx,
 		propertyReservationNotificationJob{
+			ID:                 "55555555-5555-4555-8555-555555555555",
 			OrganizationID:     "11111111-1111-4111-8111-111111111111",
 			PropertyID:         "44444444-4444-4444-8444-444444444444",
 			PropertyTitle:      "Imovel E2E",
@@ -327,9 +388,10 @@ func TestEnqueuePropertyReservationNotificationJobCreatesOnePendingHistoricalEve
 			t.Fatalf("pending historical event query missing %q: %s", required, insertQuery)
 		}
 	}
-	if len(tx.queryArgs[1]) != 5 ||
+	if len(tx.queryArgs[1]) != 6 ||
 		tx.queryArgs[1][1] != propertyReservationNotificationEventType ||
-		tx.queryArgs[1][4] != "33333333-3333-4333-8333-333333333333" {
+		tx.queryArgs[1][4] != "33333333-3333-4333-8333-333333333333" ||
+		tx.queryArgs[1][5] != "55555555-5555-4555-8555-555555555555" {
 		t.Fatalf("pending historical event args = %#v", tx.queryArgs[1])
 	}
 	var payload map[string]any
@@ -348,12 +410,33 @@ func TestEnqueuePropertyReservationNotificationJobCreatesOnePendingHistoricalEve
 	}
 }
 
+func TestReservationEventPreservesNullablePreReservationValues(t *testing.T) {
+	tx := &propertyReservationOutboxTx{tableAvailable: true}
+	_, available, err := (Repository{}).enqueuePropertyReservationNotificationJob(context.Background(), tx, propertyReservationNotificationJob{
+		ID:                   "55555555-5555-4555-8555-555555555555",
+		OrganizationID:       "11111111-1111-4111-8111-111111111111",
+		PropertyID:           "44444444-4444-4444-8444-444444444444",
+		ReservedByLeadID:     "33333333-3333-4333-8333-333333333333",
+		ExactRestoreSnapshot: true,
+	})
+	if err != nil || !available {
+		t.Fatalf("write exact nullable snapshot: available=%t error=%v", available, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(tx.queryArgs[1][3].(string)), &payload); err != nil {
+		t.Fatalf("decode exact nullable snapshot: %v", err)
+	}
+	if payload["exact_restore_snapshot"] != true || payload["old_status"] != nil || payload["old_published_on_site"] != nil || payload["old_anunciar"] != nil {
+		t.Fatalf("nullable pre-reservation values were changed: %#v", payload)
+	}
+}
+
 func TestEnqueuePropertyReservationNotificationJobSignalsInlineFallbackWithoutEvents(t *testing.T) {
 	tx := &propertyReservationOutboxTx{tableAvailable: false}
 	jobID, eventsAvailable, err := (Repository{}).enqueuePropertyReservationNotificationJob(
 		context.Background(),
 		tx,
-		propertyReservationNotificationJob{},
+		propertyReservationNotificationJob{ID: "55555555-5555-4555-8555-555555555555"},
 	)
 	if err != nil {
 		t.Fatalf("detect missing events table: %v", err)
@@ -382,8 +465,8 @@ func TestProcessPropertyReservationNotificationJobWritesFanoutBeforeAtomicProces
 	if !processed {
 		t.Fatal("reservation notification job was not processed")
 	}
-	if len(tx.queries) != 2 || len(tx.execQueries) != 2 {
-		t.Fatalf("processing statements = %d query rows/%d execs, want 2/2", len(tx.queries), len(tx.execQueries))
+	if len(tx.queries) != 3 || len(tx.execQueries) != 2 {
+		t.Fatalf("processing statements = %d query rows/%d execs, want 3/2", len(tx.queries), len(tx.execQueries))
 	}
 	claimQuery := strings.ToLower(strings.Join(strings.Fields(tx.queries[1]), " "))
 	for _, required := range []string{
@@ -430,8 +513,24 @@ func TestProcessPropertyReservationNotificationJobWritesFanoutBeforeAtomicProces
 			t.Fatalf("processed mark query missing %q: %s", required, processedQuery)
 		}
 	}
-	if len(tx.execArgs[1]) != 2 || tx.execArgs[1][1] != int64(199) {
+	if len(tx.execArgs[1]) != 3 || tx.execArgs[1][1] != int64(199) || tx.execArgs[1][2] != "processed" {
 		t.Fatalf("processed mark args = %#v, want delivered_count 199", tx.execArgs[1])
+	}
+}
+
+func TestProcessPropertyReservationNotificationJobSkipsReleasedProperty(t *testing.T) {
+	tx := &propertyReservationOutboxTx{tableAvailable: true, jobAvailable: true, propertyReleased: true}
+	processed, err := (Repository{}).processPropertyReservationNotificationJobTx(
+		context.Background(), tx, "55555555-5555-4555-8555-555555555555",
+	)
+	if err != nil || !processed {
+		t.Fatalf("skip stale reservation notification: processed=%t error=%v", processed, err)
+	}
+	if len(tx.execQueries) != 1 || strings.Contains(tx.execQueries[0], "insert into public.notifications") {
+		t.Fatalf("stale reservation sent a notice: %#v", tx.execQueries)
+	}
+	if len(tx.execArgs[0]) != 3 || tx.execArgs[0][1] != int64(0) || tx.execArgs[0][2] != "skipped_inactive" {
+		t.Fatalf("stale reservation completion = %#v", tx.execArgs[0])
 	}
 }
 

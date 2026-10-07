@@ -429,6 +429,98 @@ func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
 	return true
 }
 
+// nativeEvolutionTechnicalIgnoreReason only identifies provider callbacks that
+// cannot contain a customer message. Its caller must persist the reason before
+// acknowledging an ignored callback; until then this classifier is deliberately
+// independent from dispatch.
+func nativeEvolutionTechnicalIgnoreReason(item pendingEvolutionWebhook) string {
+	payload, err := decodeNativeEvolutionPayload(item.Payload)
+	if err != nil {
+		return ""
+	}
+	event := compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType))
+	switch event {
+	case "readself", "receipt":
+		if event == "receipt" && !nativeEvolutionReceiptIsReadSelf(payload) {
+			return ""
+		}
+		// A self-read receipt may carry message IDs, but must never hide an
+		// unexpected customer response if a provider changes its envelope.
+		if nativePayloadHasPotentialCustomerContent(payload, 0) {
+			return ""
+		}
+		return "readself_receipt"
+	case "buttonclick":
+		// An inbound click with even an opaque button ID is a customer answer.
+		// Only a callback with no data or message-shaped fields is demonstrably
+		// technical without inspecting a provider-specific subtype.
+		if data := nativeFirstValue(payload, "data", "Data"); data != nil {
+			if fields, ok := data.(map[string]any); !ok || len(fields) > 0 {
+				return ""
+			}
+		}
+		if nativePayloadHasPotentialCustomerContent(payload, 0) || nativePayloadContainsMessageLikeKey(payload, 0) {
+			return ""
+		}
+		return "buttonclick_empty_control"
+	default:
+		return ""
+	}
+}
+
+func nativeEvolutionReceiptIsReadSelf(payload map[string]any) bool {
+	data := mapFromAny(nativeFirstValue(payload, "data", "Data"))
+	states := []string{
+		firstString(data, "status"), firstString(data, "Status"),
+		firstString(data, "state"), firstString(data, "State"),
+		firstString(data, "ack"), firstString(data, "Ack"),
+		firstString(data, "type"), firstString(data, "Type"),
+		firstString(payload, "state"), firstString(payload, "State"),
+		firstString(payload, "status"), firstString(payload, "Status"),
+	}
+	seen := false
+	for _, state := range states {
+		if strings.TrimSpace(state) == "" {
+			continue
+		}
+		if compactEvolutionWebhookControlName(state) != "readself" {
+			return false
+		}
+		seen = true
+	}
+	return seen
+}
+
+func nativePayloadHasPotentialCustomerContent(value any, depth int) bool {
+	if depth > 12 || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			normalized := compactEvolutionWebhookControlName(key)
+			switch normalized {
+			case "text", "body", "content", "caption", "conversation", "buttontext", "buttonid",
+				"message", "imagemessage", "videomessage", "audiomessage", "documentmessage",
+				"stickermessage", "reaction", "reactionmessage", "encreactionmessage", "referral":
+				if nested != nil && strings.TrimSpace(stringFromAny(nested)) != "" {
+					return true
+				}
+			}
+			if nativePayloadHasPotentialCustomerContent(nested, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if nativePayloadHasPotentialCustomerContent(nested, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func prepareEvolutionWebhookWithoutGroupMessages(item pendingEvolutionWebhook) (pendingEvolutionWebhook, bool, error) {
 	payload, err := decodeNativeEvolutionPayload(item.Payload)
 	if err != nil {
@@ -684,6 +776,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	connectionStatus, connectionRecognized, connectionError := nativeEvolutionConnectionStatus(payload, event)
 	if qrCode == "" && !connectionRecognized {
 		return false, nil
+	}
+	if qrCode == "" && connectionStatus == "disconnected" {
+		if state, loggedOut := nativeDeferredLoggedOutState(item, payload); loggedOut {
+			return true, repo.applyEvolutionWebhookSessionState(ctx, evolutionWebhookSession{
+				ID: item.SessionID, OrganizationID: item.OrganizationID,
+			}, state)
+		}
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -1747,8 +1846,12 @@ func reconcileNativeOutboundOutbox(
 		pendingMessageRowID == messageRowID {
 		return nil
 	}
-	if outboxStatus != "processing" &&
-		!(outboxStatus == "dead" && outboxLastError == whatsappOutboxProviderUnknownMarker) {
+	// The row is locked above. An older worker could have persisted the unknown
+	// outcome with context in last_error; require that precise classification and
+	// retain the locked value in the final compare-and-set below.
+	unknownDead := outboxStatus == "dead" &&
+		messageDeliveryErrorCode(outboxLastError) == deliveryErrorOutcomeUnknown
+	if outboxStatus != "processing" && !unknownDead {
 		return fmt.Errorf(
 			"%w: signed outbound webhook cannot reconcile outbox status %s",
 			ErrProviderFailed,
@@ -1822,7 +1925,12 @@ func reconcileNativeOutboundOutbox(
 			    media_mime_type = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_mime_type, pending.media_mime_type) end,
 			    media_storage_path = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_storage_path, pending.media_storage_path) end,
 			    media_size = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_size, pending.media_size) end,
-			    metadata = case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else coalesce(pending.metadata, '{}'::jsonb) || coalesce(canonical.metadata, '{}'::jsonb) end,
+			    metadata = case when pending.capture_state = 'suppressed' then jsonb_build_object('attendance_capture', 'suppressed_before_join') else
+			      (coalesce(pending.metadata, '{}'::jsonb) || coalesce(canonical.metadata, '{}'::jsonb) ||
+			      jsonb_strip_nulls(jsonb_build_object(
+			        'attendance_entry_id', pending.metadata->>'attendance_entry_id',
+			        'attendance_send_origin', pending.metadata->>'attendance_send_origin'
+			      ))) - 'delivery_error_code' - 'delivery_failed_at' end,
 			    capture_state = coalesce(pending.capture_state, canonical.capture_state),
 			    provider_message_id = $6,
 			    message_id = $6,
@@ -1859,6 +1967,7 @@ func reconcileNativeOutboundOutbox(
 			set provider_message_id = $5,
 			    message_id = $5,
 			    status = case when message.status in ('delivered', 'read') then message.status else 'sent' end,
+			    metadata = coalesce(message.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at',
 			    sent_at = coalesce(message.sent_at, $6),
 			    updated_at = now()
 			where message.id = $1::uuid
@@ -1905,7 +2014,7 @@ func reconcileNativeOutboundOutbox(
 		  )
 	`, outboxID, session.OrganizationID, session.ID, messageRowID, message.SentAt,
 		outboxConversationID, pendingMessageRowID, clientMessageID,
-		message.ProviderMessageID, whatsappOutboxProviderUnknownMarker)
+		message.ProviderMessageID, outboxLastError)
 	if err != nil {
 		return err
 	}
@@ -1928,6 +2037,9 @@ func reconcileNativeOutboundOutbox(
 		if deleted.RowsAffected() != 1 {
 			return fmt.Errorf("%w: WhatsApp webhook reconciliation losing projection survived", ErrProviderFailed)
 		}
+	}
+	if err := confirmHumanWhatsAppAttendance(ctx, tx, session.OrganizationID, messageRowID); err != nil {
+		return err
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -4755,6 +4867,17 @@ func nativeIsStatusEvent(event string) bool {
 	return strings.Contains(event, "status") || strings.Contains(event, "receipt") || strings.Contains(event, "ack")
 }
 
+func nativeDeferredLoggedOutState(item pendingEvolutionWebhook, payload map[string]any) (evolutionWebhookSessionState, bool) {
+	if compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType)) != "loggedout" {
+		return evolutionWebhookSessionState{}, false
+	}
+	occurredAt, providerTimestamp := evolutionWebhookEventOccurredAt(payload, item.CreatedAt)
+	return evolutionWebhookSessionState{
+		Handled: true, Status: "disconnected", OccurredAt: occurredAt,
+		ProviderTimestamp: providerTimestamp, Rank: evolutionWebhookStateRankTerminal, EventKey: item.ID,
+	}, true
+}
+
 func nativeEvolutionQRCode(payload map[string]any) string {
 	return firstNonEmpty(
 		firstString(payload, "qrcode", "Qrcode", "qrCode", "base64", "code"),
@@ -4775,6 +4898,9 @@ func nativeEvolutionConnectionStatus(payload map[string]any, event string) (stri
 	loggedIn, loggedInPresent := nativeBool(nativeFirstValue(data, "loggedIn", "LoggedIn"))
 	connected, connectedPresent := nativeBool(nativeFirstValue(data, "connected", "Connected"))
 	errorMessage := firstString(data, "error", "message", "reason")
+	if compactEvolutionWebhookControlName(event) == "loggedout" {
+		return "disconnected", true, errorMessage
+	}
 
 	if loggedInPresent && connectedPresent {
 		if loggedIn && connected {

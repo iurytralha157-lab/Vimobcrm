@@ -16,19 +16,23 @@ const (
 )
 
 type propertyReservationNotificationJob struct {
-	ID                 string
-	OrganizationID     string
-	PropertyID         string
-	PropertyTitle      string
-	PropertyCode       string
-	ReservedByUserID   string
-	ReservedByUserName string
-	ReservedByLeadID   string
-	ReservedByLeadName string
-	OldStatus          string
-	OldPublishedOnSite bool
-	OldAnnounce        bool
-	TargetSnapshot     string
+	ID                    string
+	OrganizationID        string
+	PropertyID            string
+	PropertyTitle         string
+	PropertyCode          string
+	ReservedByUserID      string
+	ReservedByUserName    string
+	ReservedByLeadID      string
+	ReservedByLeadName    string
+	OldStatus             string
+	OldPublishedOnSite    bool
+	OldAnnounce           bool
+	OldStatusRaw          *string
+	OldPublishedOnSiteRaw *bool
+	OldAnnounceRaw        *bool
+	ExactRestoreSnapshot  bool
+	TargetSnapshot        string
 }
 
 func (repo Repository) enqueuePropertyReservationNotificationJob(
@@ -36,6 +40,9 @@ func (repo Repository) enqueuePropertyReservationNotificationJob(
 	tx pgx.Tx,
 	job propertyReservationNotificationJob,
 ) (string, bool, error) {
+	if _, ok := normalizeUUID(job.ID); !ok {
+		return "", false, ErrLeadReservationUnverified
+	}
 	var hasEventsTable bool
 	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
 		return "", false, err
@@ -44,6 +51,12 @@ func (repo Repository) enqueuePropertyReservationNotificationJob(
 		return "", false, nil
 	}
 
+	oldStatus, oldPublishedOnSite, oldAnnounce := any(job.OldStatus), any(job.OldPublishedOnSite), any(job.OldAnnounce)
+	if job.ExactRestoreSnapshot {
+		oldStatus = job.OldStatusRaw
+		oldPublishedOnSite = job.OldPublishedOnSiteRaw
+		oldAnnounce = job.OldAnnounceRaw
+	}
 	err := tx.QueryRow(ctx, `
 		with targets as materialized (
 			select
@@ -77,6 +90,7 @@ func (repo Repository) enqueuePropertyReservationNotificationJob(
 			from targets target
 		)
 		insert into public.events (
+			id,
 			organization_id,
 			event_type,
 			entity_type,
@@ -85,6 +99,7 @@ func (repo Repository) enqueuePropertyReservationNotificationJob(
 			status
 		)
 		select
+			$6::uuid,
 			$1::uuid,
 			$2,
 			'property',
@@ -99,29 +114,30 @@ func (repo Repository) enqueuePropertyReservationNotificationJob(
 		from audience
 		returning id::text
 	`, job.OrganizationID, propertyReservationNotificationEventType, job.PropertyID, jsonb(map[string]any{
-		"user_id":               job.ReservedByUserID,
-		"user_name":             job.ReservedByUserName,
-		"reserved_by_user_id":   job.ReservedByUserID,
-		"reserved_by_user_name": job.ReservedByUserName,
-		"reserved_by_lead_id":   job.ReservedByLeadID,
-		"reserved_by_lead_name": job.ReservedByLeadName,
-		"lead_id":               job.ReservedByLeadID,
-		"lead_name":             job.ReservedByLeadName,
-		"property_id":           job.PropertyID,
-		"property_code":         job.PropertyCode,
-		"title":                 job.PropertyTitle,
-		"old_status":            job.OldStatus,
-		"old_published_on_site": job.OldPublishedOnSite,
-		"old_anunciar":          job.OldAnnounce,
-		"new_status":            "reserved",
-		"organization_id":       job.OrganizationID,
+		"user_id":                job.ReservedByUserID,
+		"user_name":              job.ReservedByUserName,
+		"reserved_by_user_id":    job.ReservedByUserID,
+		"reserved_by_user_name":  job.ReservedByUserName,
+		"reserved_by_lead_id":    job.ReservedByLeadID,
+		"reserved_by_lead_name":  job.ReservedByLeadName,
+		"lead_id":                job.ReservedByLeadID,
+		"lead_name":              job.ReservedByLeadName,
+		"property_id":            job.PropertyID,
+		"property_code":          job.PropertyCode,
+		"title":                  job.PropertyTitle,
+		"old_status":             oldStatus,
+		"old_published_on_site":  oldPublishedOnSite,
+		"old_anunciar":           oldAnnounce,
+		"exact_restore_snapshot": job.ExactRestoreSnapshot,
+		"new_status":             "reserved",
+		"organization_id":        job.OrganizationID,
 		"message": fmt.Sprintf(
 			`Imovel "%s" reservado por "%s" ao marcar o lead "%s" como ganho`,
 			job.PropertyTitle,
 			job.ReservedByUserName,
 			job.ReservedByLeadName,
 		),
-	}), job.ReservedByLeadID).Scan(&job.ID)
+	}), job.ReservedByLeadID, job.ID).Scan(&job.ID)
 	if err != nil {
 		return "", true, err
 	}
@@ -245,25 +261,51 @@ func (repo Repository) processPropertyReservationNotificationJobTx(
 		job.ReservedByUserID = ""
 	}
 
-	deliveredCount, err := repo.notifyInterestedLeadsForReservedProperty(
-		ctx,
-		tx,
-		tenant.Context{
-			OrganizationID: job.OrganizationID,
-			UserID:         job.ReservedByUserID,
-		},
-		leadSnapshot{
-			ID:   job.ReservedByLeadID,
-			Name: job.ReservedByLeadName,
-		},
-		job.PropertyID,
-		job.PropertyTitle,
-		job.PropertyCode,
-		job.OldStatus,
-		job.TargetSnapshot,
-	)
-	if err != nil {
+	// The target snapshot is historical. Check the current property while
+	// holding its row lock before delivering a reservation notification.
+	var propertyStatus string
+	var reservationEventID string
+	err = tx.QueryRow(ctx, `
+		select coalesce(property.status, 'active'),
+		       coalesce(property.metadata->>$4::text, '')
+		from public.properties property
+		join public.leads lead
+		  on lead.organization_id = property.organization_id
+		 and lead.id = $3::uuid
+		 and lead.deal_status = 'won'
+		 and (lead.property_id = property.id or lead.interest_property_id = property.id)
+		where property.organization_id = $1::uuid
+		  and property.id = $2::uuid
+		for share of property
+	`, job.OrganizationID, job.PropertyID, job.ReservedByLeadID, activeWonLeadReservationEventIDKey).Scan(&propertyStatus, &reservationEventID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
+	}
+	active := err == nil && isReservedLeadPropertyStatus(propertyStatus) && reservationEventID == job.ID
+	deliveredCount := int64(0)
+	fanoutStatus := "skipped_inactive"
+	if active {
+		deliveredCount, err = repo.notifyInterestedLeadsForReservedProperty(
+			ctx,
+			tx,
+			tenant.Context{
+				OrganizationID: job.OrganizationID,
+				UserID:         job.ReservedByUserID,
+			},
+			leadSnapshot{
+				ID:   job.ReservedByLeadID,
+				Name: job.ReservedByLeadName,
+			},
+			job.PropertyID,
+			job.PropertyTitle,
+			job.PropertyCode,
+			job.OldStatus,
+			job.TargetSnapshot,
+		)
+		if err != nil {
+			return false, err
+		}
+		fanoutStatus = "processed"
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -271,13 +313,13 @@ func (repo Repository) processPropertyReservationNotificationJobTx(
 		set status = 'processed',
 		    processed_at = now(),
 		    payload = payload || jsonb_build_object(
-		      'notification_fanout_status', 'processed',
+		      'notification_fanout_status', $3::text,
 		      'notification_fanout_processed_at', now(),
 		      'delivered_count', $2::int
 		    )
 		where id = $1::uuid
 		  and status = 'pending'
-	`, job.ID, deliveredCount)
+	`, job.ID, deliveredCount, fanoutStatus)
 	if err != nil {
 		return false, err
 	}

@@ -22,6 +22,8 @@ export function MessageStatus({ fromMe, status }: MessageStatusProps) {
     case "sending":
     case "confirming":
       return <Clock className="w-[16px] h-[16px] text-amber-300 animate-pulse" role="img" aria-label="Confirmando envio" />;
+    case "unconfirmed":
+      return <Clock className="w-[16px] h-[16px] text-amber-300" role="img" aria-label="Envio não confirmado" />;
     case "failed":
     case "error":
       return <AlertCircle className="w-[16px] h-[16px] text-red-300" role="img" aria-label="Falha no envio" />;

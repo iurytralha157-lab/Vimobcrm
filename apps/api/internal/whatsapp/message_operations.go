@@ -14,6 +14,13 @@ import (
 
 const whatsappMediaBucket = "whatsapp-media"
 
+func attendanceSendOrigin(internalAutomation bool) string {
+	if internalAutomation {
+		return "automation"
+	}
+	return "human"
+}
+
 func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Context, conversationID string, input sendMessageInput) (SendMessageResponse, error) {
 	expectedLeadID, err := validateExpectedLeadID(input.ExpectedLeadID)
 	if err != nil {
@@ -296,8 +303,9 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		do nothing
 		returning id::text
 	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{
-		"delivery":            "outbox",
-		"attendance_entry_id": attendanceEntryID,
+		"delivery":               "outbox",
+		"attendance_send_origin": attendanceSendOrigin(input.InternalAutomation),
+		"attendance_entry_id":    attendanceEntryID,
 		"whatsapp_attendance_capture": map[string]any{
 			"state":               "captured",
 			"attendance_entry_id": attendanceEntryID,
@@ -356,7 +364,11 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		return SendMessageResponse{}, err
 	}
 
-	outboxPayload := jsonb(map[string]any{"action": action, "body": body})
+	outboxPayload := jsonb(map[string]any{
+		"action":                 action,
+		"body":                   body,
+		"attendance_send_origin": attendanceSendOrigin(input.InternalAutomation),
+	})
 	if _, err := tx.Exec(ctx, `
 		insert into public.whatsapp_outbox (
 			organization_id, session_id, conversation_id, message_id,

@@ -342,14 +342,33 @@ antiga; pause convites e siga um rollback coordenado ou corrija por roll-forward
    `edge-functions.env.example` fora do Git.
 5. Executar `node scripts/supabase/verify-edge-functions.mjs`. O corte deve ser
    interrompido se inventário, lifecycle, JWT ou hashes da fonte divergirem.
-6. Copiar `supabase/functions/_shared` e somente as funções com status `ACTIVE`
-   em `supabase/functions/production-manifest.json` para `volumes/functions`.
-   Entradas `RETIRED` permanecem apenas como inventário e o roteador responde
-   `404` para elas.
+6. Copiar `supabase/functions/_shared`, o arquivo
+   `supabase/functions/production-manifest.json` e somente as funções com status
+   `ACTIVE` para `volumes/functions`. O roteador versionado lê o manifesto em
+   `/home/deno/functions/production-manifest.json` ao iniciar; omiti-lo faz
+   todas as rotas desse roteador retornarem `404`. Entradas `RETIRED` permanecem
+   apenas como inventário e o roteador responde `404` para elas.
 7. Instalar o roteador em `functions-main/index.ts` e o override
    `docker-compose.vimob-functions.yml`. Ele preserva `verify_jwt` por função.
 8. Habilitar o endpoint S3 no self-hosted, gerar credenciais e iniciar a
    primeira cópia com `copy-storage.sh`.
+
+Esses passos descrevem a **instalação inicial** do roteador versionado. Para
+atualizar seletivamente as funções do Google Agenda no ambiente já em execução,
+use o [preflight local](google-calendar-release-readiness.md). Em 2026-10-06, o
+runtime observado servia apenas cinco slugs e respondia com um formato de `404`
+diferente do roteador deste repositório. Inspecione o roteador, os mounts e o
+manifesto efetivos antes de substituí-los; não copie o manifesto completo ou o
+roteador versionado sobre esse runtime sem reconciliar as rotas existentes.
+O fluxo atual da Agenda é Vimob → Google; publicar apenas OAuth e worker de
+envio. Não configurar webhook ou jobs de entrada para este corte.
+A primeira publicação da Agenda permite conectar a conta Google a todos os
+usuários Vimob com acesso ativo e permissão de gerenciar Agenda; não há lista
+de UUIDs no serviço Functions. Confirme previamente o status do cliente OAuth
+no Google Cloud: em `Testing`, apenas as contas de teste cadastradas conseguem
+autorizar, mesmo que o botão esteja visível no Vimob. Verifique o gate local,
+o banco, o Vault, o Cron e a ordem do teste controlado no
+[preflight](google-calendar-release-readiness.md) antes da publicação.
 
 O comando `supabase secrets list` devolve nomes e hashes, não os valores. Os
 valores reais devem vir do cofre operacional/Portainer ou ser rotacionados nos
@@ -382,7 +401,8 @@ Atualize ao mesmo tempo:
 - `NEXT_PUBLIC_SUPABASE_URL` e a chave pública no build do Next.js;
 - `SUPABASE_PROJECT_URL`, JWKS, issuer e chaves server-side da API Go;
 - callbacks de Auth e OAuth;
-- webhooks Meta, Evolution/WhatsApp, Google Calendar e Asaas;
+- webhooks Meta, Evolution/WhatsApp e Asaas; o webhook legado do Google
+  Calendar não integra o fluxo de mão única;
 - jobs e integrações que chamem `*.supabase.co`;
 - DNS/Cloudflare do domínio do Supabase.
 
@@ -396,13 +416,15 @@ login no primeiro acesso.
 - 177 usuários em `auth.users`;
 - 7 buckets e igualdade de contagem/tamanho no `rclone size`;
 - download real de amostras dos 7 buckets;
-- 81 funções presentes e regras JWT iguais ao manifest;
+- todas as funções `ACTIVE` do manifesto aprovado para o corte presentes e
+  regras JWT iguais ao manifesto (67 entradas `ACTIVE` no manifesto local em
+  2026-10-06; as 81 funções acima são o snapshot histórico da origem);
 - 12 Cron jobs presentes, com 11 ativos e nenhuma URL do projeto antigo;
 - 14 entradas do Vault, com `anon_key` substituída pela chave nova;
 - login, reset de senha e convite por e-mail;
 - recebimento de lead Meta;
 - envio e recebimento WhatsApp, incluindo mídia;
-- Google Calendar OAuth/sync/webhook;
+- Google Calendar OAuth e envio Vimob → Google;
 - Asaas checkout/webhook;
 - Vista e Imoview;
 - Realtime do CRM;
@@ -417,4 +439,3 @@ uma cópia externa até o novo ambiente passar pelos testes.
 - https://supabase.com/docs/guides/self-hosting/restore-from-platform
 - https://supabase.com/docs/guides/self-hosting/copy-from-platform-s3
 - https://supabase.com/docs/guides/self-hosting/self-hosted-functions
-

@@ -74,7 +74,7 @@ func TestLiveScheduleVisibilityContract(t *testing.T) {
 			if event.Visibility != "default" {
 				t.Fatalf("only default events may be masked, event %s is %s", event.ID, event.Visibility)
 			}
-			if event.UserID != nil || event.LeadID != nil || event.PropertyID != nil || len(event.AssigneeUserIDs) != 0 {
+			if event.UserID != nil || event.LeadID != nil || event.PropertyID != nil || event.GoogleSyncStatus != nil || len(event.AssigneeUserIDs) != 0 {
 				t.Fatalf("masked event %s exposed private references", event.ID)
 			}
 			continue

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
@@ -116,7 +117,27 @@ func (handler Handler) invokeAuthorizedFunction(
 		writeIntegrationError(w, r, err)
 		return
 	}
+	if isMissingGoogleCalendarFunctionResponse(name, response) {
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "google_calendar_function_unavailable", "Google Calendar is temporarily unavailable.")
+		return
+	}
 	writeFunctionResponse(w, response)
+}
+
+func isMissingGoogleCalendarFunctionResponse(name string, response FunctionResponse) bool {
+	if !allowedGoogleCalendarFunction(name) || response.StatusCode != http.StatusNotFound {
+		return false
+	}
+
+	var body struct {
+		Msg     string `json:"msg"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(response.Body, &body); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(body.Msg), "Function not found") ||
+		strings.EqualFold(strings.TrimSpace(body.Message), "Function not found")
 }
 
 func writeFunctionResponse(w http.ResponseWriter, response FunctionResponse) {

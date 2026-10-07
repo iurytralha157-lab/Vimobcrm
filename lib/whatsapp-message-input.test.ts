@@ -6,6 +6,7 @@ import {
 	getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
   getWhatsAppSendSessionId,
+	shouldOfferOwnWhatsAppStart,
 	preserveWhatsAppConversationCardSnapshot,
 	updateWhatsAppConversationDraft,
 } from './whatsapp-message-input'
@@ -159,13 +160,34 @@ test('historical conversation without a trusted session cannot fall back to anot
   const result = getWhatsAppSendSessionId(
     { id: '50000000-0000-4000-8000-000000000001', session_id: null },
     '40000000-0000-4000-8000-000000000002',
-    [{ id: '40000000-0000-4000-8000-000000000002' }],
+    [{ id: '40000000-0000-4000-8000-000000000002', can_send: true }],
   )
 
   assert.equal(result, undefined)
 })
 
-test('authorized persisted conversation keeps its own session', () => {
+test('conversa antiga sem sessao mostra caminho pelo numero proprio sem reutilizar canal legado', () => {
+  const historical = {
+    id: 'conversation-old', lead_id: 'lead-1', session_id: null,
+    contact_phone: '5511999999999', is_group: false,
+  }
+  const ownSession = {
+    id: 'session-own', owner_user_id: 'user-1', status: 'connected', can_send: true,
+    provider: 'evolution_go',
+  }
+  assert.equal(getWhatsAppSendSessionId(historical, 'session-own', [ownSession], 'user-1'), undefined)
+  assert.equal(getWhatsAppMessageInputState(historical, null, [ownSession], 'user-1').disabled, true)
+  assert.equal(shouldOfferOwnWhatsAppStart(historical, [ownSession], 'user-1'), true)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, session_id: undefined }, [ownSession], 'user-1'), true)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, is_group: true }, [ownSession], 'user-1'), false)
+  assert.equal(shouldOfferOwnWhatsAppStart({ ...historical, lead_id: null }, [ownSession], 'user-1'), false)
+  assert.equal(getWhatsAppSendSessionId(
+    { lead_id: 'lead-1', session_id: null, contact_phone: historical.contact_phone },
+    'session-own', [ownSession], 'user-1',
+  ), 'session-own')
+})
+
+test('conversation from a session absent from the authorized list is not sendable', () => {
   const result = getWhatsAppSendSessionId(
     {
       id: '50000000-0000-4000-8000-000000000001',
@@ -175,22 +197,148 @@ test('authorized persisted conversation keeps its own session', () => {
     [{ id: '40000000-0000-4000-8000-000000000002' }],
   )
 
-  assert.equal(result, '40000000-0000-4000-8000-000000000001')
+  assert.equal(result, undefined)
+})
+
+test('conversation from another session cannot silently send through the selected account', () => {
+  const state = getWhatsAppMessageInputState(
+    {
+      id: '50000000-0000-4000-8000-000000000001',
+      lead_id: 'lead-1',
+      session_id: 'session-other',
+      contact_phone: '5511999999999',
+      session: { id: 'session-other', status: 'connected' },
+    },
+    'session-own',
+    [{ id: 'session-own', status: 'connected', provider: 'evolution_go', can_send: true }],
+  )
+
+  assert.equal(state.disabled, true)
+  assert.equal(state.sendSessionId, undefined)
+  assert.match(state.placeholder, /Inicie pelo seu número/)
 })
 
 test('new conversation draft may use the explicitly selected session', () => {
   const result = getWhatsAppSendSessionId(
     { session_id: null },
     '40000000-0000-4000-8000-000000000002',
-    [{ id: '40000000-0000-4000-8000-000000000002' }],
+    [{ id: '40000000-0000-4000-8000-000000000002', owner_user_id: 'user-1', status: 'connected', can_send: true }],
+    'user-1',
   )
 
   assert.equal(result, '40000000-0000-4000-8000-000000000002')
 })
 
+test('old API without can_send still permits an owned connected session', () => {
+  const state = getWhatsAppMessageInputState(
+    { lead_id: 'lead-1', session_id: null, contact_phone: '5511999999999' },
+    null,
+    [{ id: 'session-own', owner_user_id: 'user-1', status: 'connected', provider: 'evolution_go' }],
+    'user-1',
+  )
+  assert.equal(state.disabled, false)
+  assert.equal(state.sendSessionId, 'session-own')
+})
+
+test('a shared view-only session cannot confirm attendance or start a new chat', () => {
+  const shared = {
+    id: 'session-shared', owner_user_id: 'other-user', status: 'connected',
+    provider: 'evolution_go', can_send: false,
+  }
+  const existing = getWhatsAppMessageInputState(
+    { id: 'conversation-1', lead_id: 'lead-1', session_id: shared.id, contact_phone: '5511999999999' },
+    null,
+    [shared],
+    'user-1',
+  )
+  assert.equal(existing.disabled, true)
+  assert.equal(existing.sendSessionId, undefined)
+
+  const newChat = getWhatsAppSendSessionId(
+    { lead_id: 'lead-1', session_id: null, contact_phone: '5511999999999' },
+    shared.id,
+    [shared],
+    'user-1',
+  )
+  assert.equal(newChat, undefined)
+})
+
+test('a shared send grant permits an existing assigned conversation but not a new chat', () => {
+  const shared = {
+    id: 'session-shared', owner_user_id: 'other-user', status: 'connected',
+    provider: 'evolution_go', can_send: true,
+  }
+  assert.equal(getWhatsAppSendSessionId(
+    { id: 'conversation-1', lead_id: 'lead-1', session_id: shared.id, lead: { id: 'lead-1', assignee: { id: 'user-1' } } },
+    null,
+    [shared],
+    'user-1',
+  ), shared.id)
+  assert.equal(getWhatsAppSendSessionId(
+    { lead_id: 'lead-1', session_id: null },
+    shared.id,
+    [shared],
+    'user-1',
+  ), undefined)
+})
+
+test('admin com grant ve historico de lead alheio, mas nao pode enviar pelo numero compartilhado', () => {
+  const shared = {
+    id: 'session-shared', owner_user_id: 'other-user', status: 'connected',
+    provider: 'evolution_go', can_send: true,
+  }
+  const conversation = {
+    id: 'conversation-1', lead_id: 'lead-1', session_id: shared.id,
+    contact_phone: '5511999999999',
+    lead: { id: 'lead-1', assignee: { id: 'assigned-user' } },
+  }
+  const blocked = getWhatsAppMessageInputState(conversation, null, [shared], 'admin-user')
+  assert.equal(blocked.disabled, true)
+  assert.equal(blocked.sendSessionId, undefined)
+  assert.match(blocked.placeholder, /sob sua responsabilidade/)
+
+  const assigned = getWhatsAppMessageInputState(
+    { ...conversation, lead: { id: 'lead-1', assignee: { id: 'admin-user' } } },
+    null, [shared], 'admin-user',
+  )
+  assert.equal(assigned.disabled, false)
+  assert.equal(assigned.sendSessionId, shared.id)
+})
+
+test('revogacao em chat aberto bloqueia envio anterior e permite iniciar pelo numero proprio', () => {
+  const conversation = {
+    id: 'conversation-shared', lead_id: 'lead-1', session_id: 'session-shared',
+    contact_phone: '5511999999999',
+    lead: { id: 'lead-1', assignee: { id: 'user-1' } },
+  }
+  const shared = {
+    id: 'session-shared', owner_user_id: 'other-user', status: 'connected',
+    provider: 'evolution_go', can_send: true,
+  }
+  const own = {
+    id: 'session-own', owner_user_id: 'user-1', status: 'connected',
+    provider: 'evolution_go', can_send: true,
+  }
+  assert.equal(getWhatsAppMessageInputState(conversation, null, [shared, own], 'user-1').disabled, false)
+
+  const revokedState = getWhatsAppMessageInputState(
+    conversation, null, [{ ...shared, can_send: false }, own], 'user-1',
+  )
+  assert.equal(revokedState.disabled, true)
+  assert.equal(revokedState.sendSessionId, undefined)
+
+  const ownDraft = getWhatsAppMessageInputState(
+    { lead_id: 'lead-1', session_id: null, contact_phone: '5511999999999' },
+    'session-own', [{ ...shared, can_send: false }, own], 'user-1',
+  )
+  assert.equal(ownDraft.disabled, false)
+  assert.equal(ownDraft.sendSessionId, own.id)
+})
+
 test('usa o status atual da lista de integracoes no lugar do status antigo da conversa', () => {
   const state = getWhatsAppMessageInputState(
     {
+      id: 'conversation-1',
       lead_id: 'lead-1',
       session_id: 'session-1',
       contact_phone: '5511999999999',
@@ -202,7 +350,8 @@ test('usa o status atual da lista de integracoes no lugar do status antigo da co
       },
     },
     null,
-    [{ id: 'session-1', status: 'connected', provider: 'evolution_go' }],
+    [{ id: 'session-1', owner_user_id: 'user-1', status: 'connected', provider: 'evolution_go', can_send: true }],
+    'user-1',
   )
 
   assert.deepEqual(state, {
@@ -212,9 +361,10 @@ test('usa o status atual da lista de integracoes no lugar do status antigo da co
   })
 })
 
-test('deixa o backend validar uma unica integracao configurada que aparece desconectada', () => {
+test('nao oferece envio quando o backend marca a integracao desconectada sem can_send', () => {
   const state = getWhatsAppMessageInputState(
     {
+      id: 'conversation-1',
       lead_id: 'lead-1',
       session_id: 'session-1',
       contact_phone: '5511999999999',
@@ -226,14 +376,32 @@ test('deixa o backend validar uma unica integracao configurada que aparece desco
       },
     },
     null,
-    [{ id: 'session-1', status: 'disconnected', provider: 'evolution_go' }],
+    [{ id: 'session-1', owner_user_id: 'user-1', status: 'disconnected', provider: 'evolution_go', can_send: false }],
+    'user-1',
   )
 
-  assert.deepEqual(state, {
-    disabled: false,
-    placeholder: 'Digite sua mensagem...',
-    sendSessionId: 'session-1',
-  })
+  assert.equal(state.disabled, true)
+  assert.equal(state.sendSessionId, undefined)
+  assert.match(state.placeholder, /desconectado/)
+})
+
+test('nao oferece envio por sessao desconectada mesmo com can_send verdadeiro', () => {
+  const state = getWhatsAppMessageInputState(
+    {
+      id: 'conversation-1',
+      lead_id: 'lead-1',
+      session_id: 'session-1',
+      contact_phone: '5511999999999',
+      session: { id: 'session-1', status: 'connected' },
+    },
+    null,
+    [{ id: 'session-1', owner_user_id: 'user-1', status: 'disconnected', provider: 'evolution_go', can_send: true }],
+    'user-1',
+  )
+
+  assert.equal(state.disabled, true)
+  assert.equal(state.sendSessionId, undefined)
+  assert.match(state.placeholder, /desconectado/)
 })
 
 test('permite iniciar conversa no detalhe de um lead ainda sem historico', () => {
@@ -247,7 +415,8 @@ test('permite iniciar conversa no detalhe de um lead ainda sem historico', () =>
       session: null,
     },
     null,
-    [{ id: 'session-1', status: 'connected', provider: 'evolution_go' }],
+    [{ id: 'session-1', owner_user_id: 'user-1', status: 'connected', provider: 'evolution_go', can_send: true }],
+    'user-1',
   )
 
   assert.deepEqual(state, {

@@ -32,6 +32,7 @@ type Config struct {
 	Publications             PublicationConfig
 	Portals                  PortalConfig
 	Storage                  StorageConfig
+	GoogleCalendar           GoogleCalendarConfig
 	Email                    EmailConfig
 	Notifications            NotificationConfig
 	Push                     PushConfig
@@ -57,6 +58,10 @@ type StorageConfig struct {
 	ProjectURL                string
 	APIKey                    string
 	EdgeClientIPSigningSecret string
+}
+
+type GoogleCalendarConfig struct {
+	ImmediateDispatchEnabled bool
 }
 
 type EvolutionGoConfig struct {
@@ -261,6 +266,9 @@ func Load() (Config, error) {
 			ProjectURL:                getEnv("SUPABASE_PROJECT_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", getEnv("SUPABASE_URL", ""))),
 			APIKey:                    getEnv("SUPABASE_SERVICE_ROLE_KEY", os.Getenv("SUPABASE_SECRET_KEY")),
 			EdgeClientIPSigningSecret: strings.TrimSpace(os.Getenv("BILLING_EDGE_CLIENT_IP_SIGNING_SECRET")),
+		},
+		GoogleCalendar: GoogleCalendarConfig{
+			ImmediateDispatchEnabled: parseBool("GOOGLE_CALENDAR_IMMEDIATE_DISPATCH_ENABLED", false),
 		},
 		Email: EmailConfig{
 			ResendAPIKey:         os.Getenv("RESEND_API_KEY"),

@@ -155,7 +155,7 @@ func TestScanLeadWithTotalKeepsOnlyDurableWhatsAppAvatarReference(t *testing.T) 
 		t.Fatalf("response avatar synced at = %#v, want %q", response["whatsappAvatarSyncedAt"], syncedAt.Format(time.RFC3339))
 	}
 
-	fields := leadSelectFields()
+	fields := leadSelectFields("true")
 	if !strings.Contains(fields, "l.whatsapp_avatar_url") ||
 		!strings.Contains(fields, "l.whatsapp_avatar_storage_path") ||
 		!strings.Contains(fields, "l.whatsapp_avatar_synced_at") {
@@ -215,7 +215,7 @@ func TestLeadReadModelPreservesPersistedFirstResponse(t *testing.T) {
 		lead.FirstResponseIsAutomation == nil || *lead.FirstResponseIsAutomation {
 		t.Fatalf("first response metric was lost in lead read model: %#v", lead)
 	}
-	fields := leadSelectFields()
+	fields := leadSelectFields("true")
 	for _, column := range []string{
 		"l.first_response_at", "l.first_response_seconds",
 		"l.first_response_channel", "l.first_response_is_automation",

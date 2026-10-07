@@ -48,6 +48,7 @@ export interface WhatsAppSession {
   profile_name: string | null
   profile_picture: string | null
   is_active: boolean
+  can_send?: boolean
   is_notification_session?: boolean
   provider?: WhatsAppProvider
   advanced_settings?: Json | null
@@ -199,6 +200,8 @@ export interface WhatsAppMessage {
   reaction_sender_name?: string | null
   metadata?: Record<string, unknown>
   status: string
+  delivery_error_code?: 'recipient_not_registered' | 'outcome_unknown' | 'send_failed' | null
+  delivery_failed_at?: string | null
   sent_at: string
   delivered_at: string | null
   read_at: string | null
@@ -299,6 +302,9 @@ export type WhatsAppAttendanceEntry = {
   userName: string
   sessionId: string
   joinedAt: string
+  entrySource: 'manual' | 'ctwa_auto'
+  markerAt?: string | null
+  markerKind?: 'started' | 'joined' | null
 }
 
 export type WhatsAppAttendanceState = {

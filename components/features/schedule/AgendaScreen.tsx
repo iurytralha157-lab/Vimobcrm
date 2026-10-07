@@ -435,10 +435,10 @@ function AgendaCalendar() {
       );
     } else if (callbackWarning) {
       toast.warning(
-        `Google Agenda conectada, mas a sincronização precisa de atenção: ${callbackWarning.slice(0, 300)}`,
+        `Google Agenda conectada, mas o envio precisa de atenção: ${callbackWarning.slice(0, 300)}`,
       );
     } else if (connected) {
-      toast.success("Google Agenda conectada e sincronizada.");
+      toast.success("Google Agenda conectada.");
     }
 
     const cleanParams = new URLSearchParams(searchParamsString);
@@ -792,8 +792,9 @@ function AgendaCalendar() {
               Google Agenda
             </DialogTitle>
             <DialogDescription className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-              Conecte sua conta pessoal para enviar e receber compromissos
-              automaticamente.
+              Envie automaticamente ao Google Agenda os compromissos criados
+              ou alterados no Vimob. A exclusão no Vimob também envia a remoção
+              do evento vinculado no Google.
             </DialogDescription>
           </DialogHeader>
           <GoogleCalendarConnect />

@@ -23,8 +23,9 @@ type GamificationRecorder interface {
 }
 
 type Repository struct {
-	db                   *dbpkg.Postgres
-	gamificationRecorder GamificationRecorder
+	db                      *dbpkg.Postgres
+	gamificationRecorder    GamificationRecorder
+	immediateGoogleDispatch bool
 }
 
 type scanner interface {
@@ -53,8 +54,9 @@ type eventSnapshot struct {
 	Visibility        string
 }
 
-func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder) Repository {
-	return Repository{db: db, gamificationRecorder: gamificationRecorder}
+func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, immediateGoogleDispatch ...bool) Repository {
+	enabled := len(immediateGoogleDispatch) > 0 && immediateGoogleDispatch[0]
+	return Repository{db: db, gamificationRecorder: gamificationRecorder, immediateGoogleDispatch: enabled}
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) ([]Event, error) {
@@ -307,8 +309,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	eventIDs := []string{eventID}
+	var recurringIDs []string
 	if input.RecurrenceRule != nil {
-		recurringIDs, err := repo.insertRecurringEvents(ctx, tx, tenantContext.OrganizationID, eventID, input)
+		recurringIDs, err = repo.insertRecurringEvents(ctx, tx, tenantContext.OrganizationID, eventID, input)
 		if err != nil {
 			return Event{}, fmt.Errorf("%w: %v", ErrRecurrenceCreate, err)
 		}
@@ -347,7 +350,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}); err != nil {
 		return Event{}, err
 	}
-	if err := repo.enqueueScheduleGoogleMutation(
+	parentGoogleJobEnqueued, err := repo.enqueueScheduleGoogleMutation(
 		ctx,
 		tx,
 		tenantContext.OrganizationID,
@@ -355,12 +358,28 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		eventID,
 		"",
 		input.UserID,
-	); err != nil {
+	)
+	if err != nil {
+		return Event{}, err
+	}
+	recurringGoogleJobsEnqueued, err := repo.enqueueScheduleGoogleRecurringCreates(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		eventID,
+		input.UserID,
+		recurringIDs,
+	)
+	if err != nil {
 		return Event{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
+	}
+	if parentGoogleJobEnqueued || recurringGoogleJobsEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 	if snapshot.LeadID != "" && snapshot.EventType == "visit" {
 		repo.recordScheduleGamification(tenantContext, "visit_scheduled", snapshot.ID)
@@ -627,7 +646,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			}
 		}
 	}
-	if err := repo.enqueueScheduleGoogleMutation(
+	googleJobEnqueued, err := repo.enqueueScheduleGoogleMutation(
 		ctx,
 		tx,
 		tenantContext.OrganizationID,
@@ -635,12 +654,16 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		updatedID,
 		current.UserID,
 		updated.UserID,
-	); err != nil {
+	)
+	if err != nil {
 		return Event{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
+	}
+	if googleJobEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 	if statusChangedToCompleted && updated.LeadID != "" && updated.EventType == "visit" {
 		repo.recordScheduleGamification(tenantContext, "visit_confirmed", updated.ID)
@@ -694,13 +717,14 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if err := validateEventDeletion(current); err != nil {
 		return Event{}, err
 	}
-	if err := repo.enqueueScheduleGoogleDelete(
+	googleDeleteEnqueued, err := repo.enqueueScheduleGoogleDelete(
 		ctx,
 		tx,
 		tenantContext.OrganizationID,
 		tenantContext.UserID,
 		eventID,
-	); err != nil {
+	)
+	if err != nil {
 		return Event{}, err
 	}
 
@@ -724,6 +748,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
+	}
+	if googleDeleteEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 
 	return event, nil
@@ -911,8 +938,9 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 		return nil, err
 	}
 
+	assigneeAdded := false
 	if userID != current.UserID {
-		_, err = tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			insert into public.schedule_event_assignees (
 				organization_id,
 				event_id,
@@ -928,6 +956,7 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 		if err != nil {
 			return nil, err
 		}
+		assigneeAdded = tag.RowsAffected() > 0
 	}
 
 	if err := repo.insertScheduleNotifications(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, []string{userID}, "Voce foi adicionado a uma atividade", current.Title, map[string]any{
@@ -936,9 +965,27 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 	}); err != nil {
 		return nil, err
 	}
+	googleJobEnqueued := false
+	if assigneeAdded {
+		googleJobEnqueued, err = repo.enqueueScheduleGoogleMutation(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			tenantContext.UserID,
+			eventID,
+			current.UserID,
+			current.UserID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	if googleJobEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 
 	return repo.ListAssignees(ctx, tenantContext, eventID)
@@ -973,7 +1020,7 @@ func (repo Repository) RemoveAssignee(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	_, err = tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		delete from public.schedule_event_assignees
 		where organization_id = $1::uuid
 		  and event_id = $2::uuid
@@ -982,9 +1029,27 @@ func (repo Repository) RemoveAssignee(ctx context.Context, tenantContext tenant.
 	if err != nil {
 		return nil, err
 	}
+	googleJobEnqueued := false
+	if tag.RowsAffected() > 0 {
+		googleJobEnqueued, err = repo.enqueueScheduleGoogleMutation(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			tenantContext.UserID,
+			eventID,
+			current.UserID,
+			current.UserID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	if googleJobEnqueued {
+		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
 
 	return repo.ListAssignees(ctx, tenantContext, eventID)
@@ -1862,6 +1927,7 @@ func scheduleEventsQuery(whereClause string) string {
 			v.recurrence_until,
 			v.recurrence_count,
 			case when v.is_masked then null else v.google_event_id end,
+			case when v.is_masked then null else v.google_sync_status end,
 			case when v.is_masked then null else v.completed_by::text end,
 			v.completed_at,
 			case when v.is_masked then null else v.outcome end,
@@ -1981,7 +2047,7 @@ func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, c
 
 func scanEvent(row scanner) (Event, error) {
 	var event Event
-	var userID, leadID, propertyID, createdBy, teamID, leadSourceSnapshot, description, location, recurrenceParentID, recurrenceRule, googleEventID, completedBy pgtype.Text
+	var userID, leadID, propertyID, createdBy, teamID, leadSourceSnapshot, description, location, recurrenceParentID, recurrenceRule, googleEventID, googleSyncStatus, completedBy pgtype.Text
 	var outcome, outcomeNotes, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	var reminderMinutes, recurrenceCount pgtype.Int4
 	var recurrenceUntil, completedAt, outcomeRecordedAt pgtype.Timestamptz
@@ -2015,6 +2081,7 @@ func scanEvent(row scanner) (Event, error) {
 		&recurrenceUntil,
 		&recurrenceCount,
 		&googleEventID,
+		&googleSyncStatus,
 		&completedBy,
 		&completedAt,
 		&outcome,
@@ -2058,6 +2125,7 @@ func scanEvent(row scanner) (Event, error) {
 	event.RecurrenceUntil = timePtr(recurrenceUntil)
 	event.RecurrenceCount = intPtr(recurrenceCount)
 	event.GoogleEventID = textPtr(googleEventID)
+	event.GoogleSyncStatus = textPtr(googleSyncStatus)
 	event.CompletedBy = textPtr(completedBy)
 	event.CompletedAt = timePtr(completedAt)
 	event.Outcome = textPtr(outcome)

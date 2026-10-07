@@ -93,7 +93,7 @@ export function ConversationMessages({
       ...attendanceEntries.map((entry): ConversationTimelineItem => ({
         kind: "attendance",
         id: `attendance-${entry.id}`,
-        timestamp: entry.joinedAt,
+        timestamp: entry.markerAt ?? entry.joinedAt,
         entry,
       })),
     ].sort((left, right) => (
@@ -197,6 +197,8 @@ export function ConversationMessages({
                       fromMe={item.message.from_me}
                       status={item.message.status ?? "sent"}
                       sentAt={item.message.sent_at}
+                      deliveryErrorCode={item.message.delivery_error_code ?? null}
+                      deliveryFailedAt={item.message.delivery_failed_at ?? null}
                       senderName={item.message.sender_name ?? null}
                       isGroup={conversation.is_group}
                       onRetryMedia={item.message.media_storage_path

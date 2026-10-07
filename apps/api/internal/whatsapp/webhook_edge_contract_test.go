@@ -386,7 +386,7 @@ func TestNativeOutboundWebhookReconciliationTransfersOnlyExactDurableIdentity(t 
 	for _, fragment := range []string{
 		"from public.whatsapp_outbox as outbox",
 		"for update",
-		`outboxStatus == "dead" && outboxLastError == whatsappOutboxProviderUnknownMarker`,
+		`messageDeliveryErrorCode(outboxLastError) == deliveryErrorOutcomeUnknown`,
 		"set client_message_id = null",
 		"pending.lead_id = canonical.lead_id",
 		"canonical.client_message_id is null or canonical.client_message_id = $5",
@@ -396,6 +396,7 @@ func TestNativeOutboundWebhookReconciliationTransfersOnlyExactDurableIdentity(t 
 		"and outbox.client_message_id = $8",
 		"and outbox.provider_message_id = $9",
 		"and outbox.last_error = $10",
+		"message.ProviderMessageID, outboxLastError",
 		"if reconciled.RowsAffected() != 1",
 		"delete from public.whatsapp_messages as pending",
 	} {

@@ -116,6 +116,47 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	}
 }
 
+func TestWebhookWorkerKeepsEveryClaimGateWithinActiveProcessingEpoch(t *testing.T) {
+	normalized := strings.Join(strings.Fields(strings.ToLower(claimEvolutionWebhooksQuery)), " ")
+	for _, required := range []string{
+		"left join private.whatsapp_webhook_session_cutovers cutover on cutover.session_id = ws.id",
+		"coalesce(cutover.active_epoch, 0) as active_epoch",
+		"wi.processing_epoch = coalesce(cutover.active_epoch, 0)",
+		"older.processing_epoch = wi.processing_epoch",
+		"live_due.processing_epoch = coalesce(cutover.active_epoch, 0)",
+		"wi.processing_epoch = selected.active_epoch",
+		"active.processing_epoch = selected.active_epoch",
+		"wi.processing_epoch = c.active_epoch",
+		"active.processing_epoch = c.active_epoch",
+		"claimed.processing_epoch",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Errorf("claim query is missing active epoch gate %q", required)
+		}
+	}
+	if got := strings.Count(normalized, "active.processing_epoch ="); got != 3 {
+		t.Errorf("active claim barriers have %d epoch checks, want 3", got)
+	}
+	if got := strings.Count(normalized, "predecessor.processing_epoch ="); got != 4 {
+		t.Errorf("predecessor checks have %d epoch checks, want 4", got)
+	}
+
+	recovery := strings.ToLower(strings.Join(strings.Fields(readWhatsAppSourceFunction(t, "webhook_worker.go", "func resetStaleEvolutionWebhookClaims")), " "))
+	if got := strings.Count(recovery, "inbox.processing_epoch = coalesce(( select cutover.active_epoch"); got != 2 {
+		t.Errorf("stale recovery has %d active epoch guards, want 2", got)
+	}
+	for _, name := range []string{
+		"func (repo Repository) renewEvolutionWebhookLease",
+		"func (repo Repository) markEvolutionWebhookProcessed",
+		"func (repo Repository) markEvolutionWebhookFailed",
+	} {
+		source := strings.ToLower(strings.Join(strings.Fields(readWhatsAppSourceFunction(t, "webhook_worker.go", name)), " "))
+		if !strings.Contains(source, "inbox.processing_epoch = coalesce(( select cutover.active_epoch") {
+			t.Errorf("%s does not reject a lease from a retained epoch", name)
+		}
+	}
+}
+
 func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t *testing.T) {
 	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessed`)
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))

@@ -28,6 +28,7 @@ export interface WhatsAppSession {
   profile_name: string | null;
   profile_picture: string | null;
   is_active: boolean;
+  can_send?: boolean;
   is_notification_session?: boolean;
   provider?: WhatsAppProvider;
   advanced_settings?: Json | null;

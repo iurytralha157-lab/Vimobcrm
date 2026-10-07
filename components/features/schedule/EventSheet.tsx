@@ -925,6 +925,7 @@ export function EventSheet({
               isCompleted={isCompleted}
               isMasked={isMasked}
               status={event?.status}
+              googleSyncStatus={event?.google_sync_status}
               outcome={event?.outcome}
               outcomeNotes={event?.outcome_notes}
               performedByName={

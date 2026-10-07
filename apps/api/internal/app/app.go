@@ -279,7 +279,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	developmentsHandler := developments.NewHandler(developmentsRepository)
 	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres))
-	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository), realtimeHub)
+	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository, cfg.GoogleCalendar.ImmediateDispatchEnabled), realtimeHub)
 	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
 		ProjectURL:          cfg.Storage.ProjectURL,

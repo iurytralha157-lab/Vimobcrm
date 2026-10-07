@@ -21,6 +21,7 @@ var (
 	ErrMessageNotFound            = errors.New("whatsapp message not found")
 	ErrProviderFailed             = errors.New("whatsapp provider operation failed")
 	ErrProviderOutcomeUnknown     = errors.New("whatsapp provider outcome is unknown")
+	ErrRecipientNotRegistered     = errors.New("recipient_not_registered")
 	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
 	ErrAttendanceRequired         = errors.New("whatsapp attendance confirmation is required")
@@ -221,6 +222,8 @@ type Message struct {
 	ReactionSenderName  *string        `json:"reaction_sender_name,omitempty"`
 	Metadata            map[string]any `json:"metadata,omitempty"`
 	Status              string         `json:"status"`
+	DeliveryErrorCode   *string        `json:"delivery_error_code,omitempty"`
+	DeliveryFailedAt    *time.Time     `json:"delivery_failed_at,omitempty"`
 	SentAt              time.Time      `json:"sent_at"`
 	DeliveredAt         *time.Time     `json:"delivered_at"`
 	ReadAt              *time.Time     `json:"read_at"`
@@ -247,17 +250,19 @@ type HistoryAccessResponse struct {
 }
 
 type AttendanceEntry struct {
-	ID                    string    `json:"id"`
-	OrganizationID        string    `json:"-"`
-	ConversationID        string    `json:"-"`
-	SessionID             string    `json:"sessionId"`
-	LeadID                string    `json:"-"`
-	BindingID             string    `json:"-"`
-	UserID                string    `json:"userId"`
-	ActorNameSnapshot     string    `json:"userName"`
-	JoinedAt              time.Time `json:"joinedAt"`
-	EntrySource           string    `json:"entrySource"`
-	IngressSequenceCutoff int64     `json:"-"`
+	ID                    string     `json:"id"`
+	OrganizationID        string     `json:"-"`
+	ConversationID        string     `json:"-"`
+	SessionID             string     `json:"sessionId"`
+	LeadID                string     `json:"-"`
+	BindingID             string     `json:"-"`
+	UserID                string     `json:"userId"`
+	ActorNameSnapshot     string     `json:"userName"`
+	JoinedAt              time.Time  `json:"joinedAt"`
+	EntrySource           string     `json:"entrySource"`
+	IngressSequenceCutoff int64      `json:"-"`
+	MarkerAt              *time.Time `json:"markerAt"`
+	MarkerKind            *string    `json:"markerKind"`
 }
 
 type AttendanceResponse struct {

@@ -726,7 +726,7 @@ test("resposta Chaves na Mão fixa webhook de leads como indisponível", () => {
   );
 });
 
-test("catalogo de integracoes separa portais e mantem conectores futuros visiveis", () => {
+test("catalogo de integracoes exibe todos os provedores em uma grade unica", () => {
   const source = readFileSync(
     resolve(process.cwd(), "components/features/settings/IntegrationsTab.tsx"),
     "utf8",
@@ -734,8 +734,8 @@ test("catalogo de integracoes separa portais e mantem conectores futuros visivei
 
   const expectedIntegrationNames = [
     "WhatsApp",
-    "IA de atendimento",
     "Meta",
+    "IA de atendimento",
     "Canal Pro",
     "ZAP Imóveis",
     "Viva Real",
@@ -760,6 +760,17 @@ test("catalogo de integracoes separa portais e mantem conectores futuros visivei
     ),
     expectedIntegrationNames,
   );
+  assert.deepEqual(INTEGRATION_PROVIDER_IDS.slice(0, 3), [
+    "whatsapp",
+    "meta",
+    "ai",
+  ]);
+  for (const providerId of INTEGRATION_PROVIDER_IDS) {
+    assert.ok(
+      INTEGRATION_PROVIDER_CATALOG[providerId].description.trim(),
+      `${providerId} precisa ter uma descrição visível no card`,
+    );
+  }
 
   assert.doesNotMatch(source, /\.filter\(\(item\) => item\.enabled\)/);
   assert.match(source, /INTEGRATION_PROVIDER_IDS\.map\(\(key\)/);
@@ -853,9 +864,87 @@ test("catalogo de integracoes separa portais e mantem conectores futuros visivei
   );
   assert.match(source, /router\.push\(item\.management\.href\)/);
   assert.match(source, /window\.open\(item\.management\.href/);
-  assert.match(source, /INTEGRATION_CATEGORY_IDS\.map\(\(categoryId\)/);
+  assert.match(source, /filteredIntegrations\.map\(\(item\)/);
+  assert.doesNotMatch(source, /groupedIntegrations/);
+  assert.match(
+    source,
+    /grid-cols-1[^"\n]*min-\[480px\]:grid-cols-2[^"\n]*md:grid-cols-3[^"\n]*xl:grid-cols-4/,
+  );
+  assert.match(source, /\{item\.description\}/);
+  assert.match(source, /\{item\.detail\}/);
+  assert.match(source, /item\.canInspectUnavailable/);
+  assert.match(
+    source,
+    /canInspectUnavailable:[\s\S]*?googleCalendarStatus\?\.can_connect === false/,
+  );
+  assert.equal(
+    INTEGRATION_PROVIDER_CATALOG["google-calendar"].description,
+    "Envie compromissos do Vimob para sua agenda Google.",
+  );
+  assert.doesNotMatch(source, /\{group\.items\.length\}/);
+  assert.doesNotMatch(
+    source,
+    /O módulo necessário não está liberado para esta organização/,
+  );
+  assert.equal(
+    source.match(/label: "Módulo indisponível"/g)?.length,
+    1,
+    "badge e botão reutilizam o mesmo status de módulo",
+  );
+  const cardSource = source.slice(
+    source.indexOf("function IntegrationCard("),
+    source.indexOf("function IntegrationCardNotice("),
+  );
+  const cardHeader = cardSource.slice(
+    cardSource.indexOf("<CardHeader"),
+    cardSource.indexOf("</CardHeader>"),
+  );
+  assert.ok(cardSource.includes("function IntegrationCard("));
+  assert.ok(cardHeader.includes("{item.icon}"));
+  assert.ok(cardHeader.includes("{item.title}"));
+  assert.ok(cardHeader.includes("{status.label}"));
+  assert.match(cardHeader, /flex-wrap/);
+  assert.match(cardSource, /whitespace-normal/);
+  assert.doesNotMatch(cardSource, /min-w-\[148px\]/);
+  assert.ok(
+    cardHeader.indexOf("{item.icon}") < cardHeader.indexOf("{item.title}") &&
+      cardHeader.indexOf("{item.title}") < cardHeader.indexOf("{status.label}"),
+    "ícone, nome e status devem ocupar o cabeçalho nesta ordem",
+  );
+  assert.ok(
+    cardSource.indexOf("{item.description}") <
+      cardSource.indexOf("disabled={!canManage}"),
+    "a descrição deve vir antes da ação do card",
+  );
+  assert.match(cardSource, /disabled=\{!canManage\}/);
+  assert.match(
+    cardSource,
+    /\{canManage \? getIntegrationActionLabel\(item\) : status\.label\}/,
+  );
+  assert.doesNotMatch(cardSource, /\{canManage \? \(\s*<Button/);
+  assert.match(cardSource, /<TooltipProvider>/);
+  assert.match(cardSource, /<TooltipTrigger asChild>/);
+  assert.match(
+    cardSource,
+    /aria-label="Requisitos de homologação do Chaves na Mão"/,
+  );
+  assert.match(
+    cardSource,
+    /<TooltipContent[^>]*>[\s\S]*?Exige contrato, XML aprovado e credenciais de homologação do portal\.[\s\S]*?<\/TooltipContent>/,
+  );
+  assert.equal(
+    source.match(/Exige contrato, XML aprovado e credenciais de homologação do portal\./g)?.length,
+    1,
+    "a orientação de homologação fica apenas na dica, sem aviso amarelo no card",
+  );
   assert.match(source, /INTEGRATION_CAPABILITY_LABELS\[capability\]/);
-  assert.match(source, /Não foi possível consultar o status/);
+  assert.match(
+    source,
+    /label: item\.key === "vista" \? "Indisponível" : "Em breve"/,
+  );
+  assert.match(source, /label: "Status indisponível"/);
+  assert.doesNotMatch(source, /label: "Falha na verificação"/);
+  assert.match(source, /bg-emerald-\d+[^"\n]*text-white/);
   assert.doesNotMatch(
     source,
     /WhatsAppIntegrationSettings/,

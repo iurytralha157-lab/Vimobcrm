@@ -23,9 +23,9 @@ func TestConcurrentWonContendersReserveSharedPropertyOnce(t *testing.T) {
 	target, err := url.Parse(connectionString)
 	if err != nil ||
 		(target.Hostname() != "127.0.0.1" && target.Hostname() != "localhost") ||
-		target.User.Username() != "postgres" ||
-		target.Path != "/postgres" {
-		t.Fatal("property contention test requires the local postgres database")
+		!((target.User.Username() == "postgres" && target.Path == "/postgres") ||
+			(target.User.Username() == "supabase_admin" && target.Path == "/vimob_incident_test_1007")) {
+		t.Fatal("property contention test requires a local PostgreSQL test database")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -395,9 +395,9 @@ func TestPropertyReservationOutboxKeepsAudienceSnapshotAcrossRecovery(t *testing
 	target, err := url.Parse(connectionString)
 	if err != nil ||
 		(target.Hostname() != "127.0.0.1" && target.Hostname() != "localhost") ||
-		target.User.Username() != "postgres" ||
-		target.Path != "/postgres" {
-		t.Fatal("property reservation outbox test requires the local postgres database")
+		!((target.User.Username() == "postgres" && target.Path == "/postgres") ||
+			(target.User.Username() == "supabase_admin" && target.Path == "/vimob_incident_test_1007")) {
+		t.Fatal("property reservation outbox test requires a local PostgreSQL test database")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
