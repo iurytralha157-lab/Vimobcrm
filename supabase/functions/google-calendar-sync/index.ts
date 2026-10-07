@@ -3,20 +3,13 @@ import {
   authenticateUser,
   canManageScheduleEvent,
   enqueueSyncJob,
-  ensureGoogleWatch,
   errorMessage,
-  getConnectionById,
-  getConnectionForUser,
   getUserProfile,
   handleOptions,
   jsonResponse,
   pushScheduleEventToGoogle,
-  renewDueWatches,
   runDueJobs,
-  syncConnectionFromGoogle,
   supabase,
-  deleteScheduleEventFromGoogle,
-  enqueueDuePulls,
   executeSyncJob,
   getGoogleScheduleCapability,
   GoogleScheduleCapabilityError,
@@ -72,42 +65,21 @@ Deno.serve(async (req) => {
 
     if (action === "renew_watches") {
       if (!auth.service) return jsonResponse({ success: false, error: "Apenas backend pode renovar watches." }, 403);
-      return jsonResponse({ success: true, ...(await renewDueWatches()) });
+      // Keep legacy Cron calls harmless until their schedules are removed.
+      return jsonResponse({ success: true, skipped: true, reason: "INBOUND_SYNC_DISABLED" });
     }
 
     if (action === "enqueue_due_pulls") {
       if (!auth.service) return jsonResponse({ success: false, error: "Apenas backend pode agendar reconciliacao." }, 403);
-      return jsonResponse({
-        success: true,
-        ...(await enqueueDuePulls(Number(body.limit || 20), Number(body.stale_after_minutes || 360))),
-      });
+      return jsonResponse({ success: true, skipped: true, reason: "INBOUND_SYNC_DISABLED" });
     }
 
     if (action === "sync_connection") {
-      if (!auth.service) {
-        const denied = await requireUserScheduleManage(auth.profile);
-        if (denied) return denied;
-      }
-      const connection = body.connection_id
-        ? await getConnectionById(body.connection_id)
-        : auth.profile
-          ? await getConnectionForUser(auth.profile.id, auth.profile.organization_id)
-          : null;
-
-      if (!connection) return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
-      if (
-        !auth.service
-        && (
-          connection.user_id !== auth.profile?.id
-          || connection.organization_id !== auth.profile?.organization_id
-        )
-      ) {
-        return jsonResponse({ success: false, error: "Forbidden" }, 403);
-      }
-
-      const result = await syncConnectionFromGoogle(connection, body.full === true);
-      await ensureGoogleWatch(connection).catch((watchError) => console.error("watch renewal failed", watchError));
-      return jsonResponse({ success: true, result });
+      return jsonResponse({
+        success: false,
+        error: "Importacao de eventos do Google para o Vimob nao disponivel.",
+        code: "INBOUND_SYNC_DISABLED",
+      }, 410);
     }
 
     if (action === "sync_event" || action === "push_upsert") {
@@ -118,36 +90,23 @@ Deno.serve(async (req) => {
 
       const { data: event, error: eventError } = await supabase
         .from("schedule_events")
-        .select("organization_id")
+        .select("organization_id, user_id")
         .eq("id", body.event_id)
         .maybeSingle();
       if (eventError) throw eventError;
       if (!event || event.organization_id !== auth.profile.organization_id) {
         return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
       }
-
       const result = await pushScheduleEventToGoogle(body.event_id, auth.profile.id);
       return jsonResponse({ success: true, result });
     }
 
     if (action === "push_delete") {
-      if (!auth.profile) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
-      const denied = await requireUserScheduleManage(auth.profile);
-      if (denied) return denied;
-      if (!body.event_id) return jsonResponse({ success: false, error: "event_id obrigatorio." }, 400);
-
-      const { data: event, error: eventError } = await supabase
-        .from("schedule_events")
-        .select("organization_id")
-        .eq("id", body.event_id)
-        .maybeSingle();
-      if (eventError) throw eventError;
-      if (!event || event.organization_id !== auth.profile.organization_id) {
-        return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
-      }
-
-      const result = await deleteScheduleEventFromGoogle(body.event_id, auth.profile.id);
-      return jsonResponse({ success: true, result });
+      return jsonResponse({
+        success: false,
+        error: "Exclua o compromisso no Vimob para remover a copia no Google.",
+        code: "DELETE_THROUGH_VIMOB_ONLY",
+      }, 410);
     }
 
     if (action === "enqueue_event") {
@@ -155,6 +114,13 @@ Deno.serve(async (req) => {
       const denied = await requireUserScheduleManage(auth.profile);
       if (denied) return denied;
       if (!body.event_id) return jsonResponse({ success: false, error: "event_id obrigatorio." }, 400);
+      if (body.sync_action === "push_delete") {
+        return jsonResponse({
+          success: false,
+          error: "Exclua o compromisso no Vimob para remover a copia no Google.",
+          code: "DELETE_THROUGH_VIMOB_ONLY",
+        }, 410);
+      }
 
       const { data: event, error } = await supabase
         .from("schedule_events")
@@ -165,26 +131,14 @@ Deno.serve(async (req) => {
       if (!event || event.organization_id !== auth.profile.organization_id) {
         return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
       }
-
-      const syncAction = body.sync_action === "push_delete" ? "push_delete" : "push_upsert";
       if (!(await canManageScheduleEvent(event, auth.profile.id))) {
         return jsonResponse({ success: false, error: "Forbidden" }, 403);
       }
 
-      let payload: Record<string, unknown> = {};
-      if (syncAction === "push_delete") {
-        const { data: links, error: linksError } = await supabase
-          .from("google_calendar_event_links")
-          .select("id")
-          .eq("schedule_event_id", event.id)
-          .eq("organization_id", event.organization_id)
-          .is("deleted_at", null);
-        if (linksError) throw linksError;
-        payload = {
-          event_id: event.id,
-          link_ids: (links || []).map((link) => link.id),
-        };
-      }
+      const payload: Record<string, unknown> = {
+        event_id: event.id,
+        owner_user_id: event.user_id,
+      };
 
       const { error: pendingError } = await supabase
         .from("schedule_events")
@@ -195,7 +149,7 @@ Deno.serve(async (req) => {
       const job = await enqueueSyncJob({
         organizationId: event.organization_id,
         scheduleEventId: event.id,
-        action: syncAction,
+        action: "push_upsert",
         payload,
         createdBy: auth.profile.id,
       })

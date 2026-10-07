@@ -12,22 +12,30 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { FEATURES } from "@/config/constants";
+import { isGoogleCalendarServiceUnavailable } from "@/lib/api/google-calendar";
 import { cn } from "@/lib/utils";
 import {
   useConnectGoogleCalendar,
   useDisconnectGoogleCalendar,
   useGoogleCalendarStatus,
-  useSyncGoogleCalendarNow,
-  useToggleGoogleCalendarSync,
 } from "@/hooks/use-google-calendar";
 
 type GoogleCalendarConnectProps = {
@@ -42,25 +50,37 @@ export function GoogleCalendarConnect({
   const searchParams = useSearchParams();
   const handledSettingsOAuthRef = useRef(false);
   const {
-    data: calendarStatus,
+    data: statusResponse,
+    error: statusError,
     isError: statusLoadFailed,
     isLoading,
     refetch: refetchStatus,
   } = useGoogleCalendarStatus();
   const connectCalendar = useConnectGoogleCalendar();
   const disconnectCalendar = useDisconnectGoogleCalendar();
-  const toggleSync = useToggleGoogleCalendarSync();
-  const syncNow = useSyncGoogleCalendarNow();
 
+  const calendarStatus = statusResponse?.connection ?? null;
+  const canConnect = statusResponse?.can_connect === true;
+  const canUseSchedule = statusResponse?.can_use_schedule ?? canConnect;
+  const connectRestriction = statusResponse?.connect_restriction;
+  const unavailableMessage = connectRestriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "Conexão disponível apenas para usuários do teste piloto"
+    : connectRestriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+      ? "Novas conexões temporariamente indisponíveis"
+      : "Permissão da Agenda necessária";
+  const unavailableButtonLabel = connectRestriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+    ? "Em teste piloto"
+    : connectRestriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+      ? "Indisponível"
+      : "Sem acesso à Agenda";
   const isConnected = !!calendarStatus;
-  const isSyncing =
-    syncNow.isPending || calendarStatus?.sync_status === "syncing";
+  const serviceUnavailable = isGoogleCalendarServiceUnavailable(statusError);
   const statusLabel =
-    calendarStatus?.sync_status === "error"
+    !canUseSchedule
+      ? "Sem permissão"
+      : calendarStatus?.sync_status === "error"
       ? "Erro"
-      : calendarStatus?.sync_enabled
-        ? "Ativo"
-        : "Pausado";
+      : "Conectado";
 
   useEffect(() => {
     if (!pathname.startsWith("/settings") || handledSettingsOAuthRef.current) return;
@@ -75,10 +95,10 @@ export function GoogleCalendarConnect({
       toast.error(`Não foi possível conectar o Google Agenda: ${callbackError.slice(0, 300)}`);
     } else if (callbackWarning) {
       toast.warning(
-        `Google Agenda conectada, mas a sincronização precisa de atenção: ${callbackWarning.slice(0, 300)}`,
+        `Google Agenda conectada, mas o envio precisa de atenção: ${callbackWarning.slice(0, 300)}`,
       );
     } else {
-      toast.success("Google Agenda conectada e sincronizada.");
+      toast.success("Google Agenda conectada.");
     }
     void refetchStatus();
 
@@ -196,7 +216,9 @@ export function GoogleCalendarConnect({
                 Google Agenda
               </span>
               <span className="block truncate text-[12px] font-light text-destructive">
-                Falha ao verificar a conexão
+                {serviceUnavailable
+                  ? "Serviço temporariamente indisponível"
+                  : "Falha ao verificar a conexão"}
               </span>
             </div>
           </div>
@@ -221,7 +243,9 @@ export function GoogleCalendarConnect({
             Google Agenda
           </CardTitle>
           <CardDescription className="text-[12px] font-light text-destructive">
-            Não foi possível verificar a conexão. Nenhum estado foi alterado.
+            {serviceUnavailable
+              ? "O serviço do Google Agenda está indisponível. Nenhum estado foi alterado."
+              : "Não foi possível verificar a conexão. Nenhum estado foi alterado."}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -253,18 +277,14 @@ export function GoogleCalendarConnect({
               {isConnected && (
                 <Badge
                   variant={
-                    calendarStatus.sync_status === "error"
+                    canUseSchedule && calendarStatus.sync_status === "error"
                       ? "destructive"
                       : "secondary"
                   }
                   className={cn(
                     "h-5 rounded-[6px] border-0 px-2 text-[11px] font-light",
-                    calendarStatus.sync_status !== "error" &&
-                      calendarStatus.sync_enabled &&
+                    (!canUseSchedule || calendarStatus.sync_status !== "error") &&
                       "bg-[var(--app-surface-solid)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-solid)]",
-                    calendarStatus.sync_status !== "error" &&
-                      !calendarStatus.sync_enabled &&
-                      "bg-[var(--app-surface-hover)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
                   )}
                 >
                   {statusLabel}
@@ -276,45 +296,30 @@ export function GoogleCalendarConnect({
                 ? calendarStatus.account_email ||
                   calendarStatus.calendar_summary ||
                   "Conta conectada"
-                : "Conecte para enviar e receber compromissos"}
+                : canConnect
+                  ? "Envie compromissos do Vimob ao Google"
+                  : unavailableMessage}
             </p>
           </div>
         </div>
 
         {isConnected ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2 py-1.5">
-              <span className="text-[12px] font-light text-[var(--app-text-secondary)]">
-                Auto
-              </span>
-              <Switch
-                checked={calendarStatus.sync_enabled}
-                onCheckedChange={(checked) => toggleSync.mutate(checked)}
-                disabled={toggleSync.isPending}
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-              onClick={() => syncNow.mutate()}
-              disabled={isSyncing}
-            >
-              <RefreshCw
-                className={cn("h-4 w-4", isSyncing && "animate-spin")}
-              />
-              Sincronizar
-            </Button>
-          </div>
+          <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
+            {canUseSchedule ? "Vimob → Google" : "Permissão da Agenda necessária"}
+          </span>
         ) : (
           <Button
             size="sm"
             className="h-8 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
             onClick={() => connectCalendar.mutate()}
-            disabled={connectCalendar.isPending}
+            disabled={!canConnect || connectCalendar.isPending}
           >
             <Link2 className="h-4 w-4" />
-            {connectCalendar.isPending ? "Conectando..." : "Conectar"}
+            {!canConnect
+              ? unavailableButtonLabel
+              : connectCalendar.isPending
+                ? "Conectando..."
+                : "Conectar"}
           </Button>
         )}
       </div>
@@ -335,7 +340,9 @@ export function GoogleCalendarConnect({
             <CardDescription className="truncate text-[12px] font-light text-[var(--app-text-tertiary)]">
               {isConnected
                 ? calendarStatus.account_email || "Sua agenda está conectada"
-                : "Conecte para sincronizar suas atividades"}
+                : canConnect
+                  ? "Envie compromissos do Vimob ao Google Agenda"
+                  : unavailableMessage}
             </CardDescription>
           </div>
         </div>
@@ -348,11 +355,11 @@ export function GoogleCalendarConnect({
                 <span
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-white",
-                    calendarStatus.sync_status === "error" &&
+                    canUseSchedule && calendarStatus.sync_status === "error" &&
                       "bg-destructive/10 text-destructive",
                   )}
                 >
-                  {calendarStatus.sync_status === "error" ? (
+                  {canUseSchedule && calendarStatus.sync_status === "error" ? (
                     <AlertCircle className="h-3.5 w-3.5" />
                   ) : (
                     <Check className="h-3.5 w-3.5" />
@@ -369,35 +376,58 @@ export function GoogleCalendarConnect({
                   </span>
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 self-end rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-destructive shadow-none hover:bg-[var(--app-surface-hover)] hover:text-destructive sm:self-auto"
-                onClick={() => disconnectCalendar.mutate(calendarStatus.id)}
-                disabled={disconnectCalendar.isPending}
-              >
-                <Unlink className="mr-2 h-3.5 w-3.5" />
-                Desconectar
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 shrink-0 self-end rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-destructive shadow-none hover:bg-[var(--app-surface-hover)] hover:text-destructive sm:self-auto"
+                    disabled={disconnectCalendar.isPending}
+                  >
+                    <Unlink className="mr-2 h-3.5 w-3.5" />
+                    Desconectar
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Desconectar Google Agenda?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Eventos já enviados permanecem no Google. Depois da desconexão,
+                      alterações e exclusões no Vimob não serão enviadas para essa conta.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => disconnectCalendar.mutate(calendarStatus.id)}>
+                      Desconectar
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
 
-            <div className="flex items-center justify-between gap-3 rounded-[8px] bg-[var(--app-surface-solid)] p-3">
-              <Label
-                htmlFor="sync-enabled"
-                className="flex flex-col gap-1 text-[12px] font-light text-[var(--app-text-primary)]"
-              >
-                <span>Sincronização automática</span>
-                <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  Receber alterações do Google automaticamente
-                </span>
-              </Label>
-              <Switch
-                id="sync-enabled"
-                checked={calendarStatus.sync_enabled}
-                onCheckedChange={(checked) => toggleSync.mutate(checked)}
-                disabled={toggleSync.isPending}
-              />
-            </div>
+            <p className="rounded-[8px] bg-[var(--app-surface-solid)] p-3 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+              {canUseSchedule ? (
+                calendarStatus.sync_status === "error" ? (
+                  <>
+                    Um envio ao Google Agenda falhou. Confira o erro abaixo e revise a
+                    conexão; compromissos podem continuar pendentes na fila.
+                  </>
+                ) : (
+                  <>
+                    Compromissos criados ou alterados no Vimob são enviados ao Google Agenda.
+                    Ao excluir no Vimob, a remoção do evento vinculado também é enviada ao Google.
+                    Alterações feitas no Google não entram no Vimob e podem ser substituídas
+                    pela próxima edição no Vimob.
+                  </>
+                )
+              ) : (
+                <>
+                  Seu perfil precisa de permissão para usar a Agenda do Vimob.
+                  Peça a um administrador para revisar seu acesso à integração.
+                </>
+              )}
+            </p>
 
             <div className="flex flex-col gap-3 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
@@ -406,20 +436,12 @@ export function GoogleCalendarConnect({
                     variant="outline"
                     className={cn(
                       "h-5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-light text-[var(--app-text-secondary)]",
-                      calendarStatus.sync_status === "error" &&
+                      canUseSchedule && calendarStatus.sync_status === "error" &&
                         "bg-destructive/10 text-destructive",
                     )}
                   >
                     {statusLabel}
                   </Badge>
-                  {calendarStatus.last_synced_at && (
-                    <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-                      Último sync:{" "}
-                      {new Date(calendarStatus.last_synced_at).toLocaleString(
-                        "pt-BR",
-                      )}
-                    </span>
-                  )}
                 </div>
                 {calendarStatus.last_error && (
                   <p className="line-clamp-2 rounded-[6px] bg-destructive/10 px-2 py-1.5 text-[11px] font-light leading-4 text-destructive">
@@ -427,31 +449,29 @@ export function GoogleCalendarConnect({
                   </p>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-                onClick={() => syncNow.mutate()}
-                disabled={isSyncing}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`}
-                />
-                Sincronizar
-              </Button>
             </div>
           </>
         ) : (
-          <Button
-            className="h-9 w-full rounded-[6px] border-0 bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
-            onClick={() => connectCalendar.mutate()}
-            disabled={connectCalendar.isPending}
-          >
-            <Link2 className="mr-2 h-4 w-4" />
-            {connectCalendar.isPending
-              ? "Conectando..."
-              : "Conectar Google Agenda"}
-          </Button>
+          <>
+            {!canConnect && (
+              <p className="flex items-start gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                {unavailableMessage}.
+              </p>
+            )}
+            <Button
+              className="h-9 w-full rounded-[6px] border-0 bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
+              onClick={() => connectCalendar.mutate()}
+              disabled={!canConnect || connectCalendar.isPending}
+            >
+              <Link2 className="mr-2 h-4 w-4" />
+              {!canConnect
+                ? unavailableButtonLabel
+                : connectCalendar.isPending
+                  ? "Conectando..."
+                  : "Conectar Google Agenda"}
+            </Button>
+          </>
         )}
       </CardContent>
     </Card>

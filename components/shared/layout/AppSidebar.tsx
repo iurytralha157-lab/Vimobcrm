@@ -73,7 +73,6 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const currentHash = useLocationHash();
   const {
     activeOrganization,
-    profile,
     isSuperAdmin,
     organization,
     tenantContext,

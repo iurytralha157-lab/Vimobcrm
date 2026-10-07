@@ -129,6 +129,11 @@ export function identityBelongsToOrganization(
   );
 }
 
+export function isForeignVimobGoogleEvent(value: unknown, organizationId: unknown) {
+  const identity = readVimobGoogleEventIdentity(value);
+  return Boolean(identity && !identityBelongsToOrganization(identity, organizationId));
+}
+
 export function isFinalVimobScheduleStatus(value: unknown) {
   return FINAL_VIMOB_SCHEDULE_STATUSES.has(cleanText(value).toLowerCase());
 }

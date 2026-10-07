@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "8bd8fd72fa7e0be66871b7ac179344db9c5945b26d652de62b61e10c76faa8e2",
+  "shared_source_sha256": "0aa9b83ebe46f0bf79d3ed49afd9c9e20cb967c11bb38a97355911c2974fc458",
   "functions": [
     {
       "slug": "ai-agent-responder",
@@ -354,7 +354,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91",
-      "source_sha256": "854b735c2cec9a8bbc150881cbe4f8aa8f084db3a33343f49fe61fd7f2b5a28a"
+      "source_sha256": "4d8e523380b23dd4add8bbc21bfb1ab6a3cc28dddcbc9b3cb50ce0edb2f9d6e2"
     },
     {
       "slug": "google-calendar-sync",
@@ -364,7 +364,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "85b4225ce1cad31dd7d6d60507f676145e253a4ed4060e6d4f7c13d9b392212f",
-      "source_sha256": "e94dc3ee685758852a8ae6a664eaf3ab5d1f04515b06c9fed5d5c4a2ad4cca61"
+      "source_sha256": "b77ae0a08261283fca3dd1cac6dae42388da56a95ac95936062a25dc14da503e"
     },
     {
       "slug": "google-calendar-webhook",
@@ -374,7 +374,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "4b33914033b8911d6da1b80d1da4bb44bca464798b3c24a5fbd2fd7909672de0",
-      "source_sha256": "dace1dee5a4cb464ad6da15548c7adeaff0d195ae3fac210b558f1ba2eab8813"
+      "source_sha256": "15de5b44623fd071b93f15f2fb134b9c41e3cac9c0f5a58d5f2881a382794064"
     },
     {
       "slug": "imoview-scheduled-sync",

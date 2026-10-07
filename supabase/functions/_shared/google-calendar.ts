@@ -8,6 +8,7 @@ import {
   buildVimobGoogleExtendedProperties,
   buildVimobGoogleEventId,
   identityBelongsToOrganization,
+  isForeignVimobGoogleEvent,
   isFinalVimobScheduleStatus,
   readVimobGoogleEventIdentity,
   stripVimobLinkedDescription,
@@ -22,6 +23,12 @@ import {
   normalizeGoogleCalendarTimeZone,
   scheduleInstantToGoogleDate,
 } from "./google-calendar-time.ts";
+import {
+  decideGooglePullForLocalEvent,
+  GOOGLE_CALENDAR_CONFLICT_MESSAGE,
+  GoogleCalendarConflictError,
+  hasUnsyncedVimobChanges,
+} from "./google-calendar-conflict.ts";
 
 export type JsonRecord = Record<string, any>;
 
@@ -52,6 +59,12 @@ const GOOGLE_EVENT_TYPES = new Set([
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// The public integration is one-way. Keep legacy helpers inert even if an old
+// Cron invocation or a queued inbound job reaches the new runtime.
+function googleCalendarInboundDisabled() {
+  return true;
+}
 
 export const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: {
@@ -311,6 +324,7 @@ export async function getUserProfile(
       .eq("organization_id", organizationId)
       .eq("user_id", userId)
       .eq("is_active", true)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (membershipError) throw membershipError;
@@ -725,6 +739,15 @@ export async function refreshAccessToken(connection: JsonRecord) {
   });
 
   const data = await response.json().catch(() => ({}));
+  if (!response.ok && data.error === "invalid_grant") {
+    const reconnectMessage = "Autorizacao Google expirada ou revogada. Reconecte sua conta.";
+    const { error: statusError } = await supabase
+      .from("google_calendar_tokens")
+      .update({ sync_status: "error", last_error: reconnectMessage })
+      .eq("id", connection.id);
+    if (statusError) console.error("google reconnect status persistence failed", statusError);
+    throw new Error(reconnectMessage);
+  }
   if (!response.ok)
     throw new Error(
       data.error_description || data.error || "Falha ao renovar token Google.",
@@ -860,48 +883,15 @@ async function getLinkedLead(event: JsonRecord) {
   return data as JsonRecord | null;
 }
 
-async function getConnectedAssigneeEmails(event: JsonRecord) {
-  const { data: assignees, error: assigneesError } = await supabase
-    .from("schedule_event_assignees")
-    .select("user_id")
-    .eq("organization_id", event.organization_id)
-    .eq("event_id", event.id);
-  if (assigneesError) throw assigneesError;
-
-  const assigneeIds = Array.from(
-    new Set(
-      (assignees || [])
-        .map((assignee) => assignee.user_id)
-        .filter((userId) => userId && userId !== event.user_id),
-    ),
-  );
-  if (assigneeIds.length === 0) return [];
-
-  const { data: connections, error: connectionsError } = await supabase
-    .from("google_calendar_tokens")
-    .select("user_id, account_email")
-    .eq("organization_id", event.organization_id)
-    .eq("sync_enabled", true)
-    .is("disconnected_at", null)
-    .in("user_id", assigneeIds);
-  if (connectionsError) throw connectionsError;
-
-  return (connections || []).map((connection) => connection.account_email);
-}
-
 async function getOutboundEventContext(event: JsonRecord) {
-  const [lead, attendeeEmails] = await Promise.all([
-    getLinkedLead(event),
-    getConnectedAssigneeEmails(event),
-  ]);
+  const lead = await getLinkedLead(event);
 
-  // A schedule assignee is not necessarily allowed to view the linked
-  // property under the canonical own/team/all property scope. Google sends the
-  // same event body to every connected attendee, so omit generated property
-  // title/code until every effective recipient can be proven authorized.
+  // Write only to the event owner's Google calendar. Inviting assignees
+  // requires separate membership and detail-visibility checks before lead
+  // information can leave this account.
   return {
     event: { ...event, lead, property: null },
-    attendeeEmails,
+    attendeeEmails: [],
   };
 }
 
@@ -1120,6 +1110,9 @@ async function applyGoogleCancellationToSchedule(
       googleEvent,
     );
   }
+  if (!currentEvent.updated_at) {
+    throw new Error("Evento Vimob sem versao para sincronizacao segura.");
+  }
 
   const { data, error } = await supabase
     .from("schedule_events")
@@ -1132,6 +1125,7 @@ async function applyGoogleCancellationToSchedule(
     .eq("organization_id", connection.organization_id)
     .eq("user_id", connection.user_id)
     .eq("status", "scheduled")
+    .eq("updated_at", currentEvent.updated_at)
     .select("*")
     .maybeSingle();
   if (error) throw error;
@@ -1279,7 +1273,144 @@ async function upsertEventLink(params: {
 
 type GoogleSyncExecutionContext = {
   trustedJobOrganizationId?: string | null;
+  fallbackOwnerUserId?: string | null;
+  fallbackConnectionId?: string | null;
 };
+
+async function currentScheduleEventOwner(eventId: string, organizationId: string) {
+  const { data, error } = await supabase
+    .from("schedule_events")
+    .select("user_id")
+    .eq("id", eventId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.user_id || null;
+}
+
+async function removeStaleGoogleWrite(
+  connection: JsonRecord,
+  googleEventId: string,
+) {
+  const calendarId = encodeURIComponent(normalizeCalendarId(connection.calendar_id));
+  const response = await googleFetch(
+    connection,
+    `/calendars/${calendarId}/events/${encodeURIComponent(googleEventId)}?sendUpdates=none`,
+    { method: "DELETE" },
+  );
+  if (!response.ok && ![404, 410].includes(response.status)) {
+    throw new Error(`Falha ao remover evento Google sem compromisso Vimob (${response.status}).`);
+  }
+  const { error } = await supabase
+    .from("google_calendar_event_links")
+    .update({
+      deleted_at: new Date().toISOString(),
+      last_origin: "vimob",
+      last_synced_at: new Date().toISOString(),
+      last_error: null,
+    })
+    .eq("connection_id", connection.id)
+    .eq("google_event_id", googleEventId)
+    .is("deleted_at", null);
+  if (error) throw error;
+}
+
+async function markConnectionOutboundSynced(connection: JsonRecord) {
+  const latestUnresolvedJob = async () => {
+    const { data, error } = await supabase
+      .from("google_calendar_sync_jobs")
+      .select("id, last_error")
+      .eq("organization_id", connection.organization_id)
+      .in("action", ["push_upsert", "push_delete"])
+      .in("status", ["failed", "dead"])
+      .contains("payload", { owner_user_id: connection.user_id })
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data as JsonRecord | null;
+  };
+  const persist = async (update: JsonRecord) => {
+    const { error } = await supabase
+      .from("google_calendar_tokens")
+      .update(update)
+      .eq("id", connection.id)
+      .eq("organization_id", connection.organization_id)
+      .eq("user_id", connection.user_id)
+      .is("disconnected_at", null);
+    if (error) console.error("failed to persist Google Calendar outbound sync time", error);
+  };
+  let unresolved: JsonRecord | null | undefined;
+  try {
+    unresolved = await latestUnresolvedJob();
+  } catch (error) {
+    console.error("failed to inspect unresolved Google Calendar outbound jobs", error);
+  }
+  const update: JsonRecord = { last_synced_at: new Date().toISOString() };
+  if (unresolved) {
+    update.sync_status = "error";
+    update.last_error = String(unresolved.last_error || "Envio Google pendente de revisao.").slice(0, 2_000);
+  } else if (unresolved === null) {
+    update.sync_status = "connected";
+    update.last_error = null;
+  }
+  await persist(update);
+  if (unresolved === null) {
+    // A second worker may fail between our read and status update. The failing
+    // worker records its job before marking the connection, so recheck once.
+    try {
+      const newlyUnresolved = await latestUnresolvedJob();
+      if (newlyUnresolved) {
+        await persist({
+          sync_status: "error",
+          last_error: String(newlyUnresolved.last_error || "Envio Google pendente de revisao.").slice(0, 2_000),
+        });
+      }
+    } catch (error) {
+      console.error("failed to recheck unresolved Google Calendar outbound jobs", error);
+    }
+  }
+}
+
+async function markConnectionOutboundError(job: JsonRecord, message: string) {
+  const ownerUserId = String(job.payload?.owner_user_id || "");
+  if (!ownerUserId || !job.organization_id) return;
+  const requestedConnectionId = String(
+    job.payload?.connection_id || job.connection_id || "",
+  );
+  const connectionId = requestedConnectionId || (
+    await getConnectionForUser(ownerUserId, job.organization_id, {
+      requireSyncEnabled: false,
+    })
+  )?.id;
+  if (!connectionId) return;
+  const { error } = await supabase
+    .from("google_calendar_tokens")
+    .update({ sync_status: "error", last_error: message.slice(0, 2_000) })
+    .eq("id", connectionId)
+    .eq("organization_id", job.organization_id)
+    .eq("user_id", ownerUserId)
+    .is("disconnected_at", null);
+  if (error) console.error("failed to persist Google Calendar outbound connection error", error);
+}
+
+function assertVimobGoogleEventIdentity(
+  googleEvent: JsonRecord,
+  eventId: string,
+  organizationId: string,
+  ownerUserId: string,
+) {
+  const identity = readVimobGoogleEventIdentity(googleEvent);
+  if (
+    identity?.eventId !== eventId ||
+    identity?.organizationId !== organizationId ||
+    identity?.ownerUserId !== ownerUserId
+  ) {
+    throw new GoogleCalendarConflictError(
+      "Evento Google nao corresponde ao compromisso e dono do Vimob. Revisao necessaria.",
+    );
+  }
+}
 
 export async function pushScheduleEventToGoogle(
   eventId: string,
@@ -1302,22 +1433,25 @@ export async function pushScheduleEventToGoogle(
     if (event.organization_id !== trustedJobOrganizationId) {
       throw new Error("Job Google Agenda fora da organizacao do evento.");
     }
-    if (!actorUserId) {
-      throw new Error("Job Google Agenda sem autor autorizado.");
-    }
-    // The Go API already enforced event/team scope before inserting this
-    // service-only job. Revalidate the actor's current tenant capability, but
-    // do not incorrectly reduce team-leader scope to direct participation.
-    await assertGoogleScheduleCapability(actorUserId, trustedJobOrganizationId);
+    // The Go API authorized and enqueued this durable job in its transaction.
+    // Its audit actor may later lose access or be deleted; execution is bound
+    // to the current event tenant and owner instead.
   } else if (!actorUserId) {
     await assertGoogleScheduleCapability(event.user_id, event.organization_id);
   } else if (!(await canManageScheduleEvent(event, actorUserId))) {
     throw new Error("Sem permissao para sincronizar este evento.");
   }
+  // A durable job may run after its audit actor leaves. The connection owner
+  // must still have an active profile and membership before Vimob exports a
+  // fresh copy of this event. Delete cleanup intentionally remains possible
+  // after access is revoked.
+  await getUserProfile(event.user_id, event.organization_id);
+  if (!event.updated_at) {
+    throw new Error("Evento Vimob sem versao para sincronizacao segura.");
+  }
 
-  // Pausing automatic sync stops Google -> Vimob watches/pulls. Explicit edits
-  // made by the user in Vimob still need to reach Google so the two calendars
-  // do not silently diverge while the connection remains valid.
+  // Vimob is the source of truth. Explicit local edits continue to reach an
+  // active Google connection.
   const connection = await getConnectionForUser(
     event.user_id,
     event.organization_id,
@@ -1356,11 +1490,29 @@ export async function pushScheduleEventToGoogle(
     connection.account_email,
   );
   const deterministicEventId = buildVimobGoogleEventId(event.id);
+  if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
+    return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
+  }
+  const fetchVerifiedGoogleEvent = async (googleEventId: string) => {
+    try {
+      const found = await googleJson(
+        connection,
+        `/calendars/${calendarId}/events/${encodeURIComponent(googleEventId)}`,
+      );
+      assertVimobGoogleEventIdentity(found, event.id, event.organization_id, event.user_id);
+      return found;
+    } catch (error) {
+      if (error instanceof GoogleCalendarHttpError && [404, 410].includes(error.status)) {
+        return null;
+      }
+      throw error;
+    }
+  };
   const createOrRecoverGoogleEvent = async () => {
     try {
       return await googleJson(
         connection,
-        `/calendars/${calendarId}/events?sendUpdates=all`,
+        `/calendars/${calendarId}/events?sendUpdates=none`,
         {
           method: "POST",
           body: JSON.stringify({ ...body, id: deterministicEventId }),
@@ -1369,9 +1521,11 @@ export async function pushScheduleEventToGoogle(
     } catch (error) {
       if (!(error instanceof GoogleCalendarHttpError) || error.status !== 409)
         throw error;
+      const existing = await fetchVerifiedGoogleEvent(deterministicEventId);
+      if (!existing) throw new Error("Evento Google em conflito nao encontrado para recuperacao.");
       return googleJson(
         connection,
-        `/calendars/${calendarId}/events/${encodeURIComponent(deterministicEventId)}?sendUpdates=all`,
+        `/calendars/${calendarId}/events/${encodeURIComponent(deterministicEventId)}?sendUpdates=none`,
         { method: "PATCH", body: JSON.stringify(body) },
       );
     }
@@ -1379,35 +1533,47 @@ export async function pushScheduleEventToGoogle(
 
   let googleEvent: JsonRecord;
   if (link?.google_event_id && !link.deleted_at) {
-    try {
-      googleEvent = await googleJson(
-        connection,
-        `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}?sendUpdates=all`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        },
-      );
-    } catch (error) {
-      if (
-        !(error instanceof GoogleCalendarHttpError) ||
-        ![404, 410].includes(error.status)
-      )
-        throw error;
+    const current = await fetchVerifiedGoogleEvent(String(link.google_event_id));
+    if (current) {
+      try {
+        googleEvent = await googleJson(
+          connection,
+          `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}?sendUpdates=none`,
+          { method: "PATCH", body: JSON.stringify(body) },
+        );
+      } catch (error) {
+        if (!(error instanceof GoogleCalendarHttpError) || ![404, 410].includes(error.status)) {
+          throw error;
+        }
+        googleEvent = await createOrRecoverGoogleEvent();
+      }
+    } else {
       googleEvent = await createOrRecoverGoogleEvent();
     }
   } else {
     googleEvent = await createOrRecoverGoogleEvent();
   }
 
-  await upsertEventLink({
-    connection,
-    scheduleEventId: event.id,
-    googleEvent,
-    origin: "vimob",
-  });
+  if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
+    await removeStaleGoogleWrite(connection, googleEvent.id);
+    return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
+  }
+  try {
+    await upsertEventLink({
+      connection,
+      scheduleEventId: event.id,
+      googleEvent,
+      origin: "vimob",
+    });
+  } catch (linkError) {
+    if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
+      await removeStaleGoogleWrite(connection, googleEvent.id);
+      return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
+    }
+    throw linkError;
+  }
 
-  const { error: eventUpdateError } = await supabase
+  const { data: updatedEvent, error: eventUpdateError } = await supabase
     .from("schedule_events")
     .update({
       google_event_id: googleEvent.id,
@@ -1417,9 +1583,21 @@ export async function pushScheduleEventToGoogle(
       google_last_synced_at: new Date().toISOString(),
       google_sync_error: null,
     })
-    .eq("id", event.id);
+    .eq("id", event.id)
+    .eq("organization_id", event.organization_id)
+    .eq("updated_at", event.updated_at)
+    .select("id")
+    .maybeSingle();
   if (eventUpdateError) throw eventUpdateError;
+  if (!updatedEvent) {
+    if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
+      await removeStaleGoogleWrite(connection, googleEvent.id);
+      return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
+    }
+    return { skipped: true, reason: "CONCURRENT_LOCAL_CHANGE" };
+  }
 
+  await markConnectionOutboundSynced(connection);
   return { synced: true, google_event_id: googleEvent.id };
 }
 
@@ -1450,7 +1628,13 @@ export async function deleteScheduleEventFromGoogle(
   if (!organizationId) {
     throw new Error("Evento da agenda nao encontrado.");
   }
-  if (actorUserId) {
+  const intendedOwnerUserId = execution.fallbackOwnerUserId || event?.user_id || null;
+  if (!intendedOwnerUserId) throw new Error("Dono do evento nao verificado.");
+  if (trustedJobOrganizationId) {
+    if (!execution.fallbackOwnerUserId) {
+      throw new Error("Job Google Agenda sem dono verificado.");
+    }
+  } else if (actorUserId) {
     await assertGoogleScheduleCapability(actorUserId, organizationId);
     if (
       event &&
@@ -1459,7 +1643,10 @@ export async function deleteScheduleEventFromGoogle(
     ) {
       throw new Error("Sem permissao para remover este evento do Google.");
     }
-    if (!event && durableLinkIds.length === 0) {
+    if (
+      !event && durableLinkIds.length === 0 &&
+      !execution.fallbackOwnerUserId && !execution.fallbackConnectionId
+    ) {
       throw new Error("Evento da agenda nao encontrado.");
     }
   } else {
@@ -1485,20 +1672,28 @@ export async function deleteScheduleEventFromGoogle(
     if (connection?.organization_id !== organizationId) {
       throw new Error("Vinculo Google Agenda fora da organizacao autorizada.");
     }
+    // Deleting the organizer copy propagates its cancellation to invitees.
+    // Never use another user's Google token for this owner's delete job.
+    if (connection?.user_id !== intendedOwnerUserId) continue;
     if (!connection?.token_secret_ref) continue;
     const calendarId = encodeURIComponent(
       normalizeCalendarId(link.google_calendar_id),
     );
     const eventPath = `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}`;
-    const response = await googleFetch(connection, eventPath, {
-      method: "DELETE",
-    });
-    if (!response.ok && ![404, 410].includes(response.status)) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(
-        data.error?.message ||
-          `Falha ao remover evento Google (${response.status}).`,
-      );
+    const lookup = await googleFetch(connection, eventPath);
+    let providerDeleted = false;
+    if (lookup.status !== 404 && lookup.status !== 410) {
+      const remoteEvent = await lookup.json().catch(() => ({}));
+      if (!lookup.ok) {
+        throw new Error(remoteEvent.error?.message || `Falha ao verificar evento Google (${lookup.status}).`);
+      }
+      assertVimobGoogleEventIdentity(remoteEvent, eventId, organizationId, intendedOwnerUserId);
+      const response = await googleFetch(connection, `${eventPath}?sendUpdates=none`, { method: "DELETE" });
+      if (!response.ok && ![404, 410].includes(response.status)) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error?.message || `Falha ao remover evento Google (${response.status}).`);
+      }
+      providerDeleted = response.ok;
     }
 
     const { error: linkUpdateError } = await supabase
@@ -1512,10 +1707,105 @@ export async function deleteScheduleEventFromGoogle(
       .eq("id", link.id)
       .eq("organization_id", organizationId);
     if (linkUpdateError) throw linkUpdateError;
+    if (providerDeleted) await markConnectionOutboundSynced(connection);
     deleted += 1;
   }
 
+  // A hard delete can win before a just-created Google event has a durable
+  // link. The Vimob event ID is also its deterministic Google ID, so the
+  // recorded owner connection can clean it up after any running upsert ends.
+  const fallbackOwnerUserId = intendedOwnerUserId;
+  const fallbackConnectionId = execution.fallbackConnectionId || null;
+  if (fallbackOwnerUserId || fallbackConnectionId) {
+    const connection = fallbackConnectionId
+      ? await getConnectionById(fallbackConnectionId)
+      : await getConnectionForUser(String(fallbackOwnerUserId || ""), organizationId, {
+          requireSyncEnabled: false,
+        });
+    if (!connection) {
+      if (deleted === 0) throw new Error("Conexao Google indisponivel para confirmar a remocao.");
+      return { deleted };
+    }
+    if (
+      connection.organization_id !== organizationId ||
+      (fallbackOwnerUserId && connection.user_id !== fallbackOwnerUserId)
+    ) {
+      throw new Error("Conexao Google fora do dono ou organizacao do evento removido.");
+    }
+    const calendarId = encodeURIComponent(normalizeCalendarId(connection.calendar_id));
+    const deterministicId = buildVimobGoogleEventId(eventId);
+    const eventPath = `/calendars/${calendarId}/events/${encodeURIComponent(deterministicId)}`;
+    const lookup = await googleFetch(connection, eventPath);
+    if (lookup.status !== 404 && lookup.status !== 410) {
+      const remoteEvent = await lookup.json().catch(() => ({}));
+      if (!lookup.ok) {
+        throw new Error(
+          remoteEvent.error?.message || `Falha ao verificar evento Google (${lookup.status}).`,
+        );
+      }
+      assertVimobGoogleEventIdentity(remoteEvent, eventId, organizationId, connection.user_id);
+      const response = await googleFetch(connection, `${eventPath}?sendUpdates=none`, {
+        method: "DELETE",
+      });
+      if (!response.ok && ![404, 410].includes(response.status)) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error?.message || `Falha ao remover evento Google (${response.status}).`);
+      }
+      if (response.ok) await markConnectionOutboundSynced(connection);
+      deleted += 1;
+    }
+  }
+
   return { deleted };
+}
+
+async function markScheduleEventGoogleConflict(
+  connection: JsonRecord,
+  scheduleEventId: string,
+  link: JsonRecord | null,
+) {
+  const { data, error } = await supabase
+    .from("schedule_events")
+    .update({
+      google_sync_status: "conflict",
+      google_sync_error: GOOGLE_CALENDAR_CONFLICT_MESSAGE,
+    })
+    .eq("id", scheduleEventId)
+    .eq("organization_id", connection.organization_id)
+    .eq("user_id", connection.user_id)
+    .in("google_sync_status", ["pending", "error", "conflict"])
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+
+  if (link?.id) {
+    const { error: linkError } = await supabase
+      .from("google_calendar_event_links")
+      .update({ last_error: GOOGLE_CALENDAR_CONFLICT_MESSAGE })
+      .eq("id", link.id)
+      .eq("organization_id", connection.organization_id)
+      .eq("connection_id", connection.id);
+    if (linkError) throw linkError;
+  }
+  return true;
+}
+
+async function hasRunningOutboundJob(
+  organizationId: string,
+  scheduleEventId: string,
+) {
+  const { data, error } = await supabase
+    .from("google_calendar_sync_jobs")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("schedule_event_id", scheduleEventId)
+    .in("action", ["push_upsert", "push_delete"])
+    .eq("status", "running")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
 }
 
 async function upsertGoogleEventIntoSchedule(
@@ -1523,7 +1813,17 @@ async function upsertGoogleEventIntoSchedule(
   googleEvent: JsonRecord,
   organizationTimeZone: string,
 ) {
+  // A shared Vimob identity may arrive on a calendar connected to another
+  // organization. Never import that event as a new, unlinked appointment.
+  if (isForeignVimobGoogleEvent(googleEvent, connection.organization_id)) {
+    return { skipped: true, reason: "FOREIGN_ORGANIZATION" };
+  }
   const link = await findEventLink(connection, googleEvent);
+  if (link && !link.schedule_event_id && googleEvent.status !== "cancelled") {
+    // The Vimob row may have been deleted while its outbound delete job is
+    // still pending. A provider pull must not recreate it in that interval.
+    return { skipped: true, reason: "MISSING_CANONICAL_EVENT" };
+  }
   const identity = readVimobGoogleEventIdentity(googleEvent);
   const trustedIdentity = identityBelongsToOrganization(
     identity,
@@ -1531,6 +1831,48 @@ async function upsertGoogleEventIntoSchedule(
   )
     ? identity
     : null;
+  const targetEventId =
+    link?.schedule_event_id || trustedIdentity?.eventId || null;
+  const access = targetEventId
+    ? await findScheduleEventForConnection(
+        connection,
+        targetEventId,
+        ["shared", "private"].includes(String(link?.resolved_by || "")) &&
+          trustedIdentity?.eventId === targetEventId
+          ? trustedIdentity.ownerUserId
+          : null,
+      )
+    : null;
+  if (!access && link?.schedule_event_id) {
+    throw new Error("Vinculo Google Agenda fora do escopo desta conexao.");
+  }
+  if (access?.authority === "owner") {
+    const decision = decideGooglePullForLocalEvent(
+      access.event.google_sync_status,
+      link?.google_etag,
+      googleEvent.etag,
+    );
+    if (decision === "conflict") {
+      if (
+        access.event.google_sync_status === "pending" &&
+        await hasRunningOutboundJob(
+          connection.organization_id,
+          access.event.id,
+        )
+      ) {
+        return { skipped: true, reason: "LOCAL_CHANGES_PENDING" };
+      }
+      await markScheduleEventGoogleConflict(
+        connection,
+        access.event.id,
+        link,
+      );
+      return { skipped: true, reason: "CONFLICT_REQUIRES_REVIEW" };
+    }
+    if (decision === "preserve") {
+      return { skipped: true, reason: "LOCAL_CHANGES_PENDING" };
+    }
+  }
 
   if (googleEvent.status === "cancelled") {
     if (link?.schedule_event_id) {
@@ -1541,6 +1883,22 @@ async function upsertGoogleEventIntoSchedule(
       );
       if (!cancelledEvent) {
         throw new Error("Vinculo Google Agenda fora do escopo desta conexao.");
+      }
+      if (hasUnsyncedVimobChanges(cancelledEvent.google_sync_status)) {
+        const decision = decideGooglePullForLocalEvent(
+          cancelledEvent.google_sync_status,
+          link.google_etag,
+          googleEvent.etag,
+        );
+        if (decision === "conflict") {
+          await markScheduleEventGoogleConflict(
+            connection,
+            cancelledEvent.id,
+            link,
+          );
+          return { skipped: true, reason: "CONFLICT_REQUIRES_REVIEW" };
+        }
+        return { skipped: true, reason: "LOCAL_CHANGES_PENDING" };
       }
     }
     await upsertEventLink({
@@ -1557,23 +1915,8 @@ async function upsertGoogleEventIntoSchedule(
     googleEvent,
     organizationTimeZone,
   );
-  const targetEventId =
-    link?.schedule_event_id || trustedIdentity?.eventId || null;
-
   let scheduleEvent: JsonRecord | null = null;
   if (targetEventId) {
-    const access = await findScheduleEventForConnection(
-      connection,
-      targetEventId,
-      ["shared", "private"].includes(String(link?.resolved_by || "")) &&
-        trustedIdentity?.eventId === targetEventId
-        ? trustedIdentity.ownerUserId
-        : null,
-    );
-    if (!access && link?.schedule_event_id) {
-      throw new Error("Vinculo Google Agenda fora do escopo desta conexao.");
-    }
-
     // Attendee copies share the canonical Vimob identity, but only the
     // organizer's Google connection may mutate the canonical event. The copy
     // still receives its own durable per-connection link below.
@@ -1587,6 +1930,9 @@ async function upsertGoogleEventIntoSchedule(
         googleEvent,
       );
     } else if (access) {
+      if (!access.event.updated_at) {
+        throw new Error("Evento Vimob sem versao para sincronizacao segura.");
+      }
       const { data, error } = await supabase
         .from("schedule_events")
         .update(scheduleRow)
@@ -1594,30 +1940,24 @@ async function upsertGoogleEventIntoSchedule(
         .eq("organization_id", connection.organization_id)
         .eq("user_id", connection.user_id)
         .eq("status", "scheduled")
+        .eq("updated_at", access.event.updated_at)
         .select("*")
         .maybeSingle();
       if (error) throw error;
       scheduleEvent = data as JsonRecord | null;
 
       if (!scheduleEvent) {
-        const latestEvent = await findOwnedScheduleEvent(
-          connection,
-          targetEventId,
-        );
-        if (latestEvent && isFinalVimobScheduleStatus(latestEvent.status)) {
-          scheduleEvent = await preserveFinalScheduleLifecycle(
-            connection,
-            latestEvent,
-            googleEvent,
-          );
-        } else {
-          scheduleEvent = latestEvent;
-        }
+        // Another edit won after our read. Leave the link's ETag untouched so
+        // the next pull can classify the new local and Google versions.
+        return { skipped: true, reason: "CONCURRENT_LOCAL_CHANGE" };
       }
     }
   }
 
   if (!scheduleEvent) {
+    if (trustedIdentity) {
+      return { skipped: true, reason: "MISSING_CANONICAL_EVENT" };
+    }
     const { data, error } = await supabase
       .from("schedule_events")
       .insert(scheduleRow)
@@ -1655,6 +1995,30 @@ async function reconcileMissingGoogleEvents(
   const reconciledAt = new Date().toISOString();
   for (const link of missingLinks) {
     if (link.schedule_event_id) {
+      const access = await findScheduleEventForConnection(
+        connection,
+        link.schedule_event_id,
+      );
+      if (
+        access?.authority === "owner" &&
+        hasUnsyncedVimobChanges(access.event.google_sync_status)
+      ) {
+        if (
+          access.event.google_sync_status === "pending" &&
+          await hasRunningOutboundJob(
+            connection.organization_id,
+            access.event.id,
+          )
+        ) {
+          continue;
+        }
+        await markScheduleEventGoogleConflict(
+          connection,
+          access.event.id,
+          link,
+        );
+        continue;
+      }
       await applyGoogleCancellationToSchedule(
         connection,
         link.schedule_event_id,
@@ -1686,6 +2050,9 @@ export async function syncConnectionFromGoogle(
   connectionInput: JsonRecord,
   fullSync = false,
 ) {
+  if (googleCalendarInboundDisabled()) {
+    return { skipped: true, reason: "INBOUND_SYNC_DISABLED" };
+  }
   let connection = connectionInput;
   await assertGoogleScheduleCapability(
     connection.user_id,
@@ -1791,6 +2158,9 @@ export async function syncConnectionFromGoogle(
 }
 
 export async function ensureGoogleWatch(connection: JsonRecord) {
+  if (googleCalendarInboundDisabled()) {
+    return { skipped: true, reason: "INBOUND_SYNC_DISABLED" };
+  }
   if (connection.sync_enabled === false || connection.disconnected_at) {
     return { skipped: true, reason: "SYNC_DISABLED" };
   }
@@ -1998,12 +2368,63 @@ export async function enqueueSyncJob(params: {
   return data as JsonRecord;
 }
 
+async function hasRunningUpsertForEvent(
+  organizationId: string,
+  eventId: string,
+  ownerUserId: string | null,
+  deleteCreatedAt: string | null,
+) {
+  let query = supabase
+    .from("google_calendar_sync_jobs")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("action", "push_upsert")
+    .eq("status", "running")
+    .contains("payload", ownerUserId
+      ? { event_id: eventId, owner_user_id: ownerUserId }
+      : { event_id: eventId });
+  if (deleteCreatedAt) query = query.lt("created_at", deleteCreatedAt);
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
+async function hasOutstandingDeleteForEvent(
+  organizationId: string,
+  eventId: string,
+  upsertCreatedAt: string | null,
+) {
+  let query = supabase
+    .from("google_calendar_sync_jobs")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("action", "push_delete")
+    .in("status", ["queued", "running", "failed", "dead"])
+    .contains("payload", { event_id: eventId });
+  if (upsertCreatedAt) query = query.lte("created_at", upsertCreatedAt);
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
 export async function processSyncJob(job: JsonRecord) {
   if (job.action === "push_upsert" && job.schedule_event_id) {
-    if (!job.organization_id || !job.created_by) {
-      throw new Error("Job Google Agenda sem tenant ou autor autorizado.");
+    if (!job.organization_id) {
+      throw new Error("Job Google Agenda sem tenant autorizado.");
     }
-    return pushScheduleEventToGoogle(job.schedule_event_id, job.created_by, {
+    const currentOwner = await currentScheduleEventOwner(job.schedule_event_id, job.organization_id);
+    if (!currentOwner) return { skipped: true, reason: "CANONICAL_EVENT_REMOVED" };
+    if (!job.payload?.owner_user_id || job.payload.owner_user_id !== currentOwner) {
+      return { skipped: true, reason: "STALE_EVENT_OWNER" };
+    }
+    if (await hasOutstandingDeleteForEvent(
+      job.organization_id,
+      job.schedule_event_id,
+      job.created_at || null,
+    )) {
+      return { deferred: true, reason: "DELETE_STILL_PENDING" };
+    }
+    return pushScheduleEventToGoogle(job.schedule_event_id, job.created_by || null, {
       trustedJobOrganizationId: job.organization_id,
     });
   }
@@ -2011,33 +2432,38 @@ export async function processSyncJob(job: JsonRecord) {
     job.action === "push_delete" &&
     (job.schedule_event_id || job.payload?.event_id)
   ) {
-    if (!job.organization_id || !job.created_by) {
-      throw new Error("Job Google Agenda sem tenant ou autor autorizado.");
+    if (!job.organization_id) {
+      throw new Error("Job Google Agenda sem tenant autorizado.");
     }
+    const ownerUserId = String(job.payload?.owner_user_id || "");
+    if (!ownerUserId) return { deferred: true, reason: "DELETE_OWNER_NOT_VERIFIED" };
     const durableLinkIds = Array.isArray(job.payload?.link_ids)
       ? job.payload.link_ids.filter(
           (value: unknown): value is string => typeof value === "string",
         )
       : [];
+    const eventId = String(job.schedule_event_id || job.payload.event_id);
+    if (await hasRunningUpsertForEvent(
+      job.organization_id,
+      eventId,
+      ownerUserId,
+      job.created_at || null,
+    )) {
+      return { deferred: true, reason: "UPSERT_STILL_RUNNING" };
+    }
     return deleteScheduleEventFromGoogle(
-      String(job.schedule_event_id || job.payload.event_id),
-      job.created_by,
+      eventId,
+      job.created_by || null,
       durableLinkIds,
-      { trustedJobOrganizationId: job.organization_id },
+      {
+        trustedJobOrganizationId: job.organization_id,
+        fallbackOwnerUserId: job.payload?.owner_user_id || null,
+        fallbackConnectionId: job.payload?.connection_id || null,
+      },
     );
   }
-  if (
-    (job.action === "pull_incremental" || job.action === "full_sync") &&
-    job.connection_id
-  ) {
-    const connection = await getConnectionById(job.connection_id);
-    if (job.action === "pull_incremental" && connection.sync_enabled !== true) {
-      return { skipped: true, reason: "SYNC_DISABLED" };
-    }
-    return syncConnectionFromGoogle(connection, job.action === "full_sync");
-  }
-  if (job.action === "renew_watch" && job.connection_id) {
-    return ensureGoogleWatch(await getConnectionById(job.connection_id));
+  if (["pull_incremental", "full_sync", "renew_watch"].includes(String(job.action))) {
+    return { skipped: true, reason: "INBOUND_SYNC_DISABLED" };
   }
   return { skipped: true, reason: "UNSUPPORTED_JOB" };
 }
@@ -2045,6 +2471,19 @@ export async function processSyncJob(job: JsonRecord) {
 export async function executeSyncJob(job: JsonRecord) {
   try {
     const result = await processSyncJob(job);
+    if ("deferred" in result && result.deferred) {
+      const { error } = await supabase
+        .from("google_calendar_sync_jobs")
+        .update({
+          status: "queued",
+          next_run_at: addSeconds(result.reason === "DELETE_OWNER_NOT_VERIFIED" ? 3600 : 10),
+          locked_at: null,
+          locked_by: null,
+        })
+        .eq("id", job.id);
+      if (error) throw error;
+      return { id: job.id, ok: true, deferred: true, result };
+    }
     const { error } = await supabase
       .from("google_calendar_sync_jobs")
       .update({
@@ -2058,12 +2497,17 @@ export async function executeSyncJob(job: JsonRecord) {
     return { id: job.id, ok: true, result };
   } catch (error) {
     const attempts = Number(job.attempts || 0) + 1;
+    const conflict = error instanceof GoogleCalendarConflictError;
     const message = errorMessage(error);
     if (job.action === "push_upsert" && job.schedule_event_id) {
       const { error: eventUpdateError } = await supabase
         .from("schedule_events")
-        .update({ google_sync_status: "error", google_sync_error: message })
-        .eq("id", job.schedule_event_id);
+        .update({
+          google_sync_status: conflict ? "conflict" : "error",
+          google_sync_error: message,
+        })
+        .eq("id", job.schedule_event_id)
+        .eq("organization_id", job.organization_id);
       if (eventUpdateError) {
         console.error(
           "failed to persist Google Calendar event sync error",
@@ -2080,6 +2524,7 @@ export async function executeSyncJob(job: JsonRecord) {
           .from("google_calendar_event_links")
           .update({ last_error: message })
           .in("id", durableLinkIds)
+          .eq("organization_id", job.organization_id)
           .is("deleted_at", null);
         if (linkUpdateError) {
           console.error(
@@ -2092,7 +2537,10 @@ export async function executeSyncJob(job: JsonRecord) {
     const { error: updateError } = await supabase
       .from("google_calendar_sync_jobs")
       .update({
-        status: attempts >= Number(job.max_attempts || 5) ? "dead" : "failed",
+        status:
+          conflict || attempts >= Number(job.max_attempts || 5)
+            ? "dead"
+            : "failed",
         attempts,
         locked_at: null,
         locked_by: null,
@@ -2101,13 +2549,16 @@ export async function executeSyncJob(job: JsonRecord) {
       })
       .eq("id", job.id);
     if (updateError) throw updateError;
+    await markConnectionOutboundError(job, message).catch((statusError) => {
+      console.error("failed to report Google Calendar outbound connection error", statusError);
+    });
     return { id: job.id, ok: false, error: message };
   }
 }
 
 export async function runDueJobs(limit = 10) {
   const { data: jobs, error } = await supabase.rpc(
-    "google_calendar_claim_sync_jobs",
+    "google_calendar_claim_outbound_sync_jobs",
     {
       p_limit: Math.max(1, Math.min(Number(limit) || 10, 100)),
       p_worker: `google-calendar-sync-${crypto.randomUUID()}`,
@@ -2124,81 +2575,36 @@ export async function runDueJobs(limit = 10) {
   return { processed: results.length, results };
 }
 
-export async function enqueueDuePulls(limit = 20, staleAfterMinutes = 6 * 60) {
-  const boundedLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
-  const boundedStaleMinutes = Math.max(
-    30,
-    Math.min(Number(staleAfterMinutes) || 360, 24 * 60),
-  );
-  const staleBefore = new Date(
-    Date.now() - boundedStaleMinutes * 60 * 1000,
-  ).toISOString();
-  const { data: connections, error } = await supabase
-    .from("google_calendar_tokens")
-    .select("id, organization_id, user_id")
-    .eq("sync_enabled", true)
-    .eq("sync_status", "connected")
-    .is("disconnected_at", null)
-    .or(`last_synced_at.is.null,last_synced_at.lt.${staleBefore}`)
-    .order("last_synced_at", { ascending: true, nullsFirst: true })
-    .limit(boundedLimit);
-  if (error) throw error;
-
-  const jobs = [];
-  const skipped = [];
-  for (const connection of connections || []) {
-    const capability = await getGoogleScheduleCapability(
-      connection.user_id,
-      connection.organization_id,
-    );
-    if (!capability.allowed) {
-      skipped.push({ connection_id: connection.id, reason: capability.reason });
-      continue;
-    }
-    jobs.push(
-      await enqueueSyncJob({
-        organizationId: connection.organization_id,
-        connectionId: connection.id,
-        action: "pull_incremental",
-        payload: { reason: "safety_reconciliation" },
-      }),
-    );
-  }
-
-  return { queued: jobs.length, job_ids: jobs.map((job) => job.id), skipped };
+export async function enqueueDuePulls() {
+  return { queued: 0, job_ids: [], skipped: [], reason: "INBOUND_SYNC_DISABLED" };
 }
 
 export async function renewDueWatches() {
-  const renewalCutoff = new Date(
-    Date.now() + 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const { data: connections, error } = await supabase
-    .from("google_calendar_tokens")
-    .select("*")
-    .eq("sync_enabled", true)
-    .is("disconnected_at", null)
-    .or(`watch_expires_at.is.null,watch_expires_at.lt.${renewalCutoff}`);
+  return { renewed: 0, results: [], reason: "INBOUND_SYNC_DISABLED" };
+}
 
-  if (error) throw error;
-  const results = [];
-  for (const connection of connections || []) {
-    try {
-      results.push(await ensureGoogleWatch(connection));
-    } catch (error) {
-      await supabase
-        .from("google_calendar_tokens")
-        .update({ sync_status: "error", last_error: errorMessage(error) })
-        .eq("id", connection.id);
-      results.push({
-        connection_id: connection.id,
-        error: errorMessage(error),
-      });
-    }
+export class GoogleCalendarDisconnectPendingError extends Error {
+  constructor() {
+    super("Ha eventos Google pendentes para esta conta. Aguarde ou solicite revisao antes de desconectar.");
+    this.name = "GoogleCalendarDisconnectPendingError";
   }
-  return { renewed: results.length, results };
 }
 
 export async function disconnectConnection(connection: JsonRecord) {
+  const { data: outstanding, error: outstandingError } = await supabase
+    .from("google_calendar_sync_jobs")
+    .select("id")
+    .eq("organization_id", connection.organization_id)
+    .in("action", ["push_upsert", "push_delete"])
+    .in("status", ["queued", "running", "failed", "dead"])
+    .contains("payload", { owner_user_id: connection.user_id })
+    .limit(1)
+    .maybeSingle();
+  if (outstandingError) throw outstandingError;
+  if (outstanding) {
+    throw new GoogleCalendarDisconnectPendingError();
+  }
+
   await stopGoogleWatches(connection);
 
   const token = await readTokenSecret(connection.token_secret_ref).catch(

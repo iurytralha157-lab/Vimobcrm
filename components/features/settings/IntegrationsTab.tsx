@@ -39,6 +39,7 @@ import { APIAccessIntegrationSettings } from "@/components/features/integrations
 import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
 import { GrupoOLXIntegrationSettings } from "@/components/features/integrations/grupo-olx";
 import { GoogleCalendarIntegrationSettings } from "@/components/features/integrations/google-calendar";
+import { isGoogleCalendarServiceUnavailable } from "@/lib/api/google-calendar";
 import { GoogleAnalyticsIntegrationSettings } from "@/components/features/integrations/google-analytics";
 import { GoogleSearchConsoleIntegrationSettings } from "@/components/features/integrations/google-search-console";
 import { GoogleTagManagerIntegrationSettings } from "@/components/features/integrations/google-tag-manager";
@@ -216,6 +217,7 @@ interface IntegrationItem {
   requiresAdmin?: boolean;
   locked?: boolean;
   missingModule?: boolean;
+  canInspectUnavailable?: boolean;
   retry?: () => void;
 }
 
@@ -272,6 +274,7 @@ export function IntegrationsTab({
   } = useWhatsAppSessions({ enabled: canViewWhatsApp });
   const {
     data: googleCalendarStatus,
+    error: googleCalendarError,
     isLoading: googleCalendarLoading,
     isError: googleCalendarLoadFailed,
     refetch: refetchGoogleCalendar,
@@ -582,7 +585,7 @@ export function IntegrationsTab({
           ? "reconnect-required"
           : "not-connected";
     const googleCalendarRuntimeStatus =
-      getGoogleCalendarIntegrationStatus(googleCalendarStatus);
+      getGoogleCalendarIntegrationStatus(googleCalendarStatus?.connection);
     const grupoOLXRuntimeStatus =
       getGrupoOLXIntegrationStatus(grupoOLXIntegration);
     const chavesNaMaoRuntimeStatus =
@@ -685,11 +688,26 @@ export function IntegrationsTab({
                 : definition.defaultDetail;
           break;
         case "google-calendar":
-          status = googleCalendarRuntimeStatus;
+          status = googleCalendarStatus?.connection &&
+            googleCalendarStatus.can_use_schedule !== false
+            ? googleCalendarRuntimeStatus
+            : googleCalendarStatus?.can_connect === false
+            ? "unavailable"
+            : googleCalendarRuntimeStatus;
           loading = googleCalendarLoading;
           loadError = googleCalendarLoadFailed;
           retry = () => void refetchGoogleCalendar();
-          detail = googleCalendarStatus?.account_email || definition.defaultDetail;
+          detail = googleCalendarStatus?.connection
+            ? googleCalendarStatus.can_use_schedule === false
+              ? "Permissão da Agenda necessária"
+              : googleCalendarStatus.connection.account_email || definition.defaultDetail
+            : googleCalendarStatus?.connect_restriction === "GOOGLE_CALENDAR_PILOT_ONLY"
+              ? "Conexão em teste piloto"
+              : googleCalendarStatus?.connect_restriction === "GOOGLE_CALENDAR_CONNECT_DISABLED"
+                ? "Novas conexões temporariamente indisponíveis"
+                : googleCalendarStatus?.can_connect === false
+                  ? "Sem permissão para usar a Agenda"
+                  : definition.defaultDetail;
           break;
         case "google-analytics":
           status = googleAnalyticsIntegration?.configured
@@ -771,7 +789,9 @@ export function IntegrationsTab({
         detail = "Verificando status...";
       } else if (loadError) {
         status = "error";
-        detail = "Status não verificado";
+        detail = key === "google-calendar" && isGoogleCalendarServiceUnavailable(googleCalendarError)
+          ? "Serviço temporariamente indisponível"
+          : "Status não verificado";
       }
 
       return {
@@ -792,6 +812,10 @@ export function IntegrationsTab({
         requiresAdmin: manifest.effectiveRequiresAdmin,
         locked,
         missingModule,
+        canInspectUnavailable:
+          key === "google-calendar" &&
+          availableByRelease &&
+          googleCalendarStatus?.can_connect === false,
         retry,
       };
     });
@@ -808,6 +832,7 @@ export function IntegrationsTab({
     googleAnalyticsLoadFailed,
     googleAnalyticsLoading,
     googleCalendarLoadFailed,
+    googleCalendarError,
     googleCalendarLoading,
     googleCalendarStatus,
     googleSearchConsoleIntegration,
@@ -984,7 +1009,10 @@ function IntegrationCard({
     !item.missingModule &&
     item.status !== "loading" &&
     item.management.kind !== "none" &&
-    (!isReleaseUnavailable || isExternalGuidance || isHomologationSurface);
+    (!isReleaseUnavailable ||
+      isExternalGuidance ||
+      isHomologationSurface ||
+      item.canInspectUnavailable);
   const status = getIntegrationStatusPresentation(item, isAccessLocked);
   const tourTarget =
     item.key === "whatsapp"
@@ -1049,6 +1077,9 @@ function IntegrationCard({
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3 p-3 pt-2">
+        <p className="text-[11px] leading-4 text-[var(--app-text-secondary)]">
+          {item.detail}
+        </p>
         <IntegrationCardNotice
           item={item}
           isAccessLocked={isAccessLocked}
@@ -1200,6 +1231,7 @@ function getIntegrationActionLabel(item: IntegrationItem) {
   }
   if (item.management.kind === "external") return "Ver requisitos";
   if (item.management.kind === "none") return "Em breve";
+  if (item.key === "google-calendar" && item.status === "unavailable") return "Ver status";
   if (item.status === "loading") return "Verificando";
   if (item.status === "error") return "Revisar";
   if (item.status === "connected") return "Gerenciar";

@@ -78,13 +78,13 @@
     "category": "Agenda",
     "moduleKey": "schedule",
     "title": "Como conectar o Google Agenda?",
-    "summary": "Autorize sua conta Google, ajuste a sincronização e confirme o estado da conexão.",
+    "summary": "Conecte sua conta Google para enviar compromissos criados no Vimob à sua agenda.",
     "routeHref": "/agenda",
     "actionLabel": "Abrir Agenda",
     "estimatedMinutes": 4,
     "displayOrder": 230,
     "updatedAt": "2026-07-29T11:59:27.817Z",
-    "content": "A integração fica dentro da Agenda. Usuários autorizados podem conectar ou desconectar a conta Google, ativar a sincronização e executar uma sincronização manual. A disponibilidade global também depende da configuração do produto.",
+    "content": "A integração fica dentro da Agenda. Usuários autorizados podem conectar ou desconectar a conta Google. Compromissos criados, alterados ou excluídos no Vimob são enviados ao Google Agenda. Eventos criados ou alterados no Google não entram no Vimob.",
     "searchKeywords": [
       "google agenda",
       "google calendar",
@@ -107,13 +107,13 @@
       },
       {
         "id": "google-3",
-        "body": "Depois do retorno ao Vimob, ative ou desative a sincronização conforme sua necessidade.",
-        "title": "Ajuste a sincronização"
+        "body": "Depois de conectar, crie ou altere um compromisso de teste no Vimob e confira o resultado no Google Agenda.",
+        "title": "Teste um compromisso"
       },
       {
         "id": "google-4",
-        "body": "Use Sincronizar agora quando disponível e confira se os eventos esperados aparecem sem duplicidade.",
-        "title": "Sincronize e valide"
+        "body": "Exclua o compromisso de teste no Vimob e confirme a remoção do evento vinculado no Google após o processamento.",
+        "title": "Teste a exclusão"
       }
     ],
     "relatedSlugs": [

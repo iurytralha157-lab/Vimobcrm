@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { scheduleAPI, type AssigneeUser } from "@/lib/api/schedule";
-import { syncScheduleEventWithGoogle } from "@/lib/api/google-calendar";
 import { useAuth } from "@/contexts/AuthContext";
 import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
 import { toast } from "sonner";
@@ -12,18 +11,6 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
   const queryClient = useQueryClient();
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
-
-  const syncAssigneesWithGoogle = () => {
-    if (!eventId) return;
-    void syncScheduleEventWithGoogle("push_upsert", eventId, organizationId)
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
-        queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
-      })
-      .catch((error) => {
-        console.warn("Google Calendar assignee sync skipped:", error);
-      });
-  };
 
   const {
     data: assignees = [],
@@ -51,7 +38,6 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       });
       queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
       invalidateScheduleDashboardCaches(queryClient);
-      syncAssigneesWithGoogle();
     },
     onError: (error) => toast.error(getFriendlyErrorMessage(error)),
   });
@@ -67,7 +53,6 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       });
       queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
       invalidateScheduleDashboardCaches(queryClient);
-      syncAssigneesWithGoogle();
     },
     onError: (error) => toast.error(getFriendlyErrorMessage(error)),
   });

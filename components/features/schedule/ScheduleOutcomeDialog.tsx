@@ -152,6 +152,7 @@ export function ScheduleOutcomeDialog({
   eventEndTime,
   eventIsAllDay,
   eventReminderMinutes,
+  disableReschedule = false,
   timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
   isLoading,
   onConfirm,
@@ -165,6 +166,7 @@ export function ScheduleOutcomeDialog({
   eventEndTime?: string | null;
   eventIsAllDay?: boolean | null;
   eventReminderMinutes?: number | null;
+  disableReschedule?: boolean;
   timeZone?: string;
   isLoading: boolean;
   onConfirm: (input: ScheduleOutcomeConfirmation) => void | Promise<void>;
@@ -187,7 +189,10 @@ export function ScheduleOutcomeDialog({
     );
     return () => window.clearInterval(intervalId);
   }, []);
-  const options = useMemo(() => getOutcomeOptions(eventType), [eventType]);
+  const options = useMemo(
+    () => getOutcomeOptions(eventType).filter((option) => !disableReschedule || option.value !== "rescheduled"),
+    [disableReschedule, eventType],
+  );
   const TypeIcon = TYPE_ICONS[eventType];
   const status = outcome ? scheduleStatusForOutcome(outcome) : null;
   const today = useMemo(

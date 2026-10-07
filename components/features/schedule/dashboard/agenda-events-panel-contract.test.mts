@@ -98,10 +98,7 @@ test("mutações reiniciam a lista paginada antes de atualizar os indicadores", 
       ?.length,
     2,
   );
-  assert.match(
-    googleCalendarSource,
-    /useSyncGoogleCalendarNow[\s\S]*invalidateScheduleDashboardCaches\(queryClient\)/,
-  );
+  assert.doesNotMatch(googleCalendarSource, /useSyncGoogleCalendarNow/);
   assert.match(
     backendRealtimeSource,
     /event\.type\.startsWith\(["']schedule\.["']\)[\s\S]*handleScheduleEvent/,

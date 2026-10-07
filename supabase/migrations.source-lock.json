@@ -620,6 +620,14 @@
       "sha256": "c6b2ca30564cf8ebe50731fe5bf822d0f60757d2125c91b6de634986417707d9"
     },
     {
+      "file": "20261006150000_claim_google_calendar_outbound_jobs.sql",
+      "sha256": "0ae2df643fa3fa585772d3062e0310cfb60a2520fec1f9926a98756e814068c7"
+    },
+    {
+      "file": "20261006151000_google_calendar_one_way_help_content.sql",
+      "sha256": "4b8a9c605e927654827ef9c76962c4b1f84c289bcb9cbe8d26988a67720e1402"
+    },
+    {
       "file": "20261007164309_separate_whatsapp_attendance_marker_confirmation.sql",
       "sha256": "86beb774114cf477b5d5f8ad139c3f0c1705079b8423984473068dde90eb53fb"
     }

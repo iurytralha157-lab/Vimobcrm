@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ab11b003da42999d5bcfd326c95527aa500f02ea324ff155ca5377d2a18186f7",
+  "sourceDigestSha256": "639192fb9e1c65407adc5c63fa7c1045cf11dbd40fa3ed0604bf245aea8fd739",
   "surfaceInventoryDigestSha256": "bae67650128b2be22314dd42d4d75831124e4b9598c549688f2d2c11eaf2db0b",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
@@ -1640,7 +1640,7 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1287,
+      "line": 1319,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",

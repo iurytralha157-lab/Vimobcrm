@@ -871,6 +871,16 @@ test("catalogo de integracoes exibe todos os provedores em uma grade unica", () 
     /grid-cols-1[^"\n]*min-\[480px\]:grid-cols-2[^"\n]*md:grid-cols-3[^"\n]*xl:grid-cols-4/,
   );
   assert.match(source, /\{item\.description\}/);
+  assert.match(source, /\{item\.detail\}/);
+  assert.match(source, /item\.canInspectUnavailable/);
+  assert.match(
+    source,
+    /canInspectUnavailable:[\s\S]*?googleCalendarStatus\?\.can_connect === false/,
+  );
+  assert.equal(
+    INTEGRATION_PROVIDER_CATALOG["google-calendar"].description,
+    "Envie compromissos do Vimob para sua agenda Google.",
+  );
   assert.doesNotMatch(source, /\{group\.items\.length\}/);
   assert.doesNotMatch(
     source,
