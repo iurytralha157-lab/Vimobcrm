@@ -617,7 +617,11 @@
     },
     {
       "file": "20261002191622_whatsapp_webhook_session_cutover_epoch.sql",
-      "sha256": "c6b2ca30564cf8ebe50731fe5bf822d0f60757d2125c91b6de634986417707d9"
+      "sha256": "889031ce00998121c3c11a73265f13cb07375fe932b4c8dee893a50bb5f71792"
+    },
+    {
+      "file": "20261007160000_whatsapp_webhook_epoch_claim_index.sql",
+      "sha256": "7597ae44c5d900e81862c4aedee1ba40fae87af14b7122e1709da2729d0497ec"
     },
     {
       "file": "20261007164309_separate_whatsapp_attendance_marker_confirmation.sql",
