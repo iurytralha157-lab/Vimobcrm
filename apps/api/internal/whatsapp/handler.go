@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -98,6 +99,7 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 			w.Header().Set("Retry-After", "5")
 			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "whatsapp_webhook_schema_unavailable", "WhatsApp webhook storage is not ready.")
 		default:
+			logEvolutionWebhookIngressFailure(slog.Default(), r, err)
 			httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_enqueue_failed", "Unable to persist WhatsApp webhook.")
 		}
 		return
@@ -106,6 +108,26 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 		wakeWhatsAppWebhookWorker()
 	}
 	httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true, "receipt": receipt})
+}
+
+// PostgreSQL errors can contain a failing row, which may include message text
+// or a phone number. Log only a fixed stage and SQLSTATE, never err.Error().
+func logEvolutionWebhookIngressFailure(logger *slog.Logger, r *http.Request, err error) {
+	stage := "unclassified"
+	var staged *evolutionWebhookIngressStageError
+	if errors.As(err, &staged) {
+		stage = staged.stage
+	}
+	sqlstate := ""
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		sqlstate = pgErr.SQLState()
+	}
+	logger.Error("whatsapp webhook ingress failed",
+		"request_id", httpserver.RequestIDFromContext(r.Context()),
+		"stage", stage,
+		"sqlstate", sqlstate,
+	)
 }
 
 func (handler Handler) ListSessions(w http.ResponseWriter, r *http.Request) {

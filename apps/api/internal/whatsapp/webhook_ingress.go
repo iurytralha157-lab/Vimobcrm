@@ -169,6 +169,21 @@ type evolutionWebhookReceipt struct {
 	Inline    bool   `json:"inline,omitempty"`
 }
 
+type evolutionWebhookIngressStageError struct {
+	stage string
+	err   error
+}
+
+func (e *evolutionWebhookIngressStageError) Error() string { return e.err.Error() }
+func (e *evolutionWebhookIngressStageError) Unwrap() error { return e.err }
+
+func webhookIngressStage(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &evolutionWebhookIngressStageError{stage: stage, err: err}
+}
+
 type evolutionWebhookSession struct {
 	ID             string
 	OrganizationID string
@@ -282,7 +297,7 @@ func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body [
 func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evolutionWebhookEnvelope) (evolutionWebhookReceipt, error) {
 	session, err := repo.evolutionWebhookSession(ctx, envelope.SessionID)
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("session_lookup", err)
 	}
 	if evolutionWebhookSessionInactive(session) {
 		return evolutionWebhookReceipt{}, ErrSessionNotFound
@@ -313,7 +328,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		Payload:   envelope.Payload,
 	})
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("group_filter", err)
 	}
 	if groupOnly {
 		// Group traffic is outside the CRM lead channel. Acknowledge it only
@@ -350,7 +365,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			select exists (select 1 from recorded)
 		`, session.OrganizationID, session.ID, eventKey, reason).Scan(&inserted)
 		if err != nil {
-			return evolutionWebhookReceipt{}, fmt.Errorf("record ignored Evolution webhook: %w", err)
+			return evolutionWebhookReceipt{}, webhookIngressStage("record_ignored", fmt.Errorf("record ignored Evolution webhook: %w", err))
 		}
 		return evolutionWebhookReceipt{
 			ID:        eventKey,
@@ -363,7 +378,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	}
 	inlineState, err := evolutionWebhookInlineSessionState(envelope)
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("inline_state_parse", err)
 	}
 	if inlineState.Handled {
 		if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
@@ -393,10 +408,10 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			}, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return evolutionWebhookReceipt{}, fmt.Errorf("check retained Evolution webhook state replay: %w", err)
+			return evolutionWebhookReceipt{}, webhookIngressStage("inline_replay_lookup", fmt.Errorf("check retained Evolution webhook state replay: %w", err))
 		}
 		if err := repo.applyEvolutionWebhookSessionState(ctx, session, inlineState); err != nil {
-			return evolutionWebhookReceipt{}, err
+			return evolutionWebhookReceipt{}, webhookIngressStage("apply_session_state", err)
 		}
 		return evolutionWebhookReceipt{
 			ID:        eventKey,
@@ -411,25 +426,25 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	}
 	parts, err := prepareEvolutionWebhookDurableParts(envelope)
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("prepare_durable", err)
 	}
 	if len(parts) == 0 {
-		return evolutionWebhookReceipt{}, fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts")
+		return evolutionWebhookReceipt{}, webhookIngressStage("prepare_durable", fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts"))
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("begin_transaction", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	processingEpoch, err := currentEvolutionWebhookProcessingEpoch(ctx, tx, session)
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("processing_epoch", err)
 	}
 	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch)
 	if err != nil {
-		return evolutionWebhookReceipt{}, fmt.Errorf("capture Evolution webhook routing provenance: %w", err)
+		return evolutionWebhookReceipt{}, webhookIngressStage("routing_snapshot", fmt.Errorf("capture Evolution webhook routing provenance: %w", err))
 	}
 
 	// Insert the original event key first. Besides preserving the public receipt
@@ -512,18 +527,22 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			&exactRoutingReplay,
 		)
 		if err == nil && !exactRoutingReplay {
-			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook: event key routing provenance conflict")
+			return evolutionWebhookReceipt{}, webhookIngressStage("replay_conflict", errors.New("persist Evolution webhook: event key routing provenance conflict"))
 		}
 	}
 	if err != nil {
-		return evolutionWebhookReceipt{}, err
+		stage := "insert_inbox"
+		if receipt.Duplicate {
+			stage = "replay_lookup"
+		}
+		return evolutionWebhookReceipt{}, webhookIngressStage(stage, err)
 	}
 	if receipt.Duplicate {
 		// Snapshot capture precedes the inbox INSERT so both can commit atomically.
 		// An event-key conflict means this callback owns no new inbox row; rollback
 		// every tentative ledger row instead of committing orphan provenance.
 		if err := tx.Rollback(ctx); err != nil {
-			return evolutionWebhookReceipt{}, err
+			return evolutionWebhookReceipt{}, webhookIngressStage("replay_rollback", err)
 		}
 		return receipt, nil
 	}
@@ -531,7 +550,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if len(parts) > 1 {
 		encodedParts, err := json.Marshal(parts[1:])
 		if err != nil {
-			return evolutionWebhookReceipt{}, fmt.Errorf("encode Evolution webhook batch parts: %w", err)
+			return evolutionWebhookReceipt{}, webhookIngressStage("batch_encode", fmt.Errorf("encode Evolution webhook batch parts: %w", err))
 		}
 		var insertedParts int
 		if err := tx.QueryRow(ctx, `
@@ -582,17 +601,17 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			)
 			select count(*)::integer from inserted
 		`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), string(encodedParts), firstCreatedAt).Scan(&insertedParts); err != nil {
-			return evolutionWebhookReceipt{}, fmt.Errorf("persist Evolution webhook batch parts: %w", err)
+			return evolutionWebhookReceipt{}, webhookIngressStage("insert_batch", fmt.Errorf("persist Evolution webhook batch parts: %w", err))
 		}
 		if insertedParts != len(parts)-1 {
 			// Every routing snapshot was captured in this transaction. A conflict on
 			// any derived key therefore invalidates the whole callback; committing a
 			// partial set would strand ledger rows or attach them to another receipt.
-			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook batch parts: derived event key conflict")
+			return evolutionWebhookReceipt{}, webhookIngressStage("batch_conflict", errors.New("persist Evolution webhook batch parts: derived event key conflict"))
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return evolutionWebhookReceipt{}, err
+		return evolutionWebhookReceipt{}, webhookIngressStage("commit_transaction", err)
 	}
 	return receipt, nil
 }

@@ -41,6 +41,7 @@ const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const WHATSAPP_SEND_RECONCILE_DELAYS_MS = [4_000, 15_000] as const;
 const WHATSAPP_UNCERTAIN_SEND_RECONCILE_DELAYS_MS = [0, 4_000, 15_000, 60_000] as const;
 const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
+const WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS = 5 * 60_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
 const lastWhatsAppSendByUser = new Map<string, number>();
@@ -548,13 +549,14 @@ export function useWhatsAppConversations(
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
     refetchInterval: (currentQuery) => {
-      if (currentQuery.state.status === 'error') return false;
       const data = currentQuery.state.data as { pages?: unknown[] } | undefined;
-      return (data?.pages?.length ?? 0) <= 1 ? WHATSAPP_CONVERSATIONS_REFETCH_MS : false;
+      return (data?.pages?.length ?? 0) <= 1
+        ? WHATSAPP_CONVERSATIONS_REFETCH_MS
+        : WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS;
     },
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? true,
     staleTime: 30_000,
     gcTime: 1000 * 60 * 10,
     retry: false,

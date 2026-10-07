@@ -179,8 +179,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		}
 	}
 	// A second owner in the same organization has no session grant to viewer.
-	// Its lead and Meta attribution must remain absent from all inbox reads.
-	var otherUserID, otherSessionID, privateLeadID, privateConversationID string
+	// The viewer cannot see that number; an admin may read its lead, but not
+	// the unlinked conversation or use the number to send.
+	var otherUserID, otherSessionID, privateLeadID, privateConversationID, privateUnlinkedID string
 	if err := tx.QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&otherUserID); err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +237,16 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		returning id::text
 	`, organizationID, otherSessionID, privateLeadID,
 		"55119990000999@s.whatsapp.net", fixtureName+"-private-contact", now).Scan(&privateConversationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, remote_jid, contact_name,
+			last_message, last_message_at
+		) values ($1::uuid, $2::uuid, $3, $4, 'unlinked', $5)
+		returning id::text
+	`, organizationID, otherSessionID,
+		"55119990000888@s.whatsapp.net", fixtureName+"-private-unlinked", now).Scan(&privateUnlinkedID); err != nil {
 		t.Fatal(err)
 	}
 	var privateMediaMessageID string
@@ -365,12 +376,25 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(adminLeads) != 5 {
-		t.Fatalf("admin operational inbox = %d, want only the five conversations on the owned number", len(adminLeads))
+	if len(adminLeads) != 6 {
+		t.Fatalf("admin operational inbox = %d, want all six visible leads across numbers", len(adminLeads))
 	}
+	adminFoundPrivateLead := false
 	for _, conversation := range adminLeads {
 		if conversation.ID == privateConversationID {
-			t.Fatal("admin inbox exposed another owner's ungranted number")
+			adminFoundPrivateLead = true
+		}
+	}
+	if !adminFoundPrivateLead {
+		t.Fatal("admin inbox lost a visible lead on another number")
+	}
+	adminInbox, err := repo.ListConversations(ctx, admin, ConversationListFilter{Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, conversation := range adminInbox {
+		if conversation.ID == privateUnlinkedID {
+			t.Fatal("admin inbox exposed another owner's unlinked conversation")
 		}
 	}
 	if snapshot, err := repo.GetConversationSnapshot(ctx, admin, privateConversationID); err != nil || snapshot.ID != privateConversationID {

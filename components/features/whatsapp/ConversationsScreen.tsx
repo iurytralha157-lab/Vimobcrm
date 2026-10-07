@@ -27,7 +27,7 @@ import {
 import { normalizeSearchText } from "@/lib/search-text";
 import { isLocalReadOnlyMode } from "@/lib/local-read-only";
 import { getDateRangeFromPreset, type DatePreset } from "@/hooks/use-dashboard-filters";
-import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useWhatsAppConversationFilterOptions, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useWhatsAppConversationFilterOptions, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppInboxRealtime, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
@@ -668,6 +668,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [createLeadContact, setCreateLeadContact] = useState<CreateLeadContact>({});
   const [showLeadPanel, setShowLeadPanel] = useState(true);
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<WhatsAppConversation | null>(null);
+  useWhatsAppInboxRealtime(activePlatform === "whatsapp");
   useWhatsAppLeadRealtime(
     true,
     selectedRealtimeLeadIds,

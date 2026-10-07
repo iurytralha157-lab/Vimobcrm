@@ -727,14 +727,21 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 	}
 
 	args := baseConversationArgs(tenantContext)
+	// Organization admins retain their existing lead-wide read access in the
+	// inbox. A shared-number recipient still sees only assigned leads, and an
+	// unlinked conversation remains private to its session owner.
+	adminLeadInboxScope := "false"
+	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
+		adminLeadInboxScope = "true"
+	}
 	where := []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
 		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 		// The operational inbox follows owned numbers or a current explicit
-		// grant for a lead assigned to this recipient. Lead history and direct
-		// reads keep their separate, existing lead visibility rules.
-		"(ws.owner_user_id = $2::uuid or (l.assigned_user_id = $2::uuid and " + sessionGrantExistsSQL("ws", "$2::uuid", false) + "))",
+		// grant for an assigned lead. Admins may also read other numbers' lead
+		// conversations; this does not grant access to send from those numbers.
+		"(ws.owner_user_id = $2::uuid or (wc.lead_id is not null and " + adminLeadInboxScope + ") or (l.assigned_user_id = $2::uuid and " + sessionGrantExistsSQL("ws", "$2::uuid", false) + "))",
 	}
 
 	addFilter := func(clause string, value any) {
