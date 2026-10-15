@@ -63,16 +63,6 @@ func TestAllLegacyRoundRobinSelectorsUseSharedAvailabilityContract(t *testing.T)
 		function string
 	}{
 		{
-			name:     "manual lead",
-			path:     filepath.Join("..", "leads", "repository.go"),
-			function: "selectRoundRobinMember",
-		},
-		{
-			name:     "automatic redistribution",
-			path:     filepath.Join("..", "leads", "redistribution_worker.go"),
-			function: "selectRoundRobinMemberForRedistribution",
-		},
-		{
 			name:     "meta legacy fallback",
 			path:     filepath.Join("..", "meta", "repository.go"),
 			function: "selectRoundRobinMember",
@@ -100,4 +90,14 @@ func TestAllLegacyRoundRobinSelectorsUseSharedAvailabilityContract(t *testing.T)
 			)
 		})
 	}
+}
+
+func TestLeadRedistributionDelegatesEligibilityToCanonicalRotation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "leads", "round_robin_rotation.go")
+	manual := goFunctionSource(t, path, "selectRoundRobinMember")
+	requireContains(t, manual, "repo.selectRoundRobinMemberForRedistribution", "current.TeamID", "current.AssignedUserID", "current.ID")
+	selector := goFunctionSource(t, path, "selectRoundRobinMemberForRedistribution")
+	requireContains(t, selector, "private.preview_round_robin_redistribution_candidate", "organizationID, leadID, roundRobinID, excludedUserID, requiredTeamID")
+	requireAbsent(t, selector, "entry_total", "user_logs", "with entries as", "RoundRobinAvailabilityPredicateSQL")
 }
