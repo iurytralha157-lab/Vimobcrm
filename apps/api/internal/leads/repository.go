@@ -1011,7 +1011,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		PipelineID: current.PipelineID,
 		StageID:    current.StageID,
 	}
-	if expectedUnassigned {
+	if expectedUnassigned || current.AssignedUserID == "" {
 		if current.AssignedUserID != "" {
 			result.Success = false
 			result.AssignedUserID = current.AssignedUserID
@@ -1064,7 +1064,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		return result, tx.Commit(ctx)
 	}
 
-	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current.PipelineID, current.TeamID)
+	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current)
 	if err != nil {
 		return RoundRobinResult{}, err
 	}
@@ -1100,8 +1100,9 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 			$5::jsonb
 		)
 	`, tenantContext.OrganizationID, selection.RoundRobinID, current.ID, selection.UserID, jsonb(map[string]any{
-		"member_id": selection.MemberID,
-		"source":    "vimob_api",
+		"member_id":        selection.MemberID,
+		"source":           "vimob_api",
+		"previous_user_id": current.AssignedUserID,
 	})); err != nil {
 		return RoundRobinResult{}, err
 	}
@@ -2433,148 +2434,6 @@ func sameLeadIntakeDestination(left distribution.IntakeDestination, right distri
 		return true
 	}
 	return left.ReentryBehavior == right.ReentryBehavior
-}
-
-func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, requiredTeamID string) (roundRobinSelection, string, error) {
-	var roundRobinID string
-	// Keep the selected queue locked until the caller commits its assignment,
-	// log and position update. The next request then recalculates from fresh logs.
-	err := tx.QueryRow(ctx, `
-		select id::text
-		from public.round_robins
-		where organization_id = $1::uuid
-		  and is_active = true
-		  and (pipeline_id is null or pipeline_id = $2::uuid)
-		order by pipeline_id is null, created_at asc
-		limit 1
-		for update
-	`, organizationID, nullableString(pipelineID)).Scan(&roundRobinID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return roundRobinSelection{}, "no_queue", nil
-	}
-	if err != nil {
-		return roundRobinSelection{}, "", err
-	}
-
-	var selection roundRobinSelection
-	selection.RoundRobinID = roundRobinID
-
-	err = tx.QueryRow(ctx, `
-		with entries as (
-			select
-				rrm.id,
-				rrm.round_robin_id,
-				rrm.organization_id,
-				rrm.user_id,
-				rrm.team_id,
-				coalesce(rrm.position, 0) as position,
-				rrm.created_at,
-				coalesce(entry_logs.total, 0) as entry_total
-			from public.round_robin_members rrm
-			join public.round_robins rr
-			  on rr.id = rrm.round_robin_id
-			 and rr.organization_id = rrm.organization_id
-			left join lateral (
-			  select count(*)::bigint as total
-			  from public.round_robin_logs rrl
-			  where rrl.organization_id = rrm.organization_id
-			    and rrl.round_robin_id = rrm.round_robin_id
-			    and (
-			      rrl.metadata->>'member_id' = rrm.id::text
-			      or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
-			    )
-			) entry_logs on true
-			where rrm.organization_id = $1::uuid
-			  and rrm.round_robin_id = $2::uuid
-			  and coalesce(rrm.is_active, true) = true
-		),
-		candidates as (
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				entries.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			left join public.teams direct_team
-			  on direct_team.id = entries.team_id
-			 and direct_team.organization_id = entries.organization_id
-			 and coalesce(direct_team.is_active, true) = true
-			left join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and tm.user_id = entries.user_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is not null
-			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
-
-			union all
-
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				tm.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			join public.teams t
-			  on t.id = entries.team_id
-			 and t.organization_id = entries.organization_id
-			 and coalesce(t.is_active, true) = true
-			join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is null
-			  and entries.team_id is not null
-		)
-		select candidates.id::text, candidates.user_id::text
-		from candidates
-		join public.organization_members om
-		  on om.organization_id = candidates.organization_id
-		 and om.user_id = candidates.user_id
-		 and om.is_active = true
-		join public.users u
-		  on u.id = candidates.user_id
-		 and u.is_active = true
-		left join lateral (
-		  select count(*)::bigint as total
-		  from public.round_robin_logs rrl
-		  where rrl.organization_id = candidates.organization_id
-		    and rrl.round_robin_id = candidates.round_robin_id
-		    and rrl.assigned_user_id = candidates.user_id
-		) user_logs on true
-		where (
-		    nullif($3, '')::uuid is null
-		    or exists (
-		      select 1
-		      from public.team_members required_member
-		      where required_member.organization_id = candidates.organization_id
-		        and required_member.team_id = nullif($3, '')::uuid
-		        and required_member.user_id = candidates.user_id
-		        and coalesce(required_member.is_active, true) = true
-		    )
-		  )
-		  and `+distribution.RoundRobinAvailabilityPredicateSQL+`
-		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
-		limit 1
-	`, organizationID, roundRobinID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return roundRobinSelection{}, "no_member", nil
-	}
-	if err != nil {
-		return roundRobinSelection{}, "", err
-	}
-
-	return selection, "", nil
 }
 
 func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {

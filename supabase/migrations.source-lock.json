@@ -638,6 +638,22 @@
     {
       "file": "20261007211500_enforce_whatsapp_session_sharing_scope.sql",
       "sha256": "e402e275b7d6d71b5d1fd87bc3caa5811710e62758dbc1601423ec59746b2232"
+    },
+    {
+      "file": "20261015162230_harden_lead_queue_redistribution_rotation.sql",
+      "sha256": "06c34017cdf0120e54dd9fd98363aa9476464129c0ca5b2440f08ec64cfd0b94"
+    },
+    {
+      "file": "20261015184139_isolate_lead_redistribution_worker_retry_clocks.sql",
+      "sha256": "5d1b228ea2bbebde56fd11a29f7987a8028e7ea558282c7399e3ed98d445e658"
+    },
+    {
+      "file": "20261015193322_guard_lead_distribution_ticket_sequence_acl_hotpath.sql",
+      "sha256": "481ee12363c40c578d7d84748dad892c024c7bcf4352fbdef5f8748c7531a58e"
+    },
+    {
+      "file": "20261015193555_restrict_lead_redistribution_job_client_mutations.sql",
+      "sha256": "b3d59489d00071146dfdf57311f23b1cfede9393605f14649843d185dec5c5e8"
     }
   ]
 }

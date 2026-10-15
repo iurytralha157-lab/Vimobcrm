@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -28,6 +27,7 @@ const (
 
 type redistributionJob struct {
 	ID                          string
+	RowVersion                  string
 	OrganizationID              string
 	LeadID                      string
 	RoundRobinID                string
@@ -82,102 +82,75 @@ func (repo Repository) StartRedistributionWorker(ctx context.Context, logger *sl
 	}()
 }
 
-func (repo Repository) ProcessLeadRedistribution(ctx context.Context) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+func (repo Repository) processRedistributionWarning(ctx context.Context, tx pgx.Tx, job redistributionJob, attemptedVersion *string) error {
+	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, job.OrganizationID, job.LeadID)
 	if err != nil {
+		if errors.Is(err, ErrLeadNotFound) {
+			if stopErr := repo.stopRedistributionJob(ctx, tx, job.ID, "lead_not_found"); stopErr != nil {
+				return stopErr
+			}
+			return nil
+		}
 		return err
 	}
-	defer tx.Rollback(ctx)
 
-	var locked bool
-	if err := tx.QueryRow(ctx, `select pg_try_advisory_xact_lock($1)`, leadRedistributionLockKey).Scan(&locked); err != nil {
+	locked, err := repo.lockWarningRedistributionJob(ctx, tx, job.ID)
+	if err != nil {
 		return err
 	}
 	if !locked {
 		return nil
 	}
-
-	if err := repo.processRedistributionWarnings(ctx, tx); err != nil {
-		return err
-	}
-	if err := repo.processDueRedistributions(ctx, tx); err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
-}
-
-func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx.Tx) error {
-	jobs, err := repo.listWarningRedistributionJobs(ctx, tx)
+	job, err = repo.reloadRedistributionJob(ctx, tx, job)
 	if err != nil {
 		return err
 	}
+	*attemptedVersion = job.RowVersion
+	if !redistributionJobShouldReceiveWarning(job) {
+		return nil
+	}
 
-	for _, job := range jobs {
-		if !redistributionJobShouldReceiveWarning(job) {
-			continue
-		}
-
-		current, err := repo.getLeadSnapshotForUpdate(ctx, tx, job.OrganizationID, job.LeadID)
-		if err != nil {
-			if errors.Is(err, ErrLeadNotFound) {
-				if stopErr := repo.stopRedistributionJob(ctx, tx, job.ID, "lead_not_found"); stopErr != nil {
-					return stopErr
-				}
-				continue
-			}
+	reason, err := repo.redistributionStopReason(ctx, tx, job, current)
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
 			return err
 		}
+		return nil
+	}
 
-		locked, err := repo.lockWarningRedistributionJob(ctx, tx, job.ID)
-		if err != nil {
-			return err
-		}
-		if !locked {
-			continue
-		}
+	_, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
+	if err != nil {
+		return err
+	}
+	if !canRedistribute {
+		return nil
+	}
 
-		reason, err := repo.redistributionStopReason(ctx, tx, job, current)
-		if err != nil {
-			return err
-		}
-		if reason != "" {
-			if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
-				return err
-			}
-			continue
-		}
+	if err := repo.insertNotification(ctx, tx, job.OrganizationID, job.CurrentAssignedUserID, job.LeadID, "Lead quase redistribuido", fmt.Sprintf("%s sera redistribuido em %d minuto(s) se nao houver atendimento.", job.LeadName, job.WarningMinutes), "lead_redistribution_warning", map[string]any{
+		"lead_name":       job.LeadName,
+		"timeout_minutes": job.TimeoutMinutes,
+		"warning_minutes": job.WarningMinutes,
+		"round_robin_id":  job.RoundRobinID,
+		"job_id":          job.ID,
+		"attempt_count":   job.AttemptCount,
+		"dedupe_key":      redistributionWarningDedupeKey(job),
+	}); err != nil {
+		return err
+	}
 
-		_, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
-		if err != nil {
-			return err
-		}
-		if !canRedistribute {
-			continue
-		}
-
-		if err := repo.insertNotification(ctx, tx, job.OrganizationID, job.CurrentAssignedUserID, job.LeadID, "Lead quase redistribuido", fmt.Sprintf("%s sera redistribuido em %d minuto(s) se nao houver atendimento.", job.LeadName, job.WarningMinutes), "lead_redistribution_warning", map[string]any{
-			"lead_name":       job.LeadName,
-			"timeout_minutes": job.TimeoutMinutes,
-			"warning_minutes": job.WarningMinutes,
-			"round_robin_id":  job.RoundRobinID,
-			"job_id":          job.ID,
-			"attempt_count":   job.AttemptCount,
-			"dedupe_key":      redistributionWarningDedupeKey(job),
-		}); err != nil {
-			return err
-		}
-
-		if _, err := tx.Exec(ctx, `
-			update public.lead_redistribution_jobs
-			set status = 'warning_sent',
-			    warning_sent_at = now(),
-			    metadata = metadata - 'waiting_for_available_member' - 'next_candidate_check_at',
-			    updated_at = now()
-			where id = $1::uuid
-		`, job.ID); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(ctx, `
+		update public.lead_redistribution_jobs
+		set status = 'warning_sent',
+			    warning_retry_at = null,
+		    warning_sent_at = now(),
+		    metadata = metadata - 'waiting_for_available_member' - 'next_candidate_check_at',
+		    updated_at = now()
+		where id = $1::uuid
+	`, job.ID); err != nil {
+		return err
 	}
 
 	return nil
@@ -230,6 +203,7 @@ func (repo Repository) processManagedWhatsAppInitialDistribution(
 		ctx,
 		store,
 		job.OrganizationID,
+		job.LeadID,
 		job.RoundRobinID,
 		excludedUserID,
 		"",
@@ -396,6 +370,8 @@ func (repo Repository) accelerateRedistributionJob(
 		update public.lead_redistribution_jobs
 		set status = 'pending',
 		    due_at = now(),
+		    warning_retry_at = null,
+		    redistribution_retry_at = null,
 		    warning_due_at = null,
 		    warning_sent_at = null,
 		    stopped_at = null,
@@ -543,123 +519,121 @@ func redistributionWarningDedupeKey(job redistributionJob) string {
 	)
 }
 
-func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx) error {
-	jobs, err := repo.listDueRedistributionJobs(ctx, tx)
+func (repo Repository) processDueRedistribution(ctx context.Context, tx pgx.Tx, job redistributionJob, attemptedVersion *string) error {
+	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, job.OrganizationID, job.LeadID)
 	if err != nil {
+		if errors.Is(err, ErrLeadNotFound) {
+			if stopErr := repo.stopRedistributionJob(ctx, tx, job.ID, "lead_not_found"); stopErr != nil {
+				return stopErr
+			}
+			return nil
+		}
 		return err
 	}
 
-	for _, job := range jobs {
-		current, err := repo.getLeadSnapshotForUpdate(ctx, tx, job.OrganizationID, job.LeadID)
-		if err != nil {
-			if errors.Is(err, ErrLeadNotFound) {
-				if stopErr := repo.stopRedistributionJob(ctx, tx, job.ID, "lead_not_found"); stopErr != nil {
-					return stopErr
-				}
-				continue
-			}
+	locked, err := repo.lockDueRedistributionJob(ctx, tx, job.ID)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return nil
+	}
+	job, err = repo.reloadRedistributionJob(ctx, tx, job)
+	if err != nil {
+		return err
+	}
+	*attemptedVersion = job.RowVersion
+	if job.InitialDistributionPending {
+		if err := repo.processManagedWhatsAppInitialDistribution(ctx, tx, job, current); err != nil {
 			return err
 		}
+		return nil
+	}
 
-		locked, err := repo.lockDueRedistributionJob(ctx, tx, job.ID)
-		if err != nil {
+	reason, err := repo.redistributionStopReason(ctx, tx, job, current)
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
 			return err
 		}
-		if !locked {
-			continue
-		}
-		if job.InitialDistributionPending {
-			if err := repo.processManagedWhatsAppInitialDistribution(ctx, tx, job, current); err != nil {
-				return err
-			}
-			continue
-		}
+		return nil
+	}
 
-		reason, err := repo.redistributionStopReason(ctx, tx, job, current)
-		if err != nil {
-			return err
-		}
-		if reason != "" {
-			if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
-				return err
-			}
-			continue
-		}
+	selection, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
+	if err != nil {
+		return err
+	}
+	if !canRedistribute {
+		return nil
+	}
 
-		selection, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
-		if err != nil {
+	previousUserID := current.AssignedUserID
+	systemTenant := tenant.Context{OrganizationID: job.OrganizationID}
+	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, job.OrganizationID, current.TeamID, &selection.UserID); err != nil {
+		return err
+	}
+	reason, err = repo.redistributionStopReason(ctx, tx, job, current)
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
 			return err
 		}
-		if !canRedistribute {
-			continue
-		}
+		return nil
+	}
+	if err := repo.transferLeadAssignee(ctx, tx, systemTenant, current, &selection.UserID, "auto_redistribution"); err != nil {
+		return err
+	}
 
-		previousUserID := current.AssignedUserID
-		systemTenant := tenant.Context{OrganizationID: job.OrganizationID}
-		if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, job.OrganizationID, current.TeamID, &selection.UserID); err != nil {
-			return err
-		}
-		reason, err = repo.redistributionStopReason(ctx, tx, job, current)
-		if err != nil {
-			return err
-		}
-		if reason != "" {
-			if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := repo.transferLeadAssignee(ctx, tx, systemTenant, current, &selection.UserID, "auto_redistribution"); err != nil {
-			return err
-		}
+	if err := repo.insertAutoRedistributionLog(ctx, tx, job, selection, previousUserID); err != nil {
+		return err
+	}
 
-		if err := repo.insertAutoRedistributionLog(ctx, tx, job, selection, previousUserID); err != nil {
-			return err
-		}
+	nextAttemptCount := job.AttemptCount + 1
+	finalStatus := "pending"
+	if job.MaxAttempts > 0 && nextAttemptCount >= job.MaxAttempts {
+		finalStatus = "max_attempts_reached"
+	}
 
-		nextAttemptCount := job.AttemptCount + 1
-		finalStatus := "pending"
-		if job.MaxAttempts > 0 && nextAttemptCount >= job.MaxAttempts {
-			finalStatus = "max_attempts_reached"
-		}
+	if err := repo.updateRedistributionJobAfterTransfer(ctx, tx, job, selection.UserID, nextAttemptCount, finalStatus); err != nil {
+		return err
+	}
 
-		if err := repo.updateRedistributionJobAfterTransfer(ctx, tx, job, selection.UserID, nextAttemptCount, finalStatus); err != nil {
-			return err
-		}
+	if err := repo.insertNotification(ctx, tx, job.OrganizationID, selection.UserID, job.LeadID, "Lead redistribuido para voce", fmt.Sprintf("%s estava parado ha %d minuto(s) e foi redistribuido.", job.LeadName, job.TimeoutMinutes), "lead_redistributed_received", map[string]any{
+		"lead_name":       job.LeadName,
+		"previous_user":   previousUserID,
+		"timeout_minutes": job.TimeoutMinutes,
+		"round_robin_id":  job.RoundRobinID,
+		"job_id":          job.ID,
+		"attempt_count":   nextAttemptCount,
+		"dedupe_key":      notificationDedupeKey("lead_redistributed_received", job.ID, selection.UserID, fmt.Sprint(nextAttemptCount)),
+	}); err != nil {
+		return err
+	}
+	if err := repo.insertNotification(ctx, tx, job.OrganizationID, previousUserID, job.LeadID, "Lead redistribuido", fmt.Sprintf("%s foi redistribuido apos %d minuto(s) sem atendimento.", job.LeadName, job.TimeoutMinutes), "lead_redistributed_away", map[string]any{
+		"lead_name":       job.LeadName,
+		"new_user":        selection.UserID,
+		"timeout_minutes": job.TimeoutMinutes,
+		"round_robin_id":  job.RoundRobinID,
+		"job_id":          job.ID,
+		"attempt_count":   nextAttemptCount,
+		"dedupe_key":      notificationDedupeKey("lead_redistributed_away", job.ID, previousUserID, fmt.Sprint(nextAttemptCount)),
+	}); err != nil {
+		return err
+	}
 
-		if err := repo.insertNotification(ctx, tx, job.OrganizationID, selection.UserID, job.LeadID, "Lead redistribuido para voce", fmt.Sprintf("%s estava parado ha %d minuto(s) e foi redistribuido.", job.LeadName, job.TimeoutMinutes), "lead_redistributed_received", map[string]any{
-			"lead_name":       job.LeadName,
-			"previous_user":   previousUserID,
-			"timeout_minutes": job.TimeoutMinutes,
-			"round_robin_id":  job.RoundRobinID,
-			"job_id":          job.ID,
-			"attempt_count":   nextAttemptCount,
-			"dedupe_key":      notificationDedupeKey("lead_redistributed_received", job.ID, selection.UserID, fmt.Sprint(nextAttemptCount)),
-		}); err != nil {
-			return err
-		}
-		if err := repo.insertNotification(ctx, tx, job.OrganizationID, previousUserID, job.LeadID, "Lead redistribuido", fmt.Sprintf("%s foi redistribuido apos %d minuto(s) sem atendimento.", job.LeadName, job.TimeoutMinutes), "lead_redistributed_away", map[string]any{
-			"lead_name":       job.LeadName,
-			"new_user":        selection.UserID,
-			"timeout_minutes": job.TimeoutMinutes,
-			"round_robin_id":  job.RoundRobinID,
-			"job_id":          job.ID,
-			"attempt_count":   nextAttemptCount,
-			"dedupe_key":      notificationDedupeKey("lead_redistributed_away", job.ID, previousUserID, fmt.Sprint(nextAttemptCount)),
-		}); err != nil {
-			return err
-		}
-
-		if err := repo.insertActivity(ctx, tx, job.OrganizationID, job.LeadID, "", "lead_auto_redistributed", fmt.Sprintf(`Lead "%s" redistribuido automaticamente`, job.LeadName), map[string]any{
-			"from_user_id":    previousUserID,
-			"to_user_id":      selection.UserID,
-			"round_robin_id":  job.RoundRobinID,
-			"timeout_minutes": job.TimeoutMinutes,
-			"attempt_count":   nextAttemptCount,
-			"max_attempts":    job.MaxAttempts,
-		}); err != nil {
-			return err
-		}
+	if err := repo.insertActivity(ctx, tx, job.OrganizationID, job.LeadID, "", "lead_auto_redistributed", fmt.Sprintf(`Lead "%s" redistribuido automaticamente`, job.LeadName), map[string]any{
+		"from_user_id":    previousUserID,
+		"to_user_id":      selection.UserID,
+		"round_robin_id":  job.RoundRobinID,
+		"timeout_minutes": job.TimeoutMinutes,
+		"attempt_count":   nextAttemptCount,
+		"max_attempts":    job.MaxAttempts,
+	}); err != nil {
+		return err
 	}
 
 	return nil
@@ -675,6 +649,7 @@ func (repo Repository) selectOrDeferRedistribution(
 		ctx,
 		tx,
 		job.OrganizationID,
+		job.LeadID,
 		job.RoundRobinID,
 		current.AssignedUserID,
 		current.TeamID,
@@ -732,7 +707,8 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 			j.warning_minutes,
 			j.enrolled_at,
 			coalesce(nullif(l.name, ''), 'Lead'),
-			coalesce(j.metadata, '{}'::jsonb)::text
+			coalesce(j.metadata, '{}'::jsonb)::text,
+			j.xmin::text
 		from public.lead_redistribution_jobs j
 		join public.leads l
 		  on l.organization_id = j.organization_id
@@ -742,9 +718,12 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 		  and j.warning_due_at <= now()
 		  and j.due_at > now()
 		  and j.warning_sent_at is null
+		  and (j.warning_retry_at is null or j.warning_retry_at <= now())
+		  and greatest(j.warning_due_at, coalesce(j.warning_retry_at, '-infinity'::timestamptz)) <= now()
 		  and lower(coalesce(j.metadata->>'initial_distribution_pending', 'false')) not in ('true', '1', 'yes')
-		order by j.warning_due_at asc
+		order by greatest(j.warning_due_at, coalesce(j.warning_retry_at, '-infinity'::timestamptz)) asc, j.id
 		limit $1
+		for update of j skip locked
 	`, leadRedistributionBatchLimit)
 	if err != nil {
 		return nil, err
@@ -768,15 +747,19 @@ func (repo Repository) listDueRedistributionJobs(ctx context.Context, tx pgx.Tx)
 			j.warning_minutes,
 			j.enrolled_at,
 			coalesce(nullif(l.name, ''), 'Lead'),
-			coalesce(j.metadata, '{}'::jsonb)::text
+			coalesce(j.metadata, '{}'::jsonb)::text,
+			j.xmin::text
 		from public.lead_redistribution_jobs j
 		join public.leads l
 		  on l.organization_id = j.organization_id
 		 and l.id = j.lead_id
 		where j.status in ('pending', 'warning_sent')
 		  and j.due_at <= now()
-		order by j.due_at asc
+		  and (j.redistribution_retry_at is null or j.redistribution_retry_at <= now())
+		  and greatest(j.due_at, coalesce(j.redistribution_retry_at, '-infinity'::timestamptz)) <= now()
+		order by greatest(j.due_at, coalesce(j.redistribution_retry_at, '-infinity'::timestamptz)) asc, j.id
 		limit $1
+		for update of j skip locked
 	`, leadRedistributionBatchLimit)
 	if err != nil {
 		return nil, err
@@ -801,6 +784,7 @@ func (repo Repository) lockWarningRedistributionJob(ctx context.Context, queryer
 		  and warning_due_at <= now()
 		  and due_at > now()
 		  and warning_sent_at is null
+		  and (warning_retry_at is null or warning_retry_at <= now())
 		for update
 	`, jobID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -817,6 +801,7 @@ func (repo Repository) lockDueRedistributionJob(ctx context.Context, queryer lea
 		where id = $1::uuid
 		  and status in ('pending', 'warning_sent')
 		  and due_at <= now()
+		  and (redistribution_retry_at is null or redistribution_retry_at <= now())
 		for update
 	`, jobID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -828,28 +813,28 @@ func (repo Repository) lockDueRedistributionJob(ctx context.Context, queryer lea
 func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {
 	jobs := []redistributionJob{}
 	for rows.Next() {
-		var job redistributionJob
-		var rawMetadata []byte
-		if err := rows.Scan(
-			&job.ID,
-			&job.OrganizationID,
-			&job.LeadID,
-			&job.RoundRobinID,
-			&job.CurrentAssignedUserID,
-			&job.AttemptCount,
-			&job.MaxAttempts,
-			&job.TimeoutMinutes,
-			&job.WarningMinutes,
-			&job.EnrolledAt,
-			&job.LeadName,
-			&rawMetadata,
-		); err != nil {
+		job, err := scanRedistributionJob(rows)
+		if err != nil {
 			return nil, err
 		}
-		job.InitialDistributionPending, job.AllowAssignedRedistribution, job.EntryEventID, job.Source = redistributionJobMetadataFromJSON(rawMetadata)
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func scanRedistributionJob(row interface{ Scan(...any) error }) (redistributionJob, error) {
+	var job redistributionJob
+	var rawMetadata []byte
+	if err := row.Scan(
+		&job.ID, &job.OrganizationID, &job.LeadID, &job.RoundRobinID,
+		&job.CurrentAssignedUserID, &job.AttemptCount, &job.MaxAttempts,
+		&job.TimeoutMinutes, &job.WarningMinutes, &job.EnrolledAt, &job.LeadName,
+		&rawMetadata, &job.RowVersion,
+	); err != nil {
+		return redistributionJob{}, err
+	}
+	job.InitialDistributionPending, job.AllowAssignedRedistribution, job.EntryEventID, job.Source = redistributionJobMetadataFromJSON(rawMetadata)
+	return job, nil
 }
 
 func redistributionJobMetadataFromJSON(raw []byte) (bool, bool, string, string) {
@@ -1167,153 +1152,6 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 	return hasHumanAction, nil
 }
 
-func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Context, queryer leadTeamQueryer, organizationID string, roundRobinID string, excludedUserID string, requiredTeamID string) (roundRobinSelection, string, error) {
-	var selection roundRobinSelection
-	selection.RoundRobinID = roundRobinID
-
-	err := queryer.QueryRow(ctx, `
-		with entries as (
-			select
-				rrm.id,
-				rrm.round_robin_id,
-				rrm.organization_id,
-				rrm.user_id,
-				rrm.team_id,
-				coalesce(rrm.position, 0) as position,
-				rrm.created_at,
-				coalesce(entry_logs.total, 0) as entry_total,
-				lower(coalesce(rr.settings->>'ignore_availability', 'false')) in ('true', '1', 'yes') as ignore_availability,
-				case
-				  when exists (
-				    select 1 from pg_catalog.pg_timezone_names
-				    where name = timezone_config.configured_timezone
-				  ) then timezone_config.configured_timezone
-				  else 'America/Sao_Paulo'
-				end as timezone
-			from public.round_robin_members rrm
-			join public.round_robins rr
-			  on rr.id = rrm.round_robin_id
-			 and rr.organization_id = rrm.organization_id
-			left join public.organization_attention_settings attention_settings
-			  on attention_settings.organization_id = rrm.organization_id
-			left join lateral (
-				select coalesce(
-					nullif(btrim(rr.settings->>'timezone'), ''),
-					nullif(btrim(attention_settings.timezone), '')
-				) as configured_timezone
-			) timezone_config on true
-			left join lateral (
-				select count(*)::bigint as total
-				from public.round_robin_logs rrl
-				where rrl.organization_id = rrm.organization_id
-				  and rrl.round_robin_id = rrm.round_robin_id
-				  and (
-				    rrl.metadata->>'member_id' = rrm.id::text
-				    or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
-				  )
-			) entry_logs on true
-			where rrm.organization_id = $1::uuid
-			  and rrm.round_robin_id = $2::uuid
-			  and coalesce(rrm.is_active, true) = true
-			  and coalesce(rr.is_active, true) = true
-		),
-		candidates as (
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				entries.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				entries.ignore_availability,
-				entries.timezone,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			left join public.teams direct_team
-			  on direct_team.id = entries.team_id
-			 and direct_team.organization_id = entries.organization_id
-			 and coalesce(direct_team.is_active, true) = true
-			left join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and tm.user_id = entries.user_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is not null
-			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
-
-			union all
-
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				tm.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				entries.ignore_availability,
-				entries.timezone,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			join public.teams t
-			  on t.id = entries.team_id
-			 and t.organization_id = entries.organization_id
-			 and coalesce(t.is_active, true) = true
-			join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is null
-			  and entries.team_id is not null
-		)
-		select candidates.id::text, candidates.user_id::text
-		from candidates
-		join public.organization_members om
-		  on om.organization_id = candidates.organization_id
-		 and om.user_id = candidates.user_id
-		 and coalesce(om.is_active, true) = true
-		join public.users u
-		  on u.id = candidates.user_id
-		 and coalesce(u.is_active, true) = true
-		left join lateral (
-			select count(*)::bigint as total
-			from public.round_robin_logs rrl
-			where rrl.organization_id = candidates.organization_id
-			  and rrl.round_robin_id = candidates.round_robin_id
-			  and rrl.assigned_user_id = candidates.user_id
-		) user_logs on true
-		where (nullif($3, '')::uuid is null or candidates.user_id <> nullif($3, '')::uuid)
-		  and (
-		    nullif($4, '')::uuid is null
-		    or exists (
-		      select 1
-		      from public.team_members required_member
-		      where required_member.organization_id = candidates.organization_id
-		        and required_member.team_id = nullif($4, '')::uuid
-		        and required_member.user_id = candidates.user_id
-		        and coalesce(required_member.is_active, true) = true
-		    )
-		  )
-		  and (
-		    candidates.ignore_availability
-		    or `+strings.ReplaceAll(distribution.RoundRobinAvailabilityPredicateSQL, "'America/Sao_Paulo'", "candidates.timezone")+`
-		  )
-		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
-		limit 1
-	`, organizationID, roundRobinID, excludedUserID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return roundRobinSelection{}, "no_next_member", nil
-	}
-	if err != nil {
-		return roundRobinSelection{}, "", err
-	}
-
-	return selection, "", nil
-}
-
 func (repo Repository) nextRoundRobinMemberAvailability(
 	ctx context.Context,
 	queryer leadTeamQueryer,
@@ -1551,6 +1389,8 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 		_, err := tx.Exec(ctx, `
 			update public.lead_redistribution_jobs
 			set current_assigned_user_id = $2::uuid,
+			    warning_retry_at = null,
+			    redistribution_retry_at = null,
 			    attempt_count = $3,
 			    status = 'max_attempts_reached',
 			    last_redistributed_at = now(),
@@ -1567,6 +1407,8 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 	_, err := tx.Exec(ctx, `
 		update public.lead_redistribution_jobs
 		set current_assigned_user_id = $2::uuid,
+		    warning_retry_at = null,
+		    redistribution_retry_at = null,
 		    attempt_count = $3,
 		    status = 'pending',
 		    due_at = now() + ($4::integer * interval '1 minute'),
@@ -1596,6 +1438,8 @@ func (repo Repository) deferRedistributionJobUntilAvailability(
 		update public.lead_redistribution_jobs
 		set status = 'pending',
 		    due_at = $2::timestamptz + ($3::integer * interval '1 minute'),
+		    warning_retry_at = null,
+		    redistribution_retry_at = null,
 		    warning_due_at = case
 		      when $4::integer > 0 and $4::integer < $3::integer
 		        then $2::timestamptz + (($3::integer - $4::integer) * interval '1 minute')
@@ -1625,6 +1469,8 @@ func (repo Repository) reopenManagedWhatsAppInitialDistribution(
 		update public.lead_redistribution_jobs
 		set status = 'pending',
 		    due_at = $2::timestamptz,
+		    warning_retry_at = null,
+		    redistribution_retry_at = null,
 		    attempt_count = $3,
 		    warning_due_at = null,
 		    warning_sent_at = null,
@@ -1656,6 +1502,8 @@ func (repo Repository) finishRedistributionJob(ctx context.Context, executor lea
 	_, err := executor.Exec(ctx, `
 		update public.lead_redistribution_jobs
 		set status = $2,
+		    warning_retry_at = null,
+		    redistribution_retry_at = null,
 		    stopped_reason = $3,
 		    stopped_at = now(),
 		    updated_at = now()

@@ -960,8 +960,11 @@ func TestManagedWhatsAppAssignedReentryCanRetryCanonicalDistribution(t *testing.
 	if len(store.queryArgs[0]) != 5 || store.queryArgs[0][2] != enrolledAt {
 		t.Fatalf("human activity args = %#v, want enrollment boundary", store.queryArgs[0])
 	}
-	if excluded := store.queryArgs[2][2]; excluded != currentUserID {
+	if excluded := store.queryArgs[2][3]; excluded != currentUserID {
 		t.Fatalf("eligibility excluded user = %#v, want current assignee", excluded)
+	}
+	if store.queryArgs[2][1] != job.LeadID {
+		t.Fatal("eligibility must use the same lead's rotation")
 	}
 	if len(store.execArgs) != 1 || store.execArgs[0][2] != "initial_distribution_completed" {
 		t.Fatalf("unexpected stop args: %#v", store.execArgs)
@@ -1419,7 +1422,7 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 	}
 }
 
-func TestRedistributionSelectionHonorsQueueAvailabilitySettings(t *testing.T) {
+func TestRedistributionSelectionUsesSharedLeadRotation(t *testing.T) {
 	t.Parallel()
 
 	queryer := &redistributionActivityQueryer{row: redistributionBoolRow{err: pgx.ErrNoRows}}
@@ -1427,27 +1430,20 @@ func TestRedistributionSelectionHonorsQueueAvailabilitySettings(t *testing.T) {
 		context.Background(),
 		queryer,
 		"11111111-1111-4111-8111-111111111111",
+		"55555555-5555-4555-8555-555555555555",
 		"22222222-2222-4222-8222-222222222222",
 		"33333333-3333-4333-8333-333333333333",
 		"",
 	)
 
-	for _, fragment := range []string{
-		"coalesce(rr.is_active, true) = true",
-		"rr.settings->>'ignore_availability'",
-		"candidates.ignore_availability",
-		"pg_catalog.pg_timezone_names",
-		"public.organization_attention_settings attention_settings",
-		"nullif(btrim(rr.settings->>'timezone'), '')",
-		"btrim(attention_settings.timezone)",
-		"where name = timezone_config.configured_timezone",
-		") then timezone_config.configured_timezone",
-		"else 'America/Sao_Paulo'",
-		"now() at time zone candidates.timezone",
-	} {
-		if !strings.Contains(queryer.sql, fragment) {
-			t.Fatalf("expected redistribution selection SQL to contain %q", fragment)
-		}
+	if !strings.Contains(queryer.sql, "private.preview_round_robin_redistribution_candidate") {
+		t.Fatal("the database must own rotation and availability for every redistribution path")
+	}
+	if strings.Contains(queryer.sql, "round_robin_logs") || strings.Contains(queryer.sql, "entry_total") {
+		t.Fatal("historical queue totals must not decide a lead's next recipient")
+	}
+	if len(queryer.args) != 5 || queryer.args[1] != "55555555-5555-4555-8555-555555555555" {
+		t.Fatalf("selection must be scoped to the lead: %#v", queryer.args)
 	}
 }
 

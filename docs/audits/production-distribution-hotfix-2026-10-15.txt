@@ -1,0 +1,169 @@
+REGISTRO HISTÓRICO DA HOMOLOGAÇÃO LOCAL ANTERIOR AO PREFLIGHT REMOTO
+Os hashes e contagens abaixo identificam aquela rodada, encerrada antes da
+comparação do catálogo real. A reconciliação e o procedimento de publicação
+estão em docs/runbooks/distribution-hotfix-rollout-2026-10-15.txt.
+
+CORREÇÃO DO P2 DOS 50 JOBS — REVISÃO E HOMOLOGAÇÃO LOCAL
+15/10/2026. Candidato local; sem envio ao GitHub ou alteração em produção.
+
+RESULTADO
+O P2 foi corrigido no mesmo checkout separado. Cinquenta jobs com falha
+persistente deixam de monopolizar os lotes seguintes. O teste também cobre
+151 falhas, oito workers, avisos e bloqueios, sem aumentar o limite do lote.
+As correções anteriores de rotação, relógio, legado, deadlock e notificações
+permanecem no candidato. Não foi identificado bloqueador novo no recorte
+testado; isso não constitui garantia de sistema infalível nem liberação remota.
+
+1. BASE E ISOLAMENTO
+Branch: hotfix/distribution-rotation-production-20261015
+Checkout: D:/Vimob/worktrees/vimob-crm-distribution-production-hotfix-20261015
+Base/HEAD: ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b
+É a revisão declarada publicamente pelo Web/API na verificação anterior.
+Não consultamos o catálogo de produção nesta etapa, nem verificamos todas as
+réplicas/imagens. O principal continua fora do escopo de escrita; sua lista
+de 2018 alterações é idêntica à captura inicial desta execução.
+Nenhum commit, push, PR, deploy, configuração externa ou SQL remoto foi feito.
+
+2. O ERRO E A CORREÇÃO
+Antes, ORDER BY due_at LIMIT50 sempre devolvia os mesmos50 jobs antigos que
+falhavam. A transação por job isolava seus efeitos, mas não permitia alcançar
+o saudável número51. A reprodução anterior está preservada em seis subcasos.
+
+Agora, cada job tem dois relógios técnicos independentes:
+- warning_retry_at: próxima tentativa de aviso depois de falha técnica.
+- redistribution_retry_at: próxima tentativa de transferência depois de falha.
+Ambos são NULL por padrão. Falhas adiam apenas a fase afetada em60 segundos;
+não alteram due_at, warning_due_at, enrolled_at ou attempt_count. Uma tentativa
+técnica falha não consome o limite de redistribuições do lead.
+
+A descoberta e a ordem usam GREATEST(prazo de negócio, retry da fase), seguido
+de id. O filtro usa a mesma expressão. Assim, mesmo após vencer a espera de um
+job com erro, ele não retoma automaticamente a frente de jobs antigos que
+ainda não foram tentados. Não há cursor apenas na memória da API.
+
+O limite continua50 por fase: até50 avisos e até50 jobs vencidos por ciclo.
+FOR UPDATE OF j SKIP LOCKED pula jobs bloqueados durante a descoberta curta.
+Essa transação termina antes de bloquear qualquer lead. A execução continua
+com uma transação por job e ordem lead -> job -> estado/fila.
+
+Depois de rollback, a espera é gravada numa transação curta separada. Ela usa
+o mesmo lock transacional por job e compara xmin com a versão observada na
+operação que falhou. Se outra execução atualizou o job, a tentativa antiga
+não impõe atraso ao novo estado. Falha ao persistir a espera é reportada junto
+do erro original; o sistema não declara progresso durável que não ocorreu.
+
+3. AVISOS, RETOMADAS E WRITERS ANTIGOS
+Aviso bem-sucedido limpa só seu relógio, preservando eventual espera da
+transferência. Falha no aviso não impede a transferência ao vencer o prazo.
+Transferência, encerramento e reprogramação legítima limpam as esperas antigas.
+
+Uma barreira no próprio banco cobre também writers SQL legados: mudanças de
+responsável, inscrição, prazo, tentativa ou fila e reativação de job inativo
+limpam os dois retries. O helper é SECURITY INVOKER, sem consultas e sem acesso
+direto por anon/authenticated/service_role. Alterar apenas retries/updated_at
+ou passar isoladamente de pending para warning_sent não dispara essa limpeza.
+Não se mudou a semântica do enrollment SQL original, que é INSERT-only.
+
+4. EVIDÊNCIAS DO CANDIDATO FINAL
+- 33/33 cenários SQL reais em PostgreSQL17.11, dados sintéticos.
+- 52/52 pgTAP:30 da rotação e22 dos retries/barreira/ACL/índices.
+- 25 testes Go+PostgreSQL principais e 6 subcasos aprovados.
+- Suíte backend completa: 53 pacotes com testes e
+  3876 testes/subtestes aprovados, zero falhas.
+- Source lock:161 migrations não vazias, com hashes anteriores preservados.
+- Diff check e aplicação reversa de verificação do patch aprovados.
+
+Casos novos:50 falhas de aviso/transferência,151 falhas com saudável152,
+cooldown já expirado, nova conexão/repositório, oito réplicas,50 job rows
+bloqueadas, CAS antigo, outro executor ocupando o job, erro na persistência do
+retry, retomadas de negócio, UPDATE legado WhatsApp e permissões de runtime.
+O teste de aviso aguarda o prazo real no PostgreSQL sem alterar a janela.
+O UPDATE legado usa o trecho literal do writer de produção, com contexto de
+entrada já validado; não representa teste completo de provider WhatsApp.
+
+Mantidos os testes anteriores: dois ciclos completos apesar dos totais
+25/311/692/693/694, pesos para entrada nova, memória por lead/fila/tenant,
+elegibilidade, rollback, atendimento humano, limites,8workers sem duplicação,
+deadlock com redistribuição manual real, notificações e replay idempotente.
+
+5. NAVEGADOR REAL E REINÍCIO DA API
+Frontend Next e App.Handler Go reais do checkout, PostgreSQL próprio separado,
+Playwright/Edge Chromium. Nenhuma resposta de API de aplicação foi simulada.
+Auth HTTP/JWT é fixture local sintética, não o serviço Supabase Auth real.
+Providers e workers externos ficaram desabilitados e egressHTTP bloqueado.
+
+Passaram login, clique de atribuição do card, redistribuição manual pela API
+no contexto do navegador, rotação automática, retirada do responsável pelo
+seletor real, retomada pelo card, único elegível e replay sem consumo extra.
+Sem autenticação retornou401 e organização alheia403, sem efeitos colaterais.
+
+Na primeira navegação do cenário de único elegível houve um erro transitório
+do Next em modo dev: Runtime SyntaxError / Unexpected end of JSON input.
+A causa desse erro de navegação não foi isolada. A falha original foi preservada;
+a repetição integral do cenário passou, sem alteração no frontend. Os oito
+cenários finais não registraram erro JavaScript ou resposta HTTP 5xx. A falha
+ao preparar a fixture de 50 jobs também foi corrigida somente no script de QA:
+um alias SQL colidia com uma coluna; o INSERT falhou e sofreu rollback.
+
+No caso específico do P2 foram criados50 jobs com erro controlado em outra
+fila/pipeline sintética e um lead saudável atrás deles. O primeiro ciclo
+reportou as50 falhas, preservou responsáveis/prazos/tentativas/logs/avisos e
+gravou as esperas. O processo Go foi encerrado e iniciado novamente:
+PID anterior 17056; PID novo 27692.
+O ciclo posterior processou o saudável51 e o card/histórico exibiu o novo
+corretor. Um ciclo adicional não duplicou transferência, log ou contador.
+Os50 jobs com falha continuaram sem efeitos de atribuição. Ao terminar, a
+fixture os marcou como encerrados para não contaminar outros cenários locais.
+O teste Go de novo pool é distinguido deste reinício real do processo.
+
+6. ÍNDICES E LIMITE DA EVIDÊNCIA DE PERFORMANCE
+Em banco descartável dedicado,10.010 jobs sintéticos incluíram5.000 em espera
+e5 elegíveis por fase. EXPLAIN ANALYZE/BUFFERS usou naturalmente os índices
+de relógio efetivo, com range condition, sem sort/seqscan dos jobs em espera.
+É evidência do plano nesse substrato, não teste de carga de5–6mil usuários.
+Não elevamos o tamanho do lote nem usamos varredura completa como correção.
+O banco dedicado já possuía as mesmas colunas/índices da revisão intermediária;
+para repetir o plano final, recebeu apenas o guard final, sem modificar dados.
+Os digests antes/depois e os índices ficaram idênticos. O replay da migration
+final completa ocorreu no banco separado dos testes SQL/Go, não nesse de índice.
+
+7. ARQUIVOS, MIGRATIONS E APLICAÇÃO FUTURA
+Go: redistribution_retry.go, redistribution_transactions.go e
+redistribution_worker.go, com testes de fairness e retries no domínio leads.
+SQL anterior mantido: supabase/migrations/20261015162230_harden_lead_queue_redistribution_rotation.sql
+SHA256: e3a3945cca81de13b8f41109ef428d6c1303a73fbc887043e7c03f8ed6bdb711
+Nova migration: supabase/migrations/20261015184139_isolate_lead_redistribution_worker_retry_clocks.sql
+SHA256: 5d1b228ea2bbebde56fd11a29f7987a8028e7ea558282c7399e3ed98d445e658
+
+A nova migration cria2 colunas,2 índices e1 trigger privado, sem backfill ou
+redefinição de prazos, contadores, históricos ou permissões de clientes.
+As duas migrations precisam estar aplicadas transacionalmente antes da API
+compatível. O preflight somente leitura foi atualizado para funções, colunas,
+ACL/RLS, triggers e índices; o role/catálogo reais do destino ainda precisam
+ser conferidos quando houver autorização. Réplicas antigas não conhecem a
+espera técnica; o rollout futuro deve completar a atualização dos workers.
+
+8. LIMITES E PENDÊNCIAS DE AMBIENTE
+Não houve deploy, teste em produção, despacho WhatsApp/push/email ou teste de
+carga global. Falhas de infraestrutura que impeçam persistir o retry continuam
+exigindo recuperação e são expostas, em vez de serem ocultadas.
+Locks legítimos/advisory mantidos indefinidamente por atores externos podem
+adiar trabalho; o caso comum de50 row locks já foi coberto com SKIP LOCKED.
+Os bancos usam funções versionadas e DDL/interfaces sintéticas documentadas,
+sem replay integral de todas as migrations Supabase. O navegador usa matcher
+real e read models extraídos; as permissões do role real de produção não foram
+inferidas a partir do owner de teste. Os testes ACL são separados.
+Escala nova da fila, bolsão privado e bloqueio de aviso<=5min do principal não
+foram incorporados a esta branch urgente. A retomada usa o fluxo desta base.
+
+9. PACOTE DE REVISÃO
+Esta pasta contém JSON/JSONL dos testes antes/depois, requisições e screenshots
+do navegador, estado final sintético, revisão independente, planos SQL,
+manifesto com hashes e candidate-changes.diff incluindo arquivos novos.
+Configurações privadas e senhas sintéticas permanecem fora dos artefatos/Git.
+Os scripts de QA locais foram preservados para reproduzir os casos.
+
+Referências técnicas consultadas: PostgreSQL17 SELECT/locking e Supabase
+Postgres best practices. A conclusão acima é sustentada pelos testes locais.
+https://www.postgresql.org/docs/17/sql-select.html
+https://www.postgresql.org/docs/17/explicit-locking.html

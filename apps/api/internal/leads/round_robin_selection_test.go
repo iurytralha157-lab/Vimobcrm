@@ -190,7 +190,7 @@ func (row roundRobinSelectionRow) Scan(dest ...any) error {
 	return nil
 }
 
-func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) {
+func TestSelectRoundRobinMemberPreservesQueueAndPreviewsLeadRotation(t *testing.T) {
 	queryer := &roundRobinSelectionQueryer{
 		t: t,
 		rows: []pgx.Row{
@@ -206,8 +206,13 @@ func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) 
 		context.Background(),
 		queryer,
 		"44444444-4444-4444-8444-444444444444",
-		"55555555-5555-4555-8555-555555555555",
-		"",
+		leadSnapshot{
+			ID:             "55555555-5555-4555-8555-555555555555",
+			PipelineID:     "66666666-6666-4666-8666-666666666666",
+			AssignedUserID: "77777777-7777-4777-8777-777777777777",
+			TeamID:         "88888888-8888-4888-8888-888888888888",
+			Data:           map[string]any{"origin_round_robin_id": "99999999-9999-4999-8999-999999999999"},
+		},
 	)
 	if err != nil {
 		t.Fatalf("select round-robin member: %v", err)
@@ -232,11 +237,25 @@ func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) 
 	if !strings.Contains(queueQuery, "from public.round_robins") {
 		t.Fatal("first query must resolve the round-robin queue")
 	}
-	if !strings.Contains(queueQuery, "for update") {
-		t.Fatal("round-robin queue must be locked before candidate selection")
+	for _, fragment := range []string{"log.organization_id = $1::uuid", "log.lead_id = $2::uuid", "then queue.id = (select round_robin_id from known_queue)", "queue.organization_id = $1::uuid"} {
+		if !strings.Contains(queueQuery, fragment) {
+			t.Fatalf("queue affinity must retain %q", fragment)
+		}
 	}
-	if !strings.Contains(strings.ToLower(queryer.queries[1]), "with entries as") {
-		t.Fatal("candidate selection must happen only after the queue lock")
+	if strings.Contains(queueQuery, "for update") {
+		t.Fatal("per-lead redistribution must not acquire an earlier global queue lock")
+	}
+	if !strings.Contains(queryer.queries[1], "private.preview_round_robin_redistribution_candidate") {
+		t.Fatal("manual and automatic redistribution must share the database rotation")
+	}
+	wantArgs := []string{"44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "11111111-1111-4111-8111-111111111111", "77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888"}
+	for i, want := range wantArgs {
+		if queryer.args[1][i] != want {
+			t.Fatalf("rotation argument %d = %v, want %s", i, queryer.args[1][i], want)
+		}
+	}
+	if queryer.args[0][3] != "99999999-9999-4999-8999-999999999999" {
+		t.Fatal("queue lookup must receive the immutable intake queue fallback")
 	}
 }
 
@@ -250,8 +269,7 @@ func TestSelectRoundRobinMemberDoesNotSelectCandidateWithoutQueue(t *testing.T) 
 		context.Background(),
 		queryer,
 		"44444444-4444-4444-8444-444444444444",
-		"",
-		"",
+		leadSnapshot{ID: "55555555-5555-4555-8555-555555555555"},
 	)
 	if err != nil {
 		t.Fatalf("select round-robin member: %v", err)
@@ -264,8 +282,5 @@ func TestSelectRoundRobinMemberDoesNotSelectCandidateWithoutQueue(t *testing.T) 
 	}
 	if len(queryer.queries) != 1 {
 		t.Fatalf("query count = %d, want 1", len(queryer.queries))
-	}
-	if !strings.Contains(strings.ToLower(queryer.queries[0]), "for update") {
-		t.Fatal("queue lookup must retain the transactional lock contract")
 	}
 }

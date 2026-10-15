@@ -1,0 +1,95 @@
+HOTFIX DE DISTRIBUIÇÃO — CONTRATO E ORDEM DE LIBERAÇÃO
+15/10/2026
+
+Escopo
+O candidato nasce da revisão ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b,
+em hotfix/distribution-rotation-production-20261015. Não inclui alterações do
+checkout principal. A API corrige rotação por lead/fila/organização, preserva
+pesos na entrada nova, isola a transação por job e mantém retries técnicos de
+60 segundos independentes do prazo e do limite de tentativas de negócio.
+
+O preflight remoto é obrigatório
+A mesma revisão Web/API não prova os corpos SQL instalados. O catálogo real
+apresentou variantes legítimas do canônico e do seletor, um helper antigo de
+sequências e permissões de escrita cliente em jobs mais amplas que a fixture.
+A reconciliação abaixo é restrita a esses objetos; não é replay do histórico.
+
+Arquivos congelados da publicação
+- 20261015162230_harden_lead_queue_redistribution_rotation.sql
+  SHA256 06c34017cdf0120e54dd9fd98363aa9476464129c0ca5b2440f08ec64cfd0b94
+  Admite apenas dois canônicos e dois pickers auditados. Altera anchors únicos
+  do corpo instalado, preservando owner/ACL/lock e o seletor inicial existente.
+  Predessor desconhecido aborta a transação. Cria estado privado e guards.
+- 20261015184139_isolate_lead_redistribution_worker_retry_clocks.sql
+  SHA256 5d1b228ea2bbebde56fd11a29f7987a8028e7ea558282c7399e3ed98d445e658
+  Acrescenta dois relógios nullable, dois índices e o reset em mudanças de
+  negócio. Não altera prazos, responsáveis ou tentativas existentes.
+- 20261015193322_guard_lead_distribution_ticket_sequence_acl_hotpath.sql
+  SHA256 481ee12363c40c578d7d84748dad892c024c7bcf4352fbdef5f8748c7531a58e
+  Corrige o helper conhecido: retira dois REVOKEs de chamadas com sequência
+  já criada e consulta o catálogo novamente após aguardar o advisory lock.
+  Mantém REVOKE na criação, valida ACLs existentes e preserva os valores das
+  sequências. Também aceita o intermediário histórico conhecido e o resultado
+  final já instalado, sem reescrever este último.
+- 20261015193555_restrict_lead_redistribution_job_client_mutations.sql
+  SHA256 b3d59489d00071146dfdf57311f23b1cfede9393605f14649843d185dec5c5e8
+  Remove apenas mutações diretas de PUBLIC/anon/authenticated nos jobs, inclusive
+  grants por coluna. Conserva SELECT, RLS, policies e os privilégios do backend.
+  Aborta se ainda houver escrita efetiva por herança ou se o backend perder CRUD.
+
+Validação exigida antes da ativação
+Usar os seis corpos/ACLs exportados por leitura do destino, em PostgreSQL
+descartável, com o restante do substrato sintético explicitamente identificado.
+Cobrir versão desconhecida, criação fria e sequência existente sob concorrência,
+rotação completa, pesos, rollback, deadlock, retries, replay e papéis de cliente.
+A RPC antiga de pool ausente no destino não é dependência da API Go: testes
+SQL de compatibilidade dessa RPC devem ser identificados separadamente.
+O fluxo real do card de pool passa por Repository.RedistributeRoundRobin.
+
+Ordem operacional
+1. Publicar a branch e a PR. Executar o workflow existente nessa branch para
+   gerar imagens com tag SHA. Não alterar main nem latest. Conferir que os
+   gates do commit e a construção terminaram com sucesso antes de usar a imagem.
+2. Salvar as definições/ACLs atuais e os metadados das imagens e serviços. Ler
+   supabase/cutovers/lead-queue-rotation-preflight.sql com o papel real do backend.
+   Não executar previews ou criar leads de teste em produção nessa etapa.
+3. Preparar o helper de sequência e as permissões de jobs: são compatíveis com
+   a API antiga. Usar transações e timeouts curtos; erro implica rollback e
+   inspeção do estado, sem repetir DDL automaticamente após resultado incerto.
+4. Preparar retries separando o bloco de colunas/comentários/helper/trigger dos
+   índices. Confirmar o primeiro bloco antes de construir cada índice com
+   CREATE INDEX CONCURRENTLY em autocommit, um por vez. Comparar definições,
+   indisready e indisvalid. Não usar IF NOT EXISTS para ocultar índice diferente.
+5. Drenar o worker antigo usando uma conexão dedicada que retenha o advisory
+   transacional bigint 860421704. O worker antigo usa try-lock e pula seu ciclo;
+   os workers novos usam o namespace de duas chaves por job. Esse fence é só da
+   redistribuição antiga: não desligar API_BACKGROUND_WORKERS_ENABLED global.
+   Não usar session locks em conexões emprestadas pelo SQL Editor/pooler.
+6. Com o fence adquirido, ativar a migration de rotação em transação curta e
+   trocar gradualmente a imagem da API no Portainer/Swarm. Preservar ambiente,
+   redes, demais stacks e o frontend sem alterações funcionais. O SQL novo não
+   deve permanecer indefinidamente com workers antigos: o guard retorna 40001
+   para escolhas inválidas, e o worker antigo reverte o lote inteiro nesse caso.
+7. Confirmar réplicas novas saudáveis, SHA/digest e ausência de workers antigos.
+   Só então liberar o fence. Verificar os helpers, colunas, índices e ACLs reais,
+   observar ciclos automáticos e conferir healthz/readyz e novos erros de SQL.
+   Registrar também a imagem no estado persistente da stack do Portainer.
+
+Recuperação
+Antes da ativação, qualquer falha deixa o runtime antigo e não exige remover
+colunas ou índices aditivos. Se a troca falhar depois da ativação, manter o fence
+e a atualização pausada enquanto se avalia o estado. Nunca reverter somente a
+imagem da API mantendo o guard incompatível ativo. Restaurar o canônico e os
+triggers exclusivos desta ativação exige procedimento coordenado, com backup
+das definições e confirmação de que não restam réplicas novas. Não apagar leads,
+logs, notificações ou tabelas de estado para tentar recuperar o rollout.
+
+Limites
+CREATE INDEX CONCURRENTLY reduz bloqueios de escrita, mas usa CPU/IO e pode
+esperar transações. ALTER/CREATE TRIGGER ainda requerem locks breves; timeouts
+limitam a espera, sem promessa de latência zero. A API permanece disponível
+durante a atualização gradual; conexões e requisições em andamento podem exigir
+nova tentativa. A homologação com funções reais não é clone integral do banco,
+teste de carga global, entrega de provedor ou garantia de infalibilidade.
+Não criar ledger fictício de migrations no self-hosted. O recibo da aplicação
+deve registrar os hashes aplicados e as pós-condições observadas no catálogo.
