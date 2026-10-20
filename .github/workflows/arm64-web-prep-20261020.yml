@@ -1,0 +1,247 @@
+name: Prepare pinned Web ARM64 images without deployment
+
+on:
+  push:
+    branches: [codex/arm64-web-prep-20261020]
+    paths: [.github/workflows/arm64-web-prep-20261020.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-web-prep-20261020
+  cancel-in-progress: false
+
+jobs:
+  web:
+    name: Web ARM64 (${{ matrix.mode }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/arm64-web-prep-20261020'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [production, isolated]
+    env:
+      SOURCE_SHA: ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b
+      MODE: ${{ matrix.mode }}
+      DOCKER_BUILD_SUMMARY: 'false'
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Checkout only the original pinned Web source
+        uses: actions/checkout@v4
+        with:
+          repository: iurytralha157-lab/Vimobcrm
+          ref: ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b
+          fetch-depth: 1
+          persist-credentials: false
+          path: source
+
+      - name: Verify clean source and allocate preparation tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git -C source status --porcelain)"
+          case "$MODE" in
+            production) suffix=arm64-prep ;;
+            isolated) suffix=arm64-isolated ;;
+            *) exit 1 ;;
+          esac
+          evidence_dir="$RUNNER_TEMP/web-arm64-$MODE"
+          mkdir -p "$evidence_dir"
+          image="ghcr.io/iurytralha157-lab/vimob-crm-web:${SOURCE_SHA}-${suffix}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'EVIDENCE_DIR=%s\nIMAGE=%s\n' "$evidence_dir" "$image" >> "$GITHUB_ENV"
+          sha256sum source/Dockerfile.web | cut -d ' ' -f 1 > "$evidence_dir/original-dockerfile.sha256"
+
+      - name: Verify production public config against the live pinned release
+        if: matrix.mode == 'production'
+        env:
+          INPUT_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
+          INPUT_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          INPUT_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL }}
+          INPUT_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const values = {
+            NEXT_PUBLIC_SUPABASE_URL: process.env.INPUT_SUPABASE_URL || '',
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.INPUT_SUPABASE_ANON_KEY || '',
+            NEXT_PUBLIC_VIMOB_API_URL: process.env.INPUT_API_URL || '',
+            NEXT_PUBLIC_SITE_URL: process.env.INPUT_SITE_URL || '',
+          };
+          const expected = {
+            NEXT_PUBLIC_SUPABASE_URL: '558510e10eb371c26e3b1416cf4fd873507164db1ce35906e9f4dcf09fc770a1',
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: '53e75b1974eeb6f2b717bce57119ab4b354b49c002c4d8035f02023c9baf0329',
+            NEXT_PUBLIC_VIMOB_API_URL: '2a5b177d61f54da4478d4829a826efe52eafbb4ea72aff1a5e616cbcc8dc14c1',
+            NEXT_PUBLIC_SITE_URL: '52a679a0cf847fc37975d2ab09532e058ae75fb6efbc9d114bf4609a8c2a12b6',
+          };
+          const hashes = {};
+          for (const [name, value] of Object.entries(values)) {
+            if (!value || /[\r\n]/.test(value)) throw new Error('Missing or multiline public config: ' + name);
+            if (name === 'NEXT_PUBLIC_SUPABASE_ANON_KEY') {
+              process.stdout.write('::add-mask::' + value.replace(/%/g, '%25') + '\n');
+            }
+            hashes[name] = crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+            if (hashes[name] !== expected[name]) throw new Error('Public config drift: ' + name);
+          }
+          const parts = values.NEXT_PUBLIC_SUPABASE_ANON_KEY.split('.');
+          if (parts.length !== 3 || JSON.parse(Buffer.from(parts[1], 'base64url')).role !== 'anon') {
+            throw new Error('Expected the observed public anon token');
+          }
+          for (const [name, value] of Object.entries(values)) fs.appendFileSync(process.env.GITHUB_ENV, name + '=' + value + '\n');
+          fs.writeFileSync(process.env.EVIDENCE_DIR + '/config-hashes.json', JSON.stringify({
+            source_sha: process.env.SOURCE_SHA, mode: 'production', comparison: 'exact UTF-8 SHA256',
+            observed_at: '2026-10-20T01:49:28-03:00', all_four_match_observed: true,
+            value_sha256: hashes, anon_role: 'anon', values_included: false,
+          }, null, 2) + '\n');
+          console.log('All four public configuration hashes match the observed Web release.');
+          NODE
+
+      - name: Configure synthetic isolated public build inputs
+        if: matrix.mode == 'isolated'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+          const unsigned = b64({alg:'HS256',typ:'JWT'}) + '.' + b64({iss:'vimob-isolated-fixture',role:'anon',iat:0,exp:4102444800});
+          const fixtureKey = 'vimob-isolated-web-fixture-signing-key-not-for-production';
+          const anon = unsigned + '.' + crypto.createHmac('sha256', fixtureKey).update(unsigned).digest('base64url');
+          process.stdout.write('::add-mask::' + anon + '\n');
+          const values = {
+            NEXT_PUBLIC_SUPABASE_URL: 'https://auth.fixture.invalid',
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: anon,
+            NEXT_PUBLIC_VIMOB_API_URL: 'https://api.fixture.invalid',
+            NEXT_PUBLIC_SITE_URL: 'https://web.fixture.invalid',
+          };
+          const hashes = {};
+          for (const [name, value] of Object.entries(values)) {
+            hashes[name] = crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+            fs.appendFileSync(process.env.GITHUB_ENV, name + '=' + value + '\n');
+          }
+          fs.writeFileSync(process.env.EVIDENCE_DIR + '/config-hashes.json', JSON.stringify({
+            source_sha: process.env.SOURCE_SHA, mode: 'isolated', comparison: 'exact UTF-8 SHA256',
+            synthetic_inputs_only: true, fixture_urls: ['https://auth.fixture.invalid','https://api.fixture.invalid','https://web.fixture.invalid'],
+            value_sha256: hashes, anon_role: 'anon', values_included: false,
+          }, null, 2) + '\n');
+          console.log('Synthetic isolated configuration prepared; no production inputs used.');
+          NODE
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the original Web Dockerfile and load the ARM64 candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: ./source
+          file: ./source/Dockerfile.web
+          platforms: linux/arm64
+          add-hosts: |
+            api.vimobcrm.com.br:127.0.0.1
+            app.vimobcrm.com.br:127.0.0.1
+            supabase.vimobcrm.com.br:127.0.0.1
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ env.SOURCE_SHA }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_VIMOB_API_URL=${{ env.NEXT_PUBLIC_VIMOB_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ env.NEXT_PUBLIC_SITE_URL }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/iurytralha157-lab/Vimobcrm
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            io.vimob.preparation=arm64-no-production-deploy
+            io.vimob.public-config-mode=${{ matrix.mode }}
+          tags: ${{ env.IMAGE }}
+
+      - name: Smoke Node and architecture without starting the application
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect "$IMAGE" --format '{{.Architecture}}')" = arm64
+          test "$(docker image inspect "$IMAGE" --format '{{.Os}}')" = linux
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --entrypoint node "$IMAGE" -e \
+            'if(process.arch!=="arm64"||process.platform!=="linux"||process.versions.node.split(".")[0]!=="24")process.exit(1);console.log(JSON.stringify({architecture:process.arch,platform:process.platform,node:process.version,network:"none",app_started:false}))' \
+            > "$EVIDENCE_DIR/architecture-smoke.json"
+          docker image inspect "$IMAGE" --format '{{.Id}}' > "$EVIDENCE_DIR/smoked-image-config.digest"
+          test -z "$(git -C source status --porcelain)"
+
+      - name: Login to GHCR after the isolated architecture smoke
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish only the preparation tag with SBOM and provenance
+        id: published
+        uses: docker/build-push-action@v6
+        with:
+          context: ./source
+          file: ./source/Dockerfile.web
+          platforms: linux/arm64
+          add-hosts: |
+            api.vimobcrm.com.br:127.0.0.1
+            app.vimobcrm.com.br:127.0.0.1
+            supabase.vimobcrm.com.br:127.0.0.1
+          push: true
+          provenance: mode=min
+          sbom: true
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ env.SOURCE_SHA }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_VIMOB_API_URL=${{ env.NEXT_PUBLIC_VIMOB_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ env.NEXT_PUBLIC_SITE_URL }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/iurytralha157-lab/Vimobcrm
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            io.vimob.preparation=arm64-no-production-deploy
+            io.vimob.public-config-mode=${{ matrix.mode }}
+          tags: ${{ env.IMAGE }}
+
+      - name: Record only digests, public config hashes and smoke evidence
+        env:
+          PUBLISHED_DIGEST: ${{ steps.published.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git -C source status --porcelain)"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const digest = process.env.PUBLISHED_DIGEST || '';
+          if (!/^sha256:[0-9a-f]{64}$/.test(digest)) throw new Error('Invalid published digest');
+          fs.writeFileSync(process.env.EVIDENCE_DIR + '/published-image.json', JSON.stringify({
+            source_sha: process.env.SOURCE_SHA, mode: process.env.MODE, image: process.env.IMAGE,
+            immutable_ref: process.env.IMAGE + '@' + digest, digest,
+            run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+            original_dockerfile_sha256: fs.readFileSync(process.env.EVIDENCE_DIR + '/original-dockerfile.sha256','utf8').trim(),
+            smoked_image_config_digest: fs.readFileSync(process.env.EVIDENCE_DIR + '/smoked-image-config.digest','utf8').trim(),
+            sbom: true, provenance: 'min', application_started: false, production_database_contacted_by_smoke: false,
+          }, null, 2) + '\n');
+          NODE
+
+      - name: Upload preparation evidence without configuration values or JWTs
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-web-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/web-arm64-${{ matrix.mode }}/config-hashes.json
+            ${{ runner.temp }}/web-arm64-${{ matrix.mode }}/architecture-smoke.json
+            ${{ runner.temp }}/web-arm64-${{ matrix.mode }}/published-image.json
+          if-no-files-found: error
+          retention-days: 14
