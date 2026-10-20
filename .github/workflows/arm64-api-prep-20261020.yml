@@ -1,0 +1,158 @@
+name: Prepare existing production API versions for ARM64
+
+on:
+  push:
+    branches: [codex/arm64-prep-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-production-images-20261020
+  cancel-in-progress: false
+
+jobs:
+  api:
+    if: github.ref == 'refs/heads/codex/arm64-prep-20261020'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        source:
+          - 7e490c7559b37d058395804b857173fc326e76d6
+          - ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b
+    env:
+      SOURCE_SHA: ${{ matrix.source }}
+      IMAGE: ghcr.io/iurytralha157-lab/vimob-crm-api:${{ matrix.source }}-arm64-prep-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: iurytralha157-lab/Vimobcrm
+          ref: ${{ matrix.source }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify source and prepare external architecture-only recipe
+        id: recipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(uname -m)" = aarch64
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          source = Path('Dockerfile.api').read_text()
+          changes = [
+              ('FROM golang:1.25-alpine AS builder', 'FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder'),
+              ('ARG VIMOB_RELEASE_SHA=unversioned', 'ARG TARGETOS\nARG TARGETARCH\nARG VIMOB_RELEASE_SHA=unversioned'),
+              ('CGO_ENABLED=0 GOOS=linux GOARCH=amd64', 'CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH'),
+          ]
+          for old, new in changes:
+              if source.count(old) != 1:
+                  raise SystemExit('Unexpected original recipe; refusing to build')
+              source = source.replace(old, new)
+          Path(os.environ['RUNNER_TEMP'], 'Dockerfile.api.arm64').write_text(source)
+          PY
+          git diff --no-index -- Dockerfile.api "$RUNNER_TEMP/Dockerfile.api.arm64" > "$RUNNER_TEMP/architecture-only.patch" || test "$?" = 1
+          recipe_hash=$(sha256sum "$RUNNER_TEMP/Dockerfile.api.arm64" | cut -d ' ' -f 1)
+          echo "hash=$recipe_hash" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login for preparation tags only
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build native ARM64 candidate locally
+        id: candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ runner.temp }}/Dockerfile.api.arm64
+          platforms: linux/arm64
+          load: true
+          push: false
+          provenance: false
+          build-args: VIMOB_RELEASE_SHA=${{ matrix.source }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/iurytralha157-lab/Vimobcrm
+            org.opencontainers.image.revision=${{ matrix.source }}
+            io.vimob.preparation=arm64-no-production-deploy
+            io.vimob.recipe.sha256=${{ steps.recipe.outputs.hash }}
+          tags: ${{ env.IMAGE }}
+
+      - name: Check architecture and binary execution without network or database
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect "$IMAGE" --format '{{.Architecture}}')" = arm64
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --entrypoint /bin/sh "$IMAGE" -ec '
+              test "$(uname -m)" = aarch64
+              machine=$(od -An -t u2 -j 18 -N 2 /app/vimob-api | tr -d "[:space:]")
+              test "$machine" = 183
+            '
+          set +e
+          timeout 20s docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true --env API_BACKGROUND_WORKERS_ENABLED=false \
+            --env DATABASE_FORCE_READ_ONLY=true --entrypoint /app/vimob-api "$IMAGE" \
+            > "$RUNNER_TEMP/isolated-execution.log" 2>&1
+          probe_status=$?
+          set -e
+          test "$probe_status" -eq 1
+          grep -Eqi 'config|configuration|DATABASE_URL|required' "$RUNNER_TEMP/isolated-execution.log"
+          printf 'source=%s\narchitecture=arm64\nelf_machine=183\nexecution=expected_configuration_rejection\nnetwork=none\nproduction_database=not_configured\n' "$SOURCE_SHA" > "$RUNNER_TEMP/architecture-smoke.txt"
+          test -z "$(git status --porcelain)"
+
+      - name: Publish only the new preparation tag with provenance
+        id: published
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ runner.temp }}/Dockerfile.api.arm64
+          platforms: linux/arm64
+          push: true
+          provenance: mode=min
+          sbom: true
+          build-args: VIMOB_RELEASE_SHA=${{ matrix.source }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/iurytralha157-lab/Vimobcrm
+            org.opencontainers.image.revision=${{ matrix.source }}
+            io.vimob.preparation=arm64-no-production-deploy
+            io.vimob.recipe.sha256=${{ steps.recipe.outputs.hash }}
+          tags: ${{ env.IMAGE }}
+
+      - name: Record registry manifest and immutable digest
+        env:
+          PUBLISHED_DIGEST: ${{ steps.published.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE@$PUBLISHED_DIGEST" > "$RUNNER_TEMP/published-manifest.txt"
+          printf 'image=%s\ndigest=%s\nsource=%s\nrecipe_sha256=%s\n' "$IMAGE" "$PUBLISHED_DIGEST" "$SOURCE_SHA" '${{ steps.recipe.outputs.hash }}' > "$RUNNER_TEMP/published-image.txt"
+          test -z "$(git status --porcelain)"
+
+      - name: Preserve build-only evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-api-${{ matrix.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/Dockerfile.api.arm64
+            ${{ runner.temp }}/architecture-only.patch
+            ${{ runner.temp }}/architecture-smoke.txt
+            ${{ runner.temp }}/published-manifest.txt
+            ${{ runner.temp }}/published-image.txt
+          if-no-files-found: error
+          retention-days: 14
