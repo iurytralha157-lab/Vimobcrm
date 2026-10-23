@@ -1,0 +1,326 @@
+{
+  "kind": "vimob-cloud-staging-verification-v1",
+  "observedAtUTC": "2026-10-23T20:04:50.555Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "organizationId": "snqyytbmmbfasotklrje",
+  "classification": "schema-and-sql-smoke-verified-application-acceptance-pending",
+  "readyForGeneralTesting": false,
+  "securityReviewFile": "docs/staging-security-review.md",
+  "laterStorageVerificationFile": "deploy/staging/cloud-storage-verification.json",
+  "baselineId": "local-20261016-238-v1",
+  "sourceChainSHA256": "48dd4fdc5f5dcfbaf08d514cb66167a8c5366542afd016b9027d3758196ad22c",
+  "sentinelRunId": "f7196a56-e7bb-4221-b61d-f3a95245338c",
+  "canonicalHistoricalMigrationsExecuted": false,
+  "phases": {
+    "baseline": 15,
+    "forwards": 20,
+    "durableHistoryMatchesReviewedPayloads": true
+  },
+  "referenceDataSHA256": "28d559c1079ec22f222e2d3d82d3a7d705fdf53b8366994df8a347b7d5eabfdd",
+  "referenceDataMatchesCanonical": true,
+  "catalog": {
+    "tables": 321,
+    "functions": 830,
+    "cronPresent": false,
+    "nativeOwners": [
+      {
+        "owner": "supabase_auth_admin",
+        "relation": "auth.sessions"
+      },
+      {
+        "owner": "supabase_auth_admin",
+        "relation": "auth.users"
+      },
+      {
+        "owner": "supabase_realtime_admin",
+        "relation": "realtime.messages"
+      },
+      {
+        "owner": "supabase_storage_admin",
+        "relation": "storage.buckets"
+      },
+      {
+        "owner": "supabase_storage_admin",
+        "relation": "storage.objects"
+      }
+    ],
+    "phaseHistory": [
+      {
+        "phase": "00-extension-proposals.sql",
+        "ordinal": 0,
+        "payloadSHA256": "c8ed998379558d72826ad59bc990517e52fa66fb9fb25c83b7bf8583804cb234"
+      },
+      {
+        "phase": "10-domain-001.sql",
+        "ordinal": 1,
+        "payloadSHA256": "8ca5c8d8136141199693ac7ac6a7695e3fb59bc4cad5ec8d6465c43f7b6441c3"
+      },
+      {
+        "phase": "10-domain-002.sql",
+        "ordinal": 2,
+        "payloadSHA256": "5a92da8f2493b199704bb2e26750b90254c26307f322edac32794b01053c2c80"
+      },
+      {
+        "phase": "10-domain-003.sql",
+        "ordinal": 3,
+        "payloadSHA256": "305cdc36d91962818bf54fd6d6e1fe53eecd1c0de454bb67ca8a6d31ca2dd928"
+      },
+      {
+        "phase": "10-domain-004.sql",
+        "ordinal": 4,
+        "payloadSHA256": "5877de9f0985afb3adcdc20bda57e43125b3a623650d32fcc756339dd5f8bdf1"
+      },
+      {
+        "phase": "10-domain-005.sql",
+        "ordinal": 5,
+        "payloadSHA256": "110b08c0ba6be2d6e702622e4f501629f5881eba60c8d52207fddc4f7eb40567"
+      },
+      {
+        "phase": "10-domain-006.sql",
+        "ordinal": 6,
+        "payloadSHA256": "969cff49b928721fe9f45cf2e61c1da05d1cac56b67eda7b0f22d47de2bfab97"
+      },
+      {
+        "phase": "10-domain-007.sql",
+        "ordinal": 7,
+        "payloadSHA256": "6cf36533a4a683ad08f122375c26741ac3ad120079eec191c3c1aa869f499b62"
+      },
+      {
+        "phase": "10-domain-008.sql",
+        "ordinal": 8,
+        "payloadSHA256": "b363400b0af040dac34438c9bbdcb49a26246ebe54aeaec1e3300620abb3889f"
+      },
+      {
+        "phase": "10-domain-009.sql",
+        "ordinal": 9,
+        "payloadSHA256": "64c6e4b4af960d2eaeb5acf3127aa96ee88d3cc4743ad3ccc0f44f500079a2f7"
+      },
+      {
+        "phase": "10-domain-010.sql",
+        "ordinal": 10,
+        "payloadSHA256": "e64efa7842f1543a0a964c3ebfa15db59dfd100445d67493ae4e0d15ef1b3eba"
+      },
+      {
+        "phase": "20-auth-overlay.sql",
+        "ordinal": 11,
+        "payloadSHA256": "a0d9b13b7cb4767334a0e3d68a346ad19b5422b70134cf2af95e7270fa7d1447"
+      },
+      {
+        "phase": "21-storage-overlays.sql",
+        "ordinal": 12,
+        "payloadSHA256": "fdc04f7282dc816f5c1ed70ab0a3d79de852d55a02a840b537f187c283479a6f"
+      },
+      {
+        "phase": "22-realtime-overlays.sql",
+        "ordinal": 13,
+        "payloadSHA256": "cf9657270f094fa85eda78ac1328e4e7eff377ca7640c22ca208e4c8f71480b6"
+      },
+      {
+        "phase": "30-static-reference-data.sql",
+        "ordinal": 14,
+        "payloadSHA256": "823698f3e8e840f1b8ee6c3709213734de5af1df5c91ee30449476d09e7ca3c1"
+      },
+      {
+        "phase": "40-forward-20261016121216.sql",
+        "ordinal": 15,
+        "payloadSHA256": "9049015f8bed27824c1da87cc82b6535ed1c64e9cebe404529600245632f7ace"
+      },
+      {
+        "phase": "40-forward-20261016164738.sql",
+        "ordinal": 16,
+        "payloadSHA256": "baff409c6a02d65a9bc2bc81e7ce77019a4f7d5ab9ce05272a86f4f025dab2e1"
+      },
+      {
+        "phase": "40-forward-20261016171117.sql",
+        "ordinal": 17,
+        "payloadSHA256": "ae7aa0d841b6e5084f332b6e5ba3be1a726295719edd5a44d1c078b68aa3cfe0"
+      },
+      {
+        "phase": "40-forward-20261016171251.sql",
+        "ordinal": 18,
+        "payloadSHA256": "5dd75a631b8392359fce65f162f8d4e77e6fe212a1e545f4dca6ba193ed395c1"
+      },
+      {
+        "phase": "40-forward-20261016171254.sql",
+        "ordinal": 19,
+        "payloadSHA256": "4da1b04987410b74a00f5b34aadaabdeb293819e5a3916e606c47798a291aada"
+      },
+      {
+        "phase": "40-forward-20261016171624.sql",
+        "ordinal": 20,
+        "payloadSHA256": "7d68b859079504fc3af7ea96084925e8f3e638eafc7cc47cc1b930d0a1ca584a"
+      },
+      {
+        "phase": "40-forward-20261016171628.sql",
+        "ordinal": 21,
+        "payloadSHA256": "3e1dd806d9d4157afe36dbcfc38516679fb040cb4f996ce60a2a1a414ce36387"
+      },
+      {
+        "phase": "40-forward-20261016173733.sql",
+        "ordinal": 22,
+        "payloadSHA256": "2261bf58aa4771f097c0448ccc07808dced805f6a04148ecfb1f6c5daa7f47bb"
+      },
+      {
+        "phase": "40-forward-20261016175607.sql",
+        "ordinal": 23,
+        "payloadSHA256": "dcc4e96f1fa6fddd64b480d2386d2e8b079e93cbc8a6fddbe9ca783ac47a5263"
+      },
+      {
+        "phase": "40-forward-20261016180244.sql",
+        "ordinal": 24,
+        "payloadSHA256": "66db158d5bafbbe96b04bb623305727a8cfbfd1744c93b53a827dd6be43aa754"
+      },
+      {
+        "phase": "40-forward-20261016180410.sql",
+        "ordinal": 25,
+        "payloadSHA256": "de107e34070594cee52cb104d15daecab247928ea9476a8733ebedd29845b2de"
+      },
+      {
+        "phase": "40-forward-20261016201006.sql",
+        "ordinal": 26,
+        "payloadSHA256": "4a2dcef13749a79e7e9c0d1357a90d3441a57995e3cd37722629060db084f9c0"
+      },
+      {
+        "phase": "40-forward-20261016234227.sql",
+        "ordinal": 27,
+        "payloadSHA256": "9ec254ce61c6aea7a7d016dc3ac696892b7cfc76798dabf60589589b3c2da0fb"
+      },
+      {
+        "phase": "40-forward-20261017053625.sql",
+        "ordinal": 28,
+        "payloadSHA256": "188825dd014588c75bfe939a2562bbc814ab1422bf608cbe6180fc17983f52b7"
+      },
+      {
+        "phase": "40-forward-20261018210058.sql",
+        "ordinal": 29,
+        "payloadSHA256": "1e14ea71fffb8256ec55d1ef89465aa6c739ba4ee690d0b77f262bd6bb035777"
+      },
+      {
+        "phase": "40-forward-20261018222847.sql",
+        "ordinal": 30,
+        "payloadSHA256": "7ca1bfe31d78519c1531a0c042d80be49974bdccb7c74a1135e90e7cf586b141"
+      },
+      {
+        "phase": "40-forward-20261019214356.sql",
+        "ordinal": 31,
+        "payloadSHA256": "ebdcc9ff49d832237de4f972351ec1ea7901de491ab1b7b82f6ccfcbece2ce02"
+      },
+      {
+        "phase": "40-forward-20261019222441.sql",
+        "ordinal": 32,
+        "payloadSHA256": "9e187600cb17f08de1c1f397f629b5ea93dc7649c76bcbe72a067d52f6e451f7"
+      },
+      {
+        "phase": "40-forward-20261019224603.sql",
+        "ordinal": 33,
+        "payloadSHA256": "0bb28ec8c743317c5c5253e91bc79e92e6dc6b0227c9c265168078c1cf0ade1f"
+      },
+      {
+        "phase": "40-forward-20261019230804.sql",
+        "ordinal": 34,
+        "payloadSHA256": "7e9a067fba862790804162c6eacdc555644c42df20b073026d3c1d607ef3ae36"
+      }
+    ],
+    "nativeAuthUsers": 0,
+    "realtimeSmokeRows": 0,
+    "nativeVaultEntries": 0,
+    "nativeStorageBuckets": 0,
+    "nativeStorageObjects": 0,
+    "nonEmptyDomainTables": [
+      {
+        "schema": "private",
+        "row_count": 1,
+        "table_name": "queue_runtime_configuration_cursor"
+      },
+      {
+        "schema": "private",
+        "row_count": 1196,
+        "table_name": "queue_timezone_catalog"
+      },
+      {
+        "schema": "public",
+        "row_count": 3,
+        "table_name": "admin_subscription_plans"
+      },
+      {
+        "schema": "public",
+        "row_count": 38,
+        "table_name": "available_permissions"
+      },
+      {
+        "schema": "public",
+        "row_count": 30,
+        "table_name": "help_articles"
+      },
+      {
+        "schema": "public",
+        "row_count": 4,
+        "table_name": "home_publications"
+      }
+    ],
+    "publicTablesWithoutRls": [],
+    "domainFunctionsNotOwnedByPostgres": 0
+  },
+  "smoke": {
+    "scope": "SQL Auth trigger, real-role grants, session liveness, tenant RLS, activity ACL and Realtime policy/send",
+    "result": "sql_smoke_passed_and_rolled_back",
+    "project_ref": "lfkfuhvjvqgwyikzcfep",
+    "auth_http_tested": false,
+    "storage_upload_tested": false,
+    "synthetic_organizations": 2,
+    "websocket_transport_tested": false,
+    "file": "scripts/staging/cloud-smoke.sql",
+    "sha256": "7d322dcc1e2ccbf0b6fb63799de358d15f4234d562dbb31c301eab07b5d6b6fc",
+    "firstAttempt": "Failed: managed Realtime had zero broadcast partitions; fixture transaction rolled back.",
+    "resolution": "Official Supabase client joined a public WebSocket channel; managed service created native partitions. No native partition DDL or test weakening.",
+    "retry": "Same SQL bytes passed and rolled back.",
+    "publicWebSocketJoin": "SUBSCRIBED; no application messages sent",
+    "privateWebSocketAuthorizationTested": false
+  },
+  "securityAdvisors": [
+    {
+      "name": "rls_enabled_no_policy",
+      "level": "INFO",
+      "title": "RLS Enabled No Policy",
+      "count": 82,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+    },
+    {
+      "name": "pg_graphql_anon_table_exposed",
+      "level": "WARN",
+      "title": "Public Can See Object in GraphQL Schema",
+      "count": 138,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0026_pg_graphql_anon_table_exposed"
+    },
+    {
+      "name": "pg_graphql_authenticated_table_exposed",
+      "level": "WARN",
+      "title": "Signed-In Users Can See Object in GraphQL Schema",
+      "count": 166,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0027_pg_graphql_authenticated_table_exposed"
+    },
+    {
+      "name": "anon_security_definer_function_executable",
+      "level": "WARN",
+      "title": "Public Can Execute SECURITY DEFINER Function",
+      "count": 75,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable"
+    },
+    {
+      "name": "authenticated_security_definer_function_executable",
+      "level": "WARN",
+      "title": "Signed-In Users Can Execute SECURITY DEFINER Function",
+      "count": 75,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable"
+    }
+  ],
+  "pending": [
+    "General access blocked: inherited anonymous EXECUTE on global automation RPCs requires hardening and behavioral tests; see security review. The selected smoke does not certify these RPCs.",
+    "HTTP Auth, test account onboarding and deployed CRM CRUD.",
+    "Private Realtime WebSocket authorization and Storage upload/download through real application.",
+    "Full projected definition/ACL comparison beyond source hashes, catalog observations and selected behavioral assertions.",
+    "Staging hosting, Caddy/proxy and live capacity review; Portainer login pending.",
+    "Staging subdomain DNS, Auth redirects and destination secrets."
+  ],
+  "productionModified": false
+}

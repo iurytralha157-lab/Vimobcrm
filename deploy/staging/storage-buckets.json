@@ -1,0 +1,211 @@
+{
+  "kind": "vimob-cloud-staging-storage-bucket-spec-v1",
+  "classification": "local-specification-only",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "remoteProvisioningPerformedByThisSpecification": false,
+  "configurationSource": "canonical-migrations-and-current-consumers",
+  "creationInterface": "Supabase Storage API createBucket or Storage UI; no direct writes to storage schema",
+  "buckets": [
+    {
+      "id": "property-private",
+      "name": "property-private",
+      "public": false,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/pdf"
+      ],
+      "scope": "core",
+      "purpose": "Private originals, floor plans and property documents; signed backend access.",
+      "sources": [
+        "supabase/migrations/20260731110919_harden_property_tenant_security.sql:672",
+        "apps/api/internal/properties/workspace_ownership_asset_types.go:17",
+        "supabase/migrations/20260908000636_normalize_property_media_lifecycle.sql:11"
+      ]
+    },
+    {
+      "id": "whatsapp-media",
+      "name": "whatsapp-media",
+      "public": false,
+      "fileSizeLimit": 52428800,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "video/mp4",
+        "video/mpeg",
+        "video/quicktime",
+        "video/webm",
+        "video/ogg",
+        "audio/aac",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/ogg",
+        "audio/wav",
+        "audio/webm",
+        "audio/mp4",
+        "application/pdf",
+        "application/octet-stream"
+      ],
+      "scope": "core",
+      "purpose": "Core manual lead attachments also use this bucket while WhatsApp integration is disabled.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:12",
+        "apps/api/internal/leads/attachments_upload.go:14",
+        "apps/api/internal/leads/analytics_handler.go:15",
+        "apps/api/internal/leads/attachment_upload_receipt.go:220"
+      ]
+    },
+    {
+      "id": "contract-documents",
+      "name": "contract-documents",
+      "public": false,
+      "fileSizeLimit": 26214400,
+      "allowedMimeTypes": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ],
+      "scope": "core",
+      "purpose": "Private contract documents.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:8",
+        "apps/api/internal/financial/repository_contract_documents.go:61"
+      ]
+    },
+    {
+      "id": "avatars",
+      "name": "avatars",
+      "public": true,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+      ],
+      "scope": "optional",
+      "purpose": "Optional public profile avatars.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:7",
+        "apps/api/internal/settings/repository.go:269"
+      ]
+    },
+    {
+      "id": "logos",
+      "name": "logos",
+      "public": true,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "image/x-icon",
+        "image/vnd.microsoft.icon"
+      ],
+      "scope": "optional",
+      "purpose": "Optional public organization and team logos.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:9",
+        "apps/api/internal/settings/repository.go:294",
+        "apps/api/internal/teams/repository.go:780"
+      ]
+    },
+    {
+      "id": "site-images",
+      "name": "site-images",
+      "public": true,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "image/x-icon",
+        "image/vnd.microsoft.icon"
+      ],
+      "scope": "optional",
+      "purpose": "Optional public site and home-publication assets.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:11",
+        "apps/api/internal/admin/home_publications.go:29"
+      ]
+    },
+    {
+      "id": "automation-media",
+      "name": "automation-media",
+      "public": false,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "video/mp4",
+        "video/mpeg",
+        "video/quicktime",
+        "video/webm",
+        "video/ogg",
+        "audio/aac",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/ogg",
+        "audio/wav",
+        "audio/webm",
+        "audio/mp4"
+      ],
+      "scope": "optional",
+      "purpose": "Optional media library/designer; creating an empty bucket does not activate automation workers.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:6",
+        "apps/api/internal/automations/media.go:19"
+      ]
+    },
+    {
+      "id": "properties",
+      "name": "properties",
+      "public": true,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+      ],
+      "scope": "legacy",
+      "purpose": "Legacy public property URLs; the previous upload endpoint is retired.",
+      "sources": [
+        "supabase/migrations/20260722000002_external_schema_objects.sql:10",
+        "apps/api/internal/properties/image_upload.go:35",
+        "supabase/migrations/20260908000636_normalize_property_media_lifecycle.sql:3"
+      ]
+    }
+  ],
+  "consumerConstraints": {
+    "manualLeadAttachmentMaxFileBytes": 26214400,
+    "propertyAssetMaxFileBytes": 10485760,
+    "profileAndOrganizationImageApiAllowedMimeTypes": [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif"
+    ],
+    "notes": [
+      "Bucket MIME lists and limits mirror canonical migrations exactly; API consumers may impose stricter limits.",
+      "Storage project-wide file-size configuration was not inspected by this local specification.",
+      "No objects, credentials, jobs, provider connections or production data are included."
+    ]
+  }
+}

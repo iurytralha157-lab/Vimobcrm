@@ -103,7 +103,7 @@ export function buildCloudPlan(source, target = null) {
     { code: 'PROJECTED_CATALOG_VERIFICATION_REQUIRED', action: 'Create and verify an application-only catalog including owners, effective ACLs, RLS, policies, triggers and publication membership. The full local platform hash is not a Cloud compatibility claim.' },
     { code: 'FORWARD_CLOUD_COMPATIBILITY_REVIEW_REQUIRED', action: 'Review every post-baseline migration for Cloud permissions, platform DDL and operational effects before execution. Source-lock integrity alone is not a compatibility check.' },
     { code: 'STAGING_SERVICES_CONFIGURATION_REQUIRED', action: 'Create empty test buckets, dedicated Auth URLs/accounts, and an explicit Edge Functions allowlist; leave cron, Vault provider secrets and external workers unprovisioned.' },
-    { code: 'NO_EXECUTABLE_CLOUD_EXPORTER', action: 'Review the inventory and write a separately tested Cloud exporter/installer before applying SQL. This command only emits a JSON preparation plan.' },
+    { code: 'OFFLINE_PLAN_CANNOT_CERTIFY_REMOTE_STATE', action: 'This command only emits an offline JSON inventory. It does not run the available Cloud exporter or promoters, access a database, or certify remote readiness. Review the separate derived package and current target evidence before applying SQL.' },
   ];
   if (!selectedTarget) blockers.unshift({ code: 'TARGET_NOT_SELECTED', action: 'Select a new Cloud staging project; provide only its public reference and matching HTTPS origin.' });
   if (review.length) blockers.push({ code: 'UNKNOWN_OBJECTS_REQUIRE_REVIEW', count: review.length,
@@ -112,7 +112,7 @@ export function buildCloudPlan(source, target = null) {
     action: 'Review the usage of the listed literals. They may be contact metadata; a literal alone does not establish a recipient or dispatch. Sanitize operational contacts in derived staging configuration where appropriate, preserve canonical hashes, and assess actual dispatch paths separately.' });
   return {
     kind: 'vimob-cloud-staging-baseline-plan-v1', classification: 'offline-preparation-only',
-    ready: false, databaseAccessed: false, executableSQLIncluded: false, applySupported: false,
+    ready: false, remoteReadinessEvaluated: false, databaseAccessed: false, executableSQLIncluded: false, applySupported: false,
     historicalMigrationsExecuted: false, productionDataIncluded: false, target: selectedTarget,
     source: { baselineId: source.manifest.baselineId, prefixMigrations: source.manifest.sourceChain.length,
       sourceChainSHA256: source.manifest.sourceChainSHA256,

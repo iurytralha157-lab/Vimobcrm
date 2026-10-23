@@ -48,6 +48,23 @@ test('projection preserves platform objects and rejects unexpected owners and sc
   ]) assert.throws(() => classifyBlock(invalid));
 });
 
+test('selecting a valid target produces an offline inventory without certifying remote readiness', () => {
+  const sql = `${header('safe')}CREATE TABLE public.safe(id integer);\n`;
+  const plan = buildCloudPlan(sourceFixture(sql), target);
+  assert.deepEqual(plan.target, target);
+  assert.equal(plan.classification, 'offline-preparation-only');
+  assert.equal(plan.unknownObjects.length, 0);
+  assert.equal(plan.literalRisks.length, 0);
+  assert.equal(plan.ready, false);
+  assert.equal(plan.remoteReadinessEvaluated, false);
+  assert.equal(plan.databaseAccessed, false);
+  assert.equal(plan.executableSQLIncluded, false);
+  assert.equal(plan.applySupported, false);
+  assert.ok(plan.blockers.some(row => row.code === 'OFFLINE_PLAN_CANNOT_CERTIFY_REMOTE_STATE'));
+  assert.ok(!plan.blockers.some(row => ['TARGET_NOT_SELECTED', 'NO_EXECUTABLE_CLOUD_EXPORTER'].includes(row.code)));
+  assert.ok(!JSON.stringify(plan).includes('CREATE TABLE'));
+});
+
 test('TOC scanner ignores fake headers inside function bodies, quotes and nested comments', () => {
   const fake = header('fake');
   const sql = `${header('safe()', 'FUNCTION')}CREATE FUNCTION public.safe() RETURNS text AS $body$\n${fake}SELECT 'text';\n$body$ LANGUAGE sql;\n`

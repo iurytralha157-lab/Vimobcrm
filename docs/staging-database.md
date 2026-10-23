@@ -1,152 +1,136 @@
-# Banco de homologação no Supabase Cloud
+# Homologação do banco no Supabase Cloud
 
-O destino deve ser um **projeto novo e independente**, com contas de teste,
-arquivos sintéticos e credenciais próprias. Os scripts de inventário abaixo
-funcionam offline: não conectam ao Supabase, não restauram SQL e não declaram
-o banco pronto.
+Estado em 2026-10-23: **schema instalado e smoke SQL aprovado; liberação geral em HOLD**.
+A aprovação do banco descrita aqui não certifica o CRM publicado.
 
-## Projeto de homologação criado
+## Projeto e evidências
 
-Em 2026-10-23 foi confirmado o projeto `vimob-homologacao`, organização
-`vimob teste` (`snqyytbmmbfasotklrje`), plano Free, região São Paulo (`sa-east-1`).
-A referência é `lfkfuhvjvqgwyikzcfep`; o painel e a API de gerenciamento
-confirmaram `ACTIVE_HEALTHY`. Isso comprova o provisionamento da infraestrutura,
-sem certificar a instalação do esquema ou o funcionamento do CRM.
+- Projeto `vimob-homologacao`, referência `lfkfuhvjvqgwyikzcfep`.
+- Organização `vimob teste` (`snqyytbmmbfasotklrje`), Free, São Paulo (`sa-east-1`).
+- PostgreSQL 17.11; execução com `postgres` sem superuser.
+- [Alvo público, sem credenciais](../deploy/staging/supabase-target.json).
+- [Verificação atual de schema, fases e smoke SQL](../deploy/staging/cloud-verification.json).
+- [Verificação dos buckets privados](../deploy/staging/cloud-storage-verification.json).
+- [Catálogo inicial, anterior à instalação](../deploy/staging/cloud-catalog.json).
+- [Painel do projeto](https://supabase.com/dashboard/project/lfkfuhvjvqgwyikzcfep).
 
-- [Painel do projeto de homologação](https://supabase.com/dashboard/project/lfkfuhvjvqgwyikzcfep).
-- [Alvo público validado, sem credenciais](../deploy/staging/supabase-target.json).
-- [Leitura do catálogo Cloud, sem dados de usuários ou credenciais](../deploy/staging/cloud-catalog.json).
+Produção não foi alterada nem usada como fonte de usuários, objetos ou credenciais.
 
-A inspeção remota usou somente metadados e consultas `SELECT` ao catálogo.
-Confirmou PostgreSQL 17.11, papel `postgres` sem superuser, zero objetos de
-domínio em `public`/`private`, leitura permitida de `auth.sessions` e publicação
-`supabase_realtime` já existente e vazia. O relatório lista também permissões,
-interfaces e extensões disponíveis; não houve instalação de extensões, grants,
-policies, triggers ou migrations. Esses resultados não substituem o ensaio
-do instalador Cloud com as permissões reais.
+## Instalação comprovada
 
-Para conferir o inventário local com esse alvo:
+Foram aplicadas **15 fases da baseline derivada e 20 forwards canônicos**.
+O ledger privado `vimob_cloud_staging.phase_history` possui 35 fases, ordinais
+0–34, com hashes dos payloads correspondentes aos manifestos revisados.
+A sentinela registra o projeto, a execução e a cadeia de origem.
 
-```powershell
-node scripts/staging/cloud-baseline-readiness.mjs --target D:/Vimob/workspaces/vimob-crm/deploy/staging/supabase-target.json
-```
+A baseline `local-20261016-238-v1` representa 238 migrations históricas por
+equivalência de estrutura. Não se declara execução literal dessas 238 migrations.
+Os 20 forwards foram executados depois, em ordem, com seus corpos e precondições
+preservados. As fontes, hashes e o histórico canônico continuam imutáveis.
 
-O projeto novo foi criado separadamente; nenhuma conexão ou variável da produção
-foi substituída. A instalação Cloud descrita abaixo continua pendente.
+O readback registra:
 
-## Material existente e impedimentos
+- 321 tabelas e 830 funções de domínio; nenhuma função de domínio com owner diferente de `postgres`.
+- Nenhuma tabela pública sem RLS habilitada; isso, isoladamente, não certifica todas as autorizações.
+- Fingerprint das cinco tabelas estáticas igual ao canônico: `private.queue_timezone_catalog`
+  (1.196 registros), `public.admin_subscription_plans` (3), `public.available_permissions`
+  (38), `public.help_articles` (30) e `public.home_publications` (4).
+- Um registro estrutural em `private.queue_runtime_configuration_cursor`, criado pela cadeia.
+- Zero usuários Auth, objetos Storage e entradas Vault no readback; `cron` ausente.
+- Nenhuma Edge Function publicada no inventário realizado (`[]`).
 
-A baseline em `supabase/reconciliation/local-bootstrap/` representa 238
-migrations canônicas. Na revisão de 2026-10-23 havia outras 20 migrations
-posteriores; o comando abaixo recalcula o sufixo e confere seus hashes no lock.
-O histórico permanece imutável. Não executar a cadeia histórica literalmente:
-ela contém precondições de dados/cutovers que não existem em banco vazio.
-Integridade no lock não certifica compatibilidade desses forwards com o Cloud;
-essa revisão é um bloqueio separado no relatório.
+Os objetos nativos de Auth, Storage e Realtime mantiveram seus owners da plataforma.
+Não foram copiados usuários, sessões, arquivos, jobs, tokens ou conexões de produção.
 
-Essa baseline local contém também a plataforma Supabase completa e seu executor
-exige `supabase_admin` com superuser. O Cloud fornece `postgres` sem superuser
-e mantém Auth/Storage sob papéis da plataforma. Portanto, **não executar o dump
-completo nem o executor local contra o Cloud**. Também não copiar os wrappers
-GraphQL, os corpos internos de `pg_net` ou as ACLs locais da plataforma.
+Artefatos aplicados, fora do Git, em
+`D:/Vimob/_safety/homologacao-20261023-070614/`: `cloud-trial-v2/` e
+`cloud-forwards-v1/`. Os antigos `cloud-draft-v1/` e `cloud-trial-v1/` foram
+invalidados antes de qualquer aplicação.
 
-O preparador gera uma projeção concreta por objeto: arquivo, linha, schema,
-tipo, nome, proprietário e hash. Distingue objetos de aplicação, plataforma
-preservada, overlays para revisão e extensões necessárias. Objetos, owners,
-schemas e policies desconhecidos geram bloqueio explícito. Essa projeção é
-inventário para construir o instalador; não é um pacote SQL executável.
+## Smoke e seus limites
 
-## Gerar e revisar o plano
+O [smoke SQL](../scripts/staging/cloud-smoke.sql) passou com duas organizações
+sintéticas, papéis reais, trigger Auth, sessão ativa/revogada, isolamento por
+tenant, ACLs de atividades e policy/envio Realtime no banco. A transação foi
+revertida; os dados sintéticos não permaneceram.
 
-Na raiz do checkout:
+A primeira execução falhou porque o Realtime gerenciado ainda não tinha
+partições de broadcast. Uma conexão pública pelo SDK oficial retornou
+`SUBSCRIBED`; o serviço inicializou as partições nativas. Os mesmos bytes SQL
+passaram no novo ensaio. Não houve DDL manual na plataforma nem enfraquecimento
+do teste. A conexão pública não enviou mensagens da aplicação.
 
-```powershell
-node scripts/staging/cloud-baseline-readiness.mjs
-node --test scripts/staging/cloud-baseline.test.mjs
-```
+Continuam sem validação: Auth por HTTP, onboarding real, CRM publicado,
+upload/download por aplicação e autorização de WebSocket privado. O smoke SQL
+não substitui esses testes nem a comparação completa de definições e ACLs efetivas.
 
-Para salvar o inventário completo, escolha um caminho novo fora do repositório:
+## Storage
 
-```powershell
-node scripts/staging/cloud-baseline-readiness.mjs --output C:/caminho-existente/plano-cloud.json
-```
+Os três buckets privados core foram criados pela UI; o readback confirmou
+`public=false`, limites e todos os MIMEs exatamente iguais à
+[especificação local](../deploy/staging/storage-buckets.json). Permanecem vazios.
 
-O comando recusa sobrescrever arquivo existente. A saída padrão traz somente
-contagens e bloqueios. O JSON não inclui corpos SQL nem dados das tabelas.
-`ready: false` significa que a instalação continua impedida, mesmo quando o
-comando termina com sucesso. Erros de contrato/integridade encerram com código 1.
+| Bucket core | Limite | Uso |
+| --- | ---: | --- |
+| `property-private` | 10.485.760 bytes (10 MiB) | Originais, plantas e documentos de imóveis |
+| `whatsapp-media` | 52.428.800 bytes (50 MiB) | Também anexos manuais de Leads, mesmo com a integração desligada |
+| `contract-documents` | 26.214.400 bytes (25 MiB) | Documentos de contratos |
 
-O alvo público já registrado pode ser fornecido com `--target`. Para outro
-projeto de homologação autorizado, o contrato desse arquivo é:
+A API de anexos manuais limita cada upload a 25 MiB; o bucket aceita até 50 MiB.
+A especificação contém oito buckets canônicos. Os cinco restantes estão
+pendentes: `avatars`, `logos`, `site-images`, `automation-media` e `properties`.
+Esse último atende URLs legadas; o antigo upload de imóveis foi aposentado.
 
-```json
-{
-  "kind": "vimob-cloud-staging-target-v1",
-  "environment": "staging",
-  "projectRef": "SUBSTITUIR_PELA_REF_DO_PROJETO_NOVO",
-  "supabaseUrl": "https://SUBSTITUIR_PELA_REF_DO_PROJETO_NOVO.supabase.co"
-}
-```
+Criações futuras devem usar Storage API/UI, sem INSERT direto no schema
+gerenciado. Configuração de bucket não comprova upload, download ou autorização
+com sessão revogada; esses testes continuam pendentes.
 
-Esse arquivo não aceita outros campos, conexões ou segredos. A referência de
-produção conhecida e URLs que não correspondam exatamente ao projeto novo são
-recusadas. Um alvo válido apenas identifica a preparação: **não autoriza nem
-prova compatibilidade, acesso remoto ou implantação**.
+## Segurança e liberação
 
-## Trabalho necessário antes da instalação
+**Manter HOLD para acesso geral até concluir a triagem de ACLs e advisors.**
+Consultar a [revisão de segurança](staging-security-review.md) e o
+[readback das permissões efetivas de RPC](../deploy/staging/cloud-rpc-grants.json).
+O relatório contém quatro categorias WARN: visibilidade GraphQL para `anon`
+e `authenticated`, e execução de funções SECURITY DEFINER por esses dois papéis.
+Há também uma categoria INFO de RLS habilitada sem policy.
 
-1. Conferir no projeto novo PostgreSQL, schemas nativos, extensões disponíveis
-   e interfaces usadas pela aplicação. Não exigir igualdade de versão de todos
-   os objetos internos da plataforma: as diferenças devem ser analisadas.
-2. Derivar SQL somente de `public`/`private`, com owners `postgres` e ACLs de
-   aplicação preservadas. Revisar separadamente `on_auth_user_created`, policies
-   próprias de Storage/Realtime e a publicação `supabase_realtime`/suas tabelas.
-   A publicação já pode existir no Cloud; não recriá-la cegamente.
-3. Ensaiar instalação com permissões equivalentes às de `postgres`, sem elevar
-   privilégios ou alterar o executor local. Conferir os grants necessários de
-   leitura de `auth.sessions` usados pela API. A compatibilidade real dos
-   overlays depende também das permissões específicas da plataforma Cloud.
-4. Comparar catálogo projetado: owners, grants efetivos, funções, triggers,
-   constraints, índices, RLS, policies e publicação. O hash atual inclui a
-   plataforma local inteira e não certifica equivalência com o Cloud.
-5. Carregar exclusivamente as cinco tabelas estáticas permitidas no manifesto;
-   depois executar as migrations posteriores revisadas em ordem e registrar
-   evidência própria. Não preencher o ledger canônico alegando execução do
-   histórico representado pela baseline.
-6. Criar buckets vazios com nomes/opções revisados, configurar Auth/redirects
-   para o subdomínio de homologação e contas próprias. Publicar somente uma
-   lista explícita de Edge Functions necessárias e com seus contratos JWT.
-   Não copiar usuários, sessões, arquivos, Vault, cron jobs, outboxes ou tokens
-   da produção. Os dados de referência não provisionam buckets nem usuários.
-7. Validar login/convites, isolamento entre duas organizações, CRUD de teste,
-   acesso a arquivos, sessão revogada e Realtime antes de liberar testes gerais.
+O catálogo confirmou `EXECUTE` efetivo de `anon` e `authenticated` em cinco
+funções SECURITY DEFINER de owner `postgres`, incluindo
+`public.cancel_disabled_automation_runtime(integer)`, de escopo global, e
+`rebind_whatsapp_conversation_session(uuid,uuid)`. A variante
+`rebind_whatsapp_conversation_session(uuid,uuid,text)` não permite execução
+por esses dois papéis. Não houve execução funcional nem chamada HTTP dessas RPCs.
+Esses caminhos e os grants herdados exigem triagem específica. Preservar ACLs
+canônicas e aprovar o smoke não equivale a aprovar todas essas permissões.
+Não remover bloqueios ou enfraquecer testes apenas para obter aprovação.
 
-## Destinatários e integrações
+## Ferramentas e próximos passos
 
-A preparação detecta literais de e-mail nas funções da baseline e nos forwards
-sem reproduzir seus valores.
-Na função `private.create_billing_payment_receipt_from_payment`, o literal está
-no campo `support_email` do fallback do emissor usado no snapshot do recibo.
-É um contato operacional embutido; sua presença não comprova destinatário nem
-disparo de e-mail. Revisar e, quando necessário, sanitizar esse contato na
-configuração derivada da homologação, preservando o arquivo canônico e seus
-hashes. O relatório exige revisão do contexto e não considera esse campo uma
-prova de envio externo. Endereços reservados de exemplo e sufixos JID do WhatsApp
-não são classificados como e-mails operacionais.
+Os preparadores abaixo são offline e não contêm cliente remoto:
 
-Manter workers, cron e integrações externas sem credenciais até configurar
-destinos próprios de teste. Desligar somente workers da API não demonstra que
-triggers SQL, Edge Functions ou provedores não possam produzir efeitos externos.
-O relatório não resolve esse isolamento e não permite remover seus bloqueios.
+- `scripts/staging/cloud-baseline-readiness.mjs`: inventário e bloqueios locais.
+- `scripts/staging/cloud-export.mjs`: draft derivado para ensaio local.
+- `scripts/staging/cloud-export-promote.mjs`: preparação de fases Cloud com sentinela e hashes.
+- `scripts/staging/cloud-forward.mjs`: preparação dos forwards com ordem e hashes verificados.
 
-## Fontes e limites
+Por contrato, os manifestos offline sempre declaram `ready=false`.
+Prontidão e resultados de execução ficam em evidências externas separadas;
+os preparadores não consultam o projeto nem substituem esses relatórios.
+SQL e manifestos de execução ficam fora do Git; cada fase é transacional e
+registra sucesso no ledger somente junto do commit.
 
-- [Supabase: superuser e operações não suportadas](https://supabase.com/docs/guides/database/postgres/roles-superuser).
-- [Supabase: ownership esperado em Auth e Storage](https://supabase.com/docs/guides/platform/permissions).
-- [Supabase: restore, customizações Auth/Storage e Realtime](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore).
-- [Fluxo canônico e bloqueio de db push](../supabase/README.md).
-- [Baseline estritamente local](../supabase/reconciliation/local-bootstrap/README.md).
+O [bootstrap de identidade](../scripts/staging/cloud-bootstrap-identity.sql)
+é o registro do preparo inicial do projeto vazio. **Não o executar novamente**
+no banco instalado. Não usar o dump completo, o executor local com superuser
+ou `supabase db push` no Cloud. Não alterar migrations históricas nem preencher
+o ledger canônico alegando execução do prefixo representado pela baseline.
 
-Os scripts locais de inventário não acessam um banco. Ainda faltam o exporter/instalador
-Cloud específico e a validação real de compatibilidade. Não há modo
-`apply`, conexão por `.env`, restauração de produção ou alteração de DNS neste fluxo.
+Faltam a triagem de segurança, testes HTTP e de aplicação, WebSocket privado,
+Storage por usuário real e a publicação isolada do CRM. Hospedagem, proxy,
+subdomínio, redirects Auth e segredos próprios de homologação seguem pendentes.
+O login do Portainer ainda precisa ser concluído para verificar a hospedagem.
+Workers e integrações externas permanecem desligados e sem credenciais de produção.
+
+Referências: [fluxo canônico do banco](../supabase/README.md),
+[baseline local](../supabase/reconciliation/local-bootstrap/README.md) e
+[revisão Cloud](staging-cloud-review.md).

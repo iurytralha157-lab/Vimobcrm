@@ -1,0 +1,54 @@
+{
+  "kind": "vimob-cloud-staging-rpc-grant-verification-v1",
+  "observedAtUTC": "2026-10-23T20:11:00.401Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "readOnly": true,
+  "functionBodiesInvoked": false,
+  "httpRpcExploitTested": false,
+  "decision": "HOLD-general-access",
+  "review": "docs/staging-security-review.md",
+  "functions": [
+    {
+      "signature": "cancel_disabled_automation_runtime(integer)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": true,
+      "authenticated_execute": true
+    },
+    {
+      "signature": "complete_automation_event(uuid,text)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": true,
+      "authenticated_execute": true
+    },
+    {
+      "signature": "finish_automation_external_effect(text,text,jsonb,text,text)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": true,
+      "authenticated_execute": true
+    },
+    {
+      "signature": "rebind_whatsapp_conversation_session(uuid,uuid,text)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": false,
+      "authenticated_execute": false
+    },
+    {
+      "signature": "rebind_whatsapp_conversation_session(uuid,uuid)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": true,
+      "authenticated_execute": true
+    },
+    {
+      "signature": "release_due_automation_delays(integer)",
+      "security_definer": true,
+      "owner": "postgres",
+      "anon_execute": true,
+      "authenticated_execute": true
+    }
+  ]
+}

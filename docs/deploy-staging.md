@@ -1,9 +1,27 @@
 # Homologacao isolada do Vimob CRM
 
-Este fluxo prepara a branch `homologacao` para um repositorio GitHub privado,
+Este fluxo usa a branch `homologacao`, um repositorio GitHub privado,
 duas imagens por commit, uma stack separada e um projeto Supabase exclusivo.
 O workflow de producao e a stack atual permanecem independentes. Estes arquivos
 nao criam recursos, nao aplicam SQL e nao fazem deploy automaticamente.
+
+## Estado em 2026-10-23
+
+- Repositorio criado e confirmado como **privado**:
+  [iurytralha157-lab/vimob-crm-homologacao](https://github.com/iurytralha157-lab/vimob-crm-homologacao).
+  A branch padrao e `homologacao`; a candidata `57ea4e5f883094bcbbbccd2267a2c926c71c9a44`
+  foi enviada a esse destino.
+- No Supabase exclusivo `lfkfuhvjvqgwyikzcfep`, a baseline e os 20 forwards
+  foram instalados. O smoke SQL de Auth, RLS, isolamento entre duas organizacoes
+  e Realtime passou; as alteracoes dos dados de teste foram revertidas por
+  rollback, preservando o schema instalado.
+- Nao houve publicacao de imagens, deploy da aplicacao, alteracao de DNS ou
+  mudanca no host. Ainda nao ha uma instancia web/API de homologacao validada
+  em execucao.
+- A hospedagem aguarda o login do usuario no Portainer. Antes de renderizar
+  uma stack para o alvo, conferir a configuracao do Caddy e do gateway
+  existentes, redes, arquitetura e capacidade livre do host. O template
+  Swarm/Traefik permanece uma alternativa nao validada para esse alvo.
 
 ## Arquivos e limites iniciais
 
@@ -52,8 +70,9 @@ WhatsApp. Essa configuracao nao e um bloqueio geral de saida de rede.
    reconciliacao de baseline e cutovers; nao executar `supabase db push` em
    lote. Seguir tambem [o plano do banco de homologacao](staging-database.md).
    O preparo do banco e uma operacao separada deste workflow: um inventario
-   offline aprovado nao instala o schema. Nao aplicar a stack contra um projeto
-   vazio enquanto a verificacao do banco permanecer com `ready=false`.
+   offline aprovado nao instala o schema. O `ready=false` do planner e sempre
+   offline; conferir a evidencia remota e os bloqueios em `cloud-verification.json`.
+   A liberacao geral permanece bloqueada pela revisao de permissoes herdadas.
 4. No Auth do projeto de testes, configurar a Site URL de homologacao e apenas
    os redirects necessarios desse ambiente. Conferir buckets, policies e RLS.
    Nao publicar Edge Functions nem ativar cron/jobs externos como parte do
@@ -126,6 +145,9 @@ Os templates nao comprovam a topologia do host. A inspecao inicial encontrou
 Caddy e gateway custom no ambiente existente, sem Traefik confirmado. Portanto,
 o YAML Swarm/Traefik abaixo e uma alternativa condicionada a um proxy Traefik
 disponivel, nao uma instrucao para aplica-lo no host de producao atual.
+O acesso ao Portainer continua na tela de login. A configuracao efetiva do
+Caddy, o caminho ate os containers e a capacidade livre ainda precisam ser
+conferidos antes de escolher ou renderizar o template de hospedagem.
 
 Para **Docker Compose standalone e Caddy executado no host**, usar
 `deploy/staging/compose.yml`, projeto Compose `vimob-staging`, e portas livres

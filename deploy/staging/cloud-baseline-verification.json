@@ -1,0 +1,236 @@
+{
+  "kind": "vimob-cloud-baseline-verification-v1",
+  "observedAtUTC": "2026-10-23T19:45:41Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "baselineId": "local-20261016-238-v1",
+  "classification": "baseline-installed-for-staging-validation",
+  "canonicalHistoricalMigrationsExecuted": false,
+  "transactionalPhasesApplied": 15,
+  "referenceDataSHA256": "28d559c1079ec22f222e2d3d82d3a7d705fdf53b8366994df8a347b7d5eabfdd",
+  "referenceDataMatchesCanonical": true,
+  "catalog": {
+    "policies": [
+      {
+        "count": 705,
+        "schema": "public"
+      },
+      {
+        "count": 2,
+        "schema": "realtime"
+      },
+      {
+        "count": 8,
+        "schema": "storage"
+      }
+    ],
+    "functions": 805,
+    "relations": [
+      {
+        "kind": "S",
+        "count": 1,
+        "schema": "private"
+      },
+      {
+        "kind": "i",
+        "count": 174,
+        "schema": "private"
+      },
+      {
+        "kind": "r",
+        "count": 66,
+        "schema": "private"
+      },
+      {
+        "kind": "S",
+        "count": 3,
+        "schema": "public"
+      },
+      {
+        "kind": "i",
+        "count": 1193,
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "count": 250,
+        "schema": "public"
+      },
+      {
+        "kind": "v",
+        "count": 3,
+        "schema": "public"
+      }
+    ],
+    "cronPresent": false,
+    "nativeAuthUsers": 0,
+    "publicationTables": [
+      "public.gamification_events",
+      "public.gamification_manual_entries",
+      "public.gamification_missions",
+      "public.gamification_participants",
+      "public.gamification_seasons",
+      "public.leads",
+      "public.notifications",
+      "public.stages",
+      "public.user_gamification_stats"
+    ],
+    "schemaPermissions": [
+      {
+        "role": "anon",
+        "usage": true,
+        "create": false,
+        "schema": "auth"
+      },
+      {
+        "role": "authenticated",
+        "usage": true,
+        "create": false,
+        "schema": "auth"
+      },
+      {
+        "role": "postgres",
+        "usage": true,
+        "create": false,
+        "schema": "auth"
+      },
+      {
+        "role": "service_role",
+        "usage": true,
+        "create": false,
+        "schema": "auth"
+      },
+      {
+        "role": "anon",
+        "usage": true,
+        "create": false,
+        "schema": "private"
+      },
+      {
+        "role": "authenticated",
+        "usage": true,
+        "create": false,
+        "schema": "private"
+      },
+      {
+        "role": "postgres",
+        "usage": true,
+        "create": true,
+        "schema": "private"
+      },
+      {
+        "role": "service_role",
+        "usage": true,
+        "create": false,
+        "schema": "private"
+      },
+      {
+        "role": "anon",
+        "usage": true,
+        "create": false,
+        "schema": "public"
+      },
+      {
+        "role": "authenticated",
+        "usage": true,
+        "create": false,
+        "schema": "public"
+      },
+      {
+        "role": "postgres",
+        "usage": true,
+        "create": true,
+        "schema": "public"
+      },
+      {
+        "role": "service_role",
+        "usage": true,
+        "create": false,
+        "schema": "public"
+      },
+      {
+        "role": "anon",
+        "usage": true,
+        "create": false,
+        "schema": "realtime"
+      },
+      {
+        "role": "authenticated",
+        "usage": true,
+        "create": false,
+        "schema": "realtime"
+      },
+      {
+        "role": "postgres",
+        "usage": true,
+        "create": false,
+        "schema": "realtime"
+      },
+      {
+        "role": "service_role",
+        "usage": true,
+        "create": false,
+        "schema": "realtime"
+      },
+      {
+        "role": "anon",
+        "usage": true,
+        "create": false,
+        "schema": "storage"
+      },
+      {
+        "role": "authenticated",
+        "usage": true,
+        "create": false,
+        "schema": "storage"
+      },
+      {
+        "role": "postgres",
+        "usage": true,
+        "create": false,
+        "schema": "storage"
+      },
+      {
+        "role": "service_role",
+        "usage": true,
+        "create": false,
+        "schema": "storage"
+      }
+    ],
+    "nativeVaultEntries": 0,
+    "nativeStorageBuckets": 0,
+    "nativeStorageObjects": 0,
+    "nonEmptyDomainTables": [
+      {
+        "schema": "private",
+        "row_count": 1196,
+        "table_name": "queue_timezone_catalog"
+      },
+      {
+        "schema": "public",
+        "row_count": 3,
+        "table_name": "admin_subscription_plans"
+      },
+      {
+        "schema": "public",
+        "row_count": 38,
+        "table_name": "available_permissions"
+      },
+      {
+        "schema": "public",
+        "row_count": 30,
+        "table_name": "help_articles"
+      },
+      {
+        "schema": "public",
+        "row_count": 4,
+        "table_name": "home_publications"
+      }
+    ],
+    "publicTablesWithoutRls": []
+  },
+  "notValidated": [
+    "Twenty forward migrations remain pending at this observation.",
+    "Full projected definition/ACL comparison and application acceptance tests are separate.",
+    "SQL catalog and row counts do not certify HTTP Auth, Storage upload or Realtime client behavior."
+  ]
+}

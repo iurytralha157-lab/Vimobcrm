@@ -1,0 +1,76 @@
+{
+  "kind": "vimob-cloud-staging-storage-verification-v1",
+  "observedAtUTC": "2026-10-23T20:07:04.358Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "creationInterface": "Supabase Storage dashboard UI",
+  "configurationMatchesCoreSpecification": true,
+  "buckets": [
+    {
+      "id": "contract-documents",
+      "name": "contract-documents",
+      "public": false,
+      "fileSizeLimit": 26214400,
+      "allowedMimeTypes": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ]
+    },
+    {
+      "id": "property-private",
+      "name": "property-private",
+      "public": false,
+      "fileSizeLimit": 10485760,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/pdf"
+      ]
+    },
+    {
+      "id": "whatsapp-media",
+      "name": "whatsapp-media",
+      "public": false,
+      "fileSizeLimit": 52428800,
+      "allowedMimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "video/mp4",
+        "video/mpeg",
+        "video/quicktime",
+        "video/webm",
+        "video/ogg",
+        "audio/aac",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/ogg",
+        "audio/wav",
+        "audio/webm",
+        "audio/mp4",
+        "application/pdf",
+        "application/octet-stream"
+      ]
+    }
+  ],
+  "objects": 0,
+  "globalFileSizeLimitObservedUI": "50 MB",
+  "publicBucketsCreated": false,
+  "pendingBucketIds": [
+    "avatars",
+    "logos",
+    "site-images",
+    "automation-media",
+    "properties"
+  ],
+  "uploadDownloadTested": false,
+  "revokedSessionPolicyTested": false
+}
