@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "d21d8a4a73ebdb251f2f97f56679d559e3fc1b2d0febc7436da026d69f48511d",
+  "sourceDigestSha256": "0c487a8a9f343e47b93dcfa58a0f85e4c492490fa626dc23095b6436394d7865",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1447,10 +1447,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:8d77a644ea2eeedc2e7f",
+          "id": "overlay:bf491b6ad65e30f75a4f",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1599,
+          "line": 1604,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -1458,10 +1458,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:114706b59b15b990fde2",
+          "id": "overlay:55adaedaa9b90951b2b5",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1895,
+          "line": 1900,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -13672,10 +13672,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c23fd60658a3a260b787",
+          "id": "cta:a565ab515ce11bd328a3",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 969,
+          "line": 974,
           "owner": "DashboardDataError",
           "routes": [
             "/dashboard"
@@ -13684,10 +13684,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f09743bc253d36d45bc3",
+          "id": "cta:8720c0ce4f93d44519c8",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1494,
+          "line": 1499,
           "owner": "DashboardExtraCountsError",
           "routes": [
             "/dashboard"
@@ -13696,10 +13696,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:77a063b88d4745f94443",
+          "id": "cta:fdb921427424590287f6",
           "column": 7,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1517,
+          "line": 1522,
           "owner": "DashboardStatsStaleNotice",
           "routes": [
             "/dashboard"
@@ -13708,10 +13708,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:58bf428a47b2a72b469a",
+          "id": "cta:df9aeb251904890f960f",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1540,
+          "line": 1545,
           "owner": "DashboardDealDetailsState",
           "routes": [
             "/dashboard"
@@ -13720,10 +13720,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:940421ee459f677db9cc",
+          "id": "cta:47b5dac77b9bb840cd16",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1840,
+          "line": 1845,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -13732,10 +13732,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:755e4c55f93c36595bec",
+          "id": "cta:eb5c96234ed5a7537fc7",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 2172,
+          "line": 2177,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -39593,10 +39593,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f392ee6b412924661aa2",
+          "id": "cta:ea70693ed0dc75a4c698",
           "column": 21,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 509,
+          "line": 519,
           "owner": "SharedFilters",
           "routes": [
             "/agenda",
@@ -39648,10 +39648,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8f0347fd0b48067c54f5",
+          "id": "cta:1c8eebdcf22061042c59",
           "column": 13,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 745,
+          "line": 759,
           "owner": "SharedFilters",
           "routes": [
             "/agenda",
@@ -39703,10 +39703,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d6557739a4a500aba6a8",
+          "id": "cta:f36a6e208c3ab9406f06",
           "column": 11,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 826,
+          "line": 840,
           "owner": "SharedFilters",
           "routes": [
             "/agenda",
@@ -40903,10 +40903,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:b9a321fe8cef52f91848",
+          "id": "control:1932f7f2be1d2b975d43",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 774,
+          "line": 779,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -40915,10 +40915,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:d130e35360b6c11979eb",
+          "id": "control:a4ae7fae6c9fa77cd15c",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 780,
+          "line": 785,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -45543,7 +45543,7 @@
         }
       ]
     },
-    "digestSha256": "525b22210d6fb5b2604ea08a213736d42cccba345d00892a6b3ccfe573d03726"
+    "digestSha256": "d177c3019082fb6ab9992d75f1264963da53bd0b986617971ef290e6f51682f8"
   },
   "routes": [
     {
