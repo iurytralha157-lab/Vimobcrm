@@ -1,0 +1,466 @@
+{
+  "kind": "vimob-cloud-staging-catalog-readback-v1",
+  "observedAtUTC": "2026-10-23T19:01:14Z",
+  "project": {
+    "projectRef": "lfkfuhvjvqgwyikzcfep",
+    "name": "vimob-homologacao",
+    "organizationId": "snqyytbmmbfasotklrje",
+    "region": "sa-east-1",
+    "status": "ACTIVE_HEALTHY",
+    "createdAtUTC": "2026-10-23T18:22:29.629211Z",
+    "supabaseUrl": "https://lfkfuhvjvqgwyikzcfep.supabase.co",
+    "platformDatabaseVersion": "17.11.0.003"
+  },
+  "scope": {
+    "remoteMutationsPerformed": false,
+    "sqlStatements": "SELECT only",
+    "userDataRowsRead": false,
+    "credentialsRead": false,
+    "productionAccessed": false,
+    "source": "Supabase project metadata and PostgreSQL system catalogs"
+  },
+  "readiness": {
+    "projectProvisioned": true,
+    "applicationSchemaInstalled": false,
+    "crmFunctionalTestsPassed": false
+  },
+  "catalog": {
+    "schemas": [
+      {
+        "owner": "supabase_admin",
+        "schema": "auth",
+        "postgresUsage": true,
+        "postgresCreate": false
+      },
+      {
+        "owner": "postgres",
+        "schema": "extensions",
+        "postgresUsage": true,
+        "postgresCreate": true
+      },
+      {
+        "owner": "supabase_admin",
+        "schema": "graphql",
+        "postgresUsage": true,
+        "postgresCreate": false
+      },
+      {
+        "owner": "supabase_admin",
+        "schema": "graphql_public",
+        "postgresUsage": true,
+        "postgresCreate": false
+      },
+      {
+        "owner": "pg_database_owner",
+        "schema": "public",
+        "postgresUsage": true,
+        "postgresCreate": true
+      },
+      {
+        "owner": "supabase_admin",
+        "schema": "realtime",
+        "postgresUsage": true,
+        "postgresCreate": false
+      },
+      {
+        "owner": "supabase_admin",
+        "schema": "storage",
+        "postgresUsage": true,
+        "postgresCreate": false
+      },
+      {
+        "owner": "supabase_admin",
+        "schema": "vault",
+        "postgresUsage": true,
+        "postgresCreate": false
+      }
+    ],
+    "identity": {
+      "database": "postgres",
+      "currentUser": "postgres",
+      "serverVersion": "17.11",
+      "serverVersionNum": 170011
+    },
+    "domainTypes": 0,
+    "postgresRole": {
+      "name": "postgres",
+      "inherit": true,
+      "bypassRls": true,
+      "superuser": false,
+      "createRole": true,
+      "createDatabase": true
+    },
+    "publications": [
+      {
+        "name": "supabase_realtime",
+        "owner": "postgres",
+        "allTables": false,
+        "tableCount": 0
+      }
+    ],
+    "domainFunctions": 0,
+    "domainRelations": [],
+    "managedPolicies": [],
+    "authUserTriggers": [],
+    "baselineListedExtensions": [
+      {
+        "name": "btree_gist",
+        "availableVersion": "1.7",
+        "installedVersion": null
+      },
+      {
+        "name": "pg_cron",
+        "availableVersion": "1.6.4",
+        "installedVersion": null
+      },
+      {
+        "name": "pg_graphql",
+        "availableVersion": "1.6.2",
+        "installedVersion": null
+      },
+      {
+        "name": "pg_net",
+        "availableVersion": "0.20.4",
+        "installedVersion": null
+      },
+      {
+        "name": "pg_stat_statements",
+        "availableVersion": "1.11",
+        "installedVersion": "1.11"
+      },
+      {
+        "name": "pg_trgm",
+        "availableVersion": "1.6",
+        "installedVersion": null
+      },
+      {
+        "name": "pgcrypto",
+        "availableVersion": "1.3",
+        "installedVersion": "1.3"
+      },
+      {
+        "name": "supabase_vault",
+        "availableVersion": "0.3.1",
+        "installedVersion": "0.3.1"
+      },
+      {
+        "name": "uuid-ossp",
+        "availableVersion": "1.1",
+        "installedVersion": "1.1"
+      }
+    ],
+    "criticalPermissions": [
+      {
+        "owner": "supabase_auth_admin",
+        "relation": "auth.sessions",
+        "rlsForced": false,
+        "rlsEnabled": true,
+        "postgresSelect": true,
+        "postgresTrigger": true,
+        "postgresReferences": true,
+        "postgresOwnerRoleUsage": false
+      },
+      {
+        "owner": "supabase_auth_admin",
+        "relation": "auth.users",
+        "rlsForced": false,
+        "rlsEnabled": true,
+        "postgresSelect": true,
+        "postgresTrigger": true,
+        "postgresReferences": true,
+        "postgresOwnerRoleUsage": false
+      },
+      {
+        "owner": "supabase_realtime_admin",
+        "relation": "realtime.messages",
+        "rlsForced": false,
+        "rlsEnabled": true,
+        "postgresSelect": true,
+        "postgresTrigger": true,
+        "postgresReferences": true,
+        "postgresOwnerRoleUsage": false
+      },
+      {
+        "owner": "supabase_storage_admin",
+        "relation": "storage.buckets",
+        "rlsForced": false,
+        "rlsEnabled": true,
+        "postgresSelect": true,
+        "postgresTrigger": true,
+        "postgresReferences": true,
+        "postgresOwnerRoleUsage": false
+      },
+      {
+        "owner": "supabase_storage_admin",
+        "relation": "storage.objects",
+        "rlsForced": false,
+        "rlsEnabled": true,
+        "postgresSelect": true,
+        "postgresTrigger": true,
+        "postgresReferences": true,
+        "postgresOwnerRoleUsage": false
+      }
+    ],
+    "installedExtensions": [
+      {
+        "name": "pg_stat_statements",
+        "owner": "postgres",
+        "schema": "extensions",
+        "version": "1.11"
+      },
+      {
+        "name": "pgcrypto",
+        "owner": "postgres",
+        "schema": "extensions",
+        "version": "1.3"
+      },
+      {
+        "name": "plpgsql",
+        "owner": "supabase_admin",
+        "schema": "pg_catalog",
+        "version": "1.0"
+      },
+      {
+        "name": "supabase_vault",
+        "owner": "supabase_admin",
+        "schema": "vault",
+        "version": "0.3.1"
+      },
+      {
+        "name": "uuid-ossp",
+        "owner": "postgres",
+        "schema": "extensions",
+        "version": "1.1"
+      }
+    ]
+  },
+  "interfaces": {
+    "baselineExtensionMetadata": [
+      {
+        "name": "btree_gist",
+        "schema": null,
+        "trusted": true,
+        "version": "1.7",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pg_cron",
+        "schema": null,
+        "trusted": false,
+        "version": "1.6.4",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pg_graphql",
+        "schema": "graphql",
+        "trusted": false,
+        "version": "1.6.2",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pg_net",
+        "schema": null,
+        "trusted": false,
+        "version": "0.20.4",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pg_stat_statements",
+        "schema": null,
+        "trusted": false,
+        "version": "1.11",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pg_trgm",
+        "schema": null,
+        "trusted": true,
+        "version": "1.6",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "pgcrypto",
+        "schema": null,
+        "trusted": true,
+        "version": "1.3",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "supabase_vault",
+        "schema": "vault",
+        "trusted": false,
+        "version": "0.3.1",
+        "dependencies": null,
+        "requiresSuperuser": true
+      },
+      {
+        "name": "uuid-ossp",
+        "schema": null,
+        "trusted": true,
+        "version": "1.1",
+        "dependencies": null,
+        "requiresSuperuser": true
+      }
+    ],
+    "postgresDatabaseCreate": true,
+    "platformFunctionInterfaces": [
+      {
+        "result": "jsonb",
+        "schema": "auth",
+        "function": "jwt",
+        "arguments": "",
+        "postgresExecute": true
+      },
+      {
+        "result": "text",
+        "schema": "auth",
+        "function": "role",
+        "arguments": "",
+        "postgresExecute": true
+      },
+      {
+        "result": "uuid",
+        "schema": "auth",
+        "function": "uid",
+        "arguments": "",
+        "postgresExecute": true
+      },
+      {
+        "result": "void",
+        "schema": "realtime",
+        "function": "broadcast_changes",
+        "arguments": "topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text",
+        "postgresExecute": true
+      },
+      {
+        "result": "void",
+        "schema": "realtime",
+        "function": "send",
+        "arguments": "payload jsonb, event text, topic text, private boolean",
+        "postgresExecute": true
+      },
+      {
+        "result": "text",
+        "schema": "realtime",
+        "function": "topic",
+        "arguments": "",
+        "postgresExecute": true
+      },
+      {
+        "result": "text",
+        "schema": "storage",
+        "function": "extension",
+        "arguments": "name text",
+        "postgresExecute": true
+      },
+      {
+        "result": "text",
+        "schema": "storage",
+        "function": "filename",
+        "arguments": "name text",
+        "postgresExecute": true
+      },
+      {
+        "result": "text[]",
+        "schema": "storage",
+        "function": "foldername",
+        "arguments": "name text",
+        "postgresExecute": true
+      }
+    ]
+  },
+  "baselineExtensionsNotInstalled": [
+    {
+      "name": "btree_gist",
+      "availableVersion": "1.7"
+    },
+    {
+      "name": "pg_cron",
+      "availableVersion": "1.6.4"
+    },
+    {
+      "name": "pg_graphql",
+      "availableVersion": "1.6.2"
+    },
+    {
+      "name": "pg_net",
+      "availableVersion": "0.20.4"
+    },
+    {
+      "name": "pg_trgm",
+      "availableVersion": "1.6"
+    }
+  ],
+  "proven": [
+    "The selected project is ACTIVE_HEALTHY in sa-east-1 and runs PostgreSQL 17.11.",
+    "The SQL session uses postgres with superuser=false; postgres has CREATE on the database and public schema.",
+    "There are no relations, functions or types in public/private; private does not exist.",
+    "All nine extensions listed for baseline/forward or scheduler review are available; five remain uninstalled. This inventory does not establish which extensions the application actually needs installed.",
+    "postgres has SELECT on auth.sessions and TRIGGER on auth.users.",
+    "The canonical Auth user trigger and application-managed policies are absent.",
+    "supabase_realtime exists, is owned by postgres and contains zero tables.",
+    "The nine enumerated Auth/Storage/Realtime function interfaces exist and postgres has EXECUTE according to the catalog."
+  ],
+  "notValidated": [
+    "No CREATE EXTENSION, schema restore, migration, trigger, policy or grant was executed.",
+    "Availability of pg_cron, pg_graphql and pg_net does not prove their installation with Cloud delegated permissions.",
+    "postgres does not inherit the owner roles of the inspected Auth/Storage/Realtime tables; actual CREATE POLICY behavior remains untested.",
+    "Schema-level CREATE on auth/storage/realtime is false; native platform schemas and objects must remain under platform ownership.",
+    "The local baseline was derived on PostgreSQL 17.6; identical platform schema and extension implementation hashes are not assumed.",
+    "No semantic comparison or invocation of the enumerated native functions was performed; pg_net interfaces are unavailable until that extension is installed.",
+    "No application RLS, tenant-isolation, session-revocation, Storage upload, Auth flow or Realtime behavior was exercised.",
+    "The derived Cloud installer, twenty forward migrations, reference-data load, empty test buckets and dedicated service configuration remain pending."
+  ],
+  "evidence": {
+    "metadataRead": {
+      "tool": "supabase_get_project",
+      "projectId": "lfkfuhvjvqgwyikzcfep"
+    },
+    "sqlRead": {
+      "tool": "supabase_execute_sql",
+      "projectId": "lfkfuhvjvqgwyikzcfep",
+      "statementCount": 2,
+      "statementKind": "SELECT",
+      "catalogSources": [
+        "pg_roles",
+        "pg_namespace",
+        "pg_class",
+        "pg_proc",
+        "pg_type",
+        "pg_extension",
+        "pg_available_extensions",
+        "pg_available_extension_versions",
+        "pg_trigger",
+        "pg_policies",
+        "pg_publication",
+        "pg_publication_rel"
+      ],
+      "permissionFunctions": [
+        "has_database_privilege",
+        "has_schema_privilege",
+        "has_table_privilege",
+        "has_function_privilege",
+        "pg_has_role"
+      ],
+      "predicates": "Domain objects restricted to public/private; critical table permissions restricted to auth.users, auth.sessions, storage.objects, storage.buckets and realtime.messages. No user-table contents selected."
+    },
+    "publicReferences": [
+      "https://supabase.com/dashboard/project/lfkfuhvjvqgwyikzcfep",
+      "https://supabase.com/docs/guides/database/postgres/roles-superuser",
+      "https://supabase.com/docs/guides/platform/permissions",
+      "https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore"
+    ],
+    "localReferences": [
+      "deploy/staging/supabase-target.json",
+      "docs/staging-database.md",
+      "supabase/reconciliation/local-bootstrap/baseline-20261016.json"
+    ]
+  }
+}

@@ -1,8 +1,38 @@
 # Banco de homologação no Supabase Cloud
 
 O destino deve ser um **projeto novo e independente**, com contas de teste,
-arquivos sintéticos e credenciais próprias. A preparação abaixo é offline:
-não conecta ao Supabase, não restaura SQL e não declara o banco pronto.
+arquivos sintéticos e credenciais próprias. Os scripts de inventário abaixo
+funcionam offline: não conectam ao Supabase, não restauram SQL e não declaram
+o banco pronto.
+
+## Projeto de homologação criado
+
+Em 2026-10-23 foi confirmado o projeto `vimob-homologacao`, organização
+`vimob teste` (`snqyytbmmbfasotklrje`), plano Free, região São Paulo (`sa-east-1`).
+A referência é `lfkfuhvjvqgwyikzcfep`; o painel e a API de gerenciamento
+confirmaram `ACTIVE_HEALTHY`. Isso comprova o provisionamento da infraestrutura,
+sem certificar a instalação do esquema ou o funcionamento do CRM.
+
+- [Painel do projeto de homologação](https://supabase.com/dashboard/project/lfkfuhvjvqgwyikzcfep).
+- [Alvo público validado, sem credenciais](../deploy/staging/supabase-target.json).
+- [Leitura do catálogo Cloud, sem dados de usuários ou credenciais](../deploy/staging/cloud-catalog.json).
+
+A inspeção remota usou somente metadados e consultas `SELECT` ao catálogo.
+Confirmou PostgreSQL 17.11, papel `postgres` sem superuser, zero objetos de
+domínio em `public`/`private`, leitura permitida de `auth.sessions` e publicação
+`supabase_realtime` já existente e vazia. O relatório lista também permissões,
+interfaces e extensões disponíveis; não houve instalação de extensões, grants,
+policies, triggers ou migrations. Esses resultados não substituem o ensaio
+do instalador Cloud com as permissões reais.
+
+Para conferir o inventário local com esse alvo:
+
+```powershell
+node scripts/staging/cloud-baseline-readiness.mjs --target D:/Vimob/workspaces/vimob-crm/deploy/staging/supabase-target.json
+```
+
+O projeto novo foi criado separadamente; nenhuma conexão ou variável da produção
+foi substituída. A instalação Cloud descrita abaixo continua pendente.
 
 ## Material existente e impedimentos
 
@@ -46,8 +76,8 @@ contagens e bloqueios. O JSON não inclui corpos SQL nem dados das tabelas.
 `ready: false` significa que a instalação continua impedida, mesmo quando o
 comando termina com sucesso. Erros de contrato/integridade encerram com código 1.
 
-Depois de escolher a conta e criar o projeto autorizado, um arquivo público
-de alvo pode ser fornecido com `--target C:/caminho-existente/alvo-cloud.json`:
+O alvo público já registrado pode ser fornecido com `--target`. Para outro
+projeto de homologação autorizado, o contrato desse arquivo é:
 
 ```json
 {
@@ -117,6 +147,6 @@ O relatório não resolve esse isolamento e não permite remover seus bloqueios.
 - [Fluxo canônico e bloqueio de db push](../supabase/README.md).
 - [Baseline estritamente local](../supabase/reconciliation/local-bootstrap/README.md).
 
-Nenhum comando desta preparação acessa um banco. Ainda faltam o exporter/instalador
-Cloud específico, o alvo novo e a validação real de compatibilidade. Não há modo
+Os scripts locais de inventário não acessam um banco. Ainda faltam o exporter/instalador
+Cloud específico e a validação real de compatibilidade. Não há modo
 `apply`, conexão por `.env`, restauração de produção ou alteração de DNS neste fluxo.

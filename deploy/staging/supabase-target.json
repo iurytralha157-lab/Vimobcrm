@@ -1,0 +1,6 @@
+{
+  "kind": "vimob-cloud-staging-target-v1",
+  "environment": "staging",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "supabaseUrl": "https://lfkfuhvjvqgwyikzcfep.supabase.co"
+}
