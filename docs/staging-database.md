@@ -95,12 +95,14 @@ prova compatibilidade, acesso remoto ou implantação**.
 
 A preparação detecta literais de e-mail nas funções da baseline e nos forwards
 sem reproduzir seus valores.
-Existe um destinatário operacional fixo na função
-`private.create_billing_payment_receipt_from_payment`, na baseline de 2026-10-16.
-Isso bloqueia a prontidão: antes de habilitar dispatch, revisar um override
-exclusivo e sanitizado da homologação ou uma barreira que impeça permanentemente
-esse envio. Preservar o arquivo canônico e seus hashes. Endereços reservados de
-exemplo e sufixos JID do WhatsApp não são classificados como e-mails operacionais.
+Na função `private.create_billing_payment_receipt_from_payment`, o literal está
+no campo `support_email` do fallback do emissor usado no snapshot do recibo.
+É um contato operacional embutido; sua presença não comprova destinatário nem
+disparo de e-mail. Revisar e, quando necessário, sanitizar esse contato na
+configuração derivada da homologação, preservando o arquivo canônico e seus
+hashes. O relatório exige revisão do contexto e não considera esse campo uma
+prova de envio externo. Endereços reservados de exemplo e sufixos JID do WhatsApp
+não são classificados como e-mails operacionais.
 
 Manter workers, cron e integrações externas sem credenciais até configurar
 destinos próprios de teste. Desligar somente workers da API não demonstra que

@@ -57,7 +57,8 @@ export function inventoryDump(source, artifact) {
 
 function literalRisks(block) {
   const risks = [];
-  // Never retain the matched values: they can identify operational recipients.
+  // Never retain the matched values: they can identify operational contacts.
+  // A literal alone does not establish its use as a recipient or any dispatch.
   const emails = [...block.source.matchAll(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)];
   for (const match of emails) {
     const domain = match[0].slice(match[0].lastIndexOf('@') + 1).toLowerCase();
@@ -107,8 +108,8 @@ export function buildCloudPlan(source, target = null) {
   if (!selectedTarget) blockers.unshift({ code: 'TARGET_NOT_SELECTED', action: 'Select a new Cloud staging project; provide only its public reference and matching HTTPS origin.' });
   if (review.length) blockers.push({ code: 'UNKNOWN_OBJECTS_REQUIRE_REVIEW', count: review.length,
     action: 'Review unknown dump types, owners, schemas or managed policies explicitly; no fallback includes them.' });
-  if (risks.length) blockers.push({ code: 'OPERATIONAL_LITERALS_REQUIRE_ISOLATION', count: risks.length,
-    action: 'Review the listed functions. A derived staging override must remove operational recipients/destinations or permanently prevent their dispatch before enabling any worker; preserve canonical artifact hashes.' });
+  if (risks.length) blockers.push({ code: 'OPERATIONAL_LITERALS_REQUIRE_REVIEW', count: risks.length,
+    action: 'Review the usage of the listed literals. They may be contact metadata; a literal alone does not establish a recipient or dispatch. Sanitize operational contacts in derived staging configuration where appropriate, preserve canonical hashes, and assess actual dispatch paths separately.' });
   return {
     kind: 'vimob-cloud-staging-baseline-plan-v1', classification: 'offline-preparation-only',
     ready: false, databaseAccessed: false, executableSQLIncluded: false, applySupported: false,

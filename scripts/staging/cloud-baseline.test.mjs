@@ -58,17 +58,20 @@ test('TOC scanner ignores fake headers inside function bodies, quotes and nested
   assert.throws(() => inventoryDump('-- Name: malformed\n', 'bad.sql'));
 });
 
-test('plan blocks operational recipients without including their values or executable SQL', () => {
-  const recipient = 'operational@real-provider.invalid';
-  const sql = `${header('billing()', 'FUNCTION', 'private')}CREATE FUNCTION private.billing() RETURNS text AS $$ SELECT '${recipient}'; $$ LANGUAGE sql;\n`;
+test('contact literals require contextual review without claiming recipient dispatch', () => {
+  const contact = 'operational@real-provider.invalid';
+  const sql = `${header('billing()', 'FUNCTION', 'private')}CREATE FUNCTION private.billing() RETURNS jsonb AS $$ SELECT jsonb_build_object('support_email', '${contact}'); $$ LANGUAGE sql;\n`;
   const plan = buildCloudPlan(sourceFixture(sql), target), serialized = JSON.stringify(plan);
   assert.equal(plan.ready, false);
   assert.equal(plan.applySupported, false);
   assert.equal(plan.databaseAccessed, false);
   assert.equal(plan.executableSQLIncluded, false);
   assert.equal(plan.literalRisks[0].category, 'OPERATIONAL_EMAIL_LITERAL');
-  assert.ok(plan.blockers.some(row => row.code === 'OPERATIONAL_LITERALS_REQUIRE_ISOLATION'));
-  assert.ok(!serialized.includes(recipient));
+  const review = plan.blockers.find(row => row.code === 'OPERATIONAL_LITERALS_REQUIRE_REVIEW');
+  assert.ok(review);
+  assert.match(review.action, /contact metadata/);
+  assert.match(review.action, /does not establish a recipient or dispatch/);
+  assert.ok(!serialized.includes(contact));
   assert.ok(!serialized.includes('CREATE FUNCTION'));
   assert.ok(!plan.blockers.some(row => row.code === 'TARGET_NOT_SELECTED'));
 });
