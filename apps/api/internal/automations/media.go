@@ -18,7 +18,7 @@ import (
 
 const automationMediaBucket = "automation-media"
 
-func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Context, mediaType string, limit int, offset int) (AutomationMediaPage, error) {
+func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Context, mediaType string, limit int, offset int, search ...string) (AutomationMediaPage, error) {
 	if !canViewAutomations(tenantContext) {
 		return AutomationMediaPage{}, tenant.ErrOrganizationAccessDenied
 	}
@@ -32,7 +32,10 @@ func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Conte
 	}
 
 	prefix := automationMediaFolder(tenantContext.OrganizationID, normalizedType)
-	objects, err := repo.storage.list(ctx, automationMediaBucket, prefix, limit+1, offset)
+	if len(search) > 0 && len([]rune(search[0])) > 120 {
+		return AutomationMediaPage{}, ErrInvalidInput
+	}
+	objects, err := repo.storage.list(ctx, automationMediaBucket, prefix, limit+1, offset, search...)
 	if err != nil {
 		return AutomationMediaPage{}, err
 	}

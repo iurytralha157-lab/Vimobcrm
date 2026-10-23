@@ -133,7 +133,7 @@ func Distribute(ctx context.Context, queryer Queryer, request Request) (Result, 
 		return Result{}, fmt.Errorf("decode distribution result: %w", err)
 	}
 	switch result.Reason {
-	case "assigned", "already_assigned", "no_matching_queue", "no_available_members":
+	case "assigned", "already_assigned", "no_matching_queue", "no_available_members", "queue_closed", "queue_waiting", "queue_limit_reached", "queue_protected", "pooled":
 		return result, nil
 	case "lead_not_found", "idempotency_key_conflict":
 		return result, fmt.Errorf("%w: %s", ErrRejected, result.Reason)

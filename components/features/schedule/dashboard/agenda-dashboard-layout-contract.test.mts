@@ -83,7 +83,7 @@ test("dados temporários do dashboard nunca atravessam organização ou acesso",
   assert.match(dashboardHookSource, /previousKey\[3\] !== accessSignature/);
 });
 
-test("KPIs ficam em duas linhas de seis sem textos explicativos superiores", () => {
+test("KPIs chegam a duas linhas de seis conforme a largura útil do dashboard", () => {
   for (const label of [
     "Realizados",
     "Em aberto",
@@ -103,7 +103,9 @@ test("KPIs ficam em duas linhas de seis sem textos explicativos superiores", () 
   assert.match(kpisSource, /getAgendaDashboardTotalLabels\(dateBasis\)/);
   assert.match(kpisSource, /label: totalLabels\.period/);
   assert.match(kpisSource, /byType\?: ScheduleDashboardBreakdown\[]/);
-  assert.equal(kpisSource.match(/xl:grid-cols-6/g)?.length, 2);
+  assert.equal(kpisSource.match(/@\[960px\]\/agenda-dashboard:grid-cols-6/g)?.length, 2);
+  assert.equal(kpisSource.match(/@\[580px\]\/agenda-dashboard:grid-cols-3/g)?.length, 2);
+  assert.match(dashboardSource, /@container\/agenda-dashboard/);
   assert.doesNotMatch(kpisSource, /Todos os compromissos do recorte/);
   assert.doesNotMatch(kpisSource, /Aguardando um desfecho/);
   assert.doesNotMatch(kpisSource, /Agenda futura em aberto/);

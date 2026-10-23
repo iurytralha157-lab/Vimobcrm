@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FILTER_UI } from '@/config/filter-ui';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -294,6 +296,7 @@ export default function Contracts() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
+                  aria-label="Buscar contratos por cliente, número ou imóvel"
                   placeholder="Buscar..."
                   className="pl-9"
                   value={searchQuery}
@@ -305,6 +308,8 @@ export default function Contracts() {
                 <Button
                   variant="outline"
                   onClick={() => setShowFilters(!showFilters)}
+                  aria-expanded={showFilters}
+                  aria-controls={showFilters ? "financial-contract-filters" : undefined}
                   className="w-full sm:w-auto"
                 >
                   <SlidersHorizontal className="h-4 w-4 mr-2" />
@@ -316,7 +321,7 @@ export default function Contracts() {
               ) : (
                 <>
                   <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger aria-label="Tipo de contrato" className={cn(FILTER_UI.control, 'w-40')}>
                       <SelectValue placeholder="Tipo" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
@@ -328,7 +333,7 @@ export default function Contracts() {
                   </Select>
 
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger aria-label="Status do contrato" className={cn(FILTER_UI.control, 'w-40')}>
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
@@ -344,9 +349,9 @@ export default function Contracts() {
             </div>
 
             {isMobile && showFilters && (
-              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+              <div id="financial-contract-filters" className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="Tipo de contrato" className={FILTER_UI.control}>
                     <SelectValue placeholder="Tipo" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
@@ -358,7 +363,7 @@ export default function Contracts() {
                 </Select>
 
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="Status do contrato" className={FILTER_UI.control}>
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">

@@ -67,3 +67,28 @@ func TestDashboardVisitsShareScopedKPIWhere(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardVisitLeaderVisibilityRequiresCurrentMembershipGeneration(t *testing.T) {
+	for _, required := range []string{
+		"and $4::boolean",
+		"visit_team.id = visit_leader.team_id",
+		"visit_team.organization_id = visit_leader.organization_id",
+		"coalesce(visit_team.is_active, false) = true",
+		"coalesce(visit_leader_user.is_active, false) = true",
+		"coalesce(visit_member_user.is_active, false) = true",
+		"visit_leader_membership.organization_id = visit_leader.organization_id",
+		"visit_leader_membership.user_id = visit_leader.user_id",
+		"visit_leader_membership.membership_generation = visit_leader.membership_generation",
+		"visit_leader_membership.is_active = true",
+		"visit_leader_membership.deleted_at is null",
+		"visit_member_membership.organization_id = visit_member.organization_id",
+		"visit_member_membership.user_id = visit_member.user_id",
+		"visit_member_membership.membership_generation = visit_member.membership_generation",
+		"visit_member_membership.is_active = true",
+		"visit_member_membership.deleted_at is null",
+	} {
+		if !strings.Contains(dashboardVisitEventVisibilitySQL, required) {
+			t.Fatalf("dashboard visit leader scope is missing %q", required)
+		}
+	}
+}

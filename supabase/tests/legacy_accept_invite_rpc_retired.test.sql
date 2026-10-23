@@ -29,22 +29,22 @@ select ok(
 select ok(
   exists (
     select 1
-    from pg_catalog.pg_constraint
-    where conrelid = 'public.invitations'::regclass
-      and conname = 'invitations_token_key'
-      and contype = 'u'
+    from pg_catalog.pg_index index_row
+    where index_row.indrelid = 'public.invitations'::regclass
+      and index_row.indisunique and index_row.indisvalid
+      and index_row.indexrelid = pg_catalog.to_regclass('public.invitations_token_hash_uidx')
   ),
-  'invitation tokens are protected by a unique constraint'
+  'invitation token hashes are protected by a unique index'
 );
 
 select ok(
   not exists (
     select 1
     from public.invitations
-    group by token
+    group by token_hash
     having count(*) > 1
   ),
-  'existing invitation tokens are unique'
+  'existing invitation token hashes are unique'
 );
 
 select ok(

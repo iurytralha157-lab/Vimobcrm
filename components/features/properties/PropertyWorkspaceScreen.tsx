@@ -385,9 +385,9 @@ export function PropertyWorkspaceScreen({
     (publication) => publication.channel === "site",
   );
   const sitePublicationState = getSitePublicationState(
-    sitePublication,
+    sitePublication ?? property.site_publication,
     Boolean(property.published_on_site ?? property.anunciar),
-    !normalizedResourcesAvailable || sitePublicationQuery.isSuccess,
+    Boolean(property.site_publication) || !normalizedResourcesAvailable || sitePublicationQuery.isSuccess,
   );
   const normalizedStatus = normalizeStatus(property.status);
   const isSold = normalizedStatus === "vendido" || normalizedStatus === "sold";
@@ -429,7 +429,8 @@ export function PropertyWorkspaceScreen({
     sitePublicationState.canOpenPublicSite &&
     !isPrivateStatus &&
     !isUnavailable &&
-    !isInactive;
+    !isInactive &&
+    property.autorizado_comercializacao !== false;
   const propertySiteUrl = isPubliclyAvailable
     ? sitePublication?.public_url ||
       buildPropertySiteUrl(property.code, siteInfoQuery.data)

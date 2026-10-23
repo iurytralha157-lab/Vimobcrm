@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { InternationalPhoneInput } from '@/components/shared/forms/InternationalPhoneInput';
 import { Textarea } from '@/components/ui/textarea';
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -15,8 +14,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { LeadAttachmentsStatus } from '@/components/features/leads/LeadAttachmentsStatus';
 import {
-  Phone, Mail, MessageCircle, Loader2, X, Plus, Save, User,
+  Phone, Mail, MessageCircle, Loader2, X, Plus, User,
   Calendar, FileEdit, Activity, Contact,
   ChevronDown, FileText, Paperclip
 } from 'lucide-react';
@@ -31,15 +31,28 @@ import {
 import { cn } from '@/lib/utils';
 import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
 import { commandSearchFilter } from '@/lib/search-text';
-import { format } from 'date-fns';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
 import { useLeadCadenceState } from '@/hooks/leads/use-lead-cadence-state';
+import { useLeadFeedbackDraft } from '@/hooks/leads/use-lead-feedback-draft';
+import { useLeadAttachmentUploadDraft } from '@/hooks/leads/use-lead-attachment-upload-draft';
+import { LeadAttachmentUploadRecovery } from '@/components/features/leads/lead-detail/LeadAttachmentUploadRecovery';
+import { useRecordLeadFeedback } from '@/hooks/leads/use-record-lead-feedback';
+import { useLeadMoveContract } from '@/hooks/leads/use-lead-move-contract';
+import { useLeadOutcomeDraft } from '@/hooks/leads/use-lead-outcome-draft';
+import { useLeadCardOutcomeDraft } from '@/hooks/leads/use-lead-card-outcome-draft';
+import { useRecordLeadContactOutcome } from '@/hooks/leads/use-record-lead-contact-outcome';
+import { useLeadDetailOperationScope } from '@/hooks/leads/use-lead-detail-operation-scope';
+import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
+import { useLeadStatusConfirmation } from '@/hooks/leads/use-lead-status-confirmation';
+import { useLeadTagOptimism } from '@/hooks/leads/use-lead-tag-optimism';
+import { isDefiniteLeadFieldRejection, useLeadFieldOptimism } from '@/hooks/leads/use-lead-field-optimism';
 import { useCreateActivity } from '@/hooks/use-activities';
 import { useLead, useUpdateLead, useAddLeadTag, useRemoveLeadTag } from '@/hooks/use-leads';
 import type { Lead } from '@/hooks/use-leads';
-import { useProperties } from '@/hooks/use-properties';
-import { useScheduleEvents, ScheduleEvent, EventType } from '@/hooks/use-schedule-events';
+import { useProperty } from '@/hooks/use-properties';
+import { ScheduleEvent, EventType } from '@/hooks/use-schedule-events';
+import { useLeadSchedulePreview } from '@/hooks/leads/use-lead-schedule-preview';
 import { useLeadMeta } from '@/hooks/use-lead-meta';
 import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from '@/hooks/use-lead-attachments';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -48,6 +61,7 @@ import { useFloatingChat } from '@/contexts/FloatingChatContext';
 import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { CopyLeadPhoneButton } from '@/components/features/leads/CopyLeadPhoneButton';
+import { QueuePoolClaimButton } from '@/components/features/leads/QueuePoolClaimButton';
 import { LeadCadencePanel } from '@/components/features/leads/LeadCadencePanel';
 import { resolvedFirstResponse } from '@/components/features/leads/lead-detail/first-response';
 
@@ -55,23 +69,38 @@ import type { TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog'
 import { toast } from 'sonner';
 import { formatPhoneForDisplay, normalizePhoneToE164 } from '@/lib/phone-utils';
 import { TagSelectorPopoverContent } from '@/components/ui/tag-selector';
-import { useUpdateLeadCommission } from '@/hooks/use-update-commission';
 import { useDealStatusChange } from '@/hooks/use-deal-status-change';
-import { useCreateCall } from '@/hooks/use-telephony';
 import { useRecordFirstResponseOnAction } from '@/hooks/use-first-response';
 import { formatResponseTime } from '@/hooks/use-lead-timeline';
 import { useLeadHistory } from '@/hooks/use-lead-history';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useTeams } from '@/hooks/use-teams';
-import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
-import { appendOptimisticHistoryEvent } from '@/hooks/use-optimistic-lead-history';
+import { appendOptimisticLeadHistoryEvent, removeOptimisticLeadHistoryEvent } from '@/hooks/use-optimistic-lead-history';
 import { leadsAPI } from '@/lib/api/leads';
-import { mergePreservingDefinedFields } from '@/lib/merge-preserving-defined';
+import { hydrateLeadDetail, mergeLeadDetailMutation } from '@/components/features/leads/lead-detail/hydrate-lead-detail';
+import { LeadScheduleReadDialog } from '@/components/features/leads/lead-detail/LeadScheduleReadDialog';
 import { canOperateLeadFromFreshRead, mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
+import pipelineDetailStyles from '@/components/features/leads/lead-detail/PipelineLeadDetail.module.css';
+import { PipelineMobileLeadHeader } from '@/components/features/leads/lead-detail/PipelineMobileLeadHeader';
+import { LeadTagPickerContent } from '@/components/features/leads/lead-detail/LeadTagPickerContent';
+import { LeadDetailReadNotice } from '@/components/features/leads/lead-detail/LeadDetailReadNotice';
+import { getLeadDetailReadState } from '@/components/features/leads/lead-detail/read-recovery';
+import { LeadAssigneeCatalogNotice } from '@/components/features/leads/lead-detail/LeadAssigneeCatalogNotice';
+import type { TagCatalog } from '@/lib/validation/tag-catalog';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
 import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
+import { capturePipelineMoveRevision, type PipelineMoveRevision } from '@/lib/pipeline-move-revision';
+import { getLeadAssigneeAvailability } from '@/lib/lead-assignee-availability';
 import { isAttendanceScheduleType, isFinalScheduleStatus } from '@/lib/schedule-outcome';
+import { compareServerRevisions } from '@/lib/compare-server-revisions';
+import { getDisplayInitial, normalizeDisplayName } from '@/lib/display-name';
+import { mergeLeadServerResponse } from '@/lib/merge-lead-server-response';
+import { requiresWonLeadFinancialReview, WON_LEAD_FINANCIAL_REVIEW_MESSAGE } from '@/components/features/leads/lead-detail/financial-review';
+import { getLeadStatusFinancialReviewMessage } from '@/lib/lead-financial-review';
+import { assertLeadFinancialFields } from '@/lib/validation/lead-financial-values';
+import { replaceOwnedPropertyDraft, rollbackLeadPropertySelection } from '@/components/features/leads/lead-detail/property-selection-rollback';
 import { useStageAutomations } from '@/hooks/use-stage-automations';
 import { teamsAPI } from '@/lib/api/teams';
 import type { LeadCadenceTaskState } from '@/lib/validation';
@@ -102,11 +131,26 @@ import {
 
 export type { LeadDetailLead } from './lead-detail';
 
-function useIsLeadDetailTablet() {
+type LeadStageMoveIntent = {
+  stageId: string;
+  revision: PipelineMoveRevision;
+  operation: { isCurrent: () => boolean };
+  requestOperation: LeadRequestOperation;
+};
+
+type LeadAssigneeSelection = {
+  leadId: string;
+  userId: string | null;
+  expectedUpdatedAt: string;
+  operation: { isCurrent: () => boolean };
+  requestOperation: LeadRequestOperation;
+};
+
+function useIsLeadDetailTablet(maxWidth: number) {
   const [isTablet, setIsTablet] = useState(false);
 
   useEffect(() => {
-    const media = window.matchMedia('(min-width: 768px) and (max-width: 1023px)');
+    const media = window.matchMedia(`(min-width: 768px) and (max-width: ${maxWidth}px)`);
     const sync = () => setIsTablet(media.matches);
     let cancelled = false;
     queueMicrotask(() => {
@@ -117,7 +161,7 @@ function useIsLeadDetailTablet() {
       cancelled = true;
       media.removeEventListener('change', sync);
     };
-  }, []);
+  }, [maxWidth]);
 
   return isTablet;
 }
@@ -129,42 +173,63 @@ export function LeadDetailDialog({
   onEdit,
   allTags,
   allUsers,
+  allUsersState,
+  variant = 'default',
+  hideWhatsAppAction = false,
+  verifiedRead,
+  readAccessPending = false,
+  readAccessBlocked = false,
 }: LeadDetailDialogProps) {
   const lead = leadProp ?? ({} as LeadDetailLead);
+  const { activeOrganization, profile, organization, user, session } = useAuth();
   const { language } = useLanguage();
+  const mobileTabsId = useId();
   const isMobile = useIsMobile();
-  const isTablet = useIsLeadDetailTablet();
+  const isTablet = useIsLeadDetailTablet(variant === 'contacts' ? 1199 : 1023);
   const dateLocale = language === 'pt-BR' ? ptBR : enUS;
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const [assigneePopoverOpen, setAssigneePopoverOpen] = useState(false);
   const [localLead, setLocalLead] = useState<LeadDetailLead | null>(leadProp);
   const [isUpdatingAssignee, setIsUpdatingAssignee] = useState(false);
-  const [isEditingContact, setIsEditingContact] = useState(false);
+  const assigneeUpdatingRef = useRef(false);
+  // Keep assignment intent beside this legacy action; extract detail actions into lead-detail after the CAS boundary is stable.
+  const assigneeSelectionRef = useRef<LeadAssigneeSelection | null>(null);
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
   const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
+  const [readOnlyScheduleEvent, setReadOnlyScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>('call');
   const [activeTab, setActiveTab] = useState('activities');
   const [selectedTask, setSelectedTask] = useState<LeadCadenceTaskState | null>(null);
+  const [taskInspectOnly, setTaskInspectOnly] = useState(false);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
   const [taskForOutcome, setTaskForOutcome] = useState<LeadCadenceTaskState | null>(null);
   const [quickActionOutcomeOpen, setQuickActionOutcomeOpen] = useState(false);
   const [quickActionOutcomeType, setQuickActionOutcomeType] = useState<'call' | 'email'>('call');
+  const [quickActionSubmitting, setQuickActionSubmitting] = useState(false);
+  const quickActionSubmittingRef = useRef(false);
+  const [cadenceActionPending, setCadenceActionPending] = useState(false);
+  const cadenceActionPendingRef = useRef(false);
+  const statusSubmittingRef = useRef(false);
+  const feedbackSubmittingRef = useRef(false);
+  const propertySaveOperationRef = useRef<{ isCurrent: () => boolean } | null>(null);
   const [selectedAttachment, setSelectedAttachment] = useState<LeadAttachment | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [shouldLoadLeadProperties, setShouldLoadLeadProperties] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [reopenStatusConfirmation, setReopenStatusConfirmation] =
     useState<ReopenStatusConfirmation | null>(null);
   const [assigneeScheduleConfirmation, setAssigneeScheduleConfirmation] =
     useState<AssigneeScheduleConfirmation | null>(null);
   const handleCloseLeadDetail = () => {
+    statusConfirmation.clear();
+    assigneeSelectionRef.current = null;
     setAssigneeScheduleConfirmation(null);
+    setReadOnlyScheduleEvent(null);
     onClose();
   };
   const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
   const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  const requestScope = useLeadRequestScope();
   const { openNewChat, openNewChatWithMessage } = useFloatingChat();
   const {
     refreshPipelineInBackground,
@@ -174,53 +239,66 @@ export function LeadDetailDialog({
   } = useLeadDetailPipelineCache();
 
   const leadId = leadProp?.id ?? null;
-  const fullLeadQuery = useLead(leadId, { freshOnMount: true });
-  const leadHistoryQuery = useLeadHistory(leadId);
+  const panelSessionId = getGlobalSignOutSessionId(session);
+  useLayoutEffect(() => {
+    if (!leadId) return;
+    // A fresh snapshot of the same lead must not interrupt panel navigation.
+    v2LeadInfoScrollRef.current?.scrollTo({ top: 0 });
+    v2LeadWorkScrollRef.current?.scrollTo({ top: 0 });
+  }, [leadId, leadProp?.organization_id, activeOrganization.organizationId, user?.id, panelSessionId]);
+  const attachmentUploadDraft = useLeadAttachmentUploadDraft(activeOrganization.organizationId || null, leadId,
+    user?.id || null, getGlobalSignOutSessionId(session));
+  const isUploading = attachmentUploadDraft.draft?.phase === 'pending';
+  const outcomeScopeKey = `${activeOrganization.organizationId}:${leadId}:${user?.id}:${getGlobalSignOutSessionId(session)}:${verifiedRead?.selectionVersion}`;
+  const outcomeDraft = useLeadOutcomeDraft(`${outcomeScopeKey}:cadence:${taskForOutcome?.id || ''}`);
+  const quickActionDraft = useLeadCardOutcomeDraft(activeOrganization.organizationId, user?.id,
+    getGlobalSignOutSessionId(session), leadId || '', quickActionOutcomeType);
+  const fullLeadQuery = useLead(leadId, { freshOnMount: true, verifiedRead });
+  const detailReadState = getLeadDetailReadState({ leadId, organizationId: activeOrganization.organizationId,
+    leadOrganizationId: leadProp?.organization_id, query: { data: fullLeadQuery.data, dataUpdatedAt: fullLeadQuery.dataUpdatedAt,
+      isSuccess: fullLeadQuery.isSuccess, isFetching: fullLeadQuery.isFetching, isFetchedAfterMount: fullLeadQuery.isFetchedAfterMount,
+      isError: fullLeadQuery.isError, error: fullLeadQuery.error }, verifiedRead });
+  const retryLeadRead = () => {
+    if (detailReadState.canRetry) void fullLeadQuery.refetch({ cancelRefetch: false });
+  };
+  const statusConfirmation = useLeadStatusConfirmation(leadId, fullLeadQuery.data,
+    readAccessBlocked || readAccessPending || fullLeadQuery.isFetching || !fullLeadQuery.isSuccess);
+  const leadHistoryQuery = useLeadHistory(leadId, { paginated: variant === 'pipeline' });
   const [lostReasonLocal, setLostReasonLocal] = useState(lead?.lost_reason || '');
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
-  const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
+  const [pendingLostStageMove, setPendingLostStageMove] = useState<LeadStageMoveIntent | null>(null);
   const [stageMovePending, setStageMovePending] = useState(false);
-  const [feedback, setFeedback] = useState('');
+  const stageMovePendingRef = useRef(false);
+  const { draft: feedback, updateDraft: setFeedback, acknowledgeSavedDraft, getSubmission } = useLeadFeedbackDraft(
+    leadProp?.organization_id || activeOrganization.organizationId || null, leadId, user?.id || null,
+  );
 
   const handleSaveFeedback = async () => {
-    if (!canOperateLead || !feedback.trim()) return;
-    const savedFeedback = feedback.trim();
+    if (!canOperateLead || !feedback.trim() || feedbackSubmittingRef.current) return;
+    feedbackSubmittingRef.current = true;
+    const submittedDraft = feedback;
+    let operation: ReturnType<typeof captureDetailOperation> | undefined;
+    let mutationStarted = false;
     try {
-      await updateLead.mutateAsync({
-        id: lead.id,
-        feedback: savedFeedback,
-      });
-
-      setFeedback('');
-      toast.success('Feedback registrado com sucesso!');
-    } catch {
-      toast.error('Erro ao registrar feedback');
+      operation = captureDetailOperation();
+      const command = getSubmission(submittedDraft);
+      mutationStarted = true;
+      await recordLeadFeedback.mutateAsync({ ...command, leadId: lead.id });
+      if (!operation.isCurrent()) return;
+      acknowledgeSavedDraft(submittedDraft, command.commandId);
+      if (operation.isCurrent()) toast.success('Feedback registrado com sucesso!');
+    } catch (error) {
+      if (!mutationStarted && operation?.isCurrent()) toast.error(`Não foi possível preparar o feedback: ${getErrorMessage(error)}`);
+      // The mutation reports transport errors; keep the same command for retry.
+    } finally {
+      feedbackSubmittingRef.current = false;
     }
   };
 
   const [editForm, setEditForm] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    cargo: '',
-    empresa: '',
-    endereco: '',
-    numero: '',
-    complemento: '',
-    bairro: '',
-    cidade: '',
-    uf: '',
-    cep: '',
     valor_interesse: '',
     commission_percentage: '',
     property_id: '',
-    message: '',
-    renda_familiar: '',
-    trabalha: false,
-    profissao: '',
-    faixa_valor_imovel: '',
-    finalidade_compra: '',
-    procura_financiamento: false
   });
 
   // Sync edit form with lead data whenever lead changes
@@ -228,28 +306,10 @@ export function LeadDetailDialog({
     if (!leadProp || isUpdatingAssignee) return;
 
     const fullLead = fullLeadQuery.data as LeadDetailLead | null | undefined;
-    const hydratedLead: LeadDetailLead = fullLead
-      ? {
-          ...mergePreservingDefinedFields(leadProp, fullLead, [
-            'initial_message',
-            'last_contact_at',
-            'next_follow_up_at',
-            'priority',
-            'status',
-          ]),
-          assignee: fullLead.assignee ?? (
-            fullLead.assigned_user_id === leadProp.assigned_user_id
-              ? leadProp.assignee
-              : undefined
-          ),
-          interest_property: leadProp.interest_property ?? fullLead.interest_property,
-          property: leadProp.property ?? fullLead.property,
-          stage: leadProp.stage ?? fullLead.stage,
-          tags: leadProp.tags ?? fullLead.tags,
-          tasks_count: leadProp.tasks_count ?? fullLead.tasks_count,
-          whatsapp_avatar_url: leadProp.whatsapp_avatar_url ?? fullLead.whatsapp_avatar_url,
-        }
-      : leadProp;
+    const hydratedLead = fullLead ? (
+      compareServerRevisions(leadProp.updated_at, fullLead.updated_at) === 1
+        ? hydrateLeadDetail(fullLead, leadProp) : hydrateLeadDetail(leadProp, fullLead)
+    ) : leadProp;
 
     let isActive = true;
     queueMicrotask(() => {
@@ -264,44 +324,23 @@ export function LeadDetailDialog({
   useEffect(() => {
     if (!leadProp) return;
 
-    v2LeadInfoScrollRef.current?.scrollTo({ top: 0 });
-    v2LeadWorkScrollRef.current?.scrollTo({ top: 0 });
-
     const valorStr = leadProp.valor_interesse ? leadProp.valor_interesse.toString() : '';
     const nextForm = {
-      name: leadProp.name || '',
-      phone: leadProp.phone || '',
-      email: leadProp.email || '',
-      cargo: leadProp.cargo || '',
-      empresa: leadProp.empresa || '',
-      endereco: leadProp.endereco || '',
-      numero: leadProp.numero || '',
-      complemento: leadProp.complemento || '',
-      bairro: leadProp.bairro || '',
-      cidade: leadProp.cidade || '',
-      uf: leadProp.uf || '',
-      cep: leadProp.cep || '',
       valor_interesse: valorStr,
       commission_percentage: leadProp.commission_percentage != null ? leadProp.commission_percentage.toString() : '',
       property_id: leadProp.interest_property_id || leadProp.property_id || '',
-      message: leadProp.message || '',
-      renda_familiar: leadProp.renda_familiar || '',
-      trabalha: leadProp.trabalha || false,
-      profissao: leadProp.profissao || '',
-      faixa_valor_imovel: leadProp.faixa_valor_imovel || '',
-      finalidade_compra: leadProp.finalidade_compra || '',
-      procura_financiamento: leadProp.procura_financiamento || false
     };
 
     let isActive = true;
     queueMicrotask(() => {
-      if (isActive) setEditForm(nextForm);
+      if (!isActive) return;
+      setEditForm(nextForm);
     });
 
     return () => {
       isActive = false;
     };
-  }, [leadProp]);
+  }, [leadProp, activeOrganization.organizationId, user?.id]);
 
   // Separate effect to initialize lost_reason when lead first loads
   useEffect(() => {
@@ -317,7 +356,6 @@ export function LeadDetailDialog({
       isActive = false;
     };
   }, [leadProp?.lost_reason, lostReasonLocal]);
-  const { activeOrganization, profile, organization } = useAuth();
   const cadenceOrganizationId =
     leadProp?.organization_id || activeOrganization.organizationId || null;
   const {
@@ -327,14 +365,37 @@ export function LeadDetailDialog({
     refetch: refetchLeadCadence,
   } = useLeadCadenceState(leadId, cadenceOrganizationId, leadProp?.stage_id);
   const { hasPermission } = useUserPermissions();
-  const { hasModule } = useOrganizationModules();
-  const canOperateLead = !isUpdatingAssignee && canOperateLeadFromFreshRead(
-    hasPermission('lead_operate'),
-    fullLeadQuery,
+  const hasLeadOperatePermission = hasPermission('lead_operate');
+  const poolReadOnly = Boolean(localLead?.queue_pool || fullLeadQuery.data?.queue_pool);
+  const captureDetailOperation = useLeadDetailOperationScope(
+    leadId, activeOrganization.organizationId, user?.id || null, queryClient, hasLeadOperatePermission && !readAccessBlocked && !detailReadState.hideDetails, getGlobalSignOutSessionId(session),
   );
+  // A background refetch caused by the first response must not retire its own feedback.
+  const captureCadenceFeedbackOperation = useLeadDetailOperationScope(
+    leadId, activeOrganization.organizationId, user?.id || null, queryClient,
+    !readAccessBlocked && !detailReadState.hideDetails && !poolReadOnly && hasLeadOperatePermission && fullLeadQuery.data?.can_operate === true,
+    getGlobalSignOutSessionId(session),
+  );
+  const { hasModule } = useOrganizationModules();
+  const updateLead = useUpdateLead();
+  const recordLeadFeedback = useRecordLeadFeedback();
+  const dealStatusChange = useDealStatusChange();
+  const canOperateLead = detailReadState.kind === 'ready' && !readAccessBlocked && !poolReadOnly && !isUpdatingAssignee && !updateLead.isPending && !recordLeadFeedback.isPending && !dealStatusChange.isPending && !stageMovePending && !readAccessPending && canOperateLeadFromFreshRead(
+    hasLeadOperatePermission,
+    fullLeadQuery,
+    verifiedRead,
+  );
+  const outcomeBlockedReason = canOperateLead ? undefined : detailReadState.blockedReason || (
+    poolReadOnly ? 'Assuma o lead antes de registrar o resultado.' : !hasLeadOperatePermission
+      ? 'Seu acesso a este lead permite apenas visualização.' : 'Aguarde a atualização em andamento para registrar o resultado.'
+  );
+  const moveContract = useLeadMoveContract(canOperateLead);
+  const tagOptimism = useLeadTagOptimism({ leadId, organizationId: activeOrganization.organizationId,
+    actorId: user?.id || null, sessionId: getGlobalSignOutSessionId(session), canOperate: canOperateLead, setLead: setLocalLead });
+  const fieldOptimism = useLeadFieldOptimism({ leadId, organizationId: activeOrganization.organizationId,
+    actorId: user?.id || null, sessionId: getGlobalSignOutSessionId(session), setLead: setLocalLead });
   const handleOpenLeadEdit = () => {
     if (!canOperateLead) return;
-    setIsEditingContact(false);
     onEdit?.(localLead || lead);
   };
   const hasPropertiesModule = hasModule('properties');
@@ -345,8 +406,10 @@ export function LeadDetailDialog({
     (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
   const canOperateLeadWhatsApp =
     hasLeadWhatsAppModule && hasPermission('whatsapp_operate');
-  const openLeadWhatsApp = (message?: string) => {
+  const openLeadWhatsApp = (message?: string, canOpenCapturedAccess?: () => boolean) => {
+    if (canOpenCapturedAccess && !canOpenCapturedAccess()) return false;
     const currentLead = localLead || lead;
+    if (poolReadOnly) { toast.info('Assuma o lead antes de iniciar o atendimento.'); return false; }
     const preparedMessage = message?.trim() || '';
     const canOpenLeadWhatsApp = preparedMessage
       ? canOperateLeadWhatsApp
@@ -354,48 +417,44 @@ export function LeadDetailDialog({
 
     if (!canOpenLeadWhatsApp) {
       toast.error('WhatsApp indisponível para este usuário.');
-      return;
+      return false;
     }
     if (!currentLead.phone) {
       toast.error('Cadastre um telefone antes de iniciar a conversa.');
-      return;
+      return false;
     }
 
     const phone = currentLead.phone;
     const leadName = currentLead.name || 'Lead';
     handleCloseLeadDetail();
     queueMicrotask(() => {
+      if (canOpenCapturedAccess && !canOpenCapturedAccess()) return;
       if (preparedMessage) {
         openNewChatWithMessage(phone, preparedMessage, currentLead.id, leadName);
         return;
       }
       openNewChat(phone, leadName, currentLead.id);
     });
+    return true;
   };
   const canViewProperties =
     hasPropertiesModule &&
     (hasPermission('property_view') || hasPermission('property_manage'));
   const canViewLeadSchedule = hasAgendaModule && hasPermission('schedule_view');
   const canManageLeadSchedule = hasAgendaModule && canOperateLead && hasPermission('schedule_manage');
+  const selectedPropertyId = localLead?.interest_property_id || localLead?.property_id || editForm.property_id || null;
+  const { data: persistedProperty } = useProperty(canViewProperties && leadProp ? selectedPropertyId : null);
+  const propertyOptions = mergePropertyFallback(
+    mergePropertyFallback([], persistedProperty || null),
+    getLeadPropertyFallback(localLead),
+  );
+  const schedulePreview = useLeadSchedulePreview(leadId, canViewLeadSchedule);
   const {
-    data: loadedProperties = [],
-    isLoading: propertiesLoading,
-    isFetching: propertiesFetching,
-  } = useProperties(undefined, {}, { enabled: canViewProperties && shouldLoadLeadProperties });
-  const propertyOptions = mergePropertyFallback(loadedProperties, getLeadPropertyFallback(localLead));
-  const propertyPickerLoading = shouldLoadLeadProperties && (propertiesLoading || (propertiesFetching && loadedProperties.length === 0));
-  const handlePropertyPickerOpenChange = (open: boolean) => {
-    if (open) setShouldLoadLeadProperties(true);
-  };
-  const {
-    data: scheduleEvents = [],
+    events: scheduleEvents,
     isPending: schedulePending,
     isError: scheduleError,
     refetch: refetchScheduleEvents,
-  } = useScheduleEvents({
-    leadId: leadId || undefined,
-    enabled: canViewLeadSchedule,
-  });
+  } = schedulePreview;
   const scheduleSummaryLabel = useMemo(() => {
     if (schedulePending && scheduleEvents.length === 0) return 'Carregando compromissos...';
     if (scheduleError && scheduleEvents.length === 0) return 'Não foi possível carregar os compromissos';
@@ -422,57 +481,70 @@ export function LeadDetailDialog({
       simpleCommitmentsCount > 0
         ? `+ ${simpleCommitmentsCount} compromisso${simpleCommitmentsCount === 1 ? '' : 's'} simples`
         : null,
-    ].filter(Boolean).join(' · ');
-  }, [scheduleEvents, schedulePending, scheduleError]);
-  const { data: leadMeta } = useLeadMeta(leadId);
+    ].filter(Boolean).join(' · ') + (schedulePreview.hasNextPage ? ' · lista parcial' : '');
+  }, [scheduleEvents, schedulePending, scheduleError, schedulePreview.hasNextPage]);
+  const leadMetaQuery = useLeadMeta(leadId);
+  const leadMeta = leadMetaQuery.data;
   const completeCadenceTask = useCompleteCadenceTask();
-  const updateLead = useUpdateLead();
   const addTag = useAddLeadTag();
   const removeTag = useRemoveLeadTag();
-  const updateCommission = useUpdateLeadCommission();
-  const dealStatusChange = useDealStatusChange();
   const { data: stageAutomations = [] } = useStageAutomations();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
-  const { data: teams = [] } = useTeams({
+  const teamCatalog = useTeams({
     includeInactive: true,
     enabled: hasPermission('team_view'),
   });
-  const createCallMutation = useCreateCall();
+  const teams = teamCatalog.data || [];
   const createActivityMutation = useCreateActivity();
-  const { data: attachments = [], refetch: refetchAttachments } = useLeadAttachments(leadId);
-  const uploadAttachment = useUploadLeadAttachment();
+  const recordContactOutcome = useRecordLeadContactOutcome();
+  const { data: attachments = [], refetch: refetchAttachments, isLoading: attachmentsLoading, isError: attachmentsError, isFetching: attachmentsFetching } = useLeadAttachments(leadId);
+  const uploadAttachment = useUploadLeadAttachment({ notifyOnError: false });
 
-  const handleOpenAttachment = async (attachment: LeadAttachment) => {
-    try {
-      const refreshed = await refetchAttachments();
-      const freshAttachment = refreshed.data?.find((item) => item.id === attachment.id);
-      setSelectedAttachment(freshAttachment || attachment);
-    } catch {
-      setSelectedAttachment(attachment);
-    }
+  const handleOpenAttachment = (attachment: LeadAttachment) => {
+    // The viewer requests access to this item; opening never signs the whole list.
+    setSelectedAttachment(attachment);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement> | { target: { files: File[] } }) => {
     const file = e.target.files?.[0];
     if (!canOperateLead || !file || !lead.id) return;
 
-    setIsUploading(true);
+    const operation = captureDetailOperation();
+    let receipt: ReturnType<typeof attachmentUploadDraft.begin>;
+    try { receipt = attachmentUploadDraft.begin(file); }
+    catch (error) { if (operation.isCurrent()) toast.error(getErrorMessage(error)); return; }
+    if (!receipt) return;
     try {
       await uploadAttachment.mutateAsync({ leadId: lead.id, file });
-      await queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
-      toast.success('Documento enviado com sucesso!');
+      attachmentUploadDraft.acknowledge(receipt);
+      void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] }).catch(() => { /* Upload is already acknowledged; history can refresh later. */ });
+      if (operation.isCurrent()) toast.success('Documento enviado com sucesso!');
     } catch (error: unknown) {
+      attachmentUploadDraft.retain(receipt);
       console.error('Erro fatal no upload de documento:', error);
-      toast.error(`Erro ao enviar: ${getErrorMessage(error)}`);
+      if (operation.isCurrent()) toast.error(getClientRateLimitMessage(error) || `Erro ao enviar: ${getErrorMessage(error)}`);
     } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (operation.isCurrent()) {
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
     }
   };
 
   const handleSelectInterestProperty = async (property: SelectableLeadProperty) => {
-    if (!canOperateLead) return;
+    if (!canOperateLead || propertySaveOperationRef.current?.isCurrent()) return;
+    try {
+      assertLeadFinancialFields({ valor_interesse: property.preco, commission_percentage: property.commission_percentage }, { numbersOnly: true });
+    } catch {
+      toast.error('O imóvel possui valores financeiros inválidos. Revise os dados do imóvel antes de selecioná-lo.');
+      return;
+    }
+    const operation = captureDetailOperation();
     const previousLead = localLead ? { ...localLead } : lead;
+    if (!previousLead.updated_at || (previousLead.organization_id && previousLead.organization_id !== activeOrganization.organizationId)) {
+      toast.error('Abra o lead novamente para confirmar sua versão antes de selecionar o imóvel.');
+      return;
+    }
+    propertySaveOperationRef.current = operation;
     const previousEditForm = { ...editForm };
     const nextPropertyPrice = typeof property.preco === 'number' ? property.preco : null;
     const nextPropertyCommission =
@@ -495,21 +567,18 @@ export function LeadDetailDialog({
       commission_percentage: nextPropertyCommission ?? localLead?.commission_percentage ?? lead.commission_percentage,
     };
 
-    setEditForm((current) => ({
-      ...current,
+    const optimisticDraftFields = {
       property_id: property.id,
       valor_interesse: nextPropertyPrice !== null ? nextPropertyPrice.toString() : '',
-      commission_percentage: nextPropertyCommission !== null ? nextPropertyCommission.toString() : current.commission_percentage,
-    }));
+      commission_percentage: nextPropertyCommission !== null ? nextPropertyCommission.toString() : previousEditForm.commission_percentage,
+    };
+    setEditForm((current) => ({ ...current, ...optimisticDraftFields }));
     setLocalLead((current) => current ? { ...current, ...nextLeadPatch } : current);
-    updatePipelineLeadCache(lead.id, nextLeadPatch);
+    const propertySnapshots = updatePipelineLeadCache(lead.id, nextLeadPatch);
 
-    const historyQueryKey = ['lead-history-v2', lead.id] as const;
-    const previousHistory = queryClient.getQueryData<UnifiedHistoryEvent[]>(historyQueryKey);
     const timestamp = new Date().toISOString();
     const propertyContent = [propertyCode, propertyTitle].filter(Boolean).join(' - ') || 'Imovel selecionado';
-    queryClient.setQueryData<UnifiedHistoryEvent[]>(historyQueryKey, (current) =>
-      appendOptimisticHistoryEvent(current, {
+    const optimisticHistoryId = appendOptimisticLeadHistoryEvent(queryClient, lead.id, {
         id: `optimistic-property-${lead.id}-${property.id}-${timestamp}`,
         type: 'property_selected',
         label: propertyCode || propertyTitle
@@ -533,11 +602,11 @@ export function LeadDetailDialog({
           commission_percentage: nextPropertyCommission,
           origin: 'lead_update',
         },
-      }),
-    );
+      });
 
-    const updateData: Partial<Lead> & { id: string } = {
+    const updateData: Partial<Lead> & { id: string; expectedUpdatedAt: string } = {
       id: lead.id,
+      expectedUpdatedAt: previousLead.updated_at,
       property_id: property.id,
       interest_property_id: property.id,
       property_code: propertyCode,
@@ -549,12 +618,34 @@ export function LeadDetailDialog({
     }
 
     try {
-      await updateLead.mutateAsync(updateData);
+      const savedLead = await updateLead.mutateAsync(updateData);
+      removeOptimisticLeadHistoryEvent(queryClient, lead.id, optimisticHistoryId);
+      if (!operation.isCurrent()) return;
+      const cachedLead = queryClient.getQueryData<LeadDetailLead>([
+        'lead', previousLead.organization_id || activeOrganization.organizationId, previousLead.id,
+      ]);
+      const canonicalLead = cachedLead ? mergeLeadDetailMutation(cachedLead, savedLead) : savedLead;
+      setLocalLead((current) => current ? mergeLeadDetailMutation(current, canonicalLead) : current);
+      setEditForm((current) => replaceOwnedPropertyDraft(current, optimisticDraftFields, {
+        property_id: canonicalLead.interest_property_id || canonicalLead.property_id || '',
+        valor_interesse: canonicalLead.valor_interesse != null ? canonicalLead.valor_interesse.toString() : '',
+        commission_percentage: nextPropertyCommission === null ? optimisticDraftFields.commission_percentage
+          : canonicalLead.commission_percentage != null ? canonicalLead.commission_percentage.toString() : '',
+      }));
+      if (requiresWonLeadFinancialReview(previousLead, savedLead)) {
+        toast.warning(WON_LEAD_FINANCIAL_REVIEW_MESSAGE);
+      }
     } catch {
-      setLocalLead(previousLead);
-      setEditForm(previousEditForm);
-      updatePipelineLeadCache(lead.id, previousLead);
-      queryClient.setQueryData(historyQueryKey, previousHistory);
+      removeOptimisticLeadHistoryEvent(queryClient, lead.id, optimisticHistoryId);
+      restorePipelineCache(propertySnapshots);
+      // Reconcile even after close: a transport error cannot prove rollback.
+      void queryClient.invalidateQueries({ queryKey: ['stages-with-leads', previousLead.organization_id || activeOrganization.organizationId] });
+      void queryClient.invalidateQueries({ queryKey: ['lead', previousLead.organization_id || activeOrganization.organizationId, lead.id] });
+      if (!operation.isCurrent()) return;
+      setLocalLead((current) => current ? rollbackLeadPropertySelection(current, previousLead, nextLeadPatch) : current);
+      setEditForm((current) => replaceOwnedPropertyDraft(current, optimisticDraftFields, previousEditForm));
+    } finally {
+      if (propertySaveOperationRef.current === operation) propertySaveOperationRef.current = null;
     }
   };
 
@@ -592,31 +683,30 @@ export function LeadDetailDialog({
   };
 
   const handleQuickActionOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
-    if (!canOperateLead) return;
+    if (!canOperateLead || quickActionSubmittingRef.current) return false;
+    const operation = captureDetailOperation();
+    let command: ReturnType<typeof quickActionDraft.getSubmission>;
+    try {
+      command = quickActionDraft.getSubmission(outcome, notes);
+      if (!quickActionDraft.beginSubmission(command)) return false;
+    } catch {
+      if (operation.isCurrent()) toast.error('Não foi possível preparar o registro. Confira o resultado e as anotações.');
+      return false;
+    }
+    quickActionSubmittingRef.current = true;
+    setQuickActionSubmitting(true);
+    try {
     const currentLead = localLead || lead;
     try {
-      await createActivityMutation.mutateAsync({
-        lead_id: currentLead.id,
-        type: quickActionOutcomeType === 'call' ? 'call' : 'email',
-        content: quickActionOutcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
-        metadata: { outcome, notes, channel: quickActionOutcomeType },
-      });
+      await recordContactOutcome.mutateAsync({ leadId: currentLead.id, ...command });
 
     } catch (error) {
-      toast.error(`Não foi possível registrar a atividade: ${getErrorMessage(error)}`);
+      if (operation.isCurrent()) toast.error(`Não foi possível registrar a atividade: ${getErrorMessage(error)}`);
       throw error;
     }
 
-    if (quickActionOutcomeType === 'call') {
-      createCallMutation.mutate({
-        lead_id: currentLead.id,
-        phone_to: currentLead.phone || '',
-        direction: 'outbound',
-        notes,
-        organization_id: currentLead.organization_id || activeOrganization.organizationId || '',
-      });
-    }
-
+    const draftAcknowledged = quickActionDraft.acknowledgeSavedCommand(command);
+    if (!operation.isCurrent()) return false;
     const firstResponseParams = {
       leadId: currentLead.id,
       organizationId: currentLead.organization_id || activeOrganization.organizationId || '',
@@ -628,21 +718,37 @@ export function LeadDetailDialog({
     try {
       await recordFirstResponse(firstResponseParams);
     } catch {
+      if (!operation.isCurrent()) return false;
       toast.warning('Atividade salva, mas o tempo do primeiro contato não foi registrado.', {
         action: {
           label: 'Tentar registro',
           onClick: () => {
+            if (!operation.isCurrent()) return;
             void recordFirstResponse(firstResponseParams)
-              .then(() => toast.success('Registro do primeiro contato verificado.'))
-              .catch(() => toast.error('Não foi possível registrar o tempo do primeiro contato.'));
+              .then(() => { if (operation.isCurrent()) toast.success('Registro do primeiro contato verificado.'); })
+              .catch(() => { if (operation.isCurrent()) toast.error('Não foi possível registrar o tempo do primeiro contato.'); });
           },
         },
       });
     }
+    if (!operation.isCurrent()) return false;
+    if (!draftAcknowledged) {
+      toast.info('O resultado anterior foi confirmado. Suas novas anotações foram mantidas.');
+      return false;
+    }
     setQuickActionOutcomeOpen(false);
+    return true;
+    } finally {
+      quickActionDraft.endSubmission(command);
+      quickActionSubmittingRef.current = false;
+      // This instance owns the busy flag even when its access epoch expires.
+      // The ref prevents a newer attempt until this finally has completed.
+      setQuickActionSubmitting(false);
+    }
   };
   const handleEditScheduleEvent = (event: ScheduleEvent) => {
-    if (!canManageLeadSchedule) return;
+    if (!canViewLeadSchedule) return;
+    if (!canManageLeadSchedule) { setReadOnlyScheduleEvent(event); return; }
     setEditingScheduleEvent(event);
     setScheduleFormOpen(true);
   };
@@ -650,7 +756,8 @@ export function LeadDetailDialog({
     setScheduleFormOpen(false);
     setEditingScheduleEvent(null);
   };
-  if (!leadProp || !localLead) return null;
+  // A transient access failure hides all portals but retains the unsaved form and its original CAS revision.
+  if (!leadProp || !localLead || readAccessBlocked) return null;
 
   const currentStageIndex = stages.findIndex(s => s.id === localLead.stage_id);
   const stageStepperStyle = getStageStepperStyle(stages.length);
@@ -660,90 +767,78 @@ export function LeadDetailDialog({
   const safeAllUsers = Array.isArray(allUsers) ? allUsers.filter(Boolean) : [];
   const canTransferLead = canOperateLead;
   const canUnassignLead = canOperateLead;
+  const assigneeCatalogBlocked = Boolean(allUsersState?.loading || allUsersState?.error);
   const assignableUsers = canTransferLead ? safeAllUsers : [];
   const leadTagIds = leadTags.map((tag) => tag.id);
   const availableTags = safeAllTags.filter(t => !leadTagIds.includes(t.id));
   const isTagMutationPending = addTag.isPending || removeTag.isPending;
 
-  const handleAddTag = async (tagId: string) => {
+  const handleAddTag = async (tagId: string, catalogTag?: TagCatalog) => {
     if (!canOperateLead || isTagMutationPending) return;
-    const tagToAdd = safeAllTags.find(t => t.id === tagId);
+    if (catalogTag && (catalogTag.id !== tagId || catalogTag.organization_id !== activeOrganization.organizationId)) return;
+    const tagToAdd = catalogTag || safeAllTags.find(t => t.id === tagId);
     if (!tagToAdd || !localLead) return;
 
-    const nextTags = [
-      ...leadTags,
-      {
-        id: tagToAdd.id,
-        name: tagToAdd.name,
-        color: tagToAdd.color,
-      },
-    ];
-    const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
-    const updatedLead: LeadDetailLead = { ...localLead, tags: nextTags };
-    const pipelineSnapshots = updatePipelineLeadCache(localLead.id, { tags: nextTags });
+    const operation = captureDetailOperation();
+    const receipt = tagOptimism.begin(localLead, tagToAdd, 'add', operation);
+    if (!receipt) return;
+    updatePipelineLeadCache(localLead.id, { tags: tagOptimism.project(localLead, receipt).tags });
 
     setTagPopoverOpen(false);
-    setLocalLead(updatedLead);
+    tagOptimism.apply(receipt);
 
     try {
       await addTag.mutateAsync({
         leadId: lead.id,
         tagId
       });
-    } catch {
-      setLocalLead(previousLead);
-      restorePipelineCache(pipelineSnapshots);
+      tagOptimism.complete(receipt);
+    } catch (error) {
+      tagOptimism.reject(receipt, error);
     }
   };
 
   const handleRemoveTag = async (tagId: string) => {
     if (!canOperateLead || !localLead || isTagMutationPending) return;
 
-    const nextTags = leadTags.filter((tag) => tag.id !== tagId);
-    const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
-    const updatedLead: LeadDetailLead = { ...localLead, tags: nextTags };
-    const pipelineSnapshots = updatePipelineLeadCache(localLead.id, { tags: nextTags });
+    const operation = captureDetailOperation();
+    const receipt = tagOptimism.begin(localLead, leadTags.find(tag => tag.id === tagId) || { id: tagId }, 'remove', operation);
+    if (!receipt) return;
+    updatePipelineLeadCache(localLead.id, { tags: tagOptimism.project(localLead, receipt).tags });
 
-    setLocalLead(updatedLead);
+    tagOptimism.apply(receipt);
 
     try {
       await removeTag.mutateAsync({
         leadId: lead.id,
         tagId
       });
-    } catch {
-      setLocalLead(previousLead);
-      restorePipelineCache(pipelineSnapshots);
+      tagOptimism.complete(receipt);
+    } catch (error) {
+      tagOptimism.reject(receipt, error);
     }
   };
 
-  const loadAssigneeAvailability = () => {
-    const teamMemberIds = teams
-      .flatMap((team) => team.members || [])
-      .map((member) => member.id)
-      .filter(Boolean)
-      .sort();
+  const loadAssigneeAvailability = (teamMemberId: string) => {
+    const teamMemberIds = [teamMemberId];
     const organizationId = lead.organization_id || activeOrganization.organizationId;
-
-    if (teamMemberIds.length === 0) return Promise.resolve([]);
 
     return queryClient.fetchQuery({
       queryKey: ['lead-assignee-availability', organizationId, teamMemberIds],
-      queryFn: () => teamsAPI.listMemberAvailability({ teamMemberIds, organizationId }),
+      queryFn: ({ signal }) => teamsAPI.listMemberAvailability({ teamMemberIds, organizationId, signal }),
       staleTime: 60_000,
     });
   };
 
   const handleAssigneePopoverChange = (open: boolean) => {
     setAssigneePopoverOpen(open);
-    if (open) void loadAssigneeAvailability().catch(() => undefined);
   };
 
   const handleAssignUser = async (
     userId: string | null,
-    options?: { skipScheduleConfirmation?: boolean },
+    options?: { skipScheduleConfirmation?: boolean; selection?: LeadAssigneeSelection },
   ) => {
-    if (isUpdatingAssignee) return;
+    if (isUpdatingAssignee || assigneeUpdatingRef.current) return;
     if (!canTransferLead) {
       toast.error('Você não tem permissão para trocar o responsável deste lead');
       return;
@@ -758,14 +853,39 @@ export function LeadDetailDialog({
     }
 
     if (!localLead) return;
+    let selection = options?.selection || null;
+    if (!selection && localLead.updated_at) {
+      try {
+        const requestOperation = requestScope.capture();
+        selection = { leadId: lead.id, userId, expectedUpdatedAt: localLead.updated_at,
+          operation: captureDetailOperation(), requestOperation };
+      } catch { return; }
+    }
+    if (!selection) {
+      toast.error('Atualize este lead antes de trocar o responsável.');
+      void fullLeadQuery.refetch();
+      return;
+    }
+    if (selection.leadId !== lead.id || selection.userId !== userId || !selection.operation.isCurrent() ||
+      !selection.requestOperation.isCurrent() || selection.requestOperation.organizationId !== (lead.organization_id || activeOrganization.organizationId)) return;
 
     if ((localLead.assigned_user_id || null) === userId) {
       setAssigneePopoverOpen(false);
       return;
     }
 
-    const previousLead: LeadDetailLead = { ...localLead };
+    const { operation, requestOperation, expectedUpdatedAt } = selection;
+    const mutationOperation = { isCurrent: () => operation.isCurrent() && requestOperation.isCurrent() };
     const selectedUser = userId ? assignableUsers.find(u => u.id === userId) : null;
+    const optimisticLead: LeadDetailLead = mergeLeadOperationCapability(localLead, {
+      ...localLead, assigned_user_id: userId,
+      assignee: selectedUser ? { id: selectedUser.id, name: selectedUser.name, email: selectedUser.email, avatar_url: selectedUser.avatar_url } : undefined,
+      can_operate: undefined,
+    });
+    const receipt = fieldOptimism.begin(localLead, { assigned_user_id: optimisticLead.assigned_user_id,
+      assignee: optimisticLead.assignee, can_operate: optimisticLead.can_operate }, mutationOperation, expectedUpdatedAt);
+    if (!receipt) return;
+    assigneeUpdatingRef.current = true;
     setIsUpdatingAssignee(true);
     setAssigneePopoverOpen(false);
 
@@ -773,35 +893,33 @@ export function LeadDetailDialog({
 
     try {
       if (userId) {
-        const currentDay = new Date().getDay();
-        const currentTime = format(new Date(), 'HH:mm:ss');
         const teamMember = teams
           .flatMap((team) => team.members || [])
           .find((member) => member.user_id === userId);
 
         if (teamMember) {
-          const availabilityList = await loadAssigneeAvailability();
-          const availability = availabilityList.find((item) =>
-            item.team_member_id === teamMember.id && item.day_of_week === currentDay && item.is_active
-          );
+          const availabilityList = await loadAssigneeAvailability(teamMember.id);
+          if (!mutationOperation.isCurrent()) return;
+          const scheduleAvailability = getLeadAssigneeAvailability(availabilityList, teamMember.id, new Date());
+          const availability = scheduleAvailability.today;
 
           if (availability) {
-            const isOutsideSchedule = !availability.is_all_day &&
-              (currentTime < (availability.start_time || '00:00:00') ||
-               currentTime > (availability.end_time || '23:59:59'));
+            const isOutsideSchedule = !scheduleAvailability.available;
 
             if (isOutsideSchedule && !options?.skipScheduleConfirmation) {
               const startTime = availability.start_time || '00:00:00';
               const endTime = availability.end_time || '23:59:59';
+              assigneeSelectionRef.current = selection;
               setAssigneeScheduleConfirmation({
                 leadId: lead.id,
                 userId,
                 userName: selectedUser?.name || selectedUser?.email || 'Este usuário',
-                description: `A escala de hoje é das ${startTime.slice(0, 5)} às ${endTime.slice(0, 5)}.`,
+                description: `A escala de hoje é das ${startTime.slice(0, 5)} às ${endTime.slice(0, 5)} (${scheduleAvailability.timeZone}).`,
               });
               return;
             }
-          } else if (!options?.skipScheduleConfirmation) {
+          } else if (!scheduleAvailability.available && !options?.skipScheduleConfirmation) {
+            assigneeSelectionRef.current = selection;
             setAssigneeScheduleConfirmation({
               leadId: lead.id,
               userId,
@@ -813,64 +931,89 @@ export function LeadDetailDialog({
         }
       }
 
-      const optimisticLead: LeadDetailLead = mergeLeadOperationCapability(localLead, {
-        ...localLead,
-        assigned_user_id: userId,
-        assignee: selectedUser ? {
-          id: selectedUser.id,
-          name: selectedUser.name,
-          email: selectedUser.email,
-          avatar_url: selectedUser.avatar_url
-        } : undefined,
-        can_operate: undefined,
-      });
+      fieldOptimism.apply(receipt);
+      if (fieldOptimism.isCurrent(receipt)) pipelineSnapshots = updatePipelineAssigneeCache(optimisticLead);
 
-      setLocalLead(optimisticLead);
-      pipelineSnapshots = updatePipelineAssigneeCache(optimisticLead);
-
-      const organizationId = lead.organization_id || activeOrganization.organizationId || undefined;
-      const { data, error } = await leadsAPI.assignLead(lead.id, userId, organizationId);
+      const organizationId = requestOperation.organizationId;
+      // Preserve the ACK of an already dispatched write when the popup closes.
+      const writeIntent = { ...requestOperation.intent, signal: undefined, onRequestStart: () => {
+        if (!mutationOperation.isCurrent()) throw new DOMException('A seleção do lead mudou.', 'AbortError');
+      } };
+      const { data, error } = await leadsAPI.assignLead(lead.id, userId, organizationId, writeIntent, expectedUpdatedAt);
       if (error) throw error;
+      if (!requestOperation.canReconcileCapturedAccess()) {
+        fieldOptimism.reject(receipt, new DOMException('O acesso foi encerrado.', 'AbortError'));
+        return;
+      }
+      if (!data || data.id !== lead.id || (data.organization_id && data.organization_id !== organizationId)) {
+        throw new VimobAPIError('Não foi possível confirmar a atualização do lead.', { status: 502, code: 'lead_write_unconfirmed' });
+      }
+      fieldOptimism.complete(receipt);
 
       const serverLead = data as LeadDetailLead;
-      const persistedLead: LeadDetailLead = mergeLeadOperationCapability(optimisticLead, {
-        ...optimisticLead,
-        ...serverLead,
-        assignee: serverLead.assignee ?? (
-          serverLead.assigned_user_id === optimisticLead.assigned_user_id
-            ? optimisticLead.assignee
-            : undefined
-        ),
-        can_operate: serverLead.can_operate,
-      });
-
-      setLocalLead(persistedLead);
+      const persistedLead = mergeLeadDetailMutation(optimisticLead, serverLead);
       if (organizationId) {
-        queryClient.setQueryData(['lead', organizationId, lead.id], persistedLead);
+        queryClient.setQueryData<Lead>(['lead', organizationId, lead.id], (current) => mergeLeadServerResponse(current, data));
       }
       updatePipelineLeadCache(lead.id, persistedLead);
-      void fullLeadQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       refreshPipelineInBackground(organizationId, lead.id, 'lead.assigned');
+
+      if (!mutationOperation.isCurrent()) return;
+      const latest = queryClient.getQueryData<Lead>(['lead', organizationId, lead.id]) || persistedLead;
+      setLocalLead((current) => current?.id === lead.id ? mergeLeadDetailMutation(current, latest as LeadDetailLead) : current);
+      void fullLeadQuery.refetch();
 
       toast.success(userId
         ? `Lead transferido para ${selectedUser?.name || selectedUser?.email || 'o novo responsável'}`
         : 'Responsável removido do lead');
     } catch (error: unknown) {
-      setLocalLead(previousLead);
-      restorePipelineCache(pipelineSnapshots);
-      toast.error(`Não foi possível transferir o lead: ${getErrorMessage(error)}`);
+      if (isDefiniteLeadFieldRejection(error) && fieldOptimism.isCurrent(receipt)) restorePipelineCache(pipelineSnapshots);
+      fieldOptimism.reject(receipt, error);
+      if (!mutationOperation.isCurrent()) {
+        if (requestOperation.canReconcileCapturedAccess()) {
+          void queryClient.invalidateQueries({ queryKey: ['lead', requestOperation.organizationId, lead.id], exact: true, refetchType: 'active' });
+          void queryClient.invalidateQueries({ queryKey: ['stages-with-leads', requestOperation.organizationId], refetchType: 'active' });
+        }
+        return;
+      }
+      if (error instanceof VimobAPIError && error.code === 'lead_changed') {
+        setAssigneePopoverOpen(true);
+        toast.error('Este lead foi atualizado em outra sessão. Confira o responsável atual e selecione novamente.');
+      } else toast.error(`Não foi possível transferir o lead: ${getErrorMessage(error)}`);
     } finally {
+      fieldOptimism.discard(receipt);
+      assigneeUpdatingRef.current = false;
       setIsUpdatingAssignee(false);
     }
+  };
+  const handleConfirmAssignee = (confirmation: AssigneeScheduleConfirmation) => {
+    const selection = assigneeSelectionRef.current;
+    assigneeSelectionRef.current = null;
+    setAssigneeScheduleConfirmation(null);
+    if (!selection || selection.leadId !== confirmation.leadId || selection.userId !== confirmation.userId ||
+      !selection.operation.isCurrent() || !selection.requestOperation.isCurrent()) {
+      toast.error('Esta seleção expirou. Escolha o responsável novamente.');
+      return;
+    }
+    void handleAssignUser(confirmation.userId, { skipScheduleConfirmation: true, selection });
   };
   const handleToggleCadenceTask = async (
     task: LeadCadenceTaskState,
     outcome = 'done',
     outcomeNotes = '',
   ) => {
-    if (!canOperateLead) return;
-    await completeCadenceTask.mutateAsync({
+    if (!canOperateLead || cadenceActionPendingRef.current) return false;
+    let operation: ReturnType<typeof captureCadenceFeedbackOperation>;
+    try {
+      operation = captureCadenceFeedbackOperation();
+    } catch {
+      return false;
+    }
+    cadenceActionPendingRef.current = true;
+    setCadenceActionPending(true);
+    try {
+    const completedTask = await completeCadenceTask.mutateAsync({
       leadId: lead.id,
       taskId: task.id,
       templateTaskId: task.template_task_id || undefined,
@@ -878,6 +1021,12 @@ export function LeadDetailDialog({
       outcomeNotes,
       organizationId: cadenceOrganizationId,
     });
+    if (!operation.isCurrent()) return false;
+    if (completedTask.id !== task.id || completedTask.lead_id !== lead.id || completedTask.is_done !== true ||
+      completedTask.outcome !== outcome || (completedTask.outcome_notes || '').trim() !== outcomeNotes.trim()) {
+      toast.warning('Não foi possível confirmar este resultado. A tarefa pode ter sido concluída em outra janela; suas anotações foram mantidas.');
+      return false;
+    }
     const firstContactChannel = task.type === 'call'
       ? 'phone'
       : task.type === 'email'
@@ -895,25 +1044,36 @@ export function LeadDetailDialog({
       try {
         await recordFirstResponse(firstResponseParams);
       } catch {
+        if (!operation.isCurrent()) return false;
         toast.warning('Tarefa concluída, mas o tempo do primeiro contato não foi registrado.', {
           action: {
             label: 'Tentar registro',
             onClick: () => {
+              if (!operation.isCurrent()) return;
               void recordFirstResponse(firstResponseParams)
-                .then(() => toast.success('Registro do primeiro contato verificado.'))
-                .catch(() => toast.error('Não foi possível registrar o tempo do primeiro contato.'));
+                .then(() => { if (operation.isCurrent()) toast.success('Registro do primeiro contato verificado.'); })
+                .catch(() => { if (operation.isCurrent()) toast.error('Não foi possível registrar o tempo do primeiro contato.'); });
             },
           },
         });
       }
     }
+    return operation.isCurrent();
+    } catch (error) {
+      if (!operation.isCurrent()) return false;
+      throw error;
+    } finally {
+      cadenceActionPendingRef.current = false;
+      setCadenceActionPending(false);
+    }
   };
 
   // Handle outcome dialog confirmation
   const handleOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
-    if (!canOperateLead) return;
-    if (!taskForOutcome) return;
-    await handleToggleCadenceTask(taskForOutcome, outcome, notes);
+    if (!canOperateLead) return false;
+    if (!taskForOutcome) return false;
+    if (!await handleToggleCadenceTask(taskForOutcome, outcome, notes)) return false;
+    outcomeDraft.updateDraft({ outcome: '', notes: '' });
     setOutcomeDialogOpen(false);
 
     // Se agendou visita/reunião, abrir o formulário de agenda automaticamente
@@ -933,28 +1093,23 @@ export function LeadDetailDialog({
     }
 
     setTaskForOutcome(null);
+    return true;
   };
 
   const handleCadenceTaskClick = (task: LeadCadenceTaskState) => {
-    if (!canOperateLead) return;
+    if (!canOperateLead || cadenceActionPendingRef.current) return;
+    try { captureCadenceFeedbackOperation(); } catch { return; }
     const taskType = getCadenceTaskType(task.type);
     const isDone = task.is_done || task.status === 'completed';
 
     // Se já está feito, não faz nada (evitar toggle reverso sem querer)
     if (isDone || task.status !== 'pending' || leadCadenceState?.deal_status !== 'open') return;
+    setTaskInspectOnly(false);
 
-    // Se tem observação/roteiro, abrir o popup de roteiro primeiro
-    if (task.observation) {
+    // Preparar a mensagem e registrar seu resultado são ações independentes.
+    if (task.observation || (taskType === 'message' && task.recommended_message)) {
       setSelectedTask(task);
       setRoteiroDialogOpen(true);
-      return;
-    }
-
-    // Se for tarefa de mensagem com mensagem recomendada e tem telefone
-    if (taskType === 'message' && task.recommended_message) {
-      // Substituir variáveis na mensagem
-      const message = task.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      openLeadWhatsApp(message);
       return;
     }
 
@@ -968,20 +1123,27 @@ export function LeadDetailDialog({
     }
   };
   const handleRoteiroAction = async (action: 'complete' | 'message') => {
-    if (!canOperateLead) return;
-    if (!selectedTask) return;
-    if (action === 'message' && selectedTask.recommended_message) {
-      const message = selectedTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      setRoteiroDialogOpen(false);
-      setSelectedTask(null);
-      openLeadWhatsApp(message);
+    if (!canOperateLead || taskInspectOnly || cadenceActionPendingRef.current) return;
+    const currentTask = leadCadenceState?.tasks.find((task) => task.id === selectedTask?.id);
+    if (!selectedTask || !currentTask || leadCadenceState?.lead_id !== lead.id ||
+      leadCadenceState.deal_status !== 'open' || currentTask.is_done || currentTask.status !== 'pending') return;
+    try { captureCadenceFeedbackOperation(); } catch { return; }
+    if (action === 'message') {
+      if (!currentTask.recommended_message) return;
+      let canOpenCapturedAccess: () => boolean;
+      try { canOpenCapturedAccess = requestScope.capture().canReconcileCapturedAccess; } catch { return; }
+      const message = currentTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
+      if (openLeadWhatsApp(message, canOpenCapturedAccess)) {
+        setRoteiroDialogOpen(false);
+        setSelectedTask(null);
+      }
       return;
     }
 
     // Após o roteiro, respeitar a regra configurada pelo gestor.
-    const selectedTaskType = getCadenceTaskType(selectedTask.type);
-    if (selectedTask.outcome_required && OUTCOME_CADENCE_TASK_TYPES.includes(selectedTaskType)) {
-      setTaskForOutcome(selectedTask);
+    const selectedTaskType = getCadenceTaskType(currentTask.type);
+    if (currentTask.outcome_required && OUTCOME_CADENCE_TASK_TYPES.includes(selectedTaskType)) {
+      setTaskForOutcome(currentTask);
       setOutcomeDialogOpen(true);
       setRoteiroDialogOpen(false);
       setSelectedTask(null);
@@ -989,113 +1151,100 @@ export function LeadDetailDialog({
     }
 
     try {
-      await handleToggleCadenceTask(selectedTask);
+      if (!await handleToggleCadenceTask(currentTask)) return;
       setRoteiroDialogOpen(false);
       setSelectedTask(null);
     } catch {
       // The mutation reports the error; keep the script open so the task can be retried.
     }
   };
-  const handleSaveContact = async () => {
-    if (!canOperateLead) return;
-    try {
-      const newValorInteresse = editForm.valor_interesse ? parseFloat(editForm.valor_interesse) : null;
-      const newCommissionPercentage = editForm.commission_percentage ? parseFloat(editForm.commission_percentage) : null;
-
-      await updateLead.mutateAsync({
-        id: lead.id,
-        name: editForm.name,
-        phone: editForm.phone || null,
-        email: editForm.email || null,
-        cargo: editForm.cargo || null,
-        empresa: editForm.empresa || null,
-        endereco: editForm.endereco || null,
-        numero: editForm.numero || null,
-        complemento: editForm.complemento || null,
-        bairro: editForm.bairro || null,
-        cidade: editForm.cidade || null,
-        uf: editForm.uf || null,
-        cep: editForm.cep || null,
-        valor_interesse: newValorInteresse,
-        commission_percentage: newCommissionPercentage,
-        property_id: editForm.property_id || null,
-        message: editForm.message || null,
-        renda_familiar: editForm.renda_familiar || null,
-        trabalha: editForm.trabalha || null,
-        profissao: editForm.profissao || null,
-        faixa_valor_imovel: editForm.faixa_valor_imovel || null,
-        finalidade_compra: editForm.finalidade_compra || null,
-        procura_financiamento: editForm.procura_financiamento || null
-      });
-
-
-      // If lead is already "won" and valores changed, update the commission
-      if (lead.deal_status === 'won' && newValorInteresse && newCommissionPercentage) {
-        const oldValor = lead.valor_interesse || 0;
-        const oldPercentage = lead.commission_percentage || 0;
-
-        if (newValorInteresse !== oldValor || newCommissionPercentage !== oldPercentage) {
-          updateCommission.mutate({
-            leadId: lead.id,
-            valorInteresse: newValorInteresse,
-            commissionPercentage: newCommissionPercentage
-          });
-        }
-      }
-
-      setIsEditingContact(false);
-      toast.success('Dados salvos com sucesso!');
-    } catch (error) {
-      console.error('Erro ao salvar dados do lead:', error);
+  // Keep the original selection across the reason dialog; extract stage actions into lead-detail after this CAS fix.
+  const captureStageMove = (stageId: string): LeadStageMoveIntent | null => {
+    const revision = capturePipelineMoveRevision(localLead, localLead.stage_id ?? null);
+    if (!revision) {
+      toast.error('Atualize este lead antes de mudar de etapa.');
+      void queryClient.invalidateQueries({ queryKey: ['lead', lead.organization_id || activeOrganization.organizationId, lead.id] });
+      return null;
     }
+    try {
+      const requestOperation = requestScope.capture();
+      if (requestOperation.organizationId !== (lead.organization_id || activeOrganization.organizationId)) return null;
+      return { stageId, revision, operation: captureDetailOperation(), requestOperation };
+    } catch { return null; }
   };
-  const persistMoveToStage = async (stageId: string, lostReason?: string) => {
-    if (!canOperateLead || stageId === localLead.stage_id || stageMovePending) return false;
 
-    const previousLead = { ...localLead };
+  const persistMoveToStage = async (move: LeadStageMoveIntent, lostReason?: string) => {
+    const { stageId, revision, operation, requestOperation } = move;
+    const mutationOperation = { isCurrent: () => operation.isCurrent() && requestOperation.isCurrent() };
+    if (!mutationOperation.isCurrent() || !canOperateLead || stageId === localLead.stage_id || stageMovePendingRef.current || statusSubmittingRef.current) return false;
+
     const stage = stages.find(s => s.id === stageId);
+    const submittedLead = localLead;
+    let receipt: ReturnType<typeof fieldOptimism.begin> = null;
+    stageMovePendingRef.current = true;
     setStageMovePending(true);
-    setLocalLead({
-      ...localLead,
-      stage_id: stageId,
-      stage: stage || localLead.stage,
-    });
 
     try {
-      const isProposal = stage?.name?.toLowerCase().includes('proposta');
-
-      const organizationId = lead.organization_id || activeOrganization.organizationId || undefined;
+      const organizationId = requestOperation.organizationId;
+      const guardedIntent = { ...requestOperation.intent, onRequestStart: () => {
+        if (!mutationOperation.isCurrent()) throw new DOMException('A seleção do lead mudou.', 'AbortError');
+      } };
+      const preparation = { organizationId, intent: guardedIntent, isCurrent: mutationOperation.isCurrent };
+      const moveStageContract = moveContract.getCurrent(preparation) ?? await moveContract.ensureCompatible(preparation);
+      if (!mutationOperation.isCurrent()) return false;
+      const latestRead = queryClient.getQueryData<Lead>(['lead', organizationId, lead.id]);
+      if (latestRead?.can_operate === false) return false;
+      receipt = fieldOptimism.begin(localLead, { stage_id: stageId, stage }, mutationOperation, revision.expectedUpdatedAt);
+      if (!receipt) return false;
+      fieldOptimism.apply(receipt);
       const { data: updatedLead, error } = await leadsAPI.moveLeadStage(lead.id, {
         stageId,
-        expectedStageId: previousLead.stage_id ?? null,
+        expectedStageId: revision.sourceStageId,
+        expectedUpdatedAt: revision.expectedUpdatedAt,
         lostReason,
-      }, organizationId);
+      }, organizationId, { ...guardedIntent, signal: undefined }, moveStageContract);
       if (error) throw error;
+      if (!requestOperation.canReconcileCapturedAccess()) {
+        fieldOptimism.reject(receipt, new DOMException('O acesso foi encerrado.', 'AbortError'));
+        return false;
+      }
+      if (!updatedLead || updatedLead.id !== lead.id || (updatedLead.organization_id && updatedLead.organization_id !== organizationId)) {
+        throw new VimobAPIError('Não foi possível confirmar a atualização do lead.', { status: 502, code: 'lead_write_unconfirmed' });
+      }
+      fieldOptimism.complete(receipt);
 
-      setLocalLead((current) => current ? { ...current, ...updatedLead } : current);
+      if (organizationId) {
+        queryClient.setQueryData<Lead>(['lead', organizationId, lead.id], (current) => mergeLeadServerResponse(current, updatedLead));
+      }
       updatePipelineLeadCache(lead.id, updatedLead);
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
       refreshPipelineInBackground(organizationId, lead.id, 'lead.stage_moved');
 
-      // Se moveu para estágio de Proposta, registrar atividade de gamificação
-      if (isProposal) {
-        createActivityMutation.mutate({
-          lead_id: lead.id,
-          type: 'proposal_sent',
-          content: 'Lead movido para estágio de Proposta',
-        });
-      }
+      if (!mutationOperation.isCurrent()) return false;
+      const latest = queryClient.getQueryData<Lead>(['lead', organizationId, lead.id]) || updatedLead;
+      setLocalLead((current) => current?.id === lead.id ? mergeLeadDetailMutation(current, latest as LeadDetailLead) : current);
 
-      toast.success('Lead movido!');
+      const financialReview = getLeadStatusFinancialReviewMessage(submittedLead, updatedLead);
+      if (financialReview) toast.warning(financialReview);
+      else toast.success('Lead movido!');
       return true;
     } catch (error: unknown) {
-      setLocalLead(previousLead);
-      if (error instanceof VimobAPIError && error.code === 'lead_stage_changed') {
-        void queryClient.invalidateQueries({ queryKey: ['pipeline-board'] });
+      if (receipt) fieldOptimism.reject(receipt, error);
+      if (!mutationOperation.isCurrent()) {
+        if (requestOperation.canReconcileCapturedAccess()) {
+          void queryClient.invalidateQueries({ queryKey: ['lead', requestOperation.organizationId, lead.id], exact: true, refetchType: 'active' });
+          void queryClient.invalidateQueries({ queryKey: ['stages-with-leads', requestOperation.organizationId], refetchType: 'active' });
+        }
+        return false;
+      }
+      if (error instanceof VimobAPIError && ['lead_stage_changed', 'lead_changed'].includes(error.code || '')) {
+        void queryClient.invalidateQueries({ queryKey: ['stages-with-leads', activeOrganization.organizationId] });
         void queryClient.invalidateQueries({ queryKey: ['lead', activeOrganization.organizationId, lead.id] });
         handleCloseLeadDetail();
-        toast.error('Este lead mudou de etapa em outra sessão. Abra novamente para ver a etapa atual.');
+        setPendingLostStageMove(null);
+        setLostReasonDialogOpen(false);
+        toast.error('Este lead foi atualizado em outra sessão. Abra novamente e confira os dados antes de mover.');
         return false;
       }
       if (
@@ -1103,73 +1252,78 @@ export function LeadDetailDialog({
         error instanceof VimobAPIError &&
         error.code === 'lead_lost_reason_required'
       ) {
-        setPendingLostStageId(stageId);
+        setPendingLostStageMove(move);
         setLostReasonDialogOpen(true);
       } else {
         toast.error(`Não foi possível mover o lead: ${getErrorMessage(error)}`);
       }
       return false;
     } finally {
+      if (receipt) fieldOptimism.discard(receipt);
+      stageMovePendingRef.current = false;
       setStageMovePending(false);
     }
   };
 
   const handleMoveToStage = async (stageId: string) => {
     if (!canOperateLead || stageId === localLead.stage_id) return;
+    if (!statusConfirmation.restart()) return;
+    const move = captureStageMove(stageId);
+    if (!move) return;
     const stage = stages.find((item) => item.id === stageId);
     if (getPipelineStageOutcome(stage, stageAutomations) === 'lost') {
-      setPendingLostStageId(stageId);
+      setPendingLostStageMove(move);
       setLostReasonDialogOpen(true);
       return;
     }
 
-    await persistMoveToStage(stageId);
+    await persistMoveToStage(move);
   };
 
   // Centralized handler for deal status changes
   const handleDealStatusChange = async (
     newStatus: string,
-    options?: { skipReopenConfirmation?: boolean; previousStatusOverride?: string },
+    options?: { confirmation?: ReopenStatusConfirmation },
   ) => {
-    if (!canOperateLead) return;
-    const previousStatus = options?.previousStatusOverride || localLead?.deal_status || 'open';
+    if (!canOperateLead || statusSubmittingRef.current || dealStatusChange.isPending || stageMovePending) return;
+    const previousStatus = options?.confirmation?.fromStatus || localLead?.deal_status || 'open';
     if (newStatus === previousStatus) return;
 
     // Intercept "lost" -> ask for reason via dialog
     if (newStatus === 'lost') {
+      if (!statusConfirmation.begin('lost')) return;
       setReopenStatusConfirmation(null);
+      setPendingLostStageMove(null);
       setLostReasonDialogOpen(true);
       return;
     }
 
-    if (newStatus === 'open' && previousStatus !== 'open' && !options?.skipReopenConfirmation) {
+    if (newStatus === 'open' && previousStatus !== 'open' && !options?.confirmation) {
+      const intent = statusConfirmation.begin('open');
+      if (!intent) return;
       setReopenStatusConfirmation({
         leadId: lead.id,
         leadName: localLead?.name || lead.name || 'Lead',
         fromStatus: previousStatus,
+        intent,
       });
       return;
-    } else {
-      setReopenStatusConfirmation(null);
     }
 
-    const currentLead = localLead || lead;
-
-    const previousLead = localLead ? { ...localLead } : null;
-    const statusChangedAt = new Date().toISOString();
-
-    if (localLead) {
-      setLocalLead({
-        ...localLead,
-        deal_status: newStatus as 'open' | 'won' | 'lost',
-        lost_reason: newStatus === 'lost' ? localLead.lost_reason : null,
-        won_at: newStatus === 'won' ? statusChangedAt : null,
-        lost_at: newStatus === 'lost' ? statusChangedAt : null,
-      });
+    const confirmation = options?.confirmation
+      ? statusConfirmation.resolve('open', options.confirmation.intent) : null;
+    if (options?.confirmation && !confirmation) {
+      toast.error('Esta confirmação expirou. Confira o lead e selecione o status novamente.');
+      return;
     }
+    if (!confirmation) statusConfirmation.clear();
+    const currentLead = confirmation?.authorizedLead || localLead || lead;
 
+    statusSubmittingRef.current = true;
+    const operation = confirmation?.operation || captureDetailOperation();
     try {
       const currentInterestPropertyId =
+        confirmation ? currentLead.interest_property_id || currentLead.property_id || null :
         currentLead?.interest_property_id ||
         currentLead?.property_id ||
         lead.interest_property_id ||
@@ -1186,46 +1340,46 @@ export function LeadDetailDialog({
         valorInteresse: currentLead?.valor_interesse ?? null,
         commissionPercentage: currentLead?.commission_percentage ?? null,
         leadName: currentLead?.name || lead.name || 'Lead',
+        authorizedLead: confirmation?.authorizedLead || fullLeadQuery.data || undefined,
+        expectedUpdatedAt: confirmation?.expectedUpdatedAt || fullLeadQuery.data?.updated_at || undefined,
       });
-      const updatedLead = result.lead as Partial<LeadDetailLead>;
-      setLocalLead((current) => current ? {
-        ...current,
-        ...updatedLead,
-        assignee: updatedLead.assignee === undefined ? current.assignee : updatedLead.assignee,
-        tags: updatedLead.tags === undefined ? current.tags : updatedLead.tags,
-        stage: updatedLead.stage === undefined ? current.stage : updatedLead.stage,
-      } : current);
+      if (!operation.isCurrent()) return;
+      if (confirmation) statusConfirmation.clear(confirmation);
+      setReopenStatusConfirmation(null);
+      const updatedLead = queryClient.getQueryData<Lead>(['lead', currentLead.organization_id || activeOrganization.organizationId, lead.id]) || result.lead;
+      setLocalLead((current) => current?.id === lead.id
+        ? mergeLeadDetailMutation(current, updatedLead as LeadDetailLead) : current);
       void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
     } catch {
-      if (previousLead) setLocalLead(previousLead);
+      // The hook restores only its own patch or reconciles an uncertain result.
+    } finally {
+      statusSubmittingRef.current = false;
     }
   };
 
   // Confirm lost with reason from dialog
   const handleConfirmLostReason = async (reason: string) => {
-    if (pendingLostStageId) {
-      const moved = await persistMoveToStage(pendingLostStageId, reason);
+    if (!canOperateLead || statusSubmittingRef.current || dealStatusChange.isPending || stageMovePending) return;
+    if (!statusConfirmation.isCurrent()) return;
+    if (pendingLostStageMove) {
+      const moved = await persistMoveToStage(pendingLostStageMove, reason);
       if (moved) {
+        statusConfirmation.clear();
         setLostReasonLocal(reason);
-        setPendingLostStageId(null);
+        setPendingLostStageMove(null);
         setLostReasonDialogOpen(false);
       }
       return;
     }
 
-    const previousStatus = localLead?.deal_status || 'open';
-    const currentLead = localLead || lead;
-    const previousLead = localLead ? { ...localLead } : null;
-    if (localLead) {
-      setLocalLead({
-        ...localLead,
-        deal_status: 'lost',
-        lost_reason: reason,
-        won_at: null,
-        lost_at: new Date().toISOString(),
-      });
+    const confirmation = statusConfirmation.resolve('lost');
+    if (!confirmation) {
+      toast.error('Esta confirmação expirou. Confira o lead e selecione Perdido novamente.');
+      return;
     }
-
+    const currentLead = confirmation.authorizedLead;
+    statusSubmittingRef.current = true;
+    const operation = confirmation.operation;
     try {
       const result = await dealStatusChange.mutateAsync({
         leadId: lead.id,
@@ -1238,27 +1392,27 @@ export function LeadDetailDialog({
         commissionPercentage: currentLead?.commission_percentage ?? null,
         leadName: currentLead?.name || lead.name || 'Lead',
         lostReason: reason,
+        authorizedLead: confirmation.authorizedLead,
+        expectedUpdatedAt: confirmation.expectedUpdatedAt,
       });
+      if (!operation.isCurrent()) return;
+      statusConfirmation.clear(confirmation);
       setLostReasonLocal(reason);
       setLostReasonDialogOpen(false);
-      const updatedLead = result.lead as Partial<LeadDetailLead>;
-      setLocalLead((current) => current ? {
-        ...current,
-        ...updatedLead,
-        assignee: updatedLead.assignee === undefined ? current.assignee : updatedLead.assignee,
-        tags: updatedLead.tags === undefined ? current.tags : updatedLead.tags,
-        stage: updatedLead.stage === undefined ? current.stage : updatedLead.stage,
-      } : current);
+      const updatedLead = queryClient.getQueryData<Lead>(['lead', currentLead.organization_id || activeOrganization.organizationId, lead.id]) || result.lead;
+      setLocalLead((current) => current?.id === lead.id
+        ? mergeLeadDetailMutation(current, updatedLead as LeadDetailLead) : current);
       void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
     } catch {
-      if (previousLead) setLocalLead(previousLead);
-      else if (localLead) setLocalLead({ ...localLead, deal_status: previousStatus });
+      // Cache reconciliation belongs to the mutation hook, including after close.
+    } finally {
+      statusSubmittingRef.current = false;
     }
   };
 
   const leadSource = localLead?.source ?? lead.source ?? 'outros';
-  const leadName = localLead?.name || lead.name || 'Lead';
-  const canOpenLeadWhatsApp = canViewLeadWhatsApp;
+  const leadName = normalizeDisplayName(localLead?.name || lead.name, 'Lead');
+  const canOpenLeadWhatsApp = !poolReadOnly && canViewLeadWhatsApp;
   const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, localLead || lead);
   const firstResponse = resolvedFirstResponse(localLead, leadHistoryQuery.data);
   const firstResponseLabel = firstResponse
@@ -1267,7 +1421,7 @@ export function LeadDetailDialog({
       ? 'Carregando...'
       : leadHistoryQuery.isError && !localLead.first_response_at
         ? 'Indisponível'
-        : 'Não registrado';
+        : leadHistoryQuery.historyComplete === false ? 'Histórico parcial' : 'Não registrado';
   const renderScheduleEvents = () => (
     <>
       {scheduleError && (
@@ -1284,24 +1438,29 @@ export function LeadDetailDialog({
         <CompactScheduleEventsList
           events={scheduleEvents}
           locale={dateLocale}
-          onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
+          onEditEvent={canViewLeadSchedule ? handleEditScheduleEvent : undefined}
         />
+      )}
+      {schedulePreview.hasNextPage && (
+        <Button type="button" variant="ghost" className="mt-2 h-9 text-xs" disabled={schedulePreview.isFetchingNextPage} onClick={() => void schedulePreview.fetchNextPage()}>
+          {schedulePreview.isFetchingNextPage ? 'Carregando...' : 'Ver mais compromissos'}
+        </Button>
       )}
     </>
   );
 
   const MobileContentV2 = () => {
-    const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
+    const leadAvatarUrl = localLead.whatsapp_picture || localLead.whatsapp_avatar_url || localLead.contact_picture || null;
     const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
     const mobileActiveTab = ['summary', 'actions', 'history'].includes(activeTab) ? activeTab : 'summary';
     const contactRows: Array<{ label: string; value: ReactNode }> = [
-      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
+      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} variant={variant === 'pipeline' ? 'pipeline' : 'default'} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: getLeadSourceLabel(leadSource) },
       { label: 'Primeiro contato', value: firstResponseLabel },
       {
         label: 'Campanha',
-        value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
+        value: campaignTrackingDetails || leadMetaQuery.isPending || leadMetaQuery.isError ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} variant={variant === 'pipeline' ? 'pipeline' : 'default'} loading={leadMetaQuery.isPending} error={leadMetaQuery.isError} onRetry={() => void leadMetaQuery.refetch()} /> : null
       },
     ]
       .filter((row) => Boolean(row.value));
@@ -1313,190 +1472,247 @@ export function LeadDetailDialog({
     ];
     // The shared primary-action rule fixes height at 2rem; keep mobile hit areas at 40px.
     const mobilePrimaryActionStyle = { height: '2.5rem' };
+    const isCompactPipelineHeader = variant === 'pipeline' && isMobile;
+
+    const headerStages = (
+      <div
+        data-lead-stage-stepper
+        className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center overflow-x-auto pb-0.5"
+        style={{ ...stageStepperStyle, '--lead-stage-step-size': '2.5rem' } as CSSProperties}
+      >
+        {stages.map((stage, idx) => {
+          const isActive = stage.id === localLead.stage_id;
+          const isPast = idx < currentStageIndex;
+
+          return (
+            <button
+              key={stage.id}
+              type="button"
+              disabled={!canOperateLead}
+              aria-label={`Mover para ${stage.name}`}
+              aria-current={isActive ? 'step' : undefined}
+              data-lead-stage-step
+              onClick={() => handleMoveToStage(stage.id)}
+              className={cn(
+                'lead-stage-step relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-normal',
+                isActive
+                  ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary text-primary-foreground')
+                  : isPast
+                    ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/10 text-primary')
+                    : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]',
+              )}
+            >
+              {idx + 1}
+            </button>
+          );
+        })}
+      </div>
+    );
+
+    const headerCloseAction = (
+      <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
+        <X className="h-4 w-4" />
+      </button>
+    );
+
+    const headerTags = (
+      <div className={cn('flex flex-wrap gap-1.5', variant !== 'pipeline' && 'mt-1.5')}>
+        {(variant === 'pipeline' ? leadTags : leadTags.slice(0, 4)).map((tag) => {
+          const tagColor = tag.color?.trim() || null;
+          return (
+            <Badge
+              key={tag.id}
+              className={cn(
+                'flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px] font-light',
+                'text-white', variant === 'pipeline' && pipelineDetailStyles.tag,
+              )}
+              style={getTagColorStyleWithWhiteText(tagColor)}
+            >
+              <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
+              <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </Badge>
+          );
+        })}
+        {variant !== 'pipeline' && leadTags.length > 4 && (
+          <Badge variant="secondary" className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]">
+            +{leadTags.length - 4}
+          </Badge>
+        )}
+        <Popover open={tagPopoverOpen} onOpenChange={(open) => (!open || (canOperateLead && !isTagMutationPending)) && setTagPopoverOpen(open)}>
+          <PopoverTrigger asChild>
+            <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
+              <Plus className="mr-1 h-3 w-3" />
+              Tag
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className={cn('w-64 p-0', variant === 'pipeline' && pipelineDetailStyles.portal)} align="start">
+            {variant === 'pipeline' ? (
+              <LeadTagPickerContent leadId={localLead.id} assignedTagIds={leadTagIds} disabled={!canOperateLead || isTagMutationPending} enabled={tagPopoverOpen} onAddTag={tag => handleAddTag(tag.id, tag)} onClose={() => setTagPopoverOpen(false)} />
+            ) : <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />}
+          </PopoverContent>
+        </Popover>
+      </div>
+    );
+
+    const headerIdentity = (
+      <div className={cn('flex items-start gap-2.5', variant === 'pipeline' && 'relative min-h-10 pr-11')}>
+        <Avatar className="h-10 w-10 shrink-0 border-0">
+          <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
+          <AvatarFallback className={cn('text-[12px] font-light', variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/12 text-primary')}>
+            {getDisplayInitial(leadName) || <User className="h-5 w-5" />}
+          </AvatarFallback>
+        </Avatar>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
+            <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
+            <QueuePoolClaimButton lead={localLead} compact disabled={fullLeadQuery.isFetching || readAccessPending} />
+          </div>
+          {localLead.phone && (
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(localLead.phone)}</p>
+              <CopyLeadPhoneButton phone={localLead.phone} className={cn('h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]', variant === 'pipeline' && 'absolute right-0 top-0')} />
+            </div>
+          )}
+          {variant === 'pipeline' && !localLead.phone && localLead.email && <p className="mt-1 truncate text-xs text-[var(--app-text-tertiary)]">{localLead.email}</p>}
+
+          {variant !== 'pipeline' && headerTags}
+        </div>
+      </div>
+    );
+
+    const headerAssignee = (
+      <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            aria-label="Alterar responsável pelo lead"
+             className="h-10 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs font-light text-[var(--app-text-secondary)]"
+            disabled={!canTransferLead}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{assigneeName || 'Sem responsável'}</span>
+            {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          className={cn('app-header-popover w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1', variant === 'pipeline' && pipelineDetailStyles.portal)}
+          align="start"
+          collisionPadding={12}
+          onWheelCapture={(event) => event.stopPropagation()}
+          onTouchMoveCapture={(event) => event.stopPropagation()}
+        >
+          <Command filter={commandSearchFilter} className={cn("max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2", variant === 'pipeline' && pipelineDetailStyles.assigneeSearch)}>
+            <CommandInput aria-label="Buscar responsável" placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
+            <CommandList
+              className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
+              onWheelCapture={(event) => event.stopPropagation()}
+              onTouchMoveCapture={(event) => event.stopPropagation()}
+            >
+              <LeadAssigneeCatalogNotice state={allUsersState} />
+              {!assigneeCatalogBlocked && <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>}
+              {!assigneeCatalogBlocked && <CommandGroup>
+                <CommandItem onSelect={() => handleAssignUser(null)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
+                  Sem responsável
+                </CommandItem>
+                {assignableUsers.map((user) => (
+                  <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Avatar className="h-7 w-7">
+                        <AvatarImage src={user.avatar_url || undefined} alt={user.name || user.email || 'Responsável'} />
+                        <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
+                      </Avatar>
+                      <span className="truncate">{user.name || user.email}</span>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    );
+
+    const headerStatus = (
+      <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
+        <SelectTrigger className={cn('h-10 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light', getDealStatusTriggerClass(localLead.deal_status))}>
+          <SelectValue>{dealStatusLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className={variant === 'pipeline' ? pipelineDetailStyles.portal : undefined}>
+          <SelectItem value="open" className="min-h-10">Aberto</SelectItem>
+          <SelectItem value="won" className="min-h-10">Ganho</SelectItem>
+          <SelectItem value="lost" className="min-h-10">Perdido</SelectItem>
+        </SelectContent>
+      </Select>
+    );
+
+    const headerActions = (
+      <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
+        {localLead.phone && (
+          <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+            <Phone className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {!hideWhatsAppAction && <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-10 rounded-[6px] px-2 text-xs">
+          <MessageCircle className="mr-1 h-3.5 w-3.5" />
+          Chat
+        </Button>}
+          {localLead.email && (
+          <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+            <Mail className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    );
 
     return (
       <div className="lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
-        <div className="lead-mobile-drawer-header shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 pb-3">
-          <div className="mb-3 flex items-center gap-2">
-            <div
-              data-lead-stage-stepper
-              className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center overflow-x-auto pb-0.5"
-              style={{ ...stageStepperStyle, '--lead-stage-step-size': '2.5rem' } as CSSProperties}
-            >
-              {stages.map((stage, idx) => {
-                const isActive = stage.id === localLead.stage_id;
-                const isPast = idx < currentStageIndex;
-
-                return (
-                  <button
-                    key={stage.id}
-                    type="button"
-                    disabled={!canOperateLead}
-                    aria-label={`Mover para ${stage.name}`}
-                    aria-current={isActive ? 'step' : undefined}
-                    data-lead-stage-step
-                    onClick={() => handleMoveToStage(stage.id)}
-                    className={cn(
-                      'lead-stage-step relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-normal',
-                      isActive
-                        ? 'bg-primary text-primary-foreground'
-                        : isPast
-                          ? 'bg-primary/10 text-primary'
-                          : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]',
-                    )}
-                  >
-                    {idx + 1}
-                  </button>
-                );
-              })}
+        <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />
+        {isCompactPipelineHeader ? (
+          <PipelineMobileLeadHeader
+            key={`${activeOrganization.organizationId}:${lead.id}`}
+            stages={headerStages}
+            closeAction={headerCloseAction}
+            identity={headerIdentity}
+            assignee={headerAssignee}
+            status={headerStatus}
+            tags={headerTags}
+            actions={headerActions}
+          />
+        ) : (
+          <div className="lead-mobile-drawer-header shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 pb-3">
+            <div className="mb-3 flex items-center gap-2">
+              {headerStages}
+              {headerCloseAction}
             </div>
-            <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="flex items-start gap-2.5">
-            <Avatar className="h-10 w-10 shrink-0 border-0">
-              <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
-              <AvatarFallback className="bg-primary/12 text-[12px] font-light text-primary">
-                {leadName?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
-              </AvatarFallback>
-            </Avatar>
-
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
-                <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
-              </div>
-              {localLead.phone && (
-                <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                  <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(localLead.phone)}</p>
-                  <CopyLeadPhoneButton phone={localLead.phone} className="h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]" />
-                </div>
-              )}
-
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {leadTags.slice(0, 4).map((tag) => {
-                  const tagColor = tag.color?.trim() || null;
-                  return (
-                    <Badge
-                      key={tag.id}
-                      className={cn(
-                        'flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px] font-light',
-                        'text-white',
-                      )}
-                      style={getTagColorStyleWithWhiteText(tagColor)}
-                    >
-                      <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
-                      <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </Badge>
-                  );
-                })}
-                {leadTags.length > 4 && (
-                  <Badge variant="secondary" className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]">
-                    +{leadTags.length - 4}
-                  </Badge>
-                )}
-                <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && !isTagMutationPending && setTagPopoverOpen(open)}>
-                  <PopoverTrigger asChild>
-                    <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
-                      <Plus className="mr-1 h-3 w-3" />
-                      Tag
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-0" align="start">
-                    <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />
-                  </PopoverContent>
-                </Popover>
-              </div>
+            {headerIdentity}
+            {variant === 'pipeline' && <div className="mt-2 max-h-[72px] overflow-y-auto overscroll-contain">{headerTags}</div>}
+            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              {headerAssignee}
+              {headerStatus}
             </div>
+            {headerActions}
           </div>
-
-          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-            <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  aria-label="Alterar responsável pelo lead"
-                   className="h-10 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs font-light text-[var(--app-text-secondary)]"
-                  disabled={!canTransferLead}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{assigneeName || 'Sem responsável'}</span>
-                  {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="app-header-popover w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1"
-                align="start"
-                collisionPadding={12}
-                onWheelCapture={(event) => event.stopPropagation()}
-                onTouchMoveCapture={(event) => event.stopPropagation()}
-              >
-                <Command filter={commandSearchFilter} className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
-                  <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
-                  <CommandList
-                    className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
-                    onWheelCapture={(event) => event.stopPropagation()}
-                    onTouchMoveCapture={(event) => event.stopPropagation()}
-                  >
-                    <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem onSelect={() => handleAssignUser(null)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
-                        Sem responsável
-                      </CommandItem>
-                      {assignableUsers.map((user) => (
-                        <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <Avatar className="h-7 w-7">
-                              <AvatarImage src={user.avatar_url || undefined} alt={user.name || user.email || 'Responsável'} />
-                              <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
-                            </Avatar>
-                            <span className="truncate">{user.name || user.email}</span>
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-
-            <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
-              <SelectTrigger className={cn('h-10 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light', getDealStatusTriggerClass(localLead.deal_status))}>
-                <SelectValue>{dealStatusLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="open" className="min-h-10">Aberto</SelectItem>
-                <SelectItem value="won" className="min-h-10">Ganho</SelectItem>
-                <SelectItem value="lost" className="min-h-10">Perdido</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
-            {localLead.phone && (
-              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-                <Phone className="h-3.5 w-3.5" />
-              </Button>
-            )}
-            <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-10 rounded-[6px] px-2 text-xs">
-              <MessageCircle className="mr-1 h-3.5 w-3.5" />
-              Chat
-            </Button>
-              {localLead.email && (
-              <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-                <Mail className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        </div>
+        )}
 
         <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-2">
-          <div role="tablist" aria-label="Seções dos detalhes do lead" className="grid grid-cols-3 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-1">
+          <div role="tablist" aria-label="Seções dos detalhes do lead" aria-orientation="horizontal" className="grid grid-cols-3 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-1"
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+              const currentIndex = tabs.indexOf(event.target as HTMLButtonElement);
+              if (currentIndex < 0) return;
+              event.preventDefault();
+              const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+              setActiveTab(mobileTabs[nextIndex].id);
+              tabs[nextIndex].focus();
+            }}
+          >
             {mobileTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = mobileActiveTab === tab.id;
@@ -1506,7 +1722,10 @@ export function LeadDetailDialog({
                   key={tab.id}
                   type="button"
                   role="tab"
+                   id={`${mobileTabsId}-${tab.id}-tab`}
+                   aria-controls={`${mobileTabsId}-${tab.id}-panel`}
                   aria-selected={isActive}
+                   tabIndex={isActive ? 0 : -1}
                   onClick={() => setActiveTab(tab.id)}
                   className={cn(
                     'flex h-10 items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-light transition-colors',
@@ -1523,6 +1742,7 @@ export function LeadDetailDialog({
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden">
+          <div role="tabpanel" id={`${mobileTabsId}-summary-panel`} aria-labelledby={`${mobileTabsId}-summary-tab`} hidden={mobileActiveTab !== 'summary'} tabIndex={0} className="h-full">
           {mobileActiveTab === 'summary' && (
             <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
               <div className="space-y-3 pb-4">
@@ -1540,24 +1760,6 @@ export function LeadDetailDialog({
                       <InfoLine key={row.label} label={row.label} value={row.value} />
                     ))}
                   </div>
-
-
-
-                  {isEditingContact && (
-                    <div className="mt-3 space-y-2">
-                      <Input aria-label="Nome" value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-10 rounded-[6px]" placeholder="Nome" />
-                      <div role="group" aria-label="Telefone"><InternationalPhoneInput value={editForm.phone} onChange={(value) => setEditForm({ ...editForm, phone: value })} /></div>
-                      <Input aria-label="E-mail" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-10 rounded-[6px]" placeholder="E-mail" />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input aria-label="Cargo" value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-10 rounded-[6px]" placeholder="Cargo" />
-                        <Input aria-label="Empresa" value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-10 rounded-[6px]" placeholder="Empresa" />
-                      </div>
-                      <Button size="sm" className="h-10 w-full rounded-[6px]" onClick={handleSaveContact}>
-                        <Save className="mr-1.5 h-3.5 w-3.5" />
-                        Salvar dados
-                      </Button>
-                    </div>
-                  )}
                 </section>
 
                 {hasPropertiesModule && <PropertyPickerDialog
@@ -1565,16 +1767,14 @@ export function LeadDetailDialog({
                   selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                   onSelect={(property) => void handleSelectInterestProperty(property)}
                   disabled={!canOperateLead || !canViewProperties}
-                  isLoading={propertyPickerLoading}
-                  onOpenChange={handlePropertyPickerOpenChange}
                 />}
 
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-[12px] font-normal">Documentação</h3>
+                <section className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
+                  <div className="flex h-8 items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]"><FileText className="h-3 w-3 shrink-0" aria-hidden="true" /><h3 className="leading-none" style={{ color: "var(--app-text-secondary)", fontSize: "11px", fontWeight: 400 }}>Documentação</h3></div>
                     {canOperateLead && (
                       <>
-                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-10 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light" disabled={isUploading || Boolean(attachmentUploadDraft.draft)} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                           Anexar
                         </Button>
@@ -1582,8 +1782,11 @@ export function LeadDetailDialog({
                       </>
                     )}
                   </div>
+                  {(attachmentsLoading || attachmentsError) && <div className="pb-3 pt-2"><LeadAttachmentsStatus loading={attachmentsLoading} error={attachmentsError} empty={attachments.length === 0} retrying={attachmentsFetching} onRetry={() => void refetchAttachments()} /></div>}
+                  <LeadAttachmentUploadRecovery draft={attachmentUploadDraft.draft} canRetry={canOperateLead} checking={attachmentsFetching}
+                    onCheck={() => void refetchAttachments()} onRetry={() => { if (attachmentUploadDraft.draft) void handleFileUpload({ target: { files: [attachmentUploadDraft.draft.file] } }); }} onClear={attachmentUploadDraft.clear} />
                   {attachments.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 pb-3 pt-2">
                       {attachments.map((doc) => (
                         <button
                           key={doc.id}
@@ -1601,7 +1804,9 @@ export function LeadDetailDialog({
               </div>
             </div>
           )}
+          </div>
 
+          <div role="tabpanel" id={`${mobileTabsId}-actions-panel`} aria-labelledby={`${mobileTabsId}-actions-tab`} hidden={mobileActiveTab !== 'actions'} tabIndex={0} className="h-full">
           {mobileActiveTab === 'actions' && (
             <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
               <div className="space-y-3 pb-4">
@@ -1616,7 +1821,7 @@ export function LeadDetailDialog({
                     <Button
                       size="sm"
                       disabled={!canManageLeadSchedule}
-                      className="lead-detail-primary-action lead-agenda-action h-10 shrink-0 rounded-[6px] px-2.5"
+                      className="lead-detail-primary-action lead-agenda-action h-10 shrink-0 rounded-[6px] border-0 bg-primary/50 px-2.5 text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
                       style={mobilePrimaryActionStyle}
                       onClick={() => {
                         setEditingScheduleEvent(null);
@@ -1632,13 +1837,15 @@ export function LeadDetailDialog({
                 </section>}
 
                 <LeadCadencePanel
+                  appearance={variant === 'pipeline' ? 'pipeline' : 'default'}
                   state={leadCadenceState}
                   isLoading={leadCadenceLoading}
                   error={leadCadenceError}
-                  isCompleting={completeCadenceTask.isPending}
+                  isCompleting={cadenceActionPending || completeCadenceTask.isPending}
                   canOperate={canOperateLead}
                   onRetry={() => void refetchLeadCadence()}
                   onTaskClick={handleCadenceTaskClick}
+                  onTaskInspect={(task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); }}
                 />
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
@@ -1648,7 +1855,8 @@ export function LeadDetailDialog({
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     disabled={!canOperateLead}
-                    className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
+                    rows={2}
+                    className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
                   />
                   <div className="mt-2 flex justify-end">
                     <Button className="lead-detail-primary-action h-10 rounded-[6px] px-3" style={mobilePrimaryActionStyle} disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
@@ -1659,42 +1867,80 @@ export function LeadDetailDialog({
               </div>
             </div>
           )}
+          </div>
 
+          <div role="tabpanel" id={`${mobileTabsId}-history-panel`} aria-labelledby={`${mobileTabsId}-history-tab`} hidden={mobileActiveTab !== 'history'} tabIndex={0} className="h-full">
           {mobileActiveTab === 'history' && (
             <div className="h-full p-2">
               <LeadUnifiedThread
+                historyPagination={variant === 'pipeline'}
                 leadId={lead.id}
                 leadName={leadName}
                 leadAvatarUrl={leadAvatarUrl}
-                leadPhone={localLead.phone || null}
-                whatsappVerified={localLead.whatsapp_verified ?? null}
                 leadCreatedAt={lead.created_at || null}
-                readOnly
               />
             </div>
           )}
+          </div>
         </div>
       </div>
     );
   };
 
   const DesktopContentV2 = () => {
-    const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
+    const leadAvatarUrl = localLead.whatsapp_picture || localLead.whatsapp_avatar_url || localLead.contact_picture || null;
     const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
     const contactRows: Array<{ label: string; value: ReactNode; icon?: ReactNode }> = [
-      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
+      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} variant={variant === 'pipeline' ? 'pipeline' : 'default'} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: getLeadSourceLabel(leadSource) },
       { label: 'Primeiro contato', value: firstResponseLabel },
       {
         label: 'Campanha',
-        value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
+        value: campaignTrackingDetails || leadMetaQuery.isPending || leadMetaQuery.isError ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} variant={variant === 'pipeline' ? 'pipeline' : 'default'} loading={leadMetaQuery.isPending} error={leadMetaQuery.isError} onRetry={() => void leadMetaQuery.refetch()} /> : null
       },
     ]
       .filter((row) => Boolean(row.value));
 
+    const desktopHeaderTags = (
+      <div data-tour="lead-detail-tags" className="mt-2 flex flex-wrap gap-1.5">
+        {leadTags.map((tag) => {
+          const tagColor = tag.color?.trim() || null;
+          return (
+            <Badge
+              key={tag.id}
+              className={cn(
+                'flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px] font-light',
+                'text-white', variant === 'pipeline' && pipelineDetailStyles.tag,
+              )}
+              style={getTagColorStyleWithWhiteText(tagColor)}
+            >
+              {tag.name || 'Tag'}
+              <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </Badge>
+          );
+        })}
+        <Popover open={tagPopoverOpen} onOpenChange={(open) => (!open || (canOperateLead && !isTagMutationPending)) && setTagPopoverOpen(open)}>
+          <PopoverTrigger asChild>
+            <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
+              <Plus className="mr-1 h-3 w-3" />
+              Tag
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className={cn('w-64 p-0', variant === 'pipeline' && pipelineDetailStyles.portal)} align="start">
+              {variant === 'pipeline' ? (
+                <LeadTagPickerContent leadId={localLead.id} assignedTagIds={leadTagIds} disabled={!canOperateLead || isTagMutationPending} enabled={tagPopoverOpen} onAddTag={tag => handleAddTag(tag.id, tag)} onClose={() => setTagPopoverOpen(false)} />
+              ) : <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />}
+          </PopoverContent>
+        </Popover>
+      </div>
+    );
+
     return (
       <div className="lead-detail-dialog lead-detail-v2 flex h-full max-h-full flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
+        <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />
         <div className="border-b border-transparent bg-[var(--app-surface-solid)] px-4 pt-4">
           <DialogHeader className="sr-only">
             <DialogTitle>{leadName}</DialogTitle>
@@ -1726,10 +1972,12 @@ export function LeadDetailDialog({
                           className={cn(
                             'lead-stage-step group relative flex h-8 w-8 items-center justify-center rounded-[6px] text-xs font-normal transition-colors',
                             isActive
-                              ? 'bg-primary text-primary-foreground'
+                              ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary text-primary-foreground')
                               : isPast
-                                ? 'bg-primary/10 text-primary'
-                                : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/10 hover:text-primary',
+                                ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/10 text-primary')
+                                : (variant === 'pipeline'
+                                  ? 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-muted'
+                                  : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/10 hover:text-primary'),
                           )}
                         >
                           {idx + 1}
@@ -1747,55 +1995,33 @@ export function LeadDetailDialog({
           </ScrollArea>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr_340px] xl:grid-cols-[330px_1fr_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden">
+        <div className={cn('lead-detail-v2-grid grid min-h-0 flex-1 grid-cols-[280px_1fr_340px] xl:grid-cols-[330px_1fr_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden', variant === 'contacts' && 'grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] xl:grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] [&>div]:min-w-0')}>
           <aside className="lead-detail-v2-column border-r border-[var(--app-border)]">
-            <div ref={v2LeadInfoScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
+            <div ref={v2LeadInfoScrollRef} className={cn('lead-detail-v2-scroll h-full overflow-y-auto p-4', variant === 'pipeline' && pipelineDetailStyles.columnScroll)}>
               <section className="space-y-3">
-                <div className="flex items-start gap-3">
+                <div className={cn('flex items-start gap-3', variant === 'pipeline' && 'relative min-h-11 pr-11')}>
                   <Avatar className="h-11 w-11 shrink-0 border-0">
                     <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
-                    <AvatarFallback className="bg-primary/12 text-[12px] font-light text-primary">
-                      {leadName?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
+                    <AvatarFallback className={cn('text-[12px] font-light', variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/12 text-primary')}>
+                      {getDisplayInitial(leadName) || <User className="h-5 w-5" />}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
                       <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
+                      <QueuePoolClaimButton lead={localLead} compact disabled={fullLeadQuery.isFetching || readAccessPending} />
                     </div>
-                    <div data-tour="lead-detail-tags" className="mt-2 flex flex-wrap gap-1.5">
-                      {leadTags.map((tag) => {
-                        const tagColor = tag.color?.trim() || null;
-                        return (
-                          <Badge
-                            key={tag.id}
-                            className={cn(
-                              'flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px] font-light',
-                              'text-white',
-                            )}
-                            style={getTagColorStyleWithWhiteText(tagColor)}
-                          >
-                            {tag.name || 'Tag'}
-                            <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
-                              <X className="h-2.5 w-2.5" />
-                            </button>
-                          </Badge>
-                        );
-                      })}
-                      <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && !isTagMutationPending && setTagPopoverOpen(open)}>
-                        <PopoverTrigger asChild>
-                          <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
-                            <Plus className="mr-1 h-3 w-3" />
-                            Tag
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-64 p-0" align="start">
-                          <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
+                    {variant === 'pipeline' && (localLead.phone || localLead.email) && (
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                        <p className="truncate text-xs text-[var(--app-text-tertiary)]">{localLead.phone ? formatPhoneForDisplay(localLead.phone) : localLead.email}</p>
+                        {localLead.phone && <CopyLeadPhoneButton phone={localLead.phone} className="absolute right-0 top-0 h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]" />}
+                      </div>
+                    )}
+                    {variant !== 'pipeline' && desktopHeaderTags}
                   </div>
                 </div>
+                {variant === 'pipeline' && desktopHeaderTags}
 
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                   <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
@@ -1813,21 +2039,22 @@ export function LeadDetailDialog({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent
-                      className="w-[300px] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none"
+                      className={cn('w-[300px] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none', variant === 'pipeline' && pipelineDetailStyles.portal)}
                       align="start"
                       collisionPadding={12}
                       onWheelCapture={(event) => event.stopPropagation()}
                       onTouchMoveCapture={(event) => event.stopPropagation()}
                     >
-                      <Command filter={commandSearchFilter} className="max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
-                        <CommandInput placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
+                      <Command filter={commandSearchFilter} className={cn("max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2", variant === 'pipeline' && pipelineDetailStyles.assigneeSearch)}>
+                        <CommandInput aria-label="Buscar responsável" placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
                         <CommandList
                           className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
                           onWheelCapture={(event) => event.stopPropagation()}
                           onTouchMoveCapture={(event) => event.stopPropagation()}
                         >
-                          <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
-                          <CommandGroup>
+                          <LeadAssigneeCatalogNotice state={allUsersState} />
+                          {!assigneeCatalogBlocked && <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>}
+                          {!assigneeCatalogBlocked && <CommandGroup>
                             <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
                               Sem responsável
                             </CommandItem>
@@ -1842,14 +2069,14 @@ export function LeadDetailDialog({
                                 </div>
                               </CommandItem>
                             ))}
-                          </CommandGroup>
+                          </CommandGroup>}
                         </CommandList>
                       </Command>
                     </PopoverContent>
                   </Popover>
 
                   <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
+                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
                       <SelectTrigger
                         className={cn(
                           'h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light',
@@ -1858,7 +2085,7 @@ export function LeadDetailDialog({
                       >
                         <SelectValue>{dealStatusLabel}</SelectValue>
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className={variant === 'pipeline' ? pipelineDetailStyles.portal : undefined}>
                         <SelectItem value="open">Aberto</SelectItem>
                         <SelectItem value="won">Ganho</SelectItem>
                         <SelectItem value="lost">Perdido</SelectItem>
@@ -1873,10 +2100,10 @@ export function LeadDetailDialog({
                       <Phone className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                  {!hideWhatsAppAction && <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
                     <MessageCircle className="mr-1 h-3.5 w-3.5" />
                     Chat
-                  </Button>
+                  </Button>}
                   {localLead.email && (
                     <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Mail className="h-3.5 w-3.5" />
@@ -1899,21 +2126,6 @@ export function LeadDetailDialog({
                     ))}
                   </div>
 
-                  {isEditingContact && (
-                    <div className="mt-3 space-y-2">
-                      <Input aria-label="Nome" value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-8 rounded-[6px]" placeholder="Nome" />
-                      <div role="group" aria-label="Telefone"><InternationalPhoneInput value={editForm.phone} onChange={(value) => setEditForm({ ...editForm, phone: value })} /></div>
-                      <Input aria-label="E-mail" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-8 rounded-[6px]" placeholder="E-mail" />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input aria-label="Cargo" value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-8 rounded-[6px]" placeholder="Cargo" />
-                        <Input aria-label="Empresa" value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-8 rounded-[6px]" placeholder="Empresa" />
-                      </div>
-                      <Button size="sm" className="h-8 w-full rounded-[6px]" onClick={handleSaveContact}>
-                        <Save className="mr-1.5 h-3.5 w-3.5" />
-                        Salvar dados
-                      </Button>
-                    </div>
-                  )}
                 </div>
 
                 {hasPropertiesModule && <PropertyPickerDialog
@@ -1921,16 +2133,14 @@ export function LeadDetailDialog({
                   selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                   onSelect={(property) => void handleSelectInterestProperty(property)}
                   disabled={!canOperateLead || !canViewProperties}
-                  isLoading={propertyPickerLoading}
-                  onOpenChange={handlePropertyPickerOpenChange}
                 />}
 
-                <div data-tour="lead-detail-documents" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-[12px] font-normal">Documentação</h3>
+                <div data-tour="lead-detail-documents" className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
+                  <div className="flex h-8 items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]"><FileText className="h-3 w-3 shrink-0" aria-hidden="true" /><h3 className="leading-none" style={{ color: "var(--app-text-secondary)", fontSize: "11px", fontWeight: 400 }}>Documentação</h3></div>
                     {canOperateLead && (
                       <>
-                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light" disabled={isUploading || Boolean(attachmentUploadDraft.draft)} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                           Anexar
                         </Button>
@@ -1938,8 +2148,11 @@ export function LeadDetailDialog({
                       </>
                     )}
                   </div>
+                  {(attachmentsLoading || attachmentsError) && <div className="pb-3 pt-2"><LeadAttachmentsStatus loading={attachmentsLoading} error={attachmentsError} empty={attachments.length === 0} retrying={attachmentsFetching} onRetry={() => void refetchAttachments()} /></div>}
+                  <LeadAttachmentUploadRecovery draft={attachmentUploadDraft.draft} canRetry={canOperateLead} checking={attachmentsFetching}
+                    onCheck={() => void refetchAttachments()} onRetry={() => { if (attachmentUploadDraft.draft) void handleFileUpload({ target: { files: [attachmentUploadDraft.draft.file] } }); }} onClear={attachmentUploadDraft.clear} />
                   {attachments.length > 0 && (
-                    <div className="max-h-44 space-y-2 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div className="max-h-44 space-y-2 overflow-y-auto pb-3 pr-1 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {attachments.map((doc) => (
                         <button
                           key={doc.id}
@@ -1960,7 +2173,7 @@ export function LeadDetailDialog({
           </aside>
 
           <main className="lead-detail-v2-column">
-            <div ref={v2LeadWorkScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
+            <div ref={v2LeadWorkScrollRef} className={cn('lead-detail-v2-scroll h-full overflow-y-auto p-4', variant === 'pipeline' && pipelineDetailStyles.columnScroll)}>
               <div className="space-y-4">
 
 
@@ -1973,7 +2186,7 @@ export function LeadDetailDialog({
                     <Button
                       size="sm"
                       disabled={!canManageLeadSchedule}
-                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
+                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] border-0 bg-primary/50 px-2.5 text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
@@ -1988,13 +2201,15 @@ export function LeadDetailDialog({
                 </section>}
 
                 <LeadCadencePanel
+                  appearance={variant === 'pipeline' ? 'pipeline' : 'default'}
                   state={leadCadenceState}
                   isLoading={leadCadenceLoading}
                   error={leadCadenceError}
-                  isCompleting={completeCadenceTask.isPending}
+                  isCompleting={cadenceActionPending || completeCadenceTask.isPending}
                   canOperate={canOperateLead}
                   onRetry={() => void refetchLeadCadence()}
                   onTaskClick={handleCadenceTaskClick}
+                  onTaskInspect={(task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); }}
                 />
 
                 <section data-tour="lead-detail-feedback" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
@@ -2004,7 +2219,8 @@ export function LeadDetailDialog({
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     disabled={!canOperateLead}
-                    className="min-h-[74px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
+                    rows={2}
+                    className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
                   />
                   <div className="mt-2 flex justify-end">
                     <Button
@@ -2022,13 +2238,11 @@ export function LeadDetailDialog({
 
           <aside data-tour="lead-detail-history" className="lead-detail-v2-column border-l border-[var(--app-border)]">
             <LeadUnifiedThread
+              historyPagination={variant === 'pipeline'}
               leadId={lead.id}
               leadName={leadName}
               leadAvatarUrl={leadAvatarUrl}
-              leadPhone={localLead.phone || null}
-              whatsappVerified={localLead.whatsapp_verified ?? null}
               leadCreatedAt={lead.created_at || null}
-              readOnly
             />
           </aside>
         </div>
@@ -2036,11 +2250,24 @@ export function LeadDetailDialog({
     );
   };
 
-  const overlays = (
+  const overlays = (<>
+    {canViewLeadSchedule && readOnlyScheduleEvent && <LeadScheduleReadDialog event={readOnlyScheduleEvent} onClose={() => setReadOnlyScheduleEvent(null)} />}
     <LeadDetailOverlays
+      outcomeScopeKey={outcomeScopeKey}
+      outcomeDraft={outcomeDraft.draft}
+      onOutcomeDraftChange={outcomeDraft.updateDraft}
+      quickActionDraft={quickActionDraft.draft}
+      onQuickActionDraftChange={quickActionDraft.updateDraft}
+      outcomeBlockedReason={outcomeBlockedReason}
+      quickActionBlockedReason={outcomeBlockedReason}
+      onRetryOutcomeRead={detailReadState.canRetry ? retryLeadRead : undefined}
+      outcomeReadRetrying={detailReadState.retrying}
       lead={lead}
       leadName={leadName}
-      selectedTask={selectedTask}
+      selectedTask={leadCadenceState?.tasks.find((task) => task.id === selectedTask?.id) || selectedTask}
+      cadenceTimeZone={leadCadenceState?.time_zone}
+      taskInspectOnly={taskInspectOnly || !canOperateLead || leadCadenceState?.deal_status !== 'open' ||
+        !leadCadenceState.tasks.some((task) => task.id === selectedTask?.id && task.status === 'pending' && !task.is_done)}
       roteiroDialogOpen={roteiroDialogOpen}
       onRoteiroDialogOpenChange={setRoteiroDialogOpen}
       onRoteiroAction={handleRoteiroAction}
@@ -2052,29 +2279,32 @@ export function LeadDetailDialog({
       quickActionOutcomeType={quickActionOutcomeType}
       onQuickActionOutcomeOpenChange={setQuickActionOutcomeOpen}
       onQuickActionOutcomeConfirm={handleQuickActionOutcomeConfirm}
-      cadenceTaskPending={completeCadenceTask.isPending}
-      quickActionPending={createActivityMutation.isPending}
+      cadenceTaskPending={cadenceActionPending || completeCadenceTask.isPending}
+      quickActionPending={quickActionSubmitting || recordContactOutcome.isPending || quickActionDraft.isSubmitting}
       reopenStatusConfirmation={reopenStatusConfirmation}
-      onReopenStatusConfirmationChange={setReopenStatusConfirmation}
+      onReopenStatusConfirmationChange={(confirmation) => {
+        if (!confirmation && reopenStatusConfirmation && !statusConfirmation.clear(reopenStatusConfirmation.intent)) return;
+        setReopenStatusConfirmation(confirmation);
+      }}
       onConfirmReopen={(confirmation) => {
-        void handleDealStatusChange('open', {
-          skipReopenConfirmation: true,
-          previousStatusOverride: confirmation.fromStatus,
-        });
+        void handleDealStatusChange('open', { confirmation });
       }}
       assigneeScheduleConfirmation={assigneeScheduleConfirmation}
-      onAssigneeScheduleConfirmationChange={setAssigneeScheduleConfirmation}
-      onConfirmAssignee={(confirmation) => {
-        setAssigneeScheduleConfirmation(null);
-        void handleAssignUser(confirmation.userId, { skipScheduleConfirmation: true });
+      onAssigneeScheduleConfirmationChange={(confirmation) => {
+        if (!confirmation) assigneeSelectionRef.current = null;
+        setAssigneeScheduleConfirmation(confirmation);
       }}
+      onConfirmAssignee={handleConfirmAssignee}
       dealStatusPending={dealStatusChange.isPending || stageMovePending}
       lostReasonDialogOpen={lostReasonDialogOpen}
       onLostReasonDialogOpenChange={(open) => {
-        if (!open && !stageMovePending) setPendingLostStageId(null);
+        if (!open && !statusConfirmation.clear()) return;
+        if (!open && !stageMovePending) setPendingLostStageMove(null);
         setLostReasonDialogOpen(open);
       }}
       onConfirmLostReason={handleConfirmLostReason}
+      lostReasonDraft={statusConfirmation.draft}
+      onLostReasonDraftChange={statusConfirmation.updateDraft}
       selectedAttachment={selectedAttachment}
       onSelectedAttachmentChange={setSelectedAttachment}
       hasAgendaModule={hasAgendaModule}
@@ -2083,13 +2313,13 @@ export function LeadDetailDialog({
       editingScheduleEvent={editingScheduleEvent}
       scheduleDefaultType={scheduleDefaultType}
     />
-  );
+  </>);
 
   // Render mobile or desktop version - use JSX directly instead of component functions
   if (isMobile || isTablet) {
     return (
       <>
-        <Drawer open={Boolean(leadProp)} onOpenChange={(open) => !open && handleCloseLeadDetail()} dismissible={!isEditingContact}>
+        <Drawer open={Boolean(leadProp)} onOpenChange={(open) => !open && handleCloseLeadDetail()}>
           <DrawerContent
             className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none md:max-w-[760px]"
             showHandle={false}
@@ -2105,13 +2335,15 @@ export function LeadDetailDialog({
             }}
           >
             <DrawerTitle className="sr-only">
-              {leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
+              {detailReadState.hideDetails ? 'Acesso ao lead' : leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
             </DrawerTitle>
             <DrawerDescription className="sr-only">Dados, ações e histórico do lead.</DrawerDescription>
-            {MobileContentV2()}
+            {detailReadState.hideDetails
+              ? <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} onClose={handleCloseLeadDetail} />
+              : <>{MobileContentV2()}</>}
           </DrawerContent>
         </Drawer>
-        {overlays}
+        {!detailReadState.hideDetails && overlays}
       </>
     );
   }
@@ -2126,7 +2358,8 @@ export function LeadDetailDialog({
       >
         <DialogContent
           data-tour="lead-detail-dialog"
-          className="lead-detail-dialog-content flex h-[92vh] max-h-[92vh] w-[96vw] max-w-[1180px] flex-col gap-0 overflow-hidden rounded-[8px] border-none bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none lg:h-[min(720px,84vh)] lg:max-h-[84vh] lg:w-[92vw] xl:w-[min(1180px,92vw)]"
+          data-lead-detail-variant={variant}
+          className={cn('lead-detail-dialog-content flex h-[92vh] max-h-[92vh] w-[96vw] max-w-[1180px] flex-col gap-0 overflow-hidden rounded-[8px] border-none bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none lg:h-[min(720px,84vh)] lg:max-h-[84vh] lg:w-[92vw] xl:w-[min(1180px,92vw)]', variant === 'pipeline' && pipelineDetailStyles.dialog)}
           style={{ border: 'none', outline: 'none' }}
           onInteractOutside={(event) => {
             const target = event.target as Element | null;
@@ -2140,10 +2373,13 @@ export function LeadDetailDialog({
           }}
         >
           {/* Inline JSX instead of <DesktopContent /> to prevent re-mounting */}
-          {DesktopContentV2()}
+          {detailReadState.hideDetails ? <>
+            <DialogHeader className="sr-only"><DialogTitle>Acesso ao lead</DialogTitle><DialogDescription>Confirme o acesso para visualizar os detalhes.</DialogDescription></DialogHeader>
+            <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} onClose={handleCloseLeadDetail} />
+          </> : <>{DesktopContentV2()}</>}
         </DialogContent>
       </Dialog>
-      {overlays}
+      {!detailReadState.hideDetails && overlays}
     </>
   );
 }

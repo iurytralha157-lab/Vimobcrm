@@ -7,10 +7,8 @@ import {
   getUserProfile,
   handleOptions,
   jsonResponse,
-  pushScheduleEventToGoogle,
   runDueJobs,
   supabase,
-  executeSyncJob,
   getGoogleScheduleCapability,
   GoogleScheduleCapabilityError,
 } from "../_shared/google-calendar.ts";
@@ -55,7 +53,9 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const action = body.action || "run_due_jobs";
+    const requestedAction = body.action || "run_due_jobs";
+    // Every provider write passes through the serialized/fenced outbox.
+    const action = ["sync_event", "push_upsert"].includes(requestedAction) ? "enqueue_event" : requestedAction;
     const auth = await authenticateServiceOrUser(req, body.organization_id || body.organizationId || null);
 
     if (action === "run_due_jobs") {
@@ -80,25 +80,6 @@ Deno.serve(async (req) => {
         error: "Importacao de eventos do Google para o Vimob nao disponivel.",
         code: "INBOUND_SYNC_DISABLED",
       }, 410);
-    }
-
-    if (action === "sync_event" || action === "push_upsert") {
-      if (!auth.profile) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
-      const denied = await requireUserScheduleManage(auth.profile);
-      if (denied) return denied;
-      if (!body.event_id) return jsonResponse({ success: false, error: "event_id obrigatorio." }, 400);
-
-      const { data: event, error: eventError } = await supabase
-        .from("schedule_events")
-        .select("organization_id, user_id")
-        .eq("id", body.event_id)
-        .maybeSingle();
-      if (eventError) throw eventError;
-      if (!event || event.organization_id !== auth.profile.organization_id) {
-        return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
-      }
-      const result = await pushScheduleEventToGoogle(body.event_id, auth.profile.id);
-      return jsonResponse({ success: true, result });
     }
 
     if (action === "push_delete") {
@@ -164,30 +145,7 @@ Deno.serve(async (req) => {
           if (statusError) console.error("failed to persist Google Calendar enqueue error", statusError);
           throw enqueueError;
         });
-      const { data: claimedJob, error: claimError } = await supabase
-        .from("google_calendar_sync_jobs")
-        .update({
-          status: "running",
-          locked_at: new Date().toISOString(),
-          locked_by: `google-calendar-user-${crypto.randomUUID()}`,
-        })
-        .eq("id", job.id)
-        .eq("status", "queued")
-        .select("*")
-        .maybeSingle();
-      if (claimError) throw claimError;
-      if (!claimedJob) {
-        return jsonResponse({ success: true, job_id: job.id, queued: true }, 202);
-      }
-
-      const outcome = await executeSyncJob(claimedJob);
-      return jsonResponse({
-        success: true,
-        job_id: job.id,
-        queued: !outcome.ok,
-        result: outcome.ok ? outcome.result : null,
-        immediate_error: outcome.ok ? null : outcome.error,
-      }, outcome.ok ? 200 : 202);
+      return jsonResponse({ success: true, job_id: job.id, queued: true }, 202);
     }
 
     return jsonResponse({ success: false, error: "Acao invalida." }, 400);

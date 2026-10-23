@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var (
@@ -18,38 +19,43 @@ type Envelope[T any] struct {
 }
 
 type StageAutomation struct {
-	ID             string `json:"id"`
-	OrganizationID string `json:"organization_id"`
-	StageID        string `json:"stage_id"`
-	TriggerType    string `json:"trigger_type"`
-	Config         any    `json:"config"`
-	IsActive       bool   `json:"is_active"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID                         string                     `json:"id"`
+	OrganizationID             string                     `json:"organization_id"`
+	StageID                    string                     `json:"stage_id"`
+	TriggerType                string                     `json:"trigger_type"`
+	Config                     any                        `json:"config"`
+	IsActive                   bool                       `json:"is_active"`
+	CreatedAt                  string                     `json:"created_at"`
+	UpdatedAt                  string                     `json:"updated_at"`
+	InactivityPolicy           *StageInactivityPolicyView `json:"inactivity_policy,omitempty"`
+	InactivityRuntimeAvailable bool                       `json:"inactivity_runtime_available"`
 }
 
 type StageAutomationRequest struct {
-	StageID          string         `json:"stage_id,omitempty"`
-	AutomationType   string         `json:"automation_type"`
-	TriggerDays      *int           `json:"trigger_days"`
-	TargetStageID    *string        `json:"target_stage_id"`
-	WhatsAppTemplate *string        `json:"whatsapp_template"`
-	AlertMessage     *string        `json:"alert_message"`
-	TargetUserID     *string        `json:"target_user_id"`
-	DealStatus       *string        `json:"deal_status"`
-	ActionConfig     map[string]any `json:"action_config"`
-	IsActive         *bool          `json:"is_active,omitempty"`
+	ExpectedUpdatedAt string         `json:"expected_updated_at,omitempty"`
+	StageID           string         `json:"stage_id,omitempty"`
+	AutomationType    string         `json:"automation_type"`
+	TriggerDays       *int           `json:"trigger_days"`
+	TargetStageID     *string        `json:"target_stage_id"`
+	WhatsAppTemplate  *string        `json:"whatsapp_template"`
+	AlertMessage      *string        `json:"alert_message"`
+	TargetUserID      *string        `json:"target_user_id"`
+	DealStatus        *string        `json:"deal_status"`
+	ActionConfig      map[string]any `json:"action_config"`
+	IsActive          *bool          `json:"is_active,omitempty"`
 }
 
 type StageAutomationStatusRequest struct {
-	IsActive bool `json:"is_active"`
+	IsActive          *bool  `json:"is_active"`
+	ExpectedUpdatedAt string `json:"expected_updated_at"`
 }
 
 type stageAutomationInput struct {
-	StageID     string
-	TriggerType string
-	Config      map[string]any
-	IsActive    bool
+	StageID           string
+	TriggerType       string
+	Config            map[string]any
+	IsActive          bool
+	ExpectedUpdatedAt time.Time
 }
 
 type StageOperationalConfig struct {
@@ -93,6 +99,16 @@ func (request StageAutomationRequest) Validate(requireStage bool) (stageAutomati
 	input := stageAutomationInput{
 		StageID:  strings.TrimSpace(request.StageID),
 		IsActive: true,
+	}
+	if requireStage && request.ExpectedUpdatedAt != "" {
+		return stageAutomationInput{}, fmt.Errorf("%w: create does not accept expected_updated_at", ErrInvalidInput)
+	}
+	if !requireStage {
+		revision, err := parseRequiredStageAutomationRevision(request.ExpectedUpdatedAt)
+		if err != nil {
+			return stageAutomationInput{}, err
+		}
+		input.ExpectedUpdatedAt = revision
 	}
 	if requireStage && input.StageID == "" {
 		return stageAutomationInput{}, fmt.Errorf("%w: stage_id is required", ErrInvalidInput)

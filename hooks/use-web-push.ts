@@ -6,6 +6,8 @@ import {
   rememberCurrentPushEndpoint,
 } from '@/lib/pwa/push-session';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePushDeviceIntent } from '@/hooks/use-push-device-intent';
+import type { PushDeviceIntent } from '@/hooks/use-push-device-intent';
 
 const VAPID_STORAGE_KEY = 'vimob-web-push-vapid-key';
 const WEB_PUSH_OPT_OUT_KEY_PREFIX = 'vimob-web-push-opt-out';
@@ -23,7 +25,6 @@ type WebPushStateEventDetail = {
 };
 
 let webPushOperationQueue: Promise<void> = Promise.resolve();
-const pendingInitializations = new Map<string, Promise<WebPushInitializationResult>>();
 
 function serializeWebPushOperation<T>(operation: () => Promise<T>) {
   const result = webPushOperationQueue.then(operation, operation);
@@ -36,14 +37,18 @@ function publishWebPushState(detail: WebPushStateEventDetail) {
   window.dispatchEvent(new CustomEvent<WebPushStateEventDetail>(WEB_PUSH_STATE_EVENT, { detail }));
 }
 
-function webPushOptOutKey(userId: string, organizationId: string) {
-  return `${WEB_PUSH_OPT_OUT_KEY_PREFIX}:${userId}:${organizationId}`;
+function webPushOptOutKey(userId: string) {
+  return `${WEB_PUSH_OPT_OUT_KEY_PREFIX}:account:${userId}`;
 }
 
 function readWebPushOptOut(userId: string | null | undefined, organizationId: string | null | undefined) {
   if (typeof window === 'undefined' || !userId || !organizationId) return false;
   try {
-    return localStorage.getItem(webPushOptOutKey(userId, organizationId)) === '1';
+    const accountDecision = localStorage.getItem(webPushOptOutKey(userId));
+    if (accountDecision !== null) return accountDecision === '1';
+    // Preserve the prior preference until this account makes an explicit new
+    // decision. A decision in B also governs the same physical device in A.
+    return localStorage.getItem(`${WEB_PUSH_OPT_OUT_KEY_PREFIX}:${userId}:${organizationId}`) === '1';
   } catch {
     return false;
   }
@@ -56,9 +61,7 @@ function writeWebPushOptOut(
 ) {
   if (typeof window === 'undefined' || !userId || !organizationId) return;
   try {
-    const key = webPushOptOutKey(userId, organizationId);
-    if (optedOut) localStorage.setItem(key, '1');
-    else localStorage.removeItem(key);
+    localStorage.setItem(webPushOptOutKey(userId), optedOut ? '1' : '0');
   } catch {
     // Browser storage is optional; the server-side token state remains canonical.
   }
@@ -195,10 +198,12 @@ async function loadVapidPublicKey() {
 async function createOrReusePushSubscription(
   registration: ServiceWorkerRegistration,
   vapidPublicKey: string,
+  intent: PushDeviceIntent,
 ) {
   const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
   const currentKey = arrayBufferToBase64Url(applicationServerKey);
   const existingSubscription = await registration.pushManager.getSubscription();
+  intent.assertCurrent();
 
   if (existingSubscription) {
     const shouldReplace = shouldReplaceSubscription(existingSubscription, currentKey);
@@ -209,12 +214,14 @@ async function createOrReusePushSubscription(
 
     clearRotatedWebPushState();
     await existingSubscription.unsubscribe();
+    intent.assertCurrent();
   }
 
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey,
   });
+  intent.assertCurrent();
   storeCurrentVapidKey(currentKey);
   return subscription;
 }
@@ -247,9 +254,10 @@ type SaveSubscriptionOptions = {
 };
 
 export function useWebPush() {
-  const { activeOrganization, user, profile, organization } = useAuth();
+  const { activeOrganization, user } = useAuth();
   const queryClient = useQueryClient();
   const organizationId = activeOrganization.organizationId;
+  const captureIntent = usePushDeviceIntent(user?.id, organizationId);
   const [state, setState] = useState<WebPushState>({
     isSupported: false,
     isSubscribed: false,
@@ -273,11 +281,14 @@ export function useWebPush() {
   }, []);
 
   // Verifica se já está inscrito
-  const checkSubscription = useCallback(async (vapidPublicKey: string): Promise<PushSubscription | null> => {
+  const checkSubscription = useCallback(async (vapidPublicKey: string, intent: PushDeviceIntent): Promise<PushSubscription | null> => {
     try {
       await getServiceWorkerRegistration();
+      intent.assertCurrent();
       const registration = await navigator.serviceWorker.ready;
+      intent.assertCurrent();
       const subscription = await registration.pushManager.getSubscription();
+      intent.assertCurrent();
       lastEndpointRef.current = subscription?.endpoint || null;
 
       if (subscription) {
@@ -287,6 +298,7 @@ export function useWebPush() {
           console.log('[WebPush] Subscription usa VAPID antigo/desconhecido; removendo para reinscrever.');
           clearRotatedWebPushState();
           await subscription.unsubscribe();
+          intent.assertCurrent();
           return null;
         }
         storeCurrentVapidKey(currentKey);
@@ -294,6 +306,7 @@ export function useWebPush() {
 
       return subscription;
     } catch (error) {
+      if (!intent.isCurrent()) throw error;
       console.error('[WebPush] Erro ao verificar subscription:', error);
       return null;
     }
@@ -304,11 +317,9 @@ export function useWebPush() {
     subscription: PushSubscription,
     vapidPublicKey: string,
     options: SaveSubscriptionOptions = {},
+    existingIntent?: PushDeviceIntent,
   ) => {
-    if (!user?.id || !organizationId) {
-      throw new Error('Sessao ou organizacao indisponivel para registrar o dispositivo.');
-    }
-
+    const intent = existingIntent || captureIntent();
     try {
       const subscriptionJson = subscription.toJSON() as {
         endpoint?: string;
@@ -327,31 +338,43 @@ export function useWebPush() {
         userAgent: navigator.userAgent,
         vapidPublicKey,
         syncOnly: options.syncOnly,
-      }, organizationId);
+      }, intent.organizationId, { expectedUserId: intent.userId, expectedSessionId: intent.sessionId, signal: intent.signal });
+      intent.assertCurrent();
       console.log('[WebPush] Subscription salva');
       return response;
     } catch (error) {
+      if (!intent.isCurrent()) throw error;
       console.error('[WebPush] Erro ao salvar subscription:', error);
       throw error;
+    } finally {
+      if (!existingIntent) intent.finish();
     }
-  }, [user?.id, organizationId]);
+  }, [captureIntent]);
 
   // Remove subscription do Supabase
-  const removeSubscription = useCallback(async (endpoint?: string | null) => {
-    if (!user?.id || !endpoint) return;
+  const removeSubscription = useCallback(async (endpoint?: string | null, existingIntent?: PushDeviceIntent) => {
+    if (!endpoint) return;
+    const intent = existingIntent || captureIntent();
 
     try {
-      await settingsAPI.deactivatePushToken(endpoint, organizationId);
+      await settingsAPI.deactivatePushToken(endpoint, intent.organizationId, { expectedUserId: intent.userId, expectedSessionId: intent.sessionId, signal: intent.signal });
+      intent.assertCurrent();
 
       console.log('[WebPush] Subscription desativada');
     } catch (error) {
+      if (!intent.isCurrent()) throw error;
       console.error('[WebPush] Erro ao remover subscription:', error);
       throw error;
+    } finally {
+      if (!existingIntent) intent.finish();
     }
-  }, [user?.id, organizationId]);
+  }, [captureIntent]);
 
   // Solicita permissão e cria subscription
-  const subscribe = useCallback((): Promise<WebPushSubscribeResult> => serializeWebPushOperation(async () => {
+  const subscribe = useCallback((): Promise<WebPushSubscribeResult> => {
+    const intent = captureIntent();
+    return serializeWebPushOperation<WebPushSubscribeResult>(async () => {
+    intent.assertCurrent();
     console.log('[WebPush] Iniciando subscription...');
     console.log('[WebPush] Configuracao VAPID sera carregada da API.');
 
@@ -361,7 +384,9 @@ export function useWebPush() {
       let vapidPublicKey: string;
       try {
         vapidPublicKey = await loadVapidPublicKey();
+        intent.assertCurrent();
       } catch (error) {
+        if (!intent.isCurrent()) throw error;
         const errorMessage = error instanceof Error
           ? error.message
           : 'Notificacoes push nao estao configuradas neste ambiente.';
@@ -387,6 +412,7 @@ export function useWebPush() {
       // Solicita permissão
       console.log('[WebPush] Solicitando permissão...');
       const permission = await Notification.requestPermission();
+      intent.assertCurrent();
       console.log('[WebPush] Permissão:', permission);
       setState(prev => ({ ...prev, permission }));
 
@@ -409,7 +435,9 @@ export function useWebPush() {
       let registration: ServiceWorkerRegistration;
       try {
         registration = await getReadyServiceWorkerRegistration();
+        intent.assertCurrent();
       } catch (error) {
+        if (!intent.isCurrent()) throw error;
         const errorMessage = error instanceof Error ? error.message : 'Service Worker indisponível';
         setState(prev => ({
           ...prev,
@@ -428,8 +456,10 @@ export function useWebPush() {
       console.log('[WebPush] Criando subscription com PushManager...');
       let subscription: PushSubscription;
       try {
-        subscription = await createOrReusePushSubscription(registration, vapidPublicKey);
+        subscription = await createOrReusePushSubscription(registration, vapidPublicKey, intent);
+        intent.assertCurrent();
       } catch (error) {
+        if (!intent.isCurrent()) throw error;
         const errorMessage = error instanceof Error ? error.message : 'Erro ao criar subscription';
         console.error('[WebPush] Erro ao criar subscription:', error);
         setState(prev => ({
@@ -450,11 +480,13 @@ export function useWebPush() {
       // Salva no banco
       console.log('[WebPush] Salvando subscription no banco...');
       try {
-        await saveSubscription(subscription, vapidPublicKey);
+        await saveSubscription(subscription, vapidPublicKey, {}, intent);
       } catch (error) {
+        if (!intent.isCurrent()) throw error;
         const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
         console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
         await subscription.unsubscribe().catch(() => undefined);
+        intent.assertCurrent();
         clearRotatedWebPushState();
         setState(prev => ({
           ...prev,
@@ -499,6 +531,7 @@ export function useWebPush() {
 
       return { ok: true };
     } catch (error) {
+      if (!intent.isCurrent()) return { ok: false, reason: 'unknown', message: 'Ativação cancelada porque a sessão mudou.' };
       console.error('[WebPush] Erro ao inscrever:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erro ao ativar notificações';
       console.error('[WebPush] Mensagem de erro:', errorMessage);
@@ -513,26 +546,33 @@ export function useWebPush() {
         message: 'Não foi possível ativar as notificações agora. Tente novamente em instantes.',
       };
     }
-  }), [organizationId, queryClient, saveSubscription, user?.id]);
+    }).finally(intent.finish);
+  }, [captureIntent, organizationId, queryClient, saveSubscription, user?.id]);
 
   // Cancela subscription
-  const unsubscribe = useCallback((): Promise<boolean> => serializeWebPushOperation(async () => {
+  const unsubscribe = useCallback((): Promise<boolean> => {
+    const intent = captureIntent();
+    return serializeWebPushOperation(async () => {
+    intent.assertCurrent();
     setState(prev => ({ ...prev, isLoading: true }));
     writeWebPushOptOut(user?.id, organizationId, true);
     let serverDeactivated = false;
 
     try {
       const registration = await getServiceWorkerRegistration();
+      intent.assertCurrent();
       const subscription = await registration.pushManager.getSubscription();
+      intent.assertCurrent();
       const endpoint = subscription?.endpoint || lastEndpointRef.current;
 
       if (endpoint) {
-        await removeSubscription(endpoint);
+        await removeSubscription(endpoint, intent);
         serverDeactivated = true;
       }
 
       if (subscription) {
         const removedFromBrowser = await subscription.unsubscribe();
+        intent.assertCurrent();
         if (!removedFromBrowser) {
           throw new Error('O navegador não removeu a inscrição local.');
         }
@@ -566,6 +606,7 @@ export function useWebPush() {
 
       return true;
     } catch (error) {
+      if (!intent.isCurrent()) return false;
       console.error('[WebPush] Erro ao desinscrever:', error);
 
       // Once the server token is inactive, delivery has been disabled even if
@@ -605,15 +646,18 @@ export function useWebPush() {
       }));
       return false;
     }
-  }), [organizationId, queryClient, removeSubscription, user?.id]);
+    }).finally(intent.finish);
+  }, [captureIntent, organizationId, queryClient, removeSubscription, user?.id]);
 
   // Inicialização
   useEffect(() => {
     let cancelled = false;
-    const scopeKey = `${user?.id || 'anonymous'}:${organizationId || 'no-organization'}`;
+    const intent = user?.id && organizationId ? captureIntent() : null;
     const optedOut = readWebPushOptOut(user?.id, organizationId);
 
     const init = async (): Promise<WebPushInitializationResult> => {
+      if (!intent) throw new DOMException('Cancelled', 'AbortError');
+      intent.assertCurrent();
       const isSupported = checkSupport();
 
       if (!isSupported) {
@@ -634,15 +678,20 @@ export function useWebPush() {
       let existingSubscription: PushSubscription | null = null;
       try {
         const registration = await getServiceWorkerRegistration();
+        intent.assertCurrent();
         existingSubscription = await registration.pushManager.getSubscription();
-      } catch {
+        intent.assertCurrent();
+      } catch (error) {
+        if (!intent.isCurrent()) throw error;
         // Configuration loading below provides the actionable setup error.
       }
       let syncError: string | null = null;
       let vapidPublicKey: string;
       try {
         vapidPublicKey = await loadVapidPublicKey();
+        intent.assertCurrent();
       } catch (error) {
+        if (!intent.isCurrent()) throw error;
         syncError = error instanceof Error
           ? error.message
           : 'Notificacoes push nao estao configuradas neste ambiente.';
@@ -658,18 +707,21 @@ export function useWebPush() {
           endpoint: existingSubscription?.endpoint || null,
         };
       }
-      let subscription = await checkSubscription(vapidPublicKey);
+      let subscription = await checkSubscription(vapidPublicKey, intent);
+      intent.assertCurrent();
 
       if (optedOut) {
         if (subscription) {
           try {
-            await removeSubscription(subscription.endpoint);
+            await removeSubscription(subscription.endpoint, intent);
             const removedFromBrowser = await subscription.unsubscribe();
+            intent.assertCurrent();
             if (!removedFromBrowser) {
               throw new Error('O navegador não removeu a inscrição local.');
             }
             subscription = null;
           } catch (error) {
+            if (!intent.isCurrent()) throw error;
             syncError = error instanceof Error
               ? error.message
               : 'Não foi possível concluir a desativação neste navegador.';
@@ -677,16 +729,19 @@ export function useWebPush() {
         }
       } else if (subscription && organizationId) {
         try {
-          const syncResult = await saveSubscription(subscription, vapidPublicKey, { syncOnly: true });
+          const syncResult = await saveSubscription(subscription, vapidPublicKey, { syncOnly: true }, intent);
           if (syncResult?.requiresResubscribe) {
             console.log('[WebPush] Servidor rejeitou subscription antiga; reinscrevendo dispositivo.');
             clearRotatedWebPushState();
             await subscription.unsubscribe().catch(() => undefined);
+            intent.assertCurrent();
             const registration = await getReadyServiceWorkerRegistration();
-            subscription = await createOrReusePushSubscription(registration, vapidPublicKey);
-            await saveSubscription(subscription, vapidPublicKey);
+            intent.assertCurrent();
+            subscription = await createOrReusePushSubscription(registration, vapidPublicKey, intent);
+            await saveSubscription(subscription, vapidPublicKey, {}, intent);
           }
         } catch (error) {
+          if (!intent.isCurrent()) throw error;
           syncError = error instanceof Error
             ? error.message
             : 'Não foi possível sincronizar a subscription no servidor.';
@@ -706,7 +761,7 @@ export function useWebPush() {
       };
     };
 
-    if (!user?.id) {
+    if (!intent) {
       queueMicrotask(() => {
         if (!cancelled) {
           setState({
@@ -738,26 +793,12 @@ export function useWebPush() {
       }
     });
 
-    let initialization = pendingInitializations.get(scopeKey);
-    if (!initialization) {
-      initialization = serializeWebPushOperation(init);
-      pendingInitializations.set(scopeKey, initialization);
-      void initialization.then(
-        () => {
-          if (pendingInitializations.get(scopeKey) === initialization) {
-            pendingInitializations.delete(scopeKey);
-          }
-        },
-        () => {
-          if (pendingInitializations.get(scopeKey) === initialization) {
-            pendingInitializations.delete(scopeKey);
-          }
-        },
-      );
-    }
+    // Keep browser mutations serialized, but never share an aborted login's
+    // initialization promise with a later visit or another hook instance.
+    const initialization = serializeWebPushOperation(init);
 
     void initialization.then((result) => {
-      if (cancelled) return;
+      if (cancelled || !intent.isCurrent()) return;
       lastEndpointRef.current = result.endpoint;
       if (result.endpoint) rememberCurrentPushEndpoint(result.endpoint);
       else if (result.isOptedOut) forgetCurrentPushEndpoint();
@@ -772,7 +813,7 @@ export function useWebPush() {
         error: result.error,
       });
     }).catch((error) => {
-      if (cancelled) return;
+      if (cancelled || !intent.isCurrent()) return;
       setState(prev => ({
         ...prev,
         isLoading: false,
@@ -781,13 +822,15 @@ export function useWebPush() {
           ? error.message
           : 'Não foi possível verificar as notificações deste dispositivo.',
       }));
-    });
+    }).finally(intent.finish);
 
     return () => {
       cancelled = true;
+      intent.cancel();
     };
   }, [
     user?.id,
+    captureIntent,
     organizationId,
     checkSupport,
     checkSubscription,

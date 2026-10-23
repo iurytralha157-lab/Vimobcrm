@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Download, FileAudio, FileText, FileVideo, ImageIcon, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import type { LeadAttachment } from '@/lib/api/lead-attachments';
+import { prepareLeadPDFPreview } from '@/lib/lead-attachment-preview';
+import { useLeadAttachmentAccess } from '@/hooks/use-lead-attachments';
 
 type AttachmentKind = 'image' | 'video' | 'audio' | 'pdf' | 'file';
 
@@ -21,10 +23,13 @@ function getAttachmentKind(attachment: LeadAttachment | null): AttachmentKind {
   const fileName = attachment.file_name.toLowerCase();
   const extension = fileName.split('.').pop() || '';
 
-  if (fileType === 'image' || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(extension)) return 'image';
-  if (fileType === 'video' || ['mp4', 'webm', 'mov', 'm4v', 'avi'].includes(extension)) return 'video';
-  if (fileType === 'audio' || ['mp3', 'm4a', 'aac', 'ogg', 'oga', 'wav', 'webm'].includes(extension)) return 'audio';
+  if (fileType === 'audio' || fileType.startsWith('audio/')) return 'audio';
+  if (fileType === 'video' || fileType.startsWith('video/')) return 'video';
+  if (fileType === 'image' || fileType.startsWith('image/')) return 'image';
   if (fileType.includes('pdf') || extension === 'pdf') return 'pdf';
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(extension)) return 'image';
+  if (['mp4', 'webm', 'mov', 'm4v', 'avi'].includes(extension)) return 'video';
+  if (['mp3', 'm4a', 'aac', 'ogg', 'oga', 'wav'].includes(extension)) return 'audio';
 
   return 'file';
 }
@@ -77,14 +82,42 @@ function normalizeAttachmentFileURL(value: string | null | undefined) {
   }
 }
 
+export async function readLeadAttachmentBlob(fileURL: string, signal: AbortSignal, pdf = false, timeoutMs = 30_000): Promise<Blob> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signal.addEventListener('abort', cancel, { once: true });
+  if (signal.aborted) cancel();
+  const timeout = setTimeout(cancel, timeoutMs);
+  try {
+    const response = await fetch(fileURL, { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw new Error('attachment_fetch_failed');
+    const blob = await response.blob();
+    controller.signal.throwIfAborted();
+    if (!blob.size) throw new Error('attachment_empty_blob');
+    const safeBlob = pdf ? await prepareLeadPDFPreview(blob) : blob;
+    controller.signal.throwIfAborted();
+    return safeBlob;
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener('abort', cancel);
+  }
+}
+
 export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAttachmentViewerProps) {
+  const access = useLeadAttachmentAccess(attachment, open);
   const [failedAttachmentId, setFailedAttachmentId] = useState<string | null>(null);
-  const [previewObject, setPreviewObject] = useState<{ attachmentId: string; url: string } | null>(null);
+  const [previewObject, setPreviewObject] = useState<{ attachmentId: string; fileURL: string; url: string } | null>(null);
   const [preparingAttachmentId, setPreparingAttachmentId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
+  const previewRequestRef = useRef<AbortController | null>(null);
+  const downloadRequestRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const attachmentId = attachment?.id ?? null;
   const kind = useMemo(() => getAttachmentKind(attachment), [attachment]);
-  const fileURL = useMemo(() => normalizeAttachmentFileURL(attachment?.file_url), [attachment?.file_url]);
+  const fileURL = useMemo(() => normalizeAttachmentFileURL(access.authorizedAttachment?.file_url), [access.authorizedAttachment?.file_url]);
   const hasError = Boolean(attachment?.id && failedAttachmentId === attachment.id);
-  const previewObjectUrl = previewObject && previewObject.attachmentId === attachment?.id ? previewObject.url : null;
+  const previewObjectUrl = fileURL && previewObject && previewObject.attachmentId === attachment?.id && previewObject.fileURL === fileURL ? previewObject.url : null;
   const isPreparingPreview = Boolean(attachment?.id && preparingAttachmentId === attachment.id);
 
   useEffect(() => {
@@ -94,26 +127,48 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
     };
   }, [previewObject?.url]);
 
-  const loadPreviewBlob = async () => {
-    if (!attachment?.id || !fileURL || previewObjectUrl || isPreparingPreview) return;
+  const loadPreviewBlob = useCallback(async () => {
+    if (!open || !attachmentId || !fileURL || previewRequestRef.current) return;
 
-    const attachmentId = attachment.id;
+    const generation = generationRef.current;
+    const controller = new AbortController();
+    previewRequestRef.current = controller;
     setPreparingAttachmentId(attachmentId);
     try {
-      const response = await fetch(fileURL, { cache: 'no-store' });
-      if (!response.ok) throw new Error('preview_fetch_failed');
-      const blob = await response.blob();
-      if (!blob.size) throw new Error('preview_empty_blob');
+      const blob = await readLeadAttachmentBlob(fileURL, controller.signal, kind === 'pdf');
+      if (generationRef.current !== generation || controller.signal.aborted) return;
       const objectUrl = URL.createObjectURL(blob);
 
-      setPreviewObject({ attachmentId, url: objectUrl });
+      setPreviewObject({ attachmentId, fileURL, url: objectUrl });
       setFailedAttachmentId(null);
     } catch {
-      setFailedAttachmentId(attachmentId);
+      if (generationRef.current === generation) setFailedAttachmentId(attachmentId);
     } finally {
-      setPreparingAttachmentId(null);
+      if (previewRequestRef.current === controller) previewRequestRef.current = null;
+      if (generationRef.current === generation) setPreparingAttachmentId(null);
     }
-  };
+  }, [attachmentId, fileURL, kind, open]);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    const generation = generationRef.current;
+    queueMicrotask(() => {
+      if (generationRef.current !== generation) return;
+      setDownloading(false);
+      setDownloadError(false);
+      setFailedAttachmentId(null);
+      setPreparingAttachmentId(null);
+      setPreviewObject(null);
+      if (open && kind === 'pdf') void loadPreviewBlob();
+    });
+    return () => {
+      if (generationRef.current === generation) generationRef.current += 1;
+      previewRequestRef.current?.abort();
+      previewRequestRef.current = null;
+      downloadRequestRef.current?.abort();
+      downloadRequestRef.current = null;
+    };
+  }, [loadPreviewBlob, kind, open]);
 
   const handlePreviewError = () => {
     if (!attachment?.id) return;
@@ -125,13 +180,17 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
   };
 
   const handleDownload = async () => {
-    if (!fileURL || !attachment) return;
+    if (!fileURL || !attachment || downloadRequestRef.current) return;
     const currentAttachment = attachment;
+    const generation = generationRef.current;
+    const controller = new AbortController();
+    downloadRequestRef.current = controller;
+    setDownloading(true);
+    setDownloadError(false);
 
     try {
-      const response = await fetch(fileURL);
-      if (!response.ok) throw new Error('download_failed');
-      const blob = await response.blob();
+      const blob = await readLeadAttachmentBlob(fileURL, controller.signal, kind === 'pdf');
+      if (generationRef.current !== generation || controller.signal.aborted) return;
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = objectUrl;
@@ -141,14 +200,10 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
       link.remove();
       URL.revokeObjectURL(objectUrl);
     } catch {
-      const link = document.createElement('a');
-      link.href = fileURL;
-      link.download = currentAttachment.file_name || 'arquivo';
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      if (generationRef.current === generation) setDownloadError(true);
+    } finally {
+      if (downloadRequestRef.current === controller) downloadRequestRef.current = null;
+      if (generationRef.current === generation) setDownloading(false);
     }
   };
 
@@ -157,6 +212,14 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
   const previewUnavailable = hasError || kind === 'file' || !fileURL;
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
+      access.cancel();
+      generationRef.current += 1;
+      previewRequestRef.current?.abort();
+      previewRequestRef.current = null;
+      downloadRequestRef.current?.abort();
+      downloadRequestRef.current = null;
+      setDownloading(false);
+      setDownloadError(false);
       setFailedAttachmentId(null);
       setPreparingAttachmentId(null);
       setPreviewObject((current) => {
@@ -191,11 +254,11 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
                 size="icon"
                 className="h-9 w-9 rounded-[6px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
                 onClick={handleDownload}
-                disabled={!fileURL}
+                disabled={!fileURL || downloading}
                 aria-label={`Baixar ${attachment.file_name}`}
                 title="Baixar"
               >
-                <Download className="h-4 w-4" />
+                {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               </Button>
               <Button
                 type="button"
@@ -212,7 +275,7 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
           </div>
 
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[var(--app-surface-soft)]">
-            {isPreparingPreview ? (
+            {access.isFetching || isPreparingPreview ? (
               <div className="flex flex-col items-center gap-3 px-6 text-center">
                 <Loader2 className="h-8 w-8 animate-spin text-[var(--app-text-secondary)]" />
                 <p className="text-sm font-light text-[var(--app-text-secondary)]">Carregando prévia...</p>
@@ -226,19 +289,25 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
                 )}
                 <div>
                   <p className="text-base font-normal">
-                    {hasError ? 'Não foi possível carregar a prévia' : 'Prévia indisponível'}
+                    {access.isError ? 'Não foi possível confirmar o acesso ao documento' : hasError ? 'Não foi possível carregar a prévia' : 'Prévia indisponível'}
                   </p>
                   <p className="mt-1 text-sm font-light text-[var(--app-text-tertiary)]">
                     {hasError
-                      ? 'A URL do arquivo não respondeu corretamente. O arquivo continua anexado e pode ser baixado.'
-                      : 'Este tipo de arquivo não tem visualização direta no navegador. O arquivo está anexado e pode ser baixado.'}
+                      ? 'Não foi possível abrir este arquivo. Tente baixar ou reabra o documento para atualizar o link.'
+                      : !fileURL
+                        ? 'O link deste anexo está indisponível. Feche e reabra o documento para tentar gerar um novo link.'
+                        : 'Este tipo de arquivo não tem visualização direta no navegador. O arquivo está anexado e pode ser baixado.'}
                   </p>
                 </div>
-                <Button type="button" onClick={handleDownload} disabled={!fileURL} className="mt-2 h-8 rounded-[6px] px-3 text-[11px] font-light">
-                  <Download className="mr-2 h-4 w-4" />
-                  Baixar arquivo
+                {access.isError && <Button type="button" variant="ghost" className="h-8 rounded-[6px] px-3 text-xs font-light" onClick={() => void access.refetch()}>Tentar novamente</Button>}
+                <Button type="button" onClick={handleDownload} disabled={!fileURL || downloading} className="mt-2 h-8 rounded-[6px] px-3 text-xs font-light">
+                  {downloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  {downloading ? 'Baixando...' : 'Baixar arquivo'}
                 </Button>
+                {fileURL && kind !== 'pdf' && <a href={fileURL} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline">Abrir arquivo original</a>}
               </div>
+            ) : kind === 'pdf' && !previewObjectUrl ? (
+              <p role="status" className="text-xs">Preparando PDF...</p>
             ) : kind === 'image' ? (
               // URL assinada do Storage precisa ser renderizada direto pelo navegador.
               // eslint-disable-next-line @next/next/no-img-element
@@ -267,13 +336,17 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
               </div>
             ) : (
               <iframe
-                src={previewObjectUrl || fileURL}
+                src={previewObjectUrl || undefined}
                 title={attachment.file_name}
+                sandbox=""
                 className="h-full w-full border-0 bg-[var(--app-surface-solid)]"
                 referrerPolicy="no-referrer"
+                onError={() => attachment?.id && setFailedAttachmentId(attachment.id)}
               />
             )}
           </div>
+          {kind === 'pdf' && previewObjectUrl && !hasError && <p className="px-4 py-2 text-xs text-[var(--app-text-tertiary)]">Se o navegador não exibir a prévia, use Baixar para abrir o PDF no seu leitor.</p>}
+          {downloadError && <div role="alert" className="px-4 py-2 text-xs text-destructive"><p>Não foi possível baixar o arquivo. Tente novamente ou reabra o documento para atualizar o link.</p>{fileURL && kind !== 'pdf' && <a href={fileURL} target="_blank" rel="noopener noreferrer" className="text-primary underline">Abrir arquivo original</a>}</div>}
         </div>
       </DialogContent>
     </Dialog>

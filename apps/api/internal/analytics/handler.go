@@ -18,6 +18,10 @@ func NewHandler(repo Repository) Handler {
 
 func (handler Handler) MetaInsights(w http.ResponseWriter, r *http.Request) {
 	items, err := handler.repo.MetaInsights(r.Context(), mustTenant(w, r), r.URL.Query())
+	if errors.Is(err, ErrInvalidInput) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_analytics_filters", "Analytics filters are invalid.")
+		return
+	}
 	handler.writeRows(w, r, items, err)
 }
 
@@ -106,6 +110,10 @@ func (handler Handler) writeRows(w http.ResponseWriter, r *http.Request, items [
 
 func (handler Handler) writeObject(w http.ResponseWriter, r *http.Request, item map[string]any, err error) {
 	if err != nil {
+		if errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+			httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to view these analytics.")
+			return
+		}
 		if errors.Is(err, ErrInvalidInput) {
 			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_analytics_filters", "Analytics filters are invalid.")
 			return

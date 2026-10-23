@@ -201,7 +201,7 @@ func TestPublicPropertyOutputRedactsLegacySnapshotAppraisals(t *testing.T) {
 			t.Fatalf("public snapshot SQL does not redact historical field %q: %s", field, publicPropertyOutputSQL())
 		}
 	}
-	if !strings.Contains(publicPropertyOutputSQL(), "else publication_snapshot.payload") ||
+	if !strings.Contains(publicPropertyOutputSQL(), "jsonb_build_object('public_address_visibility'") ||
 		!strings.Contains(publicPropertyOutputSQL(), "- 'condominio_nome'") {
 		t.Fatalf("public snapshot SQL does not fail closed for condominium privacy: %s", publicPropertyOutputSQL())
 	}
@@ -211,7 +211,7 @@ func TestPublicPropertyOutputRedactsLegacySnapshotAppraisals(t *testing.T) {
 }
 
 func TestPublicSnapshotCondominiumRequiresCanonicalCompleteVisibility(t *testing.T) {
-	for _, visibility := range []any{nil, "", "parcial", "minimo", "full", "COMPLETE"} {
+	for _, visibility := range []any{nil, "", "parcial", "minimo", "unknown", "Mínimo"} {
 		property := map[string]any{
 			"public_address_visibility": visibility,
 			"condominio_nome":           "Residencial Privado",
@@ -222,13 +222,12 @@ func TestPublicSnapshotCondominiumRequiresCanonicalCompleteVisibility(t *testing
 		}
 	}
 
-	property := map[string]any{
-		"public_address_visibility": " Completo ",
-		"condominio_nome":           "Residencial Público",
-	}
-	redactPublicPropertyInternalValues(property)
-	if property["condominio_nome"] != "Residencial Público" {
-		t.Fatalf("canonical complete visibility lost condominium name: %#v", property)
+	for _, visibility := range []string{" Completo ", "full", "COMPLETE"} {
+		property := map[string]any{"public_address_visibility": visibility, "condominio_nome": "Residencial Público"}
+		redactPublicPropertyInternalValues(property)
+		if property["condominio_nome"] != "Residencial Público" {
+			t.Fatalf("known complete visibility lost condominium name: %#v", property)
+		}
 	}
 
 	condominiumSQL := publicPropertyTextSQL("condominio_nome", "p.condominio_nome")

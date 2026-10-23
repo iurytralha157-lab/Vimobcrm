@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { DashboardFilters } from './use-dashboard-filters';
 import { analyticsAPI } from '@/lib/api/analytics';
+import { format } from 'date-fns';
 
 export interface MetaCampaignInsight {
   id: string;
@@ -23,16 +24,17 @@ export interface MetaCampaignInsight {
 }
 
 export function useMetaInsights(filters: DashboardFilters) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
-    queryKey: ['meta-insights', activeOrganization.organizationId, filters.dateRange.from.toISOString(), filters.dateRange.to.toISOString(), filters.campaignId, filters.adSetId, filters.adId],
+    queryKey: ['meta-insights', activeOrganization.organizationId, format(filters.dateRange.from, 'yyyy-MM-dd'), format(filters.dateRange.to, 'yyyy-MM-dd'), filters.campaignId, filters.adSetId, filters.adId, JSON.stringify([...(filters.campaignIds ?? [])].sort())],
     enabled: !!activeOrganization.organizationId,
     queryFn: async () => {
       return analyticsAPI.metaInsights<MetaCampaignInsight>({
-        dateFrom: filters.dateRange.from.toISOString(),
-        dateTo: filters.dateRange.to.toISOString(),
+        dateFrom: format(filters.dateRange.from, 'yyyy-MM-dd'),
+        dateTo: format(filters.dateRange.to, 'yyyy-MM-dd'),
         campaignId: filters.campaignId,
+        campaignIds: filters.campaignIds,
         adSetId: filters.adSetId,
         adId: filters.adId,
       });

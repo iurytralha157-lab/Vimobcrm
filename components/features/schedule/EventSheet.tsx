@@ -20,7 +20,7 @@ import {
 } from "@/hooks/use-schedule-events";
 import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useLeads } from "@/hooks/use-leads";
-import { useProperties } from "@/hooks/use-properties";
+import { useProperties, useProperty } from "@/hooks/use-properties";
 import { useScheduleComments } from "@/hooks/use-schedule-comments";
 import { useScheduleEventAssignees } from "@/hooks/use-schedule-event-assignees";
 import { useTeams } from "@/hooks/use-teams";
@@ -29,10 +29,12 @@ import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
 import { scheduleClockInputSchema } from "@/lib/validation/schedule";
 import {
   buildScheduleEventInterval,
   buildScheduleEventTimingPatch,
+  getScheduleAllDaySpan,
 } from "@/lib/schedule-event-draft";
 import { EventAssigneesSection } from "@/components/features/schedule/event-sheet/EventAssigneesSection";
 import { EventNotesAndComments } from "@/components/features/schedule/event-sheet/EventNotesAndComments";
@@ -42,6 +44,7 @@ import { EventSheetFeedback } from "@/components/features/schedule/event-sheet/E
 import { EventSheetHeader } from "@/components/features/schedule/event-sheet/EventSheetHeader";
 import { EventTimingSection } from "@/components/features/schedule/event-sheet/EventTimingSection";
 import { EventVisibilitySection } from "@/components/features/schedule/event-sheet/EventVisibilitySection";
+import { EventLocationSection } from "@/components/features/schedule/event-sheet/EventLocationSection";
 import {
   ScheduleOutcomeDialog,
   type ScheduleOutcomeConfirmation,
@@ -68,6 +71,7 @@ import {
   getClockRangeDurationMinutes,
   getDefaultDurationMinutes,
   getStoredDurationMinutes,
+  getSchedulePerformerName,
   isRecurrenceRule,
   type RecurrenceRule,
 } from "@/components/features/schedule/event-sheet/model";
@@ -201,12 +205,13 @@ export function EventSheet({
     scheduleCapabilities?.timeZone || DEFAULT_SCHEDULE_TIME_ZONE;
   const scheduleTimeZoneReady =
     scheduleCapabilitiesQuery.isSuccess &&
-    Boolean(scheduleCapabilities?.timeZone);
+    Boolean(scheduleCapabilities?.timeZone?.trim());
   const canViewProperties =
     hasModule("properties") &&
     (hasPermission("property_view") || hasPermission("property_manage"));
   const isExisting = !!event;
-  const isCompleted = [
+  const isMasked = Boolean(event?.is_masked);
+  const isCompleted = !isMasked && [
     "completed",
     "no_show",
     "cancelled",
@@ -217,7 +222,6 @@ export function EventSheet({
     (event?.status === "completed" ||
       ((event?.status === "cancelled" || event?.status === "canceled") &&
         event?.outcome !== "rescheduled"));
-  const isMasked = Boolean(event?.is_masked);
   const outcomeEventType: EventType = [
     "call",
     "email",
@@ -231,7 +235,6 @@ export function EventSheet({
   const requiresAttendanceOutcome = isAttendanceScheduleType(outcomeEventType);
   const preservesAppointmentTiming = isExisting && requiresAttendanceOutcome;
   const hasAttendanceHistoryLink =
-    requiresAttendanceOutcome &&
     Boolean(event?.rescheduled_from_event_id || event?.rescheduled_to_event_id);
   const preservesAttendanceHistory =
     shouldPreserveAttendanceHistory(outcomeEventType, event?.status) ||
@@ -281,6 +284,7 @@ export function EventSheet({
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(30);
   const durationTouched = useRef(false);
   const initializedDraftIdentityRef = useRef<string | null>(null);
+  const createRequestRef = useRef<{ signature: string; id: string } | null>(null);
   const [initializedDraftIdentity, setInitializedDraftIdentity] = useState<
     string | null
   >(null);
@@ -295,7 +299,13 @@ export function EventSheet({
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadName, setSelectedLeadName] = useState<string | null>(null);
   const [showLeadSelector, setShowLeadSelector] = useState(false);
-  const { data: searchedLeads = [] } = useLeads(
+  const {
+    data: searchedLeads = [],
+    isLoading: leadsLoading,
+    isFetching: leadsFetching,
+    isError: leadsError,
+    refetch: refetchLeads,
+  } = useLeads(
     { search: leadSearch, limit: 20 },
     { enabled: open && hasAgendaModule && showLeadSelector },
   );
@@ -326,14 +336,18 @@ export function EventSheet({
     },
   );
   const propertiesLoading = propertiesInitialLoading || propertiesFetching;
+  const persistedPropertyQuery = useProperty(
+    open && hasAgendaModule && canViewProperties && !isMasked ? selectedPropertyId : null,
+  );
+  const persistedProperty = persistedPropertyQuery.data;
   const previewProperty = useMemo(
     () =>
       selectedPropertyId
-        ? allProperties.find(
+        ? persistedProperty || allProperties.find(
             (property) => property.id === selectedPropertyId,
           ) || null
         : null,
-    [allProperties, selectedPropertyId],
+    [allProperties, persistedProperty, selectedPropertyId],
   );
 
   const [showAssigneePicker, setShowAssigneePicker] = useState(false);
@@ -348,12 +362,25 @@ export function EventSheet({
     isError: assigneesError,
     refetch: refetchAssignees,
   } = useScheduleEventAssignees(
-    open && hasAgendaModule ? event?.id : undefined,
+    open && hasAgendaModule && !isMasked ? event?.id : undefined,
   );
-  const { comments, addComment, isAdding } = useScheduleComments(
+  const { comments, addComment, isAdding, isLoading: commentsLoading, isError: commentsError, refetch: refetchComments } = useScheduleComments(
     open && hasAgendaModule && !isMasked ? event?.id : undefined,
   );
   const [commentText, setCommentText] = useState("");
+  const isLoading =
+    createEvent.isPending ||
+    updateEvent.isPending ||
+    completeEvent.isPending ||
+    rescheduleEvent.isPending ||
+    deleteEvent.isPending ||
+    isAdding;
+  const allDaySpan = useMemo(
+    () => event?.is_all_day
+      ? getScheduleAllDaySpan(event.start_time, event.end_time, scheduleTimeZone)
+      : undefined,
+    [event, scheduleTimeZone],
+  );
 
   const assignableUserIds = useMemo(
     () => new Set(users.map((user) => user.id)),
@@ -387,7 +414,8 @@ export function EventSheet({
     });
   }, [onOpenChange, open, organizationId]);
 
-  const resetDraft = useCallback(() => {
+  const resetDraft = useCallback((preserveTransientDrafts = false) => {
+    createRequestRef.current = null;
     if (event) {
       const parsedStartDate = event.start_time
         ? new Date(event.start_time)
@@ -475,7 +503,7 @@ export function EventSheet({
       setSelectedLeadName(leadName || null);
       setSelectedPropertyId(null);
       setSelectedPropertyLabel(null);
-      setDuration(30);
+      setDuration(getDefaultDurationMinutes(defaultType || "task"));
       setRecurrenceRule("none");
       setDraftAssigneeIds([]);
       setAssigneeDraftReady(true);
@@ -483,8 +511,10 @@ export function EventSheet({
       durationTouched.current = false;
     }
     setSelectedTeamId(event?.team_id || "");
-    setOutcomeDialogOpen(false);
-    setCommentText("");
+    if (!preserveTransientDrafts) {
+      setOutcomeDialogOpen(false);
+      setCommentText("");
+    }
     setLeadSearch("");
     setPropertySearch("");
     setShowLeadSelector(false);
@@ -504,7 +534,11 @@ export function EventSheet({
   useEffect(() => {
     if (!open) {
       initializedDraftIdentityRef.current = null;
-      queueMicrotask(() => setInitializedDraftIdentity(null));
+      queueMicrotask(() => {
+        setInitializedDraftIdentity(null);
+        setOutcomeDialogOpen(false);
+        setCommentText("");
+      });
       return;
     }
     if (
@@ -520,8 +554,9 @@ export function EventSheet({
       if (cancelled || initializedDraftIdentityRef.current === draftIdentity) {
         return;
       }
+      const preserveTransientDrafts = initializedDraftIdentityRef.current === null;
       initializedDraftIdentityRef.current = draftIdentity;
-      resetDraft();
+      resetDraft(preserveTransientDrafts);
       setInitializedDraftIdentity(draftIdentity);
     });
     return () => {
@@ -531,7 +566,7 @@ export function EventSheet({
 
   const draftReady =
     scheduleTimeZoneReady && initializedDraftIdentity === draftIdentity;
-  const draftLocked = locked || !draftReady;
+  const draftLocked = locked || !draftReady || isLoading;
 
   useEffect(() => {
     if (
@@ -565,11 +600,6 @@ export function EventSheet({
     event,
     open,
   ]);
-
-  useEffect(() => {
-    if (locked || durationTouched.current) return;
-    setDuration(getDefaultDurationMinutes(selectedType));
-  }, [selectedType, locked]);
 
   const endTimePreview = useMemo(() => {
     const interval = buildScheduleEventInterval({
@@ -687,7 +717,8 @@ export function EventSheet({
   };
 
   const handleSubmit = async () => {
-    if (!canManageSchedule || isMasked || !draftReady) return;
+    if (!canManageSchedule || isMasked || !draftReady || isLoading) return;
+    if (appointmentTransitionWithTimingChange) return;
     if (isExisting && !assigneeDraftReady) return;
     if (!title.trim() || !date || !primaryUserId) return;
     const interval = buildScheduleEventInterval({
@@ -697,6 +728,7 @@ export function EventSheet({
       durationMinutes: duration,
       timeZone: scheduleTimeZone,
       preferredStartTime,
+      allDaySpan,
     });
     if (!interval) return;
 
@@ -726,29 +758,43 @@ export function EventSheet({
 
     try {
       if (event) {
+        const originalAssigneeIds = (event.assignee_user_ids || assignees.map((assignee) => assignee.id))
+          .filter((userId) => userId !== event.user_id);
+        const assigneesChanged = originalAssigneeIds.length !== assigneeIds.length ||
+          originalAssigneeIds.some((userId) => !assigneeIds.includes(userId));
         await updateEvent.mutateAsync({
           id: event.id,
+          expected_updated_at: event.updated_at || undefined,
           ...sharedPayload,
+          user_id: primaryUserId !== event.user_id ? primaryUserId : undefined,
+          lead_id: selectedLeadId !== event.lead_id ? selectedLeadId : undefined,
+          property_id: selectedPropertyId !== event.property_id ? selectedPropertyId : undefined,
+          team_id: (selectedTeamId || null) !== (event.team_id || null) ? selectedTeamId || null : undefined,
+          assignee_ids: assigneesChanged ? assigneeIds : undefined,
           ...buildScheduleEventTimingPatch({
             preserveAppointmentTiming: preservesAppointmentTiming,
-            startTime: interval.startTime,
-            endTime: interval.endTime,
+            startTime: timingUnchanged ? event.start_time : interval.startTime,
+            endTime: timingUnchanged && event.end_time ? event.end_time : interval.endTime,
             isAllDay,
             reminderMinutes: reminderMinutesPayload,
           }),
           description: description.trim() || null,
-          lead_id: selectedLeadId,
           location: location.trim() || null,
         });
       } else {
-        await createEvent.mutateAsync({
+        const createPayload = {
           ...sharedPayload,
           start_time: interval.startTime,
           end_time: interval.endTime,
           is_all_day: isAllDay,
           reminder_minutes: reminderMinutesPayload,
           recurrence_rule: recurrenceRule,
-        });
+        };
+        const signature = JSON.stringify(createPayload);
+        if (createRequestRef.current?.signature !== signature) {
+          createRequestRef.current = { signature, id: crypto.randomUUID() };
+        }
+        await createEvent.mutateAsync({ ...createPayload, client_request_id: createRequestRef.current.id });
       }
       onOpenChange(false);
     } catch {
@@ -757,7 +803,7 @@ export function EventSheet({
   };
 
   const handleMarkDone = async () => {
-    if (!canManageSchedule || !event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked || isLoading) return;
     if (requiresAttendanceOutcome) {
       setOutcomeDialogOpen(true);
       return;
@@ -767,6 +813,7 @@ export function EventSheet({
       await completeEvent.mutateAsync({
         id: event.id,
         status: "completed",
+        expected_updated_at: event.updated_at || undefined,
         outcome: getSimpleScheduleCompletionOutcome(event.event_type),
       });
       onOpenChange(false);
@@ -781,12 +828,13 @@ export function EventSheet({
     performedBy,
     reschedule,
   }: ScheduleOutcomeConfirmation) => {
-    if (!canManageSchedule || !event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked || isLoading) return;
     try {
       if (outcome === "rescheduled") {
-        if (!reschedule) return;
+        if (!reschedule || !scheduleTimeZoneReady) return;
         await rescheduleEvent.mutateAsync({
           id: event.id,
+          expected_updated_at: event.updated_at || undefined,
           start_time: reschedule.startTime,
           end_time: reschedule.endTime,
           is_all_day: reschedule.isAllDay,
@@ -799,6 +847,7 @@ export function EventSheet({
       }
       await completeEvent.mutateAsync({
         id: event.id,
+        expected_updated_at: event.updated_at || undefined,
         status: scheduleStatusForOutcome(outcome),
         outcome,
         outcomeNotes: notes || null,
@@ -812,9 +861,9 @@ export function EventSheet({
   };
 
   const handleReopen = async () => {
-    if (!canManageSchedule || !event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked || isLoading) return;
     try {
-      await completeEvent.mutateAsync({ id: event.id, status: "scheduled" });
+      await completeEvent.mutateAsync({ id: event.id, status: "scheduled", expected_updated_at: event.updated_at || undefined });
       onOpenChange(false);
     } catch {
       // The owning mutation reports the error; keep the activity open.
@@ -822,7 +871,7 @@ export function EventSheet({
   };
 
   const handleDelete = async () => {
-    if (!canManageSchedule || !event || isMasked || preservesAttendanceHistory)
+    if (!canManageSchedule || !event || isMasked || preservesAttendanceHistory || isLoading)
       return;
     try {
       await deleteEvent.mutateAsync({ id: event.id });
@@ -833,7 +882,7 @@ export function EventSheet({
   };
 
   const handleSendComment = () => {
-    if (!canManageSchedule || isMasked || !commentText.trim() || isAdding)
+    if (!canManageSchedule || isMasked || !commentText.trim() || isAdding || isLoading)
       return;
     const submittedComment = commentText.trim();
     addComment(submittedComment, {
@@ -845,12 +894,6 @@ export function EventSheet({
     });
   };
 
-  const isLoading =
-    createEvent.isPending ||
-    updateEvent.isPending ||
-    completeEvent.isPending ||
-    rescheduleEvent.isPending ||
-    deleteEvent.isPending;
   const handleSheetOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && (isLoading || outcomeDialogOpen)) return;
     onOpenChange(nextOpen);
@@ -863,14 +906,28 @@ export function EventSheet({
       durationMinutes: duration,
       timeZone: scheduleTimeZone,
       preferredStartTime,
+      allDaySpan,
     }),
   );
+  const timingUnchanged = Boolean(event && date &&
+    getLocalScheduleCivilDateKey(date) === getScheduleCivilDateKey(event.start_time, scheduleTimeZone) &&
+    time === formatScheduleZonedTime(event.start_time, scheduleTimeZone) &&
+    isAllDay === Boolean(event.is_all_day) &&
+    duration === getStoredDurationMinutes({
+      start: new Date(event.start_time),
+      end: event.end_time ? new Date(event.end_time) : null,
+      eventType: event.event_type,
+    }),
+  );
+  const appointmentTransitionWithTimingChange =
+    isExisting && !requiresAttendanceOutcome && isAttendanceScheduleType(selectedType) && !timingUnchanged;
   const canSubmit =
     !draftLocked &&
     title.trim() &&
     date &&
     primaryUserId &&
     hasValidTime &&
+    !appointmentTransitionWithTimingChange &&
     (!isExisting || assigneeDraftReady);
 
   if (!hasAgendaModule) return null;
@@ -912,15 +969,35 @@ export function EventSheet({
           <EventSheetHeader
             locked={draftLocked}
             typeLocked={hasAttendanceHistoryLink}
+            attendanceTypesOnly={preservesAppointmentTiming}
+            isMasked={isMasked}
             title={title}
             selectedType={selectedType}
             isLoading={isLoading}
             onTitleChange={setTitle}
-            onTypeChange={setSelectedType}
+            onTypeChange={(nextType) => {
+              if (preservesAppointmentTiming && !isAttendanceScheduleType(nextType)) return;
+              setSelectedType(nextType);
+              if (!isExisting && !durationTouched.current) {
+                setDuration(getDefaultDurationMinutes(nextType));
+              }
+            }}
             onClose={() => handleSheetOpenChange(false)}
           />
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-8 sm:pb-2 sm:pt-0">
+            {!draftReady && (
+              <div role="status" className="mb-3 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[12px]">
+                {scheduleCapabilitiesQuery.isError || scheduleCapabilitiesQuery.isSuccess ? (
+                  <>
+                    <p>Não foi possível carregar as configurações da agenda.</p>
+                    <Button variant="ghost" size="sm" className="mt-1 h-8 text-[12px]" onClick={() => void scheduleCapabilitiesQuery.refetch()}>
+                      Tentar novamente
+                    </Button>
+                  </>
+                ) : "Carregando as configurações da agenda..."}
+              </div>
+            )}
             <EventSheetFeedback
               isCompleted={isCompleted}
               isMasked={isMasked}
@@ -928,14 +1005,10 @@ export function EventSheet({
               googleSyncStatus={event?.google_sync_status}
               outcome={event?.outcome}
               outcomeNotes={event?.outcome_notes}
-              performedByName={
-                event?.performed_by_user?.name ||
-                (event?.performed_by === event?.completed_by
-                  ? event?.completed_by_user?.name
-                  : null)
-              }
+              performedByName={event ? getSchedulePerformerName(event) : null}
               completedAt={event?.completed_at}
               attendanceOutcome={requiresAttendanceOutcome}
+              timeZone={scheduleTimeZone}
             />
             <EventTimingSection
               locked={draftLocked}
@@ -944,6 +1017,8 @@ export function EventSheet({
               time={time}
               endTimePreview={endTimePreview}
               isAllDay={isAllDay}
+              allDaySpanDays={allDaySpan?.dayCount}
+              isMasked={isMasked}
               recurrenceRule={recurrenceRule}
               reminderMinutes={reminderMinutes}
               isExisting={isExisting}
@@ -953,6 +1028,18 @@ export function EventSheet({
               onAllDayChange={handleAllDayChange}
               onRecurrenceChange={setRecurrenceRule}
               onReminderChange={setReminderMinutes}
+            />
+            {appointmentTransitionWithTimingChange && (
+              <div role="alert" className="rounded-[6px] bg-amber-500/10 px-3 py-2 text-[12px] leading-5">
+                Para transformar esta atividade em visita ou reunião, salve primeiro a mudança de tipo mantendo o horário original. Depois use “Resultado ou remarcar”. O rascunho permanece aqui.
+              </div>
+            )}
+
+            <EventLocationSection
+              locked={draftLocked}
+              isMasked={isMasked}
+              location={location}
+              onLocationChange={setLocation}
             />
 
             <EventAssigneesSection
@@ -1001,6 +1088,9 @@ export function EventSheet({
               showLeadSelector={showLeadSelector}
               leadSearch={leadSearch}
               searchedLeads={searchedLeads}
+              leadsLoading={leadsLoading || leadsFetching}
+              leadsError={leadsError}
+              onRetryLeads={() => void refetchLeads()}
               canViewProperties={canViewProperties}
               selectedPropertyId={selectedPropertyId}
               selectedPropertyLabel={selectedPropertyLabel}
@@ -1036,15 +1126,30 @@ export function EventSheet({
               }}
             />
 
+            {propertyPreviewOpen && !previewProperty && (
+              <div role="status" className="my-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[12px]">
+                {persistedPropertyQuery.isError ? (
+                  <>
+                    Não foi possível carregar o imóvel vinculado.
+                    <Button variant="ghost" size="sm" onClick={() => void persistedPropertyQuery.refetch()}>Tentar novamente</Button>
+                  </>
+                ) : persistedPropertyQuery.isLoading ? "Carregando o imóvel vinculado..." : "Imóvel indisponível para consulta."}
+              </div>
+            )}
+
             <EventNotesAndComments
               locked={draftLocked}
               isMasked={isMasked}
               isExisting={isExisting}
               description={description}
               comments={comments}
+              commentsLoading={commentsLoading}
+              commentsError={commentsError}
+              onRetryComments={() => void refetchComments()}
+              timeZone={scheduleTimeZone}
               commentText={commentText}
               canManageSchedule={canManageSchedule}
-              isAdding={isAdding}
+              isAdding={isAdding || isLoading}
               onDescriptionChange={setDescription}
               onCommentChange={setCommentText}
               onSendComment={handleSendComment}
@@ -1052,6 +1157,7 @@ export function EventSheet({
           </div>
 
           <EventSheetActions
+            draftReady={draftReady}
             canManageSchedule={canManageSchedule}
             isExisting={isExisting}
             isMasked={isMasked}
@@ -1066,7 +1172,7 @@ export function EventSheet({
             onDelete={() => void handleDelete()}
             onMarkDone={() => void handleMarkDone()}
             onReopen={() => void handleReopen()}
-            onReset={resetDraft}
+            onReset={() => resetDraft()}
             onStartEditing={() => {
               if (draftReady) setIsEditing(true);
             }}
@@ -1087,6 +1193,8 @@ export function EventSheet({
           eventIsAllDay={event.is_all_day}
           eventReminderMinutes={event.reminder_minutes}
           timeZone={scheduleTimeZone}
+          rescheduleTimeZoneReady={scheduleTimeZoneReady}
+          onRetryTimeZone={() => void scheduleCapabilitiesQuery.refetch()}
           isLoading={completeEvent.isPending || rescheduleEvent.isPending}
           onConfirm={handleOutcomeConfirm}
         />

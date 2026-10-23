@@ -16,13 +16,13 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function ValuesSection() {
   const {
+    isSaving,
     formData,
     set,
     isSale,
     isRental,
     supportsRentalContractTerms,
     supportsSaleTerms,
-    primaryValuesGridClass,
     selectedCondominium,
     isEditing,
     canManagePropertyCatalogs,
@@ -42,7 +42,8 @@ export function ValuesSection() {
   });
 
   return (
-  <TabsContent value="values">
+  <TabsContent value="values" id="property-panel-values" aria-labelledby="property-tab-values" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card data-tour="property-values-section" className="app-card">
       <CardHeader>
         <CardTitle className="text-[14px] font-normal">
@@ -50,7 +51,7 @@ export function ValuesSection() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className={primaryValuesGridClass}>
+        <div className={`grid grid-cols-1 gap-3 @[480px]:grid-cols-2 ${isSale && isRental ? "@[900px]:grid-cols-5" : "@[900px]:grid-cols-4"}`}>
           {isSale && (
             <div className="space-y-2">
               <Label htmlFor="property-sale-price">
@@ -168,7 +169,7 @@ export function ValuesSection() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-4">
           <div className="space-y-2">
             <Label htmlFor="property-rural-tax">ITR rural (R$)</Label>
             <CurrencyInput
@@ -219,7 +220,7 @@ export function ValuesSection() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-4">
           {supportsRentalContractTerms && showManagerOnlyFields && (
             <div className="space-y-2">
               <Label htmlFor="property-rental-guarantee">Seguro fiança (R$)</Label>
@@ -259,7 +260,7 @@ export function ValuesSection() {
 
         {supportsSaleTerms && (
           <div className="app-card-soft border-0 p-4">
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(220px,.75fr)_minmax(180px,.55fr)_minmax(180px,.55fr)]">
+            <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-[minmax(220px,.75fr)_minmax(180px,.55fr)_minmax(180px,.55fr)]">
               <div className="space-y-2">
                 <Label htmlFor="property-financing-mode">Financiável</Label>
                 <Select
@@ -313,7 +314,7 @@ export function ValuesSection() {
             {showManagerOnlyFields &&
               (formData.financing_mode !== "nao" ||
                 formData.aceita_permuta) && (
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="mt-4 grid grid-cols-1 gap-4 @[760px]:grid-cols-2">
                 {formData.financing_mode !== "nao" && (
                   <div className="space-y-2">
                     <Label htmlFor="property-financing-details">Detalhes do financiamento</Label>
@@ -348,6 +349,7 @@ export function ValuesSection() {
         )}
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

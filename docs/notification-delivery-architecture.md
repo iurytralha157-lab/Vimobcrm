@@ -56,7 +56,10 @@ O backend reconhece atualmente estes grupos principais:
 
 - Leads e funil: `new_lead_received`, `lead_reentry`, `lead_duplicate_existing`, `lead_transferred`, `lead_stage_changed`, `deal_won`, `lead_redistribution_warning`, `lead_redistributed_received`, `lead_redistributed_away`, `lead_auto_redistributed`, `lead_auto_redistribution_failed`.
 - Agenda e SLA: `schedule_reminder`, `appointment_reminder`, `sla_warning`, `sla_overdue`, `sla_overdue_manager`.
-- WhatsApp: `whatsapp_disconnected` e `whatsapp_disconnected_admin`.
+- WhatsApp: `whatsapp_disconnected`, `whatsapp_disconnected_admin` e
+  `whatsapp_inbound_attendant`. O último é produzido somente pelo backend,
+  para mensagem inbound nova capturada e responsável atual com atendimento
+  elegível; reações, histórico e mensagens sem atendimento não geram esse push.
 - Assinatura e onboarding: `billing_*`, `onboarding_welcome`, `onboarding_email_confirmation`, `internal_user_invitation`.
 - Produto: `update_phone_reminder`, `gamification_update`, `announcement`, `announcement_published`, `interest_property_reserved` e `test_push`.
 
@@ -72,6 +75,43 @@ Nem todo evento usa todos os canais. O produtor grava exatamente os canais resol
 - Limpeza: `cleanup-notifications` só remove registros antigos comprovadamente internos e sem qualquer estado de entrega.
 
 As funções legadas de envio não devem ser removidas apenas por busca no repositório: a retirada exige confirmar invocações e configuração no ambiente publicado.
+
+### Subfila SQL de push WhatsApp sem dispositivo
+
+`private.whatsapp_inbound_push_waiting` preserva avisos sem nenhum token ativo
+na origem. A chave é a notificação, com organização e validade originais;
+não substitui uma entrega externa nem registra tentativa de HTTP.
+`private.whatsapp_inbound_push_waiting_seed` é um cursor finito para avisos
+anteriores à migration, ainda válidos e sem entrega: examina até 100 registros
+por transação, sem replay de mensagens históricas.
+
+Essas tabelas são privadas, com RLS e sem acesso direto de `anon`,
+`authenticated` ou `service_role`. O `NotificationDispatchWorker` existente
+processa a subfila dentro de `claim_notification_deliveries`; não há novo
+worker Go ou cron. Ele revalida o responsável e as permissões, materializa
+tokens ativados ou redireciona um aviso que nunca iniciou envio. A mensagem
+possui um advisory lock compartilhado por todos os dispositivos; a transação
+curta e o lease da entrega coordenam as réplicas. Ausência de dispositivo recebe
+nova consulta em um minuto, limitada pela validade original. Expiração é
+removida em lotes de até 100, em autocommit separado antes dos locks de acesso,
+inclusive quando o alvo da mensagem foi apagado.
+
+Configuração ou token ausentes preservam a tentativa zero. O marcador durável
+de envio só é gravado depois do preflight e confirmado antes da chamada de
+rede. Transferência depois desse marcador pode deixar concluir a chamada já
+iniciada; não cria um push repetido ao novo responsável. O caminho legado
+também valida configuração e tokens antes desse marcador.
+
+A claim exige a capacidade interna `|wa_push_v2` para todo push de
+`whatsapp_inbound_attendant`, inclusive com token ativo. Réplicas anteriores
+continuam processando eventos genéricos, mas não reservam esses avisos nem
+avançam o seed/waiting. Essa proteção permite aplicar o SQL antes de trocar
+réplicas que faziam preflight do token antes de revalidar atendimento.
+
+O [ensaio local de push e retenção](runbooks/whatsapp-push-retention-hardening-2026-10-12.md)
+registra migrações, regressões, limites e sequência de publicação. A flag
+`NOTIFICATION_DISPATCH_WORKER_ENABLED` continua opt-in; o inventário não
+confirma sua ativação em produção.
 
 ## Operação
 
@@ -100,6 +140,67 @@ Alertas recomendados:
 4. Observar fila ativa, idade e recibos.
 5. Reprocessar manualmente apenas itens em estado terminal ou bloqueado que não foram liberados automaticamente.
 6. Nunca reprocessar uma entrega `accepted` sem antes consultar o provedor pelo identificador persistido.
+
+### Descartar avisos pendentes antes de conectar o WhatsApp
+
+Em `/admin/system-settings`, o superadmin pode abrir a prévia do reset da fila
+de WhatsApp para a organização atual ou escolher explicitamente todas as
+organizações. A prévia mostra quantos envios podem ser cancelados e quantos
+já começaram ou foram aceitos pelo provedor. Informe um motivo e digite
+`RESETAR` para confirmar; depois do resultado, conecte o remetente desejado.
+
+O corte usa o horário da prévia retornado pelo banco e vale por 15 minutos.
+Somente entregas `whatsapp` criadas até esse horário nos estados `queued`,
+`retry_wait`, `blocked_dependency` ou `leased` passam a `cancelled`. A transação
+invalida o lease e registra o motivo, autor, escopo e corte no ledger existente.
+O início de envio confere estado e lease: se o reset vencer a corrida, o worker
+não chama o provedor; se o envio já começou, ele permanece fora do reset.
+
+As notificações na caixa de entrada, os envios por e-mail e push e as conversas
+e mensagens da outbox de atendimento permanecem preservados. `sending` e
+`accepted` não podem ser recolhidos; o resultado informa sua quantidade.
+Avisos criados depois da prévia continuam seguindo o fluxo normal. Portanto,
+este reset é um descarte pontual, não uma pausa permanente do disparador.
+O reset só alcança registros já confirmados no banco; um produtor que ainda
+esteja em transação poderá confirmar outro aviso depois da operação. Faça a
+consulta novamente antes de conectar se precisar conferir o volume restante.
+
+Contratos, ambos com autenticação ativa e autorização de superadmin:
+
+- `GET /v1/admin/notification-deliveries/whatsapp-reset-preview` recebe
+  `scope=organization&organizationId=<uuid>` ou `scope=all`; retorna `scope`,
+  `organizationId` quando aplicável, `cutoffAt`, `pendingCount` e `inFlightCount`.
+- `POST /v1/admin/notification-deliveries/whatsapp-reset` recebe o mesmo escopo,
+  `cutoffAt`, `reason` e `confirmation: "RESETAR"`; retorna `cancelledCount`
+  e `inFlightCount`. Corte futuro ou expirado exige nova prévia.
+
+Não há nova migration nem alteração de worker ou configuração de conexão.
+O cancelamento usa as tabelas e o estado terminal existentes e não apaga o
+histórico. A reconexão automática não libera itens cancelados. Para recuperar
+um aviso descartado por engano, analise a entrega individual no painel técnico
+e use o replay auditado com motivo; isso pode gerar um envio real. Reverter o
+código remove o controle, mas não desfaz cancelamentos já confirmados.
+
+Verificações reproduzíveis da interface e dos contratos:
+
+```text
+node --test scripts/tests/notification-reset-ui-runtime.test.mjs
+node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test lib/validation/notifications.test.ts
+go test ./apps/api/internal/admin ./apps/api/internal/app ./apps/api/internal/leads
+```
+
+O teste de interface usa componentes e hook reais, com autenticação e respostas
+sintéticas e toda a rede bloqueada. Não comprova publicação nem entrega real.
+O runner `scripts/tests/notification-whatsapp-reset-postgres.mjs` recebe uma
+raiz absoluta **nova**, terminada em `vimob-whatsapp-ci`, e o diretório absoluto
+dos binários PostgreSQL 17. Ele cria dados sintéticos, admite somente o cluster
+local identificado na porta 57924, executa os três testes de integração Go sem
+aceitar skips e encerra o cluster ao terminar. Não carrega `.env` do CRM.
+
+Em 15/10/2026, os seis testes de interface e os três testes com PostgreSQL 17.11
+passaram. O ensaio de banco usa as tabelas e funções canônicas da fila, com
+tabelas pai mínimas sintéticas; não executa a cadeia completa de migrations
+Supabase nem chama o provedor WhatsApp.
 
 ## Rollout seguro
 

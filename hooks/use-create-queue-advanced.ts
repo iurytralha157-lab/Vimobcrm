@@ -1,7 +1,12 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type MutationFunctionContext, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRef } from 'react';
+import { createUUID } from '@/lib/client-id';
+import type { DistributionQueueCondition, DistributionQueueSettings } from '@/lib/round-robin/distribution-queue-form';
+import { queueMutationCollections } from '@/lib/round-robin/queue-snapshot';
+import { captureQueryClientAccess } from '@/lib/access/query-client-access';
 
 interface ScheduleDay {
   day: number;
@@ -10,14 +15,9 @@ interface ScheduleDay {
   end: string;
 }
 
-interface RuleCondition {
-  id: string;
-  type: 'source' | 'webhook' | 'whatsapp_session' | 'meta_form' | 'website_category' | 'campaign_contains' | 'whatsapp_message_contains' | 'tag' | 'city' | 'interest_property';
-  values: string[];
-  sessionId?: string;
-}
-
 interface QueueMember {
+  isActive?: boolean;
+  reenroll?: boolean;
   id?: string;
   type: 'user' | 'team';
   entityId: string;
@@ -26,7 +26,7 @@ interface QueueMember {
   name?: string;
 }
 
-interface QueueSettings {
+interface QueueSettings extends DistributionQueueSettings {
   ignore_availability?: boolean;
   auto_tag_ids?: string[];
   enable_redistribution?: boolean;
@@ -46,6 +46,10 @@ type QueueSettingsWithSchedule = QueueSettings & {
 };
 
 interface CreateQueueInput {
+  preserveRuleSnapshot?: boolean;
+  preserveMemberSnapshot?: boolean;
+  creationAttemptId?: string;
+  expectedRevision?: number;
   name: string;
   strategy: 'simple' | 'weighted';
   target_pipeline_id: string;
@@ -53,7 +57,7 @@ interface CreateQueueInput {
   is_active: boolean;
   settings: QueueSettings;
   schedule?: ScheduleDay[];
-  conditions: RuleCondition[];
+  conditions: DistributionQueueCondition[];
   members: QueueMember[];
 }
 
@@ -73,8 +77,9 @@ function buildFullSettings(input: CreateQueueInput): QueueSettingsWithSchedule {
   };
 }
 
-function toRoundRobinInput(input: CreateQueueInput) {
+function toRoundRobinInput(input: CreateQueueInput, updating = false) {
   return {
+    expectedRevision: input.expectedRevision,
     name: input.name,
     strategy: input.strategy,
     target_pipeline_id: input.target_pipeline_id || null,
@@ -82,22 +87,48 @@ function toRoundRobinInput(input: CreateQueueInput) {
     is_active: input.is_active,
     settings: buildFullSettings(input) as Record<string, unknown>,
     reentry_behavior: input.settings.reentry_behavior || 'redistribute',
-    conditions: input.conditions,
-    members: input.members,
+    ...queueMutationCollections(input, updating),
+  };
+}
+
+function useQueueMutationAccess(queryClient: QueryClient) {
+  const accessByMutation = useRef(new WeakMap<MutationFunctionContext, () => boolean>());
+  return {
+    capture: (_variables: unknown, context: MutationFunctionContext) => {
+      const isCurrentAccess = captureQueryClientAccess(queryClient);
+      // TanStack shares this context only within one execution. Variables can
+      // be reused by another mutation after the provider's SID visit changes.
+      accessByMutation.current.set(context, isCurrentAccess);
+      return isCurrentAccess;
+    },
+    requireCurrent: (context: MutationFunctionContext) => {
+      if (!accessByMutation.current.get(context)?.()) {
+        throw new Error('O contexto de acesso mudou. Reabra o formulário antes de salvar.');
+      }
+    },
   };
 }
 
 export function useCreateQueueAdvanced() {
   const queryClient = useQueryClient();
+  const access = useQueueMutationAccess(queryClient);
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
+  const attempt = useRef<{ fingerprint: string; id: string } | null>(null);
 
   return useMutation({
-    mutationFn: async (input: CreateQueueInput) => {
+    onMutate: access.capture,
+    mutationFn: async (input: CreateQueueInput, context) => {
+      access.requireCurrent(context);
       if (!organizationId) throw new Error('Organização não identificada');
-      return roundRobinsAPI.createRoundRobin(toRoundRobinInput(input), organizationId);
+      const payload = toRoundRobinInput(input);
+      const fingerprint = JSON.stringify([organizationId, payload]);
+      if (attempt.current?.fingerprint !== fingerprint) attempt.current = { fingerprint, id: createUUID() };
+      return roundRobinsAPI.createRoundRobin({ ...payload, creationAttemptId: input.creationAttemptId || attempt.current.id }, organizationId);
     },
-    onSuccess: (queue) => {
+    onSuccess: (queue, _variables, isCurrentAccess) => {
+      if (!isCurrentAccess?.()) return;
+      attempt.current = null;
       queryClient.setQueryData(
         ['round-robin', organizationId, queue.id],
         queue,
@@ -113,7 +144,8 @@ export function useCreateQueueAdvanced() {
       });
       toast.success('Fila de distribuição criada!');
     },
-    onError: (error) => {
+    onError: (error, _variables, isCurrentAccess) => {
+      if (!isCurrentAccess?.()) return;
       toast.error('Erro ao criar fila: ' + error.message);
     },
   });
@@ -121,15 +153,19 @@ export function useCreateQueueAdvanced() {
 
 export function useUpdateQueueAdvanced() {
   const queryClient = useQueryClient();
+  const access = useQueueMutationAccess(queryClient);
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
-    mutationFn: async ({ id, ...input }: CreateQueueInput & { id: string }) => {
+    onMutate: access.capture,
+    mutationFn: async ({ id, ...input }: CreateQueueInput & { id: string }, context) => {
+      access.requireCurrent(context);
       if (!organizationId) throw new Error('Organização não identificada');
-      return roundRobinsAPI.updateRoundRobin(id, toRoundRobinInput(input), organizationId);
+      return roundRobinsAPI.updateRoundRobin(id, toRoundRobinInput(input, true), organizationId);
     },
-    onSuccess: (queue, variables) => {
+    onSuccess: (queue, variables, isCurrentAccess) => {
+      if (!isCurrentAccess?.()) return;
       queryClient.setQueryData(
         ['round-robin', organizationId, variables.id],
         queue,
@@ -145,7 +181,8 @@ export function useUpdateQueueAdvanced() {
       });
       toast.success('Fila atualizada!');
     },
-    onError: (error) => {
+    onError: (error, _variables, isCurrentAccess) => {
+      if (!isCurrentAccess?.()) return;
       toast.error('Erro ao atualizar fila: ' + error.message);
     },
   });

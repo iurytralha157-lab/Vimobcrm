@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,7 +17,8 @@ import (
 )
 
 type Repository struct {
-	db *dbpkg.Postgres
+	db                       *dbpkg.Postgres
+	inactivityRuntimeEnabled bool
 }
 
 type scanner interface {
@@ -63,7 +65,14 @@ func (repo Repository) ListAutomations(ctx context.Context, tenantContext tenant
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := repo.attachInactivityPolicies(ctx, tenantContext.OrganizationID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenant.Context, input stageAutomationInput) (StageAutomation, error) {
@@ -178,6 +187,9 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if !ok {
 		return StageAutomation{}, ErrInvalidInput
 	}
+	if input.ExpectedUpdatedAt.IsZero() {
+		return StageAutomation{}, ErrStageAutomationChanged
+	}
 
 	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
 	if err != nil {
@@ -189,13 +201,12 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	}
 	defer tx.Rollback(ctx)
 	var stageID string
-	var currentIsActive bool
 	if err := tx.QueryRow(ctx, `
-		select stage_id::text, coalesce(is_active, true)
+		select stage_id::text
 		from public.stage_automations
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, automationID).Scan(&stageID, &currentIsActive); errors.Is(err, pgx.ErrNoRows) {
+	`, tenantContext.OrganizationID, automationID).Scan(&stageID); errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
 	} else if err != nil {
 		return StageAutomation{}, err
@@ -203,7 +214,12 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
 		return StageAutomation{}, err
 	}
-	input.IsActive = currentIsActive
+	// Activation may have committed while this editor waited for the stage lock.
+	// Read the actual state after that lock before validating active-rule conflicts.
+	input.IsActive, err = readLockedAutomationRevision(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input.ExpectedUpdatedAt)
+	if err != nil {
+		return StageAutomation{}, err
+	}
 	if err := repo.validateAutomationReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
 		return StageAutomation{}, err
 	}
@@ -222,7 +238,7 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 			    target_stage_id = $7::uuid,
 			    whatsapp_template = $8,
 			    alert_message = $9,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			returning `+stageAutomationSelectFields(false)+`
@@ -231,6 +247,9 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 			return StageAutomation{}, ErrNotFound
 		}
 		if err != nil {
+			return StageAutomation{}, err
+		}
+		if err := requireAdvancedStageAutomationRevision(automation, input.ExpectedUpdatedAt); err != nil {
 			return StageAutomation{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -243,7 +262,7 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 		update public.stage_automations
 		set trigger_type = $3,
 		    config = $4::jsonb,
-		    updated_at = now()
+		    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		returning `+stageAutomationSelectFields(true)+`
@@ -254,19 +273,25 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return StageAutomation{}, err
 	}
+	if err := requireAdvancedStageAutomationRevision(automation, input.ExpectedUpdatedAt); err != nil {
+		return StageAutomation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return StageAutomation{}, err
 	}
 	return automation, nil
 }
 
-func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenant.Context, automationID string) error {
+func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenant.Context, automationID string, input stageAutomationDeleteInput) error {
 	if !canManageStageConfig(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	automationID, ok := normalizeUUID(automationID)
 	if !ok {
 		return ErrInvalidInput
+	}
+	if input.ExpectedUpdatedAt.IsZero() {
+		return ErrStageAutomationChanged
 	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -287,6 +312,9 @@ func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenan
 	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
 		return err
 	}
+	if _, err := readLockedAutomationRevision(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input.ExpectedUpdatedAt); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `
 		delete from public.stage_automations
 		where organization_id = $1::uuid
@@ -301,13 +329,16 @@ func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenan
 	return tx.Commit(ctx)
 }
 
-func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenant.Context, automationID string, isActive bool) (StageAutomation, error) {
+func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenant.Context, automationID string, input stageAutomationStatusInput) (StageAutomation, error) {
 	if !canManageStageConfig(tenantContext) {
 		return StageAutomation{}, tenant.ErrOrganizationAccessDenied
 	}
 	automationID, ok := normalizeUUID(automationID)
 	if !ok {
 		return StageAutomation{}, ErrInvalidInput
+	}
+	if input.ExpectedUpdatedAt.IsZero() {
+		return StageAutomation{}, ErrStageAutomationChanged
 	}
 	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
 	if err != nil {
@@ -333,7 +364,10 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
 		return StageAutomation{}, err
 	}
-	if isActive {
+	if _, err := readLockedAutomationRevision(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input.ExpectedUpdatedAt); err != nil {
+		return StageAutomation{}, err
+	}
+	if input.IsActive {
 		current, err := scanStageAutomation(tx.QueryRow(ctx, `
 			select `+stageAutomationSelectFields(hasConfigSchema)+`
 			from public.stage_automations
@@ -361,15 +395,18 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 	automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 		update public.stage_automations
 		set is_active = $3,
-		    updated_at = now()
+		    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		returning `+stageAutomationSelectFields(hasConfigSchema)+`
-	`, tenantContext.OrganizationID, automationID, isActive))
+	`, tenantContext.OrganizationID, automationID, input.IsActive))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
 	}
 	if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := requireAdvancedStageAutomationRevision(automation, input.ExpectedUpdatedAt); err != nil {
 		return StageAutomation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -814,6 +851,11 @@ func scanStageAutomation(row scanner) (StageAutomation, error) {
 	if automation.Config == nil {
 		automation.Config = map[string]any{}
 	}
+	revision, err := parseInactivityRevision(automation.UpdatedAt)
+	if err != nil {
+		return StageAutomation{}, fmt.Errorf("decode stage automation revision: %w", err)
+	}
+	automation.UpdatedAt = revision.UTC().Format(time.RFC3339Nano)
 	return automation, nil
 }
 
@@ -996,12 +1038,26 @@ func (repo Repository) validateAutomationReferences(ctx context.Context, tx pgx.
 	return nil
 }
 
-func (repo Repository) validateAutomationStatusConflict(ctx context.Context, tx pgx.Tx, organizationID string, stageID string, excludeID string, input stageAutomationInput, hasConfigSchema bool) error {
-	if !input.IsActive || legacyStringConfig(input.Config, "automation_type") != "change_deal_status_on_enter" {
+func (repo Repository) validateAutomationStatusConflict(ctx context.Context, tx automationPolicyQueryer, organizationID string, stageID string, excludeID string, input stageAutomationInput, hasConfigSchema bool) error {
+	if !input.IsActive {
+		return nil
+	}
+	automationType := legacyStringConfig(input.Config, "automation_type")
+	if automationType == "change_assignee_on_enter" {
+		return repo.validateSingleAssigneeAutomation(ctx, tx, organizationID, stageID, excludeID, hasConfigSchema)
+	}
+	if automationType != "change_deal_status_on_enter" {
 		return nil
 	}
 	actionConfig, _ := input.Config["action_config"].(map[string]any)
 	status, _ := actionConfig["deal_status"].(string)
+	var isWon, isLost bool
+	if err := tx.QueryRow(ctx, `select coalesce(is_won, false), coalesce(is_lost, false) from public.stages where organization_id = $1::uuid and id = $2::uuid`, organizationID, stageID).Scan(&isWon, &isLost); err != nil {
+		return err
+	}
+	if err := validateNativeStageAutomationStatus(isWon, isLost, status); err != nil {
+		return err
+	}
 	statusExpression := "lower(btrim(coalesce(action_config->>'deal_status', '')))"
 	typeExpression := "coalesce(automation_type, action_type, '')"
 	if hasConfigSchema {

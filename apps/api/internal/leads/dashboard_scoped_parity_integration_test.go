@@ -111,18 +111,21 @@ func TestDashboardScopedParityReadOnlyIntegration(t *testing.T) {
 				with led_teams as (
 				  select tm.team_id from public.team_members tm
 				  join public.teams t on t.id=tm.team_id and t.organization_id=tm.organization_id and coalesce(t.is_active,true)=true
+				  join public.organization_members leader_member on leader_member.organization_id=tm.organization_id
+				    and leader_member.user_id=tm.user_id and leader_member.is_active=true and leader_member.deleted_at is null
+				    and leader_member.membership_generation=tm.membership_generation
 				  where tm.organization_id=$1::uuid and tm.user_id=$3::uuid and tm.is_active=true and tm.is_leader=true
 				), led_users as (
 				  select distinct tm.user_id from public.team_members tm
 				  join led_teams lt on lt.team_id=tm.team_id
 				  join public.users u on u.id=tm.user_id and coalesce(u.is_active,false)=true
 				  join public.organization_members om on om.organization_id=tm.organization_id and om.user_id=tm.user_id and om.is_active=true and om.deleted_at is null
+				    and om.membership_generation=tm.membership_generation
 				  where tm.organization_id=$1::uuid and tm.is_active=true
 				)
 				select count(*)::bigint from public.leads l
 				where l.organization_id=$1::uuid and l.pipeline_id=$2::uuid
-				  and (l.assigned_user_id=$3::uuid or l.assigned_user_id in (select user_id from led_users)
-				    or (l.assigned_user_id is null and l.team_id in (select team_id from led_teams)))
+				  and (l.assigned_user_id=$3::uuid or l.assigned_user_id in (select user_id from led_users))
 			`, organizationID, pipelineID, leaderID).Scan(&expected)
 			}
 			if err != nil {
@@ -148,7 +151,17 @@ func TestDashboardScopedParityReadOnlyIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("contacts count: %v", err)
 			}
-			if stats.TotalLeads != expected || contactsCount != expected || sourceCount != stats.TotalEntries {
+			// Contacts/Pipeline intentionally retain the legacy queue visibility;
+			// Dashboard follows assigned people. Compare their assigned cohort only.
+			assignedContacts := contactsCount
+			if !canViewAllLeads(role.viewer) {
+				queueContacts, err := repo.countContacts(ctx, role.viewer, ContactListFilter{PipelineID: pipelineID, Unassigned: true})
+				if err != nil {
+					t.Fatalf("queue contacts count: %v", err)
+				}
+				assignedContacts -= queueContacts
+			}
+			if stats.TotalLeads != expected || assignedContacts != expected || sourceCount != stats.TotalEntries {
 				t.Fatalf("scope mismatch: independent_cards=%d dashboard_cards=%d contacts_cards=%d dashboard_entries=%d source_entries=%d", expected, stats.TotalLeads, contactsCount, stats.TotalEntries, sourceCount)
 			}
 
@@ -156,9 +169,14 @@ func TestDashboardScopedParityReadOnlyIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dashboard funnel: %v", err)
 			}
-			board, err := repo.listPipelineBoardStageMetrics(ctx, role.viewer, PipelineBoardFilter{
+			boardFilter := PipelineBoardFilter{
 				PipelineID: pipelineID, StageIDs: stageIDs, DateMode: PipelineBoardDateModeOrigin,
-			})
+			}
+			if !canViewAllLeads(role.viewer) {
+				boardFilter.FilterUserIDsSet = true
+				boardFilter.FilterUserIDs = append([]string{role.viewer.UserID}, role.viewer.LedUserIDs...)
+			}
+			board, err := repo.listPipelineBoardStageMetrics(ctx, role.viewer, boardFilter)
 			if err != nil {
 				t.Fatalf("pipeline board metrics: %v", err)
 			}

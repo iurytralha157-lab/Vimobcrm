@@ -52,8 +52,9 @@ import {
 import type { Contact, ContactListFilters } from "@/hooks/use-contacts-list";
 import { cn } from "@/lib/utils";
 import { getInitials } from "@/lib/user-display";
+import { normalizeDisplayName } from "@/lib/display-name";
 
-import { CONTACT_SOURCE_LABELS, getContactDealStatus } from "./model";
+import { CONTACT_SOURCE_LABELS, CONTACT_TABLE_COLUMN_CLASSES, getContactDealStatus, getCurrentPageSelection } from "./model";
 
 type ContactsListProps = {
   isMobile: boolean;
@@ -178,7 +179,7 @@ function AssigneeAvatarCell({
     <TooltipProvider delayDuration={120}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex min-w-0 items-center gap-2">
+          <div role="img" aria-label={label} tabIndex={0} className="mx-auto flex h-7 w-7 items-center justify-center rounded-[6px] outline-none focus-visible:ring-1 focus-visible:ring-primary/30">
             {name ? (
               <Avatar className="h-7 w-7 rounded-[6px] [&_img]:rounded-[6px]">
                 <AvatarImage src={avatarUrl || undefined} alt={name} />
@@ -191,9 +192,6 @@ function AssigneeAvatarCell({
                 --
               </div>
             )}
-            <span className="min-w-0 truncate text-[11px] font-light text-[var(--app-text-secondary)]">
-              {label}
-            </span>
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-xs">
@@ -269,6 +267,12 @@ function ContactsMobileList({
   onWhatsApp,
   onRequestDelete,
   canUseWhatsApp,
+  selectedIds,
+  onToggleSelectOne,
+  isTransitioning,
+  onSort,
+  sortBy,
+  sortDir,
 }: Pick<
   ContactsListProps,
   | "contacts"
@@ -288,6 +292,12 @@ function ContactsMobileList({
   | "onWhatsApp"
   | "onRequestDelete"
   | "canUseWhatsApp"
+  | "selectedIds"
+  | "onToggleSelectOne"
+  | "isTransitioning"
+  | "onSort"
+  | "sortBy"
+  | "sortDir"
 >) {
   if (showErrorState) {
     return (
@@ -316,11 +326,18 @@ function ContactsMobileList({
 
   return (
     <div className="space-y-1">
+      <div className="flex items-center gap-1 border-b border-border/30 px-2 py-1" aria-label="Ordenação dos contatos">
+        <Button variant="ghost" className="h-8 px-2 text-[11px] font-light" onClick={() => onSort('name')}>Nome {sortBy === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</Button>
+        <Button variant="ghost" className="h-8 px-2 text-[11px] font-light" onClick={() => onSort('created_at')}>Cadastro {sortBy === 'created_at' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</Button>
+      </div>
       {contacts.map((contact) => (
         <ContactCard
           key={contact.id}
           contact={contact}
           sourceLabels={CONTACT_SOURCE_LABELS}
+          selected={selectedIds.has(contact.id)}
+          selectionDisabled={isTransitioning}
+          onSelect={canDeleteLeads ? () => onToggleSelectOne(contact.id) : undefined}
           onViewDetails={() => onViewDetails(contact.id)}
           onWhatsApp={
             canUseWhatsApp ? () => onWhatsApp(contact) : undefined
@@ -337,6 +354,7 @@ function ContactsMobileList({
 function ContactsDesktopTable(props: ContactsListProps) {
   const {
     contacts,
+    isTransitioning,
     isLoading,
     showErrorState,
     errorMessage,
@@ -374,8 +392,8 @@ function ContactsDesktopTable(props: ContactsListProps) {
 
   if (isLoading) {
     return (
-      <Table className="contacts-table crm-management-table min-w-[1120px] table-fixed [&_td]:px-2.5 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2.5 [&_th]:text-[10px] [&_th]:font-light">
-        <TableSkeleton showSelection={canDeleteLeads} />
+      <Table className="contacts-table crm-management-table min-w-[960px] table-fixed [&_td]:px-2 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2 [&_th]:text-[10px] [&_th]:font-light">
+        <TableSkeleton showSelection={canDeleteLeads} showLostReason={lostLeadsView} />
       </Table>
     );
   }
@@ -394,17 +412,16 @@ function ContactsDesktopTable(props: ContactsListProps) {
   }
 
   return (
-    <Table className="contacts-table crm-management-table min-w-[1120px] table-fixed border-separate border-spacing-0 [&_td]:px-2.5 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2.5 [&_th]:text-[10px] [&_th]:font-light [&_th]:text-[var(--app-text-tertiary)]">
+    <Table className="contacts-table crm-management-table min-w-[960px] table-fixed border-separate border-spacing-0 [&_td]:px-2 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2 [&_th]:text-[10px] [&_th]:font-light [&_th]:text-[var(--app-text-tertiary)]">
       <TableHeader className="crm-management-sticky-header sticky top-0 z-20">
         <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
           {canDeleteLeads && (
-            <TableHead className="w-12">
+            <TableHead className={CONTACT_TABLE_COLUMN_CLASSES.selection}>
               <Checkbox
                 data-tour="contacts-select-all"
                 aria-label="Selecionar todos os contatos desta página"
-                checked={
-                  selectedIds.size === contacts.length && contacts.length > 0
-                }
+                checked={getCurrentPageSelection(selectedIds, contacts.map((contact) => contact.id))}
+                disabled={isTransitioning}
                 onCheckedChange={onToggleSelectAll}
               />
             </TableHead>
@@ -427,16 +444,16 @@ function ContactsDesktopTable(props: ContactsListProps) {
             </button>
           </TableHead>
           <TableHead>Contato</TableHead>
-          <TableHead className="w-24 xl:w-28">
+          <TableHead className={lostLeadsView ? CONTACT_TABLE_COLUMN_CLASSES.lostReason : CONTACT_TABLE_COLUMN_CLASSES.status}>
             {lostLeadsView ? "Motivo da perda" : "Status"}
           </TableHead>
-          <TableHead className="w-36 xl:w-44">Pipeline / Estágio</TableHead>
-          <TableHead className="w-36 xl:w-44">Responsável</TableHead>
-          <TableHead className="hidden w-40 xl:table-cell 2xl:w-48">
+          <TableHead className={CONTACT_TABLE_COLUMN_CLASSES.stage}>Estágio</TableHead>
+          <TableHead className={cn(CONTACT_TABLE_COLUMN_CLASSES.assignee, "text-center")} title="Responsável" aria-label="Responsável">Resp.</TableHead>
+          <TableHead className={CONTACT_TABLE_COLUMN_CLASSES.tags}>
             Tags
           </TableHead>
           <TableHead
-            className="w-24 xl:w-40"
+            className={CONTACT_TABLE_COLUMN_CLASSES.created}
             aria-sort={
               sortBy === "created_at"
                 ? sortDir === "asc"
@@ -454,7 +471,7 @@ function ContactsDesktopTable(props: ContactsListProps) {
               <SortIcon column="created_at" sortBy={sortBy} sortDir={sortDir} />
             </button>
           </TableHead>
-          <TableHead className="contacts-actions-cell w-16 text-right">
+          <TableHead className={cn("contacts-actions-cell text-right", CONTACT_TABLE_COLUMN_CLASSES.actions)}>
             <span>Ações</span>
           </TableHead>
         </TableRow>
@@ -483,8 +500,9 @@ function ContactsDesktopTable(props: ContactsListProps) {
               {canDeleteLeads && (
                 <TableCell onClick={(event) => event.stopPropagation()}>
                   <Checkbox
-                    aria-label={`Selecionar ${contact.name}`}
+                    aria-label={`Selecionar ${normalizeDisplayName(contact.name)}`}
                     checked={selectedIds.has(contact.id)}
+                    disabled={isTransitioning}
                     onCheckedChange={() => onToggleSelectOne(contact.id)}
                   />
                 </TableCell>
@@ -497,24 +515,24 @@ function ContactsDesktopTable(props: ContactsListProps) {
                     event.stopPropagation();
                     onViewDetails(contact.id);
                   }}
-                  className="flex min-w-0 items-center gap-3 rounded-[4px] text-left outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                  className="flex w-full min-w-0 items-center gap-3 rounded-[4px] text-left outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 >
                   <Avatar className="h-9 w-9 shrink-0 rounded-[6px] [&_img]:rounded-[6px]">
                     <AvatarImage
                       src={contact.whatsapp_avatar_url || undefined}
-                      alt={contact.name}
+                      alt={normalizeDisplayName(contact.name)}
                     />
                     <AvatarFallback className="rounded-[6px] bg-primary/50 text-[11px] font-light text-primary-foreground transition-colors group-hover:bg-primary">
                       {getInitials(contact.name)}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <span
-                        className="truncate text-[13px] font-medium text-[var(--app-text-primary)]"
-                        title={contact.name}
+                        className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--app-text-primary)]"
+                        title={normalizeDisplayName(contact.name)}
                       >
-                        {contact.name}
+                        {normalizeDisplayName(contact.name)}
                       </span>
                       <ReentryBadge
                         count={contact.reentry_count}
@@ -591,21 +609,28 @@ function ContactsDesktopTable(props: ContactsListProps) {
               </TableCell>
 
               <TableCell onClick={() => onViewDetails(contact.id)}>
-                <div className="space-y-1">
-                  {contact.stage_name && (
-                    <Badge
-                      variant="secondary"
-                      className="max-w-[150px] justify-center truncate rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0.5 text-[10px] font-light text-[var(--app-text-secondary)] whitespace-nowrap"
-                      title={contact.stage_name}
-                    >
-                      {contact.stage_name}
-                    </Badge>
-                  )}
-                </div>
+                <TooltipProvider delayDuration={120}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="secondary"
+                        tabIndex={0}
+                        aria-label={`${contact.stage_name || "Sem estágio"}. Funil: ${contact.pipeline_name || "Sem funil"}`}
+                        className="inline-block h-[18px] max-w-full truncate rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0 text-center align-middle text-[10px] font-light leading-[18px] text-[var(--app-text-secondary)] outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                      >
+                        {contact.stage_name || "—"}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[280px] text-[11px] font-light">
+                      <p>{contact.stage_name || "Sem estágio"}</p>
+                      <p>Funil: {contact.pipeline_name || "Sem funil"}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </TableCell>
 
               <TableCell
-                className="w-36 xl:w-44"
+                className={CONTACT_TABLE_COLUMN_CLASSES.assignee}
                 onClick={() => onViewDetails(contact.id)}
               >
                 <AssigneeAvatarCell
@@ -615,7 +640,7 @@ function ContactsDesktopTable(props: ContactsListProps) {
               </TableCell>
 
               <TableCell
-                className="hidden xl:table-cell"
+                className={CONTACT_TABLE_COLUMN_CLASSES.tags}
                 onClick={() => onViewDetails(contact.id)}
               >
                 <div className="flex flex-wrap gap-1">
@@ -623,7 +648,8 @@ function ContactsDesktopTable(props: ContactsListProps) {
                     <Badge
                       key={tag.id}
                       variant="secondary"
-                      className="rounded-[4px] px-1.5 text-[9px] font-light"
+                      className="h-[18px] max-w-full truncate rounded-[4px] px-1.5 py-0 text-[10px] font-light leading-[14px]"
+                      title={tag.name}
                       style={{
                         backgroundColor: tag.color,
                         borderColor: tag.color,
@@ -646,21 +672,14 @@ function ContactsDesktopTable(props: ContactsListProps) {
 
               <TableCell onClick={() => onViewDetails(contact.id)}>
                 <p className="whitespace-nowrap text-[12px] font-light text-[var(--app-text-secondary)]">
-                  <span className="xl:hidden">
-                    {format(new Date(contact.created_at), "dd/MM/yy", {
-                      locale: ptBR,
-                    })}
-                  </span>
-                  <span className="hidden xl:inline">
-                    {format(new Date(contact.created_at), "dd/MM/yyyy HH:mm", {
-                      locale: ptBR,
-                    })}
-                  </span>
+                  {format(new Date(contact.created_at), "dd/MM/yyyy HH:mm", {
+                    locale: ptBR,
+                  })}
                 </p>
               </TableCell>
 
               <TableCell
-                className="contacts-actions-cell w-16 px-2 text-right"
+                className={cn("contacts-actions-cell px-2 text-right", CONTACT_TABLE_COLUMN_CLASSES.actions)}
                 onClick={(event) => event.stopPropagation()}
               >
                 <DropdownMenu>
@@ -668,7 +687,8 @@ function ContactsDesktopTable(props: ContactsListProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Ações de ${contact.name}`}
+                      aria-label={`Ações de ${normalizeDisplayName(contact.name)}`}
+                      disabled={isTransitioning}
                       className="h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--app-border-strong)] data-[state=open]:bg-[var(--app-surface-hover)] data-[state=open]:text-[var(--app-text-primary)]"
                     >
                       <MoreHorizontal className="h-4 w-4" />
@@ -732,7 +752,7 @@ export function ContactsList(props: ContactsListProps) {
   } = props;
 
   return (
-    <div className="contacts-page-list flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+    <div className="contacts-page-list flex min-h-0 flex-1 flex-col gap-3 overflow-hidden" style={{ minHeight: 0, flex: '1 1 0%' }}>
       {lostLeadsView && (
         <div className="shrink-0 rounded-[8px] bg-red-500/10 p-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -782,7 +802,7 @@ export function ContactsList(props: ContactsListProps) {
         {showRefreshError && (
           <div
             role="status"
-            className="absolute right-3 top-3 z-30 flex items-center gap-2 rounded-[6px] bg-amber-500/12 px-3 py-1.5 text-[11px] font-light text-amber-800 dark:text-amber-100"
+            className="absolute right-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-2 rounded-[6px] bg-amber-500/12 px-3 py-1.5 text-[11px] font-light text-amber-800 dark:text-amber-100"
           >
             <AlertTriangle
               className="h-3.5 w-3.5 shrink-0"
@@ -809,13 +829,15 @@ export function ContactsList(props: ContactsListProps) {
         {isMobile ? (
           <div
             data-contacts-scroll-region
-            className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5"
+            inert={isTransitioning || undefined}
+            className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pb-12 pr-0.5"
           >
             <ContactsMobileList {...props} />
           </div>
         ) : (
           <div
             data-contacts-scroll-region
+            inert={isTransitioning || undefined}
             className="contacts-table-scroll min-h-0 min-w-0 flex-1 overflow-hidden [&>div]:h-full [&>div]:overflow-auto [&>div]:overscroll-contain"
           >
             <ContactsDesktopTable {...props} />

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -54,18 +53,21 @@ func (handler Handler) ShowDashboardCreativeMedia(w http.ResponseWriter, r *http
 		writeLeadError(w, r, ErrInvalidInput)
 		return
 	}
-	// Serializing the short existence lookup prevents a burst of failed browser
-	// images from occupying every database connection in a local preview.
+	// The queue and SQL share one deadline. Release the database lookup slot
+	// before Graph work, whose resolver has its own bounded concurrency.
+	lookupCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 	select {
 	case dashboardCreativeMediaLookupSlots <- struct{}{}:
-		defer func() { <-dashboardCreativeMediaLookupSlots }()
-	case <-r.Context().Done():
+	case <-lookupCtx.Done():
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "creative_media_busy", "Creative media lookup is temporarily unavailable.")
 		return
 	}
 
-	lookupCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	candidate, found, err := handler.repo.FindVisibleDashboardCreativeMediaKey(lookupCtx, tenantContext, filter, key)
+	candidate, found, err := func() (dashboardCreativeMediaCandidate, bool, error) {
+		defer func() { <-dashboardCreativeMediaLookupSlots }()
+		return handler.repo.FindVisibleDashboardCreativeMediaKey(lookupCtx, tenantContext, filter, key)
+	}()
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
@@ -111,21 +113,7 @@ func (repo Repository) FindVisibleDashboardCreativeMediaKey(ctx context.Context,
 }
 
 func dashboardSafeHistoricalMediaURL(raw *string) *string {
-	safe := dashboardSafeCreativeURL(raw)
-	if safe == nil {
-		return nil
-	}
-	parsed, err := url.Parse(*safe)
-	if err != nil || parsed.Port() != "" {
-		return nil
-	}
-	for key := range parsed.Query() {
-		lower := strings.ToLower(key)
-		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "proof") {
-			return nil
-		}
-	}
-	return safe
+	return dashboardSafeCreativeURL(raw)
 }
 
 func (repo Repository) buildDashboardCreativeMediaKeyQuery(tenantContext tenant.Context, filter DashboardFilter, key string) (string, []any, error) {
@@ -150,7 +138,8 @@ func (repo Repository) buildDashboardCreativeMediaKeyQuery(tenantContext tenant.
 		  and (lower(entry.provider) = 'meta'
 		       or (lower(entry.meta_source_type) = 'meta_lead_ads' and entry.meta_leadgen_id is not null))
 		  and ` + keyClause + `
-		order by (entry.creative_thumbnail_url is not null or entry.creative_url is not null) desc,
+		order by (` + dashboardSafeCreativePreviewSQL("entry.creative_thumbnail_url") + `
+			or ` + dashboardSafeCreativePreviewSQL("entry.creative_url") + `) desc,
 			entry.occurred_at desc, entry.entry_id desc
 		limit 1
 	`

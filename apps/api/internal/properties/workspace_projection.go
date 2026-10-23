@@ -159,7 +159,7 @@ var workspacePropertyBaseFields = []string{
 	"imagem_principal", "fotos", "image_urls", "video_imovel", "tour_virtual",
 	"owner_id", "owner_name", "responsible_user_id", "cadastrado_por", "corretor_id",
 	"property_type_id", "condominium_id", "city_id", "neighborhood_id",
-	"published_on_site", "anunciar", "public_address_visibility", "address_visibility",
+	"published_on_site", "anunciar", "site_publication", "public_address_visibility", "address_visibility",
 	"destaque", "is_featured", "super_destaque", "placa_no_local",
 	"aceita_permuta", "aceita_financiamento", "exclusividade",
 	"created_at", "updated_at", "can_edit", "managed_terms",
@@ -187,6 +187,7 @@ func projectWorkspaceProperty(source Property, canManage bool, canViewContacts b
 	if canManage {
 		copyWorkspacePropertyFields(projected, source, workspacePropertyInternalFields)
 	}
+	scrubCreationLedger(projected)
 	return projected
 }
 

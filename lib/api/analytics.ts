@@ -7,6 +7,7 @@ import {
   apiUnknownEnvelopeSchema,
   apiUnknownListEnvelopeSchema,
   campaignInsightsQuerySchema,
+  metaInsightsQuerySchema,
   parseDomainInput,
   siteAnalyticsQuerySchema,
   uuidSchema,
@@ -18,7 +19,7 @@ type Envelope<T> = {
   data: T;
 };
 
-type Query = Record<string, string | number | boolean | null | undefined>;
+type Query = Record<string, string | number | boolean | string[] | null | undefined>;
 type TenantRequestOptions = {
   organizationId?: string | null;
   signal?: AbortSignal;
@@ -26,7 +27,7 @@ type TenantRequestOptions = {
 
 export const analyticsAPI = {
   async metaInsights<T = unknown>(query: Query) {
-    const validatedQuery = parseDomainInput(analyticsQuerySchema, query, 'analytics.meta-insights');
+    const validatedQuery = parseDomainInput(metaInsightsQuerySchema, query, 'analytics.meta-insights');
     const response = await vimobAPIRequest<Envelope<T[]>>('/v1/analytics/meta-insights', { query: validatedQuery });
     validateDomainResponse(apiUnknownListEnvelopeSchema, response, 'analytics.meta-insights');
     return response.data;

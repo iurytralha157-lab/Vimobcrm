@@ -719,6 +719,9 @@ func validateActionConfig(actionType string, config map[string]any) error {
 	case "add_tag", "remove_tag":
 		return requireUUIDConfig(config, "tag_id")
 	case "move_lead":
+		if err := validateMoveLostReason(config); err != nil {
+			return err
+		}
 		if err := requireUUIDConfig(config, "stage_id"); err != nil {
 			return err
 		}

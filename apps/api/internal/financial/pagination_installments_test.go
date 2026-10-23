@@ -10,6 +10,19 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
+func TestFinancialDateRangesRejectMalformedAndReversedCivilDays(t *testing.T) {
+	for _, values := range [][2]string{{"2026-10-02", "2026-10-01"}, {"2026-02-30", "2026-03-01"}, {"wrong", ""}} {
+		if validateFinancialDateRange(values[0], values[1]) == nil {
+			t.Fatalf("accepted invalid range %v", values)
+		}
+	}
+	for _, values := range [][2]string{{"2026-10-01", "2026-10-01"}, {"2024-02-29", ""}, {"", "2026-10-01"}, {"", ""}} {
+		if err := validateFinancialDateRange(values[0], values[1]); err != nil {
+			t.Fatalf("valid range %v: %v", values, err)
+		}
+	}
+}
+
 func TestFinancialListPaginationIsBoundedAndAdditive(t *testing.T) {
 	args := []any{"organization"}
 	clause, err := financialListPaginationSQL(url.Values{}, &args)

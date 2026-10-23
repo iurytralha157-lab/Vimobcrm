@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
+import { useWhatsAppIntentMutation } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 import { VimobAPIError } from "@/lib/api/vimob-error";
 import {
@@ -61,7 +62,7 @@ const attendanceQueryOptions = (
     target.expectedLeadId,
     target.sendSessionId,
   ),
-  queryFn: async () => {
+  queryFn: async ({ signal }: { signal: AbortSignal }) => {
     if (!scope.organizationId || !scope.userId) {
       throw new Error("Usuário não autenticado.");
     }
@@ -72,6 +73,7 @@ const attendanceQueryOptions = (
         sendSessionId: target.sendSessionId,
       },
       scope.organizationId,
+      { expectedUserId: scope.userId, signal },
     );
   },
   staleTime: 15_000,
@@ -110,8 +112,8 @@ export function useJoinWhatsAppAttendance() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async (target: WhatsAppAttendanceTarget) => {
+  return useWhatsAppIntentMutation({
+    mutationFn: async (target: WhatsAppAttendanceTarget, intent) => {
       if (!scope.organizationId || !scope.userId) {
         throw new Error("Usuário não autenticado.");
       }
@@ -121,7 +123,8 @@ export function useJoinWhatsAppAttendance() {
           expectedLeadId: target.expectedLeadId,
           sendSessionId: target.sendSessionId,
         },
-        scope.organizationId,
+        intent.scope.organizationId,
+        intent,
       );
     },
     onSuccess: (attendance, target) => {

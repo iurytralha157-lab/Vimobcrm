@@ -19,6 +19,7 @@ const (
 
 func TestUpdateRollsBackWhenRoundRobinTeamSyncFails(t *testing.T) {
 	syncFailure := errors.New("round robin team sync failed")
+	expectedRevision := int64(1)
 	tx := &teamMutationTestTx{roundRobinQueryErr: syncFailure}
 	repo := Repository{
 		beginMutationTx: func(context.Context) (pgx.Tx, error) {
@@ -35,7 +36,7 @@ func TestUpdateRollsBackWhenRoundRobinTeamSyncFails(t *testing.T) {
 			MemberRole:     "admin",
 		},
 		transactionTestTeamID,
-		UpdateTeamRequest{Members: emptyMembers},
+		UpdateTeamRequest{ExpectedRevision: &expectedRevision, ExpectedMemberIDs: []string{}, Members: emptyMembers},
 	)
 
 	if !errors.Is(err, syncFailure) {
@@ -71,8 +72,9 @@ func TestTeamMutationsReadBackBeforeCommit(t *testing.T) {
 			name: "create",
 			mutate: func(repo Repository) error {
 				_, err := repo.Create(context.Background(), tenantContext, CreateTeamRequest{
-					Name:    "Equipe transacional",
-					Members: []TeamMemberInput{},
+					IdempotencyKey: "44444444-4444-4444-8444-444444444444",
+					Name:           "Equipe transacional",
+					Members:        []TeamMemberInput{},
 				})
 				return err
 			},
@@ -81,11 +83,12 @@ func TestTeamMutationsReadBackBeforeCommit(t *testing.T) {
 			name: "update",
 			mutate: func(repo Repository) error {
 				name := "Equipe atualizada"
+				expectedRevision := int64(1)
 				_, err := repo.Update(
 					context.Background(),
 					tenantContext,
 					transactionTestTeamID,
-					UpdateTeamRequest{Name: &name},
+					UpdateTeamRequest{ExpectedRevision: &expectedRevision, Name: &name},
 				)
 				return err
 			},
@@ -239,6 +242,9 @@ func (tx *teamMutationTestTx) Query(
 
 func (tx *teamMutationTestTx) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
 	normalizedSQL := strings.ToLower(sql)
+	if strings.Contains(normalizedSQL, "from private.crm_management_create_requests") {
+		return teamMutationErrorRow{err: pgx.ErrNoRows}
+	}
 	if tx.readbackErr != nil &&
 		strings.Contains(normalizedSQL, "select") &&
 		strings.Contains(normalizedSQL, "t.id::text") &&
@@ -248,8 +254,9 @@ func (tx *teamMutationTestTx) QueryRow(_ context.Context, sql string, _ ...any) 
 	if strings.Contains(normalizedSQL, "insert into public.teams") {
 		return teamMutationStringRow(transactionTestTeamID)
 	}
-	if strings.Contains(normalizedSQL, "from public.teams") && strings.Contains(normalizedSQL, "for update") {
-		return teamMutationStringRow(transactionTestTeamID)
+	if strings.Contains(normalizedSQL, "from public.teams") &&
+		(strings.Contains(normalizedSQL, "for update") || strings.Contains(normalizedSQL, "for no key update")) {
+		return teamMutationRevisionRow(1)
 	}
 	return teamMutationBooleanRow(true)
 }
@@ -283,6 +290,20 @@ func (row teamMutationStringRow) Scan(dest ...any) error {
 		return errors.New("unexpected scan destination type")
 	}
 	*value = string(row)
+	return nil
+}
+
+type teamMutationRevisionRow int64
+
+func (row teamMutationRevisionRow) Scan(dest ...any) error {
+	if len(dest) != 1 {
+		return errors.New("unexpected revision scan destination count")
+	}
+	value, ok := dest[0].(*int64)
+	if !ok {
+		return errors.New("unexpected revision scan destination type")
+	}
+	*value = int64(row)
 	return nil
 }
 

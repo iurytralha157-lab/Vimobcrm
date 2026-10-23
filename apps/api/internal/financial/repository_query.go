@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -76,6 +77,27 @@ const (
 	maximumFinancialListLimit = 500
 	maximumFinancialOffset    = 10_000_000
 )
+
+func validateFinancialDateRange(from, to string) error {
+	var start, end time.Time
+	var err error
+	if from != "" {
+		start, err = time.Parse("2006-01-02", from)
+		if err != nil {
+			return ErrInvalidInput
+		}
+	}
+	if to != "" {
+		end, err = time.Parse("2006-01-02", to)
+		if err != nil {
+			return ErrInvalidInput
+		}
+	}
+	if !start.IsZero() && !end.IsZero() && end.Before(start) {
+		return ErrInvalidInput
+	}
+	return nil
+}
 
 func financialListPaginationSQL(values url.Values, args *[]any) (string, error) {
 	limit := defaultFinancialListLimit

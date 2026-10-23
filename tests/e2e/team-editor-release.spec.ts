@@ -22,6 +22,7 @@ type TeamPayload = {
   data: {
     id: string;
     name: string;
+    revision: number;
     logo_url?: string | null;
     is_active?: boolean;
     members?: Array<{
@@ -45,6 +46,8 @@ type TeamHistoryPayload = {
 };
 
 type TeamMutationPayload = {
+  expected_revision?: number;
+  expected_member_ids?: string[];
   name?: string;
   logo_url?: string | null;
   is_active?: boolean;
@@ -135,6 +138,84 @@ async function cleanupTemporaryTeam(
   expect.soft(response.ok(), await response.text()).toBeTruthy();
 }
 
+type TeamWizardStep = "identity" | "members" | "schedule" | "review";
+
+function teamEditorDialog(page: Page) {
+  return page.getByRole("dialog", { name: /^(Nova|Editar) equipe$/ });
+}
+
+async function openTeamStep(page: Page, step: TeamWizardStep) {
+  const dialog = teamEditorDialog(page);
+  await expect(dialog).toBeVisible();
+  const tab = dialog.locator('[data-step-id="' + step + '"]');
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const panel = dialog.getByRole("tabpanel");
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("aria-labelledby", await tab.getAttribute("id") as string);
+}
+
+async function openMemberSchedule(page: Page, memberName: string) {
+  await openTeamStep(page, "members");
+  await page.getByRole("button", { name: 'Ver escala de ' + memberName, exact: true }).click();
+  await expect(teamEditorDialog(page).locator('[data-step-id="schedule"]')).toHaveAttribute("aria-selected", "true");
+}
+
+async function expectDesktopWizardLayout(page: Page) {
+  const dialog = teamEditorDialog(page);
+  const geometry = await dialog.evaluate((element) => {
+    const nav = element.querySelector('[role="tablist"]');
+    const content = element.querySelector("[data-form-wizard-content]");
+    const aside = element.querySelector("aside");
+    const wizard = element.querySelector("[data-form-wizard]");
+    if (!nav || !content || !aside || !wizard) throw new Error("Missing wizard layout region.");
+    const modalBox = element.getBoundingClientRect();
+    const navBox = nav.getBoundingClientRect();
+    const contentBox = content.getBoundingClientRect();
+    const asideBox = aside.getBoundingClientRect();
+    const footerBox = wizard.children[1].getBoundingClientRect();
+    return {
+      modalLeft: modalBox.left, modalTop: modalBox.top,
+      modalRight: modalBox.right, modalBottom: modalBox.bottom,
+      viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+      navWidth: navBox.width, contentWidth: contentBox.width, asideWidth: asideBox.width,
+      navRight: navBox.right, contentLeft: contentBox.left,
+      contentRight: contentBox.right, asideLeft: asideBox.left,
+      contentBottom: contentBox.bottom, footerTop: footerBox.top,
+      overflowX: element.scrollWidth - element.clientWidth,
+      overflowY: element.scrollHeight - element.clientHeight,
+    };
+  });
+  expect(geometry.modalLeft).toBeGreaterThanOrEqual(11);
+  expect(geometry.modalTop).toBeGreaterThanOrEqual(11);
+  expect(geometry.modalRight).toBeLessThanOrEqual(geometry.viewportWidth - 11);
+  expect(geometry.modalBottom).toBeLessThanOrEqual(geometry.viewportHeight - 11);
+  expect(geometry.contentWidth).toBeGreaterThan(geometry.asideWidth);
+  expect(geometry.contentWidth).toBeGreaterThan(geometry.navWidth);
+  expect(geometry.asideWidth).toBeGreaterThanOrEqual(260);
+  expect(geometry.asideWidth).toBeLessThanOrEqual(310);
+  expect(Math.abs(geometry.navRight - geometry.contentLeft)).toBeLessThanOrEqual(2);
+  expect(Math.abs(geometry.contentRight - geometry.asideLeft)).toBeLessThanOrEqual(2);
+  expect(geometry.contentBottom).toBeLessThanOrEqual(geometry.footerTop + 1);
+  expect(geometry.overflowX).toBeLessThanOrEqual(1);
+  expect(geometry.overflowY).toBeLessThanOrEqual(1);
+  await expect(dialog.locator("[data-form-wizard-content]")).toHaveCSS("overflow-y", "auto");
+  for (const step of ["members", "schedule"] as const) {
+    await openTeamStep(page, step);
+    await expect(dialog.locator('[data-team-panel="' + step + '"]')).toBeVisible();
+    await expect(dialog.locator('[data-team-panel="history"]')).toBeVisible();
+    await expect(dialog.locator('[data-team-panel="' + (step === "members" ? "schedule" : "members") + '"]')).toHaveCount(0);
+    const insets = await dialog.locator('[data-team-panel="' + step + '"]').evaluate((panel, currentStep) => {
+      const item = panel.querySelector(currentStep === "members" ? "[data-team-members-scroll] > div" : "[data-team-schedule-scroll] > div");
+      if (!item) throw new Error('Missing ' + currentStep + ' panel content.');
+      const panelBox = panel.getBoundingClientRect();
+      const itemBox = item.getBoundingClientRect();
+      return { left: Math.round(itemBox.left - panelBox.left), right: Math.round(panelBox.right - itemBox.right) };
+    }, step);
+    expect(Math.abs(insets.left - insets.right), step + " panel spacing").toBeLessThanOrEqual(2);
+  }
+}
+
 async function expectNoHorizontalOverflow(page: Page) {
   await expect
     .poll(() =>
@@ -143,6 +224,18 @@ async function expectNoHorizontalOverflow(page: Page) {
       ),
     )
     .toBe(true);
+  const dialog = teamEditorDialog(page);
+  if (await dialog.isVisible()) {
+    const dimensions = await dialog.evaluate((element) => ({
+      width: element.scrollWidth - element.clientWidth,
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
+      viewportWidth: window.innerWidth,
+    }));
+    expect(dimensions.width).toBeLessThanOrEqual(1);
+    expect(dimensions.left).toBeGreaterThanOrEqual(0);
+    expect(dimensions.right).toBeLessThanOrEqual(dimensions.viewportWidth);
+  }
 }
 
 async function readTeamStateSnapshot(
@@ -300,7 +393,7 @@ async function restoreTeamState(teamId: string, snapshot: TeamStateSnapshot) {
   }
 }
 
-test.describe.serial("editor dedicado de equipes e horários", () => {
+test.describe.serial("editor de equipes e horários por etapas", () => {
   test.describe.configure({ timeout: 120_000 });
 
   test("administrador cria, edita e remove uma equipe com semana completa", async ({
@@ -319,9 +412,11 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       await expect(
         page.getByText("Nova equipe", { exact: true }).first(),
       ).toBeVisible();
+      await openTeamStep(page, "review");
       await expect(
         page.getByRole("button", { name: "Criar equipe" }),
       ).toBeDisabled();
+      await openTeamStep(page, "identity");
       await expect(
         page.getByRole("region", { name: "Indicadores da equipe" }),
       ).toHaveCount(0);
@@ -330,9 +425,11 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       ).toHaveCount(0);
 
       await page.locator("#team-name").fill(temporaryName);
+      await openTeamStep(page, "members");
       await page
         .getByRole("switch", { name: `Adicionar ${E2E_USERS.user.name}` })
         .click();
+      await openTeamStep(page, "schedule");
       await expect(
         page.getByRole("heading", { name: "Escala de atendimento" }),
       ).toBeVisible();
@@ -342,6 +439,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       await expect(
         page.getByRole("combobox", { name: "Fim de Segunda-feira" }),
       ).toContainText("18:00");
+      await openTeamStep(page, "review");
       await expect(
         page.getByRole("button", { name: "Criar equipe" }),
       ).toBeEnabled();
@@ -367,6 +465,9 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
 
       const created = JSON.parse(createBody) as TeamPayload;
       teamId = created.data.id;
+      await expect(page).toHaveURL(/\/crm\/management\?tab=teams$/);
+      await expect(teamEditorDialog(page)).toHaveCount(0);
+      await page.goto(`/crm/management/teams/${teamId}/edit`);
       await expect(page).toHaveURL(
         new RegExp(`/crm/management/teams/${teamId}/edit$`),
       );
@@ -376,6 +477,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       await expect(
         page.getByRole("button", { name: "Criar equipe" }),
       ).toHaveCount(0);
+      await openTeamStep(page, "review");
       await expect(
         page.getByRole("button", { name: "Salvar alterações" }),
       ).toBeDisabled();
@@ -385,6 +487,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       const indicators = page.getByRole("region", {
         name: "Indicadores da equipe",
       });
+      await page.locator("summary").filter({ hasText: "Indicadores da equipe" }).click();
       await expect(indicators).toBeVisible();
       await expect(indicators.getByText(/^Membros$/i)).toBeVisible();
       await expect(indicators.getByText(/^Online agora$/i)).toBeVisible();
@@ -425,106 +528,33 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       await expect(
         page.getByText("Clique em outro membro para trocar", { exact: true }),
       ).toHaveCount(0);
-      const panelHeights = await page
-        .locator("[data-team-panel]")
-        .evaluateAll((panels) =>
-          panels.map((panel) =>
-            Math.round(panel.getBoundingClientRect().height),
-          ),
-        );
-      expect(panelHeights).toHaveLength(3);
-      expect(new Set(panelHeights).size).toBe(1);
-      const panelTops = await page
-        .locator("[data-team-panel]")
-        .evaluateAll((panels) =>
-          panels.map((panel) => Math.round(panel.getBoundingClientRect().top)),
-        );
-      expect(
-        Math.max(...panelTops) - Math.min(...panelTops),
-      ).toBeLessThanOrEqual(2);
-      const panelHorizontalInsets = await page.evaluate(() => {
-        const targets = [
-          {
-            name: "members",
-            panel: '[data-team-panel="members"]',
-            item: "[data-team-members-scroll] > div",
-          },
-          {
-            name: "schedule",
-            panel: '[data-team-panel="schedule"]',
-            item: "[data-team-schedule-scroll] > div",
-          },
-          {
-            name: "history",
-            panel: '[data-team-panel="history"]',
-            item: "[data-team-history-scroll] ol > li",
-          },
-        ];
-
-        return targets.map((target) => {
-          const panel = document.querySelector(target.panel);
-          const item = document.querySelector(target.item);
-          if (!panel || !item) {
-            throw new Error(`Missing ${target.name} panel layout target.`);
-          }
-
-          const panelBox = panel.getBoundingClientRect();
-          const itemBox = item.getBoundingClientRect();
-          return {
-            name: target.name,
-            left: Math.round(itemBox.left - panelBox.left),
-            right: Math.round(panelBox.right - itemBox.right),
-          };
-        });
-      });
-      expect(panelHorizontalInsets).toHaveLength(3);
-      for (const inset of panelHorizontalInsets) {
-        expect(
-          Math.abs(inset.left - inset.right),
-          `${inset.name} panel should have balanced horizontal spacing`,
-        ).toBeLessThanOrEqual(2);
-      }
-      const desktopScrollMetrics = await page.evaluate(() => {
-        const main = document.querySelector("main");
-        const editor = document.querySelector(
-          '[data-tour="management-team-editor"]',
-        );
-        return {
-          mainOverflow: main ? main.scrollHeight - main.clientHeight : null,
-          editorOverflow: editor
-            ? editor.scrollHeight - editor.clientHeight
-            : null,
-        };
-      });
-      expect(desktopScrollMetrics.mainOverflow).not.toBeNull();
-      expect(desktopScrollMetrics.editorOverflow).not.toBeNull();
-      expect(desktopScrollMetrics.mainOverflow ?? 1).toBeLessThanOrEqual(1);
-      expect(desktopScrollMetrics.editorOverflow ?? 1).toBeLessThanOrEqual(1);
+      await expectDesktopWizardLayout(page);
       await expect(page.locator("[data-team-history-scroll]")).toHaveCSS(
         "overflow-y",
         "auto",
       );
+      await openTeamStep(page, "identity");
       await expect(page.locator("#team-name")).toHaveValue(temporaryName);
 
-      await page
-        .getByRole("button", { name: `Ver escala de ${E2E_USERS.admin.name}` })
-        .click();
+      await openMemberSchedule(page, E2E_USERS.admin.name);
       await expect(
         page.getByText(`${E2E_USERS.admin.name} está fora da equipe`),
       ).toBeVisible();
-      await page
-        .getByRole("button", { name: `Ver escala de ${E2E_USERS.user.name}` })
-        .click();
+      await openMemberSchedule(page, E2E_USERS.user.name);
+      await openTeamStep(page, "members");
       await expect(
         page.getByRole("button", {
           name: `Ver escala de ${E2E_USERS.user.name}`,
         }),
       ).toHaveAttribute("aria-pressed", "true");
+      await openTeamStep(page, "schedule");
       await expect(
         page.getByRole("combobox", { name: "Início de Segunda-feira" }),
       ).toContainText("08:00");
 
+      await openTeamStep(page, "identity");
       await page.locator("#team-name").fill(editedName);
+      await openTeamStep(page, "schedule");
       await page
         .getByRole("combobox", { name: "Início de Segunda-feira" })
         .click();
@@ -545,6 +575,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
           response.ok()
         );
       });
+      await openTeamStep(page, "review");
       await page.getByRole("button", { name: "Salvar alterações" }).click();
       const updateResponse = await updateResponsePromise;
       const updateBody = await updateResponse.text();
@@ -563,6 +594,10 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       const updateRequest = updateResponse
         .request()
         .postDataJSON() as TeamMutationPayload;
+      expect(updateRequest.expected_revision).toBe(created.data.revision);
+      expect(updateRequest.expected_member_ids).toEqual(
+        created.data.members?.map((member) => member.id),
+      );
       expect(updateRequest.name).toBe(editedName);
       const updatedWeek = updateRequest.members?.[0].availability ?? [];
       expect(updatedWeek).toHaveLength(7);
@@ -607,9 +642,16 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
         page,
         "PATCH",
         `/v1/teams/${teamId}`,
-        updateRequest,
+        {
+          ...updateRequest,
+          expected_revision: (JSON.parse(updateBody) as TeamPayload).data.revision,
+        },
       );
       expect(noOpResponse.ok(), await noOpResponse.text()).toBeTruthy();
+      const noOpTeam = JSON.parse(await noOpResponse.text()) as TeamPayload;
+      expect(noOpTeam.data.revision).toBe(
+        (JSON.parse(updateBody) as TeamPayload).data.revision,
+      );
       const historyAfterNoOp = await parseJSON<TeamHistoryPayload>(
         await authenticatedAPIRequest(
           page,
@@ -625,6 +667,90 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       if (temporaryName !== editedName) {
         await cleanupTemporaryTeam(page, null, editedName);
       }
+    }
+  });
+
+  test("duas sessões não sobrescrevem alterações feitas a partir da mesma revisão", async ({
+    page,
+    browser,
+  }) => {
+    const temporaryName = `Equipe Concorrencia E2E ${Date.now()}`;
+    const firstName = `${temporaryName} Primeiro`;
+    const secondName = `${temporaryName} Segundo`;
+    let teamId: string | null = null;
+    const otherContext = await browser.newContext();
+    const otherPage = await otherContext.newPage();
+
+    await signInAs(page, "admin");
+    try {
+      const created = await parseJSON<TeamPayload>(
+        await authenticatedAPIRequest(page, "POST", "/v1/teams", {
+          name: temporaryName,
+          members: [],
+        }),
+      );
+      teamId = created.data.id;
+      await signInAs(otherPage, "admin");
+
+      await Promise.all([
+        page.goto(`/crm/management/teams/${teamId}/edit`),
+        otherPage.goto(`/crm/management/teams/${teamId}/edit`),
+      ]);
+      await expect(page.locator("#team-name")).toHaveValue(temporaryName);
+      await expect(otherPage.locator("#team-name")).toHaveValue(temporaryName);
+      await page.locator("#team-name").fill(firstName);
+      await otherPage.locator("#team-name").fill(secondName);
+
+      const firstResponsePromise = page.waitForResponse((response) =>
+        new URL(response.url()).pathname === `/v1/teams/${teamId}` &&
+        response.request().method() === "PATCH",
+      );
+      await openTeamStep(page, "review");
+      await page.getByRole("button", { name: "Salvar alterações" }).click();
+      const firstResponse = await firstResponsePromise;
+      expect(firstResponse.status(), await firstResponse.text()).toBe(200);
+      const firstRequest = firstResponse.request().postDataJSON() as TeamMutationPayload;
+      expect(firstRequest.expected_revision).toBe(created.data.revision);
+      expect(firstRequest.expected_member_ids).toEqual([]);
+      const firstSave = JSON.parse(await firstResponse.text()) as TeamPayload;
+      expect(firstSave.data.revision).toBe(created.data.revision + 1);
+
+      const secondResponsePromise = otherPage.waitForResponse((response) =>
+        new URL(response.url()).pathname === `/v1/teams/${teamId}` &&
+        response.request().method() === "PATCH",
+      );
+      await openTeamStep(otherPage, "review");
+      await otherPage.getByRole("button", { name: "Salvar alterações" }).click();
+      const secondResponse = await secondResponsePromise;
+      expect(secondResponse.status()).toBe(409);
+      const secondRequest = secondResponse.request().postDataJSON() as TeamMutationPayload;
+      expect(secondRequest.expected_revision).toBe(created.data.revision);
+      expect(secondRequest.expected_member_ids).toEqual([]);
+      expect((await secondResponse.json()).error.code).toBe("team_revision_conflict");
+      await expect(otherPage.getByRole("alert")).toContainText(
+        "Esta equipe foi alterada em outra sessão. Suas alterações estão preservadas.",
+      );
+      await openTeamStep(otherPage, "identity");
+      await expect(otherPage.locator("#team-name")).toHaveValue(secondName);
+      await openTeamStep(otherPage, "review");
+      await expect(
+        otherPage.getByRole("button", { name: "Salvar alterações" }),
+      ).toBeDisabled();
+
+      const saved = await parseJSON<TeamPayload>(
+        await authenticatedAPIRequest(page, "GET", `/v1/teams/${teamId}`),
+      );
+      expect(saved.data.name).toBe(firstName);
+      expect(saved.data.revision).toBe(firstSave.data.revision);
+
+      await otherPage
+        .getByRole("button", { name: "Descartar alterações e carregar versão atual" })
+        .click();
+      await openTeamStep(otherPage, "identity");
+      await expect(otherPage.locator("#team-name")).toHaveValue(firstName);
+    } finally {
+      await otherContext.close();
+      await cleanupTemporaryTeam(page, teamId, temporaryName);
     }
   });
 
@@ -657,6 +783,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
 
     await page.goto("/crm/management/teams/new");
     await page.locator("#team-name").fill(temporaryName);
+    await openTeamStep(page, "members");
     const memberSwitch = page.getByRole("switch", {
       name: new RegExp(E2E_USERS.user.name),
     });
@@ -667,12 +794,16 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
         new URL(response.url()).pathname === "/v1/teams" &&
         response.request().method() === "POST",
     );
+    await openTeamStep(page, "review");
     await page.getByRole("button", { name: "Criar equipe" }).click();
     expect((await failedResponsePromise).status()).toBe(500);
 
     await expect(page).toHaveURL(/\/crm\/management\/teams\/new$/);
+    await openTeamStep(page, "identity");
     await expect(page.locator("#team-name")).toHaveValue(temporaryName);
+    await openTeamStep(page, "members");
     await expect(memberSwitch).toBeChecked();
+    await openTeamStep(page, "review");
     await expect(
       page.getByRole("button", { name: "Criar equipe" }),
     ).toBeEnabled();
@@ -761,14 +892,13 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
         page.getByText("Editar equipe", { exact: true }).first(),
       ).toBeVisible();
       await expect(page.locator("#team-name")).toBeDisabled();
+      await openTeamStep(page, "schedule");
       await expect(
         page.getByRole("heading", { name: "Escala de atendimento" }),
       ).toBeVisible();
 
       for (const memberName of [E2E_USERS.leader.name, E2E_USERS.user.name]) {
-        await page
-          .getByRole("button", { name: `Ver escala de ${memberName}` })
-          .click();
+        await openMemberSchedule(page, memberName);
         const warningConfirmation = page.getByRole("checkbox", {
           name: "Escala revisada",
         });
@@ -777,9 +907,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
         }
       }
 
-      await page
-        .getByRole("button", { name: `Ver escala de ${E2E_USERS.leader.name}` })
-        .click();
+      await openMemberSchedule(page, E2E_USERS.leader.name);
       const mondayStart = page.getByRole("combobox", {
         name: "Início de Segunda-feira",
       });
@@ -792,6 +920,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
         .getByRole("option", { name: changedMondayStart, exact: true })
         .click();
 
+      await openTeamStep(page, "review");
       const saveButton = page.getByRole("button", {
         name: "Salvar alterações",
       });
@@ -808,6 +937,10 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       const updateRequest = updateResponse
         .request()
         .postDataJSON() as TeamMutationPayload;
+      expect(updateRequest.expected_revision).toBe(initialTeam.data.revision);
+      expect(updateRequest.expected_member_ids).toEqual(
+        initialTeam.data.members?.map((member) => member.id),
+      );
       expect(updateRequest).not.toHaveProperty("name");
       expect(updateRequest).not.toHaveProperty("logo_url");
       expect(updateRequest).not.toHaveProperty("is_active");
@@ -890,7 +1023,7 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
     }
   });
 
-  test("criação dedicada continua utilizável no mobile sem overflow horizontal", async ({
+  test("criação por etapas continua utilizável no modal mobile sem overflow horizontal", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -912,21 +1045,27 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       page.locator('button[aria-label^="Ver escala de"][aria-pressed="true"]'),
     ).toHaveCount(0);
 
+    await expect(teamEditorDialog(page)).toBeVisible();
     await page.locator("#team-name").fill(`Equipe Mobile ${Date.now()}`);
+    await openTeamStep(page, "members");
     await page
       .getByRole("switch", { name: `Adicionar ${E2E_USERS.user.name}` })
       .click();
     await expect(page.getByText("Carregando presença")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    await openTeamStep(page, "schedule");
     await expect(
       page.getByRole("combobox", { name: "Início de Segunda-feira" }),
     ).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await openTeamStep(page, "review");
     await expect(
       page.getByRole("button", { name: "Criar equipe" }),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
-  test("edição dedicada reorganiza KPIs, membros, escala e histórico no mobile", async ({
+  test("edição por etapas mantém KPIs, escala, histórico e rodapé acessíveis no modal mobile", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -936,11 +1075,10 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
     const indicators = page.getByRole("region", {
       name: "Indicadores da equipe",
     });
+    await page.locator("summary").filter({ hasText: "Indicadores da equipe" }).click();
     await expect(indicators).toBeVisible();
     await expect(indicators.locator(":scope > *")).toHaveCount(5);
-    await page
-      .getByRole("button", { name: `Ver escala de ${E2E_USERS.user.name}` })
-      .click();
+    await openMemberSchedule(page, E2E_USERS.user.name);
     await expect(
       page.getByRole("heading", { name: "Escala de atendimento" }),
     ).toBeVisible();
@@ -948,9 +1086,10 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
       page.getByRole("heading", { name: "Histórico de alterações" }),
     ).toBeVisible();
 
-    const editorScroller = page.locator(
-      '[data-tour="management-team-editor"]',
-    );
+    await expectNoHorizontalOverflow(page);
+    await openTeamStep(page, "review");
+    const editorScroller = teamEditorDialog(page).locator("[data-form-wizard] > div").first();
+    await expect(editorScroller).toHaveCSS("overflow-y", "auto");
     await editorScroller.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
@@ -959,23 +1098,17 @@ test.describe.serial("editor dedicado de equipes e horários", () => {
     );
     expect(bottomScrollTop).toBeGreaterThan(0);
     const saveButton = page.getByRole("button", { name: "Salvar alterações" });
-    const presenceTrigger = page.getByRole("button", {
-      name: "Ver presença da equipe",
-    });
-    const [saveBox, presenceBox] = await Promise.all([
-      saveButton.boundingBox(),
-      presenceTrigger.boundingBox(),
+    await expect(saveButton).toBeVisible();
+    const historyPanel = page.locator('[data-team-panel="history"]');
+    const [saveBox, historyBox, scrollerBox] = await Promise.all([
+      saveButton.boundingBox(), historyPanel.boundingBox(), editorScroller.boundingBox(),
     ]);
     expect(saveBox).not.toBeNull();
-    expect(presenceBox).not.toBeNull();
-    expect(presenceBox!.y + presenceBox!.height).toBeLessThanOrEqual(
-      saveBox!.y,
-    );
-
-    await page.mouse.move(
-      saveBox!.x + saveBox!.width / 2,
-      saveBox!.y + saveBox!.height / 2,
-    );
+    expect(historyBox).not.toBeNull();
+    expect(scrollerBox).not.toBeNull();
+    expect(historyBox!.y + historyBox!.height).toBeLessThanOrEqual(saveBox!.y);
+    expect(saveBox!.y + saveBox!.height).toBeLessThanOrEqual(844);
+    await page.mouse.move(scrollerBox!.x + scrollerBox!.width / 2, scrollerBox!.y + scrollerBox!.height / 2);
     await page.mouse.wheel(0, -650);
     await expect
       .poll(() => editorScroller.evaluate((element) => element.scrollTop))

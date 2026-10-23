@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { Input } from "@/components/ui/input";
+import { searchTextIncludes } from "@/lib/search-text";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -60,6 +62,7 @@ import {
   canViewAllTeams as canViewAllTeamsForAccess,
 } from "@/lib/access/management";
 import { getInitials } from "@/lib/user-display";
+import { useActiveOrganizationId } from "@/hooks/use-active-organization";
 
 const NEW_TEAM_URL = "/crm/management/teams/new";
 const MEMBER_PREVIEW_LIMIT = 4;
@@ -77,6 +80,10 @@ function getMemberSummary(members: NonNullable<Team["members"]>) {
 
 export function TeamsTab() {
   const router = useRouter();
+  const organizationId = useActiveOrganizationId();
+  const currentScopeRef = useRef(organizationId);
+  useEffect(() => { currentScopeRef.current = organizationId; return () => { currentScopeRef.current = null; }; }, [organizationId]);
+  const [teamSearch, setTeamSearch] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
   const [availabilityMember, setAvailabilityMember] = useState<{
@@ -84,6 +91,8 @@ export function TeamsTab() {
     name: string;
     avatar?: string | null;
     readOnly: boolean;
+    organizationId: string | null;
+    teamId: string;
   } | null>(null);
 
   const teamsQuery = useTeams({ includeInactive: true });
@@ -101,9 +110,10 @@ export function TeamsTab() {
   };
   const canManageAllTeams = canManageAllTeamsForAccess(teamManagementAccess);
   const canViewAllTeams = canViewAllTeamsForAccess(teamManagementAccess);
-  const visibleTeams = canViewAllTeams
+  const authorizedTeams = canViewAllTeams
     ? teams
     : teams.filter((team) => accessScope.ledTeamIds.includes(team.id));
+  const visibleTeams = authorizedTeams.filter(team => searchTextIncludes(team.name, teamSearch));
 
   const allMemberIds = visibleTeams.flatMap(
     (team) => team.members?.map((member) => member.id) || [],
@@ -136,10 +146,11 @@ export function TeamsTab() {
   };
 
   const confirmDelete = async () => {
-    if (!teamToDelete) return;
+    if (!teamToDelete || teamToDelete.organization_id !== organizationId || !canManageAllTeams) return;
 
     try {
-      await deleteTeam.mutateAsync(teamToDelete.id);
+      await deleteTeam.mutateAsync({ id: teamToDelete.id, organizationId: teamToDelete.organization_id });
+      if (currentScopeRef.current !== teamToDelete.organization_id) return;
       setDeleteDialogOpen(false);
       setTeamToDelete(null);
     } catch {
@@ -171,6 +182,8 @@ export function TeamsTab() {
     readOnly: boolean,
   ) => {
     setAvailabilityMember({
+      organizationId,
+      teamId: member.team_id,
       id: member.id,
       name: member.user?.name || "",
       avatar: member.user?.avatar_url,
@@ -183,6 +196,7 @@ export function TeamsTab() {
       <div className="flex h-full min-h-0 flex-col">
         {canManageAllTeams && (
           <ManagementToolbarPortal>
+            <Input aria-label="Buscar equipes" placeholder="Buscar equipes..." value={teamSearch} onChange={event => setTeamSearch(event.target.value)} className="h-8 w-44 max-w-[40vw] text-[12px]" />
             <Button
               data-tour="management-team-new"
               onClick={handleNewTeam}
@@ -211,6 +225,7 @@ export function TeamsTab() {
         data-tour="management-teams"
         className="flex h-full min-h-0 flex-col gap-3"
       >
+        <Input aria-label="Buscar equipes" placeholder="Buscar equipes..." value={teamSearch} onChange={event => setTeamSearch(event.target.value)} className="h-8 max-w-sm shrink-0 text-[12px]" />
         {canManageAllTeams && (
           <ManagementToolbarPortal>
             <Button
@@ -260,12 +275,12 @@ export function TeamsTab() {
               <Users className="h-5 w-5" />
             </div>
             <h3 className="mb-1 text-[14px] font-normal text-[var(--app-text-primary)]">
-              {canManageAllTeams
+              {teamSearch ? "Nenhuma equipe corresponde à busca" : canManageAllTeams
                 ? "Crie sua primeira equipe"
                 : "Nenhuma equipe disponível"}
             </h3>
             <p className="mb-4 max-w-sm text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-              {canManageAllTeams
+              {teamSearch ? "Ajuste a busca ou limpe o texto para exibir suas equipes." : canManageAllTeams
                 ? "Organize seus corretores em equipes e configure a disponibilidade de cada um."
                 : canViewAllTeams
                   ? "Nenhuma equipe ativa foi encontrada nesta organização."
@@ -407,6 +422,7 @@ export function TeamsTab() {
                                 disabled={updateTeamStatus.isPending}
                                 onCheckedChange={(checked) =>
                                   updateTeamStatus.mutate({
+                                    organizationId: team.organization_id,
                                     id: team.id,
                                     is_active: checked,
                                   })
@@ -693,18 +709,19 @@ export function TeamsTab() {
           </>
         )}
 
-        {availabilityMember && (
+        {availabilityMember && availabilityMember.organizationId === organizationId && (
           <MemberAvailabilityDialog
+            key={`${organizationId}:${availabilityMember.id}`}
             open={!!availabilityMember}
             onOpenChange={(open) => !open && setAvailabilityMember(null)}
             teamMemberId={availabilityMember.id}
             memberName={availabilityMember.name}
             memberAvatar={availabilityMember.avatar}
-            readOnly={availabilityMember.readOnly}
+            readOnly={!canEditTeam(teamManagementAccess, availabilityMember.teamId)}
           />
         )}
 
-        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialog open={deleteDialogOpen && teamToDelete?.organization_id === organizationId} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent className="w-[calc(100vw-24px)] rounded-[8px] border-0 sm:max-w-md">
             <AlertDialogHeader>
               <AlertDialogTitle className="text-[14px] font-normal">

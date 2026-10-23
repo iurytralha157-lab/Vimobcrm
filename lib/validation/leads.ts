@@ -7,6 +7,8 @@ import {
 } from './common'
 import { normalizePhoneToE164 } from '../phone-utils'
 import { LEAD_DISTRIBUTION_OUTCOMES } from '../lead-distribution-outcome'
+import { apiQueuePoolSchema } from './queue-runtime'
+import { leadCreateInterestValueSchema, leadInterestValueSchema, leadCommissionPercentageSchema } from './lead-financial-values'
 
 const optionalText = (max: number) => z.string().trim().max(max).nullish()
 const optionalUUID = uuidSchema.nullish()
@@ -30,10 +32,6 @@ const leadPhoneSchema = z.string().trim().max(40).transform((value, ctx) => {
   return normalized
 })
 const optionalLeadPhoneSchema = leadPhoneSchema.nullish()
-const decimalStringSchema = z.string().trim().max(40).refine(
-  (value) => value === '' || Number.isFinite(Number(value)),
-  'Valor decimal invalido',
-)
 
 export const leadDealStatusSchema = z.enum(['open', 'won', 'lost'])
 export const leadDistributionOutcomeSchema = z.enum(LEAD_DISTRIBUTION_OUTCOMES)
@@ -76,12 +74,13 @@ export const leadCreateInputSchema = z.object({
   stageId: optionalUUID,
   assignedUserId: optionalUUID,
   teamId: optionalUUID,
-  interestValue: decimalStringSchema.nullish(),
+  interestValue: leadCreateInterestValueSchema,
   dealStatus: leadDealStatusSchema.nullish(),
   lostReason: optionalText(300),
   isOwnResource: z.boolean().nullish(),
   conversationId: optionalUUID,
   expectedPreviousLeadId: z.union([uuidSchema, z.literal('unlinked')]).optional(),
+  confirmHistoryLink: z.literal(true).optional(),
   tagIds: z.array(uuidSchema).max(50).optional(),
   cargo: optionalText(120),
   empresa: optionalText(160),
@@ -96,9 +95,13 @@ export const leadCreateInputSchema = z.object({
   faixaValorImovel: optionalText(80),
   profile: leadProfileSchema.optional(),
   importMode: z.boolean().optional(),
+  importRequestKey: uuidSchema.optional(),
   autoDistribute: z.boolean().optional(),
   roundRobinId: uuidSchema.optional(),
 }).strict().superRefine((input, ctx) => {
+  if (input.importRequestKey && input.importMode !== true) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['importRequestKey'], message: 'A chave de importação exige o modo de importação' })
+  }
   if (input.dealStatus === 'lost' && !input.lostReason) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -127,9 +130,24 @@ export const leadCreateInputSchema = z.object({
       message: 'Snapshot anterior exige uma conversa',
     })
   }
+  if (input.conversationId && input.confirmHistoryLink !== true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['confirmHistoryLink'],
+      message: 'Confirmação do histórico da conversa é obrigatória',
+    })
+  }
+  if (!input.conversationId && input.confirmHistoryLink) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['confirmHistoryLink'],
+      message: 'Confirmação do histórico exige uma conversa',
+    })
+  }
 })
 
 export const leadUpdateInputSchema = z.object({
+  expectedUpdatedAt: z.string().trim().datetime({ offset: true }).optional(),
   name: z.string().trim().min(2).max(180).optional(),
   email: z.string().trim().email().max(254).nullable().optional(),
   phone: optionalLeadPhoneSchema,
@@ -143,8 +161,8 @@ export const leadUpdateInputSchema = z.object({
   assignedUserId: optionalUUID,
   teamId: optionalUUID,
   interestPropertyIds: z.array(uuidSchema).max(20).optional(),
-  interestValue: decimalStringSchema.nullish(),
-  commissionPercentage: decimalStringSchema.nullish(),
+  interestValue: leadInterestValueSchema,
+  commissionPercentage: leadCommissionPercentageSchema,
   dealStatus: leadDealStatusSchema.nullable().optional(),
   lostReason: optionalText(300),
   feedback: optionalText(2_000),
@@ -166,13 +184,14 @@ export const leadUpdateInputSchema = z.object({
   isOwnResource: z.boolean().nullish(),
   profile: leadProfileSchema.optional(),
 }).strict().refine(
-  (input) => Object.values(input).some((value) => value !== undefined),
+  (input) => Object.entries(input).some(([key, value]) => key !== 'expectedUpdatedAt' && value !== undefined),
   'Informe ao menos uma alteracao',
 )
 
 export const leadMoveStageInputSchema = z.object({
   stageId: uuidSchema,
   expectedStageId: uuidSchema.nullish(),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
   isOwnResource: z.boolean().nullish(),
   boardOrderAt: timestampSchema.nullish(),
   lostReason: optionalText(300),
@@ -180,6 +199,7 @@ export const leadMoveStageInputSchema = z.object({
 
 export const leadAssignInputSchema = z.object({
   assignedUserId: uuidSchema.nullable(),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 }).strict()
 
 export const leadRedistributeInputSchema = z.object({
@@ -239,6 +259,9 @@ export const apiLeadSchema = z.object({
   id: uuidSchema,
   organizationId: uuidSchema,
   canOperate: z.boolean().optional(),
+  financialReviewRequired: z.boolean().optional(),
+  queuePool: apiQueuePoolSchema.nullable().optional(),
+  tags: z.array(z.object({ id: uuidSchema, name: z.string().nullable(), color: z.string().nullable() })).nullable().optional(),
   name: z.string().min(1),
   email: z.string().optional(),
   phone: z.string().optional(),
@@ -302,6 +325,29 @@ export const apiLeadResponseSchema = z.object({
   assignedUserName: z.string().optional(),
   distributionOutcome: leadDistributionOutcomeSchema.optional(),
 }).passthrough()
+
+// Creation can succeed after assigning the lead outside the actor's read scope.
+// Keep detail/update responses strict; only creation accepts a limited receipt.
+export const apiCreateLeadResponseSchema = z.union([
+  z.object({
+    data: apiLeadSchema,
+    leadId: uuidSchema.optional(),
+    leadVisible: z.literal(true).optional(),
+    reentry: z.boolean().optional(),
+    assignedUserName: z.string().optional(),
+    distributionOutcome: leadDistributionOutcomeSchema.optional(),
+  }).passthrough().refine(
+    response => response.leadId === undefined || response.leadId === response.data.id,
+    { message: 'leadId must match data.id', path: ['leadId'] },
+  ).transform(response => ({ ...response, leadId: response.data.id, leadVisible: true as const })),
+  z.object({
+    data: z.null(),
+    leadId: uuidSchema,
+    leadVisible: z.literal(false),
+    reentry: z.boolean(),
+    distributionOutcome: leadDistributionOutcomeSchema,
+  }).strict(),
+])
 
 export const apiLeadRoundRobinResponseSchema = z.object({
   success: z.boolean(),

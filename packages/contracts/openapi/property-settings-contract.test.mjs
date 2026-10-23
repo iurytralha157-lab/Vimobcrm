@@ -166,6 +166,16 @@ test("workspace OpenAPI enumerates every role-aware property projection field", 
     [...projectedFields].sort(),
   );
 
+  assert.equal(document.components.schemas.PropertyWorkspaceProperty.properties.site_publication.$ref,
+    "#/components/schemas/PropertySitePublicationMetadata");
+  const publication = document.components.schemas.PropertySitePublicationMetadata;
+  assert.deepEqual(publication.type, ["object", "null"]);
+  assert.equal(publication.additionalProperties, false);
+  assert.deepEqual(publication.required.slice().sort(), ["desired_state", "id", "last_error_code", "last_error_message", "observed_state", "public_visible", "published_version"]);
+  assert.equal(publication.properties.id.format, "uuid");
+  assert.equal(publication.properties.public_visible.type, "boolean");
+  assert.deepEqual(publication.properties.desired_state.enum, ["published", "paused", "unpublished"]);
+
   const meta = document.components.schemas.PropertyWorkspaceMeta;
   assert.deepEqual(Object.keys(meta.properties).sort(), [
     "can_manage",

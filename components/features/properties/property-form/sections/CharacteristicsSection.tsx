@@ -13,6 +13,7 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function CharacteristicsSection() {
   const {
+    isSaving,
     formData,
     set,
     isLand,
@@ -22,7 +23,8 @@ export function CharacteristicsSection() {
   const showManagerOnlyFields = !isEditing || canManagePropertyCatalogs;
 
   return (
-  <TabsContent value="characteristics">
+  <TabsContent value="characteristics" id="property-panel-characteristics" aria-labelledby="property-tab-characteristics" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <div
       data-tour="property-characteristics-section"
       className="space-y-4"
@@ -36,7 +38,7 @@ export function CharacteristicsSection() {
         </CardHeader>
         <CardContent className="space-y-4">
           {!isLand ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 @[480px]:grid-cols-4 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="property-bedrooms">
                   Quartos <RequiredMark />
@@ -62,6 +64,8 @@ export function CharacteristicsSection() {
                 <Input
                   id="property-suites"
                   type="number"
+                  min="0"
+                  step="1"
                   value={formData.suites}
                   onChange={(e) => set("suites", e.target.value)}
                   placeholder="0"
@@ -72,6 +76,8 @@ export function CharacteristicsSection() {
                 <Input
                   id="property-bathrooms"
                   type="number"
+                  min="0"
+                  step="1"
                   value={formData.banheiros}
                   onChange={(e) => set("banheiros", e.target.value)}
                   placeholder="0"
@@ -82,6 +88,8 @@ export function CharacteristicsSection() {
                 <Input
                   id="property-parking-spaces"
                   type="number"
+                  min="0"
+                  step="1"
                   value={formData.vagas}
                   onChange={(e) => set("vagas", e.target.value)}
                   placeholder="0"
@@ -95,7 +103,7 @@ export function CharacteristicsSection() {
               obrigatórios.
             </div>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="property-usable-area">Área Útil (m²)</Label>
               <Input
@@ -123,12 +131,14 @@ export function CharacteristicsSection() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 @[480px]:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="property-floor">Andar</Label>
               <Input
                 id="property-floor"
                 type="number"
+                  min="0"
+                  step="1"
                 value={formData.andar}
                 onChange={(e) => set("andar", e.target.value)}
                 placeholder="5"
@@ -139,6 +149,8 @@ export function CharacteristicsSection() {
               <Input
                 id="property-construction-year"
                 type="number"
+                  min="0"
+                  step="1"
                 value={formData.ano_construcao}
                 onChange={(e) =>
                   set("ano_construcao", e.target.value)
@@ -151,13 +163,15 @@ export function CharacteristicsSection() {
               <Input
                 id="property-renovation-year"
                 type="number"
+                  min="0"
+                  step="1"
                 value={formData.ano_reforma}
                 onChange={(e) => set("ano_reforma", e.target.value)}
                 placeholder="2023"
               />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="property-standard">Padrão</Label>
               <Select
@@ -194,7 +208,7 @@ export function CharacteristicsSection() {
             </div>
           </div>
           {showManagerOnlyFields && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="property-condition">Situação do Imóvel</Label>
                 <Select
@@ -259,7 +273,7 @@ export function CharacteristicsSection() {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 @[480px]:grid-cols-3 gap-4">
             <div className={togglePanelClass}>
               <Label htmlFor="property-accepts-pets">Aceita Pet</Label>
               <Switch
@@ -300,7 +314,7 @@ export function CharacteristicsSection() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 @[480px]:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="property-zoning">Zoneamento</Label>
               <Input
@@ -339,6 +353,7 @@ export function CharacteristicsSection() {
         </CardContent>
       </Card>
     </div>
+      </fieldset>
   </TabsContent>
   );
 }

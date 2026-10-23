@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { SharedFilters } from '@/components/shared/SharedFilters';
+import { MAX_LEAD_SOURCE_FILTER_LENGTH } from '@/lib/validation/filter-text';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -53,6 +54,8 @@ type PipelineToolbarProps = {
   onPageChange: (id: string | null) => void;
   campaignId: string | null;
   onCampaignChange: (id: string | null) => void;
+  campaignIds: string[];
+  onCampaignsChange: (ids: string[]) => void;
   adSetId: string | null;
   onAdSetChange: (id: string | null) => void;
   adId: string | null;
@@ -84,7 +87,7 @@ type PipelineToolbarProps = {
   onEnableFilterOptions: () => void;
   onRetryDynamicOptions: () => void;
   onSelectPipeline: (pipelineId: string) => void;
-  onRequestDeletePipeline: (pipeline: { id: string; name: string }) => void;
+  onRequestDeletePipeline: (pipeline: { id: string; name: string; revision?: string }) => void;
   onRequestNewPipeline: () => void;
   onRequestAttentionSettings: () => void;
   onRequestStagesEditor: () => void;
@@ -118,6 +121,8 @@ export function PipelineToolbar({
   onPageChange,
   campaignId,
   onCampaignChange,
+  campaignIds,
+  onCampaignsChange,
   adSetId,
   onAdSetChange,
   adId,
@@ -158,8 +163,8 @@ export function PipelineToolbar({
 }: PipelineToolbarProps) {
   return (
     <div className={cn('flex flex-col gap-2 px-2', isMobile ? 'mb-2 pt-2' : 'mb-3')}>
-      <div className="flex flex-row items-center justify-between gap-2 lg:gap-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex flex-row flex-wrap items-center justify-between gap-2 lg:gap-3">
+        <div className="flex min-w-0 max-w-full items-center gap-2">
           <div className="flex h-10 min-w-0 items-center overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-1 text-[var(--app-text-primary)] shadow-none">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -181,7 +186,7 @@ export function PipelineToolbar({
                 collisionPadding={12}
                 className="app-header-popover w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2 text-[var(--app-text-primary)]"
               >
-                <p className="px-2.5 pb-2 pt-1 text-[10px] font-light text-muted-foreground">
+                <p className="px-2.5 pb-2 pt-1 text-[12px] font-light text-muted-foreground">
                   Suas pipelines
                 </p>
                 <div className="pipeline-selector-scroll max-h-[320px] space-y-1 overflow-y-auto">
@@ -214,6 +219,7 @@ export function PipelineToolbar({
                             onRequestDeletePipeline({
                               id: pipeline.id,
                               name: pipeline.name,
+                              revision: pipeline.revision,
                             })
                           }
                           className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[6px] p-0 text-muted-foreground opacity-100 outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
@@ -318,11 +324,14 @@ export function PipelineToolbar({
               onUserChange={onUserChange}
               includeUnassignedUserOption
               source={source}
+              sourceFilterMaxLength={MAX_LEAD_SOURCE_FILTER_LENGTH}
               onSourceChange={onSourceChange}
               pageId={pageId}
               onPageChange={onPageChange}
               campaignId={campaignId}
               onCampaignChange={onCampaignChange}
+              campaignIds={campaignIds}
+              onCampaignsChange={onCampaignsChange}
               adSetId={adSetId}
               onAdSetChange={onAdSetChange}
               adId={adId}
@@ -357,7 +366,6 @@ export function PipelineToolbar({
               }}
               tourPrefix="pipeline"
               mobileIconOnly
-              triggerClassName="bg-[var(--app-surface-soft)] text-[10px] font-light hover:bg-[var(--app-surface-hover)]"
             />
           </div>
 
@@ -365,7 +373,7 @@ export function PipelineToolbar({
             <Button
               data-tour="pipeline-new-lead"
               size="sm"
-              className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
+              className="h-8 shrink-0 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
               onClick={onCreateLead}
             >
               <Plus className="h-4 w-4" />

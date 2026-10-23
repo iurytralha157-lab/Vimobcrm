@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useAuth } from '@/contexts/AuthContext'
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
 import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyCatalogAPI } from '@/lib/api/property-catalog'
 
@@ -27,7 +27,7 @@ const defaultTypes = [
   'Galp\u00e3o',
 ]
 
-export function usePropertyTypes() {
+export function usePropertyTypes(options: { enabled?: boolean } = {}) {
   const organizationId = useOrganizationId()
 
   return useQuery({
@@ -41,28 +41,28 @@ export function usePropertyTypes() {
       return [...new Set([...defaultTypes, ...customNames])].sort()
     },
     initialData: defaultTypes,
+    enabled: !!organizationId && options.enabled !== false,
   })
 }
 
 export function useCreatePropertyType() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (name: string, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      const { data } = await propertyCatalogAPI.createType(organizationId, name)
+      const { data } = await propertyCatalogAPI.createType(organizationId, name, scope.requestIntent)
       return data
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-types'] })
-      toast.success('Tipo de imóvel adicionado!')
+      if (scope.isCurrent()) toast.success('Tipo de imóvel adicionado!')
     },
-    onError: (error) => {
-      toast.error('Erro ao adicionar tipo: ' + error.message)
+    onError: (error, _input, scope) => {
+      if (scope.isCurrent()) toast.error('Erro ao adicionar tipo: ' + error.message)
     },
   })
 }

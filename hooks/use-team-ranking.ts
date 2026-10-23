@@ -18,7 +18,7 @@ export interface TeamRankingData {
 }
 
 export function useTeamRanking(dateRange?: { from: Date; to: Date }) {
-  const { activeOrganization, user, profile } = useAuth();
+  const { activeOrganization, user } = useAuth();
   const userId = user?.id;
   const organizationId = activeOrganization.organizationId;
 

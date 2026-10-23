@@ -8,6 +8,9 @@ import { format, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DatePreset, datePresetOptions, getDateRangeFromPreset } from "@/hooks/use-dashboard-filters";
+import { FILTER_UI } from "@/config/filter-ui";
+import { validateDateRangeLimit } from "@/lib/filters/date-range-limits";
+import { DATE_FILTER_STYLE } from "@/components/shared/filters/date-filter-style";
 
 interface DateFilterPopoverProps {
   datePreset: DatePreset | null;
@@ -17,9 +20,15 @@ interface DateFilterPopoverProps {
   triggerClassName?: string;
   triggerDataTour?: string;
   align?: "start" | "center" | "end";
-  defaultPreset?: DatePreset;
+  defaultPreset?: DatePreset | null;
   showCalendar?: boolean;
   iconOnly?: boolean;
+  dateLabel?: string;
+  dateRangeMaxDays?: number;
+  getPresetRange?: (preset: DatePreset) => { from: Date; to: Date };
+  validateRange?: (range: { from: Date; to: Date } | null) => string | null;
+  filterApplicationRevision?: number;
+  layerScope?: string;
 }
 
 export function DateFilterPopover({
@@ -33,17 +42,48 @@ export function DateFilterPopover({
   defaultPreset = "last30days",
   showCalendar = true,
   iconOnly = false,
+  dateLabel = "Período",
+  dateRangeMaxDays,
+  getPresetRange = getDateRangeFromPreset,
+  validateRange,
+  filterApplicationRevision,
+  layerScope,
 }: DateFilterPopoverProps) {
-  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const appliedRange = datePreset === "custom" ? customDateRange
+    : datePreset ? getPresetRange(datePreset) : null;
+  const validateResolvedRange = validateRange ?? ((range: { from: Date; to: Date } | null) =>
+    dateRangeMaxDays === undefined ? null : validateDateRangeLimit(range, dateRangeMaxDays));
+  const applicationKey = JSON.stringify([
+    datePreset, appliedRange?.from.getTime(), appliedRange?.to.getTime(), filterApplicationRevision,
+  ]);
+  const [previousApplicationKey, setPreviousApplicationKey] = useState(applicationKey);
+  const [openedApplicationKey, setOpenedApplicationKey] = useState<string | null>(null);
   const [tempDateRange, setTempDateRange] = useState<{ from?: Date; to?: Date }>({});
+  const [attemptedRangeError, setAttemptedRangeError] = useState<string | null>(null);
   const isMobile = useIsMobile();
+  if (previousApplicationKey !== applicationKey) {
+    setPreviousApplicationKey(applicationKey);
+    setOpenedApplicationKey(null);
+    setTempDateRange(appliedRange ? { from: appliedRange.from, to: appliedRange.to } : {});
+    setAttemptedRangeError(null);
+  }
   const calendarRange = normalizeCalendarRange(tempDateRange);
+  const draftRange = tempDateRange.from && tempDateRange.to
+    ? { from: startOfDay(tempDateRange.from), to: endOfDay(tempDateRange.to) }
+    : null;
+  // External applications close definitively, even if their values later return.
+  // Equal date objects from an ordinary rerender keep the user's draft intact.
+  const datePickerOpen = openedApplicationKey === applicationKey;
+  const draftRangeError = validateResolvedRange(draftRange);
+  const appliedRangeError = validateResolvedRange(appliedRange ?? null);
+  const rangeError = attemptedRangeError ?? draftRangeError ?? appliedRangeError;
 
   // Quando o popover abre, reflete o preset ou range customizado no calendário
   const handleOpenChange = (open: boolean) => {
     if (open) {
+      setAttemptedRangeError(null);
       if (datePreset && datePreset !== "custom") {
-        const range = getDateRangeFromPreset(datePreset);
+        const range = getPresetRange(datePreset);
         setTempDateRange({ from: range.from, to: range.to });
       } else if (customDateRange) {
         setTempDateRange({ from: customDateRange.from, to: customDateRange.to });
@@ -51,15 +91,11 @@ export function DateFilterPopover({
         setTempDateRange({});
       }
     }
-    setDatePickerOpen(open);
+    setOpenedApplicationKey(open ? applicationKey : null);
   };
 
   const filteredPresets = datePresetOptions.filter((option) => {
     if (option.value === "custom") return false;
-    if (isMobile) {
-      const presetsToRemove = ["thisMonth", "lastMonth", "thisQuarter", "thisYear"];
-      return !presetsToRemove.includes(option.value);
-    }
     return true;
   });
 
@@ -69,37 +105,39 @@ export function DateFilterPopover({
       onDatePresetChange(null);
       setTempDateRange({});
     } else {
+      const range = getPresetRange(preset);
+      const error = validateResolvedRange(range);
+      if (error) { setAttemptedRangeError(error); return; }
       onDatePresetChange(preset);
       // Reflete o intervalo do atalho no calendário
-      const range = getDateRangeFromPreset(preset);
       setTempDateRange({ from: range.from, to: range.to });
     }
+    setAttemptedRangeError(null);
     onCustomDateRangeChange?.(null);
-    setDatePickerOpen(false);
+    setOpenedApplicationKey(null);
   };
 
   const handleClearDate = () => {
+    setAttemptedRangeError(null);
     onDatePresetChange(null);
     onCustomDateRangeChange?.(null);
     setTempDateRange({});
-    setDatePickerOpen(false);
+    setOpenedApplicationKey(null);
   };
 
   const handleApplyCustomDate = () => {
-    if (tempDateRange.from && tempDateRange.to) {
+    if (datePickerOpen && draftRange && !draftRangeError) {
+      setAttemptedRangeError(null);
       onDatePresetChange("custom");
-      onCustomDateRangeChange?.({
-        from: startOfDay(tempDateRange.from),
-        to: endOfDay(tempDateRange.to),
-      });
-      setDatePickerOpen(false);
+      onCustomDateRangeChange?.(draftRange);
+      setOpenedApplicationKey(null);
       setTempDateRange({});
     }
   };
 
   const getDateLabel = () => {
     if (datePreset === "custom" && customDateRange) {
-      return `${format(customDateRange.from, "dd/MM", { locale: ptBR })} - ${format(customDateRange.to, "dd/MM", { locale: ptBR })}`;
+      return `${format(customDateRange.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(customDateRange.to, "dd/MM/yyyy", { locale: ptBR })}`;
     }
     if (!datePreset) return "Período";
     const option = datePresetOptions.find((o) => o.value === datePreset);
@@ -115,18 +153,27 @@ export function DateFilterPopover({
           variant="outline"
           size="sm"
           data-tour={triggerDataTour}
-          aria-label={iconOnly ? `Período: ${getDateLabel()}` : undefined}
-          title={iconOnly ? `Período: ${getDateLabel()}` : undefined}
-          className={cn("h-9 gap-2 text-sm", iconOnly && "w-8 px-0", isActive && "border-primary text-primary", triggerClassName)}
+          data-filter-active={isActive}
+          aria-label={`${dateLabel}: ${getDateLabel()}`}
+          aria-invalid={Boolean(appliedRangeError)}
+          aria-description={appliedRangeError ?? undefined}
+          title={`${dateLabel}: ${getDateLabel()}`}
+          className={cn(FILTER_UI.trigger, "max-w-[220px]", iconOnly && "w-8 px-0", isActive && "border-primary text-primary", triggerClassName)}
         >
-          <CalendarIcon className="h-4 w-4 shrink-0" />
+          <CalendarIcon className={FILTER_UI.icon} aria-hidden="true" />
           {!iconOnly && <span className="truncate">{getDateLabel()}</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className={cn("w-auto p-0 border-border/40 shadow-xl overflow-hidden", !isMobile && "w-auto")}
+        data-date-filter
+        data-filter-layer={layerScope}
+        data-filter-calendar={layerScope ? true : undefined}
+        className={cn("w-auto p-0 border-border/40 shadow-xl", FILTER_UI.panelViewport, isMobile && "w-[min(340px,calc(100vw-24px))]")}
         align={align}
+        collisionPadding={FILTER_UI.collisionPadding}
       >
+        <style>{DATE_FILTER_STYLE}</style>
+        {rangeError && <p role="alert" className="max-w-[520px] whitespace-normal px-3 pt-3 text-[11px] text-destructive">{rangeError}</p>}
         {isMobile ? (
           <div className="space-y-2.5 p-3">
             {/* Preset buttons in 2-column grid matching the design */}
@@ -134,6 +181,7 @@ export function DateFilterPopover({
               {filteredPresets.map((option) => (
                 <Button
                   key={option.value}
+                  data-date-shortcut
                   variant="ghost"
                   size="sm"
                   className={cn(
@@ -143,6 +191,7 @@ export function DateFilterPopover({
                       : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
                   )}
                   onClick={() => handleDatePresetChange(option.value)}
+                   aria-pressed={datePreset === option.value && !customDateRange}
                 >
                   {option.label}
                 </Button>
@@ -163,43 +212,49 @@ export function DateFilterPopover({
 
                 {/* Calendar for custom range */}
                 <Calendar
+                  data-date-calendar
                   mode="range"
                   selected={calendarRange}
                   onSelect={(range) => {
+                    setAttemptedRangeError(null);
                     setTempDateRange(normalizeCalendarRange(range));
                   }}
+                  defaultMonth={calendarRange.from}
                   numberOfMonths={1}
                   locale={ptBR}
                   className="pointer-events-auto rounded-[6px] p-1"
+                  styles={{ day_button: { fontSize: 12 } }}
+                  classNames={{ month: "space-y-2" }}
                 />
 
-                {/* Apply button */}
-                <Button
-                  size="sm"
-                  className="h-9 w-full rounded-[6px] font-light"
-                  disabled={!tempDateRange.from || !tempDateRange.to}
-                  onClick={handleApplyCustomDate}
-                >
-                  Aplicar
-                </Button>
-
-                {(datePreset !== null || customDateRange) && (
+                <div data-date-actions className="grid grid-cols-2 gap-2">
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
+                    data-date-action="clear-applied"
+                    className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
                     onClick={handleClearDate}
                   >
                     Limpar período
                   </Button>
-                )}
+                  <Button
+                    size="sm"
+                    data-date-action="apply"
+                    className="h-9 rounded-[6px] text-xs font-light"
+                    disabled={!draftRange || Boolean(draftRangeError)}
+                    onClick={handleApplyCustomDate}
+                  >
+                    Aplicar
+                  </Button>
+                </div>
               </>
             )}
+            {!showCalendar && (datePreset !== null || customDateRange) && <Button data-date-action="clear-applied" variant="ghost" size="sm" className="h-8 w-full text-xs font-light" onClick={handleClearDate}>Limpar período</Button>}
           </div>
         ) : (
-          <div className="flex bg-background">
+          <div className="flex min-w-0 flex-wrap bg-background">
             {/* Botões Rápidos (Esquerda) */}
-            <div className="w-[180px] p-2 bg-muted/30 border-r border-border/40 space-y-1">
+            <div data-date-shortcuts className="w-[180px] p-2 bg-muted/30 border-r border-border/40 space-y-1">
               <p className="px-2 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
                 Atalhos
               </p>
@@ -208,6 +263,7 @@ export function DateFilterPopover({
                 .map((option) => (
                   <Button
                     key={option.value}
+                    data-date-shortcut
                     variant="ghost"
                     size="sm"
                     className={cn(
@@ -217,6 +273,7 @@ export function DateFilterPopover({
                         : "text-muted-foreground",
                     )}
                     onClick={() => handleDatePresetChange(option.value as DatePreset)}
+                    aria-pressed={datePreset === option.value && !customDateRange}
                   >
                     {option.label}
                     {datePreset === option.value && !customDateRange && <Check className="ml-auto h-3 w-3" />}
@@ -225,39 +282,46 @@ export function DateFilterPopover({
             </div>
 
             {/* Seletor Personalizado (Direita) */}
-            <div className="p-3">
+            {showCalendar && <div className="min-w-0 p-3">
               <p className="px-1 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
                 Personalizado
               </p>
               <Calendar
+                data-date-calendar
                 mode="range"
                 selected={calendarRange}
-                onSelect={(range) => setTempDateRange(normalizeCalendarRange(range))}
+                onSelect={(range) => { setAttemptedRangeError(null); setTempDateRange(normalizeCalendarRange(range)); }}
+                defaultMonth={calendarRange.from}
                 numberOfMonths={1}
                 locale={ptBR}
                 className="rounded-md border border-border/40 p-2"
+                styles={{ day_button: { fontSize: 12 } }}
+                classNames={{ month: "space-y-2" }}
               />
 
-              {/* Botões Limpar e Aplicar (Abaixo do calendário) */}
-              <div className="grid grid-cols-2 gap-2 mt-3">
+              {/* A única ação de limpar restaura o rascunho e o período aplicado. */}
+              <div data-date-actions className="grid grid-cols-2 gap-2 mt-3">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 border-0 bg-[var(--app-surface-soft)] text-xs font-light uppercase tracking-tight text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
-                  onClick={() => setTempDateRange({})}
+                  data-date-action="clear-applied"
+                  className="h-8 border-0 bg-[var(--app-surface-soft)] text-xs font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
+                  onClick={handleClearDate}
                 >
-                  Limpar
+                  Limpar período
                 </Button>
                 <Button
                   size="sm"
-                  className="h-8 text-xs font-light uppercase tracking-tight bg-primary hover:bg-primary/90"
-                  disabled={!tempDateRange.from || !tempDateRange.to}
+                  data-date-action="apply"
+                  className="h-8 text-xs font-light"
+                  disabled={!draftRange || Boolean(draftRangeError)}
                   onClick={handleApplyCustomDate}
                 >
                   Aplicar
                 </Button>
               </div>
-            </div>
+            </div>}
+            {!showCalendar && (datePreset !== null || customDateRange) && <div className="w-full p-2"><Button data-date-action="clear-applied" variant="ghost" size="sm" onClick={handleClearDate} className="h-8 w-full text-xs font-light text-[var(--app-text-secondary)]">Limpar período</Button></div>}
           </div>
         )}
       </PopoverContent>
@@ -295,12 +359,12 @@ export function SimplePeriodFilter({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className={cn("h-9 gap-2 text-sm", triggerClassName)}>
+        <Button variant="outline" size="sm" title={currentLabel} aria-label={`Período: ${currentLabel}`} className={cn(FILTER_UI.trigger, triggerClassName)}>
           <CalendarIcon className="h-4 w-4" />
           <span>{currentLabel}</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align={align}>
+      <PopoverContent className={cn("w-auto p-0", FILTER_UI.panelViewport)} align={align} collisionPadding={FILTER_UI.collisionPadding}>
         <div className="p-4">
           <div className="grid grid-cols-2 gap-2">
             {options.map((option) => (

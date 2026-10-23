@@ -96,7 +96,7 @@ export function BrokerPreview({
                 <p className="truncate text-xs font-light">
                   {firstTask.title.trim() || 'Tarefa sem título'}
                 </p>
-                <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
+                <p className="mt-0.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
                   Prazo: {formatDuration(firstTask.due_minutes)}
                   {firstTask.outcome_required ? ' · resultado obrigatório' : ''}
                 </p>
@@ -122,7 +122,7 @@ export function BrokerPreview({
             <div className={cn('flex items-start gap-2.5 px-1', firstTask && 'mt-3')}>
               <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--app-text-secondary)]" strokeWidth={1.5} />
               <div>
-                <p className="text-[11px] font-light text-[var(--app-text-secondary)]">
+                <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
                   {getAttentionPreviewCopy(sourceMode, draft.attention.mode, globalAttention)}
                 </p>
                 <p className="mt-0.5 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
@@ -138,7 +138,7 @@ export function BrokerPreview({
           {sourceMode === 'local' && !hasLocalAttention && firstTask && (
             <div className="mt-3 flex items-start gap-2.5 px-1">
               <CircleOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" strokeWidth={1.5} />
-              <p className="text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
+              <p className="text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
                 {draft.attention.mode === 'disabled'
                   ? 'A atenção está silenciada nesta etapa; somente a cadência acima continua ativa.'
                   : 'Nenhum limite local está ativo; regras herdadas desses tipos ficam bloqueadas nesta etapa.'}
@@ -182,7 +182,7 @@ function InheritedAttentionPreview({
       <div className="flex items-start gap-2.5 px-1">
         <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--app-text-secondary)]" strokeWidth={1.5} />
         <div className="min-w-0">
-          <p className="text-[11px] font-light text-[var(--app-text-secondary)]">
+          <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
             {getAttentionPreviewCopy('inherit', localMode, globalAttention)}
           </p>
           <p className="mt-0.5 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
@@ -221,16 +221,16 @@ function InheritedAttentionPreview({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="text-[11px] font-light text-[var(--app-text-primary)]">
+                    <p className="text-[12px] font-light text-[var(--app-text-primary)]">
                       {rule.title}
                     </p>
                     {effective && (
                       <>
-                        <span className="rounded-[4px] bg-[var(--app-surface-solid)] px-1.5 py-0.5 text-[9px] font-light text-[var(--app-text-tertiary)]">
+                        <span className="rounded-[4px] bg-[var(--app-surface-solid)] px-1.5 py-0.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
                           {ATTENTION_POLICY_SOURCE_LABELS[effective.source]}
                         </span>
                         <span className={cn(
-                          'rounded-[4px] px-1.5 py-0.5 text-[9px] font-light',
+                          'rounded-[4px] px-1.5 py-0.5 text-[12px] font-light',
                           inheritedBlocked
                             ? 'bg-[var(--app-surface-solid)] text-[var(--app-text-tertiary)]'
                             : effective.policy.status === 'shadow'
@@ -252,11 +252,11 @@ function InheritedAttentionPreview({
                         {effective.policy.name}
                       </p>
                       {inheritedBlocked ? (
-                        <p className="mt-0.5 text-[9px] font-light leading-[14px] text-[var(--app-text-tertiary)]">
+                        <p className="mt-0.5 text-[12px] font-light leading-[14px] text-[var(--app-text-tertiary)]">
                           Bloqueia a política mais ampla deste tipo neste escopo.
                         </p>
                       ) : (
-                        <p className="mt-0.5 text-[9px] font-light leading-[14px] text-[var(--app-text-tertiary)]">
+                        <p className="mt-0.5 text-[12px] font-light leading-[14px] text-[var(--app-text-tertiary)]">
                           Limite: {formatDuration(effective.policy.thresholdMinutes)}
                           {effective.policy.warningMinutes > 0
                             ? ` · aviso ${formatDuration(effective.policy.warningMinutes)} antes`

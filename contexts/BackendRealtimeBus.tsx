@@ -9,6 +9,7 @@ import {
 } from "@/lib/api/realtime";
 import { useAuth } from "@/contexts/AuthContext";
 import { notifyLeadRealtimeChange } from "@/contexts/LeadRealtimeBus";
+import { resetQueuePoolAccessCaches } from "@/lib/queue-pool-cache";
 import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 import {
   getTargetedMembershipAccessChange,
@@ -16,7 +17,15 @@ import {
   type MembershipAccessChange,
 } from "@/lib/auth/membership-realtime";
 import { getBackendRealtimeResetDelay } from "@/lib/pipeline-reliability";
+import { invalidateWhatsAppAvatarCaches } from "@/lib/whatsapp-avatar-cache";
+import { invalidateTagConsumers } from "@/lib/tags/management";
 import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
+import { refreshScheduleQueries } from "@/hooks/schedule/schedule-query-refresh";
+import { createDashboardQueryRefresh, isDashboardRefreshQueryKey } from "@/lib/dashboard-query-refresh";
+import {
+  collectScheduleRealtimeRefresh,
+  type ScheduleRealtimeRefresh,
+} from "@/contexts/schedule-realtime-refresh";
 
 const WHATSAPP_MESSAGE_EVENTS = new Set([
   "whatsapp.message.sent",
@@ -35,6 +44,8 @@ const DASHBOARD_REALTIME_QUERY_KEYS = [
   "dashboard-extra-counts",
   "dashboard-lead-distribution",
   "dashboard-campaigns",
+  "dashboard-creatives",
+  "dashboard-creative-media",
   "dashboard-first-contact",
   "dashboard-first-contact-leads",
   "dashboard-lead-entries",
@@ -53,6 +64,8 @@ type AccessRefreshCoordinatorOptions = {
   isCurrentScope: () => boolean;
   refresh: () => Promise<unknown>;
 };
+
+type DashboardRefresh = (client: QueryClient, prefix: string) => void;
 
 type AccessRefreshCoordinator = {
   request: (onFailure?: () => void) => Promise<void>;
@@ -122,6 +135,7 @@ export function BackendRealtimeBus() {
   const scheduleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const pendingScheduleRefreshRef = useRef<ScheduleRealtimeRefresh | null>(null);
   const realtimeResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeResetDueAtRef = useRef<number | null>(null);
   const lastRealtimeResetAtRef = useRef<number | null>(null);
@@ -157,6 +171,17 @@ export function BackendRealtimeBus() {
     const scopeGeneration = ++accessScopeGenerationRef.current;
     const isCurrentScope = () =>
       accessScopeGenerationRef.current === scopeGeneration;
+    let dashboardQueryClient = queryClientRef.current;
+    let dashboardRefresh = createDashboardQueryRefresh(dashboardQueryClient, organizationId);
+    const refreshDashboardQuery: DashboardRefresh = (client, prefix) => {
+      if (!isCurrentScope() || client !== queryClientRef.current) return;
+      if (client !== dashboardQueryClient) {
+        dashboardRefresh.dispose();
+        dashboardQueryClient = client;
+        dashboardRefresh = createDashboardQueryRefresh(client, organizationId);
+      }
+      dashboardRefresh.invalidate(prefix);
+    };
     const accessRefresh = createCoalescedAccessRefresh({
       isCurrentScope,
       refresh: () => refreshCurrentUserAccess(refreshProfileRef),
@@ -185,6 +210,7 @@ export function BackendRealtimeBus() {
     };
     const handleMembershipAccessRefresh = (change: MembershipAccessChange) => {
       if (!isCurrentScope()) return;
+      resetQueuePoolAccessCaches(queryClientRef.current, organizationId);
 
       void queryClientRef.current.invalidateQueries({
         queryKey: ['lead-visibility', userId, organizationId],
@@ -240,6 +266,7 @@ export function BackendRealtimeBus() {
 
         requestAccessRefresh();
         const activeQueryClient = queryClientRef.current;
+        resetQueuePoolAccessCaches(activeQueryClient, organizationId);
         void activeQueryClient.invalidateQueries(
           {
             predicate: (query) => query.queryKey[0] !== "stages-with-leads",
@@ -273,6 +300,15 @@ export function BackendRealtimeBus() {
         }
 
         if (event.type === "organization.users.changed") {
+          if (event.data?.changeKind !== 'avatar_updated') resetQueuePoolAccessCaches(activeQueryClient, organizationId);
+          if (event.data?.changeKind === "avatar_updated" && getString(event.data, "targetUserId") === userId) {
+            requestAccessRefresh();
+          }
+          void invalidateWhatsAppAvatarCaches(
+            activeQueryClient,
+            organizationId,
+            getString(event.data, "targetUserId") || undefined,
+          );
           void activeQueryClient.invalidateQueries({
             queryKey: ["organization-users", organizationId],
             refetchType: "active",
@@ -292,17 +328,38 @@ export function BackendRealtimeBus() {
           return;
         }
 
-        if (event.type.startsWith('team.') || event.type.startsWith('pipeline.') || event.type.startsWith('stage.')) {
+        if (event.type.startsWith('tag.')) {
+          void invalidateTagConsumers(activeQueryClient, organizationId);
+          notifyLeadRealtimeChange({ organizationId, reason: event.type });
+          return;
+        }
+
+        if (event.type.startsWith('team.') || event.type.startsWith('pipeline.') || event.type.startsWith('stage.') || event.type.startsWith('round_robin.')) {
+          resetQueuePoolAccessCaches(activeQueryClient, organizationId);
           for (const queryKey of [
             ['teams', organizationId],
             ['lead-visibility', userId, organizationId],
             ['pipelines', organizationId],
             ['stages', organizationId],
+            ['team', organizationId],
+            ['team-history', organizationId],
+            ['member-availability', organizationId],
+            ['team-members-availability', organizationId],
+            ['team-editor-snapshot', organizationId],
+            ['team-distribution-stats', organizationId],
+            ['team-pipelines', organizationId],
+            ['all-team-pipelines', organizationId],
+            ['round-robins', organizationId],
+            ['round-robin', organizationId],
+            ['round-robin-history', organizationId],
+            ['round-robin-rules', organizationId],
+            ['dashboard-lead-distribution', organizationId],
             ['pipeline-selected-lead-access', organizationId],
           ]) {
             void activeQueryClient.invalidateQueries({ queryKey, refetchType: 'active' });
           }
           notifyLeadRealtimeChange({ organizationId, reason: event.type });
+          requestAccessRefresh();
           return;
         }
 
@@ -316,10 +373,27 @@ export function BackendRealtimeBus() {
           return;
         }
 
+        if (event.type === "access.roles.changed") {
+          resetQueuePoolAccessCaches(activeQueryClient, organizationId);
+          for (const queryKey of [
+            ["organization-roles", organizationId],
+            ["user-organization-roles", organizationId],
+            ["role-permissions", organizationId],
+            ["user-permissions-admin", organizationId],
+            ["lead-visibility", userId, organizationId],
+            ["pipeline-selected-lead-access", organizationId],
+          ]) {
+            void activeQueryClient.invalidateQueries({ queryKey, refetchType: "active" });
+          }
+          requestAccessRefresh();
+          return;
+        }
+
         if (event.type === "access.permissions.changed") {
           const targetUserId =
             getString(event.data, "targetUserId") || event.userId;
           if (targetUserId === userId) {
+            resetQueuePoolAccessCaches(activeQueryClient, organizationId);
             void activeQueryClient.invalidateQueries({
               queryKey: ["lead-visibility", userId, organizationId],
               refetchType: "active",
@@ -344,7 +418,7 @@ export function BackendRealtimeBus() {
         }
 
         if (event.type.startsWith("schedule.")) {
-          handleScheduleEvent(event, activeQueryClient, scheduleDebounceRef);
+          handleScheduleEvent(event, activeQueryClient, scheduleDebounceRef, pendingScheduleRefreshRef, refreshDashboardQuery);
           return;
         }
 
@@ -354,7 +428,7 @@ export function BackendRealtimeBus() {
         }
 
         if (event.type.startsWith("site.")) {
-          invalidateDashboardRealtimeQueries(activeQueryClient);
+          invalidateDashboardRealtimeQueries(activeQueryClient, refreshDashboardQuery);
           return;
         }
 
@@ -373,7 +447,7 @@ export function BackendRealtimeBus() {
             event.userId;
           if (targetUserId && targetUserId !== userId) return;
 
-          invalidateNotificationQueries(activeQueryClient);
+          invalidateNotificationQueries(activeQueryClient, userId, organizationId);
           return;
         }
       },
@@ -391,10 +465,12 @@ export function BackendRealtimeBus() {
         accessScopeGenerationRef.current += 1;
       }
       accessRefresh.dispose();
+      dashboardRefresh.dispose();
       if (scheduleDebounceRef.current) {
         clearTimeout(scheduleDebounceRef.current);
         scheduleDebounceRef.current = null;
       }
+      pendingScheduleRefreshRef.current = null;
       if (realtimeResetRef.current) {
         clearTimeout(realtimeResetRef.current);
         realtimeResetRef.current = null;
@@ -426,39 +502,46 @@ function handleScheduleEvent(
   event: BackendRealtimeEvent,
   queryClient: QueryClient,
   debounceRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  pendingRef: MutableRefObject<ScheduleRealtimeRefresh | null>,
+  refreshDashboardQuery: DashboardRefresh,
 ) {
-  if (debounceRef.current) clearTimeout(debounceRef.current);
+  pendingRef.current = collectScheduleRealtimeRefresh(pendingRef.current, event);
+  if (debounceRef.current) return;
 
   debounceRef.current = setTimeout(() => {
-    void queryClient.invalidateQueries({
-      queryKey: ["schedule-events"],
-      refetchType: "active",
+    const batch = pendingRef.current;
+    pendingRef.current = null;
+    debounceRef.current = null;
+    if (!batch) return;
+    void refreshScheduleQueries(queryClient, {
+      queryKey: ["schedule-events", batch.organizationId],
     });
     invalidateScheduleDashboardCaches(queryClient);
-    invalidateDashboardRealtimeQueries(queryClient);
+    invalidateDashboardRealtimeQueries(queryClient, refreshDashboardQuery);
 
-    const eventId = getString(event.data, "eventId");
-    if (eventId) {
-      void queryClient.invalidateQueries({
-        queryKey: ["schedule_comments", event.organizationId, eventId],
-        refetchType: "active",
+    if (batch.refreshAll) {
+      for (const queryKey of ["schedule_comments", "schedule_assignees"]) {
+        void refreshScheduleQueries(queryClient, { queryKey: [queryKey, batch.organizationId] });
+      }
+      notifyLeadRealtimeChange({ organizationId: batch.organizationId, reason: "schedule.changed" });
+    }
+    for (const eventId of batch.eventIds) {
+      void refreshScheduleQueries(queryClient, {
+        queryKey: ["schedule_comments", batch.organizationId, eventId],
       });
-      void queryClient.invalidateQueries({
-        queryKey: ["schedule_assignees", event.organizationId, eventId],
-        refetchType: "active",
+      void refreshScheduleQueries(queryClient, {
+        queryKey: ["schedule_assignees", batch.organizationId, eventId],
       });
     }
 
-    const leadId = getString(event.data, "leadId");
-    if (leadId) {
+    for (const leadId of batch.leadIds) {
       notifyLeadRealtimeChange({
-        organizationId: event.organizationId,
+        organizationId: batch.organizationId,
         leadId,
         reason: event.type,
       });
     }
 
-    debounceRef.current = null;
   }, 150);
 }
 
@@ -477,6 +560,14 @@ function handleWhatsAppEvent(
           conversation_id: conversationId,
           lead_id: leadId || null,
           organization_id: event.organizationId,
+          organizationId: event.organizationId,
+          operation: event.type === "whatsapp.message.received" || event.type === "whatsapp.message.created" ? "INSERT" : "UPDATE",
+          fromMe: event.data?.fromMe ?? event.data?.from_me,
+          direction: event.data?.direction,
+          captureState: event.data?.captureState ?? event.data?.capture_state,
+          attendantUserId: event.data?.attendantUserId,
+          createdAt: event.data?.createdAt ?? event.createdAt,
+          messageId: getString(event.data, "messageId") || getString(event.data, "clientMessageId"),
           id:
             getString(event.data, "messageId") ||
             getString(event.data, "clientMessageId"),
@@ -560,19 +651,23 @@ function handleWhatsAppEvent(
   }
 }
 
-function invalidateNotificationQueries(queryClient: QueryClient) {
+function invalidateNotificationQueries(queryClient: QueryClient, userId: string, organizationId: string) {
   void queryClient.invalidateQueries({
-    queryKey: ["notifications"],
+    queryKey: ["notifications", userId, organizationId],
     refetchType: "active",
   });
   void queryClient.invalidateQueries({
-    queryKey: ["unread-notifications-count"],
+    queryKey: ["unread-notifications-count", userId, organizationId],
     refetchType: "active",
   });
 }
 
-function invalidateDashboardRealtimeQueries(queryClient: QueryClient) {
+function invalidateDashboardRealtimeQueries(queryClient: QueryClient, refreshDashboardQuery: DashboardRefresh) {
   DASHBOARD_REALTIME_QUERY_KEYS.forEach((queryKey) => {
+    if (isDashboardRefreshQueryKey(queryKey)) {
+      refreshDashboardQuery(queryClient, queryKey);
+      return;
+    }
     void queryClient.invalidateQueries({
       queryKey: [queryKey],
       refetchType: "active",

@@ -13,6 +13,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/schedule"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -1193,6 +1194,7 @@ func (repo Repository) loadLeadActivitiesWithQueryer(ctx context.Context, querye
 			where a.organization_id = $1::uuid
 			  and a.lead_id = $2::uuid
 			  and `+leadscope.VisibilitySQL("l", "$3", "$4", "$5", leadscope.CanViewOwn(tenantContext))+`
+			  and `+schedule.HistoryReadableRecordSQL(tenantContext, "a", "type", "$4")+`
 			order by a.created_at desc
 			limit 12
 		) row

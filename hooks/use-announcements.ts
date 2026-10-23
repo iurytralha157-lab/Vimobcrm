@@ -84,7 +84,7 @@ function isAnnouncementTargeted(
 }
 
 export function useActiveAnnouncements() {
-  const { activeOrganization, profile, organization, userOrganizations, isSuperAdmin } = useAuth();
+  const { activeOrganization, profile, userOrganizations, isSuperAdmin } = useAuth();
   const [readyProfileId, setReadyProfileId] = useState<string | null>(null);
 
   useEffect(() => {

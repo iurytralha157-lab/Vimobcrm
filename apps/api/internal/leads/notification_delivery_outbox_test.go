@@ -203,7 +203,7 @@ func TestNormalizedNotificationWorkerUsesCanonicalDeliveryLifecycle(t *testing.T
 		t.Fatal("could not isolate one-delivery worker")
 	}
 	one := outbox[oneStart : oneStart+oneEnd]
-	startCall := strings.LastIndex(one, "repo.startNormalizedNotificationDelivery(ctx, delivery, preflight.Provider)")
+	startCall := strings.LastIndex(one, "repo.startQueueAuthorizedNotificationForSend(ctx, delivery, notification, preflight.Provider)")
 	sendCall := strings.Index(one, "result := preflight.Send(ctx)")
 	if startCall < 0 || sendCall < 0 || startCall > sendCall {
 		t.Fatal("attempt start must be the final durable transition before the provider send")
@@ -212,6 +212,10 @@ func TestNormalizedNotificationWorkerUsesCanonicalDeliveryLifecycle(t *testing.T
 	if strings.Contains(between, "prepareNormalized") || strings.Contains(between, "resolveNotification") {
 		t.Fatal("provider preflight must finish before the attempt budget is consumed")
 	}
+	if !strings.Contains(between, "if !started {\n\t\t\treturn true, nil") {
+		t.Fatal("a rejected durable start must stop before the provider send")
+	}
+	assertCanonicalNotificationStartDelegation(t)
 }
 
 func TestNormalizedWhatsAppFallbackIsChosenAndPersistedBeforeProviderSend(t *testing.T) {
@@ -250,10 +254,37 @@ func TestNormalizedWhatsAppFallbackIsChosenAndPersistedBeforeProviderSend(t *tes
 		t.Fatal("could not isolate normalized notification delivery")
 	}
 	process := source[processStart : processStart+processEnd]
-	startAttempt := strings.Index(process, "repo.startNormalizedNotificationDelivery(ctx, delivery, preflight.Provider)")
+	startAttempt := strings.Index(process, "repo.startQueueAuthorizedNotificationForSend(ctx, delivery, notification, preflight.Provider)")
 	send := strings.Index(process, "result := preflight.Send(ctx)")
 	if startAttempt < 0 || send < 0 || startAttempt > send {
 		t.Fatal("the selected fallback provider must be persisted before the provider send")
+	}
+	assertCanonicalNotificationStartDelegation(t)
+}
+
+func assertCanonicalNotificationStartDelegation(t *testing.T) {
+	t.Helper()
+	guardRaw, err := os.ReadFile("queue_notification_send_guard.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := string(guardRaw)
+	for _, required := range []string{
+		"default:\n\t\treturn true, repo.startNormalizedNotificationDelivery(ctx, delivery, provider)",
+		"private.start_queue_authorized_notification_delivery($1::uuid,$2::uuid,$3::text,$4::jsonb)",
+		"delivery.ID, delivery.LeaseToken, provider, string(snapshot)",
+		"if status == \"started\" {\n\t\treturn true, nil",
+	} {
+		if !strings.Contains(guard, required) {
+			t.Fatalf("attempt-start delegation must retain canonical provider persistence: missing %q", required)
+		}
+	}
+	sqlRaw, err := os.ReadFile("../../../../supabase/migrations/20261016173733_authorize_queue_notification_at_attempt_start.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sqlRaw), "if private.start_notification_delivery(p_delivery,p_lease,p_provider) then return 'started';end if;") {
+		t.Fatal("authorized queue starts must persist the selected provider through the original canonical start")
 	}
 }
 

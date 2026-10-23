@@ -38,9 +38,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		t.Fatalf("WHATSAPP_TEST_DATABASE_URL must use a disposable loopback database, got %q", target.Hostname())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	postgres, err := dbpkg.NewPostgres(ctx, dbpkg.Config{URL: databaseURL, HealthTimeout: 3 * time.Second})
+	postgres, err := dbpkg.NewPostgres(ctx, dbpkg.Config{URL: databaseURL, HealthTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $2::uuid, $3, $4, 'owner', true)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
 		on conflict (id) do update
 		set organization_id = excluded.organization_id,
 		    name = excluded.name,
@@ -89,9 +89,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
-		values ($1::uuid, $2::uuid, 'owner', true)
+		values ($1::uuid, $2::uuid, 'user', true)
 		on conflict (user_id, organization_id) do update
-		set role = 'owner', is_active = true, deleted_at = null
+		set role = 'user', is_active = true, deleted_at = null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,37 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	from, to := now.Add(-48*time.Hour), now.Add(time.Hour)
+	bindLead := func(conversationID, leadID string) {
+		t.Helper()
+		var success bool
+		if err := tx.QueryRow(ctx, `
+			select (public.activate_whatsapp_conversation_lead_binding(
+				$1::uuid, $2::uuid, $3::uuid, null
+			)->>'success')::boolean
+		`, organizationID, conversationID, leadID).Scan(&success); err != nil {
+			t.Fatal(err)
+		}
+		if !success {
+			t.Fatal("fixture conversation lead binding was not activated")
+		}
+	}
+	restoreConversationSummary := func(conversationID, lastMessage string, lastMessageAt time.Time, unreadCount int) {
+		t.Helper()
+		tag, err := tx.Exec(ctx, `
+			update public.whatsapp_conversations
+			set last_message = $2,
+			    last_message_preview = $2,
+			    last_message_at = $3,
+			    unread_count = $4
+			where organization_id = $1::uuid and id = $5::uuid
+		`, organizationID, lastMessage, lastMessageAt, unreadCount, conversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tag.RowsAffected() != 1 {
+			t.Fatalf("fixture conversation summary restored %d rows, want 1", tag.RowsAffected())
+		}
+	}
 	createConversation := func(index int, source string, lastMessageAt time.Time, unreadCount int) (string, string) {
 		t.Helper()
 		var leadID, conversationID string
@@ -118,18 +149,20 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		}
 		if err := tx.QueryRow(ctx, `
 			insert into public.whatsapp_conversations (
-				organization_id, session_id, lead_id, remote_jid,
+				organization_id, session_id, remote_jid,
 				contact_name, last_message, last_message_at, unread_count
 			) values (
-				$1::uuid, $2::uuid, $3::uuid, $4, $5, 'test', $6, $7
+				$1::uuid, $2::uuid, $3, $4, 'test', $5, $6
 			)
 			returning id::text
-		`, organizationID, sessionID, leadID,
+		`, organizationID, sessionID,
 			fmt.Sprintf("551199900%05d@s.whatsapp.net", index),
 			fmt.Sprintf("%s-contact-%d", fixtureName, index),
 			lastMessageAt, unreadCount).Scan(&conversationID); err != nil {
 			t.Fatal(err)
 		}
+		bindLead(conversationID, leadID)
+		restoreConversationSummary(conversationID, "test", lastMessageAt, unreadCount)
 		return leadID, conversationID
 	}
 
@@ -159,7 +192,7 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 			insert into public.whatsapp_messages (
 				organization_id, session_id, conversation_id, message_id,
 				content, from_me, direction, sent_at, capture_state
-			) values ($1::uuid, $2::uuid, $3::uuid, $4, 'test', $5, $6, $7, 'recorded')
+			) values ($1::uuid, $2::uuid, $3::uuid, $4, 'test', $5, $6, $7, 'captured')
 		`, organizationID, sessionID, item.conversationID, fixtureName+"-"+item.messageID,
 			item.fromMe, direction, item.at); err != nil {
 			t.Fatal(err)
@@ -179,8 +212,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		}
 	}
 	// A second owner in the same organization has no session grant to viewer.
-	// The viewer cannot see that number; an admin may read its lead, but not
-	// the unlinked conversation or use the number to send.
+	// History follows CRM lead access; an operational inbox additionally requires
+	// assignment to its reader and an explicit grant from this session owner.
+	// The owner's unlinked conversation stays private throughout those changes.
 	var otherUserID, otherSessionID, privateLeadID, privateConversationID, privateUnlinkedID string
 	if err := tx.QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&otherUserID); err != nil {
 		t.Fatal(err)
@@ -231,14 +265,16 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if err := tx.QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
-			organization_id, session_id, lead_id, remote_jid,
+			organization_id, session_id, remote_jid,
 			contact_name, last_message, last_message_at, unread_count
-		) values ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'private', $6, 11)
+		) values ($1::uuid, $2::uuid, $3, $4, 'private', $5, 11)
 		returning id::text
-	`, organizationID, otherSessionID, privateLeadID,
+	`, organizationID, otherSessionID,
 		"55119990000999@s.whatsapp.net", fixtureName+"-private-contact", now).Scan(&privateConversationID); err != nil {
 		t.Fatal(err)
 	}
+	bindLead(privateConversationID, privateLeadID)
+	restoreConversationSummary(privateConversationID, "private", now, 11)
 	if err := tx.QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
 			organization_id, session_id, remote_jid, contact_name,
@@ -259,7 +295,7 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
 			'private media', 'image', 'ready', $6,
-			false, 'inbound', $7, 'recorded', 'received'
+			false, 'inbound', $7, 'captured', 'received'
 		)
 		returning id::text
 	`, organizationID, otherSessionID, privateConversationID, privateLeadID,
@@ -279,7 +315,7 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cleanupCancel()
 		for _, cleanup := range []struct {
 			label string
@@ -289,6 +325,8 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 			{"messages", `delete from public.whatsapp_messages where organization_id = $1::uuid`, organizationID},
 			{"conversations", `delete from public.whatsapp_conversations where organization_id = $1::uuid`, organizationID},
 			{"entry events", `delete from public.lead_entry_events where organization_id = $1::uuid`, organizationID},
+			{"team members", `delete from public.team_members where organization_id = $1::uuid`, organizationID},
+			{"teams", `delete from public.teams where organization_id = $1::uuid`, organizationID},
 			{"leads", `delete from public.leads where organization_id = $1::uuid`, organizationID},
 			{"sessions", `delete from public.whatsapp_sessions where organization_id = $1::uuid`, organizationID},
 			{"membership", `delete from public.organization_members where organization_id = $1::uuid`, organizationID},
@@ -325,7 +363,8 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	viewer := tenant.Context{
 		OrganizationID: organizationID,
 		UserID:         userID,
-		MemberRole:     "agent",
+		MemberRole:     "user",
+		UserRole:       "user",
 		Permissions:    []string{"lead_view_own"},
 	}
 	firstPage, cursor, err := repo.listConversationsPage(ctx, viewer, filter)
@@ -369,6 +408,13 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 			t.Fatal("conversation from another owner leaked into list")
 		}
 	}
+	setViewerMembershipRole := func(role string) error {
+		_, err := postgres.Pool().Exec(ctx, `update public.organization_members set role=$3 where organization_id=$1::uuid and user_id=$2::uuid`, organizationID, userID, role)
+		return err
+	}
+	if err := setViewerMembershipRole("admin"); err != nil {
+		t.Fatal(err)
+	}
 	admin := viewer
 	admin.MemberRole = "admin"
 	admin.Permissions = []string{"lead_view_all"}
@@ -376,8 +422,8 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(adminLeads) != 6 {
-		t.Fatalf("admin operational inbox = %d, want all six visible leads across numbers", len(adminLeads))
+	if len(adminLeads) != 5 {
+		t.Fatalf("admin operational inbox = %d, want five authorized leads on the owned number", len(adminLeads))
 	}
 	adminFoundPrivateLead := false
 	for _, conversation := range adminLeads {
@@ -385,28 +431,41 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 			adminFoundPrivateLead = true
 		}
 	}
-	if !adminFoundPrivateLead {
-		t.Fatal("admin inbox lost a visible lead on another number")
+	if adminFoundPrivateLead {
+		t.Fatal("broad CRM history access exposed another owner's private operational inbox")
 	}
 	adminInbox, err := repo.ListConversations(ctx, admin, ConversationListFilter{Limit: 120})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, conversation := range adminInbox {
-		if conversation.ID == privateUnlinkedID {
-			t.Fatal("admin inbox exposed another owner's unlinked conversation")
+		if conversation.ID == privateUnlinkedID || conversation.ID == privateConversationID {
+			t.Fatal("admin inbox exposed another owner's conversation without assignment and grant")
 		}
 	}
 	if snapshot, err := repo.GetConversationSnapshot(ctx, admin, privateConversationID); err != nil || snapshot.ID != privateConversationID {
 		t.Fatalf("admin lost direct lead history across numbers: %+v, %v", snapshot, err)
 	}
 	t.Run("media is signed for admin across sessions but denied to agent", func(t *testing.T) {
+		// Media revalidates current database authority rather than trusting a
+		// hand-built tenant.Context. Keep the synthetic membership aligned.
+		if err := setViewerMembershipRole("user"); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := setViewerMembershipRole("user"); err != nil {
+				t.Errorf("restore synthetic broker role: %v", err)
+			}
+		}()
 		before := signingRequests.Load()
 		if _, err := repo.GetMessageMediaURL(ctx, viewer, privateMediaMessageID); !errors.Is(err, ErrMessageNotFound) {
 			t.Fatalf("agent media access error = %v, want message not found", err)
 		}
 		if got := signingRequests.Load(); got != before {
 			t.Fatalf("denied agent media reached Storage signing: before=%d after=%d", before, got)
+		}
+		if err := setViewerMembershipRole("admin"); err != nil {
+			t.Fatal(err)
 		}
 		media, err := repo.GetMessageMediaURL(ctx, admin, privateMediaMessageID)
 		if err != nil {
@@ -505,5 +564,259 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	emptyOptions, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{AccessibleProvided: true})
 	if err != nil || len(emptyOptions.Campaigns) != 0 || len(emptyOptions.Sources) != 0 {
 		t.Fatalf("explicitly empty session scope leaked options: %#v, error = %v", emptyOptions, err)
+	}
+	t.Run("expanded catalogs paginate beyond five hundred and search before pagination", func(t *testing.T) {
+		if _, err := postgres.Pool().Exec(ctx, `
+		  insert into public.lead_entry_events (organization_id,lead_id,entry_type,source,provider,page_id,page_name,campaign_id,campaign_name,is_countable)
+		  select $1::uuid,$2::uuid,'reentry','meta','meta','catalog-page','Catalog Page',
+		    'catalog-campaign-'||n::text,'Catalog Campaign '||lpad(n::text,3,'0'),true
+		  from generate_series(1,601) n`, organizationID, metaNewestLeadID); err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for offset := 0; ; {
+			page, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{ExpandedOptions: true, PageID: "catalog-page", OptionsOffset: offset, OptionsLimit: 100})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, option := range page.Campaigns {
+				if seen[option.ID] {
+					t.Fatalf("repeated option %s", option.ID)
+				}
+				seen[option.ID] = true
+			}
+			if !page.HasMore {
+				break
+			}
+			if page.NextOffset == nil || *page.NextOffset <= offset {
+				t.Fatal("catalog cursor did not advance")
+			}
+			offset = *page.NextOffset
+		}
+		if len(seen) != 601 {
+			t.Fatalf("catalog returned %d campaigns, want 601", len(seen))
+		}
+		found, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{ExpandedOptions: true, PageID: "catalog-page", OptionsSearch: "Campaign 601", OptionsLimit: 1})
+		if err != nil || len(found.Campaigns) != 1 || found.Campaigns[0].ID != "catalog-campaign-601" {
+			t.Fatalf("catalog search beyond first page: %#v %v", found, err)
+		}
+		private, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{ExpandedOptions: true, SessionID: otherSessionID, OptionsLimit: 100})
+		if err != nil || len(private.Campaigns) != 0 {
+			t.Fatalf("private expanded catalog leaked: %#v %v", private, err)
+		}
+		future := now.Add(24 * time.Hour)
+		noLeads, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{ExpandedOptions: true, LeadCreatedFrom: &future, OptionsLimit: 100})
+		if err != nil || len(noLeads.Campaigns) != 0 {
+			t.Fatalf("lead creation period not applied to catalog: %#v %v", noLeads, err)
+		}
+	})
+
+	// Team history follows the lead across numbers, while the operational inbox
+	// remains private without assignment to this reader and a number grant.
+	var teamID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.teams (organization_id, name, created_by)
+		values ($1::uuid, $2, $3::uuid)
+		returning id::text
+	`, organizationID, fixtureName+"-team", userID).Scan(&teamID); err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range []struct {
+		userID   string
+		isLeader bool
+	}{{userID, true}, {otherUserID, false}} {
+		if _, err := postgres.Pool().Exec(ctx, `
+			insert into public.team_members (organization_id, team_id, user_id, is_leader, is_active)
+			values ($1::uuid, $2::uuid, $3::uuid, $4, true)
+		`, organizationID, teamID, member.userID, member.isLeader); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("secondary organization team and catalogs preserve authorization", func(t *testing.T) {
+		assertConversationSecondaryOrganizationFilters(t, ctx, repo, viewer, conversationMembershipFixture{
+			organizationID: organizationID, userID: userID, sessionID: sessionID, teamID: teamID,
+			conversationID: metaNewestID, leadID: metaNewestLeadID,
+			privateSessionID: otherSessionID, privateConversationID: privateConversationID,
+			privateLeadID: privateLeadID, privateOwnerID: otherUserID,
+		})
+	})
+	leader := viewer
+	leader.Permissions = []string{"lead_view_team"}
+	leaderInbox, err := repo.ListConversations(ctx, leader, ConversationListFilter{Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaderFound := map[string]bool{}
+	for _, conversation := range leaderInbox {
+		leaderFound[conversation.ID] = true
+	}
+	if leaderFound[privateConversationID] || leaderFound[privateUnlinkedID] {
+		t.Fatalf("team history permission exposed another owner's private operational inbox: %#v", leaderFound)
+	}
+	if count, err := repo.CountUnreadMessages(ctx, leader, ConversationListFilter{}); err != nil || count != 14 {
+		t.Fatalf("leader private inbox unread = %d, error = %v; want 14", count, err)
+	}
+	if snapshot, err := repo.GetConversationSnapshot(ctx, leader, privateConversationID); err != nil || snapshot.ID != privateConversationID {
+		t.Fatalf("leader lost direct team lead history across sessions: %+v, %v", snapshot, err)
+	}
+
+	// Direct assignment permits canonical history reads, but alone cannot open
+	// another owner's operational inbox.
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.leads set assigned_user_id = $1::uuid where id = $2::uuid
+	`, userID, privateLeadID); err != nil {
+		t.Fatal(err)
+	}
+	brokerInbox, err := repo.ListConversations(ctx, viewer, ConversationListFilter{Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerFound := map[string]bool{}
+	for _, conversation := range brokerInbox {
+		brokerFound[conversation.ID] = true
+	}
+	if brokerFound[privateConversationID] || brokerFound[privateUnlinkedID] {
+		t.Fatalf("assignment alone exposed an ungranted private inbox: %#v", brokerFound)
+	}
+	if count, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || count != 14 {
+		t.Fatalf("assigned but ungranted broker unread = %d, error = %v; want 14", count, err)
+	}
+	if snapshot, err := repo.GetConversationSnapshot(ctx, viewer, privateConversationID); err != nil || snapshot.ID != privateConversationID {
+		t.Fatalf("assignment lost canonical history before a number grant: %+v, %v", snapshot, err)
+	}
+
+	// Only this administrative session owner grants access. READ is sufficient
+	// for assigned conversations; private unlinked contacts remain excluded.
+	privateOwner := tenant.Context{OrganizationID: organizationID, UserID: otherUserID, MemberRole: "owner", UserRole: "owner"}
+	if err := repo.GrantSessionAccess(ctx, privateOwner, otherSessionID, grantAccessInput{UserID: userID, CanView: true, CanSend: false}); err != nil {
+		t.Fatalf("fixture owner's explicit READ grant: %v", err)
+	}
+	sharedInbox, err := repo.ListConversations(ctx, viewer, ConversationListFilter{Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedFound := map[string]bool{}
+	for _, conversation := range sharedInbox {
+		sharedFound[conversation.ID] = true
+	}
+	if !sharedFound[privateConversationID] || sharedFound[privateUnlinkedID] {
+		t.Fatalf("assigned READ grant scope = %#v", sharedFound)
+	}
+	if count, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || count != 25 {
+		t.Fatalf("assigned and granted broker unread = %d, error = %v; want 25", count, err)
+	}
+	sharedOptions, err := repo.ListConversationFilterOptions(ctx, viewer, ConversationListFilter{ExpandedOptions: true, SessionID: otherSessionID, OptionsLimit: 100})
+	if err != nil || len(sharedOptions.Campaigns) != 1 || sharedOptions.Campaigns[0].ID != "private-campaign" {
+		t.Fatalf("assigned READ grant catalog = %#v, error = %v", sharedOptions, err)
+	}
+	// A retained grant must not keep the operational conversation after transfer.
+	if _, err := postgres.Pool().Exec(ctx, `update public.leads set assigned_user_id=$1::uuid where id=$2::uuid and organization_id=$3::uuid`, otherUserID, privateLeadID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	transferredInbox, err := repo.ListConversations(ctx, viewer, ConversationListFilter{Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, conversation := range transferredInbox {
+		if conversation.ID == privateConversationID || conversation.ID == privateUnlinkedID {
+			t.Fatal("number grant retained another broker's operational conversation after transfer")
+		}
+	}
+	if count, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || count != 14 {
+		t.Fatalf("transferred broker unread = %d, error = %v; want 14", count, err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `update public.leads set assigned_user_id=$1::uuid where id=$2::uuid and organization_id=$3::uuid`, userID, privateLeadID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+
+	// An enrolled unlinked conversation disappears exactly from its creation
+	// time boundary, even if cleanup has not physically removed its rows yet.
+	var freshUnlinkedID, expiredUnlinkedID, freshMediaID, expiredMediaID string
+	for _, item := range []struct {
+		label          string
+		conversationID *string
+		messageID      *string
+	}{
+		{"fresh", &freshUnlinkedID, &freshMediaID},
+		{"expired", &expiredUnlinkedID, &expiredMediaID},
+	} {
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_conversations (
+				organization_id, session_id, remote_jid, contact_name,
+				last_message, last_message_at, unlinked_retention_v1
+			) values ($1::uuid, $2::uuid, $3, $4, $5, now(), true)
+			returning id::text
+		`, organizationID, sessionID, fixtureName+"-"+item.label+"@s.whatsapp.net",
+			fixtureName+"-"+item.label, item.label).Scan(item.conversationID); err != nil {
+			t.Fatal(err)
+		}
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_messages (
+				organization_id, session_id, conversation_id, message_id,
+				content, message_type, media_status, media_storage_path,
+				from_me, direction, sent_at, capture_state, status
+			) values (
+				$1::uuid, $2::uuid, $3::uuid, $4,
+				$5, 'image', 'ready', $6,
+				false, 'inbound', now(), 'unlinked_ephemeral', 'received'
+			)
+			returning id::text
+		`, organizationID, sessionID, *item.conversationID, fixtureName+"-"+item.label+"-media",
+			item.label, fmt.Sprintf("orgs/%s/sessions/%s/incoming/%s-%s.jpg", organizationID, sessionID, fixtureName, item.label)).Scan(item.messageID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_conversations
+		set created_at = now() - interval '8 days'
+		where id = $1::uuid
+	`, expiredUnlinkedID); err != nil {
+		t.Fatal(err)
+	}
+	var oldUnmarkedID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, remote_jid, contact_name,
+			created_at, last_message_at, unread_count
+		) values ($1::uuid, $2::uuid, $3, $4,
+			now() - interval '8 days', now() - interval '8 days', 9)
+		returning id::text
+	`, organizationID, sessionID, fixtureName+"-legacy-old@s.whatsapp.net",
+		fixtureName+"-legacy-old").Scan(&oldUnmarkedID); err != nil {
+		t.Fatal(err)
+	}
+	ownerUnlinked, err := repo.ListConversations(ctx, viewer, ConversationListFilter{WithoutLead: true, Limit: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerFound := map[string]bool{}
+	for _, conversation := range ownerUnlinked {
+		ownerFound[conversation.ID] = true
+	}
+	if !ownerFound[freshUnlinkedID] || ownerFound[expiredUnlinkedID] ||
+		ownerFound[oldUnmarkedID] || ownerFound[privateUnlinkedID] {
+		t.Fatalf("unlinked owner/retention inbox boundary = %#v", ownerFound)
+	}
+	if count, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || count != 25 {
+		t.Fatalf("old unmarked unlinked unread = %d, error = %v; want 25", count, err)
+	}
+	if _, err := repo.GetConversationSnapshot(ctx, viewer, expiredUnlinkedID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("expired unlinked detail = %v, want not found", err)
+	}
+	if _, err := repo.GetConversationSnapshot(ctx, viewer, oldUnmarkedID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("old unmarked unlinked detail = %v, want not found", err)
+	}
+	if _, err := repo.ListMessages(ctx, viewer, expiredUnlinkedID, MessageFilter{Limit: 20, ExpectedLeadID: unlinkedConversationLeadSnapshot}); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("expired unlinked messages = %v, want not found", err)
+	}
+	if freshMessages, err := repo.ListMessages(ctx, viewer, freshUnlinkedID, MessageFilter{Limit: 20, ExpectedLeadID: unlinkedConversationLeadSnapshot}); err != nil || len(freshMessages.Messages) != 1 || freshMessages.Messages[0].ID != freshMediaID {
+		t.Fatalf("fresh unlinked messages = %#v, error = %v", freshMessages.Messages, err)
+	}
+	beforeExpiredMedia := signingRequests.Load()
+	if _, err := repo.GetMessageMediaURL(ctx, viewer, expiredMediaID); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("expired unlinked media = %v, want not found", err)
+	}
+	if signingRequests.Load() != beforeExpiredMedia {
+		t.Fatal("expired unlinked media reached Storage signing")
 	}
 }

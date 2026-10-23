@@ -53,11 +53,32 @@ function publishableSaleForm(
   });
 }
 
+test("proprietário catalogado não exige contato em campos desabilitados", () => {
+  const issues = getPropertyValidationIssues(validSaleForm({ owner_id: "owner-1", owner_name: "", owner_cellphone: "" }));
+  assert.equal(issues.some((issue: ValidationIssue) => issue.fieldId?.startsWith("property-owner-")), false);
+  assert.equal(getPropertyValidationIssues(validSaleForm({ owner_id: "", owner_name: "", owner_cellphone: "" })).some((issue: ValidationIssue) => issue.fieldId === "property-owner-name"), true);
+});
+
+test("inteiros inválidos permanecem disponíveis para rejeição pelo schema", () => {
+  const options = { isEditing: true, canAssignProperty: true, canManagePropertyCatalogs: true };
+  assert.equal(buildPropertyMutationInput(validSaleForm({ suites: "3.5" }), options).suites, 3.5);
+  assert.equal(Number.isNaN(buildPropertyMutationInput(validSaleForm({ suites: "abc" }), options).suites), true);
+  assert.equal(buildPropertyMutationInput(validSaleForm({ suites: "" }), options).suites, null);
+});
+
 test("normaliza moeda brasileira sem alterar a precisão aceita pelo formulário", () => {
   assert.equal(normalizeLocaleNumberString("R$ 1.234,56", 2), "1234.56");
   assert.equal(normalizeLocaleNumberString("1.234", 2), "1234");
   assert.equal(normalizeLocaleNumberString("12,345", 2), "12.34");
   assert.equal(formatCurrencyDisplay("1234.5"), "R$ 1.234,50");
+});
+
+test("status privado e desconhecido não viram ativo durante hidratação", () => {
+  assert.equal(normalizePropertyStatus("Privado"), "rascunho");
+  assert.equal(normalizePropertyStatus("private"), "rascunho");
+  assert.equal(normalizePropertyStatus("Disponível"), "ativo");
+  assert.equal(normalizePropertyStatus("available"), "ativo");
+  assert.equal(normalizePropertyStatus("status legado desconhecido"), "status legado desconhecido");
 });
 
 test("opções personalizadas continuam sem duplicatas por caixa ou acento", () => {

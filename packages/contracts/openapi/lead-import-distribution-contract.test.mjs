@@ -29,6 +29,11 @@ test("OpenAPI exposes the exact create distribution outcome", () => {
   assert.deepEqual(schema.properties.distributionOutcome.enum, [
     "assigned",
     "already_assigned",
+    "pooled",
+    "queue_closed",
+    "queue_waiting",
+    "queue_limit_reached",
+    "queue_protected",
     "no_matching_queue",
     "no_available_members",
     "skipped",

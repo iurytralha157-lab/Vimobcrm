@@ -28,15 +28,25 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	t.Cleanup(postgres.Close)
 
 	suffix := fmt.Sprintf("wa-outbox-conversation-fence-%d", time.Now().UnixNano())
-	var organizationID, userID, sessionID, pendingConversationID, foreignConversationID string
+	var organizationID, userID, sessionID, pendingConversationID, foreignConversationID, pendingLeadID, foreignLeadID string
 	if err := postgres.Pool().QueryRow(ctx, `select gen_random_uuid()::text, gen_random_uuid()::text`).Scan(&organizationID, &userID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		for _, table := range []string{"public.whatsapp_outbox", "public.whatsapp_messages", "public.whatsapp_conversations", "public.whatsapp_sessions", "public.leads"} {
+			if _, err := postgres.Pool().Exec(cleanupCtx, "delete from "+table+" where organization_id=$1::uuid", organizationID); err != nil {
+				t.Errorf("cleanup synthetic projection fixture %s: %v", table, err)
+			}
+		}
+		if _, err := postgres.Pool().Exec(cleanupCtx, `
+			delete from public.organization_members where organization_id=$1::uuid and user_id=$2::uuid;
+			delete from public.users where id=$2::uuid;
+			delete from auth.users where id=$2::uuid;
+			delete from public.organizations where id=$1::uuid`, organizationID, userID); err != nil {
+			t.Error(err)
+		}
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -59,12 +69,14 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict(id) do update set organization_id=excluded.organization_id,name=excluded.name,email=excluded.email,role=excluded.role,is_active=excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict(user_id,organization_id) do update set role=excluded.role,is_active=excluded.is_active,deleted_at=null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -93,37 +105,57 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	`, organizationID, sessionID, userID, suffix+"-foreign").Scan(&foreignConversationID); err != nil {
 		t.Fatal(err)
 	}
+	// The active outbox now requires a canonical immutable card/binding. Build
+	// two valid conversations before testing a deliberately mismatched projection.
+	for _, capture := range []struct {
+		conversationID, phone, name string
+		leadID                      *string
+	}{
+		{pendingConversationID, "5511999990101", suffix + "-pending-lead", &pendingLeadID},
+		{foreignConversationID, "5511999990102", suffix + "-foreign-lead", &foreignLeadID},
+	} {
+		if err := postgres.Pool().QueryRow(ctx, `insert into public.leads
+			(organization_id,assigned_user_id,name,phone,source)
+			values($1::uuid,$2::uuid,$3,$4,'whatsapp') returning id::text`,
+			organizationID, userID, capture.name, capture.phone).Scan(capture.leadID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := postgres.Pool().Exec(ctx, `select public.activate_whatsapp_conversation_lead_binding($1::uuid,$2::uuid,$3::uuid,null)`,
+			organizationID, capture.conversationID, *capture.leadID); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	clientMessageID := suffix + "-client"
-	providerMessageID := suffix + "-provider"
+	providerMessageID := deterministicProviderMessageID(clientMessageID)
 	leaseToken := suffix + "-lease"
 	var pendingMessageID, collisionMessageID, outboxID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, sender_user_id,
 			message_id, client_message_id, from_me, direction, content,
-			message_type, remote_jid, status, metadata
+			message_type, remote_jid, status, metadata, lead_id
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, true, 'outbound', 'pending projection',
-			'text', '5511999990101@s.whatsapp.net', 'queued', '{"delivery":"outbox"}'::jsonb
+			'text', '5511999990101@s.whatsapp.net', 'queued', '{"delivery":"outbox"}'::jsonb, $6::uuid
 		)
 		returning id::text
-	`, organizationID, pendingConversationID, sessionID, userID, clientMessageID).Scan(&pendingMessageID); err != nil {
+	`, organizationID, pendingConversationID, sessionID, userID, clientMessageID, pendingLeadID).Scan(&pendingMessageID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, sender_user_id,
 			message_id, provider_message_id, from_me, direction, content,
-			message_type, remote_jid, status, sent_at, metadata
+			message_type, remote_jid, status, sent_at, metadata, lead_id
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, true, 'outbound', 'foreign collision',
-			'text', '5511999990102@s.whatsapp.net', 'sent', now(), '{"delivery":"webhook"}'::jsonb
+			'text', '5511999990102@s.whatsapp.net', 'sent', now(), '{"delivery":"webhook"}'::jsonb, $6::uuid
 		)
 		returning id::text
-	`, organizationID, foreignConversationID, sessionID, userID, providerMessageID).Scan(&collisionMessageID); err != nil {
+	`, organizationID, foreignConversationID, sessionID, userID, providerMessageID, foreignLeadID).Scan(&collisionMessageID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -134,7 +166,9 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, '5511999990101@s.whatsapp.net', 'text',
-			'{"action":"send.text"}'::jsonb, 'processing', now(), $6
+			jsonb_build_object('action','send.text','session_id',$2::text,
+			 'body',jsonb_build_object('number','5511999990101','text','pending projection')),
+			'processing', now(), $6
 		)
 		returning id::text
 	`, organizationID, sessionID, pendingConversationID, pendingMessageID, clientMessageID, leaseToken).Scan(&outboxID); err != nil {
@@ -171,7 +205,7 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	`, outboxID).Scan(&outboxStatus, &outboxLockedBy, &outboxProviderID); err != nil {
 		t.Fatal(err)
 	}
-	if outboxStatus != "processing" || outboxLockedBy != leaseToken || outboxProviderID != "" {
+	if outboxStatus != "processing" || outboxLockedBy != leaseToken || outboxProviderID != providerMessageID {
 		t.Fatalf("outbox mutated after collision: status=%q locked_by=%q provider_id=%q", outboxStatus, outboxLockedBy, outboxProviderID)
 	}
 
@@ -200,7 +234,7 @@ func TestCompleteWhatsAppOutboxRejectsProjectionConversationMismatch(t *testing.
 	}
 }
 
-func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testing.T) {
+func TestClaimWhatsAppOutboxPreservesConversationStartsAndIndependentLanes(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("WHATSAPP_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
@@ -212,7 +246,11 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if host := strings.ToLower(target.Hostname()); host != "localhost" && host != "127.0.0.1" && host != "::1" {
 		t.Fatalf("outbox fixture requires loopback, got %q", host)
 	}
-	if strings.TrimPrefix(target.Path, "/") != "vimob_whatsapp_test" {
+	targetDatabase := strings.TrimPrefix(target.Path, "/")
+	if targetDatabase == "vimob_whatsapp_clone" {
+		_ = localOutboundTestDatabaseURL(t)
+	}
+	if targetDatabase != "vimob_whatsapp_test" && targetDatabase != "vimob_whatsapp_clone" {
 		t.Fatal("outbox fixture requires the disposable vimob_whatsapp_test database")
 	}
 
@@ -227,7 +265,7 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if err := postgres.Pool().QueryRow(ctx, `select current_database()`).Scan(&databaseName); err != nil {
 		t.Fatal(err)
 	}
-	if databaseName != "vimob_whatsapp_test" {
+	if databaseName != targetDatabase {
 		t.Fatalf("outbox fixture connected to %q, want disposable vimob_whatsapp_test", databaseName)
 	}
 
@@ -248,8 +286,8 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 		}{
 			{"outbox", `delete from public.whatsapp_outbox where organization_id = $1::uuid`, organizationID},
 			{"messages", `delete from public.whatsapp_messages where organization_id = $1::uuid`, organizationID},
-			{"bindings", `delete from public.whatsapp_conversation_lead_bindings where organization_id = $1::uuid`, organizationID},
 			{"conversations", `delete from public.whatsapp_conversations where organization_id = $1::uuid`, organizationID},
+			{"bindings", `delete from public.whatsapp_conversation_lead_bindings where organization_id = $1::uuid`, organizationID},
 			{"entry events", `delete from public.lead_entry_events where organization_id = $1::uuid`, organizationID},
 			{"leads", `delete from public.leads where organization_id = $1::uuid`, organizationID},
 			{"sessions", `delete from public.whatsapp_sessions where organization_id = $1::uuid`, organizationID},
@@ -284,12 +322,14 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict(id) do update set organization_id=excluded.organization_id,name=excluded.name,email=excluded.email,role=excluded.role,is_active=excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict(user_id,organization_id) do update set role=excluded.role,is_active=excluded.is_active,deleted_at=null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -413,8 +453,8 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if err != nil {
 		t.Fatalf("fast-lane claim: %v", err)
 	}
-	if len(fast) != 2 {
-		t.Fatalf("fast-lane claim = %#v, want both due text rows", fast)
+	if len(fast) != 1 {
+		t.Fatalf("fast-lane claim = %#v, want independent conversation B only", fast)
 	}
 	claimedFast := map[string]bool{}
 	claimedFastItems := map[string]pendingWhatsAppOutbox{}
@@ -425,8 +465,8 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 			t.Fatalf("claimed outbox %s has no lease token", item.ID)
 		}
 	}
-	if !claimedFast[textA] || !claimedFast[textB] {
-		t.Fatalf("fast-lane IDs = %#v, want conversation A text %s to pass deferred media %s and conversation B text %s", claimedFast, textA, mediaA, textB)
+	if claimedFast[textA] || !claimedFast[textB] {
+		t.Fatalf("fast-lane IDs = %#v, want A held behind its deferred head and B progressing", claimedFast)
 	}
 	if claimedFast[textASecond] {
 		t.Fatalf("one claim batch took two rows from conversation A: %s and %s", textASecond, textA)
@@ -435,8 +475,8 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, textA).Scan(&overtakingTextStatus); err != nil {
 		t.Fatal(err)
 	}
-	if overtakingTextStatus != "processing" {
-		t.Fatalf("conversation A text status = %q, want processing without waiting for deferred media", overtakingTextStatus)
+	if overtakingTextStatus != "pending" {
+		t.Fatalf("conversation A text status = %q, want pending behind deferred media", overtakingTextStatus)
 	}
 	var secondTextStatus string
 	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_outbox where id = $1::uuid`, textASecond).Scan(&secondTextStatus); err != nil {
@@ -445,10 +485,10 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if secondTextStatus != "pending" {
 		t.Fatalf("second conversation A text status = %q, want pending until another worker claims it", secondTextStatus)
 	}
-	// The first text is still processing. Another worker must be able to claim
-	// the next ready text from the same conversation without waiting for it.
+	// An independent processing row in B and a future retry head in A cannot
+	// authorize overtaking either head in a second worker.
 	concurrentText, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneFast)
-	if err != nil || len(concurrentText) != 1 || concurrentText[0].ID != textASecond {
+	if err != nil || len(concurrentText) != 0 {
 		t.Fatalf("second text behind active predecessor = %+v, error = %v", concurrentText, err)
 	}
 
@@ -460,10 +500,11 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 		t.Fatalf("media-lane claim before retry deadline = %#v, want no claim", media)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_outbox set status='failed' where id=$2::uuid;
 		update public.whatsapp_outbox
 		set next_attempt_at = now() - interval '1 second'
 		where id = $1::uuid
-	`, mediaA); err != nil {
+	`, mediaA, deferredTextA); err != nil {
 		t.Fatal(err)
 	}
 	media, err = repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneMedia)
@@ -476,8 +517,20 @@ func TestClaimWhatsAppOutboxLetsReadySendsPassDeferredAndProcessingRows(t *testi
 	if media[0].SessionID != fast[0].SessionID {
 		t.Fatal("fixture must prove independent conversations can progress on the same WhatsApp session")
 	}
-
-	acceptedItem := claimedFastItems[textA]
+	whileMedia, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneFast)
+	if err != nil || len(whileMedia) != 0 {
+		t.Fatalf("text overtook processing media: %+v %v", whileMedia, err)
+	}
+	// This fixture proves claim/recovery SQL, not a provider completion. The
+	// separate fake-HTTP test proves actual start order across both lanes.
+	if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_outbox set status='sent',locked_by=null,locked_at=null where id=$1::uuid`, mediaA); err != nil {
+		t.Fatal(err)
+	}
+	readyA, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 10, "", whatsappOutboxLaneFast)
+	if err != nil || len(readyA) != 1 || readyA[0].ID != textA {
+		t.Fatalf("terminal head did not release first A text: %+v %v", readyA, err)
+	}
+	acceptedItem := readyA[0]
 	startedItem := claimedFastItems[textB]
 	if acceptedItem.LeaseToken == startedItem.LeaseToken {
 		t.Fatal("different claims unexpectedly share one lease token")

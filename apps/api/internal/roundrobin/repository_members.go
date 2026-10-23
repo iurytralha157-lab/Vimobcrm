@@ -25,6 +25,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return nil, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return nil, err
 	}
@@ -36,11 +39,15 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return nil, err
 	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.ExpectedRevision); err != nil {
+		return nil, err
+	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return nil, err
 	}
 
 	items := []memberInput{{
+		IsActive: &input.IsActive,
 		Type:     input.Type,
 		EntityID: input.EntityID,
 		UserID:   input.UserID,
@@ -48,6 +55,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 		Weight:   input.Weight,
 	}}
 	if err := ensureRoundRobinInputInScope(tenantContext, nil, items, true, false); err != nil {
+		return nil, err
+	}
+	if err := ensureQueueCollectionCanGrow(ctx, tx, tenantContext.OrganizationID, roundRobinID, true); err != nil {
 		return nil, err
 	}
 	ids, err := repo.insertMembers(
@@ -61,23 +71,25 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return nil, err
 	}
-	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+	if err := repo.validateQueueParticipants(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return nil, err
 	}
-
-	if err := tx.Commit(ctx); err != nil {
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return nil, err
 	}
 
 	members := make([]Member, 0, len(ids))
 	for _, id := range ids {
-		member, err := repo.getMember(ctx, tenantContext.OrganizationID, id)
+		member, err := getMemberWithQueryer(ctx, tx, tenantContext.OrganizationID, id)
 		if err != nil {
 			return nil, err
 		}
 		members = append(members, member)
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return members, nil
 }
 
@@ -96,6 +108,9 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 		return Member{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Member{}, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Member{}, err
 	}
@@ -103,10 +118,16 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if err != nil {
 		return Member{}, err
 	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.ExpectedRevision); err != nil {
+		return Member{}, err
+	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return Member{}, err
 	}
 
+	if err := validateMemberPatchCollectionSize(ctx, tx, tenantContext.OrganizationID, roundRobinID, memberID, input); err != nil {
+		return Member{}, err
+	}
 	setClauses := []string{}
 	args := []any{tenantContext.OrganizationID, memberID}
 	if input.Weight != nil {
@@ -134,17 +155,23 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if commandTag.RowsAffected() == 0 {
 		return Member{}, ErrMemberNotFound
 	}
+	if err := repo.validateQueueParticipants(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return Member{}, err
+	}
 	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return Member{}, err
+	}
+	item, err := getMemberWithQueryer(ctx, tx, tenantContext.OrganizationID, memberID)
+	if err != nil {
 		return Member{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Member{}, err
 	}
-
-	return repo.getMember(ctx, tenantContext.OrganizationID, memberID)
+	return item, nil
 }
 
-func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Context, memberID string) error {
+func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Context, memberID string, revisions ...*int64) error {
 	if !canManageRoundRobinScope(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
@@ -159,11 +186,21 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
 	roundRobinID, err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID)
 	if err != nil {
+		return err
+	}
+	var expected *int64
+	if len(revisions) > 0 {
+		expected = revisions[0]
+	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, roundRobinID, expected); err != nil {
 		return err
 	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
@@ -181,6 +218,9 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	if commandTag.RowsAffected() == 0 {
 		return ErrMemberNotFound
 	}
+	if err := repo.validateQueueParticipants(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
+	}
 	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
 	}
@@ -190,6 +230,69 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 func (repo Repository) listMembers(ctx context.Context, organizationID string, roundRobinID *string) ([]Member, error) {
 	return listMembersWithQueryer(ctx, repo.db.Pool(), organizationID, roundRobinID)
 }
+
+// Match the picker's structural eligibility. Availability schedules are not
+// included because isActive describes a configured participant, not whether
+// the recipient happens to be on duty at the instant of this read.
+const memberEffectiveActiveSQL = `
+	coalesce(rrm.is_active, true) and (
+	  (
+	    rrm.user_id is not null
+	    and exists (
+	      select 1
+	      from public.users account
+	      join public.organization_members om
+	        on om.user_id = account.id
+	       and om.organization_id = rrm.organization_id
+	       and om.is_active = true
+	       and om.deleted_at is null
+	       and om.membership_generation = rrm.membership_generation
+	      where account.id = rrm.user_id
+	        and account.is_active is true
+	    )
+	    and (
+	      rrm.team_id is null
+	      or exists (
+	        select 1
+	        from public.teams team
+	        join public.team_members tm
+	          on tm.team_id = team.id
+	         and tm.organization_id = rrm.organization_id
+	         and tm.user_id = rrm.user_id
+	         and tm.membership_generation = rrm.membership_generation
+	         and coalesce(tm.is_active, true) = true
+	        where team.id = rrm.team_id
+	          and team.organization_id = rrm.organization_id
+	          and coalesce(team.is_active, true) = true
+	      )
+	    )
+	  )
+	  or (
+	    rrm.user_id is null
+	    and rrm.team_id is not null
+	    and exists (
+	      select 1
+	      from public.teams team
+	      join public.team_members tm
+	        on tm.team_id = team.id
+	       and tm.organization_id = rrm.organization_id
+	       and coalesce(tm.is_active, true) = true
+	      join public.organization_members om
+	        on om.organization_id = rrm.organization_id
+	       and om.user_id = tm.user_id
+	       and om.membership_generation = tm.membership_generation
+	       and om.is_active = true
+	       and om.deleted_at is null
+	      join public.users account
+	        on account.id = tm.user_id
+	       and account.is_active is true
+	      where team.id = rrm.team_id
+	        and team.organization_id = rrm.organization_id
+	        and coalesce(team.is_active, true) = true
+	    )
+	  )
+	)
+`
 
 func listMembersWithQueryer(ctx context.Context, q queryer, organizationID string, roundRobinID *string) ([]Member, error) {
 	args := []any{organizationID}
@@ -207,12 +310,13 @@ func listMembersWithQueryer(ctx context.Context, q queryer, organizationID strin
 			rrm.team_id::text,
 			coalesce(rrm.position, 0),
 			rrm.weight,
-			coalesce(rrm.is_active, true),
+			`+memberEffectiveActiveSQL+`,
 			u.id::text,
 			u.name,
 			u.email,
 			u.avatar_url,
-			coalesce(logs.total, 0)
+			coalesce(logs.total, 0),
+			rr.revision
 		from public.round_robin_members rrm
 		join public.round_robins rr
 		  on rr.organization_id = rrm.organization_id
@@ -256,7 +360,11 @@ func listMembersWithQueryer(ctx context.Context, q queryer, organizationID strin
 }
 
 func (repo Repository) getMember(ctx context.Context, organizationID string, memberID string) (Member, error) {
-	member, err := scanMember(repo.db.Pool().QueryRow(ctx, `
+	return getMemberWithQueryer(ctx, repo.db.Pool(), organizationID, memberID)
+}
+
+func getMemberWithQueryer(ctx context.Context, q queryer, organizationID string, memberID string) (Member, error) {
+	member, err := scanMember(q.QueryRow(ctx, `
 		select
 			rrm.id::text,
 			rrm.round_robin_id::text,
@@ -264,12 +372,13 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 			rrm.team_id::text,
 			coalesce(rrm.position, 0),
 			rrm.weight,
-			coalesce(rrm.is_active, true),
+			`+memberEffectiveActiveSQL+`,
 			u.id::text,
 			u.name,
 			u.email,
 			u.avatar_url,
-			coalesce(logs.total, 0)
+			coalesce(logs.total, 0),
+			rr.revision
 		from public.round_robin_members rrm
 		join public.round_robins rr
 		  on rr.organization_id = rrm.organization_id

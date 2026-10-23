@@ -113,49 +113,8 @@ const teamHistoryQuery = `
 			)
 		  )
 	),
-	ranked_history as (
-		select
-			team_history.*,
-			row_number() over (
-				partition by
-					case
-						when team_history.entity_type = 'team_member_availability'
-							then team_history.entity_type
-						else team_history.id::text
-					end,
-					case
-						when team_history.entity_type = 'team_member_availability'
-							then coalesce(
-								team_history.new_data ->> 'team_member_id',
-								team_history.old_data ->> 'team_member_id'
-							)
-						else null
-					end,
-					case
-						when team_history.entity_type = 'team_member_availability'
-							then team_history.user_id
-						else null
-					end,
-					case
-						when team_history.entity_type = 'team_member_availability'
-							then coalesce(
-								team_history.new_data ->> 'updated_at',
-								team_history.new_data ->> 'created_at',
-								team_history.old_data ->> 'updated_at',
-								team_history.old_data ->> 'created_at',
-								team_history.created_at::text
-							)
-						else null
-					end
-				order by team_history.id
-			) as availability_event_rank
-		from team_history
-	),
 	visible_history as (
-		select *
-		from ranked_history
-		where entity_type <> 'team_member_availability'
-		   or availability_event_rank = 1
+		select * from team_history
 	),
 	ordered_history as (
 		select
@@ -206,6 +165,7 @@ const teamHistoryQuery = `
 		history.created_at desc,
 		history.id desc
 	limit $3
+	offset $4
 `
 
 func parseTeamHistoryLimit(value string) (int, error) {
@@ -221,14 +181,26 @@ func parseTeamHistoryLimit(value string) (int, error) {
 	return limit, nil
 }
 
+func parseTeamHistoryOffset(value string) (int, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	offset, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || offset < 0 || offset > 1_000_000 {
+		return 0, ErrInvalidInput
+	}
+	return offset, nil
+}
+
 func (repo Repository) ListHistory(
 	ctx context.Context,
 	tenantContext tenant.Context,
 	teamID string,
 	limit int,
+	offset int,
 ) ([]TeamHistoryEvent, error) {
 	teamID, ok := normalizeUUID(teamID)
-	if !ok || limit < 1 || limit > maxTeamHistoryLimit {
+	if !ok || limit < 1 || limit > maxTeamHistoryLimit || offset < 0 || offset > 1_000_000 {
 		return nil, ErrInvalidInput
 	}
 	if !canViewTeam(tenantContext, teamID) {
@@ -256,6 +228,7 @@ func (repo Repository) ListHistory(
 		tenantContext.OrganizationID,
 		teamID,
 		limit,
+		offset,
 	)
 	if err != nil {
 		return nil, err

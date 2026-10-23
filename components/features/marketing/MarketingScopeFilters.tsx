@@ -11,13 +11,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableFilterSelect } from "@/components/shared/SearchableFilterSelect";
+import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 import { cn } from "@/lib/utils";
 
 export interface MarketingScopeFilterOption {
@@ -34,6 +29,8 @@ export interface MarketingScopeFiltersProps {
   pages: MarketingScopeFilterOption[];
   campaignId: string | null;
   onCampaignChange: (value: string | null) => void;
+  campaignIds?: string[];
+  onCampaignsChange?: (values: string[]) => void;
   campaigns: MarketingScopeFilterOption[];
   adSetId: string | null;
   onAdSetChange: (value: string | null) => void;
@@ -46,6 +43,7 @@ export interface MarketingScopeFiltersProps {
   pageOnly?: boolean;
   variant?: "default" | "macro" | "panel";
   className?: string;
+  layerScope?: string;
 }
 
 interface ScopeSelectProps {
@@ -58,6 +56,7 @@ interface ScopeSelectProps {
   disabled?: boolean;
   variant?: "default" | "macro" | "panel";
   className?: string;
+  layerScope?: string;
 }
 
 function ScopeSelect({
@@ -70,70 +69,29 @@ function ScopeSelect({
   disabled,
   variant = "default",
   className,
+  layerScope,
 }: ScopeSelectProps) {
   const isMacro = variant === "macro";
   const isPanel = variant === "panel";
 
   return (
-    <Select
-      value={value ?? "all"}
-      onValueChange={(nextValue) =>
-        onChange(nextValue === "all" ? null : nextValue)
-      }
+    <SearchableFilterSelect
+      ariaLabel={ariaLabel}
+      value={value}
+      onChange={onChange}
+      options={options}
+      allLabel={allLabel}
+      icon={<Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
       disabled={disabled}
-    >
-      <SelectTrigger
-        aria-label={ariaLabel}
-        className={cn(
-          "h-9 min-w-0 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-primary)] shadow-none focus:ring-1 focus:ring-primary/30 data-[placeholder]:text-[var(--app-text-tertiary)]",
-          isMacro &&
-            "h-10 rounded-[10px] !bg-[rgba(255,255,255,0.08)] px-3 !text-[#f8fafc] transition-colors hover:!bg-[rgba(255,255,255,0.13)] focus:ring-white/25 data-[placeholder]:!text-[#cbd5e1] [&>svg]:!text-[#94a3b8]",
-          isPanel && "w-full",
-          className,
-        )}
-      >
-        <span className="!flex min-w-0 flex-1 items-center gap-2">
-          <Icon
-            className={cn(
-              "h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]",
-              isMacro && "!text-[#94a3b8]",
-            )}
-            aria-hidden="true"
-          />
-          <SelectValue placeholder={allLabel} />
-        </span>
-      </SelectTrigger>
-      <SelectContent
-        className={cn(
-          "rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-lg",
-          isMacro && "rounded-[10px] !bg-[#172946] !text-[#f8fafc] shadow-xl",
-        )}
-      >
-        <SelectItem
-          value="all"
-          className={cn(
-            "text-[11px] font-light",
-            isMacro &&
-              "!text-[#f8fafc] focus:!bg-[rgba(255,255,255,0.1)] focus:!text-[#f8fafc]",
-          )}
-        >
-          {allLabel}
-        </SelectItem>
-        {options.map((option) => (
-          <SelectItem
-            key={option.value}
-            value={option.value}
-            className={cn(
-              "text-[11px] font-light",
-              isMacro &&
-                "!text-[#f8fafc] focus:!bg-[rgba(255,255,255,0.1)] focus:!text-[#f8fafc]",
-            )}
-          >
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      className={cn(
+        "h-9 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light",
+        isMacro && "h-10 rounded-[10px] !bg-[rgba(255,255,255,0.08)] !text-[#f8fafc]",
+        isPanel && "w-full",
+        className,
+      )}
+      popupClassName={isMacro ? "!bg-[#172946] !text-[#f8fafc]" : undefined}
+      layerScope={layerScope}
+    />
   );
 }
 
@@ -146,6 +104,8 @@ export function MarketingScopeFilters({
   pages,
   campaignId,
   onCampaignChange,
+  campaignIds = [],
+  onCampaignsChange,
   campaigns,
   adSetId,
   onAdSetChange,
@@ -158,9 +118,10 @@ export function MarketingScopeFilters({
   pageOnly = false,
   variant = "default",
   className,
+  layerScope,
 }: MarketingScopeFiltersProps) {
   const hasActiveScope = Boolean(
-    accountId || pageId || campaignId || adSetId || objective,
+    accountId || pageId || campaignId || campaignIds.length > 0 || adSetId || objective,
   );
   const isMacro = variant === "macro";
   const isPanel = variant === "panel";
@@ -187,6 +148,7 @@ export function MarketingScopeFilters({
           icon={BriefcaseBusiness}
           disabled={isLoading && accounts.length === 0}
           variant={variant}
+          layerScope={layerScope}
           className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
         />
       ) : null}
@@ -199,11 +161,29 @@ export function MarketingScopeFilters({
         icon={Globe}
         disabled={isLoading && pages.length === 0}
         variant={variant}
+        layerScope={layerScope}
         className={cn("w-[210px]", isMacro && "xl:flex-1", isPanel && "w-full")}
       />
       {!pageOnly ? (
         <>
-          <ScopeSelect
+          {onCampaignsChange ? <SearchableTagPicker
+            tags={campaigns.map((option) => ({ id: option.value, name: option.label }))}
+            selectedTagIds={campaignIds}
+            onToggleTag={(id) => onCampaignsChange(campaignIds.includes(id) ? campaignIds.filter((selected) => selected !== id) : [...campaignIds, id])}
+            onClearSelection={() => onCampaignsChange([])}
+            placeholder="Todas as campanhas"
+            triggerIcon={<Megaphone className="h-3.5 w-3.5" aria-hidden="true" />}
+            showColorDot={false}
+            showSelectedBadges={false}
+            allowCreate={false}
+            caseSensitiveIds
+            showUnavailableId
+            itemNameSingular="campanha"
+            itemNamePlural="campanhas"
+            loading={isLoading && campaigns.length === 0}
+            layerScope={layerScope}
+            triggerClassName={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+          /> : <ScopeSelect
             ariaLabel="Filtrar por campanha"
             value={campaignId}
             onChange={onCampaignChange}
@@ -212,8 +192,9 @@ export function MarketingScopeFilters({
             icon={Megaphone}
             disabled={isLoading && campaigns.length === 0}
             variant={variant}
+            layerScope={layerScope}
             className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
-          />
+          />}
           <ScopeSelect
             ariaLabel="Filtrar por conjunto de anúncios"
             value={adSetId}
@@ -221,8 +202,9 @@ export function MarketingScopeFilters({
             options={adSets}
             allLabel="Todos os conjuntos"
             icon={Layers3}
-            disabled={isLoading && adSets.length === 0}
+            disabled={campaignIds.length > 1 || (isLoading && adSets.length === 0)}
             variant={variant}
+            layerScope={layerScope}
             className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
           />
           <ScopeSelect
@@ -234,6 +216,7 @@ export function MarketingScopeFilters({
             icon={Target}
             disabled={isLoading && objectives.length === 0}
             variant={variant}
+            layerScope={layerScope}
             className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
           />
         </>

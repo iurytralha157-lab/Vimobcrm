@@ -5,6 +5,44 @@ export const PASSWORD_RECOVERY_REQUEST_WAIT_MS = 15_000;
 export const EMAIL_CONFIRMATION_RESEND_WAIT_MS = 15_000;
 export const POST_LOGIN_ROUTING_WAIT_MS = 15_000;
 
+type NoMembershipAccountStatus = {
+  profileExists: boolean;
+  globallyActive: boolean;
+  isSuperAdmin: boolean;
+};
+
+export function resolveNoMembershipAccountEntry(status: NoMembershipAccountStatus) {
+  if (!status.profileExists) return 'missing_profile' as const;
+  if (!status.globallyActive) return 'globally_suspended' as const;
+  if (status.isSuperAdmin) return 'load_super_admin_profile' as const;
+  return 'no_organization' as const;
+}
+
+export type MembershipRevalidationState = {
+  active: boolean;
+  hasUser: boolean;
+  authInitialized: boolean;
+  organizationsLoaded: boolean;
+  isInitializingOrganization: boolean;
+  isLoggingOut: boolean;
+  inFlight: boolean;
+  onRecoveryRoute: boolean;
+  fromFocus: boolean;
+  now: number;
+  lastRefreshAt: number;
+  focusIntervalMs: number;
+};
+
+export function shouldRevalidateMembership(state: MembershipRevalidationState): boolean {
+  if (
+    !state.active || !state.hasUser || !state.authInitialized
+    || !state.organizationsLoaded || state.isInitializingOrganization
+    || state.isLoggingOut || state.inFlight || state.onRecoveryRoute
+  ) return false;
+
+  return !state.fromFocus || state.now - state.lastRefreshAt >= state.focusIntervalMs;
+}
+
 export type BestEffortAuthOperationStatus =
   | 'completed'
   | 'failed'

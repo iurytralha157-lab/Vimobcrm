@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(33);
 
 insert into auth.users (
   instance_id,
@@ -194,6 +194,36 @@ values
     true
   );
 
+insert into public.pipelines (id, organization_id, name, position)
+values
+  (
+    '98450000-0000-4000-8000-000000000001',
+    '98410000-0000-4000-8000-000000000001',
+    'Team Gateway Org A Pipeline',
+    1
+  ),
+  (
+    '98450000-0000-4000-8000-000000000002',
+    '98410000-0000-4000-8000-000000000002',
+    'Team Gateway Org B Pipeline',
+    1
+  );
+
+insert into public.team_pipelines (id, organization_id, team_id, pipeline_id)
+values
+  (
+    '98460000-0000-4000-8000-000000000001',
+    '98410000-0000-4000-8000-000000000001',
+    '98420000-0000-4000-8000-000000000001',
+    '98450000-0000-4000-8000-000000000001'
+  ),
+  (
+    '98460000-0000-4000-8000-000000000002',
+    '98410000-0000-4000-8000-000000000002',
+    '98420000-0000-4000-8000-000000000002',
+    '98450000-0000-4000-8000-000000000002'
+  );
+
 insert into public.team_members (
   id,
   team_id,
@@ -275,6 +305,16 @@ select ok(
     'anon',
     'public.member_availability',
     'select,insert,update,delete,truncate,references,trigger'
+  )
+  and not has_table_privilege(
+    'anon',
+    'public.team_pipelines',
+    'select,insert,update,delete,truncate,references,trigger'
+  )
+  and not has_any_column_privilege(
+    'anon',
+    'public.team_pipelines',
+    'select,insert,update,references'
   ),
   'anonymous clients have no direct privileges on the team domain'
 );
@@ -309,13 +349,33 @@ select ok(
 );
 
 select ok(
+  has_table_privilege('authenticated', 'public.team_pipelines', 'select')
+  and not has_table_privilege(
+    'authenticated',
+    'public.team_pipelines',
+    'insert,update,delete,truncate,references,trigger'
+  ),
+  'authenticated keeps only the team-pipeline read needed by pipeline RLS'
+);
+
+select ok(
+  not has_any_column_privilege(
+    'authenticated',
+    'public.team_pipelines',
+    'insert,update,references'
+  ),
+  'authenticated has no column-level team-pipeline mutation privileges'
+);
+
+select ok(
   (
     select bool_and(has_table_privilege('service_role', relation_name, privilege_name))
     from (
       values
         ('public.teams'),
         ('public.team_members'),
-        ('public.member_availability')
+        ('public.member_availability'),
+        ('public.team_pipelines')
     ) as relation(relation_name)
     cross join (
       values
@@ -335,7 +395,8 @@ select ok(
       values
         ('public.teams'),
         ('public.team_members'),
-        ('public.member_availability')
+        ('public.member_availability'),
+        ('public.team_pipelines')
     ) as relation(relation_name)
     cross join (
       values
@@ -355,7 +416,8 @@ select ok(
     where oid in (
       'public.teams'::regclass,
       'public.team_members'::regclass,
-      'public.member_availability'::regclass
+      'public.member_availability'::regclass,
+      'public.team_pipelines'::regclass
     )
   ),
   'RLS remains enabled as a second line of defense on the team domain'
@@ -367,14 +429,41 @@ select set_config('request.jwt.claim.role', 'authenticated', true);
 
 select results_eq(
   $$select count(*)::bigint from public.teams$$,
-  array[1::bigint],
-  'ordinary user can read only their organization team through legacy RLS'
+  array[0::bigint],
+  'ordinary user without TeamView cannot enumerate organization teams'
 );
 
 select results_eq(
   $$select count(*)::bigint from public.team_members$$,
-  array[2::bigint],
-  'ordinary user cannot enumerate team memberships from another organization'
+  array[0::bigint],
+  'ordinary user without TeamView cannot enumerate staff memberships'
+);
+
+select results_eq(
+  $$select count(*)::bigint from public.team_pipelines where id::text like '98460000-%'$$,
+  array[0::bigint],
+  'ordinary user without TeamView cannot enumerate team-pipeline links'
+);
+
+select results_eq(
+  $$select count(*)::bigint from public.pipelines where id::text like '98450000-%'$$,
+  array[1::bigint],
+  'pipeline reads still work when their RLS policy consults team_pipelines'
+);
+
+select throws_ok(
+  $$
+    insert into public.team_pipelines (organization_id, team_id, pipeline_id)
+    values (
+      '98410000-0000-4000-8000-000000000001',
+      '98420000-0000-4000-8000-000000000001',
+      '98450000-0000-4000-8000-000000000001'
+    )
+    on conflict (team_id, pipeline_id) do nothing
+  $$,
+  '42501',
+  null,
+  'ordinary user cannot link a pipeline through the Data API'
 );
 
 select throws_ok(
@@ -431,6 +520,13 @@ select throws_ok(
   'team leader cannot bypass backend availability validation'
 );
 
+select throws_ok(
+  $$delete from public.team_pipelines where id = '98460000-0000-4000-8000-000000000001'$$,
+  '42501',
+  null,
+  'team leader cannot unlink a pipeline through the Data API'
+);
+
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '98400000-0000-4000-8000-000000000003', true);
@@ -456,6 +552,17 @@ select throws_ok(
   'organization admin must create teams through the Go API'
 );
 
+select throws_ok(
+  $$
+    update public.team_pipelines
+    set pipeline_id = pipeline_id
+    where id = '98460000-0000-4000-8000-000000000001'
+  $$,
+  '42501',
+  null,
+  'organization admin must update team-pipeline links through the Go API'
+);
+
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '98400000-0000-4000-8000-000000000004', true);
@@ -468,6 +575,12 @@ select results_eq(
   $$,
   array[1::bigint],
   'cross-organization user sees only the team in their own tenant'
+);
+
+select results_eq(
+  $$select count(*)::bigint from public.team_pipelines where id::text like '98460000-%'$$,
+  array[1::bigint],
+  'cross-organization user sees only their own team-pipeline link'
 );
 
 select results_eq(
@@ -493,6 +606,7 @@ select throws_ok(
 
 reset role;
 set local role service_role;
+select set_config('app.current_user_id', '98400000-0000-4000-8000-000000000003', true);
 
 select results_eq(
   $$select count(*)::bigint from public.teams where id::text like '98420000-%'$$,
@@ -507,6 +621,36 @@ select lives_ok(
     where id = '98440000-0000-4000-8000-000000000001'
   $$,
   'service_role still performs backend team-domain mutations'
+);
+
+select lives_ok(
+  $$
+    update public.team_pipelines
+    set pipeline_id = pipeline_id
+    where id = '98460000-0000-4000-8000-000000000001'
+  $$,
+  'service_role still performs backend team-pipeline mutations'
+);
+
+select lives_ok(
+  $$
+    delete from public.team_pipelines
+    where id = '98460000-0000-4000-8000-000000000001'
+  $$,
+  'service_role still unlinks a team pipeline with audit triggers enabled'
+);
+
+select lives_ok(
+  $$
+    insert into public.team_pipelines (id, organization_id, team_id, pipeline_id)
+    values (
+      '98460000-0000-4000-8000-000000000001',
+      '98410000-0000-4000-8000-000000000001',
+      '98420000-0000-4000-8000-000000000001',
+      '98450000-0000-4000-8000-000000000001'
+    )
+  $$,
+  'service_role still links a team pipeline with tenant and audit triggers enabled'
 );
 
 reset role;

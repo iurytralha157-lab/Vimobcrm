@@ -200,8 +200,11 @@ test("edições e exclusões do catálogo propagam a versão lida", () => {
   const ownerHook = source("hooks", "use-property-owners.ts");
   assert.match(
     ownerHook,
-    /onError: async \(error\) => \{\s*await queryClient\.invalidateQueries\(\{ queryKey: \['property-owners'\] \}\)/,
+    /onError: async \(error, _input, scope\) => \{\s*await queryClient\.invalidateQueries\(\{ queryKey: \['property-owners'\] \}\)/,
   );
+  assert.match(ownerHook, /usePropertyMutation\(\{/);
+  assert.match(ownerHook, /deactivateOwner\(organizationId, id, expected_updated_at, scope\.requestIntent\)/);
+  assert.match(ownerHook, /if \(scope\.isCurrent\(\)\) toast\.error/);
   assert.match(tables, /expected_updated_at: city\.updated_at/);
   assert.match(tables, /expected_updated_at: neighborhood\.updated_at/);
   assert.match(tables, /expected_updated_at: condominium\.updated_at/);

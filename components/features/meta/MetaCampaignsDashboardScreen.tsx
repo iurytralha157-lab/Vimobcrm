@@ -5,15 +5,20 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { getDateRangeFromPreset } from "@/hooks/use-dashboard-filters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
+import { useRelativeDateClock } from "@/hooks/shared/use-relative-date-clock";
+import { usePipelines } from "@/hooks/use-stages";
 import { MetaCampaignDashboard } from "./MetaCampaignDashboard";
 
 export function MetaCampaignsDashboardScreen() {
+  const { data: pipelines = [] } = usePipelines();
   const {
     filters,
     datePreset,
     setDatePreset,
     customDateRange,
     setCustomDateRange,
+    pipelineId,
+    setPipelineId,
     teamId,
     setTeamId,
     userId,
@@ -24,6 +29,8 @@ export function MetaCampaignsDashboardScreen() {
     setPageId,
     campaignId,
     setCampaignId,
+    campaignIds,
+    setCampaignIds,
     adSetId,
     setAdSetId,
     adId,
@@ -32,10 +39,8 @@ export function MetaCampaignsDashboardScreen() {
     setTagIds,
     dealStatus,
     setDealStatus,
-    searchQuery,
     setSearchQuery,
     clearFilters,
-    hasActiveFilters,
     dynamicSources,
     pages,
     campaigns,
@@ -49,15 +54,34 @@ export function MetaCampaignsDashboardScreen() {
     isLoadingAds,
     isLoadingTags,
     hasTagsError,
-  } = useSharedFilters();
+    isFiltersHydrated,
+  } = useSharedFilters({ multiCampaigns: true });
+  const relativeDateClock = useRelativeDateClock(!filters.dateRange);
   const campaignFilters = useMemo(
-    () => ({
+    () => {
+      void relativeDateClock;
+      return {
       ...filters,
+      // Campaign analytics does not support the shared lead-text search.
+      searchQuery: "",
       datePreset: datePreset ?? "last30days" as const,
       dateRange: filters.dateRange ?? getDateRangeFromPreset("last30days"),
-    }),
-    [datePreset, filters],
+      };
+    },
+    [datePreset, filters, relativeDateClock],
   );
+  const hasActiveCampaignFilters =
+    pipelineId !== null ||
+    teamId !== null ||
+    (userId !== null && userId !== "all") ||
+    source !== null ||
+    pageId !== null ||
+    campaignIds.length > 0 ||
+    adSetId !== null ||
+    adId !== null ||
+    tagIds.length > 0 ||
+    dealStatus !== null ||
+    Boolean(filters.dateRange);
 
   return (
     <AppLayout title="Dashboard de campanhas">
@@ -68,16 +92,22 @@ export function MetaCampaignsDashboardScreen() {
           defaultDatePreset="last30days"
           customDateRange={customDateRange}
           onCustomDateRangeChange={setCustomDateRange}
+          pipelineId={pipelineId}
+          onPipelineChange={setPipelineId}
+          pipelines={pipelines}
           teamId={teamId}
           onTeamChange={setTeamId}
           userId={userId}
           onUserChange={setUserId}
+          includeUnassignedUserOption
           source={source}
           onSourceChange={setSource}
           pageId={pageId}
           onPageChange={setPageId}
           campaignId={campaignId}
           onCampaignChange={setCampaignId}
+          campaignIds={campaignIds}
+          onCampaignsChange={setCampaignIds}
           adSetId={adSetId}
           onAdSetChange={setAdSetId}
           adId={adId}
@@ -86,10 +116,10 @@ export function MetaCampaignsDashboardScreen() {
           onTagsChange={setTagIds}
           dealStatus={dealStatus}
           onDealStatusChange={setDealStatus}
-          searchQuery={searchQuery}
+          searchQuery={campaignFilters.searchQuery}
           onSearchChange={setSearchQuery}
           onClear={clearFilters}
-          hasActiveFilters={hasActiveFilters}
+          hasActiveFilters={hasActiveCampaignFilters}
           hideSearch
           dynamicSources={dynamicSources}
           pages={pages}
@@ -107,7 +137,7 @@ export function MetaCampaignsDashboardScreen() {
           datePosition="start"
         />
 
-        <MetaCampaignDashboard filters={campaignFilters} />
+        <MetaCampaignDashboard filters={campaignFilters} filtersReady={isFiltersHydrated} />
       </div>
     </AppLayout>
   );

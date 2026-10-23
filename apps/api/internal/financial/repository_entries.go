@@ -16,6 +16,9 @@ func (repo Repository) ListEntries(ctx context.Context, tenantContext tenant.Con
 	if !canReadFinancial(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validateFinancialDateRange(strings.TrimSpace(values.Get("startDate")), strings.TrimSpace(values.Get("endDate"))); err != nil {
+		return nil, err
+	}
 	canReadProperties := propertyscope.CanRead(tenantContext)
 	args := []any{
 		tenantContext.OrganizationID,
@@ -33,7 +36,12 @@ func (repo Repository) ListEntries(ctx context.Context, tenantContext tenant.Con
 		add(value, "fe.type = $%d")
 	}
 	if value := strings.TrimSpace(values.Get("status")); value != "" {
-		add(value, "fe.status = $%d")
+		aliases := map[string][]string{"pending": {"pending", "pendente"}, "partial": {"partial", "parcial"}, "paid": {"paid", "paga"}, "overdue": {"overdue", "vencido"}, "cancelled": {"cancelled", "cancelada"}}
+		statuses, ok := aliases[normalizedFinancialEntryStatus(value)]
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		add(statuses, "lower(btrim(coalesce(fe.status, ''))) = any($%d::text[])")
 	}
 	if value := strings.TrimSpace(values.Get("startDate")); value != "" {
 		add(value, "fe.due_date >= $%d::date")

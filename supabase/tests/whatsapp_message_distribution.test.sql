@@ -112,15 +112,22 @@ select ok(
 );
 
 select ok(
-  position('nullif(v_lead.initial_message' in lower(pg_get_functiondef(
+  position('private.whatsapp_managed_initial_proof_matches(' in lower(pg_get_functiondef(
     'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
   ))) > 0
-  and position('v_lead.message' in lower(pg_get_functiondef(
+  and position('managed_whatsapp_initial_provider_event_id' in lower(pg_get_functiondef(
     'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
-  ))) > position('nullif(v_lead.initial_message' in lower(pg_get_functiondef(
-    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
-  ))),
-  'initial assignment keeps matching against the immutable initial WhatsApp message first'
+  ))) > 0
+  and position('proof.lead_id = p_lead_id' in lower(pg_get_functiondef(
+    'private.whatsapp_managed_initial_proof_matches(uuid,uuid,uuid,text,text,uuid,uuid)'::regprocedure
+  ))) > 0
+  and position('proof.rule_id = p_rule_id' in lower(pg_get_functiondef(
+    'private.whatsapp_managed_initial_proof_matches(uuid,uuid,uuid,text,text,uuid,uuid)'::regprocedure
+  ))) > 0
+  and position('proof.target_round_robin_id = p_target_round_robin_id' in lower(pg_get_functiondef(
+    'private.whatsapp_managed_initial_proof_matches(uuid,uuid,uuid,text,text,uuid,uuid)'::regprocedure
+  ))) > 0,
+  'initial assignment validates the private immutable first-message proof for the exact lead, rule and queue'
 );
 
 select has_function(
@@ -547,6 +554,8 @@ values (
 select is(
   public.whatsapp_webhook_has_lead_creation_context(
     '{
+      "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+      "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
       "managed_whatsapp_message_distribution": true,
       "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
       "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -564,6 +573,8 @@ update public.round_robins
 select is(
   public.whatsapp_webhook_has_lead_creation_context(
     '{
+      "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+      "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
       "managed_whatsapp_message_distribution": true,
       "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
       "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -592,6 +603,8 @@ select throws_ok(
       'Quero Casa',
       'Quero Casa',
       '{
+        "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+        "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
         "managed_whatsapp_message_distribution": true,
         "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
         "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -628,6 +641,10 @@ values (
   'Olá, QUERO CASA no centro',
   'Olá, QUERO CASA no centro',
   '{
+    "whatsapp_initial_provider_event_id": "e7200000-0000-4000-8000-000000000001:distribution-initial",
+    "managed_whatsapp_initial_provider_event_id": "e7200000-0000-4000-8000-000000000001:distribution-initial",
+    "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+    "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
     "managed_whatsapp_message_distribution": true,
     "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
     "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -741,11 +758,21 @@ select ok(
       and metadata->>'concurrent_message_seen' = 'true'
       and source = 'whatsapp'
       and source_session_id = 'e7200000-0000-4000-8000-000000000001'
-      and initial_message = 'Olá, QUERO CASA no centro'
+      and initial_message is null
+      and message is null
+      and private.whatsapp_managed_initial_proof_matches(
+        organization_id, id, source_session_id,
+        'e7200000-0000-4000-8000-000000000001:distribution-initial',
+        private.managed_whatsapp_message_fingerprint(
+          organization_id, source_session_id, 'distribution-initial', 'Olá, QUERO CASA no centro'
+        ),
+        'e7100000-0000-4000-8000-000000000001',
+        'e7000000-0000-4000-8000-000000000001'
+      )
       from public.leads
      where id = 'e9000000-0000-4000-8000-000000000001'
   ),
-  'a concurrent update cannot rewrite managed intake provenance but may merge unrelated metadata'
+  'a concurrent update cannot rewrite managed provenance or its private first-message proof, and plaintext stays redacted'
 );
 
 select throws_ok(
@@ -800,6 +827,10 @@ from public.upsert_whatsapp_webhook_lead(
   p_message := 'Olá, quero casa pelo WhatsApp',
   p_metadata := '{
     "source": "whatsapp",
+    "whatsapp_initial_provider_event_id": "e7200000-0000-4000-8000-000000000001:distribution-rpc",
+    "managed_whatsapp_initial_provider_event_id": "e7200000-0000-4000-8000-000000000001:distribution-rpc",
+    "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+    "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
     "managed_whatsapp_message_distribution": true,
     "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
     "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -814,9 +845,18 @@ select ok(
       from managed_whatsapp_upsert_result as result
       join public.leads as lead on lead.id = result.id
      where lead.assigned_user_id is not null
-       and lead.initial_message = 'Olá, quero casa pelo WhatsApp'
+       and lead.initial_message is null and lead.message is null
+       and private.whatsapp_managed_initial_proof_matches(
+         lead.organization_id, lead.id, lead.source_session_id,
+         'e7200000-0000-4000-8000-000000000001:distribution-rpc',
+         private.managed_whatsapp_message_fingerprint(
+           lead.organization_id, lead.source_session_id, 'distribution-rpc', 'Olá, quero casa pelo WhatsApp'
+         ),
+         'e7100000-0000-4000-8000-000000000001',
+         'e7000000-0000-4000-8000-000000000001'
+       )
   ),
-  'the real WhatsApp upsert creates a new lead and the insert trigger distributes it'
+  'the real WhatsApp upsert records a private first-message proof, redacts plaintext and the insert trigger distributes it'
 );
 
 create temporary table managed_whatsapp_upsert_replay on commit drop as
@@ -830,6 +870,8 @@ from public.upsert_whatsapp_webhook_lead(
   p_message := 'Mensagem concorrente',
   p_metadata := '{
     "source": "whatsapp",
+    "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+    "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
     "managed_whatsapp_message_distribution": true,
     "matched_rule_id": "ffffffff-ffff-4fff-8fff-fffffffffff1",
     "whatsapp_session_id": "ffffffff-ffff-4fff-8fff-fffffffffff2",
@@ -885,6 +927,8 @@ select throws_ok(
       'Quero apenas alugar um apartamento',
       'Quero apenas alugar um apartamento',
       '{
+        "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+        "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
         "managed_whatsapp_message_distribution": true,
         "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
         "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",
@@ -915,6 +959,8 @@ values (
 
 update public.leads
    set metadata = metadata || '{
+     "whatsapp_lead_creation_contract": "ctwa_ad_v1",
+     "whatsapp_attribution": {"entry_point_conversion_source":"ctwa_ad","source_referral":{"explicit_source_type":"ad"}},
      "managed_whatsapp_message_distribution": true,
      "matched_rule_id": "e7100000-0000-4000-8000-000000000001",
      "whatsapp_session_id": "e7200000-0000-4000-8000-000000000001",

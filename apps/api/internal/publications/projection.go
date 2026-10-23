@@ -14,12 +14,16 @@ import (
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/grupoolx"
+	propertiesdomain "github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 )
 
 type publicationSource struct {
 	Property                map[string]any
 	UpdatedAt               time.Time
 	Status                  string
+	CommercializationDenied bool
+	InventoryOpen           bool
+	LegacySitePublished     bool
 	OwnerPresent            bool
 	ResponsiblePresent      bool
 	Offers                  []sourceOffer
@@ -102,9 +106,11 @@ func evaluateSiteReadiness(source publicationSource) ([]Check, int, string) {
 		publicationCheck("purpose", "Modalidade com preço compatível", "error", compatiblePurpose, "Defina a modalidade de negócio e informe um preço positivo para cada modalidade selecionada."),
 		publicationCheck("area", "Área informada", "error", areaValid, "Informe a área útil ou total do imóvel."),
 		publicationCheck("photo", "Ao menos uma foto pública", "error", publicPhoto, "Adicione uma foto pública ao imóvel."),
+		publicationCheck("commercialization", "Comercialização autorizada", "error", !source.CommercializationDenied, "Autorize a comercialização antes de publicar este imóvel."),
+		publicationCheck("inventory", "Estrutura do empreendimento disponível", "error", source.InventoryOpen, "Reabra o empreendimento ou a estrutura da unidade antes de publicar."),
 		publicationCheck("owner", "Proprietário vinculado", "warning", source.OwnerPresent, "Vincule um proprietário atual para completar a operação interna."),
 		publicationCheck("responsible", "Corretor responsável definido", "warning", source.ResponsiblePresent, "Defina o corretor responsável para completar a operação interna."),
-		publicationCheck("status", "Imóvel disponível para divulgação", "error", normalizedASCII(source.Status) == "active" || normalizedASCII(source.Status) == "ativo" || normalizedASCII(source.Status) == "disponivel", "Altere o imóvel para ativo."),
+		publicationCheck("status", "Imóvel disponível para divulgação", "error", publicationStatusAvailable(source.Status), "Altere o imóvel para ativo."),
 	}
 
 	resolved := 0
@@ -162,8 +168,7 @@ func evaluateGrupoOLXReadiness(source publicationSource) ([]Check, int, string) 
 		addressVisibility = text(property["public_address_visibility"])
 	}
 	addressVisibilityValid := !grupoOLXMinimumAddressVisibility(addressVisibility)
-	status := normalizedASCII(source.Status)
-	statusValid := status == "active" || status == "available" || status == "ativo" || status == "disponivel"
+	statusValid := publicationStatusAvailable(source.Status)
 	salePrice := grupoOLXSalePrice(property, source.Offers)
 	rentPrice := grupoOLXRentPrice(property, source.Offers)
 	priceValid := (transactionType == "For Sale" && salePrice > 0) ||
@@ -190,6 +195,8 @@ func evaluateGrupoOLXReadiness(source publicationSource) ([]Check, int, string) 
 		publicationCheck("grupo_olx_transaction", "Tipo de transação compatível", "error", transactionType != "", "Defina venda, locação ou venda/locação."),
 		publicationCheck("grupo_olx_property_type", "Tipo de imóvel compatível", "error", propertyType != "", "Defina um tipo de imóvel aceito pelo VRSync."),
 		publicationCheck("grupo_olx_status", "Imóvel disponível", "error", statusValid, "Altere o imóvel para ativo ou disponível."),
+		publicationCheck("commercialization", "Comercialização autorizada", "error", !source.CommercializationDenied, "Autorize a comercialização antes de publicar este imóvel."),
+		publicationCheck("inventory", "Estrutura do empreendimento disponível", "error", source.InventoryOpen, "Reabra o empreendimento ou a estrutura da unidade antes de publicar."),
 		publicationCheck("grupo_olx_location", "Bairro, cidade e UF informados", "error", locationValid, "Informe bairro, cidade e UF."),
 		publicationCheck("grupo_olx_postal_code", "CEP com 8 dígitos", "error", postalCodeValid, "Informe um CEP válido com 8 dígitos."),
 		publicationCheck("grupo_olx_address_visibility", "Privacidade de endereço compatível", "error", addressVisibilityValid, "O Grupo OLX exige bairro e CEP; selecione endereço parcial ou completo."),
@@ -462,14 +469,7 @@ func sanitizePublicProperty(source map[string]any) map[string]any {
 }
 
 func normalizePublicAddressVisibility(value string) string {
-	switch normalizedASCII(value) {
-	case "completo", "complete", "full":
-		return "completo"
-	case "minimo", "minimum", "city", "cidade":
-		return "minimo"
-	default:
-		return "parcial"
-	}
+	return propertiesdomain.NormalizePublicAddressVisibility(value)
 }
 
 func sanitizeGrupoOLXProperty(source map[string]any) map[string]any {
@@ -725,20 +725,7 @@ func sitePublicPropertySQL(alias string) string {
 			  and condominium.id = ` + alias + `.condominium_id
 			limit 1
 		),
-		'public_address_visibility', case lower(trim(coalesce(
-			nullif(` + alias + `.address_visibility, ''),
-			nullif(` + alias + `.public_address_visibility, ''),
-			'parcial'
-		)))
-			when 'completo' then 'completo'
-			when 'complete' then 'completo'
-			when 'full' then 'completo'
-			when 'minimo' then 'minimo'
-			when 'minimum' then 'minimo'
-			when 'city' then 'minimo'
-			when 'cidade' then 'minimo'
-			else 'parcial'
-		end,
+		'public_address_visibility', ` + propertiesdomain.PropertyPublicAddressVisibilitySQL(alias) + `,
 		'imagem_principal', nullif(` + alias + `.imagem_principal, ''),
 		'fotos', to_jsonb(coalesce(` + alias + `.image_urls, '{}'::text[])),
 		'detalhes_extras', to_jsonb(coalesce(` + alias + `.detalhes_extras, '{}'::text[])),

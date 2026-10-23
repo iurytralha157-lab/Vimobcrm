@@ -83,11 +83,10 @@ test("canonical site publication needs the exact durable published version", () 
   }
 });
 
-test("canonical state is authoritative and never falls back to the legacy flag", () => {
+test("withdrawal, pauses and malformed canonical versions never fall back to the legacy flag", () => {
   for (const canonical of [
     publication({ desired_state: "unpublished", published_version: null }),
     publication({ desired_state: "paused" }),
-    publication({ published_version: null }),
     publication({ published_version: 0 }),
     publication({ published_version: 2.5 }),
   ]) {
@@ -101,6 +100,18 @@ test("canonical state is authoritative and never falls back to the legacy flag",
       0,
     );
   }
+});
+
+test("a first canonical delivery preserves legacy visibility but never overrides current denial", () => {
+  const pending = publication({ published_version: null });
+  for (const status of ["active", "ativo", "available", "disponivel"]) {
+    assert.equal(eligiblePublicPropertyIds({ organizationId, properties: [property({ status })], publications: [pending], versions: [] }).size, 1);
+  }
+  for (const changed of [property({ published_on_site: false }), property({ status: "reserved" }), property({ autorizado_comercializacao: false })]) {
+    assert.equal(eligiblePublicPropertyIds({ organizationId, properties: [changed], publications: [pending], versions: [] }).size, 0);
+  }
+  assert.equal(eligiblePublicPropertyIds({ organizationId, properties: [property({ autorizado_comercializacao: false })], publications: [publication()], versions: [version()] }).size, 0);
+  assert.equal(eligiblePublicPropertyIds({ organizationId, properties: [property()], publications: [publication({ organization_id: "other", published_version: null })], versions: [] }).size, 0);
 });
 
 test("legacy published_on_site is accepted only when no canonical row exists", () => {
@@ -122,6 +133,43 @@ test("legacy published_on_site is accepted only when no canonical row exists", (
     }).size,
     0,
   );
+});
+
+test("legacy AI disclosure uses only public description and suppresses hidden media metadata", async () => {
+  const live = property({ descricao: 'PRIVATE INTERNAL COPY', descricao_site: 'Public site copy',
+    imagem_principal: 'https://fixture.example/hidden.jpg', metadata: { hidden_site_image_urls: ['https://fixture.example/hidden.jpg'], secret: 'PRIVATE' } });
+  const result = await filterPublicSiteEligibleProperties(mockSupabase(), organizationId, [live]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].descricao, 'Public site copy');
+  assert.equal(result[0].imagem_principal, null);
+  assert.equal('metadata' in result[0], false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+});
+
+test("AI minimum address privacy removes neighborhoods from legacy and frozen canonical responses", async () => {
+  for (const field of ["address_visibility", "public_address_visibility"]) {
+    for (const visibility of ["minimo", " Mínimo ", "minimum", "minimal", "cidade", "city", "unknown", ""]) {
+      const result = await filterPublicSiteEligibleProperties(mockSupabase(), organizationId,
+        [property({ [field]: visibility, bairro: "PRIVATE_NEIGHBORHOOD", cidade: "Public city", endereco: "PRIVATE_STREET" })]);
+      assert.equal(result[0].bairro, null);
+      assert.equal(result[0].cidade, "Public city");
+      assert.equal(JSON.stringify(result).includes("PRIVATE"), false);
+    }
+  }
+  const client = mockSupabase({ rows: {
+    property_channel_publications: [publication()],
+    property_channel_publication_versions: [version({ payload: { property: {
+      id: "property-a", public_address_visibility: "minimo", bairro: "PRIVATE_NEIGHBORHOOD", cidade: "Frozen city",
+    } } })],
+  } });
+  const result = await filterPublicSiteEligibleProperties(client, organizationId,
+    [property({ address_visibility: "completo", bairro: "PRIVATE_LIVE", cidade: "Unpublished city" })]);
+  assert.equal(result[0].bairro, null);
+  assert.equal(result[0].cidade, "Frozen city");
+  assert.equal(JSON.stringify(result).includes("PRIVATE"), false);
+  const partial = await filterPublicSiteEligibleProperties(mockSupabase(), organizationId,
+    [property({ address_visibility: "parcial", bairro: "Public neighborhood" })]);
+  assert.equal(partial[0].bairro, "Public neighborhood");
 });
 
 test("only active or ativo properties can be disclosed or counted", () => {

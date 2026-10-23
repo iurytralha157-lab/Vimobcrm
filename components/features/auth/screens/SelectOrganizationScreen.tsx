@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
+import { AlertCircle, ArrowRight, LogOut, Shield, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { VimobLoader } from '@/components/shared/loading';
+import { NoOrganizationEmptyState } from './NoOrganizationEmptyState';
 import { BRAND_HEADER_LAYOUT, DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 import {
   createLoginPath,
@@ -75,6 +76,8 @@ export default function SelectOrganization() {
   const [emptyStateReadyKey, setEmptyStateReadyKey] = useState<string | null>(null);
   const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [failedOrgId, setFailedOrgId] = useState<string | null>(null);
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   const autoRoutingOrgIdRef = useRef<string | null>(null);
@@ -180,6 +183,19 @@ export default function SelectOrganization() {
     }
   }
 
+  async function handleSignOut() {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    setLogoutError(null);
+    try {
+      await signOut();
+    } catch {
+      setLogoutError('Não foi possível concluir a saída. Tente novamente.');
+    } finally {
+      setIsSigningOut(false);
+    }
+  }
+
   const showOrganizationLoader = shouldShowOrganizationSelectionLoader({
     authLoading: loading,
     hasSelectionError: selectionError !== null,
@@ -222,61 +238,25 @@ export default function SelectOrganization() {
           </button>
           <button
             type="button"
-            onClick={() => void signOut()}
+            onClick={() => void handleSignOut()}
+            disabled={isSigningOut}
             className="h-10 rounded-[6px] bg-[var(--app-surface-soft)] px-5 text-[12px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
           >
             Sair
           </button>
         </div>
+        {logoutError ? <p role="alert" className="mt-3 text-[12px] text-destructive">{logoutError}</p> : null}
       </div>
     );
   }
 
   if (showEmptyState && organizations.length === 0) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--app-background)] p-4 text-center text-[var(--app-text-primary)]">
-        <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]">
-          <Building2 className="h-6 w-6" strokeWidth={1.35} />
-        </div>
-        <h2 className="mt-5 text-[16px] font-normal text-[var(--app-text-primary)]">
-          Nenhuma organização encontrada
-        </h2>
-        <p className="mt-2 max-w-xs text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-          Você não possui acesso a nenhuma organização ativa no momento.
-        </p>
-
-        <div className="mt-5 flex max-w-sm items-start gap-2 rounded-[8px] bg-destructive/10 px-4 py-3 text-left text-[12px] font-light leading-[18px] text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.5} />
-          <span>
-            Erro: este usuário não está vinculado a uma organização ativa. Peça ao administrador para revisar o convite ou liberar o acesso.
-          </span>
-        </div>
-
-        <div className="mt-8 flex flex-col gap-2">
-          <button
-            onClick={() => window.location.reload()}
-            className="h-10 rounded-[6px] bg-primary/50 px-5 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary"
-          >
-            Tentar novamente
-          </button>
-
-          {isSuperAdmin && (
-            <button
-              onClick={() => router.push('/admin')}
-              className="h-10 text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-primary"
-            >
-              Acessar Painel Super Admin
-            </button>
-          )}
-
-          <button
-            onClick={signOut}
-            className="h-10 text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-text-primary)]"
-          >
-            Sair
-          </button>
-        </div>
-      </div>
+      <NoOrganizationEmptyState
+        onSignOut={() => void handleSignOut()}
+        signingOut={isSigningOut}
+        error={logoutError}
+      />
     );
   }
 
@@ -319,7 +299,8 @@ export default function SelectOrganization() {
           </div>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void handleSignOut()}
+            disabled={isSigningOut}
             className="group inline-flex h-10 items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-4 text-xs font-light text-[var(--app-text-secondary)] outline-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <LogOut className="h-4 w-4 text-primary/70 transition-colors group-hover:text-primary-foreground" strokeWidth={1.6} />
@@ -327,6 +308,12 @@ export default function SelectOrganization() {
           </button>
         </div>
       </header>
+
+      {logoutError ? (
+        <p role="alert" className="mx-auto mt-3 max-w-[1040px] px-4 text-[12px] text-destructive sm:px-6 lg:px-8">
+          {logoutError}
+        </p>
+      ) : null}
 
       <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1040px] flex-col px-4 pb-8 pt-5 sm:px-6 sm:pb-10 sm:pt-7 lg:px-8">
         <div className="flex flex-1 flex-col justify-center py-7 sm:py-9">

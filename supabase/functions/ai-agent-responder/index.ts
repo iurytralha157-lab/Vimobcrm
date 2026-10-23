@@ -1,4 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { Database } from "../../../integrations/supabase/types.ts";
 import {
   readSupabaseSecretKeyEnvironment,
   selectSupabaseAdminSecretKey,
@@ -21,6 +22,11 @@ import {
 import { canonicalAIPauseReason } from "./canonical-ai-pause.ts";
 import { filterPublicSiteEligibleProperties } from "./public-property-eligibility.ts";
 import {
+  loadPublicPropertyCatalog,
+  matchPublicPropertyCodes,
+  type PublicCatalogClient,
+} from "./public-property-catalog.ts";
+import {
   requireCurrentLeadId,
   rowsForCurrentLead,
 } from "./lead-history-scope.ts";
@@ -37,7 +43,142 @@ const HUMAN_TAKEOVER_LOOKBACK_HOURS = 6;
 const AI_MODEL = "google/gemini-3-flash-preview";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
-type PropertyCandidate = Record<string, any> & { score?: number; public_url?: string | null };
+// These columns and this RPC postdate the checked-in generated Database type.
+// Keep the local delta next to this retired function until types are regenerated.
+type PublicTables = Database["public"]["Tables"];
+type EdgeDatabase = Omit<Database, "public"> & {
+  public: Omit<Database["public"], "Tables" | "Functions"> & {
+    Tables: Omit<PublicTables, "whatsapp_messages" | "outbox_messages"> & {
+      whatsapp_messages: PublicTables["whatsapp_messages"] & {
+        Row: PublicTables["whatsapp_messages"]["Row"] & { capture_state: string | null };
+      };
+      outbox_messages: PublicTables["outbox_messages"] & {
+        Row: PublicTables["outbox_messages"]["Row"] & { lead_id: string | null };
+        Insert: PublicTables["outbox_messages"]["Insert"] & { lead_id?: string | null };
+      };
+    };
+    Functions: Database["public"]["Functions"] & {
+      activate_whatsapp_conversation_lead_binding: {
+        Args: {
+          p_organization_id: string;
+          p_conversation_id: string;
+          p_lead_id: string;
+          p_provider_message_id?: string | null;
+        };
+        Returns: {
+          success: boolean;
+          conversation_id: string;
+          lead_id: string;
+          active_lead_id: string;
+          is_current: boolean;
+          binding_id: string | null;
+        };
+      };
+    };
+  };
+};
+type AdminClient = SupabaseClient<EdgeDatabase>;
+type PublicEligibilityClient = Parameters<typeof filterPublicSiteEligibleProperties>[0];
+type RelatedRecord = Record<string, unknown>;
+type AgentRecord = {
+  id: string;
+  handoff_keywords?: string[] | null;
+  max_messages_before_handoff?: number | null;
+  system_prompt?: string | null;
+};
+type ConversationRecord = {
+  id: string;
+  organization_id: string;
+  session_id: string | null;
+  lead_id: string | null;
+  remote_jid?: string | null;
+  contact_phone?: string | null;
+  contact_name?: string | null;
+  is_group?: boolean | null;
+  session?: RelatedRecord | RelatedRecord[] | null;
+  lead?: RelatedRecord | RelatedRecord[] | null;
+};
+type AgentConversationIdentity = {
+  id: string;
+  agent_id: string;
+  conversation_id: string;
+  lead_id: string | null;
+  last_property_id: string | null;
+  agent?: RelatedRecord | RelatedRecord[] | null;
+  lead?: RelatedRecord | RelatedRecord[] | null;
+  last_property?: RelatedRecord | RelatedRecord[] | null;
+};
+type AgentConversationState = {
+  id: string;
+  agent_id: string;
+  status: string | null;
+  updated_at: string;
+  context_reset_at?: string | null;
+  started_at?: string | null;
+  message_count?: number | null;
+  memory_summary?: string | null;
+  last_human_message_at?: string | null;
+};
+type LeadRecord = RelatedRecord & {
+  id: string;
+  organization_id: string;
+  name?: string | null;
+  cidade?: string | null;
+  bairro?: string | null;
+  uf?: string | null;
+  property_id?: string | null;
+  interest_property_id?: string | null;
+  pipeline_id?: string | null;
+  stage_id?: string | null;
+  assigned_user_id?: string | null;
+  pipeline?: RelatedRecord | null;
+  stage?: RelatedRecord | null;
+};
+type PropertyRecord = RelatedRecord & {
+  id: string;
+  organization_id: string;
+  code?: string | null;
+  cidade?: string | null;
+  bairro?: string | null;
+  uf?: string | null;
+  tipo_de_imovel?: string | null;
+  tipo_de_negocio?: string | null;
+  destaque?: boolean | null;
+};
+type PropertyCandidate = PropertyRecord & { score?: number; public_url?: string | null };
+type LeadMetaRow = {
+  form_id?: string | null;
+  form_name?: string | null;
+  campaign_name?: string | null;
+  ad_name?: string | null;
+  adset_name?: string | null;
+  platform?: string | null;
+  contact_notes?: string | null;
+  raw_payload?: unknown;
+};
+type VisitAction = {
+  requested: boolean;
+  created: boolean;
+  start_time: string;
+  reason?: string;
+};
+
+function publicEligibilityClient(client: AdminClient): PublicEligibilityClient {
+  // The helper models the chain after select(); Supabase's from() builder
+  // exposes select() first. Both invoke the same runtime client unchanged.
+  return client as unknown as PublicEligibilityClient;
+}
+
+function propertyRows(value: unknown): PropertyRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is PropertyRecord => {
+    const property = item && typeof item === "object" && !Array.isArray(item)
+      ? item as RelatedRecord
+      : null;
+    return typeof property?.id === "string" &&
+      typeof property.organization_id === "string";
+  });
+}
 type AICompletionResult = {
   content: string;
   model: string;
@@ -60,8 +201,8 @@ type OutboxInsertResult =
   | { kind: "queued"; queuedChunks: number }
   | { kind: "suppressed"; reason: string; queuedChunks: number };
 
-Deno.serve(async (req) => {
-  let supabase: any = null;
+Deno.serve(async (req: Request) => {
+  let supabase: AdminClient | null = null;
   let responseClaimContext: AIResponseClaimContext | null = null;
   try {
     let privateWorkerContext: {
@@ -81,7 +222,7 @@ Deno.serve(async (req) => {
           throw new Error("Supabase admin environment is not configured");
         }
 
-        supabase = createClient(supabaseUrl, adminSecret);
+        supabase = createClient(supabaseUrl, adminSecret) as AdminClient;
         privateWorkerContext = { supabaseUrl, apiKey: adminSecret };
         return await getConversationForTenant(
           supabase,
@@ -366,7 +507,10 @@ Deno.serve(async (req) => {
     }
 
     const publicBaseUrl = await getPublicSiteBaseUrl(supabase, organization_id);
-    const mentionedProperties = await findMentionedProperties(supabase, organization_id, message, publicBaseUrl);
+    const publicCatalog = propertyRows(await loadPublicPropertyCatalog(
+      supabase as unknown as PublicCatalogClient, organization_id, propertySelect(),
+    ));
+    const mentionedProperties = await findMentionedProperties(supabase, organization_id, message, publicBaseUrl, publicCatalog);
     const leadContext = await buildLeadContext(
       supabase,
       organization_id,
@@ -374,7 +518,7 @@ Deno.serve(async (req) => {
       tenantReferences.currentProperty,
       contact_name,
     );
-    const organizationContext = await buildOrganizationContext(supabase, organization_id, message);
+    const organizationContext = await buildOrganizationContext(supabase, organization_id, message, publicCatalog);
     const bestProperties = await searchBestProperties(
       supabase,
       organization_id,
@@ -382,6 +526,7 @@ Deno.serve(async (req) => {
       lead,
       mentionedProperties,
       publicBaseUrl,
+      publicCatalog,
     );
 
     const selectedProperty = mentionedProperties[0] || bestProperties[0] || leadContext.currentProperty || null;
@@ -585,7 +730,7 @@ function json(
   });
 }
 
-async function getInboundMessageIdentity(supabase: any, input: {
+async function getInboundMessageIdentity(supabase: AdminClient, input: {
   organizationId: string;
   sessionId: string;
   conversationId: string;
@@ -604,7 +749,7 @@ async function getInboundMessageIdentity(supabase: any, input: {
       .eq("message_type", "text")
       .maybeSingle();
     if (error) throw error;
-    return data || null;
+    return data as { id: string; lead_id: string | null } | null;
   };
 
   const byMessageId = await loadByColumn("message_id");
@@ -619,7 +764,7 @@ async function getInboundMessageIdentity(supabase: any, input: {
   return byMessageId || byProviderMessageId || null;
 }
 
-async function claimAIResponse(supabase: any, input: {
+async function claimAIResponse(supabase: AdminClient, input: {
   organizationId: string;
   sessionId: string;
   conversationId: string;
@@ -698,7 +843,7 @@ function responseClaimMetadata(
   };
 }
 
-async function completeAIResponseClaim(supabase: any, claim: AIResponseClaimContext, input: {
+async function completeAIResponseClaim(supabase: AdminClient, claim: AIResponseClaimContext, input: {
   eventType: string;
   success: boolean;
   model?: string | null;
@@ -745,7 +890,7 @@ async function completeAIResponseClaim(supabase: any, claim: AIResponseClaimCont
 }
 
 async function completeSuppressedAIResponseClaim(
-  supabase: any,
+  supabase: AdminClient,
   claim: AIResponseClaimContext,
   reason: string,
   queuedChunks = 0,
@@ -762,7 +907,7 @@ async function completeSuppressedAIResponseClaim(
   });
 }
 
-async function getCanonicalAIPauseReason(supabase: any, input: {
+async function getCanonicalAIPauseReason(supabase: AdminClient, input: {
   organizationId: string;
   sessionId: string;
   conversationId: string;
@@ -799,7 +944,7 @@ async function getCanonicalAIPauseReason(supabase: any, input: {
   return canonicalAIPauseReason(state);
 }
 
-async function findActiveAgent(supabase: any, organizationId: string, sessionId?: string | null) {
+async function findActiveAgent(supabase: AdminClient, organizationId: string, sessionId?: string | null) {
   let agentQuery = supabase
     .from("ai_agents")
     .select("*")
@@ -808,7 +953,7 @@ async function findActiveAgent(supabase: any, organizationId: string, sessionId?
 
   if (sessionId) agentQuery = agentQuery.eq("session_id", sessionId);
   const { data: agents } = await agentQuery.limit(1);
-  let agent = agents?.[0];
+  let agent = (agents as AgentRecord[] | null)?.[0];
 
   if (!agent && sessionId) {
     const { data: fallbackAgents } = await supabase
@@ -818,14 +963,14 @@ async function findActiveAgent(supabase: any, organizationId: string, sessionId?
       .eq("is_active", true)
       .is("session_id", null)
       .limit(1);
-    agent = fallbackAgents?.[0];
+    agent = (fallbackAgents as AgentRecord[] | null)?.[0];
   }
 
   return agent || null;
 }
 
 async function getConversationForTenant(
-  supabase: any,
+  supabase: AdminClient,
   conversationId: string,
   organizationId: string,
   sessionId?: string | null,
@@ -840,11 +985,11 @@ async function getConversationForTenant(
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
 
-  return data || null;
+  return data as ConversationRecord | null;
 }
 
 async function getAgentConversationReferenceIdentity(
-  supabase: any,
+  supabase: AdminClient,
   conversationId: string,
 ) {
   const { data, error } = await supabase
@@ -853,10 +998,10 @@ async function getAgentConversationReferenceIdentity(
     .eq("conversation_id", conversationId)
     .maybeSingle();
   if (error) throw error;
-  return data || null;
+  return data as AgentConversationIdentity | null;
 }
 
-async function getAgentConversation(supabase: any, identity: any) {
+async function getAgentConversation(supabase: AdminClient, identity: AgentConversationIdentity | null) {
   if (!identity) return null;
 
   let query = supabase
@@ -875,13 +1020,13 @@ async function getAgentConversation(supabase: any, identity: any) {
 
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
-  return data || null;
+  return data as AgentConversationState | null;
 }
 
-async function loadTenantReferenceContext(supabase: any, input: {
+async function loadTenantReferenceContext(supabase: AdminClient, input: {
   organizationId: string;
-  conversation: any;
-  agentConversation: any;
+  conversation: ConversationRecord;
+  agentConversation: AgentConversationIdentity | null;
   inboundMessageLeadId: string | null;
 }) {
   if (
@@ -965,13 +1110,15 @@ async function loadTenantReferenceContext(supabase: any, input: {
     sessionOwnerId: sessionOwnerId ? String(sessionOwnerId) : null,
     currentProperty: relatedRecord(
       leadReferences.interestProperty || leadReferences.property,
-    ),
+    ) as PropertyRecord | null,
   };
 }
 
-function relatedRecord(value: any) {
-  if (Array.isArray(value)) return value.length === 1 ? value[0] : null;
-  return value && typeof value === "object" ? value : null;
+function relatedRecord(value: unknown): RelatedRecord | null {
+  const related = Array.isArray(value) ? (value.length === 1 ? value[0] : null) : value;
+  return related && typeof related === "object" && !Array.isArray(related)
+    ? related as RelatedRecord
+    : null;
 }
 
 function emptyLeadTenantReferences(): LoadedLeadTenantReferences {
@@ -985,9 +1132,9 @@ function emptyLeadTenantReferences(): LoadedLeadTenantReferences {
 }
 
 async function loadLeadTenantReferences(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
-  lead: any,
+  lead: LeadRecord,
 ): Promise<LoadedLeadTenantReferences> {
   const [property, interestProperty, pipeline, stage, assignedMember] =
     await Promise.all([
@@ -1020,7 +1167,7 @@ async function loadLeadTenantReferences(
 }
 
 async function loadPipelineForTenant(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   pipelineId: string,
 ) {
@@ -1034,7 +1181,7 @@ async function loadPipelineForTenant(
 }
 
 async function loadStageForTenant(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   stageId: string,
 ) {
@@ -1048,7 +1195,7 @@ async function loadStageForTenant(
 }
 
 async function loadOrganizationMembership(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   userId: string,
 ) {
@@ -1063,7 +1210,7 @@ async function loadOrganizationMembership(
 }
 
 async function getConversationResetAt(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   conversationId: string,
 ) {
@@ -1077,9 +1224,9 @@ async function getConversationResetAt(
 }
 
 async function findLeadByConversationPhone(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
-  conversation: any,
+  conversation: ConversationRecord,
 ) {
   const phone = conversation.contact_phone || conversation.remote_jid || "";
   if (!phoneVariants(phone).length) return { lead: null, ambiguous: false };
@@ -1104,11 +1251,11 @@ async function findLeadByConversationPhone(
   return { lead, ambiguous: false };
 }
 
-async function bindConversationLead(supabase: any, input: {
+async function bindConversationLead(supabase: AdminClient, input: {
   organizationId: string;
   conversationId: string;
   sessionId: string;
-  lead: any;
+  lead: LeadRecord;
   providerMessageId: string;
   contactName?: string | null;
   existingContactName?: string | null;
@@ -1148,7 +1295,7 @@ async function bindConversationLead(supabase: any, input: {
 }
 
 async function fetchLead(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   leadId: string,
 ) {
@@ -1158,7 +1305,11 @@ async function fetchLead(
     .eq("id", leadId)
     .eq("organization_id", organizationId)
     .maybeSingle();
-  return data || null;
+  const lead = relatedRecord(data);
+  return lead && typeof lead.id === "string" &&
+      typeof lead.organization_id === "string"
+    ? lead as LeadRecord
+    : null;
 }
 
 function leadSelect() {
@@ -1194,10 +1345,10 @@ function leadSelect() {
 }
 
 async function buildLeadContext(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
-  lead: any,
-  currentProperty: any,
+  lead: LeadRecord | null,
+  currentProperty: PropertyRecord | null,
   fallbackName?: string | null,
 ) {
   if (!lead?.id) {
@@ -1249,7 +1400,7 @@ async function buildLeadContext(
   };
 }
 
-async function buildOrganizationContext(supabase: any, organizationId: string, message: string) {
+async function buildOrganizationContext(supabase: AdminClient, organizationId: string, message: string, catalog?: PropertyRecord[]) {
   const { data: organization } = await supabase
     .from("organizations")
     .select("name, nome_fantasia, razao_social, segment, cidade, uf, bairro, website")
@@ -1263,26 +1414,10 @@ async function buildOrganizationContext(supabase: any, organizationId: string, m
     .eq("is_active", true)
     .maybeSingle();
 
-  const { data: properties, error } = await supabase
-    .from("properties")
-    .select("id, organization_id, bairro, cidade, uf, tipo_de_imovel, tipo_de_negocio, status, destaque, preco, valor_locacao, published_on_site")
-    .eq("organization_id", organizationId)
-    .order("destaque", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(250);
-
-  if (error) {
-    console.error("[ai-agent-responder] organization inventory context error:", error);
-  }
-
-  const offerable = error
-    ? []
-    : await filterPublicSiteEligibleProperties(
-      supabase,
-      organizationId,
-      Array.isArray(properties) ? properties : [],
-    );
-  const inventory = summarizeInventory(offerable, message);
+  const offerable = catalog ?? await loadPublicPropertyCatalog(
+    supabase as unknown as PublicCatalogClient, organizationId, propertySelect(),
+  );
+  const inventory = summarizeInventory(propertyRows(offerable), message);
   const displayName = organization?.nome_fantasia || organization?.name || site?.site_title || "a imobiliaria";
   const baseCity = joinParts([organization?.bairro, organization?.cidade, organization?.uf]);
 
@@ -1315,7 +1450,7 @@ async function buildOrganizationContext(supabase: any, organizationId: string, m
   };
 }
 
-function summarizeInventory(properties: any[], message: string) {
+function summarizeInventory(properties: PropertyRecord[], message: string) {
   const cityCounts = new Map<string, number>();
   const neighborhoodCounts = new Map<string, number>();
   const typeCounts = new Map<string, number>();
@@ -1402,7 +1537,7 @@ function estimateCostUsd(model: string, promptTokens: number, completionTokens: 
   return Number((((promptTokens / 1_000_000) * 0.15) + ((completionTokens / 1_000_000) * 0.60)).toFixed(8));
 }
 
-function formatLeadMeta(rows: any[]) {
+function formatLeadMeta(rows: LeadMetaRow[]) {
   if (!rows.length) return [];
 
   const lines = ["", "[RESPOSTAS E ORIGEM META]"];
@@ -1425,13 +1560,16 @@ function formatLeadMeta(rows: any[]) {
   return lines.filter(Boolean);
 }
 
-function extractMetaAnswers(raw: any): string[] {
-  const payload = parseJsonValue(raw);
-  const fieldData = payload?.field_data || payload?.fieldData || payload?.data?.field_data || [];
+function extractMetaAnswers(raw: unknown): string[] {
+  const payload = relatedRecord(parseJsonValue(raw));
+  const fieldData = payload?.field_data || payload?.fieldData ||
+    relatedRecord(payload?.data)?.field_data || [];
   if (!Array.isArray(fieldData)) return [];
 
   return fieldData
-    .map((field: any) => {
+    .map((fieldValue: unknown) => {
+      const field = relatedRecord(fieldValue);
+      if (!field) return "";
       const value = Array.isArray(field.values) ? field.values.filter(Boolean).join(", ") : field.value;
       if (!field.name || !value) return "";
       return `${field.name}: ${value}`;
@@ -1441,7 +1579,7 @@ function extractMetaAnswers(raw: any): string[] {
 }
 
 async function fetchPropertyById(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   propertyId: string,
 ) {
@@ -1456,86 +1594,59 @@ async function fetchPropertyById(
     return null;
   }
   const eligible = await filterPublicSiteEligibleProperties(
-    supabase,
+    publicEligibilityClient(supabase),
     organizationId,
-    data ? [data] : [],
+    propertyRows(data ? [data] : []),
   );
-  return eligible[0] || null;
+  return propertyRows(eligible)[0] || null;
 }
 
 async function findMentionedProperties(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   message: string,
   publicBaseUrl: string | null,
+  catalog?: PropertyRecord[],
 ): Promise<PropertyCandidate[]> {
   const codes = extractPropertyCodes(message);
   if (!codes.length) return [];
 
-  const orFilter = codes.map((code) => `code.ilike.%${code}%`).join(",");
-  const { data, error } = await supabase
-    .from("properties")
-    .select(propertySelect())
-    .eq("organization_id", organizationId)
-    .or(orFilter)
-    .limit(4);
-
-  if (error) {
-    console.error("[ai-agent-responder] property code lookup error:", error);
-    return [];
-  }
-
-  const eligible = await filterPublicSiteEligibleProperties(
-    supabase,
-    organizationId,
-    Array.isArray(data) ? data : [],
+  const eligible = catalog ?? await loadPublicPropertyCatalog(
+    supabase as unknown as PublicCatalogClient, organizationId, propertySelect(),
   );
-  return eligible
-    .filter((property: any) => property.organization_id === organizationId)
-    .map((property: any) => ({
+  return propertyRows(matchPublicPropertyCodes(eligible, codes))
+    .filter((property) => property.organization_id === organizationId)
+    .map((property) => ({
       ...property,
-      score: codes.includes(normalizeCode(property.code)) ? 100 : 80,
+      score: codes.includes(normalizeCode(property.code || "")) ? 100 : 80,
       public_url: propertyPublicUrl(publicBaseUrl, property.code),
     }))
     .sort((a: PropertyCandidate, b: PropertyCandidate) => (b.score || 0) - (a.score || 0));
 }
 
 async function searchBestProperties(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   message: string,
-  lead: any,
+  lead: LeadRecord,
   mentionedProperties: PropertyCandidate[],
   publicBaseUrl: string | null,
+  catalog?: PropertyRecord[],
 ): Promise<PropertyCandidate[]> {
-  const { data, error } = await supabase
-    .from("properties")
-    .select(propertySelect())
-    .eq("organization_id", organizationId)
-    .order("destaque", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(30);
-
-  if (error) {
-    console.error("[ai-agent-responder] property search error:", error);
-    return mentionedProperties.slice(0, 3);
-  }
-
-  const eligible = await filterPublicSiteEligibleProperties(
-    supabase,
-    organizationId,
-    Array.isArray(data) ? data : [],
+  const eligible = catalog ?? await loadPublicPropertyCatalog(
+    supabase as unknown as PublicCatalogClient, organizationId, propertySelect(),
   );
   const mentionedIds = new Set(mentionedProperties.map((property) => property.id));
-  const scored = eligible
-    .filter((property: any) => property.organization_id === organizationId)
-    .map((property: any) => ({
+  const scored = propertyRows(eligible)
+    .filter((property) => property.organization_id === organizationId)
+    .map((property) => ({
       ...property,
       score: scoreProperty(property, lead, message, mentionedIds.has(property.id)),
       public_url: propertyPublicUrl(publicBaseUrl, property.code),
     }))
     .filter((property: PropertyCandidate) => (property.score || 0) > 0)
-    .sort((a: PropertyCandidate, b: PropertyCandidate) => (b.score || 0) - (a.score || 0));
+    .sort((a: PropertyCandidate, b: PropertyCandidate) => (b.score || 0) - (a.score || 0))
+    .slice(0, 30);
 
   const merged = [...mentionedProperties, ...scored].filter(uniqueById);
   return merged.slice(0, 3);
@@ -1547,7 +1658,7 @@ function propertySelect() {
     "organization_id",
     "code",
     "title",
-    "descricao",
+    "descricao_site",
     "tipo_de_imovel",
     "tipo_de_negocio",
     "status",
@@ -1565,11 +1676,15 @@ function propertySelect() {
     "valor_locacao",
     "imagem_principal",
     "published_on_site",
+    "address_visibility",
+    "public_address_visibility",
+    "autorizado_comercializacao",
+    "metadata",
     "created_at",
   ].join(", ");
 }
 
-function scoreProperty(property: any, lead: any, message: string, mentioned: boolean) {
+function scoreProperty(property: PropertyRecord, lead: LeadRecord, message: string, mentioned: boolean) {
   const text = normalizeText(message);
   const leadCity = normalizeText(lead?.cidade || "");
   const leadNeighborhood = normalizeText(lead?.bairro || "");
@@ -1595,8 +1710,8 @@ function scoreProperty(property: any, lead: any, message: string, mentioned: boo
 
 async function maybeCreateVisitSchedule(input: {
   message: string;
-  lead: any;
-}) {
+  lead: LeadRecord;
+}): Promise<VisitAction | null> {
   const visitDate = parseVisitDate(input.message);
   if (!visitDate || !input.lead?.id) return null;
 
@@ -1613,8 +1728,8 @@ async function maybeCreateVisitSchedule(input: {
 }
 
 export async function moveLeadToVisitStage(
-  supabase: any,
-  lead: any,
+  supabase: AdminClient,
+  lead: LeadRecord | null,
   organizationId: string,
 ) {
   if (!lead?.id || !lead.pipeline_id) return false;
@@ -1626,7 +1741,7 @@ export async function moveLeadToVisitStage(
     .eq("pipeline_id", lead.pipeline_id);
   if (stagesError) throw stagesError;
 
-  const target = (stages || []).find((stage: any) => {
+  const target = (stages || []).find((stage: { name?: string | null; stage_key?: string | null; id?: string; pipeline_id?: string }) => {
     const value = normalizeText(`${stage.name || ""} ${stage.stage_key || ""}`);
     return value.includes("visit") && (value.includes("agend") || value.includes("marcad"));
   });
@@ -1659,7 +1774,7 @@ export async function moveLeadToVisitStage(
 }
 
 async function getCompactHistory(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   conversationId: string,
   sessionId: string | null,
@@ -1685,12 +1800,17 @@ async function getCompactHistory(
     query = query.gte("sent_at", since);
   }
 
-  const { data, error } = await query;
+  const { data: rawData, error } = await query;
   if (error) throw error;
+  const data = rawData as Array<{
+    lead_id?: string | null;
+    content?: string | null;
+    from_me?: boolean | null;
+  }> | null;
 
   const history = rowsForCurrentLead(data, currentLeadId)
     .reverse()
-    .map((msg: any) => ({
+    .map((msg) => ({
       role: msg.from_me ? "assistant" as const : "user" as const,
       content: truncate(String(msg.content || ""), 260),
     }))
@@ -1705,13 +1825,13 @@ async function getCompactHistory(
 }
 
 function buildSystemPrompt(input: {
-  agent: any;
-  leadContext: any;
+  agent: AgentRecord;
+  leadContext: { text: string };
   mentionedProperties: PropertyCandidate[];
   bestProperties: PropertyCandidate[];
-  organizationContext: any;
+  organizationContext: { text: string };
   memorySummary: string;
-  visitAction: any;
+  visitAction: VisitAction | null;
 }) {
   const defaultSystemPrompt =
     "Voce e a Jhenny, assistente comercial imobiliaria do Vimob. Responda com clareza, cuidado e objetividade.";
@@ -1788,10 +1908,10 @@ function formatPropertyContext(mentioned: PropertyCandidate[], best: PropertyCan
 
 function buildMemorySummary(input: {
   previous: string;
-  lead: any;
-  leadMeta: any[];
-  selectedProperty: any;
-  visitAction: any;
+  lead: LeadRecord;
+  leadMeta: LeadMetaRow[];
+  selectedProperty: PropertyRecord | null;
+  visitAction: VisitAction | null;
   message: string;
 }) {
   const facts = [
@@ -1841,12 +1961,15 @@ async function callLovableAI(apiKey: string, systemPrompt: string, history: Chat
     throw new Error(`Lovable AI error: ${response.status} - ${err}`);
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  const promptTokens = Number(data.usage?.prompt_tokens ?? estimateTokens(messages.map((msg) => msg.content).join("\n")));
-  const completionTokens = Number(data.usage?.completion_tokens ?? estimateTokens(content));
-  const totalTokens = Number(data.usage?.total_tokens ?? promptTokens + completionTokens);
-  const model = data.model || AI_MODEL;
+  const data = relatedRecord(await response.json());
+  const choices = Array.isArray(data?.choices) ? data.choices : [];
+  const message = relatedRecord(relatedRecord(choices[0])?.message);
+  const usage = relatedRecord(data?.usage);
+  const content = typeof message?.content === "string" ? message.content : "";
+  const promptTokens = Number(usage?.prompt_tokens ?? estimateTokens(messages.map((msg) => msg.content).join("\n")));
+  const completionTokens = Number(usage?.completion_tokens ?? estimateTokens(content));
+  const totalTokens = Number(usage?.total_tokens ?? promptTokens + completionTokens);
+  const model = typeof data?.model === "string" && data.model ? data.model : AI_MODEL;
 
   return {
     content,
@@ -1860,8 +1983,8 @@ async function callLovableAI(apiKey: string, systemPrompt: string, history: Chat
 }
 
 async function insertOutboxMessage(
-  supabase: any,
-  conversation: any,
+  supabase: AdminClient,
+  conversation: ConversationRecord,
   organizationId: string,
   content: string,
   privateWorker: { supabaseUrl: string; apiKey: string },
@@ -1938,14 +2061,14 @@ async function insertOutboxMessage(
   return { kind: "queued", queuedChunks };
 }
 
-async function upsertAgentConversation(supabase: any, input: {
-  agent: any;
-  agentConv: any;
+async function upsertAgentConversation(supabase: AdminClient, input: {
+  agent: AgentRecord;
+  agentConv: AgentConversationState | null;
   conversationId: string;
   leadId: string | null;
   messageCount: number;
   memorySummary: string;
-  property: any;
+  property: PropertyRecord | null;
 }) {
   const nextState = {
     agent_id: input.agent.id,
@@ -2006,8 +2129,8 @@ async function upsertAgentConversation(supabase: any, input: {
   return updated;
 }
 
-async function markAgentConversationAIMessageQueued(supabase: any, input: {
-  state: any;
+async function markAgentConversationAIMessageQueued(supabase: AdminClient, input: {
+  state: Pick<AgentConversationState, "id" | "status" | "updated_at">;
   agentId: string;
   conversationId: string;
 }) {
@@ -2038,11 +2161,11 @@ async function markAgentConversationAIMessageQueued(supabase: any, input: {
 }
 
 async function markHandedOff(
-  supabase: any,
-  agent: any,
+  supabase: AdminClient,
+  agent: AgentRecord,
   conversationId: string,
   leadId: string | null,
-  agentConv: any,
+  agentConv: AgentConversationState | null,
   reason: string,
   messageCount?: number,
 ) {
@@ -2108,7 +2231,7 @@ async function markHandedOff(
 }
 
 async function detectHumanTakeover(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   conversationId: string,
   sessionId: string | null,
@@ -2131,8 +2254,11 @@ async function detectHumanTakeover(
   const { data: manualMessages, error: manualMessagesError } = await messageQuery;
   if (manualMessagesError) throw manualMessagesError;
 
-  if (rowsForCurrentLead(manualMessages, currentLeadId)
-    .some((message: any) => !isAutomationSenderName(message.sender_name))) {
+  if (rowsForCurrentLead(manualMessages as Array<{
+    lead_id?: string | null;
+    sender_name?: string | null;
+  }> | null, currentLeadId)
+    .some((message) => !isAutomationSenderName(message.sender_name))) {
     return { detected: true, reason: "manual_message" };
   }
 
@@ -2166,9 +2292,9 @@ function isAutomationSenderName(value: string | null | undefined) {
 }
 
 async function notifyHumanNeeded(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
-  lead: any,
+  lead: LeadRecord | null,
   fallbackUserId: string | null,
   conversationId: string,
   reason: string,
@@ -2184,7 +2310,7 @@ async function notifyHumanNeeded(
 }
 
 async function notifyUser(
-  supabase: any,
+  supabase: AdminClient,
   organizationId: string,
   userId: string,
   leadId: string | null,
@@ -2202,7 +2328,7 @@ async function notifyUser(
   if (error) throw error;
 }
 
-async function getPublicSiteBaseUrl(supabase: any, organizationId: string) {
+async function getPublicSiteBaseUrl(supabase: AdminClient, organizationId: string) {
   const { data } = await supabase
     .from("organization_sites")
     .select("subdomain, custom_domain, domain_verified, is_active")
@@ -2221,7 +2347,7 @@ function propertyPublicUrl(baseUrl: string | null, code: string | null | undefin
   return `${baseUrl.replace(/\/+$/, "")}/imovel/${encodeURIComponent(code)}`;
 }
 
-function appendActionConfirmation(response: string, visitAction: any) {
+function appendActionConfirmation(response: string, visitAction: VisitAction | null) {
   if (!visitAction?.created) return response;
   if (normalizeText(response).includes("visita") && normalizeText(response).includes("agend")) return response;
   return `${response.trim()}\n\nVisita agendada para ${formatDateTimePtBR(new Date(visitAction.start_time))}.`;
@@ -2289,7 +2415,7 @@ function extractBudget(message: string) {
   return value >= 10000 ? value : null;
 }
 
-function propertyLine(property: any) {
+function propertyLine(property: PropertyRecord) {
   return [
     property.code,
     property.title || property.tipo_de_imovel,
@@ -2306,7 +2432,7 @@ function propertyLineWithLink(property: PropertyCandidate) {
   return property.public_url ? `${base} | Link: ${property.public_url}` : base;
 }
 
-function formatCurrency(value: any) {
+function formatCurrency(value: unknown) {
   const number = Number(value || 0);
   if (!number) return "";
   return number.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
@@ -2323,12 +2449,12 @@ function formatDateTimePtBR(date: Date) {
   });
 }
 
-function line(label: string, value: any) {
+function line(label: string, value: unknown) {
   if (value === undefined || value === null || value === "") return "";
   return `${label}: ${value}`;
 }
 
-function joinParts(parts: any[]) {
+function joinParts(parts: unknown[]) {
   return parts.filter(Boolean).join(", ");
 }
 
@@ -2372,7 +2498,7 @@ function splitLongMessage(value: string, limit: number) {
   return chunks;
 }
 
-function parseJsonValue(value: any) {
+function parseJsonValue(value: unknown): unknown {
   if (!value) return null;
   if (typeof value === "object") return value;
   if (typeof value !== "string") return null;
@@ -2418,11 +2544,6 @@ function phoneVariants(value: string) {
   }
 
   return Array.from(variants).filter(Boolean);
-}
-
-function phonesMatch(a: string, b: string) {
-  const aVariants = new Set(phoneVariants(a));
-  return phoneVariants(b).some((variant) => aVariants.has(variant));
 }
 
 function uniqueById(value: PropertyCandidate, index: number, arr: PropertyCandidate[]) {

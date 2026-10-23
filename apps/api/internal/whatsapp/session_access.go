@@ -11,11 +11,13 @@ import (
 
 // sessionGrantExistsSQL is used only with source-controlled SQL aliases and
 // placeholders. Legacy grants have no grant_scope and are deliberately inert.
-// Team grants are bound to the exact team chosen when access was granted.
+// Older manager/team grants are inert even if their rows still exist. Only an
+// active organization administrator who owns the number may share it.
 func sessionGrantExistsSQL(sessionAlias, userExpression string, requireSend bool) string {
 	capability := "access.can_view = true and access.can_read = true"
 	if requireSend {
 		capability += " and access.can_send = true"
+		capability += " and recipient.organization_id = access.organization_id and owner_user.organization_id = access.organization_id"
 	}
 	return fmt.Sprintf(`exists (
 		select 1
@@ -43,38 +45,10 @@ func sessionGrantExistsSQL(sessionAlias, userExpression string, requireSend bool
 		  and access.access_mode = 'assigned_leads_only'
 		  and access.only_leads_access = true
 		  and %s
-		  and (
-		    (
-		      access.grant_scope = 'organization'
-		      and access.grant_team_id is null
-		      and lower(btrim(owner_member.role)) in (
-		        'owner', 'admin', 'manager'
-		      )
-		    )
-		    or (
-		      access.grant_scope = 'team'
-		      and access.grant_team_id is not null
-		      and exists (
-		        select 1
-		        from public.teams team
-		        join public.team_members leader
-		          on leader.team_id = team.id
-		         and leader.organization_id = team.organization_id
-		         and leader.user_id = %s.owner_user_id
-		         and coalesce(leader.is_active, true) = true
-		         and coalesce(leader.is_leader, false) = true
-		        join public.team_members member
-		          on member.team_id = team.id
-		         and member.organization_id = team.organization_id
-		         and member.user_id = access.user_id
-		         and coalesce(member.is_active, true) = true
-		        where team.organization_id = access.organization_id
-		          and team.id = access.grant_team_id
-		          and coalesce(team.is_active, true) = true
-		      )
-		    )
-		  )
-	)`, sessionAlias, sessionAlias, sessionAlias, sessionAlias, userExpression, sessionAlias, capability, sessionAlias)
+		  and access.grant_scope = 'organization'
+		  and access.grant_team_id is null
+		  and lower(btrim(owner_member.role)) in ('owner', 'admin')
+	)`, sessionAlias, sessionAlias, sessionAlias, sessionAlias, userExpression, sessionAlias, capability)
 }
 
 // outboundSessionAccessGrantID records the exact grant that authorized a

@@ -155,7 +155,14 @@ func (repo Repository) createOrganizationWithAdminInvitation(
 			return nil, err
 		}
 		tokenHash := invitationTokenHash(invitation.Token)
-		err = tx.QueryRow(ctx, `
+		var legacyTokenColumn bool
+		if err := tx.QueryRow(ctx, invitationLegacyTokenColumnQuery).Scan(&legacyTokenColumn); err != nil {
+			return nil, err
+		}
+		if legacyTokenColumn {
+			// The transaction has already read public.invitations, so its table
+			// lock prevents the manual column cutover from racing this insert.
+			err = tx.QueryRow(ctx, `
 			insert into public.invitations (
 				organization_id,
 				email,
@@ -168,9 +175,21 @@ func (repo Repository) createOrganizationWithAdminInvitation(
 			values ($1::uuid, $2, 'admin', $3::uuid, now() + interval '7 days', $4, $5)
 			returning id::text, expires_at
 		`, invitation.OrganizationID, adminEmail, tenantContext.UserID, invitation.Token, tokenHash).Scan(
-			&invitation.ID,
-			&invitation.ExpiresAt,
-		)
+				&invitation.ID,
+				&invitation.ExpiresAt,
+			)
+		} else {
+			err = tx.QueryRow(ctx, `
+				insert into public.invitations (
+					organization_id, email, role, created_by, expires_at, token_hash
+				)
+				values ($1::uuid, $2, 'admin', $3::uuid, now() + interval '7 days', $4)
+				returning id::text, expires_at
+			`, invitation.OrganizationID, adminEmail, tenantContext.UserID, tokenHash).Scan(
+				&invitation.ID,
+				&invitation.ExpiresAt,
+			)
+		}
 		if err != nil {
 			return nil, err
 		}

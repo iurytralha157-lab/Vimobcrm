@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { ChevronDown, Settings2 } from "lucide-react";
 
 import {
@@ -19,17 +20,26 @@ import {
   type DistributionQueueStrategy,
 } from "@/lib/round-robin/distribution-queue-form";
 import { cn } from "@/lib/utils";
+import { DISTRIBUTION_QUEUE_NAME_ERROR, isValidDistributionQueueName } from "@/lib/round-robin/queue-name";
 
 interface PipelineOption {
   id: string;
   name: string;
+  is_active?: boolean | null;
+  deleted_at?: string | null;
 }
 
 interface StageOption {
   id: string;
   name: string;
   color?: string | null;
+  is_active?: boolean | null;
+  deleted_at?: string | null;
+  pipeline_id?: string | null;
 }
+
+const selectViewportClassName =
+  "max-h-[min(24rem,var(--radix-select-content-available-height))] max-w-[var(--radix-select-content-available-width)] [&_[role=option]>span:last-child]:min-w-0 [&_[role=option]>span:last-child]:break-words";
 
 interface DistributionQueueBasicSectionProps {
   open: boolean;
@@ -60,6 +70,14 @@ export function DistributionQueueBasicSection({
   onPipelineChange,
   onStageChange,
 }: DistributionQueueBasicSectionProps) {
+  const fieldId = useId();
+  const nameInvalid = name.length > 0 && !isValidDistributionQueueName(name);
+  const activePipelines = pipelines.filter((pipeline) => pipeline.is_active !== false && !pipeline.deleted_at);
+  const activeStages = stages.filter((stage) => stage.is_active !== false && !stage.deleted_at && (!stage.pipeline_id || stage.pipeline_id === targetPipelineId));
+  const currentPipeline = pipelines.find((pipeline) => pipeline.id === targetPipelineId);
+  const currentStage = stages.find((stage) => stage.id === targetStageId);
+  const pipelineUnavailable = Boolean(targetPipelineId) && !activePipelines.some((pipeline) => pipeline.id === targetPipelineId);
+  const stageUnavailable = Boolean(targetStageId) && !activeStages.some((stage) => stage.id === targetStageId);
   return (
     <Collapsible
       data-tour="distribution-queue-basic"
@@ -87,16 +105,20 @@ export function DistributionQueueBasicSection({
       <CollapsibleContent className="space-y-3 px-0.5 pt-2.5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label>Nome da fila *</Label>
+            <Label htmlFor={`${fieldId}-name`}>Nome da fila *</Label>
             <Input
+              id={`${fieldId}-name`}
               placeholder="Ex: Leads Facebook"
               value={name}
+              aria-invalid={nameInvalid || undefined}
+              aria-describedby={nameInvalid ? `${fieldId}-name-error` : undefined}
               onChange={(event) => onNameChange(event.target.value)}
               className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
             />
+            {nameInvalid && <p id={`${fieldId}-name-error`} role="alert" className="text-xs text-destructive">{DISTRIBUTION_QUEUE_NAME_ERROR}</p>}
           </div>
           <div className="space-y-2">
-            <Label>Estrategia</Label>
+            <Label htmlFor={`${fieldId}-strategy`}>Estrategia</Label>
             <Select
               value={strategy}
               onValueChange={(value) => {
@@ -105,10 +127,10 @@ export function DistributionQueueBasicSection({
                 }
               }}
             >
-              <SelectTrigger className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
+              <SelectTrigger id={`${fieldId}-strategy`} className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className={selectViewportClassName}>
                 <SelectItem value="simple">Sequencial</SelectItem>
                 <SelectItem value="weighted">Ponderada</SelectItem>
               </SelectContent>
@@ -118,12 +140,15 @@ export function DistributionQueueBasicSection({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label>Pipeline de destino *</Label>
+            <Label htmlFor={`${fieldId}-pipeline`}>Pipeline de destino *</Label>
             <Select
               value={targetPipelineId || ""}
               onValueChange={onPipelineChange}
             >
               <SelectTrigger
+                id={`${fieldId}-pipeline`}
+                aria-invalid={pipelineUnavailable || !targetPipelineId}
+                aria-describedby={pipelineUnavailable ? `${fieldId}-pipeline-status` : undefined}
                 className={cn(
                   "h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none",
                   !targetPipelineId && "ring-1 ring-destructive/50",
@@ -131,31 +156,42 @@ export function DistributionQueueBasicSection({
               >
                 <SelectValue placeholder="Selecione um pipeline..." />
               </SelectTrigger>
-              <SelectContent>
-                {pipelines.map((pipeline) => (
+              <SelectContent className={selectViewportClassName}>
+                {pipelineUnavailable && (
+                  <SelectItem value={targetPipelineId} disabled>
+                    {currentPipeline?.name || "Pipeline selecionado"} (indisponível)
+                  </SelectItem>
+                )}
+                {activePipelines.map((pipeline) => (
                   <SelectItem key={pipeline.id} value={pipeline.id}>
                     {pipeline.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {pipelineUnavailable && <p id={`${fieldId}-pipeline-status`} role="status" className="text-[11px] text-[var(--app-text-secondary)]">O pipeline selecionado está inativo ou indisponível nos dados carregados. O destino atual foi preservado; escolha um pipeline ativo para alterá-lo.</p>}
           </div>
           <div className="space-y-2">
-            <Label>Estagio inicial *</Label>
+            <Label htmlFor={`${fieldId}-stage`}>Estagio inicial *</Label>
             <Select
               value={targetStageId || ""}
               onValueChange={onStageChange}
-              disabled={!targetPipelineId}
+              disabled={!targetPipelineId || pipelineUnavailable}
             >
-              <SelectTrigger className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
+              <SelectTrigger id={`${fieldId}-stage`} aria-invalid={stageUnavailable} aria-describedby={stageUnavailable ? `${fieldId}-stage-status` : undefined} className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
                 <SelectValue placeholder="Selecione um estágio..." />
               </SelectTrigger>
-              <SelectContent>
-                {stages.map((stage) => (
+              <SelectContent className={selectViewportClassName}>
+                {stageUnavailable && (
+                  <SelectItem value={targetStageId} disabled>
+                    {currentStage?.name || "Estágio selecionado"} (indisponível)
+                  </SelectItem>
+                )}
+                {activeStages.map((stage) => (
                   <SelectItem key={stage.id} value={stage.id}>
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <div
-                        className="h-2 w-2 rounded-full"
+                        className="h-2 w-2 shrink-0 rounded-full"
                         style={{ backgroundColor: stage.color ?? undefined }}
                       />
                       {stage.name}
@@ -164,6 +200,7 @@ export function DistributionQueueBasicSection({
                 ))}
               </SelectContent>
             </Select>
+            {stageUnavailable && <p id={`${fieldId}-stage-status`} role="status" className="text-[11px] text-[var(--app-text-secondary)]">O estágio selecionado está inativo ou indisponível nos dados carregados. A referência atual foi preservada; escolha um estágio ativo para alterá-la.</p>}
           </div>
         </div>
       </CollapsibleContent>

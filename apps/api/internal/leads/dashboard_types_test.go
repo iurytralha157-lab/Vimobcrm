@@ -179,7 +179,7 @@ func TestParseDashboardFilterRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 			"dealStatus": {"deleted"},
 		},
 		"oversized source": {
-			"source": {strings.Repeat("s", 181)},
+			"source": {strings.Repeat("s", maxDashboardSourceLength+1)},
 		},
 		"oversized campaign": {
 			"campaignId": {strings.Repeat("c", 256)},

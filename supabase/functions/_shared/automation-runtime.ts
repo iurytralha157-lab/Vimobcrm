@@ -4,6 +4,7 @@ import {
   evaluateAutomationCondition,
   renderAutomationTemplate,
 } from "../../../lib/automations/engine.ts";
+import { AutomationStageCommandError, deferAutomationStageCommand, invokeAutomationStageCommand } from "./automation-stage-command.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -665,7 +666,17 @@ async function executeAction(client: SupabaseClient, execution: ClaimedExecution
     }
   }
   const internalType = actionType === "set_variable" ? String(config.actionType || "") : actionType;
-  const { data, error } = await client.rpc("apply_automation_internal_effect", {
+  // move_lead uses the Go commercial transaction, including reservation/history.
+  // Other internal effects retain the existing fenced SQL RPC.
+  const { data, error } = internalType === "move_lead"
+    ? { data: await invokeAutomationStageCommand({
+      organizationId: execution.organization_id, executionId: execution.id, nodeKey: node.id,
+      leaseToken: execution.locked_by || "", effectKey,
+    }, {
+      apiURL: Deno.env.get("AUTOMATION_COMMAND_API_URL") || "",
+      token: Deno.env.get("AUTOMATION_COMMAND_TOKEN") || "",
+    }), error: null }
+    : await client.rpc("apply_automation_internal_effect", {
     p_organization_id: execution.organization_id,
     p_execution_id: execution.id,
     p_node_key: node.id,
@@ -678,8 +689,11 @@ async function executeAction(client: SupabaseClient, execution: ClaimedExecution
   if (!data?.ok) throw new Error(`internal_effect_failed:${data?.status || "unknown"}`);
   const { data: refreshedLead, error: refreshError } = await client.from("leads").select("*")
     .eq("id", execution.lead_id).eq("organization_id", execution.organization_id).maybeSingle();
-  if (refreshError) throw refreshError;
-  if (!refreshedLead) throw new Error("lead_missing_after_internal_effect");
+  if (refreshError || !refreshedLead) {
+    if (internalType === "move_lead") throw new AutomationStageCommandError("automation_command_unavailable", true);
+    if (refreshError) throw refreshError;
+    throw new Error("lead_missing_after_internal_effect");
+  }
   context.lead = refreshedLead;
   return data;
 }
@@ -858,6 +872,12 @@ async function runExecution(client: SupabaseClient, execution: ClaimedExecution)
         }).eq("id", execution.id).eq("status", "running").eq("locked_by", execution.locked_by || "");
         return;
       }
+      if (node.action_type === "move_lead" && nodeError instanceof AutomationStageCommandError && nodeError.retryable) {
+        if (await deferAutomationStageCommand(client, {
+          organizationId: execution.organization_id, executionId: execution.id, nodeKey: node.id,
+          leaseToken: execution.locked_by || "", effectKey: `automation:${execution.id}:${node.id}:move_lead`,
+        }, step.id)) return;
+      }
       await updateStep(client, step.id, { status: "failed", error_message: sanitizeError(nodeError), completed_at: new Date().toISOString() });
       throw nodeError;
     }
@@ -902,10 +922,11 @@ export async function processSpecificExecution(executionID: string): Promise<Run
     await client.from("automation_executions").update({ status: "cancelled", completed_at: new Date().toISOString(), error_message: "module_disabled" }).eq("id", executionID).eq("status", "queued");
     return { accepted: false, status: "cancelled" };
   }
-  const { data: claimed, error: claimError } = await client.from("automation_executions").update({
-    status: "running", attempt_count: Number(current.attempt_count || 0) + 1, locked_at: new Date().toISOString(), locked_by: id, error_message: null,
-  }).eq("id", executionID).eq("status", "queued").is("cancellation_requested_at", null).select("*").maybeSingle();
+  const { data: claimedRows, error: claimError } = await client.rpc("claim_specific_automation_execution", {
+    p_organization_id: current.organization_id, p_execution_id: executionID, p_worker_id: id,
+  });
   if (claimError) throw claimError;
+  const claimed = claimedRows?.[0];
   if (!claimed) return { accepted: false, status: "already_claimed" };
   const execution = { ...claimed, locked_by: id } as ClaimedExecution;
   try {

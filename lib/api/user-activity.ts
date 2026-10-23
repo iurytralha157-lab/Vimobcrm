@@ -122,7 +122,9 @@ export function connectAuditFeed(options: ConnectAuditFeedOptions) {
         .channel(`audit:${organizationId}:feed`, { config: { private: true } })
         .on('broadcast', { event: 'audit.log.created' }, ({ payload }) => {
           const parsed = auditFeedEventPayloadSchema.safeParse(payload)
-          if (parsed.success) options.onEvent(parsed.data)
+          if (parsed.success && parsed.data.organizationId === organizationId) {
+            options.onEvent(parsed.data)
+          }
         })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {

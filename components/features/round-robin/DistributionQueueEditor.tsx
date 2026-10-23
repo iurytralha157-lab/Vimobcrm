@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,9 +13,17 @@ import {
   DistributionQueueRulesSection,
   DistributionQueueWhatsAppAutoReplySection,
 } from "@/components/features/round-robin/distribution-queue-editor";
-import { createClientId } from "@/lib/client-id";
+import { createClientId, createUUID } from "@/lib/client-id";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save } from "lucide-react";
+import { FormWizardLayout } from "@/components/shared/forms/FormWizardLayout";
+import { FormWizardDiscardDialog } from "@/components/shared/forms/FormWizardDiscardDialog";
+import { DistributionQueueCreationPreview } from "@/components/features/round-robin/DistributionQueueCreationPreview";
+import {
+  FORM_WIZARD_DIALOG_CLASS_NAME,
+  FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME,
+  FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME,
+} from "@/config/form-wizard";
+import { ArrowLeft, ArrowRight, Check, Filter, Loader2, MessageSquare, RefreshCw, Save, Settings2, Tags, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 import { usePipelines, useStages } from "@/hooks/use-stages";
 import { useTeams } from "@/hooks/use-teams";
@@ -30,6 +38,9 @@ import {
 } from "@/hooks/use-round-robins";
 import {
   activeTeamsForUser,
+  canEditQueueMember,
+  isUnchangedQueueMember,
+  moveEditableQueueMember,
   queueMemberKey,
   resolveDirectUserTeamContext,
   type QueueMemberDraft,
@@ -39,13 +50,12 @@ import {
   DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
   createEmptyDistributionQueueFormData,
   DISTRIBUTION_QUEUE_CONDITION_TYPES,
+  DISTRIBUTION_QUEUE_SOURCE_OPTIONS,
+  DISTRIBUTION_QUEUE_WEBSITE_CATEGORY_OPTIONS,
   findConflictingDistributionQueueMetaForm,
-  getDistributionQueueEligibleUserIds,
-  hasValidDistributionQueueCriteria,
   hydrateDistributionQueueFormData,
   isValidWhatsAppDistributionAutoReplyDelay,
   MAX_DISTRIBUTION_QUEUE_AUTO_TAGS,
-  MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
   MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH,
   normalizeDistributionQueueAutoTagIds,
   sanitizeDistributionQueueConditions,
@@ -53,23 +63,40 @@ import {
   type DistributionQueueFormData,
   type ExistingDistributionQueue,
 } from "@/lib/round-robin/distribution-queue-form";
+import { hasQueueRedistributionCapacity, hasValidQueueCriteria, hasValidQueueDestination, queueRedistributionCapacity, queueSnapshotPreservation } from "@/lib/round-robin/queue-snapshot";
 import type { DragEndEvent } from "@dnd-kit/core";
-import { arrayMove } from "@dnd-kit/sortable";
-import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { readDistributionDraftRecovery, distributionDraftKey, saveDistributionDraft, saveDistributionNavigationDraft } from "@/lib/round-robin/pending-draft";
+import { useDistributionEditorVisit } from "@/hooks/round-robin/use-distribution-editor-visit";
+import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
+import { VimobAPIError } from "@/lib/api/vimob-client";
+import { DistributionQueueScheduleSection } from "@/components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection";
+import { queueScheduleError, queueWarningMinutes } from "@/lib/round-robin/operating-schedule";
+import { isValidDistributionQueueName } from "@/lib/round-robin/queue-name";
+import { distributionQueueAutoReplyError } from "@/lib/round-robin/whatsapp-auto-reply-validation";
+import { countDistributionQueueInputCharacters } from "@/lib/round-robin/input-text";
 
 interface DistributionQueueEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   queue?: ExistingDistributionQueue | null;
-  onSave: (data: DistributionQueueFormData) => Promise<void>;
+  onSave: (data: DistributionQueueFormData) => Promise<ExistingDistributionQueue | void>;
+  onReload?: () => Promise<ExistingDistributionQueue>;
   presentation?: "dialog" | "page";
+  aside?: ReactNode;
+  summary?: ReactNode;
+  closeOnSave?: boolean;
   allowedTeamIds?: string[];
   allowedUserIds?: string[];
   allowedPipelineIds?: string[];
 }
 
 const EMPTY_RESTRICTION_IDS: string[] = [];
-const DEFAULT_PAGE_SECTION_IDS = ["basic", "rules", "members"];
+const DEFAULT_PAGE_SECTION_IDS = ["basic", "rules", "members", "schedule", "auto-tags", "redistribution", "whatsapp-auto-reply"];
+
+function withDraftStorage<T>(action: (storage: Storage) => T): T | undefined {
+  try { return action(window.sessionStorage); } catch { return undefined; }
+}
 
 function buildEditorFingerprint(formData: DistributionQueueFormData) {
   return JSON.stringify({
@@ -91,6 +118,8 @@ function buildEditorFingerprint(formData: DistributionQueueFormData) {
       entityId: member.entityId,
       teamId: member.teamId,
       weight: member.weight,
+      isActive: member.isActive,
+      reenroll: member.reenroll,
     })),
   });
 }
@@ -100,11 +129,32 @@ export function DistributionQueueEditor({
   onOpenChange,
   queue,
   onSave,
+  onReload,
   presentation = "dialog",
+  aside,
+  summary,
+  closeOnSave = true,
   allowedTeamIds,
   allowedUserIds,
   allowedPipelineIds,
 }: DistributionQueueEditorProps) {
+  const { activeOrganization, profile, user, session } = useAuth();
+  const draftKey = distributionDraftKey(activeOrganization.organizationId, profile?.id, queue?.id);
+  const visitKey = draftKey ? JSON.stringify([draftKey, user?.id ?? profile?.id, getGlobalSignOutSessionId(session ?? null)]) : null;
+  const { saving, isBusy, beginOperation } = useDistributionEditorVisit(visitKey, open);
+  const [recoverableDraft, setRecoverableDraft] = useState<DistributionQueueFormData | null>(null);
+  const [createReviewRequired, setCreateReviewRequired] = useState(false);
+  const [pendingCreationSnapshot, setPendingCreationSnapshot] = useState<DistributionQueueFormData | null>(null);
+  const [saveError, setSaveError] = useState<{ message: string; occurrence: number } | null>(null);
+  const saveErrorRef = useRef<HTMLDivElement>(null);
+  const [draftStorageError, setDraftStorageError] = useState(false);
+  const wizardId = useId();
+  useEffect(() => {
+    if (open && saveError) saveErrorRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [open, saveError]);
+  const reportSaveError = (message: string) => {
+    setSaveError((previous) => ({ message, occurrence: (previous?.occurrence ?? 0) + 1 }));
+  };
   const { hasModule } = useOrganizationModules();
   const hasPropertiesModule = hasModule("properties");
   const {
@@ -226,13 +276,18 @@ export function DistributionQueueEditor({
     [whatsappSessions],
   );
 
-  const [saving, setSaving] = useState(false);
-  const saveInFlightRef = useRef(false);
+  const [activeStep, setActiveStep] = useState("basic");
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
 
   const [formData, setFormData] = useState<DistributionQueueFormData>(
     createEmptyDistributionQueueFormData,
   );
+  // User edits must not race a replacing operation; hydration and confirmed responses use the internal setter.
+  const updateDraft = (update: SetStateAction<DistributionQueueFormData>) => {
+    if (!isBusy()) setFormData(update);
+  };
+  const [editorScopeKey, setEditorScopeKey] = useState(draftKey);
   const [savedFingerprint, setSavedFingerprint] = useState(() =>
     buildEditorFingerprint(createEmptyDistributionQueueFormData()),
   );
@@ -250,6 +305,7 @@ export function DistributionQueueEditor({
   const hasWhatsAppMessageCondition = formData.conditions.some(
     (condition) => condition.type === "whatsapp_message_contains",
   );
+  const autoReplyError = distributionQueueAutoReplyError(formData);
   const selectedAutoTagIds = normalizeDistributionQueueAutoTagIds(
     formData.settings.auto_tag_ids,
   );
@@ -276,12 +332,14 @@ export function DistributionQueueEditor({
   );
   const eligibleRedistributionUserCount = useMemo(
     () =>
-      getDistributionQueueEligibleUserIds(
+      queueRedistributionCapacity(
         formData.members,
+        queue,
         visibleTeams,
         visibleUsers.map((user) => user.id),
-      ).length,
-    [formData.members, visibleTeams, visibleUsers],
+        hasTeamRestriction || hasUserRestriction,
+      ),
+    [formData.members, queue, visibleTeams, visibleUsers, hasTeamRestriction, hasUserRestriction],
   );
   const teamSelectMessage =
     teams.length === 0
@@ -341,7 +399,9 @@ export function DistributionQueueEditor({
     if (open) {
       // This is UI draft hydration when the dialog opens or switches queue.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setOpenSections(presentation === "page" ? DEFAULT_PAGE_SECTION_IDS : []);
+      setOpenSections(DEFAULT_PAGE_SECTION_IDS);
+      setActiveStep("basic");
+      setDiscardOpen(false);
     }
   }, [open, presentation, queue?.id]);
 
@@ -392,10 +452,13 @@ export function DistributionQueueEditor({
       setFormData(hydratedFormData);
     }
     setSavedFingerprint(buildEditorFingerprint(hydratedFormData));
+    setEditorScopeKey(draftKey);
+    setPendingCreationSnapshot(null);
+    setDraftStorageError(false);
     // Intentionally initialize only when the dialog opens or switches queue.
     // Team/user query refreshes must not reset in-progress edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, queue?.id]);
+  }, [open, queue?.id, draftKey]);
 
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
@@ -406,7 +469,7 @@ export function DistributionQueueEditor({
   };
 
   const addCondition = () => {
-    setFormData((prev) => ({
+    updateDraft((prev) => ({
       ...prev,
       conditions: [
         ...prev.conditions,
@@ -427,7 +490,7 @@ export function DistributionQueueEditor({
     id: string,
     updates: Partial<DistributionQueueCondition>,
   ) => {
-    setFormData((prev) => {
+    updateDraft((prev) => {
       const current = prev.conditions.find((condition) => condition.id === id);
       const conditions = prev.conditions.map((condition) =>
         condition.id === id ? { ...condition, ...updates } : condition,
@@ -455,7 +518,7 @@ export function DistributionQueueEditor({
   };
 
   const removeCondition = (id: string) => {
-    setFormData((prev) => {
+    updateDraft((prev) => {
       const removed = prev.conditions.find((condition) => condition.id === id);
       const conditions = prev.conditions.filter(
         (condition) => condition.id !== id,
@@ -488,7 +551,7 @@ export function DistributionQueueEditor({
   ) => {
     if (!entityId.trim()) return;
 
-    setFormData((prev) => ({
+    updateDraft((prev) => ({
       ...prev,
       members: prev.members.some(
         (m) => m.type === type && m.entityId === entityId,
@@ -506,24 +569,25 @@ export function DistributionQueueEditor({
   };
 
   const updateMemberWeight = (memberKey: string, weight: number) => {
-    setFormData((prev) => ({
+    updateDraft((prev) => ({
       ...prev,
       members: prev.members.map((m) =>
-        queueMemberKey(m) === memberKey
-          ? { ...m, weight: Math.max(1, weight) }
+        queueMemberKey(m) === memberKey && canEditQueueMember(m, allowedUserIds, allowedTeamIds)
+          ? { ...m, weight: Math.max(1, Math.min(1000, Math.trunc(weight))) }
           : m,
       ),
     }));
   };
 
   const removeMember = (memberKey: string) => {
-    setFormData((prev) => ({
+    updateDraft((prev) => ({
       ...prev,
-      members: prev.members.filter((m) => queueMemberKey(m) !== memberKey),
+      members: prev.members.filter((m) => queueMemberKey(m) !== memberKey || !canEditQueueMember(m, allowedUserIds, allowedTeamIds)),
     }));
   };
 
   const toggleAutoTag = (tagId: string) => {
+    if (isBusy()) return;
     const normalizedTagId = normalizeDistributionQueueAutoTagIds([tagId])[0];
     if (!normalizedTagId) return;
 
@@ -540,7 +604,7 @@ export function DistributionQueueEditor({
       return;
     }
 
-    setFormData((previous) => {
+    updateDraft((previous) => {
       const autoTagIds = normalizeDistributionQueueAutoTagIds(
         previous.settings.auto_tag_ids,
       );
@@ -562,24 +626,72 @@ export function DistributionQueueEditor({
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setFormData((prev) => {
-        const oldIndex = prev.members.findIndex(
-          (m) => queueMemberKey(m) === active.id,
-        );
-        const newIndex = prev.members.findIndex(
-          (m) => queueMemberKey(m) === over.id,
-        );
-        if (oldIndex < 0 || newIndex < 0) return prev;
+      updateDraft((prev) => {
+        const members = moveEditableQueueMember(prev.members, String(active.id), String(over.id), (member) => canEditQueueMember(member, allowedUserIds, allowedTeamIds));
+        if (members === prev.members) return prev;
         return {
           ...prev,
-          members: arrayMove(prev.members, oldIndex, newIndex),
+          members,
         };
       });
     }
   };
 
+  const submitQueueForm = async (payload: DistributionQueueFormData, creationReplay: boolean) => {
+    const operation = beginOperation();
+    if (!operation) return;
+    setFormData(payload);
+    const preserved = draftKey ? withDraftStorage((storage) => saveDistributionDraft(storage, draftKey, payload)) : false;
+    setDraftStorageError(preserved !== true);
+    if (!queue && preserved !== true) {
+      operation.finish();
+      if (!creationReplay) setFormData({ ...payload, creationAttemptId: undefined });
+      reportSaveError("Não foi possível preservar a tentativa neste navegador. Libere o armazenamento da sessão antes de criar a fila.");
+      return;
+    }
+    if (!queue) setPendingCreationSnapshot(payload);
+    try {
+      const saved = await onSave(payload);
+      if (!operation.isCurrent()) return;
+      const persisted = saved ? hydrateDistributionQueueFormData(saved, teams) : payload;
+      setFormData(persisted);
+      setSavedFingerprint(buildEditorFingerprint(persisted));
+      setSaveError(null);
+      setDraftStorageError(false);
+      setRecoverableDraft(null);
+      setPendingCreationSnapshot(null);
+      if (draftKey) withDraftStorage((storage) => storage.removeItem(draftKey));
+      if (presentation === "dialog" && closeOnSave) onOpenChange(false);
+    } catch (error) {
+      if (!operation.isCurrent()) return;
+      if (!queue && !creationReplay && error instanceof VimobAPIError && error.status >= 400 && error.status < 500 && ![408, 409].includes(error.status)) {
+        setFormData({ ...payload, creationAttemptId: undefined });
+        setPendingCreationSnapshot(null);
+        if (draftKey) withDraftStorage((storage) => storage.removeItem(draftKey));
+      }
+      reportSaveError(error instanceof Error ? error.message : "Não foi possível salvar a fila. Seu rascunho foi mantido.");
+    } finally {
+      operation.finish();
+    }
+  };
   const handleSave = async () => {
-    if (saveInFlightRef.current) return;
+    if (isBusy()) return;
+    if (editorScopeKey !== draftKey) return;
+    if (queue?.hasUnsupportedReentryBehavior) { toast.error("A política legada de reentrada não é suportada por este editor. Sua configuração foi preservada."); return; }
+    if (hasUnreviewedCreation) {
+      toast.error("Revise o pedido de criação anterior antes de iniciar outro.");
+      return;
+    }
+    if (!queue && pendingCreationSnapshot) {
+      if (buildEditorFingerprint(formData) !== buildEditorFingerprint(pendingCreationSnapshot)) {
+        toast.error("Retome o pedido enviado para confirmar o resultado antes de alterar a nova fila.");
+        return;
+      }
+      await submitQueueForm(pendingCreationSnapshot, true);
+      return;
+    }
+    const scheduleError = queueScheduleError(formData.settings.operating_schedule, !queue);
+    if (scheduleError) { toast.error(scheduleError); return; }
     if (blockingReferenceDataError) {
       toast.error(
         "Não foi possível validar todos os dados da fila. Recarregue as referências antes de salvar.",
@@ -590,16 +702,12 @@ export function DistributionQueueEditor({
       toast.error("Aguarde o carregamento completo dos dados da fila.");
       return;
     }
-    if (!formData.name.trim()) {
-      toast.error("Nome da fila e obrigatorio");
+    if (!isValidDistributionQueueName(formData.name)) {
+      toast.error("O nome da fila deve ter entre 2 e 120 caracteres.");
       return;
     }
-    if (!formData.target_pipeline_id) {
-      toast.error("Pipeline de destino e obrigatorio");
-      return;
-    }
-    if (!formData.target_stage_id) {
-      toast.error("Estagio inicial e obrigatorio");
+    if (!hasValidQueueDestination(formData, queue)) {
+      toast.error("Selecione o pipeline de destino e o estágio inicial.");
       return;
     }
     if (
@@ -618,19 +726,7 @@ export function DistributionQueueEditor({
     }
     if (hasTeamRestriction || hasUserRestriction) {
       const invalidMember = formData.members.some((member) => {
-        if (member.type === "team") {
-          return (
-            hasTeamRestriction &&
-            !effectiveAllowedTeamIds.includes(member.entityId)
-          );
-        }
-        return (
-          (hasUserRestriction &&
-            !effectiveAllowedUserIds.includes(member.entityId)) ||
-          (hasTeamRestriction &&
-            Boolean(member.teamId) &&
-            !effectiveAllowedTeamIds.includes(member.teamId || ""))
-        );
+        return !canEditQueueMember(member, allowedUserIds, allowedTeamIds) && !isUnchangedQueueMember(member, member.id ? persistedMemberById.get(member.id) : undefined);
       });
       if (invalidMember) {
         toast.error("Você só pode distribuir para sua equipe ou membros dela");
@@ -732,29 +828,11 @@ export function DistributionQueueEditor({
       "string"
         ? formData.settings.whatsapp_distribution_auto_reply_message.trim()
         : "";
-    const whatsappAutoReplyMessageLength = Array.from(
-      rawWhatsAppAutoReplyMessage,
-    ).length;
+    const whatsappAutoReplyMessageLength = countDistributionQueueInputCharacters(rawWhatsAppAutoReplyMessage);
     const rawWhatsAppAutoReplyDelay =
       formData.settings.whatsapp_distribution_auto_reply_delay_seconds;
-    if (
-      whatsappAutoReplyEnabled &&
-      (whatsappAutoReplyMessageLength < 1 ||
-        whatsappAutoReplyMessageLength >
-          MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH)
-    ) {
-      toast.error(
-        `A resposta automática deve conter entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.`,
-      );
-      return;
-    }
-    if (
-      whatsappAutoReplyEnabled &&
-      !isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)
-    ) {
-      toast.error(
-        `O atraso da resposta automática deve ficar entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS} segundos.`,
-      );
+    if (autoReplyError) {
+      toast.error(autoReplyError);
       return;
     }
     const whatsappAutoReplyMessage =
@@ -781,22 +859,20 @@ export function DistributionQueueEditor({
       );
       return;
     }
-    const hasValidCriteria = hasValidDistributionQueueCriteria(
-      formData.conditions,
-    );
+    const hasValidCriteria = hasValidQueueCriteria(formData, queue);
     if (!hasValidCriteria) {
       toast.error(
         "Adicione pelo menos um criterio de entrada para salvar a fila",
       );
       return;
     }
-    if (formData.is_active && validMembers.length === 0) {
+    if (formData.is_active && !validMembers.some((member) => member.isActive !== false)) {
       toast.error("Adicione pelo menos um participante antes de ativar a fila");
       return;
     }
     if (formData.settings.enable_redistribution) {
       const timeout = formData.settings.redistribution_timeout_minutes ?? 20;
-      const warning = formData.settings.redistribution_warning_minutes ?? 5;
+      const warning = queueWarningMinutes(timeout, formData.settings.redistribution_warning_minutes);
       if (timeout < 1 || timeout > 10080) {
         toast.error(
           "O prazo de redistribuicao deve ficar entre 1 minuto e 7 dias.",
@@ -809,12 +885,14 @@ export function DistributionQueueEditor({
         );
         return;
       }
-      const eligibleUserCount = getDistributionQueueEligibleUserIds(
+      const eligibleUserCount = queueRedistributionCapacity(
         validMembers,
+        queue,
         visibleTeams,
         visibleUsers.map((user) => user.id),
-      ).length;
-      if (eligibleUserCount < 2) {
+        hasTeamRestriction || hasUserRestriction,
+      );
+      if (!hasQueueRedistributionCapacity(formData.settings, eligibleUserCount)) {
         toast.error(
           `A redistribuição automática precisa de pelo menos dois corretores ativos. Esta fila possui ${eligibleUserCount}.`,
         );
@@ -841,6 +919,8 @@ export function DistributionQueueEditor({
     );
     const sanitizedSettings = {
       ...formData.settings,
+      ignore_availability: formData.settings.operating_schedule ? false : formData.settings.ignore_availability,
+      redistribution_warning_minutes: queueWarningMinutes(formData.settings.redistribution_timeout_minutes ?? 20, formData.settings.redistribution_warning_minutes),
       auto_tag_ids: normalizeDistributionQueueAutoTagIds(
         formData.settings.auto_tag_ids,
       ),
@@ -851,6 +931,7 @@ export function DistributionQueueEditor({
     };
     const payload: DistributionQueueFormData = {
       ...formData,
+      creationAttemptId: queue ? undefined : formData.creationAttemptId || createUUID(),
       settings: sanitizedHasWhatsAppMessageCondition
         ? {
             ...sanitizedSettings,
@@ -860,50 +941,301 @@ export function DistributionQueueEditor({
           }
         : {
             ...sanitizedSettings,
-            ignore_availability: queue?.settings?.ignore_availability,
+            ignore_availability: formData.settings.operating_schedule ? false : queue?.settings?.ignore_availability,
             whatsapp_distribution_auto_reply_enabled: false,
           },
       conditions: sanitizedConditions,
       members: validMembers,
+      ...queueSnapshotPreservation({ ...formData, conditions: sanitizedConditions, members: validMembers }, queue),
     };
-    saveInFlightRef.current = true;
-    setSaving(true);
-    try {
-      await onSave(payload);
-      setFormData(payload);
-      setSavedFingerprint(buildEditorFingerprint(payload));
-      if (presentation === "dialog") onOpenChange(false);
-    } finally {
-      saveInFlightRef.current = false;
-      setSaving(false);
-    }
+    await submitQueueForm(payload, Boolean(formData.creationAttemptId));
   };
-  const hasValidCriteria = hasValidDistributionQueueCriteria(
-    formData.conditions,
-  );
-  const hasRequiredMembers = !formData.is_active || formData.members.length > 0;
-  const hasRedistributionCapacity =
-    !formData.settings.enable_redistribution ||
-    eligibleRedistributionUserCount >= 2;
+  const hasValidCriteria = hasValidQueueCriteria(formData, queue);
+  const hasValidDestination = hasValidQueueDestination(formData, queue);
+  const hasValidSchedule = queueScheduleError(formData.settings.operating_schedule, !queue) === null;
+  const hasRequiredMembers = !formData.is_active || formData.members.some((member) => member.isActive !== false);
+  const hasRedistributionCapacity = hasQueueRedistributionCapacity(formData.settings, eligibleRedistributionUserCount);
   const hasUnsavedChanges =
     buildEditorFingerprint(formData) !== savedFingerprint;
-  const canSave =
-    !!formData.name.trim() &&
-    !!formData.target_pipeline_id &&
-    !!formData.target_stage_id &&
+  const hasUnreviewedCreation = !queue && (createReviewRequired || Boolean(recoverableDraft?.creationAttemptId));
+  const reloadQueue = async () => {
+    if (!onReload) return;
+    const operation = beginOperation();
+    if (!operation) return;
+    try {
+      const current = await onReload();
+      if (!operation.isCurrent()) return;
+      const data = hydrateDistributionQueueFormData(current, teams);
+      setFormData(data);
+      setSavedFingerprint(buildEditorFingerprint(data));
+      setSaveError(null);
+      setDraftStorageError(false);
+      setRecoverableDraft(null);
+      if (draftKey) withDraftStorage((storage) => storage.removeItem(draftKey));
+    } catch (error) {
+      if (!operation.isCurrent()) return;
+      reportSaveError(error instanceof Error ? error.message : "Não foi possível carregar a versão atual. Seu rascunho foi mantido.");
+    } finally {
+      operation.finish();
+    }
+  };
+  useEffect(() => {
+    if (!open || !draftKey) return;
+    const recovered = withDraftStorage((storage) => readDistributionDraftRecovery(storage, draftKey));
+    // Synchronize the external session draft when the editor scope opens or changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRecoverableDraft(recovered?.status === "ready" ? recovered.form : null);
+    setCreateReviewRequired(recovered?.status === "review_required");
+  }, [open, draftKey, queue?.revision]);
+  useEffect(() => {
+    if (!open || !draftKey || !hasUnsavedChanges || editorScopeKey !== draftKey) return;
+    if (!hasUnreviewedCreation && !pendingCreationSnapshot) {
+      const preserved = withDraftStorage((storage) => saveDistributionDraft(storage, draftKey, formData));
+      // Report an external storage failure; saving still validates on the server.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDraftStorageError(preserved !== true);
+    }
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const beforeLink = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
+      const destination = new URL(link.href, window.location.href);
+      if (destination.href === window.location.href) return;
+      const preserved = withDraftStorage((storage) => saveDistributionNavigationDraft(storage, draftKey, formData, { hasUnreviewedCreation, pendingCreationSnapshot }));
+      setDraftStorageError(preserved !== true);
+      if (window.confirm(preserved === true
+        ? !queue && (hasUnreviewedCreation || pendingCreationSnapshot)
+          ? "Há um pedido de criação sem confirmação. Deseja sair? A tentativa anterior será preservada; alterações posteriores ainda não foram enviadas."
+          : "Há alterações não salvas nesta fila. Deseja sair? O rascunho ficará disponível nesta sessão."
+        : "Há alterações não salvas nesta fila e o navegador não conseguiu guardar o rascunho. Deseja sair e perder essas alterações?")) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", beforeLink, true);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", beforeLink, true); };
+  }, [open, draftKey, formData, hasUnsavedChanges, hasUnreviewedCreation, pendingCreationSnapshot, editorScopeKey, queue]);
+  const canReplayCreation = !queue && Boolean(pendingCreationSnapshot) &&
+    buildEditorFingerprint(formData) === buildEditorFingerprint(pendingCreationSnapshot || formData) &&
+    !hasUnreviewedCreation && !saving && editorScopeKey === draftKey;
+  const canSave = canReplayCreation || (
+    editorScopeKey === draftKey &&
+    !queue?.hasUnsupportedReentryBehavior &&
+    (!pendingCreationSnapshot || buildEditorFingerprint(formData) === buildEditorFingerprint(pendingCreationSnapshot)) &&
+    isValidDistributionQueueName(formData.name) &&
+    hasValidDestination &&
+    hasValidSchedule &&
+    !autoReplyError &&
     hasValidCriteria &&
     hasRequiredMembers &&
     hasRedistributionCapacity &&
     hasUnsavedChanges &&
+    !hasUnreviewedCreation &&
     !blockingReferenceDataError &&
     !blockingReferenceDataLoading &&
-    !saving;
+    (!queue?.revision || queue.revision === formData.expectedRevision) &&
+    !saving);
 
-  const editorTitle = queue
-    ? "Editar fila de distribuição"
-    : "Nova fila de distribuição";
+  const steps = [
+    { id: "basic", label: "Nome e destino", icon: Settings2 },
+    { id: "rules", label: "Critérios de entrada", icon: Filter },
+    { id: "members", label: "Participantes", icon: UsersRound },
+    { id: "schedule", label: "Horário da fila", icon: Settings2 },
+    { id: "auto-tags", label: "Tags automáticas", icon: Tags },
+    { id: "redistribution", label: "Redistribuição", icon: RefreshCw },
+    ...(hasWhatsAppMessageCondition ? [{ id: "whatsapp-auto-reply", label: "Resposta no WhatsApp", icon: MessageSquare }] : []),
+    { id: "review", label: "Revisão", icon: Check },
+  ];
+  const displayedStep = steps.some((step) => step.id === activeStep) ? activeStep : "rules";
+  const activeStepIndex = steps.findIndex((step) => step.id === displayedStep);
+  const closeEditor = () => {
+    if (isBusy()) return;
+    if (hasUnsavedChanges) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+  const advanceStep = () => {
+    if (isBusy()) return;
+    if (displayedStep === "basic" && (!isValidDistributionQueueName(formData.name) || !hasValidDestination)) {
+      toast.error("Preencha o nome, o pipeline de destino e o estágio inicial.");
+      return;
+    }
+    if (displayedStep === "rules" && !hasValidCriteria) {
+      toast.error("Adicione pelo menos um critério de entrada preenchido.");
+      return;
+    }
+    if (displayedStep === "schedule" && !hasValidSchedule) {
+      toast.error(queueScheduleError(formData.settings.operating_schedule, !queue));
+      return;
+    }
+    if (displayedStep === "members" && !hasRequiredMembers) {
+      toast.error("Adicione pelo menos um participante antes de ativar a fila.");
+      return;
+    }
+    if (displayedStep === "redistribution" && !hasRedistributionCapacity) {
+      toast.error("A redistribuição automática precisa de pelo menos dois corretores ativos.");
+      return;
+    }
+    if (displayedStep === "whatsapp-auto-reply" && autoReplyError) {
+      toast.error(autoReplyError);
+      return;
+    }
+    const nextStep = steps[activeStepIndex + 1];
+    if (nextStep) setActiveStep(nextStep.id);
+  };
+  const criteriaPreview = formData.conditions.map((condition) => ({
+    id: condition.id,
+    label: DISTRIBUTION_QUEUE_CONDITION_TYPES.find((option) => option.value === condition.type)?.label || "Critério",
+    values: condition.values.map((value) => {
+      if (condition.type === "source") return DISTRIBUTION_QUEUE_SOURCE_OPTIONS.find((option) => option.value === value)?.label || value;
+      if (condition.type === "website_category") return DISTRIBUTION_QUEUE_WEBSITE_CATEGORY_OPTIONS.find((option) => option.value === value)?.label || value;
+      if (condition.type === "meta_form") return metaFormConfigs.find((form) => form.config_id === value || form.form_id === value)?.form_name || "Formulário selecionado";
+      if (condition.type === "whatsapp_session") {
+        const session = whatsappSessions.find((candidate) => candidate.id === value);
+        return session?.display_name || session?.instance_name || "Conexão selecionada";
+      }
+      if (condition.type === "webhook") return incomingWebhooks.find((webhook) => webhook.id === value)?.name || "Webhook selecionado";
+      if (condition.type === "tag") return tags.find((tag) => tag.id === value)?.name || "Tag selecionada";
+      if (condition.type === "interest_property") return properties.find((property) => property.id === value)?.title || "Imóvel selecionado";
+      return value;
+    }),
+  }));
+  const draftPreview = (
+    <DistributionQueueCreationPreview
+      formData={formData}
+      pipelineName={visiblePipelines.find((pipeline) => pipeline.id === formData.target_pipeline_id)?.name}
+      stageName={stages.find((stage) => stage.id === formData.target_stage_id)?.name}
+      criteria={criteriaPreview}
+      tagNames={selectedAutoTagIds.map((id) => tags.find((tag) => tag.id === id)?.name || "Tag selecionada")}
+      teamMembersById={Object.fromEntries(visibleTeams.map((team) => [
+        team.id,
+        (team.members || []).flatMap((member) => {
+          const user = visibleUsers.find((candidate) => candidate.id === member.user_id);
+          return user ? [user.name] : [];
+        }),
+      ]))}
+    />
+  );
+  const editorTitle = queue ? "Editar fila de distribuição" : "Nova fila de distribuição";
+  const editorAlerts = (
+    <>
+      {draftStorageError && <p role="alert" className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px]">Não foi possível guardar o rascunho neste navegador. Mantenha esta janela aberta até salvar; sair ou recarregar pode perder as alterações.</p>}
+      {queue?.hasUnsupportedReentryBehavior && <p role="alert" className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px]">A política legada de reentrada não é suportada por este editor. A fila está disponível para consulta e sua configuração foi preservada.</p>}
+      {(saveError || (queue?.revision && queue.revision !== formData.expectedRevision)) && (
+        <div ref={saveErrorRef} role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-[12px] font-light text-destructive">
+          <p key={saveError?.occurrence ?? "revision-conflict"}>{saveError?.message ?? "A configuração desta fila foi atualizada. Seu rascunho foi mantido."}</p>
+          {onReload && <Button type="button" variant="ghost" disabled={saving} className="mt-2 h-8 text-[12px]" onClick={() => void reloadQueue()}>Descartar rascunho e carregar versão atual</Button>}
+        </div>
+      )}
+      {recoverableDraft && (
+        <div role="status" className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light">
+          {!queue && recoverableDraft.creationAttemptId ? "Há um pedido de criação sem confirmação. Restaure para reenviar a mesma tentativa ou confira a lista de filas antes de descartá-lo." : recoverableDraft.expectedRevision !== queue?.revision ? "Há um rascunho de uma versão anterior. Você pode revisá-lo; carregar a versão atual será necessário antes de salvar." : "Há um rascunho não salvo desta fila nesta sessão."}
+          <Button type="button" variant="ghost" disabled={saving} className="ml-2 h-8 text-[12px]" onClick={() => { if (isBusy()) return; updateDraft(recoverableDraft); setPendingCreationSnapshot(!queue && recoverableDraft.creationAttemptId ? recoverableDraft : null); setRecoverableDraft(null); }}>Restaurar rascunho</Button>
+          <Button type="button" variant="ghost" disabled={saving} className="h-8 text-[12px]" onClick={() => { if (isBusy()) return; setRecoverableDraft(null); if (draftKey) withDraftStorage((storage) => storage.removeItem(draftKey)); }}>{!queue && recoverableDraft.creationAttemptId ? "Conferi a lista e quero descartar o pedido anterior" : "Descartar"}</Button>
+        </div>
+      )}
+      {!queue && pendingCreationSnapshot && buildEditorFingerprint(formData) !== buildEditorFingerprint(pendingCreationSnapshot) && (
+        <div role="status" className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light">
+          Confirme o resultado do pedido já enviado antes de mudar sua configuração.
+          <Button type="button" variant="ghost" disabled={saving} className="ml-2 h-8 text-[12px]" onClick={() => updateDraft(pendingCreationSnapshot)}>Retomar pedido enviado</Button>
+        </div>
+      )}
+      {createReviewRequired && (
+        <div role="alert" className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light">
+          <p>Não foi possível recuperar com segurança a última tentativa de criação. Confira as filas existentes antes de iniciar uma nova criação.</p>
+          <a className="mr-2 inline-flex h-8 items-center text-primary underline" href="/crm/management?tab=distribution">Ver filas existentes</a>
+          <Button type="button" variant="ghost" disabled={saving} className="h-8 text-[12px]" onClick={() => { if (isBusy()) return; setCreateReviewRequired(false); setPendingCreationSnapshot(null); updateDraft((current) => ({ ...current, creationAttemptId: undefined })); if (draftKey) withDraftStorage((storage) => storage.removeItem(draftKey)); }}>Conferi a lista e quero iniciar uma nova criação</Button>
+        </div>
+      )}
+    </>
+  );
   const editorBody = (
     <>
+      <FormWizardLayout
+        focusContentOnStepChange
+        steps={steps.map((step) => ({
+          ...step,
+          disabled: saving,
+          buttonId: `${wizardId}-${step.id}-tab`,
+          panelId: `${wizardId}-${step.id}-panel`,
+          tourId: `distribution-queue-step-${step.id}`,
+        }))}
+        activeStep={displayedStep}
+        onStepChange={(step) => { if (!isBusy()) setActiveStep(step); }}
+        aside={aside ?? draftPreview}
+        asideTitle={aside ? undefined : "Prévia da distribuição"}
+        asideContentClassName={aside ? "flex min-h-[360px] flex-col" : undefined}
+        footer={(
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <p
+            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
+            aria-live="polite"
+          >
+            {saving
+              ? queue
+                ? "Salvando alterações..."
+                : "Criando fila..."
+              : blockingReferenceDataError
+                ? "Recarregue os dados necessários antes de salvar."
+              : autoReplyError
+                ? autoReplyError
+              : blockingReferenceDataLoading
+                ? "Carregando dados da distribuição..."
+                : formData.settings.enable_redistribution &&
+                    !hasRedistributionCapacity
+                  ? `Adicione pelo menos dois corretores ativos ou desative a redistribuição. Atualmente: ${eligibleRedistributionUserCount}.`
+                  : canSave
+                    ? "Tudo pronto para salvar."
+                    : queue && !hasUnsavedChanges
+                      ? "Nenhuma alteração para salvar."
+                      : "Preencha destino, critérios e participantes obrigatórios."}
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}
+              onClick={activeStepIndex > 0 ? () => setActiveStep(steps[activeStepIndex - 1].id) : closeEditor}
+              disabled={saving}
+            >
+              {activeStepIndex > 0 ? <><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Voltar</> : "Cancelar"}
+            </Button>
+            {displayedStep !== "review" ? (
+              <Button type="button" onClick={advanceStep} disabled={saving} className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}>
+                Avançar <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+              </Button>
+            ) : (
+            <Button
+              type="button"
+              data-tour="distribution-queue-save"
+              className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
+              onClick={handleSave}
+              disabled={!canSave}
+              aria-busy={saving}
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}{" "}
+              {queue ? "Salvar alterações" : "Criar fila"}
+            </Button>
+            )}
+          </div>
+        </div>
+        )}
+      >
+        <div
+          id={`${wizardId}-${displayedStep}-panel`}
+          role="tabpanel"
+          aria-labelledby={`${wizardId}-${displayedStep}-tab`}
+          tabIndex={0}
+          className="space-y-4 focus-visible:outline-none [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light"
+        >
+          <fieldset disabled={saving} aria-label="Configuração da distribuição" className="m-0 min-w-0 space-y-4 border-0 p-0">
+          {editorAlerts}
+          {summary}
       {blockingReferenceDataError && (
         <div
           role="alert"
@@ -914,12 +1246,7 @@ export function DistributionQueueEditor({
           existentes.
         </div>
       )}
-      <div className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-2.5 py-2.5 sm:px-4 sm:py-4 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light">
-        <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
-          <div className="min-w-0 space-y-3">
-            <p className="px-1 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">
-              Entrada e destino
-            </p>
+          {displayedStep === "basic" && (
             <DistributionQueueBasicSection
               open={openSections.includes("basic")}
               name={formData.name}
@@ -930,26 +1257,27 @@ export function DistributionQueueEditor({
               stages={stages}
               onToggle={() => toggleSection("basic")}
               onNameChange={(name) =>
-                setFormData((previous) => ({ ...previous, name }))
+                updateDraft((previous) => ({ ...previous, name }))
               }
               onStrategyChange={(strategy) =>
-                setFormData((previous) => ({ ...previous, strategy }))
+                updateDraft((previous) => ({ ...previous, strategy }))
               }
               onPipelineChange={(targetPipelineId) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   target_pipeline_id: targetPipelineId,
                   target_stage_id: "",
                 }))
               }
               onStageChange={(targetStageId) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   target_stage_id: targetStageId,
                 }))
               }
             />
-
+          )}
+          {displayedStep === "rules" && (
             <DistributionQueueRulesSection
               open={openSections.includes("rules")}
               conditions={formData.conditions}
@@ -957,6 +1285,7 @@ export function DistributionQueueEditor({
               hasWhatsAppMessageCondition={hasWhatsAppMessageCondition}
               hasValidCriteria={hasValidCriteria}
               ignoreAvailability={formData.settings.ignore_availability}
+              managedSchedule={formData.settings.operating_schedule !== undefined}
               incomingWebhooks={incomingWebhooks}
               whatsappSessions={whatsappSessions}
               activeWhatsAppSessions={activeWhatsAppSessions}
@@ -976,7 +1305,7 @@ export function DistributionQueueEditor({
               onUpdateCondition={updateCondition}
               onRemoveCondition={removeCondition}
               onIgnoreAvailabilityChange={(ignoreAvailability) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
@@ -985,25 +1314,12 @@ export function DistributionQueueEditor({
                 }))
               }
             />
-
-            <DistributionQueueAutoTagsSection
-              open={openSections.includes("auto-tags")}
-              tags={tags}
-              selectedTagIds={selectedAutoTagIds}
-              tagsLoading={tagsLoading}
-              tagsError={tagsError}
-              onToggle={() => toggleSection("auto-tags")}
-              onToggleTag={toggleAutoTag}
-            />
-          </div>
-
-          <div className="min-w-0 space-y-3">
-            <p className="px-1 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">
-              Participantes e operação
-            </p>
+          )}
+          {displayedStep === "members" && (
             <DistributionQueueMembersSection
               open={openSections.includes("members")}
               members={formData.members}
+              canEditMember={(member) => canEditQueueMember(member, allowedUserIds, allowedTeamIds)}
               strategy={formData.strategy}
               visibleTeams={visibleTeams}
               selectableTeams={selectableTeams}
@@ -1028,15 +1344,38 @@ export function DistributionQueueEditor({
               }}
               onUpdateWeight={updateMemberWeight}
               onRemove={removeMember}
+              onReenroll={(memberKey) => updateDraft((previous) => ({ ...previous, members: previous.members.map((member) => queueMemberKey(member) === memberKey && canEditQueueMember(member, allowedUserIds, allowedTeamIds) ? { ...member, isActive: true, reenroll: true } : member) }))}
             />
-
+          )}
+          {displayedStep === "schedule" && (
+            <DistributionQueueScheduleSection
+              isLegacy={Boolean(queue)}
+              schedule={formData.settings.operating_schedule}
+              poolNotificationsEnabled={formData.settings.pool_notifications?.enabled === true}
+              onPoolNotificationsChange={(enabled) => updateDraft((previous) => ({ ...previous, settings: { ...previous.settings, pool_notifications: { enabled } } }))}
+              onChange={(schedule) => updateDraft((previous) => ({ ...previous, settings: { ...previous.settings, operating_schedule: schedule, ignore_availability: false } }))}
+            />
+          )}
+          {displayedStep === "auto-tags" && (
+            <DistributionQueueAutoTagsSection
+              open={openSections.includes("auto-tags")}
+              tags={tags}
+              selectedTagIds={selectedAutoTagIds}
+              tagsLoading={tagsLoading}
+              tagsError={tagsError}
+              onToggle={() => toggleSection("auto-tags")}
+              onToggleTag={toggleAutoTag}
+            />
+          )}
+          {displayedStep === "redistribution" && (
             <DistributionQueueRedistributionSection
               open={openSections.includes("redistribution")}
               settings={formData.settings}
               eligibleUserCount={eligibleRedistributionUserCount}
+              managedSchedule={formData.settings.operating_schedule !== undefined}
               onToggle={() => toggleSection("redistribution")}
               onEnabledChange={(enableRedistribution) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
@@ -1044,34 +1383,35 @@ export function DistributionQueueEditor({
                     redistribution_timeout_minutes:
                       previous.settings.redistribution_timeout_minutes ?? 20,
                     redistribution_warning_minutes:
-                      previous.settings.redistribution_warning_minutes ?? 5,
+                      queueWarningMinutes(previous.settings.redistribution_timeout_minutes ?? 20, previous.settings.redistribution_warning_minutes),
                     redistribution_max_attempts:
                       previous.settings.redistribution_max_attempts ?? 10,
                   },
                 }))
               }
               onTimeoutChange={(redistributionTimeoutMinutes) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
                     redistribution_timeout_minutes:
                       redistributionTimeoutMinutes,
+                    redistribution_warning_minutes: queueWarningMinutes(redistributionTimeoutMinutes, previous.settings.redistribution_warning_minutes),
                   },
                 }))
               }
               onWarningChange={(redistributionWarningMinutes) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
                     redistribution_warning_minutes:
-                      redistributionWarningMinutes,
+                      queueWarningMinutes(previous.settings.redistribution_timeout_minutes ?? 20, redistributionWarningMinutes),
                   },
                 }))
               }
               onMaxAttemptsChange={(redistributionMaxAttempts) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
@@ -1080,7 +1420,7 @@ export function DistributionQueueEditor({
                 }))
               }
               onReentryBehaviorChange={(reentryBehavior) =>
-                setFormData((previous) => ({
+                updateDraft((previous) => ({
                   ...previous,
                   settings: {
                     ...previous.settings,
@@ -1089,86 +1429,37 @@ export function DistributionQueueEditor({
                 }))
               }
             />
-
-            {hasWhatsAppMessageCondition && (
+          )}
+          {displayedStep === "whatsapp-auto-reply" && hasWhatsAppMessageCondition && (
               <DistributionQueueWhatsAppAutoReplySection
                 open={openSections.includes("whatsapp-auto-reply")}
                 settings={formData.settings}
                 onToggle={() => toggleSection("whatsapp-auto-reply")}
                 onSettingsChange={(updates) =>
-                  setFormData((previous) => ({
+                  updateDraft((previous) => ({
                     ...previous,
                     settings: { ...previous.settings, ...updates },
                   }))
                 }
               />
-            )}
-          </div>
+          )}
+          {displayedStep === "review" && (
+            <section className="space-y-3">
+              <h2 className="text-[14px] font-normal">Revise a distribuição</h2>
+              {draftPreview}
+            </section>
+          )}
+          </fieldset>
         </div>
-      </div>
-      <div
-        className={cn(
-          "shrink-0 bg-[var(--app-surface-solid)]",
-          presentation === "page"
-            ? "sticky bottom-0 z-20 mx-auto mb-2 flex w-[calc(100%_-_16px)] max-w-[680px] rounded-[8px] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"
-            : "border-t border-[var(--app-border)] px-3 py-3 sm:px-4",
-        )}
-      >
-        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p
-            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
-            aria-live="polite"
-          >
-            {saving
-              ? queue
-                ? "Salvando alterações..."
-                : "Criando fila..."
-              : blockingReferenceDataError
-                ? "Recarregue os dados necessários antes de salvar."
-              : blockingReferenceDataLoading
-                ? "Carregando dados da distribuição..."
-                : formData.settings.enable_redistribution &&
-                    !hasRedistributionCapacity
-                  ? `Adicione pelo menos dois corretores ativos ou desative a redistribuição. Atualmente: ${eligibleRedistributionUserCount}.`
-                  : canSave
-                    ? "Tudo pronto para salvar."
-                    : queue && !hasUnsavedChanges
-                      ? "Nenhuma alteração para salvar."
-                      : "Preencha destino, critérios e participantes obrigatórios."}
-          </p>
-          <div className="grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 sm:w-[330px]">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              data-tour="distribution-queue-save"
-              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={handleSave}
-              disabled={!canSave}
-              aria-busy={saving}
-            >
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="mr-2 h-4 w-4" />
-              )}{" "}
-              {queue ? "Salvar alterações" : "Criar fila"}
-            </Button>
-          </div>
-        </div>
-      </div>
+      </FormWizardLayout>
+      <FormWizardDiscardDialog open={discardOpen} onOpenChange={setDiscardOpen} busy={saving} onConfirm={() => { if (draftKey && (queue || (!pendingCreationSnapshot && !hasUnreviewedCreation))) withDraftStorage((storage) => storage.removeItem(draftKey)); onOpenChange(false); }} />
     </>
   );
 
   if (presentation === "page") {
     return (
       <section
+        data-management-editor="distribution"
         data-tour="distribution-queue-editor"
         className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
       >
@@ -1178,10 +1469,14 @@ export function DistributionQueueEditor({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) closeEditor(); }}>
       <DialogContent
+        data-management-editor="distribution"
         data-tour="distribution-queue-editor"
-        className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-6xl flex-col gap-0 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none sm:max-h-[88dvh]"
+        className={FORM_WIZARD_DIALOG_CLASS_NAME}
+        aria-describedby={undefined}
+        onEscapeKeyDown={(event) => { if (saving) event.preventDefault(); }}
+        onInteractOutside={(event) => event.preventDefault()}
       >
         <DialogHeader className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3 sm:px-5">
           <DialogTitle className="text-[14px] font-normal">

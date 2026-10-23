@@ -16,7 +16,9 @@ import { LeadAttachmentViewer } from '@/components/features/leads/LeadAttachment
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
 import {
   TaskOutcomeDialog,
+  getOutcomeLabel,
   type TaskOutcome,
+  type TaskOutcomeDraft,
 } from '@/components/features/leads/TaskOutcomeDialog';
 import type { LeadAttachment } from '@/hooks/use-lead-attachments';
 import type { EventType, ScheduleEvent } from '@/hooks/use-schedule-events';
@@ -27,25 +29,38 @@ import type {
   ReopenStatusConfirmation,
 } from './types';
 import { getCadenceTaskType } from './utils';
+import { formatLeadCadenceDate } from '@/lib/lead-cadence-presentation';
+import type { LeadLostReasonDraft } from '@/hooks/leads/use-lead-status-confirmation';
 
 type LeadDetailOverlaysProps = {
   lead: LeadDetailLead;
   leadName: string;
+  outcomeScopeKey: string;
   selectedTask: LeadCadenceTaskState | null;
+  cadenceTimeZone?: string;
+  taskInspectOnly?: boolean;
   roteiroDialogOpen: boolean;
   onRoteiroDialogOpenChange: (open: boolean) => void;
   onRoteiroAction: (action: 'complete' | 'message') => void | Promise<void>;
   taskForOutcome: LeadCadenceTaskState | null;
   outcomeDialogOpen: boolean;
   onOutcomeDialogOpenChange: (open: boolean) => void;
-  onOutcomeConfirm: (outcome: TaskOutcome, notes: string) => void | Promise<void>;
+  onOutcomeConfirm: (outcome: TaskOutcome, notes: string) => boolean | Promise<boolean>;
+  outcomeBlockedReason?: string;
+  outcomeDraft?: TaskOutcomeDraft;
+  onOutcomeDraftChange?: (draft: TaskOutcomeDraft) => void;
   quickActionOutcomeOpen: boolean;
   quickActionOutcomeType: 'call' | 'email';
   onQuickActionOutcomeOpenChange: (open: boolean) => void;
   onQuickActionOutcomeConfirm: (
     outcome: TaskOutcome,
     notes: string,
-  ) => void | Promise<void>;
+  ) => boolean | Promise<boolean>;
+  quickActionBlockedReason?: string;
+  quickActionDraft?: TaskOutcomeDraft;
+  onQuickActionDraftChange?: (draft: TaskOutcomeDraft) => void;
+  onRetryOutcomeRead?: () => void;
+  outcomeReadRetrying?: boolean;
   cadenceTaskPending: boolean;
   quickActionPending: boolean;
   reopenStatusConfirmation: ReopenStatusConfirmation | null;
@@ -60,6 +75,8 @@ type LeadDetailOverlaysProps = {
   lostReasonDialogOpen: boolean;
   onLostReasonDialogOpenChange: (open: boolean) => void;
   onConfirmLostReason: (reason: string) => void | Promise<void>;
+  lostReasonDraft?: LeadLostReasonDraft;
+  onLostReasonDraftChange?: (draft: LeadLostReasonDraft) => void;
   selectedAttachment: LeadAttachment | null;
   onSelectedAttachmentChange: (attachment: LeadAttachment | null) => void;
   hasAgendaModule: boolean;
@@ -72,7 +89,10 @@ type LeadDetailOverlaysProps = {
 export function LeadDetailOverlays({
   lead,
   leadName,
+  outcomeScopeKey,
   selectedTask,
+  cadenceTimeZone,
+  taskInspectOnly = false,
   roteiroDialogOpen,
   onRoteiroDialogOpenChange,
   onRoteiroAction,
@@ -80,10 +100,18 @@ export function LeadDetailOverlays({
   outcomeDialogOpen,
   onOutcomeDialogOpenChange,
   onOutcomeConfirm,
+  outcomeBlockedReason,
+  outcomeDraft,
+  onOutcomeDraftChange,
   quickActionOutcomeOpen,
   quickActionOutcomeType,
   onQuickActionOutcomeOpenChange,
   onQuickActionOutcomeConfirm,
+  quickActionBlockedReason,
+  quickActionDraft,
+  onQuickActionDraftChange,
+  onRetryOutcomeRead,
+  outcomeReadRetrying,
   cadenceTaskPending,
   quickActionPending,
   reopenStatusConfirmation,
@@ -96,6 +124,8 @@ export function LeadDetailOverlays({
   lostReasonDialogOpen,
   onLostReasonDialogOpenChange,
   onConfirmLostReason,
+  lostReasonDraft,
+  onLostReasonDraftChange,
   selectedAttachment,
   onSelectedAttachmentChange,
   hasAgendaModule,
@@ -119,7 +149,7 @@ export function LeadDetailOverlays({
     <>
       {selectedTask && (
         <Dialog open={roteiroDialogOpen} onOpenChange={onRoteiroDialogOpenChange}>
-          <DialogContent className="w-[calc(100vw-2rem)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:w-full sm:max-w-md">
+          <DialogContent className="max-h-[85dvh] w-[calc(100vw-2rem)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:w-full sm:max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 font-normal">
                 <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-amber-500/12">
@@ -129,14 +159,24 @@ export function LeadDetailOverlays({
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="rounded-[8px] border-0 bg-amber-500/10 p-3">
+              {selectedTask.observation && <div className="rounded-[8px] border-0 bg-amber-500/10 p-3">
                 <div className="flex items-start gap-3">
                   <Lightbulb className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-800 dark:text-amber-200">
                     {selectedTask.observation}
                   </p>
                 </div>
-              </div>
+              </div>}
+
+              {taskInspectOnly && (
+                <div className="space-y-2 text-sm">
+                  <p>Estado: {selectedTask.is_done || selectedTask.status === 'completed' ? 'Concluída' : selectedTask.status === 'cancelled' ? 'Cancelada' : selectedTask.status === 'skipped' ? 'Ignorada' : selectedTask.status === 'pending' ? 'Pendente' : selectedTask.status}</p>
+                  {selectedTask.description && <p className="whitespace-pre-wrap">{selectedTask.description}</p>}
+                  {selectedTask.outcome && <p>Resultado: {getOutcomeLabel(selectedTask.outcome)}</p>}
+                  {selectedTask.outcome_notes && <p className="whitespace-pre-wrap">{selectedTask.outcome_notes}</p>}
+                  {selectedTask.done_at && <p>Concluída em {formatLeadCadenceDate(selectedTask.done_at, cadenceTimeZone, true)}</p>}
+                </div>
+              )}
 
               {selectedTask.recommended_message && (
                 <div className="rounded-[8px] border-0 bg-primary/5 p-3">
@@ -155,27 +195,27 @@ export function LeadDetailOverlays({
                 </div>
               )}
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+              {!taskInspectOnly && <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
-                  className="h-8 flex-1 rounded-[6px] text-[11px] font-light"
+                  className="h-9 flex-1 rounded-[6px] text-xs font-light"
                   disabled={cadenceTaskPending}
                   onClick={() => void onRoteiroAction('complete')}
                 >
                   <Check className="mr-2 h-4 w-4" />
-                  Marcar como feito
+                  {selectedTask.outcome_required ? 'Registrar resultado' : 'Concluir tarefa'}
                 </Button>
                 {selectedTask.recommended_message && lead.phone && (
                   <Button
                     variant="outline"
-                    className="h-8 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none"
+                    className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"
                     disabled={cadenceTaskPending}
                     onClick={() => void onRoteiroAction('message')}
                   >
                     <MessageCircle className="mr-2 h-4 w-4" />
-                    Enviar mensagem
+                    Preparar mensagem
                   </Button>
                 )}
-              </div>
+              </div>}
             </div>
           </DialogContent>
         </Dialog>
@@ -183,15 +223,23 @@ export function LeadDetailOverlays({
 
       {taskForOutcome && (
         <TaskOutcomeDialog
+          key={`${outcomeScopeKey}:cadence:${taskForOutcome.id}:${taskForOutcome.type}`}
           open={outcomeDialogOpen}
           onOpenChange={onOutcomeDialogOpenChange}
           taskType={getCadenceTaskType(taskForOutcome.type)}
           taskTitle={taskForOutcome.title || ''}
           onConfirm={onOutcomeConfirm}
           isLoading={cadenceTaskPending}
+          confirmationBlockedReason={outcomeBlockedReason}
+          confirmationRetry={onRetryOutcomeRead}
+          confirmationRetrying={outcomeReadRetrying}
+          notesLimit={1000}
+          draft={outcomeDraft}
+          onDraftChange={onOutcomeDraftChange}
         />
       )}
       <TaskOutcomeDialog
+        key={`${outcomeScopeKey}:quick:${quickActionOutcomeType}`}
         open={quickActionOutcomeOpen}
         onOpenChange={onQuickActionOutcomeOpenChange}
         taskType={quickActionOutcomeType}
@@ -200,6 +248,12 @@ export function LeadDetailOverlays({
         }
         onConfirm={onQuickActionOutcomeConfirm}
         isLoading={quickActionPending}
+        confirmationBlockedReason={quickActionBlockedReason}
+        confirmationRetry={onRetryOutcomeRead}
+        confirmationRetrying={outcomeReadRetrying}
+        draft={quickActionDraft}
+        notesLimit={2000}
+        onDraftChange={onQuickActionDraftChange}
       />
 
       <AlertDialog
@@ -215,6 +269,7 @@ export function LeadDetailOverlays({
               {reopenStatusConfirmation?.leadName || 'Este lead'} está marcado como{' '}
               {fromStatusLabel}. Ao confirmar, ele volta para Aberto e pode entrar novamente no
               fluxo comercial.
+              {reopenStatusConfirmation?.fromStatus === 'won' && ' Lançamentos e comissões existentes serão mantidos; solicite a revisão financeira.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -279,6 +334,8 @@ export function LeadDetailOverlays({
       </AlertDialog>
 
       <LostReasonDialog
+        draft={lostReasonDraft}
+        onDraftChange={onLostReasonDraftChange}
         open={lostReasonDialogOpen}
         onOpenChange={onLostReasonDialogOpenChange}
         onConfirm={onConfirmLostReason}

@@ -1,11 +1,13 @@
 package leads
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -84,5 +86,32 @@ func TestDashboardHistoricalMediaFallbackRejectsTokenURLs(t *testing.T) {
 	valid := "https://cdn.example.test/a.jpg?oe=123"
 	if safe := dashboardSafeHistoricalMediaURL(&valid); safe == nil || *safe != valid {
 		t.Fatal("ordinary signed CDN URL was rejected")
+	}
+}
+
+func TestDashboardCreativeMediaQueueHonorsRequestCancellationBeforeDatabase(t *testing.T) {
+	// Hold both SQL slots. A canceled caller must leave the queue without
+	// reaching the empty repository, even when its key and permission are valid.
+	for i := 0; i < cap(dashboardCreativeMediaLookupSlots); i++ {
+		dashboardCreativeMediaLookupSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < cap(dashboardCreativeMediaLookupSlots); i++ {
+			<-dashboardCreativeMediaLookupSlots
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	ctx = tenant.ContextWithTenant(ctx, tenant.Context{
+		OrganizationID: dashboardTestUUID,
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		Permissions:    []string{permissions.DashboardView},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/v1/dashboard/creative-media?key=creative:123", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	started := time.Now()
+	(Handler{}).ShowDashboardCreativeMedia(response, request)
+	if time.Since(started) > time.Second || response.Code != 499 {
+		t.Fatalf("canceled queue status=%d, elapsed=%s", response.Code, time.Since(started))
 	}
 }

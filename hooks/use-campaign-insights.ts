@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import type { DashboardFilters } from "@/hooks/use-dashboard-filters";
 import { analyticsAPI } from "@/lib/api/analytics";
 import { integrationsAPI } from "@/lib/api/integrations";
 import { VimobAPIError } from "@/lib/api/vimob-error";
+import { getMarketingPeriodValidation } from "@/lib/analytics/marketing-period";
 import {
   DomainValidationError,
   type MetaMarketingSyncResponse,
@@ -210,10 +210,6 @@ function formatUTCDate(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
-function formatMarketingCalendarDate(value: Date) {
-  return Number.isFinite(value.getTime()) ? format(value, "yyyy-MM-dd") : "";
-}
-
 export function splitMarketingSyncRange(dateStart: string, dateStop: string) {
   const start = parseCalendarDate(dateStart);
   const stop = parseCalendarDate(dateStop);
@@ -238,23 +234,24 @@ export function splitMarketingSyncRange(dateStart: string, dateStop: string) {
   return windows;
 }
 
-export function useCampaignInsights(filters: CampaignInsightsFilters) {
-  const { activeOrganization, profile, organization } = useAuth();
+export function useCampaignInsights(filters: CampaignInsightsFilters, options: { enabled?: boolean } = {}) {
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
-  const dateFrom = formatMarketingCalendarDate(filters.dateRange.from);
-  const dateTo = formatMarketingCalendarDate(filters.dateRange.to);
+  const { dateFrom, dateTo, error: periodValidationError, message: periodError } = getMarketingPeriodValidation(filters.dateRange);
 
-  return useQuery({
+  const query = useQuery({
     queryKey: [
       "campaign-insights",
       organizationId,
       dateFrom,
       dateTo,
       filters.teamId,
+      filters.pipelineId,
       filters.userId,
       filters.source,
       filters.pageId,
       filters.campaignId,
+      JSON.stringify([...(filters.campaignIds ?? [])].sort()),
       filters.adSetId,
       filters.adId,
       [...filters.tagIds].sort().join(","),
@@ -263,6 +260,7 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
       filters.objective,
     ],
     queryFn: async ({ signal }) => {
+      if (periodValidationError) throw periodValidationError;
       if (!organizationId) return emptyResult();
 
       return analyticsAPI.campaignInsights(
@@ -270,10 +268,12 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
           dateFrom,
           dateTo,
           teamId: filters.teamId,
+          pipelineId: filters.pipelineId,
           userId: filters.userId,
           source: filters.source,
           pageId: filters.pageId,
           campaignId: filters.campaignId,
+          campaignIds: filters.campaignIds,
           adSetId: filters.adSetId,
           adId: filters.adId,
           tagIds:
@@ -287,7 +287,7 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
         { organizationId, signal },
       );
     },
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false && !periodValidationError,
     staleTime: 5 * 60 * 1000,
     retry: (failureCount, error) => {
       if (error instanceof DomainValidationError) return false;
@@ -301,6 +301,7 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
       return failureCount < 2;
     },
   });
+  return { ...query, periodError };
 }
 
 function emptyResult() {
@@ -413,7 +414,7 @@ function emptyResult() {
 
 export function useSyncCampaignInsights() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({

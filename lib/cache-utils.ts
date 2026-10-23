@@ -18,7 +18,10 @@ export async function performFullCacheClear(options: {
   clearAuth?: boolean;
   reload?: boolean;
   redirectTo?: string;
+  isCurrent?: () => boolean;
 } = {}): Promise<void> {
+  const isCurrent = options.isCurrent ?? (() => true);
+  if (!isCurrent()) return;
   const clearAuth = options.clearAuth ?? false;
   let reload = options.reload ?? false;
   let redirectTo = options.redirectTo;
@@ -40,16 +43,23 @@ export async function performFullCacheClear(options: {
   if ('serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
+      if (!isCurrent()) return;
       for (const registration of registrations) {
+        if (!isCurrent()) return;
         if (clearAuth) {
           const subscription = await registration.pushManager?.getSubscription();
+          if (!isCurrent()) return;
           await subscription?.unsubscribe();
+          if (!isCurrent()) return;
           await registration.unregister();
+          if (!isCurrent()) return;
         } else {
           await registration.update();
+          if (!isCurrent()) return;
         }
       }
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('[CacheUtils] Error refreshing service workers:', err);
     }
   }
@@ -58,15 +68,21 @@ export async function performFullCacheClear(options: {
   if ('caches' in window) {
     try {
       const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames.map((cacheName) => caches.delete(cacheName))
-      );
+      if (!isCurrent()) return;
+      if (!options.isCurrent) await Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)));
+      else for (const cacheName of cacheNames) {
+        if (!isCurrent()) return;
+        await caches.delete(cacheName);
+        if (!isCurrent()) return;
+      }
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('[CacheUtils] Error clearing caches:', err);
     }
   }
 
   // 3. Clear localStorage
+  if (!isCurrent()) return;
   const supabaseStorageKey = getSupabaseAuthStorageKey(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
   );
@@ -95,9 +111,10 @@ export async function performFullCacheClear(options: {
       keysToRemove.push(key);
     }
   }
-  keysToRemove.forEach(key => localStorage.removeItem(key));
+  keysToRemove.forEach(key => { if (isCurrent()) localStorage.removeItem(key); });
 
   // 4. Clear sessionStorage
+  if (!isCurrent()) return;
   const sessionKeysToRemove: string[] = [];
   for (let i = 0; i < sessionStorage.length; i++) {
     const key = sessionStorage.key(i);
@@ -105,10 +122,11 @@ export async function performFullCacheClear(options: {
       sessionKeysToRemove.push(key);
     }
   }
-  sessionKeysToRemove.forEach(key => sessionStorage.removeItem(key));
+  sessionKeysToRemove.forEach(key => { if (isCurrent()) sessionStorage.removeItem(key); });
 
   console.log('[CacheUtils] Full cache clear completed');
 
+  if (!isCurrent()) return;
   if (redirectTo) {
     const url = new URL(redirectTo, window.location.origin);
     url.searchParams.set('v_refresh', Date.now().toString());

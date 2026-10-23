@@ -16,6 +16,7 @@ type publicIntegration struct {
 	OrganizationID        string
 	Status                string
 	IsActive              bool
+	OrganizationActive    bool
 	DefaultPipelineID     string
 	DefaultStageID        string
 	DefaultAssignedUserID string
@@ -36,6 +37,7 @@ func (repo Repository) integrationByPublicToken(ctx context.Context, token strin
 			pi.organization_id::text,
 			pi.status,
 			pi.is_active,
+			coalesce(organization.is_active, false),
 			coalesce(pi.default_pipeline_id::text, ''),
 			coalesce(pi.default_stage_id::text, ''),
 			coalesce(pi.default_assigned_user_id::text, ''),
@@ -47,6 +49,7 @@ func (repo Repository) integrationByPublicToken(ctx context.Context, token strin
 			-- representation field and changes whenever the XML changes.
 			pi.created_at
 		from public.portal_integrations pi
+		join public.organizations organization on organization.id = pi.organization_id
 		where pi.%s = $1
 		  and pi.portal = 'grupo_olx'
 		limit 1
@@ -58,6 +61,7 @@ func (repo Repository) integrationByPublicToken(ctx context.Context, token strin
 		&integration.OrganizationID,
 		&integration.Status,
 		&integration.IsActive,
+		&integration.OrganizationActive,
 		&integration.DefaultPipelineID,
 		&integration.DefaultStageID,
 		&integration.DefaultAssignedUserID,
@@ -80,7 +84,7 @@ func (repo Repository) integrationByPublicToken(ctx context.Context, token strin
 	if err != nil {
 		return publicIntegration{}, err
 	}
-	if requireActive && (!integration.IsActive || integration.Status == "paused" || !integration.ModuleEnabled) {
+	if requireActive && (!integration.OrganizationActive || !integration.IsActive || integration.Status == "paused" || !integration.ModuleEnabled) {
 		return publicIntegration{}, ErrModuleUnavailable
 	}
 	return integration, nil

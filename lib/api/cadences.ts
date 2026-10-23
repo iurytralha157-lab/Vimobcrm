@@ -14,7 +14,7 @@ import {
   uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 
 type Envelope<T> = {
   data: T
@@ -118,11 +118,11 @@ export const cadencesAPI = {
     return response.data
   },
 
-  async getStageOperationalRules(stageId: string, organizationId?: string | null): Promise<StageOperationalRules> {
+  async getStageOperationalRules(stageId: string, organizationId?: string | null, intent?: VimobAPIRequestIntent): Promise<StageOperationalRules> {
     const parsedStageId = parseDomainInput(uuidSchema, stageId, 'cadences.stage-rules.get.id')
     const response = await vimobAPIRequest<Envelope<StageOperationalRules>>(
       `/v1/stages/${parsedStageId}/operational-rules`,
-      { organizationId },
+      { ...intent, organizationId },
     )
     const validated = validateDomainResponse(
       apiStageOperationalRulesResponseSchema,
@@ -135,6 +135,7 @@ export const cadencesAPI = {
   async updateStageOperationalRules(
     input: UpdateStageOperationalRulesInput,
     organizationId?: string | null,
+    intent?: VimobAPIRequestIntent,
   ): Promise<StageOperationalRules> {
     const body = parseDomainInput(
       updateStageOperationalRulesInputSchema,
@@ -144,7 +145,7 @@ export const cadencesAPI = {
     const response = await vimobAPIRequest<Envelope<StageOperationalRules>>(
       `/v1/stages/${body.stage_id}/operational-rules`,
       {
-        method: 'PUT',
+        ...intent, method: 'PUT', retry: false,
         organizationId,
         body,
       },

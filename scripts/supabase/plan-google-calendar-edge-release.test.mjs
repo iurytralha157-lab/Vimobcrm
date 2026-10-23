@@ -28,6 +28,7 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
   for (const dependency of [
     "supabase/functions/_shared/google-calendar-access.ts",
     "supabase/functions/_shared/google-calendar-event.ts",
+    "supabase/functions/_shared/google-calendar-delivery.ts",
     "supabase/functions/_shared/google-calendar-pilot.ts",
     "supabase/functions/_shared/google-calendar-time.ts",
     "supabase/functions/_shared/google-calendar.ts",
@@ -46,10 +47,12 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
   assert.equal(plan.access_policy.google_cloud_oauth_audience_verified, false);
   assert.equal(
     plan.database_prerequisite.rpc,
-    "public.google_calendar_claim_outbound_sync_jobs(integer, text)",
+    "public.google_calendar_claim_outbound_sync_jobs_v2(integer, text)",
   );
   assert.equal(plan.database_prerequisite.required_before_sync_worker, true);
   assert.equal(plan.database_prerequisite.runtime_verified, false);
+  assert.equal(plan.database_prerequisite.old_edge_workers_must_be_stopped_and_drained, true);
+  assert.equal(plan.database_prerequisite.old_go_producers_compatible, true);
   assert.equal(plan.legacy_tombstone.publish_for_one_way, false);
   assert.equal(plan.inbound_webhook.publish_for_one_way, false);
   assert.equal(plan.runtime_router_and_mount_verified, false);

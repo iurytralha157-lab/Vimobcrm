@@ -136,12 +136,14 @@ export function AgendaResponsibleResultsPanel({
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-primary/10 text-primary">
           <UsersRound className="h-4 w-4" aria-hidden="true" />
         </span>
-        <h2
-          id="agenda-responsible-results-title"
-          className="min-w-0 flex-1 truncate text-[13px] font-normal text-[var(--app-text-primary)]"
-        >
-          Resultado por responsável
-        </h2>
+        <div className="min-w-0 flex-1">
+          <h2 id="agenda-responsible-results-title" className="text-[13px] font-normal text-[var(--app-text-primary)]">
+            Resultado por responsável
+          </h2>
+          <p className="mt-0.5 text-[10px] leading-4 text-[var(--app-text-tertiary)]">
+            Responsável principal e participantes; autoria da execução é separada.
+          </p>
+        </div>
         {orderedPerformers.length > 0 ? (
           <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[9px] font-medium tabular-nums text-primary">
             {integerFormatter.format(orderedPerformers.length)} responsáve

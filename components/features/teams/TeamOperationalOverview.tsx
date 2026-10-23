@@ -9,6 +9,7 @@ import { useOrganizationPresenceList } from "@/hooks/presence";
 import { useTeamDistributionStats } from "@/hooks/use-teams";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import type { Team, TeamDistributionStats } from "@/lib/api/teams";
+import { isAvailableAtClock } from "@/lib/teams/availability-clock";
 
 const REFERENCE_TIME_ZONE = "America/Sao_Paulo";
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -25,6 +26,7 @@ const REFERENCE_CLOCK_FORMATTER = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
   hour: "2-digit",
   minute: "2-digit",
+  second: "2-digit",
   hourCycle: "h23",
 });
 const COVERAGE_DATE_FORMATTER = new Intl.DateTimeFormat("pt-BR", {
@@ -39,13 +41,6 @@ type TeamOperationalOverviewProps = {
   activeUserIds?: ReadonlySet<string>;
 };
 
-function parseTimeToMinutes(value?: string | null) {
-  if (!value) return null;
-  const [hours, minutes] = value.split(":").map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  return hours * 60 + minutes;
-}
-
 function getReferenceClock(date: Date) {
   const parts = REFERENCE_CLOCK_FORMATTER.formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value || "";
@@ -56,7 +51,7 @@ function getReferenceClock(date: Date) {
 
   return {
     dayOfWeek: WEEKDAY_INDEX[weekday] ?? date.getDay(),
-    minutes: hour * 60 + minute,
+    seconds: hour * 3600 + minute * 60 + Number(parts.find((part) => part.type === "second")?.value || 0),
     label: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
   };
 }
@@ -65,37 +60,7 @@ function isMemberAvailableNow(
   availability: MemberAvailability[],
   clock: ReturnType<typeof getReferenceClock>,
 ) {
-  if (availability.length === 0) return true;
-  const today = availability.find(
-    (entry) => entry.day_of_week === clock.dayOfWeek,
-  );
-  if (today?.is_active) {
-    if (today.is_all_day) return true;
-
-    const start = parseTimeToMinutes(today.start_time);
-    const end = parseTimeToMinutes(today.end_time);
-    if (start !== null && end !== null && start !== end) {
-      if (start < end && clock.minutes >= start && clock.minutes <= end) {
-        return true;
-      }
-      if (start > end && clock.minutes >= start) return true;
-    }
-  }
-
-  const previousDay = (clock.dayOfWeek + 6) % 7;
-  const previous = availability.find(
-    (entry) => entry.day_of_week === previousDay,
-  );
-  if (!previous?.is_active || previous.is_all_day) return false;
-
-  const previousStart = parseTimeToMinutes(previous.start_time);
-  const previousEnd = parseTimeToMinutes(previous.end_time);
-  return (
-    previousStart !== null &&
-    previousEnd !== null &&
-    previousStart > previousEnd &&
-    clock.minutes <= previousEnd
-  );
+  return isAvailableAtClock(availability, clock.dayOfWeek, clock.seconds);
 }
 
 function distributionMetricTitle(stats: TeamDistributionStats) {
@@ -135,7 +100,7 @@ function MetricCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">
+          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
             {label}
           </p>
           <p className="mt-1 text-[22px] font-normal leading-none text-[var(--app-text-primary)]">

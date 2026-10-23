@@ -38,6 +38,7 @@ import type { PropertyChannelPublication } from '@/lib/validation'
 import { PropertyPublicationHistory } from './PropertyPublicationHistory'
 import { PropertyPublicationPreview } from './PropertyPublicationPreview'
 import { publicationIsBusy, publicationPublishBlockReason, publicationUnavailableReason } from './publication-action'
+import { getSitePublicationState } from './site-publication-state'
 
 type PublicationAction = 'publish' | 'unpublish' | 'retry'
 
@@ -71,13 +72,22 @@ const DESIRED_STATE_LABELS: Record<PropertyChannelPublication['desired_state'], 
 }
 
 function observedStateLabel(publication: PropertyChannelPublication) {
+  if (publication.channel === 'site') {
+    return getSitePublicationState(publication, false, true).label
+  }
   if (publication.channel === 'grupo_olx' && publication.observed_state === 'published') {
-    return 'Disponível no XML'
+    if (publication.checks.some((check) => check.code === 'grupo_olx_status' && !check.resolved)) {
+      return 'Fora do XML pelo status'
+    }
+    return publication.last_error ? 'XML disponível; atualização falhou' : 'Disponível no XML'
   }
   return OBSERVED_STATE_LABELS[publication.observed_state]
 }
 
 function desiredStateLabel(publication: PropertyChannelPublication) {
+  if (publication.channel === 'site' && !publication.id && publication.legacy_visible) {
+    return 'Complete as pendências e publique para confirmar a atualização.'
+  }
   if (publication.channel !== 'grupo_olx') {
     return DESIRED_STATE_LABELS[publication.desired_state]
   }
@@ -88,6 +98,10 @@ function desiredStateLabel(publication: PropertyChannelPublication) {
 
 function versionLabel(publication: PropertyChannelPublication) {
   const isGrupoOLXChannel = publication.channel === 'grupo_olx'
+
+  if (publication.channel === 'site' && !publication.id && publication.legacy_visible) {
+    return 'Publicação pelo fluxo anterior'
+  }
 
   if (publication.published_version) {
     return isGrupoOLXChannel
@@ -120,6 +134,7 @@ export function PropertyPublicationChannelCard({
 }: PropertyPublicationChannelCardProps) {
   const isSiteChannel = publication.channel === 'site'
   const isGrupoOLXChannel = publication.channel === 'grupo_olx'
+  const siteState = isSiteChannel ? getSitePublicationState(publication, false, true) : null
   const isTransient = publicationIsBusy(publication)
   const unresolvedChecks = publication.checks.filter((check) => !check.resolved)
   const blockingChecks = unresolvedChecks.filter((check) => (check.severity ?? 'error') === 'error')
@@ -156,7 +171,7 @@ export function PropertyPublicationChannelCard({
             {publication.is_outdated && (
               <Badge className="rounded-[5px] border-0 bg-warning/10 px-2 py-1 text-[10px] font-light text-warning shadow-none hover:bg-warning/10">Atualização pendente</Badge>
             )}
-            <Badge className={cn('rounded-[5px] border-0 px-2 py-1 text-[10px] font-light shadow-none', statusClassName(publication.observed_state))}>
+            <Badge className={cn('rounded-[5px] border-0 px-2 py-1 text-[10px] font-light shadow-none', statusClassName(publication.last_error ? 'error' : siteState?.tone === 'success' ? 'published' : siteState?.tone === 'neutral' ? 'unpublished' : publication.observed_state))}>
               {isTransient && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden="true" />}
               {observedStateLabel(publication)}
             </Badge>
@@ -328,7 +343,7 @@ export function PropertyPublicationChannelCard({
           {publication.capabilities.can_preview && (
             <PropertyPublicationPreview publication={publication} imageUrls={previewImageUrls} />
           )}
-          {!isGrupoOLXChannel && publication.public_url && publication.observed_state === 'published' && (
+          {!isGrupoOLXChannel && publication.public_url && siteState?.canOpenPublicSite && (
             <Button asChild type="button" variant="ghost" size="sm" className="h-8 gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]">
               <a href={publication.public_url} target="_blank" rel="noopener noreferrer">
                 Abrir no canal

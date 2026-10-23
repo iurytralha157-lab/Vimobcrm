@@ -788,7 +788,7 @@ func (input *UpdateUnitInput) Validate() error {
 		}
 		input.Status = &status
 	}
-	if _, err := parseTimestamp(input.ExpectedUpdatedAt); err != nil {
+	if _, err := requiredTimestamp(*input.ExpectedUpdatedAt); err != nil {
 		return fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
 	}
 	return nil
@@ -841,9 +841,14 @@ func (input *UnlinkUnitPropertyInput) Validate() error {
 }
 
 func (input *ActivatePriceTableInput) Validate() error {
-	if _, err := parseTimestamp(input.ExpectedUpdatedAt); err != nil {
+	if input.ExpectedUpdatedAt == nil {
+		return fmt.Errorf("%w: expected_updated_at is required", ErrInvalidInput)
+	}
+	expected, err := requiredTimestamp(*input.ExpectedUpdatedAt)
+	if err != nil {
 		return fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
 	}
+	input.ExpectedUpdatedAt = &expected
 	return nil
 }
 

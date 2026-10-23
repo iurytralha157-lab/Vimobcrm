@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getScheduleLifecycleLabel,
   getScheduleLifecycleState,
+  getScheduleAllDayLastOccupiedInstant,
   getScheduleOutcomeLabel,
   getSimpleScheduleCompletionOutcome,
   isAttendanceScheduleType,
@@ -10,6 +11,40 @@ import {
   scheduleStatusForOutcome,
   shouldPreserveAttendanceHistory,
 } from "./schedule-outcome";
+
+const allDayIntervals = [
+  { zone: "America/Sao_Paulo", start: "2026-10-12T03:00:00Z", end: "2026-10-13T03:00:00Z" },
+  { zone: "America/New_York", start: "2026-03-08T05:00:00Z", end: "2026-03-09T04:00:00Z" },
+  { zone: "America/New_York", start: "2026-11-01T04:00:00Z", end: "2026-11-02T05:00:00Z" },
+  { zone: "Pacific/Kiritimati", start: "2026-10-11T10:00:00Z", end: "2026-10-12T10:00:00Z" },
+  { zone: "America/Sao_Paulo", start: "2026-10-10T03:00:00Z", end: "2026-10-13T03:00:00Z" },
+];
+
+for (const { zone, start, end } of allDayIntervals) {
+  test(`all-day inclusive and exclusive ends agree across civil boundary ${zone} ${start}`, () => {
+    const endInstant = Date.parse(end);
+    const inclusiveEnd = new Date(endInstant - 1).toISOString();
+    assert.equal(getScheduleAllDayLastOccupiedInstant(start, end, zone), endInstant - 1);
+    assert.equal(getScheduleAllDayLastOccupiedInstant(start, inclusiveEnd, zone), endInstant - 1);
+    for (const candidateEnd of [end, inclusiveEnd]) {
+      const input = { startTime: start, endTime: candidateEnd, timeZone: zone, isAllDay: true };
+      assert.equal(getScheduleLifecycleState({ ...input, now: endInstant - 1 }), "open");
+      assert.equal(getScheduleLifecycleState({ ...input, now: endInstant }), "overdue");
+    }
+  });
+}
+
+test("all-day end normalization preserves fractional midnight, invalid and legacy zero intervals", () => {
+  const start = "2026-10-12T03:00:00Z";
+  const midnight = "2026-10-13T03:00:00Z";
+  const fractional = "2026-10-13T03:00:00.001Z";
+  assert.equal(getScheduleAllDayLastOccupiedInstant(start, fractional, "America/Sao_Paulo"), Date.parse(fractional));
+  assert.equal(getScheduleAllDayLastOccupiedInstant(midnight, midnight, "America/Sao_Paulo"), Date.parse(midnight));
+  assert.equal(getScheduleAllDayLastOccupiedInstant(null, midnight, "America/Sao_Paulo"), Date.parse(midnight));
+  assert.equal(getScheduleAllDayLastOccupiedInstant(start, "invalid", "America/Sao_Paulo"), null);
+  assert.equal(getScheduleAllDayLastOccupiedInstant(start, null, "America/Sao_Paulo"), null);
+  assert.equal(getScheduleLifecycleState({ startTime: start, endTime: midnight, isAllDay: true, timeZone: "Invalid/Zone", now: Date.parse(midnight) }), "overdue");
+});
 
 test("limits attendance outcomes to visits and meetings", () => {
   assert.equal(isAttendanceScheduleType("visit"), true);

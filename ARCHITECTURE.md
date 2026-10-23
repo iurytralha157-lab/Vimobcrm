@@ -350,6 +350,10 @@ teste).
 3. Pool de conexões é recurso escasso: jobs e rotas disputam o mesmo pool
    (limite por processo; confirmar o efeito com 2 réplicas).
 4. Toda mudança de rota atualiza o contrato (seção 10).
+5. No SuperAdmin, `/v1/admin/tables/{table}` mantém inventário de leitura.
+   Escrita genérica fica limitada a planos, comunicados e artigos de ajuda;
+   exclusão genérica, a planos e artigos. As demais tabelas do inventário não
+   admitem mutação genérica; mudanças previstas usam seus fluxos de domínio.
 
 **[Estado] Arquivos grandes no Go (não teste)**
 
@@ -371,7 +375,7 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 ## 9. Workers e filas
 
-**[Estado]** 20 trabalhos de fundo são iniciados dentro da API
+**[Estado]** 22 chamadas de inicialização de trabalhos de fundo estão registradas na API
 (`apps/api/internal/app/app.go`); `apps/worker/` é só um README. O gate global
 `API_BACKGROUND_WORKERS_ENABLED` tem padrão ligado. Quantos rodam em produção:
 **não verificado**.
@@ -382,12 +386,13 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 | Asaas billing | 5 min | lease 10 min |
 | Atenção | 30 s | advisory lock |
 | Gamificação | 5 s | `SKIP LOCKED`, lease 5 min |
-| Redistribuição de leads | 30 s | advisory lock |
+| Redistribuição de leads | 30 s | runtime de filas em até 10 lotes/10 s, transações próprias, advisory lock separado do legado |
 | Notificações (padrão desligado) | 15 s | `SKIP LOCKED`, lease 2 min |
 | Limpeza de assets de imóveis | 30 s | `SKIP LOCKED` |
 | Publicações | 2 s | lease 2 min |
 | Expiração de reservas | 1 min | `SKIP LOCKED` |
 | Automações (runtime / inatividade) | 30 s / 5 min | advisory lock |
+| Inatividade simples de etapa (padrão desligado) | 30 s; ciclo 45 s | scan por política; `SKIP LOCKED` e dedupe por episódio |
 | WhatsApp IA e follow-up | 1 / 10 min | `SKIP LOCKED` |
 | WhatsApp outbox | 1 s | lease/fence, heartbeat |
 | WhatsApp webhook inbox | 1 s | `SKIP LOCKED`, owner |
@@ -413,10 +418,11 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 **[Estado] Lacunas comprovadas**
 
-- Recuperação de panic existe só no middleware HTTP, **não** nos starters de
-  worker.
+- Redistribuição de leads recupera panic, limita seus ciclos e preserva lotes
+  confirmados quando outro item falha. Os demais starters precisam de revisão
+  específica; a proteção desse worker não demonstra a dos outros.
 - Vários trabalhos têm timeout só em partes do ciclo (marcados NV na auditoria).
-- `background_worker_contract_test.go` confere 19 nomes e **omite**
+- `background_worker_contract_test.go` confere 21 nomes, incluindo inatividade simples, e **omite**
   `StartAvatarWorker`; não impede registrar worker extra fora da lista.
 
 **[Estado] WhatsApp no código examinado**
@@ -702,6 +708,22 @@ produção):
    segredo ou outra credencial apropriada.
 7. Trilha de auditoria: leitura restrita a quem tem permissão; ação gravada pelo
    servidor, não declarada pelo cliente.
+
+**[Estado local em 2026-10-09; não implantado]** `GET /v1/audit-logs` exige
+sessão ativa e papel de proprietário, administrador ou SuperAdmin. O `POST`
+genérico responde `410` e não grava eventos; clientes `anon` e `authenticated`
+não recebem acesso direto a `public.audit_logs` após a migration local
+`20261009054807_restrict_audit_logs_to_server.sql`. Os eventos emitidos pelos
+fluxos do servidor e pelos gatilhos do banco continuam separados desse POST.
+Tentativas de login, logout, recuperação e impersonação antes enviadas pelo
+navegador deixam de alimentar essa trilha; sua futura substituição deve usar
+eventos verificados no servidor. O `source='app'` histórico não comprova que
+um evento antigo foi criado pelo servidor.
+O feed Realtime de auditoria passa a enviar só o ID da organização como sinal
+de atualização e confere a sessão ao entrar no canal; uma conexão já aberta
+mantém o cache de autorização do Realtime até renovar ou expirar o JWT.
+Os históricos de lead, equipe e distribuição que consultam essa tabela também
+exigem sessão ativa na API Go, mantendo seus filtros e permissões próprios.
 8. `docs/security.md` descreve: modelo de tenant, papéis, rotas públicas e
    motivo, política de logs.
 

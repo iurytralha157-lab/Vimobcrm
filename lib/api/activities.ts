@@ -1,4 +1,5 @@
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { captureCurrentLeadRequestIntent } from '@/lib/api/lead-request-intent'
 import type { Json } from '@/lib/supabase/types'
 import {
   activityListQuerySchema,
@@ -39,12 +40,15 @@ export const activitiesAPI = {
   async create(activity: {
     lead_id: string
     type: string
-    content?: string
+    content?: string | null
     metadata?: Json
-  }) {
+  }, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const body = parseDomainInput(createActivityInputSchema, activity, 'activities.create')
     const response = await vimobAPIRequest<Envelope<Activity>>('/v1/activities', {
       method: 'POST',
+      organizationId,
+      ...requestIntent,
       body,
     })
     validateDomainResponse(apiActivityResponseSchema, response, 'activities.create')

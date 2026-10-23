@@ -41,15 +41,6 @@ export const organizationInvitationBatchSchema = z
     })
   })
 
-export const createUserInputSchema = z.object({
-  name: z.string().trim().min(2).max(180),
-  email: z.string().trim().email().max(254),
-  phone: z.string().trim().max(40).nullish(),
-  whatsapp: z.string().trim().max(40).nullish(),
-  endereco: z.string().trim().max(200).nullish(),
-  role: z.enum(['admin', 'manager', 'user']),
-}).strict()
-
 export const updateUserInputSchema = z.object({
   id: uuidSchema,
   name: z.string().trim().min(2).max(180).optional(),
@@ -71,6 +62,7 @@ export const deleteUserInputSchema = z.object({
 export const apiUserSchema = z.object({
   id: uuidSchema,
   organization_id: uuidSchema.nullable(),
+  home_organization_id: uuidSchema.nullable().optional(),
   name: z.string().min(1),
   email: z.string().email(),
   role: z.string().min(1),
@@ -94,16 +86,6 @@ export const apiUserOrganizationSchema = z.object({
 export const apiUserListResponseSchema = apiEnvelopeSchema(z.array(apiUserSchema))
 export const apiUserOrganizationListResponseSchema = apiEnvelopeSchema(z.array(apiUserOrganizationSchema))
 
-export const apiCreateUserResponseSchema = z.object({
-  success: z.boolean(),
-  user: apiUserSchema,
-  generatedPassword: z.string().optional(),
-  whatsappSent: z.boolean(),
-  wasMultiOrg: z.boolean(),
-  wasOrphan: z.boolean(),
-  message: z.string().optional(),
-}).passthrough()
-
 export const apiUpdateUserResponseSchema = z.object({
   success: z.boolean(),
   user: apiUserSchema,
@@ -113,6 +95,10 @@ export const apiDeleteUserImpactSchema = z.object({
   leads: nonNegativeIntegerSchema,
   properties: nonNegativeIntegerSchema,
   whatsapp_sessions: nonNegativeIntegerSchema,
+  teams: nonNegativeIntegerSchema,
+  custom_roles: nonNegativeIntegerSchema,
+  permission_overrides: nonNegativeIntegerSchema,
+  round_robin_entries: nonNegativeIntegerSchema,
 }).passthrough()
 
 export const apiDeleteUserImpactResponseSchema = apiEnvelopeSchema(apiDeleteUserImpactSchema)

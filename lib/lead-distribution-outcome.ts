@@ -1,5 +1,10 @@
 export const LEAD_DISTRIBUTION_OUTCOMES = [
   'assigned',
+  'pooled',
+  'queue_closed',
+  'queue_waiting',
+  'queue_limit_reached',
+  'queue_protected',
   'already_assigned',
   'no_matching_queue',
   'no_available_members',
@@ -15,6 +20,11 @@ export type ImportDistributionSummary = Record<ImportDistributionOutcome, number
 export function createEmptyImportDistributionSummary(): ImportDistributionSummary {
   return {
     assigned: 0,
+    pooled: 0,
+    queue_closed: 0,
+    queue_waiting: 0,
+    queue_limit_reached: 0,
+    queue_protected: 0,
     already_assigned: 0,
     no_matching_queue: 0,
     no_available_members: 0,
@@ -43,5 +53,5 @@ export function countImportDistributionOutcome(
 }
 
 export function countPendingDistribution(summary: ImportDistributionSummary): number {
-  return summary.no_matching_queue + summary.no_available_members + summary.unknown;
+  return summary.pooled + summary.queue_closed + summary.queue_waiting + summary.queue_limit_reached + summary.no_matching_queue + summary.no_available_members + summary.unknown;
 }

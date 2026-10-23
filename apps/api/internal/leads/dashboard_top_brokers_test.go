@@ -13,7 +13,7 @@ import (
 )
 
 func TestDashboardTopBrokerCommissionsUseOnlyVisibleFilteredLeads(t *testing.T) {
-	join := dashboardTopBrokerCommissionJoinSQL()
+	join := dashboardTopBrokerCommissionJoinSQL("")
 	for _, expected := range []string{
 		"join filtered_leads visible_lead on visible_lead.id = cm.lead_id",
 		"cm.organization_id = $1::uuid",
@@ -53,7 +53,7 @@ func TestDashboardTopBrokerCommissionsReadOnlyIntegration(t *testing.T) {
 	}
 	repo := NewRepository(db, nil)
 	brokers, err := repo.dashboardTopBrokers(ctx, tenant.Context{
-		OrganizationID: organizationID, UserID: organizationID, MemberRole: "admin",
+		OrganizationID: organizationID, OrganizationName: "Vetter Co.", UserID: organizationID, MemberRole: "admin",
 	}, DashboardFilter{}, false)
 	if err != nil {
 		t.Fatalf("scoped top broker query: %v", err)
@@ -70,8 +70,8 @@ func TestDashboardTopBrokerCommissionsReadOnlyIntegration(t *testing.T) {
 		`, organizationID, broker.ID).Scan(&expected); err != nil {
 			t.Fatalf("independent commission check: %v", err)
 		}
-		if math.Abs(broker.TotalCommissions-expected) > 0.01 {
-			t.Fatalf("broker %s commissions = %.2f, want %.2f from linked won leads", broker.ID, broker.TotalCommissions, expected)
+		if broker.TotalCommissions == nil || math.Abs(*broker.TotalCommissions-expected) > 0.01 {
+			t.Fatalf("broker %s commissions = %v, want %.2f from linked won leads", broker.ID, broker.TotalCommissions, expected)
 		}
 	}
 	t.Logf("read-only top broker query returned %d brokers", len(brokers))

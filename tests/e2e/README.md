@@ -31,6 +31,12 @@ opt-ins are present. Never configure these variables in production.
 
 Release-critical coverage includes:
 
+- the auth session lifecycle: global logout invalidates a second device's
+  refresh token and a revoked JWT cannot switch organizations; a real recovery
+  link reaches the reset screen without opening the protected CRM; on an
+  isolated `E2E_SUPABASE_WORKDIR`, recovery also completes the password change,
+  verifies the old password and second session are rejected, then restores the
+  synthetic account password;
 - modal team creation, dedicated edit pages, atomic seven-day schedules, role
   boundaries and mobile overflow;
 - the property list, quick view, history dialog and dedicated 360 workspace on

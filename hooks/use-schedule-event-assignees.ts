@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { scheduleAPI, type AssigneeUser } from "@/lib/api/schedule";
 import { useAuth } from "@/contexts/AuthContext";
 import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
+import { refreshScheduleQueries } from "@/hooks/schedule/schedule-query-refresh";
 import { toast } from "sonner";
 import { getFriendlyErrorMessage } from "@/lib/error-handler";
 
@@ -25,6 +26,7 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       return scheduleAPI.getAssignees(eventId, organizationId);
     },
     enabled: !!eventId && !!organizationId,
+    refetchOnMount: true,
   });
 
   const addAssignee = useMutation({
@@ -33,10 +35,10 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       return scheduleAPI.addAssignee(eventId, userId, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
+      void refreshScheduleQueries(queryClient, {
         queryKey: ["schedule_assignees", organizationId, eventId],
       });
-      queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
+      void refreshScheduleQueries(queryClient, { queryKey: ["schedule-events"] });
       invalidateScheduleDashboardCaches(queryClient);
     },
     onError: (error) => toast.error(getFriendlyErrorMessage(error)),
@@ -48,10 +50,10 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       return scheduleAPI.removeAssignee(eventId, userId, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
+      void refreshScheduleQueries(queryClient, {
         queryKey: ["schedule_assignees", organizationId, eventId],
       });
-      queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
+      void refreshScheduleQueries(queryClient, { queryKey: ["schedule-events"] });
       invalidateScheduleDashboardCaches(queryClient);
     },
     onError: (error) => toast.error(getFriendlyErrorMessage(error)),

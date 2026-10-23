@@ -41,11 +41,9 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.users where id = $1::uuid`, userID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -81,13 +79,24 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Queue-origin leads require an actual, active destination in the current
+	// schema. Do not disable the destination guard to build the CAS fixture.
+	var pipelineID, stageID string
+	if err := postgres.Pool().QueryRow(ctx, `insert into public.pipelines
+		(organization_id,name,is_active) values($1::uuid,$2,true) returning id::text`, organizationID, suffix).Scan(&pipelineID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `insert into public.stages
+		(organization_id,pipeline_id,name,stage_key,position,is_active) values($1::uuid,$2::uuid,$3,'new',0,true) returning id::text`, organizationID, pipelineID, suffix).Scan(&stageID); err != nil {
+		t.Fatal(err)
+	}
 	queueIDs := make([]string, 3)
 	for index := range queueIDs {
 		if err := postgres.Pool().QueryRow(ctx, `
-			insert into public.round_robins (organization_id, name, is_active)
-			values ($1::uuid, $2, true)
+			insert into public.round_robins (organization_id, name, is_active, target_pipeline_id, target_stage_id)
+			values ($1::uuid, $2, true, $3::uuid, $4::uuid)
 			returning id::text
-		`, organizationID, fmt.Sprintf("%s-queue-%d", suffix, index)).Scan(&queueIDs[index]); err != nil {
+		`, organizationID, fmt.Sprintf("%s-queue-%d", suffix, index), pipelineID, stageID).Scan(&queueIDs[index]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,8 +114,8 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		}
 	}
 
-	sessionIDs := make([]string, 4)
-	conversationIDs := make([]string, 4)
+	sessionIDs := make([]string, 5)
+	conversationIDs := make([]string, 5)
 	for index := range sessionIDs {
 		if err := postgres.Pool().QueryRow(ctx, `
 			insert into public.whatsapp_sessions (
@@ -122,10 +131,10 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		}
 		if err := postgres.Pool().QueryRow(ctx, `
 			insert into public.whatsapp_conversations (
-				organization_id, session_id, remote_jid, contact_phone, contact_name
-			) values ($1::uuid, $2::uuid, $3, $4, $5)
+				organization_id, session_id, remote_jid, contact_phone, contact_name, unlinked_retention_v1
+			) values ($1::uuid, $2::uuid, $3, $4, $5, $6)
 			returning id::text
-		`, organizationID, sessionIDs[index], phone+"@s.whatsapp.net", phone, fmt.Sprintf("%s-contact-%d", suffix, index)).Scan(&conversationIDs[index]); err != nil {
+		`, organizationID, sessionIDs[index], phone+"@s.whatsapp.net", phone, fmt.Sprintf("%s-contact-%d", suffix, index), index != 3).Scan(&conversationIDs[index]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,6 +202,22 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		}, leadIDs[1], leadIDs[2])
 		assertSingleBindingCASWinner(t, results)
 		assertConversationLeadOneOf(t, ctx, postgres, conversationIDs[3], leadIDs[1], leadIDs[2])
+	})
+
+	t.Run("prospective private history requires explicit confirmation before StartConversation", func(t *testing.T) {
+		_, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
+			Phone: phone, SessionID: sessionIDs[4], LeadID: leadIDs[1],
+			ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
+		})
+		if !errors.Is(err, ErrConversationHistoryLinkRequired) {
+			t.Fatalf("prospective history start = %v, want explicit history confirmation", err)
+		}
+		assertConversationLead(t, ctx, postgres, conversationIDs[4], "")
+		var bindings int
+		if err := postgres.Pool().QueryRow(ctx, `select count(*) from public.whatsapp_conversation_lead_bindings
+			where conversation_id=$1::uuid`, conversationIDs[4]).Scan(&bindings); err != nil || bindings != 0 {
+			t.Fatalf("prospective history start created %d bindings: %v", bindings, err)
+		}
 	})
 }
 

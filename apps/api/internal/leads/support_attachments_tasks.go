@@ -43,6 +43,7 @@ type LeadAttachment struct {
 	MessageID     *string   `json:"message_id"`
 	StorageBucket string    `json:"-"`
 	StoragePath   string    `json:"-"`
+	Availability  string    `json:"availability,omitempty"`
 }
 
 type LeadAttachmentCreateRequest struct {
@@ -216,7 +217,11 @@ func (request CompleteCadenceTaskRequest) Validate() (CompleteCadenceTaskRequest
 }
 
 func (repo Repository) ListLeadAttachments(ctx context.Context, tenantContext tenant.Context, leadID string) ([]LeadAttachment, error) {
-	leadID, ok := normalizeUUID(leadID)
+	return repo.ListLeadAttachmentsWithOptions(ctx, tenantContext, LeadAttachmentListFilter{LeadID: leadID})
+}
+
+func (repo Repository) ListLeadAttachmentsWithOptions(ctx context.Context, tenantContext tenant.Context, filter LeadAttachmentListFilter) ([]LeadAttachment, error) {
+	leadID, ok := normalizeUUID(filter.LeadID)
 	if !ok {
 		return nil, ErrInvalidInput
 	}
@@ -253,27 +258,56 @@ func (repo Repository) ListLeadAttachments(ctx context.Context, tenantContext te
 		if err != nil {
 			return nil, err
 		}
-		repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &attachment)
 		attachments = append(attachments, attachment)
 	}
-	return attachments, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // Signing authorization must not reacquire a connection while rows own it.
+	prepareLeadAttachmentList(attachments, filter.MetadataOnly, func(attachment *LeadAttachment) {
+		repo.signLeadAttachmentURL(ctx, tenantContext, attachment)
+	})
+	return attachments, nil
 }
 
 func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext tenant.Context, input leadAttachmentCreateInput) (LeadAttachment, error) {
-	storagePath := storagePathFromPublicURL(input.FileURL, repo.storage.projectURL)
-	if storagePath != "" && !leadAttachmentStoragePathBelongsToOrganization(storagePath, tenantContext.OrganizationID) {
-		return LeadAttachment{}, fmt.Errorf("%w: attachment storage path does not belong to the organization", ErrInvalidInput)
-	}
-
-	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
-		return LeadAttachment{}, err
-	}
-
 	columns, err := repo.getLeadAttachmentColumns(ctx)
 	if err != nil {
 		return LeadAttachment{}, err
 	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return LeadAttachment{}, err
+	}
+	defer tx.Rollback(ctx)
+	var storagePath string
+	originID := input.LeadID
+	if input.MessageID != nil {
+		if err := lockAttachmentMessageConversation(ctx, tx, tenantContext, *input.MessageID, input.LeadID); err != nil {
+			return LeadAttachment{}, err
+		}
+		input, storagePath, err = repo.resolveAttachmentMessage(ctx, tx, tenantContext, input, true)
+	} else {
+		input, storagePath, originID, err = repo.resolveAttachmentDocument(ctx, tx, tenantContext, input, columns)
+	}
+	if err != nil {
+		return LeadAttachment{}, err
+	}
+	if err := lockAttachmentLeadResources(ctx, tx, tenantContext, input.LeadID, originID); err != nil {
+		return LeadAttachment{}, err
+	}
+	attachment, err := repo.insertLeadAttachment(ctx, tx, tenantContext, input, columns, storagePath)
+	if err != nil {
+		return LeadAttachment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadAttachment{}, err
+	}
+	repo.signLeadAttachmentURL(ctx, tenantContext, &attachment)
+	return attachment, nil
+}
 
+func (repo Repository) insertLeadAttachment(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, input leadAttachmentCreateInput, columns leadAttachmentColumns, storagePath string) (LeadAttachment, error) {
 	if input.MessageID != nil && columns.MessageID {
 		existingArgs := []any{input.LeadID}
 		existingWhere := []string{"la.lead_id = $1::uuid"}
@@ -284,7 +318,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		existingArgs = append(existingArgs, *input.MessageID)
 		existingWhere = append(existingWhere, fmt.Sprintf("la.message_id = $%d::uuid", len(existingArgs)))
 
-		existing, err := scanLeadAttachment(repo.db.Pool().QueryRow(ctx, `
+		existing, err := scanLeadAttachment(tx.QueryRow(ctx, `
 			select `+leadAttachmentSelectFields(columns)+`
 			from public.lead_attachments la
 			join public.leads l on l.id = la.lead_id
@@ -292,7 +326,6 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 			limit 1
 		`, existingArgs...))
 		if err == nil {
-			repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &existing)
 			return existing, nil
 		}
 		if err != pgx.ErrNoRows {
@@ -358,12 +391,6 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		add("metadata", jsonb(metadata), "::jsonb")
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return LeadAttachment{}, err
-	}
-	defer tx.Rollback(ctx)
-
 	attachment, err := scanLeadAttachment(tx.QueryRow(ctx, `
 		with inserted as (
 			insert into public.lead_attachments (`+strings.Join(insertColumns, ", ")+`)
@@ -389,19 +416,15 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		)
 		values ($1::uuid, $2::uuid, $3::uuid, 'note', $4, $5::jsonb)
 	`, tenantContext.OrganizationID, input.LeadID, tenantContext.UserID, "Documento anexado: "+input.FileName, jsonb(map[string]any{
-		"file_url":   input.FileURL,
-		"file_type":  input.FileType,
-		"file_size":  input.FileSize,
-		"message_id": input.MessageID,
+		"attachment_id": attachment.ID,
+		"file_name":     input.FileName,
+		"file_type":     input.FileType,
+		"file_size":     input.FileSize,
+		"message_id":    input.MessageID,
 	}))
 	if err != nil {
 		return LeadAttachment{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return LeadAttachment{}, err
-	}
-
-	repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &attachment)
 	return attachment, nil
 }
 
@@ -442,15 +465,27 @@ func (repo Repository) ListLeadTasks(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) CreateLeadTask(ctx context.Context, tenantContext tenant.Context, input leadTaskCreateInput) (LeadTask, error) {
-	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
 		return LeadTask{}, err
 	}
-	return scanLeadTask(repo.db.Pool().QueryRow(ctx, `
-		insert into public.lead_tasks (lead_id, day_offset, type, title, description, due_date)
-		values ($1::uuid, $2, $3, $4, $5, $6)
+	defer tx.Rollback(ctx)
+	if err := ensureLeadEditableForUpdate(ctx, tx, tenantContext, input.LeadID); err != nil {
+		return LeadTask{}, err
+	}
+	task, err := scanLeadTask(tx.QueryRow(ctx, `
+		insert into public.lead_tasks (lead_id, day_offset, type, title, description, due_date, organization_id)
+		values ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)
 		returning id::text, lead_id::text, day_offset, type, title, description, due_date,
 			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-	`, input.LeadID, input.DayOffset, input.Type, input.Title, input.Description, input.DueDate))
+	`, input.LeadID, input.DayOffset, input.Type, input.Title, input.Description, input.DueDate, tenantContext.OrganizationID))
+	if err != nil {
+		return LeadTask{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadTask{}, err
+	}
+	return task, nil
 }
 
 func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.Context, taskID string, request LeadTaskPatchRequest) (LeadTask, error) {
@@ -468,8 +503,27 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 			ErrInvalidInput,
 		)
 	}
-	if err := repo.ensureLeadEditable(ctx, tenantContext, current.LeadID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
 		return LeadTask{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := ensureLeadEditableForUpdate(ctx, tx, tenantContext, current.LeadID); err != nil {
+		return LeadTask{}, err
+	}
+	// Lock lead before task. Recheck the relationship after any wait; the
+	// unlocked lookup above is only a hint for the required parent lock.
+	var isCadence bool
+	if err := tx.QueryRow(ctx, `select cadence_enrollment_id is not null from public.lead_tasks
+		where organization_id=$1::uuid and id=$2::uuid and lead_id=$3::uuid for update`,
+		tenantContext.OrganizationID, taskID, current.LeadID).Scan(&isCadence); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LeadTask{}, ErrInvalidReference
+		}
+		return LeadTask{}, err
+	}
+	if isCadence {
+		return LeadTask{}, fmt.Errorf("%w: cadence tasks must be completed through the cadence endpoint", ErrInvalidInput)
 	}
 
 	var doneAt any
@@ -482,7 +536,7 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 		doneBy = nil
 	}
 
-	task, err := scanLeadTask(repo.db.Pool().QueryRow(ctx, `
+	task, err := scanLeadTask(tx.QueryRow(ctx, `
 		update public.lead_tasks
 		set
 			is_done = coalesce($2, is_done),
@@ -491,16 +545,23 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 			outcome = coalesce($5, outcome),
 			outcome_notes = coalesce($6, outcome_notes)
 		where id = $1::uuid
+		  and organization_id = $7::uuid and lead_id = $8::uuid
 		returning id::text, lead_id::text, day_offset, type, title, description, due_date,
 			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-	`, taskID, request.IsDone, doneAt, doneBy, optionalStringFromPointer(request.Outcome, 120), optionalStringFromPointer(request.OutcomeNotes, 1_000)))
+	`, taskID, request.IsDone, doneAt, doneBy, optionalStringFromPointer(request.Outcome, 120), optionalStringFromPointer(request.OutcomeNotes, 1_000), tenantContext.OrganizationID, current.LeadID))
 	if err != nil {
 		return LeadTask{}, err
 	}
 	if request.IsDone != nil && *request.IsDone {
-		if err := repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, current.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, nil, request.Outcome, request.OutcomeNotes); err != nil {
+		if err := repo.insertTaskCompletedActivity(ctx, tx, tenantContext.OrganizationID, current.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, nil, request.Outcome, request.OutcomeNotes); err != nil {
 			return LeadTask{}, err
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadTask{}, err
+	}
+	if request.IsDone != nil && *request.IsDone {
+		repo.recordTaskGamification(tenantContext.OrganizationID, tenantContext.UserID, task.ID, task.Type, request.Outcome)
 	}
 	return task, nil
 }
@@ -511,148 +572,18 @@ func (repo Repository) CompleteCadenceTask(ctx context.Context, tenantContext te
 		return LeadTask{}, err
 	}
 	defer tx.Rollback(ctx)
-
-	// Cadence lifecycle paths lock lead -> tasks -> enrollment. Keep completion
-	// in the same order so a simultaneous stage move, reassignment or cadence
-	// switch cannot deadlock or invalidate this task between authorization and
-	// completion.
-	if err := ensureLeadEditableForUpdate(ctx, tx, tenantContext, request.LeadID); err != nil {
-		return LeadTask{}, err
-	}
-
-	var existingID, status string
-	var outcomeRequired bool
-	var templateTaskID pgtype.Text
-	err = tx.QueryRow(ctx, `
-		select
-			lt.id::text,
-			coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end),
-			case
-			  when lower(coalesce(lt.metadata->>'outcome_required', '')) in ('true', '1', 'yes') then true
-			  when lower(coalesce(lt.metadata->>'outcome_required', '')) in ('false', '0', 'no') then false
-			  else coalesce(ctt.outcome_required, false)
-			end,
-			lt.cadence_template_task_id::text
-		from public.lead_tasks lt
-		join public.cadence_enrollments ce
-		  on ce.organization_id = lt.organization_id
-		 and ce.id = lt.cadence_enrollment_id
-		 and ce.status in ('active', 'completed')
-		join public.lead_stage_cycles sc
-		  on sc.organization_id = ce.organization_id
-		 and sc.id = ce.stage_cycle_id
-		 and sc.exited_at is null
-		join public.leads l
-		  on l.organization_id = lt.organization_id
-		 and l.id = lt.lead_id
-		 and l.deal_status = 'open'
-		 and l.stage_id = sc.stage_id
-		left join public.cadence_tasks_template ctt
-		  on ctt.organization_id = lt.organization_id
-		 and ctt.id = lt.cadence_template_task_id
-		where lt.organization_id = $1::uuid
-		  and lt.lead_id = $2::uuid
-		  and coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end) in ('pending', 'completed')
-		  and (
-			(nullif($3, '') is not null and lt.id = nullif($3, '')::uuid)
-			or (
-			  nullif($3, '') is null
-			  and lt.cadence_template_task_id = nullif($4, '')::uuid
-			)
-		  )
-		order by
-		  case coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end)
-		    when 'pending' then 0 else 1
-		  end,
-		  lt.created_at desc,
-		  lt.id desc
-		limit 1
-		for update of lt
-	`, tenantContext.OrganizationID, request.LeadID, request.TaskID, request.TemplateTaskID).Scan(
-		&existingID,
-		&status,
-		&outcomeRequired,
-		&templateTaskID,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadTask{}, ErrInvalidReference
-	}
+	task, completed, err := completeCadenceTaskTx(ctx, tx, tenantContext, request)
 	if err != nil {
-		return LeadTask{}, err
-	}
-	if outcomeRequired && (request.Outcome == nil || strings.TrimSpace(*request.Outcome) == "") {
-		return LeadTask{}, fmt.Errorf("%w: outcome is required for this cadence task", ErrInvalidInput)
-	}
-
-	if status == "completed" {
-		task, err := scanLeadTask(tx.QueryRow(ctx, `
-			select id::text, lead_id::text, day_offset, type, title, description, due_date,
-				is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-			from public.lead_tasks
-			where organization_id = $1::uuid and id = $2::uuid
-		`, tenantContext.OrganizationID, existingID))
-		if err != nil {
-			return LeadTask{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return LeadTask{}, err
-		}
-		return task, nil
-	}
-
-	task, err := scanLeadTask(tx.QueryRow(ctx, `
-		update public.lead_tasks
-		set is_done = true,
-			status = 'completed',
-			done_at = now(),
-			completed_at = now(),
-			done_by = $3::uuid,
-			outcome = coalesce($4, outcome),
-			outcome_notes = coalesce($5, outcome_notes)
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and coalesce(
-		    status,
-		    case when coalesce(is_done, false) then 'completed' else 'pending' end
-		  ) = 'pending'
-		  and coalesce(is_done, false) = false
-		returning id::text, lead_id::text, day_offset, type, title, description, due_date,
-			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-	`, tenantContext.OrganizationID, existingID, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
-	if err != nil {
-		return LeadTask{}, err
-	}
-
-	activityMetadata := map[string]any{
-		"task_id":    task.ID,
-		"task_type":  task.Type,
-		"day_offset": task.DayOffset,
-	}
-	if templateTaskID.Valid {
-		activityMetadata["template_task_id"] = templateTaskID.String
-	}
-	if request.Outcome != nil {
-		activityMetadata["outcome"] = *request.Outcome
-	}
-	if request.OutcomeNotes != nil {
-		activityMetadata["outcome_notes"] = *request.OutcomeNotes
-	}
-	if _, err := tx.Exec(ctx, `
-		insert into public.activities (
-			organization_id, lead_id, type, content, user_id, metadata
-		) values (
-			$1::uuid, $2::uuid, 'task_completed', $3, $4::uuid, $5::jsonb
-		)
-	`, tenantContext.OrganizationID, request.LeadID, "Cadencia concluida: "+task.Title, tenantContext.UserID, jsonb(activityMetadata)); err != nil {
 		return LeadTask{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return LeadTask{}, err
 	}
-	repo.recordTaskGamification(tenantContext.OrganizationID, tenantContext.UserID, task.ID, task.Type, request.Outcome)
+	if completed {
+		repo.recordTaskGamification(tenantContext.OrganizationID, tenantContext.UserID, task.ID, task.Type, request.Outcome)
+	}
 	return task, nil
 }
-
 func leadAttachmentSelectFields(columns leadAttachmentColumns) string {
 	fileTypeExpression := "null::text"
 	if columns.FileType {
@@ -862,6 +793,7 @@ func (repo Repository) getLeadAttachmentColumns(ctx context.Context) (leadAttach
 
 func (repo Repository) insertTaskCompletedActivity(
 	ctx context.Context,
+	store leadRedistributionExecutor,
 	organizationID string,
 	leadID string,
 	taskID string,
@@ -887,16 +819,12 @@ func (repo Repository) insertTaskCompletedActivity(
 	if outcomeNotes != nil {
 		metadata["outcome_notes"] = *outcomeNotes
 	}
-	_, err := repo.db.Pool().Exec(ctx, `
+	_, err := store.Exec(ctx, `
 		insert into public.activities (organization_id, lead_id, type, content, user_id, metadata)
 		values ($1::uuid, $2::uuid, 'task_completed', $3, $4::uuid, $5::jsonb)
 	`, organizationID, leadID, "Cadencia concluida: "+title, userID, jsonb(metadata))
 
-	if err != nil {
-		return err
-	}
-	repo.recordTaskGamification(organizationID, userID, taskID, taskType, outcome)
-	return nil
+	return err
 }
 
 func (repo Repository) recordTaskGamification(organizationID string, userID string, taskID string, taskType *string, outcome *string) {
@@ -978,12 +906,29 @@ func leadAttachmentStoragePathBelongsToOrganization(objectPath string, organizat
 		strings.HasPrefix(cleaned, organizationID+"/")
 }
 
-func (repo Repository) signLeadAttachmentURL(ctx context.Context, organizationID string, attachment *LeadAttachment) {
-	if attachment == nil || strings.TrimSpace(organizationID) == "" {
+func (repo Repository) signLeadAttachmentURL(ctx context.Context, actor tenant.Context, attachment *LeadAttachment) {
+	repo.signLeadAttachmentURLWithQueryer(ctx, repo.db.Pool(), actor, attachment)
+}
+
+func (repo Repository) signLeadAttachmentURLWithQueryer(ctx context.Context, q attachmentQueryer, actor tenant.Context, attachment *LeadAttachment) {
+	if attachment == nil {
 		return
 	}
-
-	fileURLPath := storagePathFromPublicStorageURL(attachment.FileURL, repo.storage.projectURL)
+	attachment.Availability = "signing_unavailable"
+	originalURL := attachment.FileURL
+	attachment.FileURL = ""
+	if !attachmentLeadVisible(ctx, q, actor, attachment.LeadID) {
+		return
+	}
+	if attachment.MessageID != nil {
+		resolved, objectPath, err := repo.resolveAttachmentMessage(ctx, q, actor, leadAttachmentCreateInput{LeadID: attachment.LeadID, MessageID: attachment.MessageID}, false)
+		if err != nil {
+			return
+		}
+		originalURL = resolved.FileURL
+		attachment.StoragePath = objectPath
+	}
+	fileURLPath := storagePathFromPublicStorageURL(originalURL, repo.storage.projectURL)
 	path := fileURLPath
 	if path == "" {
 		storedPath := strings.TrimSpace(attachment.StoragePath)
@@ -992,10 +937,21 @@ func (repo Repository) signLeadAttachmentURL(ctx context.Context, organizationID
 		}
 	}
 	if path == "" {
+		if attachment.MessageID != nil && safeAttachmentExternalURL(originalURL) != "" && attachmentLeadVisible(ctx, q, actor, attachment.LeadID) {
+			attachment.FileURL = originalURL
+			attachment.Availability = "ready"
+		}
 		return
 	}
-	if !leadAttachmentStoragePathBelongsToOrganization(path, organizationID) {
+	if !leadAttachmentStoragePathBelongsToOrganization(path, actor.OrganizationID) {
 		return
+	}
+	originID := attachment.LeadID
+	if attachment.MessageID == nil {
+		originID = attachmentDocumentLeadID(path, actor.OrganizationID)
+		if originID == "" || !attachmentLeadVisible(ctx, q, actor, originID) {
+			return
+		}
 	}
 
 	bucket := strings.TrimSpace(attachment.StorageBucket)
@@ -1007,7 +963,8 @@ func (repo Repository) signLeadAttachmentURL(ctx context.Context, organizationID
 	}
 
 	signedURL, err := repo.storage.signedURL(ctx, bucket, path, leadAttachmentSignedURLTTLSeconds)
-	if err == nil && signedURL != "" {
+	if err == nil && signedURL != "" && attachmentLeadVisible(ctx, q, actor, attachment.LeadID) && attachmentLeadVisible(ctx, q, actor, originID) {
 		attachment.FileURL = signedURL
+		attachment.Availability = "ready"
 	}
 }

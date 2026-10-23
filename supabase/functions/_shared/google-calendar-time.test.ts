@@ -7,6 +7,7 @@ import {
   nextGoogleCivilDate,
   normalizeGoogleCalendarTimeZone,
   scheduleInstantToGoogleDate,
+  scheduleAllDayRangeToGoogleRange,
 } from "./google-calendar-time";
 
 test("converts a one-day Google event into a complete Sao Paulo civil day", () => {
@@ -108,4 +109,26 @@ test("falls back safely for invalid timezones and rejects invalid ranges", () =>
       ),
     /nao existe/,
   );
+});
+
+test("outbound all-day preserves inclusive CRM and exclusive Google ends", () => {
+  for (const [start, end, zone, startDate, exclusiveEndDate] of [
+    ["2026-10-12T00:00:00Z", "2026-10-12T23:59:59.999Z", "UTC", "2026-10-12", "2026-10-13"],
+    ["2026-10-12T00:00:00Z", "2026-10-13T00:00:00Z", "UTC", "2026-10-12", "2026-10-13"],
+    ["2026-10-12T00:00:00Z", "2026-10-14T00:00:00Z", "UTC", "2026-10-12", "2026-10-14"],
+    ["2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z", "America/New_York", "2026-03-08", "2026-03-09"],
+    ["2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z", "America/New_York", "2026-11-01", "2026-11-02"],
+    ["2026-10-12T00:00:00Z", "2026-10-13T00:00:00.001Z", "UTC", "2026-10-12", "2026-10-14"],
+  ]) {
+    assert.deepEqual(scheduleAllDayRangeToGoogleRange(start, end, zone), { startDate, exclusiveEndDate });
+  }
+});
+
+test("outbound all-day rejects missing, reversed and zero-length instants", () => {
+  for (const [start, end] of [
+    ["not-an-instant", "2026-10-13T00:00:00Z"],
+    ["2026-10-12T00:00:00Z", "not-an-instant"],
+    ["2026-10-13T00:00:00Z", "2026-10-12T00:00:00Z"],
+    ["2026-10-12T00:00:00Z", "2026-10-12T00:00:00Z"],
+  ]) assert.throws(() => scheduleAllDayRangeToGoogleRange(start, end, "UTC"), /Intervalo/);
 });

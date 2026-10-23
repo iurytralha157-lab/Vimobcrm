@@ -1,5 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTenantQueryAccessSignature } from "@/hooks/shared/use-tenant-query-access-signature";
+import { reusePreviousDataWhenKeyPartsMatch } from "@/lib/query-placeholder-safety";
 import {
   automationsAPI,
   type AutomationConnection,
@@ -78,15 +80,16 @@ export function useAutomation(automationId: string) {
   });
 }
 
-export function useAutomationMedia(mediaType: AutomationMediaType) {
+export function useAutomationMedia(mediaType: AutomationMediaType, search = "") {
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   const query = useInfiniteQuery({
-    queryKey: ["automation-media", organizationId, mediaType],
+    queryKey: ["automation-media", organizationId, mediaType, search.trim()],
     queryFn: ({ pageParam }) => automationsAPI.listMedia(mediaType, {
       limit: 50,
       offset: pageParam,
+      search: search.trim() || undefined,
       organizationId,
     }),
     initialPageParam: 0,
@@ -435,19 +438,32 @@ export function useLeadActiveAutomationExecutions(
   });
 }
 
-export function useAutomationExecutions(automationId?: string, limit = 50) {
-  const { activeOrganization } = useAuth();
+export function useAutomationExecutions(automationId?: string, limit = 50, filters: { status?: string; dateFrom?: string; dateTo?: string; offset?: number; enabled?: boolean } = {}) {
+  const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId;
+  const accessSignature = useTenantQueryAccessSignature();
+  const queryKey = ["automation-executions", automationId, organizationId, limit, filters, accessSignature];
 
   return useQuery({
-    queryKey: ["automation-executions", automationId, organizationId, limit],
+    queryKey,
+    placeholderData: (previousData, previousQuery) =>
+      reusePreviousDataWhenKeyPartsMatch(
+        previousData,
+        previousQuery?.queryKey,
+        queryKey,
+        [2, 5],
+      ),
     queryFn: () =>
       automationsAPI.listExecutions({
         automationId,
         limit,
+        status: filters.status,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
+        offset: filters.offset,
         organizationId,
       }),
-    enabled: !!organizationId,
+    enabled: !!user?.id && !!organizationId && filters.enabled !== false,
     staleTime: 15_000,
     refetchInterval: (query) => {
       const currentExecutions = query.state.data as AutomationExecution[] | undefined;

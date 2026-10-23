@@ -98,9 +98,9 @@ export function CadenceSection({
           description={
             draft.cadence.tasks.length > 0
               ? draft.cadence.tasks.length === 1
-                ? '1 tarefa fica guardada para reativação. Cadências individuais já iniciadas podem continuar nos leads.'
-                : `${draft.cadence.tasks.length} tarefas ficam guardadas para reativação. Cadências individuais já iniciadas podem continuar nos leads.`
-              : 'Nenhuma nova tarefa será criada. Cadências individuais já iniciadas podem continuar nos leads.'
+                ? '1 tarefa fica guardada para reativação. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.'
+                : `${draft.cadence.tasks.length} tarefas ficam guardadas para reativação. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.`
+              : 'Nenhuma nova tarefa será criada. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.'
           }
         />
       ) : (
@@ -110,7 +110,7 @@ export function CadenceSection({
               <p className="text-xs font-light text-[var(--app-text-secondary)]">
                 Linha do tempo
               </p>
-              <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
+              <p className="mt-0.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
                 O prazo conta a partir da entrada na etapa.
               </p>
             </div>
@@ -118,7 +118,7 @@ export function CadenceSection({
               <Button
                 type="button"
                 size="sm"
-                className="h-8 rounded-[6px] bg-primary/10 px-3 text-[11px] font-light text-primary shadow-none hover:bg-primary hover:text-primary-foreground"
+                className="h-8 rounded-[6px] bg-primary/10 px-3 text-[12px] font-light text-primary shadow-none hover:bg-primary hover:text-primary-foreground"
                 onClick={onAddTask}
                 disabled={draft.cadence.tasks.length >= 100}
               >
@@ -133,7 +133,7 @@ export function CadenceSection({
               className="mt-3"
               icon={Clock3}
               title="Nenhuma tarefa configurada"
-              description="Esta cadência está ativa, mas ainda gera zero obrigações. Adicione a primeira ação quando estiver pronto."
+              description="Sem tarefas, esta cadência não gera novas obrigações. Ao salvar assim, as obrigações ainda pendentes dos leads nesta coluna serão canceladas."
             />
           ) : (
             <ol className="mt-3 space-y-2" aria-label="Tarefas da cadência em ordem">
@@ -202,7 +202,7 @@ function TaskCard({
             <span className="block truncate text-xs font-light">
               {task.title.trim() || `Nova tarefa ${index + 1}`}
             </span>
-            <span className="mt-0.5 block text-[11px] font-light text-[var(--app-text-tertiary)]">
+            <span className="mt-0.5 block text-[12px] font-light text-[var(--app-text-tertiary)]">
               {meta.label} · {formatDuration(task.due_minutes)}
               {task.is_required ? ' · obrigatória' : ' · opcional'}
             </span>
@@ -308,7 +308,7 @@ function TaskCard({
               onChange={(minutes) => onUpdate({ warning_minutes: minutes })}
             />
           </div>
-          <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
+          <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
             O aviso aparece em Prioridades; não envia mensagem ou notificação externa.
           </p>
 
@@ -381,7 +381,7 @@ function TaskCard({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-8 rounded-[6px] px-2.5 text-[11px] font-light text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
+                className="h-8 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
                 onClick={onRemove}
               >
                 <Trash2 className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.5} />

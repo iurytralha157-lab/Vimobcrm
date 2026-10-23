@@ -1,5 +1,6 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { enforceRateLimit } from "../_shared/rate-limit.ts";
+import { constantTimeTextEqual } from "../_shared/asaas-webhook.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,14 +9,24 @@ const corsHeaders = {
 
 interface EvolutionResponse {
   success: boolean;
-  data?: any;
+  data?: unknown;
   error?: string;
+}
+
+type EvolutionParams = Record<string, unknown>;
+
+type EvolutionSupabaseClient = SupabaseClient;
+
+type ConnectedSession = { id: string; instance_name: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const SESSION_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function isSendAction(action: string | undefined): boolean {
+function isSendAction(action: unknown): boolean {
   return action === "sendMessage" || action === "sendFile";
 }
 
@@ -25,6 +36,23 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() || "";
+    if (!SUPABASE_SERVICE_ROLE_KEY) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Evolution service is unavailable" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const authHeader = req.headers.get("Authorization");
+    const bearerToken = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
+    // This legacy endpoint is server-only. Reject before consuming an
+    // untrusted body, logging its contents or constructing a privileged client.
+    if (!bearerToken || !constantTimeTextEqual(bearerToken, SUPABASE_SERVICE_ROLE_KEY)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Evolution legada desativada" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
     const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
     const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
     const EVOLUTION_WEBHOOK_SECRET = Deno.env.get("EVOLUTION_WEBHOOK_SECRET")?.trim() || "";
@@ -38,20 +66,15 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { action, ...params } = await req.json();
-    console.log(`Evolution proxy action: ${action}`, params);
+    const requestBody: unknown = await req.json();
+    if (requestBody === null || requestBody === undefined) {
+      throw new TypeError("Request body cannot be null");
+    }
+    const requestParams: EvolutionParams = isRecord(requestBody) ? requestBody : Object(requestBody);
+    const { action, ...params } = requestParams;
 
     // Initialize Supabase client for actions that need it
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const authHeader = req.headers.get("Authorization");
-    const bearerToken = authHeader?.replace("Bearer ", "").trim();
-    if (bearerToken !== SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Evolution legada desativada" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
 
     let webhookSessionToken = "";
     if (action === "createInstance" || action === "setWebhook") {
@@ -194,7 +217,7 @@ Deno.serve(async (req) => {
     );
 
   } catch (error: unknown) {
-    console.error("Evolution proxy error:", error);
+    console.error("Evolution proxy request failed");
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
@@ -203,7 +226,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function resolveWebhookSessionToken(supabase: any, params: any): Promise<string> {
+async function resolveWebhookSessionToken(supabase: EvolutionSupabaseClient, params: EvolutionParams): Promise<string> {
   const requestedSessionId = String(params?.session_id || params?.sessionId || "").trim();
   const requestedInstanceName = String(params?.instanceName || params?.sessionName || "").trim();
 
@@ -275,7 +298,7 @@ async function createInstance(
   supabaseUrl: string,
   webhookSecret: string,
   sessionToken: string,
-  params: any,
+  params: EvolutionParams,
 ): Promise<EvolutionResponse> {
   try {
     const webhookUrl = safeEvolutionWebhookUrl(`${supabaseUrl}/functions/v1/evolution-webhook`);
@@ -315,7 +338,6 @@ async function createInstance(
     });
 
     const data = await response.json();
-    console.log("Create instance response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || data.error || "Failed to create instance" };
@@ -323,12 +345,12 @@ async function createInstance(
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Create instance error:", error);
+    console.error("Evolution instance creation failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function getQRCode(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function getQRCode(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     // Try primary endpoint (v2 standard)
     let response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
@@ -337,7 +359,6 @@ async function getQRCode(apiUrl: string, apiKey: string, instanceName: string): 
     });
 
     let data = await response.json();
-    console.log("QR Code response (v2):", data);
 
     // Fallback if 404 or specific error for /instance/qr (whatsmeow style)
     if (!response.ok) {
@@ -349,7 +370,6 @@ async function getQRCode(apiUrl: string, apiKey: string, instanceName: string): 
       if (fallbackRes.ok) {
         response = fallbackRes;
         data = await response.json();
-        console.log("QR Code response (fallback):", data);
       }
     }
 
@@ -362,12 +382,12 @@ async function getQRCode(apiUrl: string, apiKey: string, instanceName: string): 
     
     return { success: true, data: { qrcode, base64: qrcode, ...data } };
   } catch (error: unknown) {
-    console.error("Get QR code error:", error);
+    console.error("Evolution QR request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function getConnectionStatus(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function getConnectionStatus(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     let response = await fetch(`${apiUrl}/instance/connectionState/${instanceName}`, {
       method: "GET",
@@ -388,7 +408,6 @@ async function getConnectionStatus(apiUrl: string, apiKey: string, instanceName:
       }
     }
 
-    console.log("Connection status response:", { status: response.status, data });
 
     if (response.status === 404) {
       return { 
@@ -428,8 +447,8 @@ async function getConnectionStatus(apiUrl: string, apiKey: string, instanceName:
         connected: isConnected
       } 
     };
-  } catch (error: unknown) {
-    console.error("Get connection status error:", error);
+  } catch {
+    console.error("Evolution connection status request failed");
     return { 
       success: true, 
       data: { state: "close", status: false, connected: false } 
@@ -437,7 +456,7 @@ async function getConnectionStatus(apiUrl: string, apiKey: string, instanceName:
   }
 }
 
-async function sendMessage(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function sendMessage(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { instanceName, number, text, phone, message, sessionName, mentions } = params;
     const instance = instanceName || sessionName;
@@ -445,6 +464,7 @@ async function sendMessage(apiUrl: string, apiKey: string, params: any): Promise
     const messageText = text || message;
 
     // Format phone number for Evolution (just digits for personal, full JID for groups)
+    if (typeof phoneNumber !== "string") throw new TypeError("number or phone must be a string");
     const formattedPhone = (phoneNumber.includes("@") || params.isGroup) ? phoneNumber : phoneNumber.replace(/\D/g, "");
 
     const response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
@@ -461,12 +481,12 @@ async function sendMessage(apiUrl: string, apiKey: string, params: any): Promise
     });
 
     const data = await response.json();
-    console.info("Send message response:", data);
 
     if (!response.ok) {
       // Check if the error is about number not existing on WhatsApp
       if (data.response?.message && Array.isArray(data.response.message)) {
-        const notFoundNumbers = data.response.message.filter((m: any) => m.exists === false);
+        const messages: unknown[] = data.response.message;
+        const notFoundNumbers = messages.filter((m): m is { exists: false; number?: unknown } => isRecord(m) && m.exists === false);
         if (notFoundNumbers.length > 0) {
           return { 
             success: false, 
@@ -479,12 +499,12 @@ async function sendMessage(apiUrl: string, apiKey: string, params: any): Promise
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Send message error:", error);
+    console.error("Evolution text request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function sendMedia(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { 
       instanceName, number, phone, path, filename, caption, sessionName, 
@@ -497,22 +517,24 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
     const rawCaption = caption || text || "";
     const isJustFilename = rawCaption && (
       rawCaption === filename || 
-      /\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg|mp4|mp3|pdf|doc|docx|ogg|wav|m4a|avi|mov|mkv|xlsx|xls|pptx|ppt|zip|rar)$/i.test(rawCaption)
+      /\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg|mp4|mp3|pdf|doc|docx|ogg|wav|m4a|avi|mov|mkv|xlsx|xls|pptx|ppt|zip|rar)$/i.test(String(rawCaption))
     );
     const mediaCaption = isJustFilename ? "" : rawCaption;
 
     // Format phone number for Evolution (just digits for personal, full JID for groups)
+    if (typeof phoneNumber !== "string") throw new TypeError("number or phone must be a string");
     const formattedPhone = (phoneNumber.includes("@") || params.isGroup) ? phoneNumber : phoneNumber.replace(/\D/g, "");
 
     // Prefer base64 if available (more reliable), fallback to URL
     const mediaContent = base64 || mediaUrl || path;
-    const isBase64 = !!base64;
+    if (mediaContent != null && typeof mediaContent !== "string") {
+      throw new TypeError("media content must be a string");
+    }
     
-    console.log(`Sending media: type=${mediaType}, isBase64=${isBase64}, mime=${mimetype}, hasContent=${!!mediaContent}, caption=${mediaCaption}`);
 
     // Determine the correct endpoint and body based on media type
     let endpoint = "sendMedia";
-    let body: any;
+    let body: { number: string; media?: unknown; [key: string]: unknown };
 
     if (mediaType === "image") {
       endpoint = "sendMedia";
@@ -568,7 +590,6 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
       };
     }
 
-    console.log(`Sending media via ${endpoint}:`, { ...body, media: body.media?.substring?.(0, 50) + "..." || body.media });
 
     let response = await fetch(`${apiUrl}/message/${endpoint}/${instance}`, {
       method: "POST",
@@ -580,7 +601,6 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
     });
 
     let data = await response.json();
-    console.log(`Send ${endpoint} response:`, data);
 
     // If failed, try alternative endpoints
     if (!response.ok) {
@@ -588,7 +608,7 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
       
       // Try specific endpoints for each type
       let altEndpoint = "";
-      let altBody: any = null;
+      let altBody: Record<string, unknown> | null = null;
 
       if (mediaType === "image") {
         altEndpoint = "sendImage";
@@ -625,7 +645,6 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
       }
 
       if (altEndpoint && altBody) {
-        console.log(`Trying alternative endpoint: ${altEndpoint}`);
         response = await fetch(`${apiUrl}/message/${altEndpoint}/${instance}`, {
           method: "POST",
           headers: {
@@ -635,7 +654,6 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
           body: JSON.stringify(altBody),
         });
         data = await response.json();
-        console.log(`Alternative ${altEndpoint} response:`, data);
       }
     }
 
@@ -647,12 +665,12 @@ async function sendMedia(apiUrl: string, apiKey: string, params: any): Promise<E
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Send media error:", error);
+    console.error("Evolution media request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function fetchChats(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function fetchChats(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     const response = await fetch(`${apiUrl}/chat/findChats/${instanceName}`, {
       method: "POST",
@@ -664,7 +682,6 @@ async function fetchChats(apiUrl: string, apiKey: string, instanceName: string):
     });
 
     const data = await response.json();
-    console.log("Fetch chats response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to fetch chats" };
@@ -672,12 +689,12 @@ async function fetchChats(apiUrl: string, apiKey: string, instanceName: string):
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Fetch chats error:", error);
+    console.error("Evolution chat request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function fetchMessages(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function fetchMessages(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { instanceName, remoteJid, count = 50 } = params;
 
@@ -698,7 +715,6 @@ async function fetchMessages(apiUrl: string, apiKey: string, params: any): Promi
     });
 
     const data = await response.json();
-    console.log("Fetch messages response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to fetch messages" };
@@ -706,12 +722,12 @@ async function fetchMessages(apiUrl: string, apiKey: string, params: any): Promi
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Fetch messages error:", error);
+    console.error("Evolution history request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function deleteInstance(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function deleteInstance(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     // Try /instance/delete/name (v2)
     let response = await fetch(`${apiUrl}/instance/delete/${instanceName}`, {
@@ -728,24 +744,23 @@ async function deleteInstance(apiUrl: string, apiKey: string, instanceName: stri
       if (fallbackRes.ok || fallbackRes.status === 404) response = fallbackRes;
     }
 
-    let data = {};
+    let data: { message?: string } = {};
     try { data = await response.json(); } catch {
       // noop
     }
-    console.log("Delete instance response:", data);
 
     if (!response.ok && response.status !== 404) {
-      return { success: false, error: (data as any).message || "Failed to delete instance" };
+      return { success: false, error: data.message || "Failed to delete instance" };
     }
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Delete instance error:", error);
+    console.error("Evolution instance deletion failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function logoutInstance(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function logoutInstance(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     const response = await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
       method: "DELETE",
@@ -754,21 +769,20 @@ async function logoutInstance(apiUrl: string, apiKey: string, instanceName: stri
       },
     });
 
-    let data = {};
+    let data: { message?: string } = {};
     try {
       data = await response.json();
     } catch {
       // Empty response is OK
     }
-    console.log("Logout instance response:", data);
 
     if (!response.ok) {
-      return { success: false, error: (data as any).message || "Failed to logout instance" };
+      return { success: false, error: data.message || "Failed to logout instance" };
     }
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Logout instance error:", error);
+    console.error("Evolution logout request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
@@ -778,10 +792,11 @@ async function setWebhook(
   apiKey: string,
   webhookSecret: string,
   sessionToken: string,
-  params: any,
+  params: EvolutionParams,
 ): Promise<EvolutionResponse> {
   try {
     const { instanceName, webhookUrl } = params;
+    if (typeof webhookUrl !== "string") throw new TypeError("webhookUrl must be a string");
     const safeWebhookUrl = safeEvolutionWebhookUrl(webhookUrl);
 
     const response = await fetch(`${apiUrl}/webhook/set/${instanceName}`, {
@@ -811,7 +826,6 @@ async function setWebhook(
     });
 
     const data = await response.json();
-    console.log("Set webhook response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to set webhook" };
@@ -819,17 +833,18 @@ async function setWebhook(
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Set webhook error:", error);
+    console.error("Evolution webhook configuration failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function sendSeen(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function sendSeen(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { instanceName, sessionName, phone, number, isGroup } = params;
     const instance = instanceName || sessionName;
     const phoneNumber = phone || number;
     
+    if (typeof phoneNumber !== "string") throw new TypeError("phone or number must be a string");
     const formattedPhone = phoneNumber.replace(/\D/g, "");
     const remoteJid = isGroup ? `${formattedPhone}@g.us` : `${formattedPhone}@s.whatsapp.net`;
 
@@ -850,26 +865,25 @@ async function sendSeen(apiUrl: string, apiKey: string, params: any): Promise<Ev
     } catch {
       // Empty response is OK
     }
-    console.log("Send seen response:", data);
 
     // Don't fail if this doesn't work - it's not critical
     return { success: true, data };
-  } catch (error: unknown) {
-    console.error("Send seen error:", error);
+  } catch {
+    console.error("Evolution read receipt request failed");
     // Return success anyway - marking as read is not critical
     return { success: true, data: {} };
   }
 }
 
-async function fetchProfilePicture(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function fetchProfilePicture(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { instanceName, number } = params;
     if (!instanceName || !number) {
       return { success: false, error: "instanceName and number are required" };
     }
 
+    if (typeof number !== "string") throw new TypeError("number must be a string");
     const formattedPhone = number.replace(/\D/g, "");
-    console.log(`Fetching profile picture for ${formattedPhone} on instance ${instanceName}`);
 
     const response = await fetch(`${apiUrl}/chat/fetchProfilePictureUrl/${instanceName}`, {
       method: "POST",
@@ -881,7 +895,6 @@ async function fetchProfilePicture(apiUrl: string, apiKey: string, params: any):
     });
 
     const data = await response.json();
-    console.log("Fetch profile picture response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to fetch profile picture" };
@@ -894,18 +907,21 @@ async function fetchProfilePicture(apiUrl: string, apiKey: string, params: any):
       } 
     };
   } catch (error: unknown) {
-    console.error("Fetch profile picture error:", error);
+    console.error("Evolution profile picture request failed");
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return { success: false, error: errorMessage };
   }
 }
 
-async function updateInstanceSettings(apiUrl: string, apiKey: string, params: any): Promise<EvolutionResponse> {
+async function updateInstanceSettings(apiUrl: string, apiKey: string, params: EvolutionParams): Promise<EvolutionResponse> {
   try {
     const { instanceName, settings } = params;
     
     if (!instanceName) {
       return { success: false, error: "instanceName is required" };
+    }
+    if (settings != null && !isRecord(settings)) {
+      throw new TypeError("settings must be an object");
     }
 
     const response = await fetch(`${apiUrl}/settings/set/${instanceName}`, {
@@ -918,12 +934,11 @@ async function updateInstanceSettings(apiUrl: string, apiKey: string, params: an
         rejectCall: false,
         readMessages: false,
         readStatus: false,
-        ...settings
+        ...(isRecord(settings) ? settings : {})
       }),
     });
 
     const data = await response.json();
-    console.log("Update settings response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to update settings" };
@@ -931,13 +946,13 @@ async function updateInstanceSettings(apiUrl: string, apiKey: string, params: an
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Update settings error:", error);
+    console.error("Evolution settings request failed");
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return { success: false, error: errorMessage };
   }
 }
 
-async function fetchGroupInfo(apiUrl: string, apiKey: string, instanceName: string, groupJid: string): Promise<EvolutionResponse> {
+async function fetchGroupInfo(apiUrl: string, apiKey: string, instanceName: unknown, groupJid: unknown): Promise<EvolutionResponse> {
   try {
     const response = await fetch(`${apiUrl}/group/findGroupInfos/${instanceName}?groupJid=${groupJid}`, {
       method: "GET",
@@ -947,7 +962,6 @@ async function fetchGroupInfo(apiUrl: string, apiKey: string, instanceName: stri
     });
 
     const data = await response.json();
-    console.log("Fetch group info response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to fetch group info" };
@@ -955,12 +969,12 @@ async function fetchGroupInfo(apiUrl: string, apiKey: string, instanceName: stri
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Fetch group info error:", error);
+    console.error("Evolution group information request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function fetchAllGroups(apiUrl: string, apiKey: string, instanceName: string): Promise<EvolutionResponse> {
+async function fetchAllGroups(apiUrl: string, apiKey: string, instanceName: unknown): Promise<EvolutionResponse> {
   try {
     const response = await fetch(`${apiUrl}/group/fetchAllGroups/${instanceName}`, {
       method: "GET",
@@ -970,7 +984,6 @@ async function fetchAllGroups(apiUrl: string, apiKey: string, instanceName: stri
     });
 
     const data = await response.json();
-    console.log("Fetch all groups response:", data);
 
     if (!response.ok) {
       return { success: false, error: data.message || "Failed to fetch groups" };
@@ -978,26 +991,34 @@ async function fetchAllGroups(apiUrl: string, apiKey: string, instanceName: stri
 
     return { success: true, data };
   } catch (error: unknown) {
-    console.error("Fetch all groups error:", error);
+    console.error("Evolution group listing request failed");
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 }
 
-async function fetchBulkProfilePictures(apiUrl: string, apiKey: string, supabase: any, params: any): Promise<EvolutionResponse> {
-  const { organizationId, limit = 50 } = params;
-  if (!organizationId) return { success: false, error: "organizationId is required" };
+async function fetchBulkProfilePictures(apiUrl: string, apiKey: string, supabase: EvolutionSupabaseClient, params: EvolutionParams): Promise<EvolutionResponse> {
+  const { organizationId, limit: requestedLimit = 50 } = params;
+  if (typeof organizationId !== "string" || !organizationId) return { success: false, error: "organizationId is required" };
+  if (typeof requestedLimit !== "number" && (typeof requestedLimit !== "string" || !requestedLimit.trim())) {
+    return { success: false, error: "limit must be a number" };
+  }
+  const limit = Number(requestedLimit);
+  if (!Number.isFinite(limit)) return { success: false, error: "limit must be a number" };
 
-  console.log("Fetching bulk profile pictures for organization:", organizationId);
 
-  const { data: sessions } = await supabase
+  const { data: rawSessions } = await supabase
     .from("whatsapp_sessions")
     .select("id, instance_name")
     .eq("organization_id", organizationId)
     .eq("status", "connected");
 
+  const sessionRows: unknown[] = Array.isArray(rawSessions) ? rawSessions : [];
+  const sessions = sessionRows.filter((session): session is ConnectedSession =>
+    isRecord(session) && typeof session.id === "string" && typeof session.instance_name === "string"
+  );
   if (!sessions?.length) return { success: true, data: { updated: 0, message: "No connected sessions" } };
 
-  const sessionIds = sessions.map((s: any) => s.id);
+  const sessionIds = sessions.map((s) => s.id);
   const { data: conversations } = await supabase
     .from("whatsapp_conversations")
     .select("id, contact_phone, session_id")
@@ -1010,7 +1031,7 @@ async function fetchBulkProfilePictures(apiUrl: string, apiKey: string, supabase
 
   if (!conversations?.length) return { success: true, data: { updated: 0, message: "All have pictures" } };
 
-  const sessionMap = new Map(sessions.map((s: any) => [s.id, s.instance_name]));
+  const sessionMap = new Map(sessions.map((s) => [s.id, s.instance_name] as const));
   let updated = 0;
 
   for (const conv of conversations) {
@@ -1031,7 +1052,7 @@ async function fetchBulkProfilePictures(apiUrl: string, apiKey: string, supabase
           updated++;
         }
       }
-    } catch (e) { console.log("Error fetching picture:", e); }
+    } catch { console.log("Evolution bulk profile picture item failed"); }
     await new Promise((r) => setTimeout(r, 100));
   }
 

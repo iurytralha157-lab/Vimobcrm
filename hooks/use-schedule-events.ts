@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
-import { getFriendlyErrorMessage } from "@/lib/error-handler";
+import { refreshScheduleQueries } from "@/hooks/schedule/schedule-query-refresh";
+import { getScheduleMutationErrorMessage } from "@/lib/api/schedule-errors";
 import {
   scheduleAPI,
   type CreateScheduleEventInput,
@@ -36,7 +37,7 @@ function invalidateScheduleCaches(
   queryClient: ReturnType<typeof useQueryClient>,
   leadId?: string | null,
 ) {
-  queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
+  void refreshScheduleQueries(queryClient, { queryKey: ["schedule-events"] });
   invalidateScheduleDashboardCaches(queryClient);
   if (leadId) {
     queryClient.invalidateQueries({ queryKey: ["activities", leadId] });
@@ -53,7 +54,7 @@ export function useScheduleEvents(options: UseScheduleEventsOptions = {}) {
 
   return useQuery({
     queryKey: ["schedule-events", organizationId, options],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       scheduleAPI.getScheduleEvents({
         organizationId,
         eventId: options.eventId,
@@ -61,9 +62,11 @@ export function useScheduleEvents(options: UseScheduleEventsOptions = {}) {
         leadId: options.leadId,
         startDate: options.startDate,
         endDate: options.endDate,
+        signal,
       }),
     enabled: !!organizationId && options.enabled !== false,
     staleTime: 1000 * 60 * 5,
+    refetchOnMount: true,
   });
 }
 
@@ -96,7 +99,7 @@ export function useCreateScheduleEvent() {
     },
     onError: (error: Error) => {
       console.error("Error creating schedule event:", error);
-      toast.error(getFriendlyErrorMessage(error));
+      toast.error(getScheduleMutationErrorMessage(error));
     },
   });
 }
@@ -128,8 +131,12 @@ export function useUpdateScheduleEvent() {
       visibility?: ScheduleEventVisibility;
       user_id?: string;
       assignee_ids?: string[];
+      expected_updated_at?: string;
     }) => {
       if (!organizationId) throw new Error("Organização não encontrada");
+      if (updates.recurrence_rule !== undefined) {
+        throw new Error("A recorrência pode ser definida apenas na criação da atividade.");
+      }
       return scheduleAPI.updateScheduleEvent(
         id,
         toScheduleUpdateBody(updates),
@@ -138,7 +145,7 @@ export function useUpdateScheduleEvent() {
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id);
-      queryClient.invalidateQueries({
+      void refreshScheduleQueries(queryClient, {
         queryKey: ["schedule_assignees", organizationId, data?.id],
       });
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
@@ -146,7 +153,7 @@ export function useUpdateScheduleEvent() {
     },
     onError: (error: Error) => {
       console.error("Error updating schedule event:", error);
-      toast.error(getFriendlyErrorMessage(error));
+      toast.error(getScheduleMutationErrorMessage(error));
     },
   });
 }
@@ -163,12 +170,14 @@ export function useCompleteScheduleEvent() {
       outcome,
       outcomeNotes,
       performedBy,
+      expected_updated_at,
     }: {
       id: string;
       status: string;
       outcome?: ScheduleOutcome | null;
       outcomeNotes?: string | null;
       performedBy?: string | null;
+      expected_updated_at?: string;
     }) => {
       if (!organizationId) throw new Error("Organização não encontrada");
       return scheduleAPI.completeScheduleEvent(
@@ -178,6 +187,7 @@ export function useCompleteScheduleEvent() {
           outcome,
           outcome_notes: outcomeNotes,
           performed_by: performedBy,
+          expected_updated_at,
         },
         organizationId,
       );
@@ -197,7 +207,7 @@ export function useCompleteScheduleEvent() {
     },
     onError: (error: Error) => {
       console.error("Error completing schedule event:", error);
-      toast.error(getFriendlyErrorMessage(error));
+      toast.error(getScheduleMutationErrorMessage(error));
     },
   });
 }
@@ -223,7 +233,7 @@ export function useRescheduleScheduleEvent() {
     },
     onError: (error: Error) => {
       console.error("Error rescheduling schedule event:", error);
-      toast.error(getFriendlyErrorMessage(error));
+      toast.error(getScheduleMutationErrorMessage(error));
     },
   });
 }
@@ -245,7 +255,7 @@ export function useDeleteScheduleEvent() {
     },
     onError: (error: Error) => {
       console.error("Error deleting schedule event:", error);
-      toast.error(getFriendlyErrorMessage(error));
+      toast.error(getScheduleMutationErrorMessage(error));
     },
   });
 }
@@ -268,8 +278,8 @@ function toScheduleUpdateBody(
     "status",
     "visibility",
     "reminder_minutes",
-    "recurrence_rule",
     "assignee_ids",
+    "expected_updated_at",
   ]);
 
   return Object.fromEntries(

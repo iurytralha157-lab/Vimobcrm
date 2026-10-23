@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Clock, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -19,6 +19,8 @@ import { FieldPill } from "@/components/features/schedule/event-sheet/EventSheet
 export function EventSheetHeader({
   locked,
   typeLocked = false,
+  attendanceTypesOnly = false,
+  isMasked = false,
   title,
   selectedType,
   isLoading,
@@ -28,6 +30,8 @@ export function EventSheetHeader({
 }: {
   locked: boolean;
   typeLocked?: boolean;
+  attendanceTypesOnly?: boolean;
+  isMasked?: boolean;
   title: string;
   selectedType: EventType;
   isLoading: boolean;
@@ -38,7 +42,7 @@ export function EventSheetHeader({
   const typeConf =
     eventTypes.find((eventType) => eventType.type === selectedType) ||
     eventTypes[3];
-  const TypeIcon = typeConf.icon;
+  const TypeIcon = isMasked ? Clock : typeConf.icon;
 
   return (
     <div className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-[var(--app-border)] px-4 pb-3 pt-3 sm:grid-cols-[minmax(0,1fr)_158px_auto] sm:border-b-0 sm:px-8 sm:pb-1 sm:pt-4">
@@ -50,7 +54,7 @@ export function EventSheetHeader({
               agendaFieldClass,
             )}
           >
-            {title || "Sem título"}
+            {isMasked ? "Horário ocupado" : title || "Sem título"}
           </h2>
         ) : (
           <Input
@@ -70,7 +74,7 @@ export function EventSheetHeader({
         {locked || typeLocked ? (
           <FieldPill className="h-10 w-full justify-center px-3 text-xs sm:h-9">
             <TypeIcon className="h-3.5 w-3.5" />
-            {typeConf.label}
+            {isMasked ? "Horário ocupado" : typeConf.label}
           </FieldPill>
         ) : (
           <Select
@@ -91,7 +95,7 @@ export function EventSheetHeader({
               </span>
             </SelectTrigger>
             <SelectContent className={agendaPopoverClass}>
-              {eventTypes.map(({ type, label, icon: Icon }) => (
+              {eventTypes.filter(({ type }) => !attendanceTypesOnly || type === "visit" || type === "meeting").map(({ type, label, icon: Icon }) => (
                 <SelectItem key={type} value={type}>
                   <span className="inline-flex items-center gap-2">
                     <Icon className="h-4 w-4" />
@@ -101,6 +105,11 @@ export function EventSheetHeader({
               ))}
             </SelectContent>
           </Select>
+        )}
+        {attendanceTypesOnly && !locked && (
+          <p className="mt-1 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
+            {typeLocked ? "O tipo é preservado na cadeia de remarcações." : "Visitas e reuniões preservam o histórico do compromisso."}
+          </p>
         )}
       </div>
       <button

@@ -891,9 +891,10 @@ declare
 begin
   -- Delivery/status/reaction/media updates to an old message must remain valid
   -- after the conversation moves to another lead. Never compare an unchanged
-  -- historical message context with the conversation's current binding. The
-  -- only allowed context transition is session_id non-NULL -> NULL, performed
-  -- by the existing ON DELETE SET NULL contract when a session is deleted.
+  -- historical message context with the conversation's current binding.
+  -- Session deletion retains its ON DELETE SET NULL transition. If retention
+  -- v1 was installed before this cutover, preserve its exact human-promotion
+  -- proof rather than overwriting that newer guard with the legacy definition.
   if tg_op = 'UPDATE' then
     if new.organization_id is not distinct from old.organization_id
        and new.conversation_id is not distinct from old.conversation_id
@@ -904,6 +905,14 @@ begin
          or (old.session_id is not null and new.session_id is null)
        ) then
       return new;
+    end if;
+
+    if pg_catalog.to_regprocedure(
+      'private.whatsapp_unlinked_promotion_is_authorized(public.whatsapp_messages,public.whatsapp_messages)'
+    ) is not null then
+      if private.whatsapp_unlinked_promotion_is_authorized(old, new) then
+        return new;
+      end if;
     end if;
 
     raise exception using
@@ -950,6 +959,30 @@ begin
     raise exception using
       errcode = '23503',
       message = 'whatsapp_message_session_tenant_mismatch';
+  end if;
+
+  -- Preserve the newer human-link proof if history capture preceded B1. The
+  -- nested test keeps this cutover usable before that optional helper exists.
+  if pg_catalog.to_regprocedure(
+    'private.whatsapp_unlinked_capture_resolution(uuid,uuid,uuid,text,text)'
+  ) is not null then
+    if new.capture_state = 'promoted_unlinked'
+       and new.session_id is not distinct from v_conversation.session_id
+       and new.remote_jid is not distinct from v_conversation.remote_jid
+       and new.lead_id is not null
+       and (
+         private.whatsapp_unlinked_capture_resolution(
+           new.organization_id, new.session_id, new.conversation_id,
+           new.provider_message_id,
+           (select snapshot.inbox_event_key
+            from public.whatsapp_webhook_routing_snapshots as snapshot
+            where snapshot.organization_id = new.organization_id
+              and snapshot.session_id = new.session_id
+              and snapshot.provider_message_id = new.provider_message_id)
+         )->>'lead_id'
+       )::uuid is not distinct from new.lead_id then
+      return new;
+    end if;
   end if;
 
   -- A provider event may be replayed after a later lead becomes active. Its
@@ -1299,6 +1332,28 @@ comment on function private.enforce_canonical_whatsapp_outbox_lead_binding() is
 
 do $$
 begin
+  if pg_catalog.to_regprocedure(
+       'private.whatsapp_unlinked_promotion_is_authorized(public.whatsapp_messages,public.whatsapp_messages)'
+     ) is not null
+     and pg_catalog.strpos(
+       pg_catalog.pg_get_functiondef('public.set_whatsapp_message_context()'::regprocedure),
+       'private.whatsapp_unlinked_promotion_is_authorized(old, new)'
+     ) = 0 then
+    raise exception using errcode = '55000',
+      message = 'whatsapp_unlinked_promotion_cutover_readback_failed';
+  end if;
+
+  if pg_catalog.to_regprocedure(
+       'private.whatsapp_unlinked_capture_resolution(uuid,uuid,uuid,text,text)'
+     ) is not null
+     and pg_catalog.strpos(
+       pg_catalog.pg_get_functiondef('public.set_whatsapp_message_context()'::regprocedure),
+       'private.whatsapp_unlinked_capture_resolution('
+     ) = 0 then
+    raise exception using errcode = '55000',
+      message = 'whatsapp_unlinked_history_cutover_readback_failed';
+  end if;
+
   if exists (
     select 1
     from public.whatsapp_webhook_inbox as inbox

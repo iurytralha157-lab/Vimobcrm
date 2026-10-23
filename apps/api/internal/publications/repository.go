@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/developments"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
@@ -19,9 +20,10 @@ import (
 )
 
 type Repository struct {
-	db      *dbpkg.Postgres
-	config  Config
-	storage publicationStorageClient
+	db          *dbpkg.Postgres
+	config      Config
+	storage     publicationStorageClient
+	workerState *publicationWorkerState
 }
 
 func NewRepository(db *dbpkg.Postgres, config Config) Repository {
@@ -29,7 +31,7 @@ func NewRepository(db *dbpkg.Postgres, config Config) Repository {
 	config.AppURL = strings.TrimRight(strings.TrimSpace(config.AppURL), "/")
 	config.Worker = config.Worker.normalized()
 	return Repository{
-		db: db, config: config,
+		db: db, config: config, workerState: &publicationWorkerState{},
 		storage: newPublicationStorageClient(config.StorageURL, config.StorageAPIKey),
 	}
 }
@@ -136,9 +138,33 @@ func (repo Repository) ResolvePublicMedia(ctx context.Context, publicationID str
 		return "", ErrMediaNotFound
 	}
 	var target publicMediaTarget
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.db.Pool().QueryRow(ctx, publicMediaQuerySQL(), publicationID, version, assetID).Scan(&target.StoragePath, &target.ExternalURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrMediaNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if target.StoragePath != "" {
+		return repo.storage.signedURL(ctx, target.StoragePath, time.Minute)
+	}
+	if externalURL, ok := safeExternalMediaURL(target.ExternalURL); ok {
+		return externalURL, nil
+	}
+	return "", ErrMediaNotFound
+}
+
+func publicMediaQuerySQL() string {
+	return `
 		select coalesce(asset.storage_path, ''), coalesce(asset.external_url, '')
 		from public.property_channel_publications as publication
+		join public.properties as current_property
+		  on current_property.organization_id = publication.organization_id
+		 and current_property.id = publication.property_id
+		join public.organizations as organization
+		  on organization.id = publication.organization_id
+		left join public.organization_sites as site
+		  on site.organization_id = publication.organization_id and publication.channel = 'site'
 		join public.property_channel_publication_versions as version
 		  on version.publication_id = publication.id
 		 and version.organization_id = publication.organization_id
@@ -154,6 +180,11 @@ func (repo Repository) ResolvePublicMedia(ctx context.Context, publicationID str
 		    or publication.channel = 'grupo_olx'
 		  )
 		  and publication.desired_state = 'published'
+		  and coalesce(organization.is_active, false)
+		  and (publication.channel <> 'site' or coalesce(site.is_active, false))
+		  and current_property.autorizado_comercializacao is distinct from false
+		  and lower(trim(coalesce(current_property.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')
+		  and ` + developments.PropertyInventoryOpenSQL("current_property") + `
 		  and (
 		    publication.published_version = version.version
 		    or exists (
@@ -186,20 +217,7 @@ func (repo Repository) ResolvePublicMedia(ctx context.Context, publicationID str
 		      )
 		  )
 		limit 1
-	`, publicationID, version, assetID).Scan(&target.StoragePath, &target.ExternalURL)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrMediaNotFound
-	}
-	if err != nil {
-		return "", err
-	}
-	if target.StoragePath != "" {
-		return repo.storage.signedURL(ctx, target.StoragePath, time.Minute)
-	}
-	if externalURL, ok := safeExternalMediaURL(target.ExternalURL); ok {
-		return externalURL, nil
-	}
-	return "", ErrMediaNotFound
+	`
 }
 
 func (repo Repository) executeCommand(
@@ -214,6 +232,9 @@ func (repo Repository) executeCommand(
 ) (commandResult, error) {
 	if !tenantContext.HasPermission(permissions.PropertyManage) || !tenantContext.HasModule("properties") {
 		return commandResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	if action == ActionPublish && !repo.config.Worker.Enabled {
+		return commandResult{}, ErrWorkerUnavailable
 	}
 	propertyID, ok := normalizeUUID(propertyID)
 	if !ok {
@@ -230,6 +251,12 @@ func (repo Repository) executeCommand(
 	}
 	defer tx.Rollback(ctx)
 
+	if err := developments.LockPropertyInventory(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+		if errors.Is(err, developments.ErrConflict) {
+			return commandResult{}, ErrPublicationConflict
+		}
+		return commandResult{}, err
+	}
 	source, err := repo.loadPublicationSource(ctx, tx, tenantContext, propertyID, true)
 	if err != nil {
 		return commandResult{}, err
@@ -361,6 +388,9 @@ func (repo Repository) executeCommand(
 				return commandResult{}, err
 			}
 		} else {
+			if !repo.config.Worker.Enabled {
+				return commandResult{}, ErrWorkerUnavailable
+			}
 			if err := ensurePublicationAvailable(scope, source, tenantContext); err != nil {
 				return commandResult{}, err
 			}
@@ -596,6 +626,11 @@ func (repo Repository) buildPublicationView(
 	canManage bool,
 ) (PublicationView, error) {
 	checks, score, readinessState := evaluatePublicationReadiness(scope, source)
+	if !repo.config.Worker.Enabled {
+		checks, score, readinessState = markPublicationModuleUnavailable(
+			checks, "publication_worker", "Processamento de publicação ativo", "O processamento de publicações está indisponível. Tente novamente mais tarde.",
+		)
+	}
 	switch scope.Channel {
 	case SiteChannel:
 		if !tenantContext.HasModule("site") {
@@ -626,8 +661,12 @@ func (repo Repository) buildPublicationView(
 		ReadinessScore:    score,
 		Checks:            checks,
 		CurrentVersion:    0,
+		LegacyVisible:     legacySitePublicationVisible(scope, source, publication),
 		Preview:           buildPreview(source.Property, previewURL),
 		RecentJobs:        []RecentJob{},
+	}
+	if view.LegacyVisible {
+		view.PublicURL = view.Preview.PublicURL
 	}
 
 	var currentVersion *versionRecord
@@ -637,7 +676,9 @@ func (repo Repository) buildPublicationView(
 		view.ObservedState = publication.ObservedState
 		view.CurrentVersion = publication.CurrentVersion
 		view.PublishedVersion = publication.PublishedVersion
-		view.PublicURL = publication.PublicURL
+		if publication.PublicURL != nil {
+			view.PublicURL = publication.PublicURL
+		}
 		view.LastRequestedAt = formatTimestampPointer(publication.LastRequestedAt)
 		view.LastAttemptAt = formatTimestampPointer(publication.LastAttemptAt)
 		view.LastSucceededAt = formatTimestampPointer(publication.LastSucceededAt)
@@ -695,6 +736,17 @@ func (repo Repository) buildPublicationView(
 		CanPreview: currentVersion != nil || previewHasContent(view.Preview),
 	}
 	return view, nil
+}
+
+// Legacy visibility is an observation, not a canonical publication request.
+// Module/worker readiness gates new delivery but does not hide an existing live
+// compatibility announcement. A durable withdrawal or pause always wins.
+func legacySitePublicationVisible(scope publicationScope, source publicationSource, publication *publicationRecord) bool {
+	if scope.Channel != SiteChannel || !source.LegacySitePublished || !source.SiteActive ||
+		!publicationStatusAvailable(source.Status) || source.CommercializationDenied || !source.InventoryOpen {
+		return false
+	}
+	return publication == nil || (publication.DesiredState == DesiredPublished && publication.PublishedVersion == nil)
 }
 
 func (repo Repository) latestGrupoOLXProviderFeedback(
@@ -797,6 +849,9 @@ func (repo Repository) loadPublicationSource(
 		select `+sitePublicPropertySQL("p")+`::text,
 		       p.updated_at,
 		       coalesce(p.status, ''),
+		       p.autorizado_comercializacao is false,
+		       `+developments.PropertyInventoryOpenSQL("p")+`,
+		       coalesce(p.published_on_site, false),
 		       (
 		         p.owner_id is not null
 		         or nullif(trim(coalesce(p.owner_name, '')), '') is not null
@@ -840,6 +895,9 @@ func (repo Repository) loadPublicationSource(
 		&propertyJSON,
 		&source.UpdatedAt,
 		&source.Status,
+		&source.CommercializationDenied,
+		&source.InventoryOpen,
+		&source.LegacySitePublished,
 		&source.OwnerPresent,
 		&source.ResponsiblePresent,
 		&source.HasAssetPhotos,

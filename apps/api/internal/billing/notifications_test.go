@@ -7,7 +7,10 @@ import (
 
 func TestBillingNotificationOutboxContract(t *testing.T) {
 	requiredFragments := []string{
+		"membership.deleted_at is null",
 		"lower(coalesce(membership.role, 'user')) in ('owner', 'admin')",
+		"join public.organization_roles role",
+		"role.is_active = true",
 		"permission.key = 'settings_billing'",
 		"'billing_due_in_3_days'",
 		"'billing_due_today'",

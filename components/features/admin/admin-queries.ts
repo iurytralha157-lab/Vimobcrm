@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import {
   adminAPI,
@@ -72,6 +72,16 @@ export function useAdminRows(table: string, limit = 60) {
     () => adminAPI.listTableRows(table, limit) as Promise<AdminRecord[]>,
     [],
   );
+}
+
+export function useAdminRowsPaginated(table: string, search: string) {
+  return useInfiniteQuery({
+    queryKey: ['admin-rows-page', table, search],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => adminAPI.listTableRowsPage(table, { search: search || undefined, offset: pageParam, limit: 120 }),
+    getNextPageParam: (page) => page.meta.nextOffset ?? undefined,
+    staleTime: 60_000,
+  });
 }
 
 export function useAdminUsersList() {

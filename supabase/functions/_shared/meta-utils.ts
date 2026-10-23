@@ -1,11 +1,11 @@
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+type MetaLeadgenChange = { leadgen_id?: string; form_id?: string };
 
 export async function processLeadgenEvent(
-  supabase: any,
+  supabase: SupabaseClient,
   pageId: string,
-  changeValue: any,
-  eventId: string | null = null
+  changeValue: MetaLeadgenChange,
 ): Promise<{ status: string; error?: string; organization_id?: string }> {
   const leadgenId = changeValue?.leadgen_id;
   const formId = changeValue?.form_id;
@@ -107,8 +107,8 @@ export async function processLeadgenEvent(
 
     // Process field mapping (simplified logic from meta-webhook)
     let name = "Lead Facebook", email = "", phone = "", message = "";
-    const customFields: any = {};
-    const extraFields: any = {};
+    const customFields: Record<string, unknown> = {};
+    const extraFields: Record<string, unknown> = {};
 
     for (const field of leadData.field_data || []) {
       const value = field.values?.[0] || "";
@@ -145,7 +145,7 @@ export async function processLeadgenEvent(
     }).select("id").single();
 
     if (leadError) {
-      if ((leadError as any).code === "23505") {
+      if (leadError.code === "23505") {
         return { status: "duplicate", organization_id: integration.organization_id };
       }
       lastResult = {

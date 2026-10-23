@@ -113,6 +113,11 @@ export function formatDeliveryFailureTime(date: string): string {
   return format(parsed, "dd/MM 'às' HH:mm");
 }
 
+export function formatMessageDetailsTime(date: string): string {
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? "" : format(parsed, "dd/MM/yyyy 'às' HH:mm:ss");
+}
+
 export function formatMessageAudioDuration(seconds: number): string {
   if (!seconds || !Number.isFinite(seconds) || isNaN(seconds)) return "0:00";
   const minutes = Math.floor(seconds / 60);

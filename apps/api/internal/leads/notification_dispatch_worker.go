@@ -48,6 +48,7 @@ func billingNotificationAuthorizationSQL(organizationParameter string, userParam
 	where membership.organization_id = ` + organizationParameter + `::uuid
 	  and membership.user_id = ` + userParameter + `::uuid
 	  and membership.is_active = true
+	  and membership.deleted_at is null
 	  and coalesce(account.is_active, true) = true
 	  and (
 		lower(coalesce(membership.role, 'user')) in ('owner', 'admin')
@@ -70,6 +71,10 @@ func billingNotificationAuthorizationSQL(organizationParameter string, userParam
 			and exists (
 				select 1
 				from public.user_organization_roles user_role
+				join public.organization_roles role
+				  on role.id = user_role.role_id
+				 and role.organization_id = user_role.organization_id
+				 and role.is_active = true
 				join public.organization_role_permissions role_permission
 				  on role_permission.organization_id = user_role.organization_id
 				 and role_permission.role_id = user_role.role_id
@@ -122,7 +127,7 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				created, err := repo.createDueScheduleNotifications(ctx)
+				created, err := repo.createDueScheduleNotificationBurst(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("schedule notification producer failed", "error", err)
 				} else if created > 0 {
@@ -463,6 +468,15 @@ func isCadenceNotificationDeliverySuppressed(metadata map[string]any) bool {
 }
 
 func (repo Repository) dispatchPendingNotificationUnchecked(ctx context.Context, notification pendingNotification, channels []string) notificationDeliveryResult {
+	if rejected := repo.preflightQueueNotification(ctx, notification); rejected != nil {
+		return notificationDeliveryResult{WhatsApp: *rejected, Push: *rejected, Email: *rejected, Error: rejected.Error}
+	}
+	if isWhatsAppInboundAttendantNotification(notification) {
+		if !shouldAttemptNotificationChannel(notification.Metadata, "push", channels) {
+			return notificationDeliveryResult{}
+		}
+		return repo.dispatchLegacyWhatsAppInboundPush(ctx, notification)
+	}
 	var result notificationDeliveryResult
 	if shouldAttemptNotificationChannel(notification.Metadata, "whatsapp", channels) {
 		if rejected := repo.preflightBillingNotificationChannel(ctx, notification); rejected != nil {
@@ -752,14 +766,17 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 	if repo.notificationPush == nil || !repo.notificationPush.hasAnySender() {
 		return DispatchChannelResult{Enabled: false, Error: "push_sender_not_configured"}
 	}
-	subscriptions, err := repo.listActivePushSubscriptions(ctx, notification.UserID)
+	subscriptions, err := repo.listActivePushSubscriptions(ctx, notification.UserID, notification.OrganizationID)
 	if err != nil {
 		return DispatchChannelResult{Enabled: true, Error: err.Error()}
 	}
 	if len(subscriptions) == 0 {
 		return DispatchChannelResult{Enabled: true, Error: "push_tokens_missing"}
 	}
+	return repo.dispatchPushSubscriptions(ctx, notification, subscriptions)
+}
 
+func (repo Repository) dispatchPushSubscriptions(ctx context.Context, notification pendingNotification, subscriptions []pushSubscription) DispatchChannelResult {
 	payload := pushPayload{
 		Title:     notification.Title,
 		Body:      notification.Content,
@@ -1414,8 +1431,16 @@ func notificationDispatchAttempts(metadata map[string]any, channel string) int {
 	return 0
 }
 
-func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID string) ([]pushSubscription, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID string, organizationIDs ...string) ([]pushSubscription, error) {
+	organizationID := ""
+	if len(organizationIDs) > 0 {
+		organizationID = strings.TrimSpace(organizationIDs[0])
+	}
+	return repo.listActivePushSubscriptionsWithQueryer(ctx, repo.db.Pool(), userID, organizationID)
+}
+
+func (repo Repository) listActivePushSubscriptionsWithQueryer(ctx context.Context, queryer notificationPushQueryer, userID, organizationID string) ([]pushSubscription, error) {
+	rows, err := queryer.Query(ctx, `
 		select
 			id::text,
 			coalesce(endpoint, ''),
@@ -1424,11 +1449,19 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID s
 			coalesce(token, ''),
 			coalesce(platform, ''),
 			coalesce(device_info, '{}'::jsonb)::text
-		from public.push_tokens
+		from public.push_tokens token
 		where user_id = $1::uuid
 		  and coalesce(is_active, true) = true
+		  and exists (
+		    select 1 from public.users recipient
+		    join public.organization_members member on member.user_id=recipient.id
+		      and member.organization_id=nullif($2,'')::uuid
+		    where recipient.id=token.user_id and coalesce(recipient.is_active,false)
+		      and coalesce(member.is_active,false) and member.deleted_at is null
+		  )
 		order by updated_at desc nulls last, created_at desc nulls last
-	`, userID)
+		for share of token
+	`, userID, organizationID)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
 		return nil, nil
 	}
@@ -1471,7 +1504,7 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID s
 }
 
 func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Context) error {
-	_, err := repo.createDueScheduleNotifications(ctx)
+	_, err := repo.createDueScheduleNotificationBurst(ctx)
 	return err
 }
 

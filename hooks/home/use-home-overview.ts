@@ -143,7 +143,7 @@ export function useHomeOverview(
   scope: HomeFocusScope = 'mine',
   enabled = true,
 ) {
-  const { activeOrganization, organization, profile, user, isSuperAdmin } = useAuth()
+  const { activeOrganization, organization, user, isSuperAdmin } = useAuth()
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions()
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules()
   const organizationId = activeOrganization.organizationId

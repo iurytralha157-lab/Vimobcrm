@@ -99,7 +99,7 @@ export function SalesFunnelWithPipeline({
             Funil de vendas
           </CardTitle>
           <div className="ml-auto flex shrink-0 items-center">
-            {pipelines.length > 1 && (
+            {!pipelinesError && pipelines.length > 1 && (
               <Select
                 value={selectedPipelineId || ''}
                 onValueChange={(pipelineId) => {
@@ -157,15 +157,18 @@ export function SalesFunnelWithPipeline({
                   <Tooltip key={`${item.stage_key || item.name}-${index}`}>
                     <TooltipTrigger asChild>
                       <div
+                        tabIndex={0}
+                        role="img"
+                        aria-label={`${item.name}: ${item.value.toLocaleString('pt-BR')} leads, ${item.percentage}% do funil`}
                         className={cn(
                           'relative group cursor-default transition-all duration-300',
-                          'hover:z-10'
+                          'hover:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
                         )}
                         style={{ width: `${width}%` }}
                       >
                         <div
                           className={cn(
-                            'w-full rounded flex items-center justify-between px-4 py-2',
+                            'w-full rounded flex flex-wrap items-center justify-between gap-y-1 px-3 py-2',
                             'bg-gradient-to-r text-white text-sm',
                             'shadow-none transition-all duration-200',
                             'group-hover:brightness-110',
@@ -177,7 +180,7 @@ export function SalesFunnelWithPipeline({
                           </span>
 
                           <div className="flex items-center gap-2">
-                            <span className="text-[12px] font-normal">{item.value}</span>
+                            <span className="text-[12px] font-normal tabular-nums">{item.value.toLocaleString('pt-BR')}</span>
                             <span className="min-w-[28px] rounded-[6px] bg-[var(--app-surface-solid)]/20 px-1.5 py-0.5 text-center text-[10px] font-light tabular-nums">
                               {item.percentage}%
                             </span>
@@ -191,14 +194,14 @@ export function SalesFunnelWithPipeline({
                     </TooltipTrigger>
                     <TooltipContent
                       side="right"
-                      className="min-w-[160px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-none"
+                      className="min-w-[160px] max-w-[calc(100vw-24px)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-none"
                     >
                       <div className="space-y-2">
-                        <p className="text-[12px] font-light text-[var(--app-text-secondary)]">{item.name}</p>
+                        <p className="break-all text-[12px] font-light text-[var(--app-text-secondary)]">{item.name}</p>
                         <div className="space-y-1.5 pt-2">
                           <div className="flex justify-between items-center gap-4">
                             <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">Quantidade:</span>
-                            <span className="text-[11px] font-medium text-[var(--app-text-primary)] tabular-nums">{item.value} leads</span>
+                            <span className="text-[11px] font-medium text-[var(--app-text-primary)] tabular-nums">{item.value.toLocaleString('pt-BR')} leads</span>
                           </div>
                           <div className="flex justify-between items-center gap-4">
                             <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">Percentual:</span>

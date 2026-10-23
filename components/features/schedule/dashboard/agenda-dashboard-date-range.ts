@@ -1,3 +1,6 @@
+import type { DatePreset } from "@/hooks/use-dashboard-filters";
+import { differenceInCalendarDays } from "date-fns";
+
 export const AGENDA_DASHBOARD_FALLBACK_TIME_ZONE = "America/Sao_Paulo";
 
 export type AgendaDashboardDatePreset =
@@ -17,6 +20,13 @@ type CivilDate = {
 };
 
 const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1_000;
+
+export function validateAgendaDashboardCalendarRange(range: { from: Date; to: Date } | null) {
+  if (!range) return null;
+  const days = differenceInCalendarDays(range.to, range.from);
+  if (!Number.isFinite(days) || days < 0) return "Selecione um período válido.";
+  return days > 365 ? "Selecione no máximo 366 dias." : null;
+}
 
 function getCivilDateInTimeZone(referenceDate: Date, timeZone: string) {
   const readParts = (resolvedTimeZone: string) => {
@@ -126,4 +136,42 @@ export function getAgendaDashboardPresetRange(
     dateFrom: formatCivilDate(from),
     dateTo: formatCivilDate(to),
   };
+}
+
+/** Shared shortcuts, interpreted in the reporting organization's civil timezone. */
+export function getAgendaDashboardSharedPresetRange(
+  preset: Exclude<DatePreset, "custom">,
+  referenceDate = new Date(),
+  timeZone = AGENDA_DASHBOARD_FALLBACK_TIME_ZONE,
+) {
+  const today = getCivilDateInTimeZone(referenceDate, timeZone);
+  let from = today;
+  let to = today;
+  switch (preset) {
+    case "yesterday":
+      from = addCivilDays(today, -1);
+      to = from;
+      break;
+    case "last7days":
+      from = addCivilDays(today, -6);
+      break;
+    case "last30days":
+      from = addCivilDays(today, -29);
+      break;
+    case "thisMonth":
+      from = { ...today, day: 1 };
+      break;
+    case "lastMonth": {
+      to = addCivilDays({ ...today, day: 1 }, -1);
+      from = { ...to, day: 1 };
+      break;
+    }
+    case "thisQuarter":
+      from = { ...today, month: Math.floor((today.month - 1) / 3) * 3 + 1, day: 1 };
+      break;
+    case "thisYear":
+      from = { ...today, month: 1, day: 1 };
+      break;
+  }
+  return { dateFrom: formatCivilDate(from), dateTo: formatCivilDate(to) };
 }

@@ -42,6 +42,28 @@ func TestParseHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestParseHistoryOffset(t *testing.T) {
+	for _, item := range []struct {
+		value   string
+		want    int
+		invalid bool
+	}{
+		{"", 0, false}, {"0", 0, false}, {" 50 ", 50, false}, {"1000000", 1_000_000, false},
+		{"-1", 0, true}, {"1000001", 0, true}, {"1.5", 0, true}, {"many", 0, true},
+	} {
+		got, err := parseHistoryOffset(item.value)
+		if item.invalid {
+			if err == nil {
+				t.Fatalf("invalid offset %q accepted", item.value)
+			}
+			continue
+		}
+		if err != nil || got != item.want {
+			t.Fatalf("offset %q = %d, %v; want %d", item.value, got, err, item.want)
+		}
+	}
+}
+
 func TestHistoryQueryScopesQueueAndRelatedEntities(t *testing.T) {
 	requiredFragments := []string{
 		"queue_creation as",
@@ -62,6 +84,7 @@ func TestHistoryQueryScopesQueueAndRelatedEntities(t *testing.T) {
 		"left join public.users actor",
 		"left join public.users subject",
 		"limit $3",
+		"offset $4",
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(historyQuery, fragment) {
@@ -97,7 +120,7 @@ func TestListHistoryUsesOrganizationAndQueueVisibilityBoundary(t *testing.T) {
 	normalized := strings.Join(strings.Fields(string(source)), " ")
 	for _, fragment := range []string{
 		`strings.TrimSpace(tenantContext.OrganizationID) == ""`,
-		"repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID)",
+		"repo.ensureRoundRobinHistoryVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID)",
 		"tenantContext.OrganizationID, roundRobinID, limit",
 	} {
 		if !strings.Contains(normalized, fragment) {

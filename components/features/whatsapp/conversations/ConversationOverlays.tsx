@@ -13,6 +13,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatWhatsAppContactLabel } from "@/lib/phone-utils";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { useAuth } from "@/contexts/AuthContext";
 
 import type { ScreenConversation } from "./conversation-model";
 
@@ -21,9 +23,11 @@ export type CreateLeadContact = {
   name?: string;
   conversationId?: string;
   expectedPreviousLeadId?: string;
+  confirmHistoryLink?: true;
 };
 
 type ConversationOverlaysProps = {
+  ownerScopeKey: string;
   canCreateLeads: boolean;
   createLeadOpen: boolean;
   onCreateLeadOpenChange: (open: boolean) => void;
@@ -40,6 +44,7 @@ type ConversationOverlaysProps = {
 };
 
 export function ConversationOverlays({
+  ownerScopeKey,
   canCreateLeads,
   createLeadOpen,
   onCreateLeadOpenChange,
@@ -54,6 +59,10 @@ export function ConversationOverlays({
   onDeleteDialogOpenChange,
   onConfirmDeleteConversation,
 }: ConversationOverlaysProps) {
+  const scope = useWhatsAppQueryScope();
+  const { profile } = useAuth();
+  if (profile?.organization_id !== scope.organizationId
+    || ownerScopeKey !== JSON.stringify([scope.userId, scope.organizationId, scope.accessScope, profile?.organization_id])) return null;
   const pendingDeleteName = pendingDeleteConversation?.lead?.name
     || formatWhatsAppContactLabel(
       pendingDeleteConversation?.contact_name,
@@ -72,7 +81,8 @@ export function ConversationOverlays({
           contactName={createLeadContact.name}
           conversationId={createLeadContact.conversationId}
           expectedPreviousLeadId={createLeadContact.expectedPreviousLeadId}
-          onSaved={(lead) => onLeadSaved(lead.id)}
+          confirmHistoryLink={createLeadContact.confirmHistoryLink}
+          onCreated={onLeadSaved}
         />
       )}
       {selectedLeadId && selectedConversation && (
@@ -102,7 +112,7 @@ export function ConversationOverlays({
                 onConfirmDeleteConversation();
               }}
             >
-              {isDeletingConversation && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+              {isDeletingConversation && <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
               Remover conversa
             </AlertDialogAction>
           </AlertDialogFooter>

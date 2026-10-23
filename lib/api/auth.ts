@@ -22,23 +22,12 @@ export const authAPI = {
   },
 
   async resetPassword(email: string) {
-    try {
-      const input = parseDomainInput(resetPasswordSchema, { email }, 'auth.reset-password')
-      const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
+    const input = parseDomainInput(resetPasswordSchema, { email }, 'auth.reset-password')
+    const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
 
-      const result = await supabase.auth.resetPasswordForEmail(input.email, {
-        redirectTo: redirectUrl,
-      });
-
-      if (result.error) {
-        console.error('[authAPI] Reset password error:', result.error);
-      }
-
-      return result;
-    } catch (err) {
-      console.error('[authAPI] Reset password exception:', err);
-      throw err;
-    }
+    return supabase.auth.resetPasswordForEmail(input.email, {
+      redirectTo: redirectUrl,
+    });
   },
 
   async resendSignupEmailConfirmation(email: string) {

@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "0aa9b83ebe46f0bf79d3ed49afd9c9e20cb967c11bb38a97355911c2974fc458",
+  "shared_source_sha256": "028948fbc994fb7051f10356842de59b168a363f63ced2956fd652cb408edd6e",
   "functions": [
     {
       "slug": "ai-agent-responder",
@@ -14,7 +14,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "1ab1210ad5212f4e9accdefb87a2262d4e419d25afed0e31263e86aa84eacd41",
-      "source_sha256": "2968534cb8c570a7c3d998977b3bdee4b17fb7b79a45073a3b0844ca91247808"
+      "source_sha256": "c89f54d23e859bb91cd92aebeb85e86ab9ec4fceffa5aa77adb6d5b1456b1ac8"
     },
     {
       "slug": "approve-onboarding-request",
@@ -194,7 +194,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "aeb3e156a4824c2df01bea15451c0a3829382b50cc354f83bd5d3bf8e5dd0fef"
+      "source_sha256": "56fae45ac5d6b09e66f3d94c625d5c42ec766fb8f502188106236aef33199314"
     },
     {
       "slug": "create-organization-admin",
@@ -249,12 +249,12 @@
     {
       "slug": "evolution-go-proxy",
       "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 150,
-      "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "verify_jwt": true,
+      "auth_boundary": "GATEWAY_JWT",
       "captured_deployment_sha256": "4c3089aa3000f0db994226862540638cf57b4ce5e945826915484e4bec998a53",
-      "source_sha256": "70ac7ff1c5126f60e7ab8ba58ab11d8de1c33ed2a6bf0493812a4333c175166b"
+      "source_sha256": "d6bfbe9727c37886a0216f937804beb39071eb72e672ed2138acdf5a69a5efcb"
     },
     {
       "slug": "evolution-go-webhook",
@@ -264,7 +264,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
-      "source_sha256": "665d8203601254e551efd19bc7f3e64fd3995e0edd9222f2b6120fbec84de7e0"
+      "source_sha256": "9fb1fca7f6cbd5e605af45c9b6f4d3f137ef8203f96e71679848e058706fbe48"
     },
     {
       "slug": "evolution-proxy",
@@ -274,7 +274,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "1828b71cb273c012c31954db8e098bf44ffaa1b370a49bf1101c650682b7b6b9",
-      "source_sha256": "547cdd06f45a3d93938bdbb92c347ece1769688be012199b02cd6e02452a3d6b"
+      "source_sha256": "5de0474f6ecf1bcaac78ae12af6f2677de01288c57626f0b3c71bd82f43ec0d3"
     },
     {
       "slug": "evolution-webhook",
@@ -284,7 +284,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "82e151f2056a55f0cdb0130fb84c1ded3ba1dbb2a7e59897cecd0dcfe8b26e3c",
-      "source_sha256": "6598275311449e3659845679ca1960e974983a5cb24875f759cbb1e76f8a0f48"
+      "source_sha256": "2d7e23a35a1f110175eba5c939f42c337a9d4d44a2162443017c64c42879b80f"
     },
     {
       "slug": "financial-engine",
@@ -334,7 +334,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "e305e0809374fa873728d5d584e96eb563d929e726727417b83e11adb8b1e038"
+      "source_sha256": "bf58d95eebb55169deefa901e688f3cbc9fea5bc1ed5c086bef01e23a24341d2"
     },
     {
       "slug": "google-calendar-auth",
@@ -354,7 +354,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91",
-      "source_sha256": "4d8e523380b23dd4add8bbc21bfb1ab6a3cc28dddcbc9b3cb50ce0edb2f9d6e2"
+      "source_sha256": "c191cd4f530f7afa400443f3392d973a7fc6447e419e2aadd4730acebddce6eb"
     },
     {
       "slug": "google-calendar-sync",
@@ -364,7 +364,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "85b4225ce1cad31dd7d6d60507f676145e253a4ed4060e6d4f7c13d9b392212f",
-      "source_sha256": "b77ae0a08261283fca3dd1cac6dae42388da56a95ac95936062a25dc14da503e"
+      "source_sha256": "0cab6d37003f8f3c43627496a83cfd96e1f29ac6810f6ecb7e85aa20e75aa404"
     },
     {
       "slug": "google-calendar-webhook",
@@ -424,7 +424,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "f0f58b87b198a278c8457f8c028e4c05557a148c871e622a03bcbecbf4ef01fb",
-      "source_sha256": "097ae3f9a8e4adfd99a55eda21c0f06a12af334941a1944b3197edfa179e22b8"
+      "source_sha256": "2b555d1373712978185aa9661eb6a9b31c21ab53add358cedd36dd3915f4dcc5"
     },
     {
       "slug": "manage-user",
@@ -464,7 +464,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "9887ae98e004279c0effc42820170d2541f46d23aa5425c61d0d0cb5e49c7c74",
-      "source_sha256": "6fc9a2db7f7f147cd6354c101534ff2049185f18d75f357224e391724d124072"
+      "source_sha256": "144ff24f7e919376102106939c067f0fda192fd8de3957c4c0318d99c32cc964"
     },
     {
       "slug": "meta-messenger-proxy",
@@ -484,7 +484,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "675c062fab1648a3bd324d32d30610f206ed36e4a64e4ef31af99c0cf506f361",
-      "source_sha256": "eaf8cdf62daec6cc1c5097f593e207b31f8567256e1ab37e981815a7b687625f"
+      "source_sha256": "0c2e73e429296774945559bcf44ab06b6672701d3c27ebc600c246a4266e385d"
     },
     {
       "slug": "meta-token-healthcheck",
@@ -494,7 +494,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": null,
-      "source_sha256": "1fe71f9ea3b8545e3ef905e80b71d82d8f9af21ccbdc9591a59b82eb572f8c1f"
+      "source_sha256": "2ba4fa816025c087dd8b49f2e56c0d0e28ba9b69b507bb3b5b725cbfc665f9a0"
     },
     {
       "slug": "meta-webhook",
@@ -504,7 +504,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "705b3ba8636801e38593a761c32dd2e68e65a8878bfaa345180d9afb3989d34f",
-      "source_sha256": "67c4a8dbe3877548168817b89ed8d4d7cf8db7ed2d8a964d32fe45d404b965f9"
+      "source_sha256": "542d6f7615f3ebbf9ab8dcb6738bae394c44888860f790afcdc56fd4f4cdf361"
     },
     {
       "slug": "meta-webhook-replay",
@@ -514,7 +514,7 @@
       "verify_jwt": false,
       "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": null,
-      "source_sha256": "12ac725924c59ff9516bab06e95027aeacb40ab7ac78ad94e981ab2fc2c1716f"
+      "source_sha256": "2a6b9050f903f6d5f672f661aca386a9c875d10a68a2b8395875a13c0cf63aba"
     },
     {
       "slug": "notification-dispatcher",
@@ -574,7 +574,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "77cf0683bbb6ec43304a75fc33086d46341fedc69cd124b1b5bf5cc92159f4d6",
-      "source_sha256": "1c6f5529a41c9c9513762c3dd9ff41d3194ce0d768af51807a4ba06e21a35a72"
+      "source_sha256": "e2a0a8ff80e47d731e88839de697ac26d92efbd758f43827a8091bbeb0f5eee7"
     },
     {
       "slug": "public-api",
@@ -584,7 +584,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "5981af2b31120a0127fb35869d16f4ed92b08699f2dceca3d17967f03ebc27cb",
-      "source_sha256": "4f4d5d67b846bbad9bb0be6dc1b6a70fc19221bcc071e3f9d100c354d2c9c586"
+      "source_sha256": "0700273d7ff5b6eb68c46c406c89e04c023503e24b0fa921cc232a4c9645d3f2"
     },
     {
       "slug": "public-signup",
@@ -604,7 +604,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "6cd1a554fe2c534461c64058438d31681648d9c11eced3281aa37dc257304a9a"
+      "source_sha256": "7a3b86262ca81158f57eac3e549d8ea32bb1252c2905af9e90d6e89282c95e9c"
     },
     {
       "slug": "public-site-data",
@@ -644,7 +644,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "678f743a5d0406eaf236959632c630ea093ab213833cd55da977466b7e19b520",
-      "source_sha256": "7f310985ea74c0bd8080bc2d9d9ca88f5a764b6cee94deaeda389b3230a750ac"
+      "source_sha256": "36a9d4bd00b631c1da385d6c312f9a0947176c6b5ca983209d2ae249b03f6487"
     },
     {
       "slug": "seed-organization-data",
@@ -654,7 +654,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "60a43f30f13f08109b5466bd1ea2fdecc4d1d8f41a645fc67f645742400eee22"
+      "source_sha256": "a6232bdc46e67df9cffffd907daed391ba78c8be870cc39e5cb81e89f1285b3b"
     },
     {
       "slug": "send-email",
@@ -684,7 +684,7 @@
       "verify_jwt": true,
       "auth_boundary": "GATEWAY_JWT",
       "captured_deployment_sha256": "012f2984944e2b2723b7b6bfb112f325e98c836a1cee2d8b5614f1ab11924947",
-      "source_sha256": "48ab975ec0e61db80706d22c31436f8d2531f5d99bff9577305f69254a26d924"
+      "source_sha256": "bae00bb97313cba983c0508f5199f8e3a3a4037aa661a3437d07761d2d4390be"
     },
     {
       "slug": "session-health-check",
@@ -694,7 +694,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": null,
-      "source_sha256": "783f713171592fc9ab94931b326330d14ffd6ebb265e5a48d6051b60cf237472"
+      "source_sha256": "3a6493b9b8e0d576905f352361474c5da16d0e2a898df1a29c424eab1b170567"
     },
     {
       "slug": "sla-checker",

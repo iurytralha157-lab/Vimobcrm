@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -19,6 +19,9 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { getAgendaEventsPage } from "@/components/features/schedule/agenda-period";
+import { formatScheduleTimestamp, getSchedulePerformerName } from "@/components/features/schedule/event-sheet/model";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -34,13 +37,12 @@ import {
 } from "@/hooks/use-schedule-events";
 import {
   DEFAULT_SCHEDULE_TIME_ZONE,
-  getScheduleLifecycleLabel,
-  getScheduleLifecycleState,
   getScheduleOutcomeLabel,
   getSimpleScheduleCompletionOutcome,
   isAttendanceScheduleType,
   shouldPreserveAttendanceHistory,
 } from "@/lib/schedule-outcome";
+import { getScheduleDisplayLifecycle, getScheduleDisplayLifecycleLabel, getScheduleDisplayTitle } from "@/components/features/schedule/schedule-event-presentation";
 import {
   formatScheduleZonedTime,
   getNextScheduleCivilDate,
@@ -83,6 +85,7 @@ interface EventsListProps {
   onAddEvent?: () => void;
   canManage?: boolean;
   timeZone?: string;
+  paginate?: boolean;
 }
 
 export function EventsList({
@@ -93,10 +96,15 @@ export function EventsList({
   showLead = true,
   canManage = false,
   timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
+  paginate = false,
 }: EventsListProps) {
   const completeEvent = useCompleteScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();
+  const mutationLock = useRef(false);
+  const mutationPending = completeEvent.isPending || deleteEvent.isPending;
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [visibleCount, setVisibleCount] = useState(20);
+  const [eventToDelete, setEventToDelete] = useState<ScheduleEvent | null>(null);
   useEffect(() => {
     const intervalId = window.setInterval(
       () => setCurrentTime(Date.now()),
@@ -132,7 +140,9 @@ export function EventsList({
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
   };
 
-  const groupedEvents = groupEventsByDate(events);
+  const sortedEvents = [...events].sort((left, right) => left.start_time.localeCompare(right.start_time) || left.id.localeCompare(right.id));
+  const page = getAgendaEventsPage(sortedEvents, paginate ? visibleCount : events.length);
+  const groupedEvents = groupEventsByDate(page.items);
 
   if (events.length === 0) {
     return (
@@ -144,14 +154,15 @@ export function EventsList({
           Nenhuma atividade encontrada
         </p>
         <p className="mb-4 text-xs font-light">
-          Você ainda não agendou nenhuma atividade para este lead.
+          Não há atividades para o período e os filtros selecionados.
         </p>
 
         {onAddEvent && canManage && (
           <Button
             variant="default"
             size="sm"
-            onClick={onAddEvent}
+            disabled={mutationPending}
+            onClick={() => { if (!mutationLock.current && !mutationPending) onAddEvent(); }}
             className="mx-auto h-9 w-auto rounded-[6px] bg-primary/50 px-6 text-xs font-light text-white shadow-none transition-colors hover:bg-primary"
           >
             <Plus className="h-3.5 w-3.5 mr-2" />
@@ -163,7 +174,8 @@ export function EventsList({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {paginate && <p aria-live="polite" className="text-[11px] text-[var(--app-text-tertiary)]">{page.items.length} de {page.total} atividades</p>}
       {groupedEvents.map(([dateKey, dayEvents]) => (
         <div key={dateKey}>
           <h3 className="mb-3 ml-1 text-[12px] font-light capitalize text-[var(--app-text-tertiary)]">
@@ -172,8 +184,9 @@ export function EventsList({
           <div className="space-y-3">
             {dayEvents.map((event) => {
               const eventType = event.event_type as EventType;
-              const Icon = eventTypeIcons[eventType] || CalendarIcon;
-              const isCompleted = event.status === "completed";
+              const Icon = event.is_masked ? Clock : eventTypeIcons[eventType] || CalendarIcon;
+              const eventTitle = getScheduleDisplayTitle(event);
+              const isCompleted = !event.is_masked && event.status === "completed";
               const isFinalized = [
                 "completed",
                 "no_show",
@@ -182,18 +195,12 @@ export function EventsList({
               ].includes(event.status || "");
               const preservesAttendanceHistory =
                 shouldPreserveAttendanceHistory(event.event_type, event.status);
-              const lifecycle = getScheduleLifecycleState({
-                status: event.status,
-                outcome: event.outcome,
-                startTime: event.start_time,
-                endTime: event.end_time,
-                isAllDay: event.is_all_day ?? false,
-                timeZone,
-                now: currentTime,
-              });
+              const lifecycle = getScheduleDisplayLifecycle(event, timeZone, currentTime);
               const isOverdue = lifecycle === "overdue";
               const lifecycleClass =
-                lifecycle === "completed"
+                lifecycle === "busy"
+                  ? "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"
+                  : lifecycle === "completed"
                   ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                   : lifecycle === "no_show"
                     ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
@@ -214,33 +221,43 @@ export function EventsList({
                   )}
                 >
                   <Checkbox
+                    aria-label={`Conclusão de ${eventTitle}`}
                     checked={isCompleted}
                     disabled={
                       !canManage ||
+                      mutationPending ||
                       Boolean(event.is_masked) ||
                       (isFinalized &&
                         (!isCompleted ||
                           isAttendanceScheduleType(event.event_type)))
                     }
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        if (isAttendanceScheduleType(event.event_type)) {
-                          onEditEvent?.(event);
-                        } else {
-                          completeEvent.mutate({
+                    onCheckedChange={async (checked) => {
+                      if (!canManage || event.is_masked || mutationPending || mutationLock.current ||
+                        (isFinalized && (!isCompleted || isAttendanceScheduleType(event.event_type)))) return;
+                      if (checked && isAttendanceScheduleType(event.event_type)) {
+                        onEditEvent?.(event);
+                        return;
+                      }
+                      mutationLock.current = true;
+                      try {
+                        if (checked) {
+                          await completeEvent.mutateAsync({
                             id: event.id,
                             status: "completed",
+                            expected_updated_at: event.updated_at || undefined,
                             outcome: getSimpleScheduleCompletionOutcome(
                               event.event_type,
                             ),
                           });
+                          return;
                         }
-                        return;
-                      }
-                      completeEvent.mutate({
-                        id: event.id,
-                        status: "scheduled",
-                      });
+                        await completeEvent.mutateAsync({
+                          id: event.id,
+                          status: "scheduled",
+                          expected_updated_at: event.updated_at || undefined,
+                        });
+                      } catch { /* Mutation owns feedback. */ }
+                      finally { mutationLock.current = false; }
                     }}
                     className="mt-1 h-5 w-5 rounded-[4px]"
                   />
@@ -248,7 +265,7 @@ export function EventsList({
                   <div
                     className={cn(
                       "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[6px] shadow-none",
-                      eventTypeColors[event.event_type as EventType],
+                      event.is_masked ? "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]" : eventTypeColors[eventType],
                     )}
                   >
                     <Icon className="h-4 w-4" />
@@ -264,7 +281,11 @@ export function EventsList({
                               "line-through text-[var(--app-text-tertiary)]",
                           )}
                         >
-                          {event.title}
+                          {onEditEvent ? (
+                            <button type="button" disabled={mutationPending} onClick={() => { if (!mutationLock.current && !mutationPending) onEditEvent(event); }} className="block max-w-full truncate text-left hover:text-primary focus-visible:underline" aria-label={`Abrir detalhes de ${eventTitle}`}>
+                              {eventTitle}
+                            </button>
+                          ) : eventTitle}
                         </p>
                         <div className="mt-1 flex flex-wrap items-center gap-3 text-[12px] font-light text-[var(--app-text-tertiary)]">
                           <span className="flex items-center gap-1.5">
@@ -278,7 +299,7 @@ export function EventsList({
                           </span>
                           <span className="flex items-center gap-1.5">
                             <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
-                            {eventTypeLabels[eventType] || "Compromisso"}
+                            {event.is_masked ? "Horário ocupado" : eventTypeLabels[eventType] || "Compromisso"}
                           </span>
                           <span
                             className={cn(
@@ -289,7 +310,7 @@ export function EventsList({
                             {lifecycle === "rescheduled" && (
                               <CalendarClock className="h-3 w-3" />
                             )}
-                            {getScheduleLifecycleLabel(lifecycle)}
+                            {getScheduleDisplayLifecycleLabel(lifecycle)}
                           </span>
                         </div>
                       </div>
@@ -300,7 +321,9 @@ export function EventsList({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] opacity-100 shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] md:opacity-0 md:group-hover:opacity-100"
+                              aria-label={`Ações de ${event.title}`}
+                              disabled={mutationPending}
+                              className="h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] opacity-100 shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 md:focus-visible:opacity-100"
                             >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
@@ -310,7 +333,8 @@ export function EventsList({
                             className="app-header-popover rounded-[8px] border-0 p-1"
                           >
                             <DropdownMenuItem
-                              onClick={() => onEditEvent?.(event)}
+                              disabled={mutationPending}
+                              onClick={() => { if (!mutationLock.current && !mutationPending) onEditEvent?.(event); }}
                               className="gap-2 rounded-[6px] py-2 text-[12px] font-light"
                             >
                               <Edit2 className="h-3.5 w-3.5 text-[var(--app-text-tertiary)]" />
@@ -320,9 +344,8 @@ export function EventsList({
                             </DropdownMenuItem>
                             {!preservesAttendanceHistory && (
                               <DropdownMenuItem
-                                onClick={() =>
-                                  deleteEvent.mutate({ id: event.id })
-                                }
+                                disabled={mutationPending}
+                                onClick={() => { if (!mutationLock.current && !mutationPending) setEventToDelete(event); }}
                                 className="gap-2 rounded-[6px] py-2 text-[12px] font-light text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -374,27 +397,21 @@ export function EventsList({
                         )}
                       </div>
 
-                      {isCompleted &&
-                        (event.performed_by_user ||
-                          event.completed_by_user) && (
+                      {isCompleted && !event.is_masked && (
                           <div className="flex w-fit items-center gap-2 rounded-[6px] border-0 bg-emerald-500/10 px-2 py-1 text-[10px] font-light text-emerald-700 dark:text-emerald-300">
                             <CheckSquare className="h-3 w-3" />
                             <span>
-                              {isAttendanceScheduleType(event.event_type)
-                                ? "Realizado"
-                                : "Concluído"}{" "}
-                              por:{" "}
-                              {
-                                (
-                                  event.performed_by_user ||
-                                  event.completed_by_user
-                                )?.name
-                              }{" "}
+                              {getSchedulePerformerName(event)
+                                ? `${isAttendanceScheduleType(event.event_type) ? "Realizado" : "Concluído"} por: ${getSchedulePerformerName(event)}`
+                                : "Executor não informado"}{" "}
                               {event.completed_at &&
-                                `em ${format(new Date(event.completed_at), "dd/MM HH:mm")}`}
+                                `em ${formatScheduleTimestamp(event.completed_at, timeZone)}`}
                             </span>
                           </div>
                         )}
+                      {isCompleted && !event.is_masked && event.completed_by_user && (
+                        <p className="text-[10px] text-[var(--app-text-tertiary)]">Conclusão registrada por {event.completed_by_user.name}.</p>
+                      )}
 
                       {event.outcome && lifecycle !== "rescheduled" && (
                         <div className="flex w-fit items-center gap-2 rounded-[6px] border-0 bg-primary/10 px-2 py-1 text-[10px] font-light text-primary">
@@ -410,6 +427,29 @@ export function EventsList({
           </div>
         </div>
       ))}
+      {paginate && page.hasMore && (
+        <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={() => setVisibleCount((count) => count + 20)}>Carregar mais atividades</Button>
+      )}
+      <AlertDialog open={Boolean(eventToDelete)} onOpenChange={(nextOpen) => { if (!nextOpen && !mutationPending && !mutationLock.current) setEventToDelete(null); }}>
+        <AlertDialogContent className="rounded-[8px] bg-[var(--app-surface-solid)]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir atividade?</AlertDialogTitle>
+            <AlertDialogDescription>Esta ação não pode ser desfeita.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={mutationPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction disabled={mutationPending || !canManage} onClick={async (event) => {
+              event.preventDefault();
+              const currentEvent = events.find((item) => item.id === eventToDelete?.id);
+              if (!canManage || mutationPending || mutationLock.current || !currentEvent || currentEvent.is_masked ||
+                shouldPreserveAttendanceHistory(currentEvent.event_type, currentEvent.status)) return;
+              mutationLock.current = true;
+              try { await deleteEvent.mutateAsync({ id: currentEvent.id }); setEventToDelete(null); } catch { /* Mutation owns feedback; retain confirmation. */ }
+              finally { mutationLock.current = false; }
+            }}>Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

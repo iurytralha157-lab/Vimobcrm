@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -15,19 +16,46 @@ import (
 
 const (
 	heartbeatInterval       = 25 * time.Second
+	sessionRecheckInterval  = time.Minute
 	minimumStreamDuration   = 4 * time.Minute
 	streamDurationJitterSec = 120
 )
 
 type Handler struct {
-	hub *Hub
+	hub                    *Hub
+	activeSessionChecker   httpserver.ActiveSessionChecker
+	sessionRecheckInterval time.Duration
 }
 
 func NewHandler(hub *Hub) Handler {
-	return Handler{hub: hub}
+	return Handler{hub: hub, sessionRecheckInterval: sessionRecheckInterval}
+}
+
+func (handler Handler) WithActiveSessionChecker(checker httpserver.ActiveSessionChecker) Handler {
+	handler.activeSessionChecker = checker
+	return handler
 }
 
 func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
+	user, hasUser := httpserver.UserFromContext(r.Context())
+	if !hasUser || strings.TrimSpace(user.ID) == "" || strings.TrimSpace(user.SessionID) == "" {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "session_missing", "An active session is required.")
+		return
+	}
+	if handler.activeSessionChecker == nil {
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "session_check_unavailable", "Session validation is unavailable.")
+		return
+	}
+	active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID)
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "session_check_unavailable", "Session validation is unavailable.")
+		return
+	}
+	if !active {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "session_revoked", "The session is no longer active.")
+		return
+	}
+
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
@@ -96,6 +124,9 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 				if isTargetedMembershipEvent(event, tenantContext.UserID) && index != latestMembershipEventIndex {
 					continue
 				}
+				if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+					return
+				}
 				if err := writeSSE(w, flusher, event); err != nil {
 					return
 				}
@@ -114,6 +145,9 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 	if lastSentID > 0 {
 		connectedID = strconv.FormatUint(lastSentID, 10)
 	}
+	if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+		return
+	}
 	if err := writeSSE(w, flusher, Event{
 		ID:             connectedID,
 		Type:           EventConnected,
@@ -131,6 +165,8 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+	sessionTicker := time.NewTicker(handler.sessionRecheckInterval)
+	defer sessionTicker.Stop()
 	streamTimer := time.NewTimer(
 		minimumStreamDuration +
 			time.Duration(rand.IntN(streamDurationJitterSec))*time.Second,
@@ -141,6 +177,9 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 		select {
 		case event, ok := <-events:
 			if !ok {
+				return
+			}
+			if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
 				return
 			}
 			if eventID := parseCursor(event.ID); eventID > 0 {
@@ -159,6 +198,10 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			if err := writeSSEComment(w, flusher, "ping"); err != nil {
 				return
 			}
+		case <-sessionTicker.C:
+			if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+				return
+			}
 		case <-streamTimer.C:
 			// Force a fresh JWT/tenant resolution periodically. The jitter avoids
 			// reconnecting every browser at once after a deploy.
@@ -167,6 +210,12 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (handler Handler) sessionActive(ctx context.Context, userID, sessionID string) (bool, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return handler.activeSessionChecker.IsActive(checkCtx, userID, sessionID)
 }
 
 func latestTargetedMembershipEventIndex(events []Event, userID string) int {
@@ -210,6 +259,8 @@ func lastEventCursor(value string) (uint64, bool) {
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event Event) error {
+	event = scheduleSafeSSEEvent(event)
+	event = leadSafeSSEEvent(event)
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err

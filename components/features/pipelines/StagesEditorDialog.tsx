@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,13 +9,19 @@ import { toast } from 'sonner';
 import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { cn } from '@/lib/utils';
 import { createClientId } from '@/lib/client-id';
+import { stageCreateInputSchema } from '@/lib/validation/pipelines';
+import { buildUniquePipelineStageKey } from '@/lib/pipeline-stage-key';
 import {
   resolveStageEditorDraft,
+  pinStageEditorDraft,
   updateStageEditorDraft,
   type StageEditorDraft,
 } from '@/lib/pipeline-stage-editor-draft';
-import { useDeleteStage, useReorderStages } from '@/hooks/use-stages';
+import { useDeleteStage, useReorderStages, useUpdateStage } from '@/hooks/use-stages';
+import type { DeleteStageData } from '@/hooks/pipelines/use-stage-delete-intent';
+import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
+import { toStageEditorSaveValues, type StageEditorValue } from './pipeline-screen/stage-editor-contract';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,15 +33,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-interface Stage {
-  id: string;
-  name: string;
-  color: string;
-  position: number;
-  lead_count?: number;
-  stage_key?: string;
-  updated_at?: string | null;
-}
+type Stage = StageEditorValue;
+type DeleteStageConfirmation = { stage: Stage; persisted: boolean; input: DeleteStageData | null };
 
 interface StagesEditorDialogProps {
   open: boolean;
@@ -43,6 +42,7 @@ interface StagesEditorDialogProps {
   pipelineId: string;
   pipelineName: string;
   stages: Stage[];
+  archivedStages?: Stage[];
 }
 
 export function StagesEditorDialog({
@@ -51,6 +51,7 @@ export function StagesEditorDialog({
   pipelineId,
   pipelineName,
   stages: initialStages,
+  archivedStages = [],
 }: StagesEditorDialogProps) {
   const sortedInitialStages = [...initialStages].sort((a, b) => a.position - b.position);
   const initialStagesKey = open
@@ -65,20 +66,40 @@ export function StagesEditorDialog({
     hasChanges,
     isStale: isDraftStale,
   } = resolveStageEditorDraft(stageDraft, pipelineId, initialStagesKey, sortedInitialStages);
-  const [isSaving, setIsSaving] = useState(false);
+  const [savingOperation, setSavingOperation] = useState<PipelineEditorOperation | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingColor, setEditingColor] = useState('');
-  const [deleteStage, setDeleteStage] = useState<Stage | null>(null);
+  const [deleteStage, setDeleteStage] = useState<DeleteStageConfirmation | null>(null);
+  const deletion = useRef<DeleteStageConfirmation | null>(null);
+  const [deleteConflict, setDeleteConflict] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState<string>(PIPELINE_STAGE_COLOR_FALLBACK);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoringOperation, setRestoringOperation] = useState<{ stageId: string; operation: PipelineEditorOperation } | null>(null);
+  const [restoredStageIds, setRestoredStageIds] = useState<Set<string>>(() => new Set());
+  const restoreInFlight = useRef<PipelineEditorOperation | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const saveInFlightRef = useRef(false);
+  const saveInFlightRef = useRef<PipelineEditorOperation | null>(null);
   const deleteInFlightRef = useRef(false);
   const reorderStages = useReorderStages();
-  const deleteStageMutation = useDeleteStage();
-  const isMutating = isSaving || deleteStageMutation.isPending;
+  const deleteStageMutation = useDeleteStage(open ? pipelineId : undefined);
+  const restoreStageMutation = useUpdateStage();
+  const editorVisit = usePipelineEditorVisit(reorderStages.scopeKey, JSON.stringify([open, pipelineId]), reorderStages.captureScopeGuard);
+  const isSaving = savingOperation?.visit === editorVisit.key;
+  const restoringStageId = restoringOperation?.operation.visit === editorVisit.key ? restoringOperation.stageId : null;
+  const isMutating = isSaving || deleteStageMutation.isPending || restoringStageId !== null;
+  const closeDeletion = useCallback((candidate: DeleteStageConfirmation | null) => {
+    if (deletion.current !== candidate) return;
+    if (candidate?.input) deleteStageMutation.discard(candidate.input);
+    deletion.current = null;
+    setDeleteStage(null);
+    setDeleteConflict(false);
+  }, [deleteStageMutation]);
 
   useEffect(() => {
     if (open) return;
@@ -89,7 +110,7 @@ export function StagesEditorDialog({
       if (cancelled) return;
       setEditingId(null);
       setIsAdding(false);
-      setDeleteStage(null);
+      closeDeletion(deletion.current);
       setNewName('');
       setStageDraft(null);
     });
@@ -97,7 +118,7 @@ export function StagesEditorDialog({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, closeDeletion]);
 
   const setDraftStages = (nextStages: Stage[], nextHasChanges = true) => {
     setStageDraft((current) => updateStageEditorDraft(
@@ -110,42 +131,21 @@ export function StagesEditorDialog({
     ));
   };
 
-  const buildStageKey = (name: string) =>
-    name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'coluna';
-
-  const buildUniqueStageKey = (name: string, currentStages: Stage[]) => {
-    const baseKey = buildStageKey(name);
-    const existingKeys = new Set(
-      currentStages
-        .map((stage) => stage.stage_key)
-        .filter((stageKey): stageKey is string => Boolean(stageKey))
-    );
-
-    if (!existingKeys.has(baseKey)) return baseKey;
-
-    let suffix = 2;
-    let nextKey = `${baseKey}_${suffix}`;
-    while (existingKeys.has(nextKey)) {
-      suffix += 1;
-      nextKey = `${baseKey}_${suffix}`;
-    }
-
-    return nextKey;
-  };
+  const buildUniqueStageKey = (name: string, currentStages: Stage[]) => buildUniquePipelineStageKey(
+    name,
+    [...currentStages, ...archivedStages]
+      .map((stage) => stage.stage_key)
+      .filter((stageKey): stageKey is string => Boolean(stageKey)),
+  );
 
   const createLocalUuid = () => {
     return createClientId('stage');
   };
 
-  const createDraftStage = (currentStages: Stage[], name: string): Stage => ({
+  const createDraftStage = (currentStages: Stage[], name: string, color = newColor): Stage => ({
     id: createLocalUuid(),
     name: name.trim(),
-    color: newColor,
+    color,
     position: currentStages.length,
     lead_count: 0,
     stage_key: buildUniqueStageKey(name, currentStages),
@@ -153,10 +153,22 @@ export function StagesEditorDialog({
 
   const pendingNewStageName = isAdding ? newName.trim() : '';
   const hasPendingNewStage = pendingNewStageName.length > 0;
-  const canSave = hasChanges || hasPendingNewStage;
+  const canSave = hasChanges || hasPendingNewStage || Boolean(editingId);
+  const readStageFields = (name: string, color: string) => {
+    const parsed = stageCreateInputSchema.safeParse({ name, color });
+    if (parsed.success) return { name: parsed.data.name, color: color.trim() };
+    toast.error(parsed.error.issues.some(issue => issue.path[0] === 'name')
+      ? 'O nome da coluna deve ter entre 2 e 120 caracteres.'
+      : 'Use uma cor hexadecimal no formato #RRGGBB.');
+    return null;
+  };
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isMutating) return;
+    if (!nextOpen && (canSave || Boolean(editingId))) {
+      setDiscardOpen(true);
+      return;
+    }
     onOpenChange(nextOpen);
   };
 
@@ -183,63 +195,71 @@ export function StagesEditorDialog({
   };
 
   const handleSave = async () => {
-    if (isMutating || saveInFlightRef.current) return;
+    const operation = editorVisit.capture();
+    if (!open || !operation.isCurrent() || isMutating || saveInFlightRef.current?.visit === operation.visit) return;
     if (isDraftStale) {
       toast.error('As colunas mudaram em outra sessão. Seu rascunho foi mantido.');
       return;
     }
 
-    if (isAdding && pendingNewStageName.length < 2) {
-      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
+    if (editingId && !stages.some(stage => stage.id === editingId)) {
+      toast.error('A coluna em edição não está mais no rascunho. Cancele a edição e revise as colunas.');
       return;
     }
+    const pendingEdit = editingId ? readStageFields(editingName, editingColor) : null;
+    if (editingId && !pendingEdit) return;
+    const pendingNewStage = isAdding ? readStageFields(pendingNewStageName, newColor) : null;
+    if (isAdding && !pendingNewStage) return;
 
     if (!canSave) {
       handleOpenChange(false);
       return;
     }
 
-    saveInFlightRef.current = true;
-    setIsSaving(true);
+    saveInFlightRef.current = operation;
+    setSavingOperation(operation);
+    setSaveError(null);
     try {
-      const stagesForSave = hasPendingNewStage
-        ? [...stages, createDraftStage(stages, pendingNewStageName)]
+      const editedStages = pendingEdit
+        ? stages.map(stage => stage.id === editingId ? { ...stage, ...pendingEdit } : stage)
         : stages;
+      const stagesForSave = pendingNewStage
+        ? [...editedStages, createDraftStage(editedStages, pendingNewStage.name, pendingNewStage.color)]
+        : editedStages;
 
-      const originalStagesByID = new Map(sourceStages.map((stage) => [stage.id, stage]));
-      const stagesToSave = stagesForSave.map((stage) => {
-        const stageKey = stage.stage_key || buildUniqueStageKey(stage.name, stagesForSave);
-        const original = originalStagesByID.get(stage.id);
-
-        return {
-          id: stage.id,
-          name: stage.name,
-          color: stage.color,
-          stage_key: stageKey,
-          isNew: !original,
-          expectedUpdatedAt: original?.updated_at || undefined,
-        };
-      });
+      const stagesToSave = toStageEditorSaveValues(stagesForSave, sourceStages).map(({ stage_key, ...stage }) => (
+        stage.isNew
+          ? { ...stage, stage_key: stage_key || buildUniqueStageKey(stage.name, stagesForSave) }
+          : stage
+      ));
 
       await reorderStages.mutateAsync({
         pipelineId,
         stages: stagesToSave,
       });
 
+      if (!operation.isCurrent()) return;
       toast.success('Colunas atualizadas com sucesso!');
       setDraftStages(stagesForSave, false);
+      setEditingId(null);
+      setEditingName('');
+      setEditingColor('');
       setIsAdding(false);
       setNewName('');
       onOpenChange(false);
     } catch (error: unknown) {
-      toast.error('Erro ao salvar: ' + getErrorMessage(error));
+      if (!operation.isCurrent()) return;
+      const message = 'Erro ao salvar: ' + getErrorMessage(error);
+      setSaveError(message);
+      toast.error(message);
     } finally {
-      saveInFlightRef.current = false;
-      setIsSaving(false);
+      if (saveInFlightRef.current === operation) saveInFlightRef.current = null;
+      if (operation.isCurrent()) setSavingOperation(current => current === operation ? null : current);
     }
   };
 
   const handleStartEdit = (stage: Stage) => {
+    setStageDraft((current) => pinStageEditorDraft(current, pipelineId, initialStagesKey, sortedInitialStages));
     setEditingId(stage.id);
     setEditingName(stage.name);
     setEditingColor(stage.color);
@@ -247,21 +267,19 @@ export function StagesEditorDialog({
 
   const handleSaveEdit = () => {
     if (!editingId) return;
-    const normalizedName = editingName.trim();
-    if (normalizedName.length < 2) {
-      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
-      return;
-    }
+    const fields = readStageFields(editingName, editingColor);
+    if (!fields) return;
 
     setDraftStages(stages.map(s =>
       s.id === editingId
-        ? { ...s, name: normalizedName, color: editingColor }
+        ? { ...s, ...fields }
         : s
     ));
     setEditingId(null);
   };
 
   const handleCancelEdit = () => {
+    setStageDraft((current) => current?.hasChanges ? current : null);
     setEditingId(null);
     setEditingName('');
     setEditingColor('');
@@ -269,45 +287,93 @@ export function StagesEditorDialog({
 
   const handleDeleteStage = async () => {
     const target = deleteStage;
-    if (!target || deleteStageMutation.isPending || deleteInFlightRef.current) return;
+    if (!open || !deleteStageMutation.isScopeCurrent() || !target || deletion.current !== target || deleteConflict || deleteStageMutation.isPending || deleteInFlightRef.current) return;
 
-    const isPersistedStage = sortedInitialStages.some((stage) => stage.id === target.id);
-    if (!isPersistedStage) {
-      setDraftStages(stages.filter((stage) => stage.id !== target.id));
-      setDeleteStage(null);
+    if (!target.persisted) {
+      setDraftStages(stages.filter((stage) => stage.id !== target.stage.id));
+      closeDeletion(target);
       return;
     }
+    if (!target.input || !deleteStageMutation.isCurrent(target.input)) return;
 
     deleteInFlightRef.current = true;
+    setDeleteError(null);
     try {
-      await deleteStageMutation.mutateAsync(target.id);
+      await deleteStageMutation.mutateAsync(target.input);
+      if (deletion.current !== target || !deleteStageMutation.isCurrent(target.input)) return;
 
-      setDraftStages(stages.filter(s => s.id !== target.id), false);
+      setDraftStages(stages.filter(s => s.id !== target.stage.id), false);
       toast.success('Coluna excluída!');
-      setDeleteStage(null);
+      closeDeletion(target);
     } catch (error: unknown) {
-      toast.error('Erro ao excluir: ' + getErrorMessage(error));
+      if (deletion.current !== target || !deleteStageMutation.isCurrent(target.input)) return;
+      const conflict = typeof error === 'object' && error !== null && 'status' in error && error.status === 409;
+      if (conflict) {
+        deleteStageMutation.discard(target.input);
+        setDeleteConflict(true);
+      }
+      const message = conflict
+        ? 'Esta coluna mudou em outra sessão. Feche esta confirmação, atualize as colunas e confira antes de excluir.'
+        : 'Erro ao excluir: ' + getErrorMessage(error);
+      setDeleteError(message);
+      toast.error(message);
     } finally {
       deleteInFlightRef.current = false;
     }
   };
 
   const requestDeleteStage = (stage: Stage) => {
+    if (!open || !deleteStageMutation.isScopeCurrent() || isMutating || deleteInFlightRef.current) return;
     const isPersistedStage = sortedInitialStages.some((candidate) => candidate.id === stage.id);
     if (isPersistedStage && (canSave || Boolean(editingId) || isAdding)) {
       toast.info('Salve ou descarte as alterações antes de excluir uma coluna existente.');
       return;
     }
 
-    setDeleteStage(stage);
+    try {
+      const input = isPersistedStage && stage.updated_at
+        ? deleteStageMutation.capture({ id: stage.id, expectedUpdatedAt: stage.updated_at }) : null;
+      closeDeletion(deletion.current);
+      const confirmation = { stage: { ...stage }, persisted: isPersistedStage, input };
+      deletion.current = confirmation;
+      setDeleteStage(confirmation);
+      setDeleteConflict(false);
+      setDeleteError(isPersistedStage && !input ? 'Não foi possível confirmar a versão desta coluna. Feche a confirmação e atualize as colunas antes de excluir.' : null);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleRestoreStage = async (stageId: string) => {
+    const operation = editorVisit.capture();
+    if (!open || !operation.isCurrent() || isMutating || restoreInFlight.current?.visit === operation.visit) return;
+    if (canSave || editingId) {
+      setRestoreError('Salve ou descarte as alterações antes de reativar uma coluna.');
+      return;
+    }
+    restoreInFlight.current = operation;
+    setRestoringOperation({ stageId, operation });
+    setRestoreError(null);
+    try {
+      const expectedUpdatedAt = archivedStages.find((stage) => stage.id === stageId)?.updated_at;
+      if (!expectedUpdatedAt) throw new Error('Atualize as colunas antes de reativar.');
+      await restoreStageMutation.mutateAsync({ id: stageId, expectedUpdatedAt, isActive: true });
+      if (!operation.isCurrent()) return;
+      setRestoredStageIds((current) => new Set([...current, stageId]));
+      toast.success('Coluna reativada. A estrutura será atualizada.');
+    } catch (error) {
+      if (!operation.isCurrent()) return;
+      setRestoreError('Não foi possível reativar: ' + getErrorMessage(error));
+    } finally {
+      if (restoreInFlight.current === operation) restoreInFlight.current = null;
+      if (operation.isCurrent()) setRestoringOperation(current => current?.operation === operation ? null : current);
+    }
   };
 
   const handleAddStage = () => {
-    if (newName.trim().length < 2) {
-      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
-      return;
-    }
-    const newStage = createDraftStage(stages, newName);
+    const fields = readStageFields(newName, newColor);
+    if (!fields) return;
+    const newStage = createDraftStage(stages, fields.name, fields.color);
 
     setDraftStages([...stages, newStage]);
     setNewName('');
@@ -325,9 +391,9 @@ export function StagesEditorDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-md w-[90%] sm:w-full p-4 sm:p-6 rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
-          <DialogHeader>
-            <div className="flex items-center justify-between gap-3 pr-8">
+        <DialogContent onEscapeKeyDown={(event) => { if (editingId) { event.preventDefault(); handleCancelEdit(); } }} className="sm:max-w-md w-[90%] sm:w-full p-4 sm:p-6 rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
+          <DialogHeader className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-3 pr-8 sm:flex-nowrap">
               <DialogTitle className="text-base sm:text-lg">Gerenciar Colunas</DialogTitle>
               <Button
                 variant="outline"
@@ -364,15 +430,17 @@ export function StagesEditorDialog({
               </Button>
             </div>
           )}
+          {saveError && <p role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-xs text-destructive">{saveError}</p>}
 
-          <ScrollArea ref={scrollAreaRef} className="max-h-[55vh] pr-2 sm:pr-4">
+          {/* Radix's table wrapper otherwise expands these rows to their intrinsic content width. */}
+          <ScrollArea ref={scrollAreaRef} className="min-w-0 w-full max-h-[55vh] pr-2 sm:pr-4 [&_[data-radix-scroll-area-viewport]>div]:!block">
             <DragDropContext onDragEnd={handleDragEnd}>
               <Droppable droppableId="stages-list">
                 {(provided) => (
                   <div
                     ref={provided.innerRef}
                     {...provided.droppableProps}
-                    className="space-y-1.5 sm:space-y-2"
+                    className="min-w-0 w-full space-y-1.5 sm:space-y-2"
                   >
                     {stages.map((stage, index) => (
                       <Draggable key={stage.id} draggableId={stage.id} index={index} isDragDisabled={isMutating}>
@@ -388,7 +456,7 @@ export function StagesEditorDialog({
                               }),
                             }}
                             className={cn(
-                              "flex items-center gap-1.5 sm:gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 sm:p-3 transition-colors",
+                              "flex min-w-0 items-center gap-1.5 sm:gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 sm:p-3 transition-colors",
                               snapshot.isDragging && "bg-[var(--app-surface-hover)] ring-1 ring-primary/30"
                             )}
                           >
@@ -404,24 +472,25 @@ export function StagesEditorDialog({
 
                             {editingId === stage.id ? (
                               // Edit mode
-                              <div className="flex-1 flex items-center gap-1.5 sm:gap-2">
+                              <div className="min-w-0 flex-1 flex items-center gap-1.5 sm:gap-2">
                                 <input
                                   type="color"
                                   value={editingColor}
                                   onChange={(e) => setEditingColor(e.target.value)}
                                   aria-label={`Cor da coluna ${stage.name}`}
                                   disabled={isMutating}
-                                  className="w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer border-0"
+                                  className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded cursor-pointer border-0"
                                 />
                                 <Input
                                   value={editingName}
+                                  aria-label={`Nome da coluna ${stage.name}`}
                                   onChange={(e) => setEditingName(e.target.value)}
-                                  className="h-7 sm:h-8 flex-1 text-sm"
+                                  className="h-7 sm:h-8 min-w-0 flex-1 text-sm"
                                   autoFocus
                                   disabled={isMutating}
                                   onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveEdit();
-                                    if (e.key === 'Escape') handleCancelEdit();
+                                    if (e.key === 'Enter') { e.preventDefault(); handleSaveEdit(); }
+                                    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); handleCancelEdit(); }
                                   }}
                                 />
                                 <Button
@@ -452,7 +521,7 @@ export function StagesEditorDialog({
                                   className="h-3 w-3 sm:h-4 sm:w-4 rounded-full shrink-0"
                                   style={{ backgroundColor: stage.color }}
                                 />
-                                <span className="flex-1 text-sm sm:text-base font-medium truncate">
+                                <span className="min-w-0 flex-1 text-sm sm:text-base font-medium truncate" title={stage.name}>
                                   {stage.name}
                                 </span>
                                 {stage.lead_count !== undefined && stage.lead_count > 0 && (
@@ -489,20 +558,20 @@ export function StagesEditorDialog({
                     {provided.placeholder}
 
                     {isAdding && (
-                      <div className="flex items-center gap-1.5 sm:gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 sm:p-3 animate-in slide-in-from-top-2">
+                      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 sm:p-3 animate-in slide-in-from-top-2">
                         <input
                           type="color"
                           value={newColor}
                           onChange={(e) => setNewColor(e.target.value)}
                           aria-label="Cor da nova coluna"
                           disabled={isMutating}
-                          className="w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer border-0"
+                          className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded cursor-pointer border-0"
                         />
                         <Input
                           placeholder="Nome da coluna..."
                           value={newName}
                           onChange={(e) => setNewName(e.target.value)}
-                          className="h-7 sm:h-8 flex-1 text-sm"
+                          className="h-7 sm:h-8 min-w-0 flex-1 text-sm"
                           autoFocus
                           disabled={isMutating}
                           onKeyDown={(e) => {
@@ -538,31 +607,60 @@ export function StagesEditorDialog({
             </DragDropContext>
           </ScrollArea>
 
+          {archivedStages.some((stage) => !restoredStageIds.has(stage.id)) && (
+            <section aria-label="Colunas arquivadas" className="space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+              <p className="text-xs text-muted-foreground">Colunas arquivadas preservam o histórico. Reativar não cria tarefas retroativas nem move leads.</p>
+              {restoreError && <p role="alert" className="text-xs text-destructive">{restoreError}</p>}
+              {archivedStages.filter((stage) => !restoredStageIds.has(stage.id)).map((stage) => (
+                <div key={stage.id} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="min-w-0 truncate" title={stage.name}>{stage.name}</span>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void handleRestoreStage(stage.id)} disabled={isMutating} aria-label={`Reativar coluna ${stage.name}`}>
+                    {restoringStageId === stage.id ? 'Reativando...' : 'Reativar'}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
           <div className="flex gap-2 pt-3 sm:pt-4">
             <Button variant="outline" size="sm" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isMutating}>
               Cancelar
             </Button>
             <Button size="sm" className="w-[60%] rounded-[6px]" onClick={handleSave} disabled={isMutating || isDraftStale}>
               {isSaving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-              {hasPendingNewStage ? 'Criar e salvar' : hasChanges ? 'Salvar' : 'Fechar'}
+              {hasPendingNewStage ? 'Criar e salvar' : canSave ? 'Salvar' : 'Fechar'}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descartar alterações das colunas?</AlertDialogTitle>
+            <AlertDialogDescription>As alterações ainda não salvas serão perdidas. As colunas atuais serão preservadas.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Continuar editando</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setDiscardOpen(false); onOpenChange(false); }} disabled={isMutating}>Descartar alterações</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete Confirmation */}
       <AlertDialog
         open={!!deleteStage}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !deleteStageMutation.isPending) setDeleteStage(null);
+          if (!nextOpen && !deleteStageMutation.isPending) closeDeletion(deleteStage);
         }}
       >
         <AlertDialogContent className="w-[calc(100vw-32px)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none sm:w-full">
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir coluna &quot;{deleteStage?.name}&quot;?</AlertDialogTitle>
+            <AlertDialogTitle>Excluir coluna &quot;{deleteStage?.stage.name}&quot;?</AlertDialogTitle>
             <AlertDialogDescription>
               Colunas com leads, histórico ou configurações vinculadas não podem ser excluídas.
+              {' '}Para ocultar uma coluna vazia preservando o histórico, use Arquivar nas configurações da coluna.
             </AlertDialogDescription>
+            {deleteError && <p role="alert" className="text-xs text-destructive">{deleteError}</p>}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleteStageMutation.isPending}>Cancelar</AlertDialogCancel>
@@ -571,7 +669,7 @@ export function StagesEditorDialog({
                 event.preventDefault();
                 void handleDeleteStage();
               }}
-              disabled={deleteStageMutation.isPending}
+              disabled={deleteStageMutation.isPending || deleteConflict || Boolean(deleteStage?.persisted && !deleteStage.input)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleteStageMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}

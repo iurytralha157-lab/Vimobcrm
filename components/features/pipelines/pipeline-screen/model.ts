@@ -12,6 +12,7 @@ export type PipelineSummary = {
   id: string;
   name: string;
   is_default?: boolean | null;
+  revision?: string;
 };
 
 export type VisualPendingPipelineMove = {
@@ -33,6 +34,7 @@ export type StageCountMeta = {
   visible: number;
   remaining: number;
   canLoadMore: boolean;
+  isCountEstimate?: boolean;
 };
 
 export const NO_VISIBLE_USER_ID = '00000000-0000-0000-0000-000000000000';
@@ -144,14 +146,15 @@ export function buildStageCountMetaMap(stages: StageWithLeads[]) {
 
   for (const stage of stages) {
     const visible = stage.leads.length || 0;
-    const total = stage.total_lead_count ?? visible;
+    const total = Math.max(stage.total_lead_count ?? visible, visible);
     const remaining = Math.max(total - visible, 0);
 
     map.set(stage.id, {
       total,
       visible,
       remaining,
-      canLoadMore: visible > 0 && remaining > 0,
+      canLoadMore: stage.has_more,
+      ...(stage.pagination_count_is_estimate ? { isCountEstimate: true } : {}),
     });
   }
 

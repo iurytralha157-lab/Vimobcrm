@@ -33,7 +33,7 @@ export function AgendaOverduePanel({
   const detailedTotal = owners.reduce((sum, owner) => sum + owner.overdue, 0);
 
   return (
-    <section className="flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none">
+    <section className="flex h-[300px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[360px]">
       <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-rose-500/10 text-rose-600 dark:text-rose-400">

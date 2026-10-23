@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { usePushDeviceIntent } from '@/hooks/use-push-device-intent';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { settingsAPI } from '@/lib/api/settings';
@@ -86,7 +87,7 @@ async function getPushNotificationsPlugin(): Promise<CapacitorPushNotifications 
 }
 
 export function usePushNotifications() {
-  const { activeOrganization, profile, organization, tenantContext } = useAuth();
+  const { activeOrganization, profile, tenantContext } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
   const initialized = useRef(false);
@@ -96,6 +97,7 @@ export function usePushNotifications() {
   const listenerHandles = useRef<CapacitorPluginListenerHandle[]>([]);
   const profileId = profile?.id;
   const activeOrganizationId = activeOrganization.organizationId;
+  const captureIntent = usePushDeviceIntent(profileId, activeOrganizationId);
   const hasCurrentTenantContext = isTenantContextForOrganization(
     activeOrganizationId,
     tenantContext,
@@ -115,7 +117,7 @@ export function usePushNotifications() {
     canViewWhatsApp,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     pushContextRef.current = {
       profileId,
       organizationId: activeOrganizationId,
@@ -125,10 +127,11 @@ export function usePushNotifications() {
 
   // Save token to database
   const saveToken = useCallback(async (token: string) => {
+    let intent: ReturnType<typeof captureIntent>;
+    try { intent = captureIntent(); } catch { return; }
     currentToken.current = token;
-    const currentContext = pushContextRef.current;
-    const currentProfileId = currentContext.profileId;
-    const currentOrganizationId = currentContext.organizationId;
+    const currentProfileId = intent.userId;
+    const currentOrganizationId = intent.organizationId;
     tokenOwnerProfileId.current = currentProfileId || null;
 
     if (!currentProfileId || !currentOrganizationId) {
@@ -142,16 +145,20 @@ export function usePushNotifications() {
       await settingsAPI.savePushToken({
         endpoint: `native:${platform}:${token}`,
         userAgent: `${navigator.userAgent} | platform=${platform}`,
-      }, currentOrganizationId);
+      }, currentOrganizationId, { expectedUserId: intent.userId, expectedSessionId: intent.sessionId, signal: intent.signal });
+      if (!intent.isCurrent()) return;
       rememberCurrentPushEndpoint(`native:${platform}:${token}`);
       void queryClient.invalidateQueries({
         queryKey: ['settings', 'push-devices', currentOrganizationId],
       });
       console.log('[Push] Token saved successfully');
     } catch (error) {
+      if (!intent.isCurrent()) return;
       console.error('[Push] Error saving token:', error);
+    } finally {
+      intent.finish();
     }
-  }, [queryClient]);
+  }, [captureIntent, queryClient]);
 
   // Handle notification click (navigation)
   const handleNotificationAction = useCallback((data: Record<string, unknown>) => {
@@ -170,15 +177,20 @@ export function usePushNotifications() {
   const deactivateToken = useCallback(async () => {
     const currentContext = pushContextRef.current;
     if (!currentToken.current || !currentContext.profileId) return;
+    let intent: ReturnType<typeof captureIntent>;
+    try { intent = captureIntent(); } catch { return; }
+    const endpoint = `native:${getPlatform()}:${currentToken.current}`;
 
     try {
       await settingsAPI.deactivatePushToken(
-        `native:${getPlatform()}:${currentToken.current}`,
-        currentContext.organizationId,
+        endpoint,
+        intent.organizationId,
+        { expectedUserId: intent.userId, expectedSessionId: intent.sessionId, signal: intent.signal },
       );
+      if (!intent.isCurrent()) return;
 
       console.log('[Push] Token deactivated');
-      forgetCurrentPushEndpoint(`native:${getPlatform()}:${currentToken.current}`);
+      forgetCurrentPushEndpoint(endpoint);
       currentToken.current = null;
       tokenOwnerProfileId.current = null;
       if (currentContext.organizationId) {
@@ -187,9 +199,12 @@ export function usePushNotifications() {
         });
       }
     } catch (error) {
+      if (!intent.isCurrent()) return;
       console.error('[Push] Error deactivating token:', error);
+    } finally {
+      intent.finish();
     }
-  }, [queryClient]);
+  }, [captureIntent, queryClient]);
 
   // Keep the native token bound to the currently selected organization.
   useEffect(() => {
@@ -211,8 +226,11 @@ export function usePushNotifications() {
 
     if (!profileId || initialized.current) return;
 
+    let initializationIntent: ReturnType<typeof captureIntent>;
+    try { initializationIntent = captureIntent(); } catch { return; }
     const generation = ++initializationGeneration.current;
-    const isCurrentInitialization = () => initializationGeneration.current === generation;
+    const isCurrentInitialization = () => initializationGeneration.current === generation
+      && initializationIntent.isCurrent();
     initialized.current = true;
 
     const addOwnedListener = async (
@@ -249,7 +267,8 @@ export function usePushNotifications() {
         }
 
         await addOwnedListener(() => PushNotifications.addListener('registration', (token) => {
-          console.log('[Push] Registered with token:', token.value.substring(0, 20) + '...');
+          if (!isCurrentInitialization()) return;
+          console.log('[Push] Device registered');
           void saveToken(token.value);
         }));
         await addOwnedListener(() => PushNotifications.addListener('registrationError', (error) => {
@@ -259,6 +278,7 @@ export function usePushNotifications() {
           console.log('[Push] Notification received in foreground:', notification.title);
         }));
         await addOwnedListener(() => PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+          if (!isCurrentInitialization()) return;
           console.log('[Push] Notification action:', action.actionId);
           handleNotificationAction(action.notification.data || {});
         }));
@@ -279,6 +299,7 @@ export function usePushNotifications() {
     void initializePush();
 
     return () => {
+      initializationIntent.finish();
       if (initializationGeneration.current === generation) {
         initializationGeneration.current += 1;
       }
@@ -287,7 +308,7 @@ export function usePushNotifications() {
       tokenOwnerProfileId.current = null;
       void removeOwnListeners();
     };
-  }, [profileId, saveToken, handleNotificationAction, removeOwnListeners]);
+  }, [profileId, activeOrganizationId, captureIntent, saveToken, handleNotificationAction, removeOwnListeners]);
 
   return {
     isNative: isCapacitorNative(),

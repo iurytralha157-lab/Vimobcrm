@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefCallback } from "react";
 import { Loader2, MessageSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { CONVERSATION_LIST_UI } from "@/components/features/whatsapp/conversation-list-ui";
 import type { Tag as TagType } from "@/hooks/use-tags";
 import { cn } from "@/lib/utils";
 
@@ -21,14 +22,21 @@ type ConversationListProps = {
   selectedConversationId?: string | null;
   currentUserId?: string | null;
   isLoading: boolean;
+  isSearching?: boolean;
   isError?: boolean;
   onRetry: () => void;
   sessionsDisconnected?: boolean;
   canManageWhatsApp: boolean;
   onConnectWhatsApp: () => void;
   canOperate: boolean;
+  canManageTags: boolean;
   canCreateLead: boolean;
-  availableTags: TagType[];
+  availableTags: Pick<TagType, 'id' | 'name' | 'color'>[];
+  isTagsLoading?: boolean;
+  isTagsError?: boolean;
+  onRetryTags?: () => void;
+  isArchiving?: (conversation: ScreenConversation) => boolean;
+  isTagUpdating?: (conversation: ScreenConversation) => boolean;
   onSelect: (conversation: ScreenConversation) => void;
   onArchive: (conversation: ScreenConversation) => void;
   onDelete: (conversation: ScreenConversation) => void;
@@ -42,6 +50,8 @@ type ConversationListProps = {
   returnPositionKey?: string;
   returnPosition?: ConversationListReturnPosition | null;
   onReturnPositionChange?: (position: ConversationListReturnPosition) => void;
+  getDraftText?: (conversation: ScreenConversation) => string;
+  previewCardRef?: RefCallback<HTMLDivElement>;
 };
 
 export function ConversationList({
@@ -51,14 +61,21 @@ export function ConversationList({
   selectedConversationId,
   currentUserId,
   isLoading,
+  isSearching = false,
   isError = false,
   onRetry,
   sessionsDisconnected = false,
   canManageWhatsApp,
   onConnectWhatsApp,
   canOperate,
+  canManageTags,
   canCreateLead,
   availableTags,
+  isTagsLoading,
+  isTagsError,
+  onRetryTags,
+  isArchiving,
+  isTagUpdating,
   onSelect,
   onArchive,
   onDelete,
@@ -72,6 +89,8 @@ export function ConversationList({
   returnPositionKey,
   returnPosition,
   onReturnPositionChange,
+  getDraftText,
+  previewCardRef,
 }: ConversationListProps) {
   const isMobile = layout === "mobile";
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -105,7 +124,13 @@ export function ConversationList({
 
   return (
     <ScrollArea ref={scrollAreaRef} data-tour="conversations-list" className="flex-1">
-      <div className="divide-y divide-white/[0.045]">
+      <div className="divide-y divide-[var(--app-border)]">
+        {isSearching && conversations.length > 0 && (
+          <div role="status" className="flex items-center gap-2 bg-[var(--app-surface-soft)] px-3 py-2 text-[11px] font-light text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            Buscando conversas...
+          </div>
+        )}
         {isError && conversations.length > 0 && (
           <div className="flex items-center justify-between gap-2 bg-muted/60 px-3 py-2 text-xs text-muted-foreground" role="status">
             <span>Não foi possível atualizar. Exibindo conversas já carregadas.</span>
@@ -121,9 +146,14 @@ export function ConversationList({
               Tentar novamente
             </Button>
           </div>
-        ) : isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        ) : isLoading && conversations.length === 0 ? (
+          <div className="flex items-center justify-center py-12" role="status" aria-label={isSearching ? "Buscando conversas" : "Carregando conversas"} aria-busy="true">
+            <Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none text-muted-foreground" aria-hidden="true" />
+          </div>
+        ) : conversations.length === 0 && isSearching ? (
+          <div role="status" className="flex items-center justify-center gap-2 px-3 py-6 text-[11px] font-light text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            Buscando conversas...
           </div>
         ) : conversations.length === 0 ? (
           <div className={cn(
@@ -160,15 +190,23 @@ export function ConversationList({
             <ConversationListItem
               key={conversation.id}
               conversation={conversation}
+              previewCardRef={previewCardRef}
+              draftText={getDraftText?.(conversation)}
               isSelected={isMobile ? false : selectedConversationId === conversation.id}
               currentUserId={currentUserId}
               onClick={() => handleSelect(conversation)}
               formatTime={formatTime}
               onArchive={() => onArchive(conversation)}
+              isArchiving={isArchiving?.(conversation)}
+              isTagUpdating={isTagUpdating?.(conversation)}
               onDelete={() => onDelete(conversation)}
               canOperate={canOperate}
+              canManageTags={canManageTags}
               canCreateLead={canCreateLead}
               availableTags={availableTags}
+              isTagsLoading={isTagsLoading}
+              isTagsError={isTagsError}
+              onRetryTags={onRetryTags}
               onAddTag={(tagId) => onAddTag(conversation, tagId)}
               onRemoveTag={(tagId) => onRemoveTag(conversation, tagId)}
               onCreateLead={() => onCreateLead(conversation)}
@@ -180,12 +218,14 @@ export function ConversationList({
             <Button
               size="sm"
               variant="secondary"
+              className={CONVERSATION_LIST_UI.pagination}
               disabled={isLoadingMoreConversations}
+              aria-busy={isLoadingMoreConversations}
               onClick={onLoadMoreConversations}
             >
               {isLoadingMoreConversations && (
                 <Loader2
-                  className="mr-2 h-3.5 w-3.5 animate-spin"
+                  className="mr-2 h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
               )}

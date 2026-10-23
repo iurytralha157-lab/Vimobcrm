@@ -43,6 +43,9 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 		fixture := createSessionConversationLockFixture(t, ctx, postgres.Pool(), "claim-send")
 		defer cleanupSessionConversationLockFixture(t, postgres.Pool(), fixture)
 		repo := NewRepository(postgres, nil, StorageConfig{})
+		if _, err := repo.JoinConversationAttendance(ctx, fixture.tenant, fixture.conversationID, attendanceInput{ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID}); err != nil {
+			t.Fatal(err)
+		}
 
 		blocker := holdSessionForUpdate(t, ctx, postgres.Pool(), fixture.sessionID)
 		blockerReleased := false
@@ -105,6 +108,9 @@ func TestSessionConversationMutationLockOrder(t *testing.T) {
 		fixture := createSessionConversationLockFixture(t, ctx, postgres.Pool(), "native-send")
 		defer cleanupSessionConversationLockFixture(t, postgres.Pool(), fixture)
 		repo := NewRepository(postgres, nil, StorageConfig{})
+		if _, err := repo.JoinConversationAttendance(ctx, fixture.tenant, fixture.conversationID, attendanceInput{ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID}); err != nil {
+			t.Fatal(err)
+		}
 
 		blocker := holdSessionForUpdate(t, ctx, postgres.Pool(), fixture.sessionID)
 		blockerReleased := false
@@ -392,9 +398,11 @@ func cleanupSessionConversationLockFixture(t *testing.T, pool *pgxpool.Pool, fix
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := pool.Exec(cleanupCtx, `
+		delete from private.whatsapp_unlinked_history_links where organization_id = $1::uuid;
 		delete from public.whatsapp_conversations where organization_id = $1::uuid;
 		delete from public.whatsapp_sessions where organization_id = $1::uuid;
 		delete from public.leads where organization_id = $1::uuid;
+		delete from public.round_robins where organization_id = $1::uuid;
 		delete from public.organization_members
 		where organization_id = $1::uuid and user_id = $2::uuid;
 		delete from public.users where id = $2::uuid;

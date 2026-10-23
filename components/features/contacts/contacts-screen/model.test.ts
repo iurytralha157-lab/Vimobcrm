@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
+import { FILTER_UI } from "@/config/filter-ui";
+
 import {
   buildContactExportFilters,
   buildContactListFilters,
@@ -10,6 +12,8 @@ import {
   parseContactPageInput,
   toggleContactSelection,
   toggleCurrentPageSelection,
+  getCurrentPageSelection,
+  contactSelectionScope,
 // The Node type-stripping runner requires the explicit TypeScript extension.
 // @ts-expect-error -- production imports remain extensionless for Next.js.
 } from "./model.ts";
@@ -147,6 +151,29 @@ test("keeps deal-status fallback and permissive page parsing", () => {
   assert.equal(parseContactPageInput("5", 4), null);
 });
 
+test('selection reflects page membership rather than the number of selected IDs', () => {
+  const ids = ['new-1', 'new-2'];
+  const old = new Set(['old-1', 'old-2']);
+  assert.equal(getCurrentPageSelection(old, ids), false);
+  assert.deepEqual([...toggleCurrentPageSelection(old, ids)], ids);
+  assert.equal(getCurrentPageSelection(new Set(['new-1']), ids), 'indeterminate');
+  assert.equal(getCurrentPageSelection(new Set(ids), ids), true);
+  assert.equal(getCurrentPageSelection(new Set(), []), false);
+});
+
+test('selection scope changes immediately with search, page, filters and ordering', () => {
+  const filters = { page: 1, limit: 50, source: 'meta', sortDir: 'desc' as const };
+  const initial = contactSelectionScope(filters, '');
+  assert.notEqual(initial, contactSelectionScope({ ...filters, page: 2 }, ''));
+  assert.notEqual(initial, contactSelectionScope({ ...filters, source: 'site' }, ''));
+  assert.notEqual(initial, contactSelectionScope(filters, 'Nova busca'));
+  assert.notEqual(initial, contactSelectionScope({ ...filters, sortDir: 'asc' }, ''));
+  const identity = { organizationId: 'org-a', userId: 'user-a' };
+  const scoped = contactSelectionScope(filters, '', identity);
+  assert.notEqual(scoped, contactSelectionScope(filters, '', { ...identity, organizationId: 'org-b' }));
+  assert.notEqual(scoped, contactSelectionScope(filters, '', { ...identity, userId: 'user-b' }));
+});
+
 test("keeps the contacts page fixed while the list owns scrolling and pagination", () => {
   const screenSource = readFileSync(
     resolve(process.cwd(), "components/features/contacts/ContactsScreen.tsx"),
@@ -164,6 +191,10 @@ test("keeps the contacts page fixed while the list owns scrolling and pagination
       process.cwd(),
       "components/features/contacts/contacts-screen/ContactsToolbar.tsx",
     ),
+    "utf8",
+  );
+  const sharedFiltersSource = readFileSync(
+    resolve(process.cwd(), "components/shared/SharedFilters.tsx"),
     "utf8",
   );
   const globalStyles = readFileSync(
@@ -184,11 +215,36 @@ test("keeps the contacts page fixed while the list owns scrolling and pagination
     /<TableHeader className="crm-management-sticky-header sticky top-0 z-20">/,
   );
   assert.match(listSource, /data-contacts-pagination className="shrink-0"/);
-  assert.match(listSource, />\s*Responsável\s*<\/TableHead>/);
-  assert.match(toolbarSource, /app-toolbar overflow-visible px-2 py-1/);
+  assert.match(listSource, /aria-label="Responsável">Resp\.<\/TableHead>/);
+  assert.match(toolbarSource, /className="app-toolbar overflow-visible p-2 md:px-2 md:py-1"/);
+  const toolbarFiltersConfig = screenSource.match(
+    /^  const toolbarFilters: ContactsToolbarFilters = \{[\s\S]*?^  \};/m,
+  )?.[0];
+  assert.ok(toolbarFiltersConfig);
+  assert.doesNotMatch(toolbarFiltersConfig, /\btriggerClassName\s*:/);
   assert.match(
-    screenSource,
-    /triggerClassName:[\s\S]{0,160}bg-\[var\(--app-surface-soft\)\]/,
+    toolbarSource,
+    /<SharedFilters \{\.\.\.filters\} sourceFilterMaxLength=\{MAX_LEAD_SOURCE_FILTER_LENGTH\} \/>/,
+  );
+  assert.match(
+    sharedFiltersSource,
+    /const dashboardTriggerClass = FILTER_UI\.trigger;/,
+  );
+  const filterTriggerSource = sharedFiltersSource.match(
+    /const filterTrigger = \(\s*(<Button\b[\s\S]*?<\/Button>)\s*\);/,
+  )?.[1];
+  assert.ok(filterTriggerSource);
+  assert.match(
+    filterTriggerSource,
+    /className=\{cn\(\s*dashboardTriggerClass,\s*triggerClassName,/,
+  );
+  assert.match(
+    sharedFiltersSource,
+    /<SharedFilterPanel\b[^>]*\btrigger=\{filterTrigger\}/,
+  );
+  assert.match(
+    FILTER_UI.trigger,
+    /(?:^|\s)bg-\[var\(--app-surface-soft\)\](?:\s|$)/,
   );
   assert.match(
     toolbarSource,

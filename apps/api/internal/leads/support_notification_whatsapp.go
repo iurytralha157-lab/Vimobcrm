@@ -73,7 +73,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 	messageText := buildWhatsAppNotificationText(eventKey, title, content, request.Variables)
 	idempotencyKey := notificationWhatsAppIdempotencyKey(tenantContext.OrganizationID, eventKey, dedupeKey)
 
-	if !isPlatformTransactionalNotificationEvent(eventKey) {
+	if usesOrganizationNotificationWhatsAppSender(eventKey) {
 		if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID); err != nil {
 			return result, err
 		} else if found {
@@ -114,6 +114,13 @@ func notificationConfigUsesDirectInstance(config notificationWhatsAppConfig) boo
 		return true
 	}
 	return strings.TrimSpace(firstNotificationText(config.InstanceName, config.InstanceID)) != ""
+}
+
+// Backend ownership controls who may enqueue an event. Pool alerts still use
+// the organization's authorized sender, like the other queue notifications.
+func usesOrganizationNotificationWhatsAppSender(eventKey string) bool {
+	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
+	return eventKey == queuePoolAvailableEvent || !isPlatformTransactionalNotificationEvent(eventKey)
 }
 
 func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, organizationID string) (notificationWhatsAppSession, bool, error) {

@@ -16,6 +16,12 @@ with active_team_leaders as (
     member.organization_id,
     member.user_id
   from public.team_members member
+  join public.organization_members leader_membership
+    on leader_membership.organization_id = member.organization_id
+   and leader_membership.user_id = member.user_id
+   and leader_membership.is_active = true
+   and leader_membership.deleted_at is null
+   and leader_membership.membership_generation = member.membership_generation
   join public.teams team
     on team.id = member.team_id
    and team.organization_id = member.organization_id

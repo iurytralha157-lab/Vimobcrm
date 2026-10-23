@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 var whatsappOutboxWorkerID = "vimob-api-whatsapp-outbox-" + randomHex(8)
@@ -64,6 +65,7 @@ var whatsappOutboxMediaMetrics whatsappOutboxLaneMetrics
 
 const (
 	whatsappOutboxQueuedLanePredicateToken = "/* whatsapp_outbox_queued_lane_predicate */"
+	whatsappOutboxOrderPredicateToken      = "/* whatsapp_outbox_order_predicate */"
 )
 
 const claimWhatsAppOutboxQueryTemplate = `
@@ -119,6 +121,7 @@ const claimWhatsAppOutboxQueryTemplate = `
 				  and current_message.lead_id = current_conversation.lead_id
 			  )
 			  and queued.conversation_id > params.after_conversation_id
+			  ` + whatsappOutboxOrderPredicateToken + `
 			  ` + whatsappOutboxQueuedLanePredicateToken + `
 			order by
 				queued.conversation_id,
@@ -290,6 +293,7 @@ func buildWhatsAppOutboxClaimQuery(lane whatsappOutboxLane) string {
 
 	return strings.NewReplacer(
 		whatsappOutboxQueuedLanePredicateToken, queuedLanePredicate,
+		whatsappOutboxOrderPredicateToken, whatsappOutboxOrderPredicate,
 	).Replace(claimWhatsAppOutboxQueryTemplate)
 }
 
@@ -431,9 +435,9 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 
 	// Text and lightweight control operations have their own capacity. Outbound
 	// media is intentionally isolated because provider-side fetch/upload can take
-	// orders of magnitude longer than a text request. Ready rows from one
-	// conversation may run concurrently, so a retry or slow provider call does
-	// not hold a later send. Provider-visible order is best-effort.
+	// orders of magnitude longer than a text request. Durable starts within one
+	// conversation are serialized across both lanes; independent conversations
+	// retain parallel capacity. Provider delivery itself is outside this fence.
 	for range config.OutboxWorkerConcurrency {
 		go handler.runWhatsAppOutboxLaneWorker(
 			ctx,
@@ -519,6 +523,8 @@ func (handler Handler) runWhatsAppOutboxLaneWorker(
 }
 
 func (repo Repository) CleanupTerminalWhatsAppOutbox(ctx context.Context, limit int) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, whatsappQueueDatabaseTimeout)
+	defer cancel()
 	if limit < 1 || limit > 10000 {
 		limit = 1000
 	}
@@ -609,7 +615,18 @@ func tryWrapWhatsAppOutboxCursor(cursor *string, wrapped *bool) bool {
 	return true
 }
 
-func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, lane whatsappOutboxLane) error {
+func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, lane whatsappOutboxLane) (resultErr error) {
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, whatsappQueueItemTimeout)
+	defer cancel()
+	defer func() {
+		if !whatsappQueueOperationTimedOut(resultErr) && ctx.Err() == nil {
+			return
+		}
+		completionCtx, cancelCompletion := whatsappQueueCompletionContext(parent)
+		defer cancelCompletion()
+		resultErr = errors.Join(resultErr, repo.releaseTimedOutWhatsAppOutbox(completionCtx, item))
+	}()
 	leaseOwned, err := repo.renewWhatsAppOutboxLease(ctx, item)
 	if err != nil {
 		return err
@@ -632,12 +649,26 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		recordWhatsAppOutboxSent(lane)
 		return nil
 	}
+	if item.LastError == whatsappOutboxProviderStartedMarker || item.LastError == whatsappOutboxProviderUnknownMarker {
+		// A legacy/manual retry state cannot turn a known provider boundary back
+		// into an untouched intent. Preserve uncertainty and never POST again.
+		return repo.failWhatsAppOutbox(ctx, item, ErrProviderOutcomeUnknown, false, true)
+	}
 
 	action := strings.TrimSpace(stringFromAny(item.Payload["action"]))
 	body := mapFromAny(item.Payload["body"])
 	if action == "" || len(body) == 0 {
 		recordWhatsAppOutboxDeliveryFailure(lane)
 		return repo.failWhatsAppOutbox(ctx, item, fmt.Errorf("invalid outbox payload"), true, false)
+	}
+	if action == "send.media" || action == "send.audio" {
+		verified, err := repo.whatsappOutboxMediaIntegrityVerified(ctx, item, body)
+		if err != nil {
+			return err
+		}
+		if !verified {
+			return repo.failWhatsAppOutbox(ctx, item, errOutboundMediaIntegrityUnverified, true, false)
+		}
 	}
 	attended, err := repo.whatsappOutboxAttendanceCurrent(ctx, item)
 	if err != nil {
@@ -657,6 +688,19 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		}
 		return repo.failWhatsAppOutbox(ctx, item, sessionErr, permanentSessionFailure, false)
 	}
+	if action == "message.react" || body["quoted"] != nil {
+		valid, err := repo.whatsappOutboxTargetCurrent(ctx, item)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			cause := ErrQuoteTargetUnavailable
+			if action == "message.react" {
+				cause = ErrReactionTargetUnconfirmed
+			}
+			return repo.failWhatsAppOutbox(ctx, item, cause, true, false)
+		}
+	}
 	if storagePath := strings.TrimSpace(stringFromAny(body["mediaStoragePath"])); storagePath != "" {
 		if !whatsappMediaPathBelongsToOrganization(storagePath, item.OrganizationID) {
 			recordWhatsAppOutboxDeliveryFailure(lane)
@@ -668,13 +712,22 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 				false,
 			)
 		}
+		if digest := strings.TrimSpace(stringFromAny(body["mediaSHA256"])); digest != "" {
+			if err := repo.storage.verifyOutboundMediaDigest(ctx, storagePath, digest); err != nil {
+				if errors.Is(err, errOutboundMediaDigestMismatch) {
+					return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+				}
+				return repo.failWhatsAppOutboxPreparation(ctx, item, err)
+			}
+			delete(body, "mediaSHA256")
+		}
 		signedURL, signErr := repo.storage.signedURL(ctx, whatsappMediaBucket, storagePath, 15*60)
 		if signErr != nil || signedURL == "" {
 			if signErr == nil {
 				signErr = fmt.Errorf("media signed URL is empty")
 			}
 			recordWhatsAppOutboxDeliveryFailure(lane)
-			return repo.failWhatsAppOutbox(ctx, item, signErr, false, false)
+			return repo.failWhatsAppOutboxPreparation(ctx, item, signErr)
 		}
 		body["media"] = signedURL
 		body["url"] = signedURL
@@ -684,7 +737,7 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 
 	item.Attempts, err = repo.startWhatsAppOutboxProviderAttempt(ctx, item)
 	if err != nil {
-		if errors.Is(err, ErrSessionAccessRevoked) {
+		if errors.Is(err, ErrSessionAccessRevoked) || errors.Is(err, ErrReactionTargetUnconfirmed) || errors.Is(err, ErrQuoteTargetUnavailable) || errors.Is(err, ErrQueuePoolClaimRequired) || errors.Is(err, ErrConversationNotFound) {
 			recordWhatsAppOutboxDeliveryFailure(lane)
 			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
 		}
@@ -790,6 +843,17 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
+			`+whatsappOutboxAttendanceSQL()+`
+		)
+	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
+	return attended, err
+}
+
+// This gate is checked before preparation and again under the provider-start
+// transaction's resource locks. Owning a number does not retain lead access
+// after reassignment, and a human send needs that sender's own current entry.
+func whatsappOutboxAttendanceSQL() string {
+	return `
 			from public.whatsapp_messages as message
 			join public.whatsapp_conversations as conversation
 			  on conversation.id = message.conversation_id
@@ -810,13 +874,14 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			 and attendance.session_id = binding.session_id
 			 and attendance.lead_id = binding.lead_id
 			 and attendance.binding_id = binding.id
+			 and attendance.id::text = message.metadata->>'attendance_entry_id'
 			join public.whatsapp_sessions as session
 			  on session.organization_id = attendance.organization_id
 			 and session.id = attendance.session_id
 			 and session.provider = 'evolution_go'
 			 and coalesce(session.is_active, true) = true
 			 and coalesce(session.status, '') not in ('deleted', 'disabled')
-			left join public.leads as lead
+			join public.leads as lead
 			  on lead.organization_id = message.organization_id
 			 and lead.id = message.lead_id
 			join public.users as actor
@@ -826,33 +891,39 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			join public.organization_members as member
 			  on member.organization_id = attendance.organization_id
 			 and member.user_id = attendance.user_id
-			 and coalesce(member.is_active, true) = true
+			 and coalesce(member.is_active, false) = true
+			 and member.deleted_at is null
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
 			  and message.session_id = $3::uuid
 			  and message.conversation_id = $4::uuid
 			  and message.capture_state = 'captured'
+			  and private.whatsapp_actor_can_read_lead(message.organization_id, message.lead_id, attendance.user_id)
 			  and (
-			    session.owner_user_id = attendance.user_id
+			    coalesce(nullif(message.metadata->>'attendance_send_origin', ''), message.metadata->>'origin', '') = 'automation'
 			    or (
-			      message.metadata->>'attendance_send_origin' = 'human'
+			      coalesce(nullif(message.metadata->>'attendance_send_origin', ''), message.metadata->>'origin', '') = 'human'
 			      and message.sender_user_id = attendance.user_id
-			      and lead.assigned_user_id = attendance.user_id
-			      and message.metadata->>'session_access_grant_id' = $5
-			      and exists (
+			      and (
+			        (session.owner_user_id = attendance.user_id
+			         and coalesce(message.metadata->>'session_access_grant_id', '') = '')
+			        or exists (
 			        select 1 from public.whatsapp_session_access access
 			        where access.organization_id = message.organization_id
 			          and access.session_id = message.session_id
 			          and access.user_id = attendance.user_id
-			          and access.id::text = $5
-		      )
-		      and `+sessionGrantExistsSQL("session", "attendance.user_id", true)+`
+			          and access.id::text = message.metadata->>'session_access_grant_id'
+			        )
+			      )
 		    )
 		  )
-		)
-	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID,
-		strings.TrimSpace(stringFromAny(item.Payload["session_access_grant_id"]))).Scan(&attended)
-	return attended, err
+			  and (
+			    session.owner_user_id = attendance.user_id
+			    or (
+			      lead.assigned_user_id = attendance.user_id
+			      and ` + sessionGrantExistsSQL("session", "attendance.user_id", true) + `
+			    )
+			  )`
 }
 
 func finalizeAcceptedWhatsAppOutbox(
@@ -976,11 +1047,11 @@ func (repo Repository) renewWhatsAppOutboxLease(ctx context.Context, item pendin
 }
 
 func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, item pendingWhatsAppOutbox) (int, error) {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 	if err := lockWhatsAppOutboxGrantForStart(ctx, tx, item); err != nil {
 		return 0, err
 	}
@@ -1102,7 +1173,7 @@ func (repo Repository) deferWhatsAppOutboxFinalization(ctx context.Context, item
 	return fmt.Errorf("%w: %v", errWhatsAppOutboxFinalizationPending, cause)
 }
 
-func (repo Repository) getOutboundMessageByClientID(ctx context.Context, organizationID string, sessionID string, clientMessageID string) (Message, error) {
+func (repo Repository) getOutboundMessageByClientID(ctx context.Context, organizationID string, sessionID string, clientMessageID string, actors ...tenant.Context) (Message, error) {
 	message, err := scanMessage(repo.db.Pool().QueryRow(ctx, `
 		select `+messageSelectFields()+`
 		from public.whatsapp_messages wm
@@ -1118,7 +1189,7 @@ func (repo Repository) getOutboundMessageByClientID(ctx context.Context, organiz
 		return Message{}, err
 	}
 	messages := []Message{message}
-	if err := repo.hydrateMessageMediaURLs(ctx, organizationID, messages); err != nil {
+	if err := repo.hydrateMessageMediaURLs(ctx, organizationID, messages, actors...); err != nil {
 		return Message{}, err
 	}
 	return messages[0], nil
@@ -1138,12 +1209,14 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 	afterConversationID string,
 	lane whatsappOutboxLane,
 ) ([]pendingWhatsAppOutbox, error) {
+	ctx, cancel := context.WithTimeout(ctx, whatsappQueueHeartbeatTimeout)
+	defer cancel()
 	batch = normalizeWorkerBatch(batch, defaultWhatsAppOutboxWorkerBatch)
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackWhatsAppQueueTx(tx)
 	// A missing rollout index must fail quickly instead of turning every fast
 	// lane claim into a long scan over the durable outbox.
 	if _, err := tx.Exec(ctx, `set local statement_timeout = '5s'`); err != nil {
@@ -1200,6 +1273,8 @@ func (repo Repository) claimWhatsAppOutboxWithBatchAfterConversation(
 }
 
 func (repo Repository) RecoverStaleWhatsAppOutbox(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, whatsappQueueDatabaseTimeout)
+	defer cancel()
 	for batchIndex := 0; batchIndex < whatsappOutboxRecoveryMaxBatches; batchIndex++ {
 		recovered, err := repo.recoverStaleWhatsAppOutboxBatch(ctx, whatsappOutboxRecoveryBatch)
 		if err != nil {
@@ -1217,11 +1292,15 @@ func (repo Repository) RecoverStaleWhatsAppOutbox(ctx context.Context) error {
 
 func (repo Repository) recoverStaleWhatsAppOutboxBatch(ctx context.Context, batch int) (int, error) {
 	batch = normalizeWorkerBatch(batch, whatsappOutboxRecoveryBatch)
+	unavailable, err := repo.recoverUnavailableWhatsAppOutboxBatch(ctx, batch)
+	if err != nil {
+		return 0, err
+	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackWhatsAppQueueTx(tx)
 	if _, err := tx.Exec(ctx, `set local lock_timeout = '2s'; set local statement_timeout = '30s'`); err != nil {
 		return 0, err
 	}
@@ -1319,15 +1398,15 @@ func (repo Repository) recoverStaleWhatsAppOutboxBatch(ctx context.Context, batc
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return recoveredCount, nil
+	return recoveredCount + unavailable, nil
 }
 
 func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingWhatsAppOutbox, providerMessageID string) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 
 	// Binding switches lock the physical conversation before touching its
 	// outbox. Preserve that order during provider finalization as well: the
@@ -1438,10 +1517,12 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			    content = coalesce(existing.content, pending.content),
 			    media_url = coalesce(existing.media_url, pending.media_url),
 			    media_storage_path = coalesce(existing.media_storage_path, pending.media_storage_path),
-			    metadata = (coalesce(existing.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
+			    metadata = (coalesce(existing.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at' - 'delivery_error_reason') ||
 			      jsonb_strip_nulls(jsonb_build_object(
 			        'attendance_entry_id', pending.metadata->>'attendance_entry_id',
-			        'attendance_send_origin', pending.metadata->>'attendance_send_origin'
+			        'attendance_send_origin', pending.metadata->>'attendance_send_origin',
+			        'media_filename', pending.metadata->>'media_filename',
+			        'quoted_message_id', pending.metadata->>'quoted_message_id'
 			      )),
 			    provider_message_id = $3,
 			    message_id = $3,
@@ -1472,7 +1553,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			set provider_message_id = $2,
 			    message_id = $2,
 			    status = case when status in ('delivered', 'read') then status else 'sent' end,
-			    metadata = coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at',
+			    metadata = coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at' - 'delivery_error_reason',
 			    sent_at = coalesce(sent_at, now()),
 			    updated_at = now()
 			where id = $1::uuid
@@ -1676,11 +1757,11 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		status = "dead"
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 	result, err := tx.Exec(ctx, `
 		update public.whatsapp_outbox
 		set status = $2,
@@ -1712,12 +1793,13 @@ func (repo Repository) failWhatsAppOutbox(ctx context.Context, item pendingWhats
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_messages
 			set status = 'failed',
-			    metadata = (coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
-			      jsonb_build_object('delivery_error_code', $3, 'delivery_failed_at', now()),
+			    metadata = (coalesce(metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at' - 'delivery_error_reason') ||
+			      jsonb_build_object('delivery_error_code', $3, 'delivery_failed_at', now()) ||
+			      case when $4::text<>'' then jsonb_build_object('delivery_error_reason',$4::text) else '{}'::jsonb end,
 			    updated_at = now()
 			where id = $1::uuid
 			  and organization_id = $2::uuid
-		`, item.MessageRowID, item.OrganizationID, deliveryCode); err != nil {
+		`, item.MessageRowID, item.OrganizationID, deliveryCode, mediaDeliveryFailureReason(lastError)); err != nil {
 			return err
 		}
 		if err := repo.syncTerminalWhatsAppOutboxFailures(ctx, tx, item.ID); err != nil {
@@ -1805,7 +1887,7 @@ func (repo Repository) syncTerminalWhatsAppOutboxFailuresBatch(ctx context.Conte
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages as message
 		set status = 'failed',
-		    metadata = (coalesce(message.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at') ||
+		    metadata = (coalesce(message.metadata, '{}'::jsonb) - 'delivery_error_code' - 'delivery_failed_at' - 'delivery_error_reason') ||
 		      jsonb_build_object(
 		        'delivery_error_code', case
 		          when lower(coalesce(outbox.last_error, '')) like '%recipient_not_registered%'

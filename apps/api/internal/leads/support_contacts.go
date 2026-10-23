@@ -126,27 +126,30 @@ type Contact struct {
 }
 
 type ContactListFilter struct {
-	Search      string
-	TeamID      string
-	PipelineID  string
-	StageID     string
-	AssigneeID  string
-	Unassigned  bool
-	TagID       string
-	TagIDs      []string
-	Source      string
-	PageID      string
-	CampaignID  string
-	AdSetID     string
-	AdID        string
-	DealStatus  string
-	CreatedFrom string
-	CreatedTo   string
-	SortBy      string
-	SortDir     string
-	Page        int
-	Limit       int
-	Mode        string
+	Search                string
+	TeamID                string
+	PipelineID            string
+	StageID               string
+	AssigneeID            string
+	Unassigned            bool
+	TagID                 string
+	TagIDs                []string
+	Source                string
+	PageID                string
+	CampaignID            string
+	CampaignIDs           []string
+	AdSetID               string
+	AdID                  string
+	DealStatus            string
+	CreatedFrom           string
+	CreatedTo             string
+	SortBy                string
+	SortDir               string
+	Page                  int
+	Limit                 int
+	Mode                  string
+	ResponseMode          string
+	ExpectedExportVersion string
 }
 
 type LeadVisibility struct {
@@ -174,27 +177,61 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 	}
 
 	filter := ContactListFilter{
-		Search:      trimMax(cleanContactFilterValue(values.Get("search")), 100),
-		TeamID:      cleanContactFilterValue(values.Get("teamId")),
-		PipelineID:  cleanContactFilterValue(values.Get("pipelineId")),
-		StageID:     cleanContactFilterValue(values.Get("stageId")),
-		AssigneeID:  cleanContactFilterValue(values.Get("assigneeId")),
-		Unassigned:  strings.EqualFold(values.Get("unassigned"), "true"),
-		TagID:       tagID,
-		TagIDs:      tagIDs,
-		Source:      trimMax(cleanContactFilterValue(values.Get("source")), 80),
-		PageID:      trimMax(cleanContactFilterValue(values.Get("pageId")), 255),
-		CampaignID:  trimMax(cleanContactFilterValue(values.Get("campaignId")), 120),
-		AdSetID:     trimMax(cleanContactFilterValue(values.Get("adSetId")), 120),
-		AdID:        trimMax(cleanContactFilterValue(values.Get("adId")), 120),
-		DealStatus:  cleanContactFilterValue(values.Get("dealStatus")),
-		CreatedFrom: cleanContactFilterValue(values.Get("createdFrom")),
-		CreatedTo:   cleanContactFilterValue(values.Get("createdTo")),
-		SortBy:      cleanContactFilterValue(values.Get("sortBy")),
-		SortDir:     cleanContactFilterValue(values.Get("sortDir")),
-		Page:        page,
-		Limit:       limit,
-		Mode:        strings.ToLower(cleanContactFilterValue(values.Get("mode"))),
+		Search:                strings.TrimSpace(values.Get("search")),
+		TeamID:                cleanContactFilterValue(values.Get("teamId")),
+		PipelineID:            cleanContactFilterValue(values.Get("pipelineId")),
+		StageID:               cleanContactFilterValue(values.Get("stageId")),
+		AssigneeID:            cleanContactFilterValue(values.Get("assigneeId")),
+		Unassigned:            strings.EqualFold(values.Get("unassigned"), "true"),
+		TagID:                 tagID,
+		TagIDs:                tagIDs,
+		Source:                cleanContactLiteralFilterValue(values.Get("source")),
+		PageID:                cleanContactLiteralFilterValue(values.Get("pageId")),
+		CampaignID:            cleanContactLiteralFilterValue(values.Get("campaignId")),
+		AdSetID:               cleanContactLiteralFilterValue(values.Get("adSetId")),
+		AdID:                  cleanContactLiteralFilterValue(values.Get("adId")),
+		DealStatus:            cleanContactFilterValue(values.Get("dealStatus")),
+		CreatedFrom:           cleanContactFilterValue(values.Get("createdFrom")),
+		CreatedTo:             cleanContactFilterValue(values.Get("createdTo")),
+		SortBy:                cleanContactFilterValue(values.Get("sortBy")),
+		SortDir:               cleanContactFilterValue(values.Get("sortDir")),
+		Page:                  page,
+		Limit:                 limit,
+		Mode:                  strings.ToLower(cleanContactFilterValue(values.Get("mode"))),
+		ResponseMode:          strings.ToLower(strings.TrimSpace(values.Get("responseMode"))),
+		ExpectedExportVersion: strings.TrimSpace(values.Get("expectedExportVersion")),
+	}
+	for name, item := range map[string]struct {
+		value   string
+		maximum int
+	}{
+		"search": {filter.Search, 180}, "source": {filter.Source, maxLeadSourceFilterLength},
+		"pageId": {filter.PageID, 255}, "campaignId": {filter.CampaignID, 255},
+		"adSetId": {filter.AdSetID, 255}, "adId": {filter.AdID, 255},
+	} {
+		if len([]rune(item.value)) > item.maximum || strings.ContainsRune(item.value, '\x00') {
+			return ContactListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, name)
+		}
+	}
+	filter.CampaignIDs, err = normalizeDashboardCampaignFilterIDs(filter.CampaignID, values["campaignIds"])
+	if err != nil {
+		return ContactListFilter{}, err
+	}
+	for _, value := range filter.CampaignIDs {
+		if strings.ContainsRune(value, '\x00') {
+			return ContactListFilter{}, fmt.Errorf("%w: invalid campaignIds", ErrInvalidInput)
+		}
+	}
+	from, err := parseOptionalTime(filter.CreatedFrom)
+	if err != nil {
+		return ContactListFilter{}, err
+	}
+	to, err := parseOptionalTime(filter.CreatedTo)
+	if err != nil {
+		return ContactListFilter{}, err
+	}
+	if (from == nil) != (to == nil) || (from != nil && (to.Before(*from) || to.Sub(*from) > maxDashboardDateRange)) {
+		return ContactListFilter{}, fmt.Errorf("%w: createdFrom and createdTo must define a valid period of up to five years", ErrInvalidInput)
 	}
 
 	for _, item := range []struct {
@@ -235,6 +272,12 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 	if !validEnum(filter.Mode, "compact", "full") {
 		return ContactListFilter{}, fmt.Errorf("%w: mode is invalid", ErrInvalidInput)
 	}
+	if filter.ResponseMode != "" && filter.ResponseMode != "page" {
+		return ContactListFilter{}, fmt.Errorf("%w: responseMode is invalid", ErrInvalidInput)
+	}
+	if filter.ExpectedExportVersion != "" && (filter.ResponseMode != "page" || filter.Mode != "full" || !validContactExportVersion(filter.ExpectedExportVersion)) {
+		return ContactListFilter{}, fmt.Errorf("%w: expectedExportVersion requires a full page response and a SHA256 version", ErrInvalidInput)
+	}
 
 	return filter, nil
 }
@@ -247,6 +290,16 @@ func cleanContactFilterValue(value string) string {
 	default:
 		return value
 	}
+}
+
+// Text can legitimately be named None/null/undefined. Only explicit legacy
+// "all" remains reserved for opaque dimensions; search is always literal.
+func cleanContactLiteralFilterValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "all" {
+		return ""
+	}
+	return value
 }
 
 func (repo Repository) ListContacts(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
@@ -285,29 +338,40 @@ func (repo Repository) countContacts(ctx context.Context, tenantContext tenant.C
 	return total, nil
 }
 
-func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter, readContexts ...contactListReadContext) ([]Contact, error) {
 	where, args, err := buildContactWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 	countResult := make(chan struct {
 		total int64
 		err   error
 	}, 1)
-	go func() {
-		total, countErr := repo.countContacts(ctx, tenantContext, filter)
+	var queryer contactReadQueryer
+	if len(readContexts) > 0 {
+		queryer = readContexts[0].queryer
 		countResult <- struct {
 			total int64
 			err   error
-		}{total: total, err: countErr}
-	}()
+		}{total: readContexts[0].total}
+	} else {
+		queryer = repo.db.Pool()
+		go func() {
+			total, countErr := repo.countContacts(ctx, tenantContext, filter)
+			countResult <- struct {
+				total int64
+				err   error
+			}{total: total, err: countErr}
+		}()
+	}
 
 	offset := (filter.Page - 1) * filter.Limit
 	args = append(args, filter.Limit, offset)
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			0::bigint as total_count,
 			l.id::text,
@@ -335,8 +399,8 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			l.message,
 			l.initial_message,
 			l.property_code,
-			l.property_id::text,
-			l.interest_property_id::text,
+			`+pipelineBoardVisiblePropertyIDSQL("property_id", propertyVisibility)+`,
+			`+pipelineBoardVisiblePropertyIDSQL("interest_property_id", propertyVisibility)+`,
 			l.interest_plan_id::text,
 			l.created_at,
 			l.updated_at,
@@ -384,7 +448,7 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			l.won_at,
 			l.lost_at,
 			l.created_by::text,
-			coalesce(to_jsonb(l)->'metadata', '{}'::jsonb)::text,
+			(`+contactPropertyMetadataSQL(propertyVisibility)+`)::text,
 			l.meta_lead_id,
 			l.meta_form_id,
 			l.meta_campaign_id,
@@ -429,7 +493,7 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			from public.lead_meta lm
 			where lm.organization_id = l.organization_id
 			  and lm.lead_id = l.id
-			order by lm.updated_at desc nulls last, lm.created_at desc nulls last
+			order by lm.updated_at desc nulls last, lm.created_at desc nulls last, lm.id desc
 			limit 1
 		) lm on true
 		left join lateral (
@@ -439,7 +503,7 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			  and mi.campaign_id = coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
 		) mci on true
 		left join lateral (
-			select json_agg(json_build_object('id', t.id::text, 'name', t.name, 'color', t.color) order by t.name) as tags
+			select json_agg(json_build_object('id', t.id::text, 'name', t.name, 'color', t.color) order by t.name, t.id) as tags
 			from public.lead_tags lt
 			join public.tags t on t.id = lt.tag_id
 			where lt.lead_id = l.id
@@ -477,29 +541,40 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 	return contacts, nil
 }
 
-func (repo Repository) listContactsCompact(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+func (repo Repository) listContactsCompact(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter, readContexts ...contactListReadContext) ([]Contact, error) {
 	where, args, err := buildContactWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 	countResult := make(chan struct {
 		total int64
 		err   error
 	}, 1)
-	go func() {
-		total, countErr := repo.countContacts(ctx, tenantContext, filter)
+	var queryer contactReadQueryer
+	if len(readContexts) > 0 {
+		queryer = readContexts[0].queryer
 		countResult <- struct {
 			total int64
 			err   error
-		}{total: total, err: countErr}
-	}()
+		}{total: readContexts[0].total}
+	} else {
+		queryer = repo.db.Pool()
+		go func() {
+			total, countErr := repo.countContacts(ctx, tenantContext, filter)
+			countResult <- struct {
+				total int64
+				err   error
+			}{total: total, err: countErr}
+		}()
+	}
 
 	offset := (filter.Page - 1) * filter.Limit
 	args = append(args, filter.Limit, offset)
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			0::bigint as total_count,
 			l.id::text,
@@ -527,8 +602,8 @@ func (repo Repository) listContactsCompact(ctx context.Context, tenantContext te
 			null::text as message,
 			null::text as initial_message,
 			l.property_code,
-			l.property_id::text,
-			l.interest_property_id::text,
+			`+pipelineBoardVisiblePropertyIDSQL("property_id", propertyVisibility)+`,
+			`+pipelineBoardVisiblePropertyIDSQL("interest_property_id", propertyVisibility)+`,
 			l.interest_plan_id::text,
 			l.created_at,
 			l.updated_at,
@@ -658,6 +733,18 @@ func (repo Repository) GetLeadVisibility(ctx context.Context, tenantContext tena
 			  on member.organization_id = leader.organization_id
 			 and member.team_id = leader.team_id
 			 and member.is_active = true
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = leader.organization_id
+			 and leader_membership.user_id = leader.user_id
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
+			 and leader_membership.membership_generation = leader.membership_generation
+			join public.organization_members member_membership
+			  on member_membership.organization_id = member.organization_id
+			 and member_membership.user_id = member.user_id
+			 and member_membership.is_active = true
+			 and member_membership.deleted_at is null
+			 and member_membership.membership_generation = member.membership_generation
 			where leader.organization_id = $1::uuid
 			  and leader.user_id = $2::uuid
 			  and leader.is_active = true
@@ -712,7 +799,12 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	if filter.Search != "" {
 		args = append(args, searchtext.Pattern(filter.Search))
 		index := len(args)
-		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
+		searchClause := searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index))
+		if digits := contactPhoneSearchDigits(filter.Search); digits != "" {
+			args = append(args, "%"+digits+"%")
+			searchClause = fmt.Sprintf("(%s or %s)", searchClause, searchtext.PhoneSQL("l.phone", fmt.Sprintf("$%d", len(args))))
+		}
+		where = append(where, searchClause)
 	}
 	if strings.TrimSpace(filter.TeamID) != "" {
 		teamID, ok := normalizeUUID(filter.TeamID)
@@ -767,10 +859,11 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 		add("l.deal_status = $%d", filter.DealStatus)
 	}
 	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
-		Page:     filter.PageID,
-		Campaign: filter.CampaignID,
-		AdSet:    filter.AdSetID,
-		Ad:       filter.AdID,
+		Page:      filter.PageID,
+		Campaign:  filter.CampaignID,
+		Campaigns: filter.CampaignIDs,
+		AdSet:     filter.AdSetID,
+		Ad:        filter.AdID,
 	})
 	if filter.CreatedFrom != "" {
 		add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
@@ -1013,49 +1106,13 @@ func scanContact(row scanner) (Contact, error) {
 	contact.CreativeURL = textPtr(creativeURL)
 	contact.CreativeVideoURL = textPtr(creativeVideoURL)
 	contact.CreativeInstagramURL = textPtr(creativeInstagramURL)
-	contact.MetaPayloadJSON = textPtr(metaPayloadJSON)
-	contact.MetaRawPayloadJSON = textPtr(metaRawPayloadJSON)
+	contact.MetaPayloadJSON = sanitizedLeadMetadataJSON(metaPayloadJSON)
+	contact.MetaRawPayloadJSON = sanitizedLeadMetadataJSON(metaRawPayloadJSON)
 	contact.Tags = []ContactTag{}
 	if strings.TrimSpace(tagsJSON) != "" {
 		_ = json.Unmarshal([]byte(tagsJSON), &contact.Tags)
 	}
 	return contact, nil
-}
-
-func sanitizedLeadMetadataJSON(raw pgtype.Text) *string {
-	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
-		return nil
-	}
-
-	metadata := map[string]any{}
-	if err := json.Unmarshal([]byte(raw.String), &metadata); err != nil {
-		empty := "{}"
-		return &empty
-	}
-
-	sanitize := func(values map[string]any) {
-		if value, exists := values["cpf"]; exists {
-			values["hasCPF"] = strings.TrimSpace(fmt.Sprint(value)) != ""
-			delete(values, "cpf")
-		}
-		if value, exists := values["rg"]; exists {
-			values["hasRG"] = strings.TrimSpace(fmt.Sprint(value)) != ""
-			delete(values, "rg")
-		}
-	}
-
-	sanitize(metadata)
-	if profile, ok := metadata["profile"].(map[string]any); ok {
-		sanitize(profile)
-	}
-
-	payload, err := json.Marshal(metadata)
-	if err != nil {
-		empty := "{}"
-		return &empty
-	}
-	value := string(payload)
-	return &value
 }
 
 func int32Ptr(value pgtype.Int4) *int32 {

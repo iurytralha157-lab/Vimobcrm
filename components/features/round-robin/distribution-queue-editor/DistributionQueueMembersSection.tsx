@@ -64,6 +64,7 @@ interface UserOption {
 }
 
 interface DistributionQueueMembersSectionProps {
+  canEditMember?: (member: QueueMemberDraft) => boolean;
   open: boolean;
   members: QueueMemberDraft[];
   strategy: DistributionQueueStrategy;
@@ -83,9 +84,11 @@ interface DistributionQueueMembersSectionProps {
   onAddTeam: (teamId: string) => void;
   onUpdateWeight: (memberKey: string, weight: number) => void;
   onRemove: (memberKey: string) => void;
+  onReenroll: (memberKey: string) => void;
 }
 
 interface SortableMemberRowProps {
+  editable: boolean;
   member: QueueMemberDraft;
   user?: UserOption;
   index: number;
@@ -94,6 +97,7 @@ interface SortableMemberRowProps {
   teams: QueueTeamSource[];
   onUpdateWeight: (memberKey: string, weight: number) => void;
   onRemove: (memberKey: string) => void;
+  onReenroll: (memberKey: string) => void;
 }
 
 function getInitials(value: string) {
@@ -147,14 +151,16 @@ function SearchableTeamPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-[var(--radix-popover-trigger-width)] min-w-[260px] rounded-[8px] border-[var(--app-border)] p-0 shadow-lg"
+        data-management-editor="distribution"
+        className="flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] min-w-[260px] max-w-[var(--radix-popover-content-available-width)] flex-col overflow-hidden rounded-[8px] border-[var(--app-border)] p-0 shadow-none"
       >
-        <Command filter={commandSearchFilter}>
+        <Command filter={commandSearchFilter} className="min-h-0 [&_[cmdk-input-wrapper]]:shrink-0">
           <CommandInput
             placeholder="Buscar equipe por nome..."
+            aria-label="Buscar equipe por nome"
             className="h-9 text-[12px]"
           />
-          <CommandList className="max-h-[260px]">
+          <CommandList className="min-h-0 max-h-[260px]">
             <CommandEmpty className="px-3 py-5 text-[12px]">
               {emptyMessage}
             </CommandEmpty>
@@ -184,6 +190,7 @@ function SearchableTeamPicker({
 }
 
 function SortableMemberRow({
+  editable,
   member,
   user,
   index,
@@ -192,6 +199,7 @@ function SortableMemberRow({
   teams,
   onUpdateWeight,
   onRemove,
+  onReenroll,
 }: SortableMemberRowProps) {
   const memberKey = queueMemberKey(member);
   const {
@@ -201,7 +209,7 @@ function SortableMemberRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: memberKey });
+  } = useSortable({ id: memberKey, disabled: !editable });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -209,7 +217,7 @@ function SortableMemberRow({
     opacity: isDragging ? 0.5 : undefined,
   };
   const percentage =
-    totalWeight > 0 ? Math.round((member.weight / totalWeight) * 100) : 0;
+    member.isActive !== false && totalWeight > 0 ? Math.round((member.weight / totalWeight) * 100) : 0;
   const displayName = member.name || user?.name || "Desconhecido";
   const initials = getInitials(displayName) || "?";
   const linkedTeam = member.teamId
@@ -222,7 +230,7 @@ function SortableMemberRow({
       className={cn(
         "group grid min-w-0 grid-cols-[36px_38px_minmax(0,1fr)_34px] items-center gap-x-2 gap-y-2 rounded-[7px] bg-[var(--app-surface-soft)] px-2 py-2.5 transition-[background-color,box-shadow] hover:bg-[var(--app-surface-hover)] sm:grid-cols-[36px_38px_minmax(0,1fr)_auto_34px] sm:px-2.5",
         isDragging &&
-          "bg-[var(--app-surface-hover)] shadow-[0_10px_28px_rgba(15,23,42,0.14)] ring-1 ring-primary/25",
+          "bg-[var(--app-surface-hover)] shadow-none ring-1 ring-primary/25",
       )}
     >
       <button
@@ -230,6 +238,7 @@ function SortableMemberRow({
         {...attributes}
         {...listeners}
         aria-label={`Mover ${displayName}, posição ${index + 1}`}
+        disabled={!editable}
         title="Arraste para mudar a ordem"
         className="flex h-9 w-9 touch-none cursor-grab items-center justify-center gap-0.5 rounded-[6px] bg-[var(--app-surface-solid)] text-[var(--app-text-secondary)] outline-none transition-colors hover:text-[var(--app-text-primary)] focus-visible:ring-2 focus-visible:ring-primary/40 active:cursor-grabbing"
       >
@@ -259,6 +268,8 @@ function SortableMemberRow({
       )}
 
       <div className="min-w-0 self-center">
+        {!editable && <p className="mb-1 text-[10px] text-[var(--app-text-tertiary)]">Participante fora do seu escopo · configuração preservada</p>}
+        {member.isActive === false && <div className="mb-1 flex flex-wrap items-center gap-1 text-[11px] font-light text-destructive"><span>Participação inativa ou vínculo indisponível</span><Button type="button" variant="ghost" disabled={!editable} className="h-6 px-1.5 text-[11px]" onClick={() => onReenroll(memberKey)}>Reativar participação</Button></div>}
         <div className="flex min-w-0 items-center gap-1.5">
           <span
             className="truncate text-[13px] font-medium text-[var(--app-text-primary)]"
@@ -267,7 +278,7 @@ function SortableMemberRow({
             {displayName}
           </span>
           {member.type === "team" && (
-            <Badge className="h-5 shrink-0 border-0 bg-primary/10 px-1.5 text-[9px] font-medium uppercase tracking-wide text-primary shadow-none hover:bg-primary/10">
+            <Badge className="h-5 shrink-0 rounded-[5px] border-0 bg-primary/10 px-1.5 text-[10px] font-light text-primary shadow-none hover:bg-primary/10">
               Equipe
             </Badge>
           )}
@@ -313,7 +324,8 @@ function SortableMemberRow({
             aria-label={`Peso de ${displayName}`}
             className="h-8 w-14 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-1.5 text-center text-[12px] tabular-nums shadow-none"
             min={1}
-            max={100}
+            max={1000}
+            disabled={!editable}
           />
           <span className="w-8 text-right text-[10px] tabular-nums text-[var(--app-text-tertiary)]">
             {percentage}%
@@ -331,6 +343,7 @@ function SortableMemberRow({
         size="icon"
         aria-label={`Remover ${displayName}`}
         title={`Remover ${displayName}`}
+        disabled={!editable}
         className="col-start-4 row-start-1 h-8 w-8 rounded-[6px] text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/30 sm:col-start-5"
         onClick={() => onRemove(memberKey)}
       >
@@ -341,6 +354,7 @@ function SortableMemberRow({
 }
 
 export function DistributionQueueMembersSection({
+  canEditMember,
   open,
   members,
   strategy,
@@ -360,6 +374,7 @@ export function DistributionQueueMembersSection({
   onAddTeam,
   onUpdateWeight,
   onRemove,
+  onReenroll,
 }: DistributionQueueMembersSectionProps) {
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const sensors = useSensors(
@@ -368,7 +383,7 @@ export function DistributionQueueMembersSection({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-  const totalWeight = members.reduce((sum, member) => sum + member.weight, 0);
+  const totalWeight = members.reduce((sum, member) => sum + (member.isActive !== false ? member.weight : 0), 0);
 
   return (
     <Collapsible
@@ -392,7 +407,7 @@ export function DistributionQueueMembersSection({
               variant="secondary"
               className="h-5 shrink-0 rounded-[5px] border-0 px-1.5 text-[10px] font-light"
             >
-              {members.length}
+              {members.filter((member) => member.isActive !== false).length} ativos / {members.length}
             </Badge>
           )}
         </div>
@@ -421,6 +436,7 @@ export function DistributionQueueMembersSection({
                   <SortableMemberRow
                     key={queueMemberKey(member)}
                     member={member}
+                    editable={canEditMember?.(member) ?? true}
                     user={
                       member.type === "user"
                         ? users.find((user) => user.id === member.entityId)
@@ -432,6 +448,7 @@ export function DistributionQueueMembersSection({
                     teams={visibleTeams}
                     onUpdateWeight={onUpdateWeight}
                     onRemove={onRemove}
+                    onReenroll={onReenroll}
                   />
                 ))}
               </ol>
@@ -465,14 +482,16 @@ export function DistributionQueueMembersSection({
             </PopoverTrigger>
             <PopoverContent
               align="start"
-              className="w-[var(--radix-popover-trigger-width)] min-w-[280px] rounded-[8px] border-[var(--app-border)] p-0 shadow-lg"
+              data-management-editor="distribution"
+              className="flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] min-w-[280px] max-w-[var(--radix-popover-content-available-width)] flex-col overflow-hidden rounded-[8px] border-[var(--app-border)] p-0 shadow-none"
             >
-              <Command filter={commandSearchFilter}>
+              <Command filter={commandSearchFilter} className="min-h-0 [&_[cmdk-input-wrapper]]:shrink-0">
                 <CommandInput
                   placeholder="Buscar usuário por nome ou e-mail..."
+                  aria-label="Buscar usuário por nome ou e-mail"
                   className="h-9 text-[12px]"
                 />
-                <CommandList className="max-h-[260px]">
+                <CommandList className="min-h-0 max-h-[260px]">
                   <CommandEmpty>
                     {selectableUsers.length === 0
                       ? "Nenhum usuário ativo disponível."

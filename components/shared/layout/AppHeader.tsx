@@ -17,6 +17,8 @@ import { getNotificationRoute } from '@/lib/notification-routing';
 import { ProductUpdatesDialog } from '@/components/features/news';
 import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 import { getInitials, getOrganizationMemberRoleLabel } from '@/lib/user-display';
+import { NotificationSoundControls } from '@/components/features/notifications/NotificationSoundControls';
+import { useNotificationSound } from '@/components/features/notifications/NotificationSoundProvider';
 
 const notificationIcons: Record<string, typeof Bell> = {
   lead: UserPlus,
@@ -58,11 +60,13 @@ export const AppHeader = React.memo(function AppHeader({
     userOrganizations: rawUserOrganizations = [],
   } = useAuth();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const queryClient = useQueryClient();
   const router = useRouter();
   const isMobile = useIsMobile();
+  const notificationSound = useNotificationSound();
   const {
     data: notifications = [],
     isFetched: notificationsFetched,
@@ -251,9 +255,10 @@ export const AppHeader = React.memo(function AppHeader({
                 )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={12} collisionPadding={12} className="app-header-popover notification-popover flex max-h-[min(520px,calc(100dvh-8rem))] w-[min(340px,calc(100vw-1.25rem))] flex-col overflow-hidden p-1 sm:max-h-[min(580px,calc(100dvh-5rem))] sm:w-[340px]">
-              <div className="shrink-0 border-b border-border/30 px-3 py-2.5">
-                <p className="notification-title">Notificações</p>
+            <DropdownMenuContent align="end" sideOffset={12} collisionPadding={12} className="app-header-popover notification-popover flex max-h-[min(460px,calc(100dvh-8rem))] w-[min(320px,calc(100vw-1.25rem))] flex-col overflow-hidden p-1 sm:max-h-[min(500px,calc(100dvh-5rem))] sm:w-[320px]">
+              <div className="flex shrink-0 items-start gap-1 border-b border-border/30 px-2 py-1.5">
+                <p className="notification-title shrink-0 py-2 sm:py-1.5">Notificações</p>
+                {notificationSound && <NotificationSoundControls {...notificationSound} />}
               </div>
               {!notificationsFetched && notifications.length === 0 ? (
                 <div className="flex items-center justify-center py-8">
@@ -290,14 +295,14 @@ export const AppHeader = React.memo(function AppHeader({
                       const notificationRoute = getNotificationRoute(notification, { canViewWhatsApp });
                       const isActionable = Boolean(notificationRoute) || !notification.is_read;
                       const content = (
-                          <div className="flex w-full items-start gap-2.5">
+                          <div className="flex w-full items-start gap-2">
                             <div
                               aria-hidden="true"
                               className={isActionable
-                                ? "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors group-hover:bg-primary group-focus:bg-primary group-data-[highlighted]:bg-primary sm:h-9 sm:w-9"
-                                : "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] sm:h-9 sm:w-9"}
+                                ? "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors group-hover:bg-primary group-focus:bg-primary group-data-[highlighted]:bg-primary"
+                                : "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"}
                             >
-                              <NotificationIcon className="h-4 w-4" />
+                              <NotificationIcon className="h-3.5 w-3.5" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
@@ -306,8 +311,8 @@ export const AppHeader = React.memo(function AppHeader({
                                 </p>
                                 {!notification.is_read && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
                               </div>
-                              {notification.content && <p className="mt-0.5 line-clamp-2 text-[12px] font-light leading-[15px] text-muted-foreground">{notification.content}</p>}
-                              <p className="mt-1 text-[11px] font-light tabular-nums text-muted-foreground">
+                              {notification.content && <p className="mt-0.5 line-clamp-2 text-[11px] font-light leading-[14px] text-muted-foreground">{notification.content}</p>}
+                              <p className="mt-1 text-[10px] font-light leading-3 tabular-nums text-muted-foreground">
                                 {formatNotificationDistance(notification.created_at)}
                               </p>
                             </div>
@@ -316,7 +321,7 @@ export const AppHeader = React.memo(function AppHeader({
 
                       if (!isActionable) {
                         return (
-                          <div key={notification.id} className="m-1 rounded-[6px] px-2.5 py-2.5 sm:px-3">
+                          <div key={notification.id} className="mx-1 my-0.5 rounded-[6px] px-2 py-2">
                             {content}
                           </div>
                         );
@@ -328,7 +333,7 @@ export const AppHeader = React.memo(function AppHeader({
                           aria-label={notificationRoute
                             ? `Abrir ${notification.title}`
                             : `Marcar ${notification.title} como lida`}
-                          className="group m-1 cursor-pointer rounded-[6px] px-2.5 py-2.5 sm:px-3"
+                          className="group mx-1 my-0.5 cursor-pointer rounded-[6px] px-2 py-2"
                           onSelect={() => handleNotificationClick(notification)}
                         >
                           {content}
@@ -352,10 +357,10 @@ export const AppHeader = React.memo(function AppHeader({
                     </div>
                   ) : null}
                   <DropdownMenuSeparator className="mx-2 my-1 bg-border/30" />
-                  <div className="flex shrink-0 flex-col gap-2 p-2 min-[360px]:flex-row">
+                  <div className="flex shrink-0 flex-col gap-1.5 p-1.5 min-[360px]:flex-row">
                     {unreadCount > 0 && (
                       <DropdownMenuItem
-                        className="h-9 flex-1 cursor-pointer justify-center rounded-[6px] bg-[var(--app-surface-soft)] px-2 text-center text-[12px] font-light hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)]"
+                        className="h-8 flex-1 cursor-pointer justify-center rounded-[6px] bg-[var(--app-surface-soft)] px-2 text-center text-[11px] font-light hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)]"
                         onSelect={handleMarkAllNotificationsRead}
                         disabled={markAllRead.isPending}
                       >
@@ -364,7 +369,7 @@ export const AppHeader = React.memo(function AppHeader({
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem
-                      className="h-9 flex-1 cursor-pointer justify-center rounded-[6px] bg-primary px-2 text-center text-[12px] font-light text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground focus:bg-primary/90 focus:text-primary-foreground data-[highlighted]:bg-primary/90 data-[highlighted]:text-primary-foreground"
+                      className="h-8 flex-1 cursor-pointer justify-center rounded-[6px] bg-primary px-2 text-center text-[11px] font-light text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground focus:bg-primary/90 focus:text-primary-foreground data-[highlighted]:bg-primary/90 data-[highlighted]:text-primary-foreground"
                       onSelect={handleOpenAllNotifications}
                     >
                       Ver todas
@@ -450,13 +455,17 @@ export const AppHeader = React.memo(function AppHeader({
             </div>
             <DropdownMenuItem
               onClick={async () => {
+                if (isSigningOut) return;
+                setIsSigningOut(true);
                 try {
                   await signOut();
-                } catch (error) {
-                  console.error('Erro no logout:', error);
+                } catch {
+                  toast.error('Não foi possível concluir a saída. Tente novamente.');
+                } finally {
+                  setIsSigningOut(false);
                 }
-                window.location.href = '/login';
               }}
+              disabled={isSigningOut}
               className="app-header-logout mt-1 cursor-pointer gap-2 rounded-[4px] bg-primary px-2.5 py-2 text-[14px] font-light text-primary-foreground transition-colors hover:bg-primary/90 hover:text-primary-foreground focus:bg-primary/90 focus:text-primary-foreground data-[highlighted]:bg-primary/90 data-[highlighted]:text-primary-foreground"
             >
               <LogOut className="h-3.5 w-3.5" aria-hidden="true" />

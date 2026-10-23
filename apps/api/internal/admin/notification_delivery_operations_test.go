@@ -9,7 +9,7 @@ func TestNormalizeNotificationDeliveryStatus(t *testing.T) {
 	t.Parallel()
 
 	for _, candidate := range []string{
-		"", "all", "queued", "leased", "sending", "accepted", "delivered",
+		"", "all", "problems", "queued", "leased", "sending", "accepted", "delivered",
 		"retry_wait", "blocked_dependency", "dead_letter", "cancelled", "permanent_failed",
 	} {
 		if _, ok := normalizeNotificationDeliveryStatus(candidate); !ok {

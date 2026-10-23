@@ -70,50 +70,57 @@ func (input DeletePropertyInput) Validate() error {
 type propertyRequest map[string]any
 
 type ListFilter struct {
-	Limit            int
-	Offset           int
-	Scope            string
-	Search           string
-	Status           string
-	DealType         string
-	PropertyType     string
-	City             string
-	Neighborhood     string
-	ResponsibleID    string
-	BedroomsMin      int
-	SuitesMin        int
-	BathroomsMin     int
-	PriceMin         float64
-	PriceMax         float64
-	AcceptsExchange  *bool
-	AcceptsFinancing *bool
-	PublishedOnSite  *bool
-	OwnerID          string
-	CondominiumID    string
-	Furniture        string
-	Exclusive        *bool
-	HasSign          *bool
-	Featured         *bool
-	ParkingSpacesMin int
-	UsableAreaMin    float64
-	UsableAreaMax    float64
-	TotalAreaMin     float64
-	TotalAreaMax     float64
+	Limit                 int
+	Offset                int
+	Scope                 string
+	Search                string
+	Status                string
+	DealType              string
+	PropertyType          string
+	City                  string
+	Neighborhood          string
+	CityID                string
+	NeighborhoodID        string
+	UF                    string
+	ResponsibleID         string
+	BedroomsMin           int
+	SuitesMin             int
+	BathroomsMin          int
+	PriceMin              float64
+	PriceMax              float64
+	PriceMaxProvided      bool
+	AcceptsExchange       *bool
+	AcceptsFinancing      *bool
+	PublishedOnSite       *bool
+	OwnerID               string
+	CondominiumID         string
+	Furniture             string
+	Exclusive             *bool
+	HasSign               *bool
+	Featured              *bool
+	ParkingSpacesMin      int
+	UsableAreaMin         float64
+	UsableAreaMax         float64
+	UsableAreaMaxProvided bool
+	TotalAreaMin          float64
+	TotalAreaMax          float64
+	TotalAreaMaxProvided  bool
 }
 
 type fieldKind string
 
 const (
-	fieldText      fieldKind = "text"
-	fieldBool      fieldKind = "bool"
-	fieldInt       fieldKind = "int"
-	fieldNumeric   fieldKind = "numeric"
-	fieldUUID      fieldKind = "uuid"
-	fieldDate      fieldKind = "date"
-	fieldJSON      fieldKind = "json"
-	fieldTextArray fieldKind = "text_array"
-	fieldDealType  fieldKind = "deal_type"
-	fieldStatus    fieldKind = "status"
+	fieldText              fieldKind = "text"
+	fieldBool              fieldKind = "bool"
+	fieldInt               fieldKind = "int"
+	fieldNumeric           fieldKind = "numeric"
+	fieldUUID              fieldKind = "uuid"
+	fieldDate              fieldKind = "date"
+	fieldJSON              fieldKind = "json"
+	fieldTextArray         fieldKind = "text_array"
+	fieldDealType          fieldKind = "deal_type"
+	fieldStatus            fieldKind = "status"
+	fieldAddressVisibility fieldKind = "address_visibility"
 )
 
 type fieldDef struct {
@@ -202,7 +209,7 @@ var writableFields = map[string]fieldDef{
 	"projeto_aprovado":           {column: "projeto_aprovado", kind: fieldBool},
 	"property_type_id":           {column: "property_type_id", kind: fieldUUID},
 	"proximidades":               {column: "proximidades", kind: fieldTextArray},
-	"public_address_visibility":  {column: "address_visibility", kind: fieldText},
+	"public_address_visibility":  {column: "address_visibility", kind: fieldAddressVisibility},
 	"published_on_site":          {column: "published_on_site", kind: fieldBool},
 	"quartos":                    {column: "quartos", kind: fieldInt},
 	"referencia_alternativa":     {column: "referencia_alternativa", kind: fieldText},
@@ -242,7 +249,7 @@ var compatibilityColumns = map[string]fieldDef{
 	"destaque":                  {column: "destaque", kind: fieldBool},
 	"fotos":                     {column: "fotos", kind: fieldTextArray},
 	"owner_media_source":        {column: "owner_media_source", kind: fieldText},
-	"public_address_visibility": {column: "public_address_visibility", kind: fieldText},
+	"public_address_visibility": {column: "public_address_visibility", kind: fieldAddressVisibility},
 	"tipo_de_imovel":            {column: "tipo_de_imovel", kind: fieldText},
 	"tipo_de_negocio":           {column: "tipo_de_negocio", kind: fieldText},
 }
@@ -292,19 +299,22 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		return ListFilter{}, err
 	}
 	filter := ListFilter{
-		Limit:         limit,
-		Offset:        offset,
-		Scope:         normalizedPropertyScope(rawScope),
-		Search:        search,
-		Status:        normalizedPropertyStatusForFilter(rawStatus),
-		DealType:      rawDealType,
-		PropertyType:  propertyType,
-		City:          city,
-		Neighborhood:  neighborhood,
-		ResponsibleID: strings.TrimSpace(values.Get("responsavel_id")),
-		OwnerID:       strings.TrimSpace(values.Get("owner_id")),
-		CondominiumID: strings.TrimSpace(values.Get("condominium_id")),
-		Furniture:     furniture,
+		Limit:          limit,
+		Offset:         offset,
+		Scope:          normalizedPropertyScope(rawScope),
+		Search:         search,
+		Status:         normalizedPropertyStatusForFilter(rawStatus),
+		DealType:       rawDealType,
+		PropertyType:   propertyType,
+		City:           city,
+		Neighborhood:   neighborhood,
+		CityID:         strings.TrimSpace(values.Get("city_id")),
+		NeighborhoodID: strings.TrimSpace(values.Get("neighborhood_id")),
+		UF:             strings.ToUpper(strings.TrimSpace(values.Get("uf"))),
+		ResponsibleID:  strings.TrimSpace(values.Get("responsavel_id")),
+		OwnerID:        strings.TrimSpace(values.Get("owner_id")),
+		CondominiumID:  strings.TrimSpace(values.Get("condominium_id")),
+		Furniture:      furniture,
 	}
 	if rawScope != "" && filter.Scope == "" {
 		return ListFilter{}, fmt.Errorf("%w: scope is invalid", ErrInvalidInput)
@@ -324,6 +334,15 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	}
 	if filter.CondominiumID != "" && !isUUID(filter.CondominiumID) {
 		return ListFilter{}, fmt.Errorf("%w: condominium_id is invalid", ErrInvalidInput)
+	}
+	if filter.CityID != "" && !isUUID(filter.CityID) {
+		return ListFilter{}, fmt.Errorf("%w: city_id is invalid", ErrInvalidInput)
+	}
+	if filter.NeighborhoodID != "" && !isUUID(filter.NeighborhoodID) {
+		return ListFilter{}, fmt.Errorf("%w: neighborhood_id is invalid", ErrInvalidInput)
+	}
+	if filter.UF != "" && (len(filter.UF) != 2 || filter.UF[0] < 'A' || filter.UF[0] > 'Z' || filter.UF[1] < 'A' || filter.UF[1] > 'Z') {
+		return ListFilter{}, fmt.Errorf("%w: uf is invalid", ErrInvalidInput)
 	}
 
 	integerFilters := []struct {
@@ -360,13 +379,16 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		}
 		*item.target = value
 	}
-	if err := validatePropertyFilterRange("valor", filter.PriceMin, filter.PriceMax); err != nil {
+	filter.PriceMaxProvided = strings.TrimSpace(values.Get("valor_max")) != ""
+	filter.UsableAreaMaxProvided = strings.TrimSpace(values.Get("area_util_max")) != ""
+	filter.TotalAreaMaxProvided = strings.TrimSpace(values.Get("area_total_max")) != ""
+	if err := validatePropertyFilterRange("valor", filter.PriceMin, filter.PriceMax, filter.PriceMaxProvided); err != nil {
 		return ListFilter{}, err
 	}
-	if err := validatePropertyFilterRange("area_util", filter.UsableAreaMin, filter.UsableAreaMax); err != nil {
+	if err := validatePropertyFilterRange("area_util", filter.UsableAreaMin, filter.UsableAreaMax, filter.UsableAreaMaxProvided); err != nil {
 		return ListFilter{}, err
 	}
-	if err := validatePropertyFilterRange("area_total", filter.TotalAreaMin, filter.TotalAreaMax); err != nil {
+	if err := validatePropertyFilterRange("area_total", filter.TotalAreaMin, filter.TotalAreaMax, filter.TotalAreaMaxProvided); err != nil {
 		return ListFilter{}, err
 	}
 	booleanFilters := []struct {
@@ -430,6 +452,7 @@ func (request propertyRequest) ValidateCreate() (propertyRequest, error) {
 	if err := validatePropertyBusinessRules(input); err != nil {
 		return nil, err
 	}
+	removeCreationLedgerFromInput(input)
 
 	return input, nil
 }
@@ -458,6 +481,7 @@ func (request propertyRequest) ValidateUpdate() (propertyRequest, error) {
 	if err := validatePropertyBusinessRules(input); err != nil {
 		return nil, err
 	}
+	removeCreationLedgerFromInput(input)
 	if hasExpectedUpdatedAt {
 		input[internalPropertyVersionField] = expectedUpdatedAt
 	}
@@ -497,6 +521,11 @@ func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 			mainImage = value
 		}
 		if key == "metadata" {
+			if metadata, ok := value.(map[string]any); ok {
+				if _, reserved := metadata[propertyCreationLedgerKey]; reserved {
+					return nil, fmt.Errorf("%w: metadata contains a reserved property field", ErrInvalidInput)
+				}
+			}
 			if _, ok := value.(map[string]any); !ok {
 				return nil, fmt.Errorf("%w: metadata must be a JSON object", ErrInvalidInput)
 			}
@@ -630,6 +659,9 @@ func mirrorPropertyCompatibilityFields(out propertyRequest) {
 }
 
 func normalizeValue(value any, kind fieldKind) (any, error) {
+	if kind == fieldAddressVisibility {
+		return normalizeAddressVisibilityInput(value)
+	}
 	if value == nil {
 		return nil, nil
 	}
@@ -904,11 +936,11 @@ func normalizePropertyStatus(value any) (string, error) {
 	}
 	text = normalizeASCII(text)
 	switch text {
-	case "", "ativo", "active", "disponivel":
+	case "", "ativo", "active", "disponivel", "available":
 		return "active", nil
 	case "reservado", "reserved":
 		return "reserved", nil
-	case "draft", "rascunho":
+	case "draft", "rascunho", "private", "privado":
 		return "draft", nil
 	case "vendido", "sold":
 		return "sold", nil
@@ -983,8 +1015,8 @@ func parseOptionalBoundedFilterText(raw string, field string, maxLength int) (st
 	return value, nil
 }
 
-func validatePropertyFilterRange(field string, minimum float64, maximum float64) error {
-	if maximum > 0 && minimum > maximum {
+func validatePropertyFilterRange(field string, minimum float64, maximum float64, maximumProvided ...bool) error {
+	if (maximum > 0 || (len(maximumProvided) > 0 && maximumProvided[0])) && minimum > maximum {
 		return fmt.Errorf("%w: %s_min must be less than or equal to %s_max", ErrInvalidInput, field, field)
 	}
 	return nil

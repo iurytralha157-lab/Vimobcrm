@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import { SignupCheckoutRecoveryBanner } from "@/components/features/onboarding/SignupCheckoutRecoveryBanner";
 import { toast } from "sonner";
 import { paymentsAPI } from "@/lib/api/payments";
@@ -99,6 +100,7 @@ function CheckoutContent({
   organizationId: organizationIdProp,
   checkoutToken: checkoutTokenProp,
 }: CheckoutScreenProps = {}) {
+  const router = useRouter();
   const organizationId = organizationIdProp?.trim() || null;
   const token = organizationId
     ? undefined
@@ -1180,9 +1182,7 @@ function CheckoutContent({
               "Cartão atualizado para as próximas cobranças.",
           );
           if (directCardUpdateMode === "saved_only") {
-            window.location.assign(
-              "/settings?tab=subscription&billing=methods&saved=1",
-            );
+            router.push("/settings?tab=subscription&billing=methods&saved=1");
           }
           return;
         }
@@ -1240,6 +1240,7 @@ function CheckoutContent({
     hasCheckoutIdentity,
     organizationId,
     recoveryPaymentId,
+    router,
     token,
   ]);
 
@@ -1652,9 +1653,7 @@ function CheckoutContent({
             toast.success(
               result.message || "Cartão salvo para as próximas cobranças.",
             );
-            window.location.assign(
-              "/settings?tab=subscription&billing=methods&saved=1",
-            );
+            router.push("/settings?tab=subscription&billing=methods&saved=1");
             return;
           }
           if (result.saved_only) {

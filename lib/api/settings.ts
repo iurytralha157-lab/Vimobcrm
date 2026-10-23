@@ -36,7 +36,10 @@ import {
   validateDomainResponse,
 } from "@/lib/validation";
 import type { UpdatePropertySettingsInput } from "@/lib/validation";
-import { vimobAPIRequest, vimobPublicAPIRequest } from "./vimob-client";
+import { getVimobAPIAccessTokenSessionId, getVimobAPIAccessTokenUserId, vimobAPIRequest, vimobPublicAPIRequest } from "./vimob-client";
+import type { VimobAPIRequestIntent } from "./vimob-client";
+
+export type PushDeviceRequestOptions = Pick<VimobAPIRequestIntent, "expectedUserId" | "expectedSessionId" | "signal">;
 
 type Envelope<T> = {
   data: T;
@@ -425,6 +428,7 @@ export const settingsAPI = {
       allowed: boolean;
       message: string;
       emailNotificationSent?: boolean;
+      sessionsRevoked?: boolean;
     }>("/v1/settings/password", {
       method: "POST",
       organizationId,
@@ -532,6 +536,7 @@ export const settingsAPI = {
       syncOnly?: boolean;
     },
     organizationId?: string | null,
+    options: PushDeviceRequestOptions = {},
   ) {
     const body = parseDomainInput(
       pushTokenInputSchema,
@@ -546,6 +551,9 @@ export const settingsAPI = {
       method: "POST",
       organizationId,
       body,
+      signal: options.signal,
+      expectedUserId: options.expectedUserId === undefined ? getVimobAPIAccessTokenUserId() : options.expectedUserId,
+      expectedSessionId: options.expectedSessionId === undefined ? getVimobAPIAccessTokenSessionId() : options.expectedSessionId,
     });
     validateDomainResponse(
       okResponseSchema,
@@ -573,6 +581,7 @@ export const settingsAPI = {
   async deactivatePushToken(
     endpoint?: string | null,
     organizationId?: string | null,
+    options: PushDeviceRequestOptions = {},
   ) {
     const body = parseDomainInput(
       deactivatePushTokenInputSchema,
@@ -585,6 +594,9 @@ export const settingsAPI = {
         method: "POST",
         organizationId,
         body,
+        signal: options.signal,
+        expectedUserId: options.expectedUserId === undefined ? getVimobAPIAccessTokenUserId() : options.expectedUserId,
+        expectedSessionId: options.expectedSessionId === undefined ? getVimobAPIAccessTokenSessionId() : options.expectedSessionId,
       },
     );
     validateDomainResponse(

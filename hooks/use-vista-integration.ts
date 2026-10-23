@@ -26,7 +26,7 @@ type VistaSyncResult = {
 };
 
 export function useVistaIntegration(options: { enabled?: boolean } = {}) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const orgId = activeOrganization.organizationId;
 
   return useQuery({
@@ -37,7 +37,7 @@ export function useVistaIntegration(options: { enabled?: boolean } = {}) {
 }
 
 export function useSaveVistaIntegration() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
   const orgId = activeOrganization.organizationId;
 
@@ -55,7 +55,7 @@ export function useSaveVistaIntegration() {
 }
 
 export function useTestVistaConnection() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: () =>
@@ -67,7 +67,7 @@ export function useTestVistaConnection() {
 }
 
 export function useSyncVistaProperties() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -90,7 +90,7 @@ export function useSyncVistaProperties() {
 }
 
 export function useDeleteVistaIntegration() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({

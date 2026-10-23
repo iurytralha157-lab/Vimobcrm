@@ -63,6 +63,7 @@ func TestClosedDevelopmentBlocksUnitPromotion(t *testing.T) {
 	for _, state := range [][2]string{
 		{"cancelled", "active"},
 		{"archived", "active"},
+		{"suspended", "paused"},
 		{"ready", "sold_out"},
 		{"delivered", "closed"},
 	} {
@@ -70,7 +71,7 @@ func TestClosedDevelopmentBlocksUnitPromotion(t *testing.T) {
 			t.Fatalf("closed development state %#v did not block promotion", state)
 		}
 	}
-	for _, state := range [][2]string{{"launched", "active"}, {"delivered", "active"}, {"suspended", "paused"}} {
+	for _, state := range [][2]string{{"launched", "active"}, {"delivered", "active"}, {"ready", "paused"}} {
 		if developmentBlocksUnitPromotion(state[0], state[1]) {
 			t.Fatalf("non-terminal development state %#v unexpectedly blocked promotion", state)
 		}

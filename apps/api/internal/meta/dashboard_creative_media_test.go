@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +40,8 @@ func TestDashboardCreativeMediaRejectsUnsafeURLsAndIDs(t *testing.T) {
 		"http://cdn.example.test/a.jpg", "https://user:password@cdn.example.test/a.jpg",
 		"https://cdn.example.test:444/a.jpg", "https://cdn.example.test/a.jpg?access_token=secret",
 		"https://cdn.example.test/a.jpg?appsecret_proof=value", "javascript:alert(1)",
+		"https://cdn.example.test/a.jpg#access_token=secret", "https://cdn.example.test/a.jpg#appsecret_proof=value",
+		"https://cdn.example.test/a.jpg#section", "https://cdn.example.test/a.jpg#",
 	} {
 		if got := dashboardCreativeMediaSafeURL(raw); got != nil {
 			t.Errorf("unsafe URL accepted: %s", raw)
@@ -64,6 +67,22 @@ func TestDashboardCreativeMediaRejectsUnsafeURLsAndIDs(t *testing.T) {
 	}
 	if called.Load() != 0 {
 		t.Fatal("invalid IDs reached token lookup")
+	}
+}
+
+func TestDashboardCreativeMediaFragmentRejectionPreservesSignedSafeFallback(t *testing.T) {
+	safe := "https://cdn.example.test/image%23part.jpg?oh=public-signature&oe=123"
+	media := dashboardCreativeMediaFromGraph(
+		map[string]any{"preview_shareable_link": "https://facebook.com/adpreview#access_token=secret"},
+		map[string]any{
+			"effective_image_url":     "https://cdn.example.test/image.jpg#appsecret_proof=secret",
+			"image_url":               safe,
+			"instagram_permalink_url": "https://instagram.com/p/example/",
+		},
+	)
+	if media.ThumbnailURL == nil || *media.ThumbnailURL != safe ||
+		media.PermalinkURL == nil || *media.PermalinkURL != "https://instagram.com/p/example/" {
+		t.Fatal("fragment rejection lost the next safe signed image or link fallback")
 	}
 }
 
@@ -140,5 +159,150 @@ func TestDashboardCreativeMediaTokenQueryIsScopedAndBounded(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(dashboardCreativeMediaTokenQuery), "update ") || strings.Contains(strings.ToLower(dashboardCreativeMediaTokenQuery), "insert ") {
 		t.Fatal("media lookup must never write to the database")
+	}
+}
+
+func TestDashboardCreativeMediaCoalescesConcurrentKeysWithinEachOrganization(t *testing.T) {
+	otherOrg := "22222222-2222-4222-8222-222222222222"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		image := "https://cdn.example.test/first-org.jpg"
+		if r.Header.Get("Authorization") == "Bearer second-org-token" {
+			image = "https://cdn.example.test/second-org.jpg"
+		}
+		_, _ = w.Write([]byte(`{"id":"123","effective_image_url":"` + image + `"}`))
+	}))
+	defer server.Close()
+	resolver := NewDashboardCreativeMediaResolver(nil, Config{})
+	resolver.graphRepo.config.GraphBaseURL, resolver.graphRepo.client = server.URL, server.Client()
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	var tokenLookups atomic.Int32
+	resolver.tokens = func(ctx context.Context, orgID string) ([]string, error) {
+		tokenLookups.Add(1)
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if orgID == otherOrg {
+			return []string{"second-org-token"}, nil
+		}
+		return []string{"first-org-token"}, nil
+	}
+	var callers sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		orgID, expected := dashboardCreativeMediaTestOrg, "https://cdn.example.test/first-org.jpg"
+		if i%2 == 1 {
+			orgID, expected = otherOrg, "https://cdn.example.test/second-org.jpg"
+		}
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			media := resolver.ResolveDashboardCreativeMedia(context.Background(), orgID, "123", "")
+			if media.ThumbnailURL == nil || *media.ThumbnailURL != expected {
+				t.Errorf("organization %s received another scope's preview: %#v", orgID, media)
+			}
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("both organization lookups did not start")
+		}
+	}
+	releaseOnce.Do(func() { close(release) })
+	callers.Wait()
+	if calls.Load() != 2 || tokenLookups.Load() != 2 {
+		t.Fatalf("expected one shared lookup per organization: graph=%d tokens=%d", calls.Load(), tokenLookups.Load())
+	}
+}
+
+func TestDashboardCreativeMediaCallerCancellationDoesNotCancelSharedLookup(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	resolver := NewDashboardCreativeMediaResolver(nil, Config{})
+	resolver.tokens = func(ctx context.Context, _ string) ([]string, error) {
+		close(started)
+		select {
+		case <-release:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	firstCtx, cancel := context.WithCancel(context.Background())
+	first := make(chan DashboardCreativeMedia, 1)
+	go func() {
+		first <- resolver.ResolveDashboardCreativeMedia(firstCtx, dashboardCreativeMediaTestOrg, "123", "")
+	}()
+	<-started
+	cancel()
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("canceled caller kept waiting")
+	}
+	resolver.mu.Lock()
+	flight := resolver.inflight[dashboardCreativeMediaTestOrg+":123:"]
+	resolver.mu.Unlock()
+	if flight == nil {
+		t.Fatal("caller cancellation prematurely completed the shared lookup")
+	}
+	second := make(chan DashboardCreativeMedia, 1)
+	go func() {
+		second <- resolver.ResolveDashboardCreativeMedia(context.Background(), dashboardCreativeMediaTestOrg, "123", "")
+	}()
+	select {
+	case <-flight.done:
+		t.Fatal("shared provider context was canceled by its first caller")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("remaining caller was stranded after shared work completed")
+	}
+}
+
+func TestDashboardCreativeMediaBoundsDistinctFlightsAndProviderQueue(t *testing.T) {
+	resolver := NewDashboardCreativeMediaResolver(nil, Config{})
+	var tokenLookups atomic.Int32
+	resolver.tokens = func(context.Context, string) ([]string, error) { tokenLookups.Add(1); return nil, nil }
+	for i := 0; i < dashboardCreativeMediaCacheEntries; i++ {
+		resolver.inflight[strings.Repeat("x", i+1)] = &dashboardCreativeMediaFlight{done: make(chan struct{})}
+	}
+	_ = resolver.ResolveDashboardCreativeMedia(context.Background(), dashboardCreativeMediaTestOrg, "123", "")
+	if tokenLookups.Load() != 0 || len(resolver.inflight) != dashboardCreativeMediaCacheEntries {
+		t.Fatal("saturated pending flight map must reject additional distinct provider work")
+	}
+	for i := 0; i < cap(resolver.slots); i++ {
+		resolver.slots <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_ = resolver.lookupDashboardCreativeMedia(ctx, dashboardCreativeMediaTestOrg, "123", "")
+	if time.Since(started) > time.Second || tokenLookups.Load() != 0 {
+		t.Fatal("provider queue did not honor its deadline before token lookup")
+	}
+}
+
+func TestDashboardCreativeMediaProviderPanicReleasesSharedFlight(t *testing.T) {
+	resolver := NewDashboardCreativeMediaResolver(nil, Config{})
+	resolver.tokens = func(context.Context, string) ([]string, error) { panic("synthetic provider adapter panic") }
+	media := resolver.ResolveDashboardCreativeMedia(context.Background(), dashboardCreativeMediaTestOrg, "123", "")
+	resolver.mu.Lock()
+	remaining := len(resolver.inflight)
+	resolver.mu.Unlock()
+	if remaining != 0 || media.ThumbnailURL != nil {
+		t.Fatal("provider panic stranded the flight or returned unsafe media")
 	}
 }

@@ -1,19 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  differenceInCalendarDays,
-  format,
-  isSameDay,
-  isSameYear,
-  parseISO,
-} from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { CalendarRange, Check, SlidersHorizontal, X } from "lucide-react";
-import type { DateRange } from "react-day-picker";
+import { SlidersHorizontal, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
+import { SearchableFilterSelect } from "@/components/shared/SearchableFilterSelect";
+import { FILTER_UI } from "@/config/filter-ui";
 import {
   Popover,
   PopoverContent,
@@ -26,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import type {
   ScheduleDashboardEventType,
@@ -34,11 +25,8 @@ import type {
   ScheduleDashboardStatus,
 } from "@/lib/validation/schedule-dashboard";
 
-import {
-  AGENDA_DASHBOARD_FALLBACK_TIME_ZONE,
-  getAgendaDashboardPresetRange,
-  type AgendaDashboardDatePreset,
-} from "./agenda-dashboard-date-range";
+import { AGENDA_DASHBOARD_FALLBACK_TIME_ZONE } from "./agenda-dashboard-date-range";
+import { AgendaDashboardPeriodFilter } from "@/components/features/schedule/dashboard/AgendaDashboardPeriodFilter";
 
 const ALL_VALUE = "__all__";
 
@@ -57,22 +45,6 @@ export type AgendaDashboardSourceOption = {
   value: string;
   label: string;
 };
-
-type DatePresetOption = {
-  value: AgendaDashboardDatePreset;
-  label: string;
-};
-
-const DATE_PRESETS: DatePresetOption[] = [
-  { value: "today", label: "Hoje" },
-  { value: "yesterday", label: "Ontem" },
-  { value: "this_week", label: "Esta semana" },
-  { value: "last_week", label: "Semana passada" },
-  { value: "next_week", label: "Próxima semana" },
-  { value: "this_month", label: "Este mês" },
-  { value: "last_30_days", label: "Últimos 30 dias" },
-  { value: "next_30_days", label: "Próximos 30 dias" },
-];
 
 const EVENT_TYPE_OPTIONS: Array<{
   value: ScheduleDashboardEventType;
@@ -114,200 +86,6 @@ export type AgendaDashboardFiltersProps = {
   reportTimezone?: string;
   className?: string;
 };
-
-function formatCalendarDate(date: Date) {
-  return format(date, "yyyy-MM-dd");
-}
-
-function getActivePreset(
-  filters: ScheduleDashboardQuery,
-  reportTimezone: string,
-) {
-  return DATE_PRESETS.find(({ value }) => {
-    const presetRange = getAgendaDashboardPresetRange(
-      value,
-      new Date(),
-      reportTimezone,
-    );
-    return (
-      filters.dateFrom === presetRange.dateFrom &&
-      filters.dateTo === presetRange.dateTo
-    );
-  })?.value;
-}
-
-function getPeriodLabel(
-  filters: ScheduleDashboardQuery,
-  reportTimezone: string,
-) {
-  const preset = getActivePreset(filters, reportTimezone);
-  const presetLabel = DATE_PRESETS.find(
-    (option) => option.value === preset,
-  )?.label;
-  if (presetLabel) return presetLabel;
-
-  const from = parseISO(filters.dateFrom);
-  const to = parseISO(filters.dateTo);
-  if (isSameDay(from, to)) {
-    return format(from, "dd 'de' MMM 'de' yyyy", { locale: ptBR });
-  }
-
-  if (isSameYear(from, to)) {
-    return `${format(from, "dd MMM", { locale: ptBR })} – ${format(
-      to,
-      "dd MMM yyyy",
-      {
-        locale: ptBR,
-      },
-    )}`;
-  }
-
-  return `${format(from, "dd MMM yyyy", { locale: ptBR })} – ${format(
-    to,
-    "dd MMM yyyy",
-    {
-      locale: ptBR,
-    },
-  )}`;
-}
-
-function PeriodFilter({
-  filters,
-  onChange,
-  reportTimezone,
-}: Pick<AgendaDashboardFiltersProps, "filters" | "onChange"> & {
-  reportTimezone: string;
-}) {
-  const isMobile = useIsMobile();
-  const [open, setOpen] = useState(false);
-  const [draftRange, setDraftRange] = useState<DateRange | undefined>();
-  const activePreset = getActivePreset(filters, reportTimezone);
-  const customRangeTooLong = Boolean(
-    draftRange?.from &&
-    draftRange.to &&
-    differenceInCalendarDays(draftRange.to, draftRange.from) > 365,
-  );
-
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) {
-      setDraftRange({
-        from: parseISO(filters.dateFrom),
-        to: parseISO(filters.dateTo),
-      });
-    }
-    setOpen(nextOpen);
-  };
-
-  const applyPreset = (preset: AgendaDashboardDatePreset) => {
-    const range = getAgendaDashboardPresetRange(
-      preset,
-      new Date(),
-      reportTimezone,
-    );
-    onChange({
-      ...filters,
-      dateFrom: range.dateFrom,
-      dateTo: range.dateTo,
-    });
-    setOpen(false);
-  };
-
-  const applyCustomRange = () => {
-    if (!draftRange?.from || !draftRange.to || customRangeTooLong) return;
-    onChange({
-      ...filters,
-      dateFrom: formatCalendarDate(draftRange.from),
-      dateTo: formatCalendarDate(draftRange.to),
-    });
-    setOpen(false);
-  };
-
-  return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          title={getPeriodLabel(filters, reportTimezone)}
-          className="h-8 max-w-[180px] gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-foreground"
-        >
-          <CalendarRange className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="truncate">
-            {getPeriodLabel(filters, reportTimezone)}
-          </span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        sideOffset={8}
-        collisionPadding={12}
-        className="app-header-popover w-auto overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0"
-      >
-        <div className={cn("flex", isMobile && "w-[min(94vw,350px)] flex-col")}>
-          <div className="w-full space-y-1 border-b border-[var(--app-border)] bg-[var(--app-surface-soft)] p-2 sm:w-[168px] sm:border-b-0 sm:border-r">
-            <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--app-text-tertiary)]">
-              Atalhos
-            </p>
-            {DATE_PRESETS.map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => applyPreset(option.value)}
-                className={cn(
-                  "h-8 w-full justify-between rounded-[6px] px-2 text-[11px] font-light shadow-none",
-                  activePreset === option.value
-                    ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
-                    : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
-                )}
-              >
-                {option.label}
-                {activePreset === option.value ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : null}
-              </Button>
-            ))}
-          </div>
-
-          <div className="p-2">
-            <p className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--app-text-tertiary)]">
-              Personalizado
-            </p>
-            <Calendar
-              mode="range"
-              selected={draftRange}
-              onSelect={setDraftRange}
-              numberOfMonths={isMobile ? 1 : 2}
-              locale={ptBR}
-              className="p-1"
-            />
-            <Button
-              type="button"
-              size="sm"
-              disabled={
-                !draftRange?.from || !draftRange.to || customRangeTooLong
-              }
-              onClick={applyCustomRange}
-              className="mt-2 h-8 w-full rounded-[6px] text-[11px] font-normal shadow-none"
-            >
-              Aplicar período
-            </Button>
-            {customRangeTooLong ? (
-              <p
-                role="alert"
-                className="mt-1.5 text-center text-[9px] font-light text-destructive"
-              >
-                Selecione no máximo 366 dias.
-              </p>
-            ) : null}
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 export function AgendaDashboardFilters({
   filters,
@@ -369,7 +147,7 @@ export function AgendaDashboardFilters({
     <div
       className={cn("flex shrink-0 items-center justify-end gap-2", className)}
     >
-      <PeriodFilter
+      <AgendaDashboardPeriodFilter
         filters={filters}
         onChange={onChange}
         reportTimezone={reportTimezone}
@@ -381,6 +159,7 @@ export function AgendaDashboardFilters({
             type="button"
             variant="outline"
             size="sm"
+            aria-label="Demais filtros da agenda"
             className={cn(
               "h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-foreground",
               activeFilterCount > 0 &&
@@ -400,7 +179,7 @@ export function AgendaDashboardFilters({
           align="end"
           sideOffset={8}
           collisionPadding={12}
-          className="app-header-popover w-[min(94vw,380px)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4"
+          className={cn("app-header-popover w-[min(94vw,380px)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4", FILTER_UI.panelViewport)}
         >
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
@@ -464,127 +243,24 @@ export function AgendaDashboardFilters({
 
             {showTeamFilter ? (
               <FilterField label="Equipe">
-                <Select
-                  value={filters.teamId ?? ALL_VALUE}
-                  onValueChange={(value) => {
-                    const teamId = value === ALL_VALUE ? undefined : value;
-                    const selectedTeam = teams.find(
-                      (team) => team.id === teamId,
-                    );
-                    const selectedTeamUserIds = selectedTeam?.userIds;
-                    const userStillBelongsToTeam =
-                      !teamId ||
-                      !filters.userId ||
-                      !selectedTeamUserIds ||
-                      selectedTeamUserIds.includes(filters.userId);
-                    onChange({
-                      ...filters,
-                      teamId,
-                      userId: userStillBelongsToTeam
-                        ? filters.userId
-                        : undefined,
-                    });
-                  }}
-                >
-                  <SelectTrigger
-                    className="h-9 rounded-[6px] text-[11px]"
-                    aria-label="Equipe"
-                  >
-                    <SelectValue
-                      placeholder={
-                        isLoadingTeams ? "Carregando..." : "Todas as equipes"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_VALUE} className="text-[11px]">
-                      Todas as equipes
-                    </SelectItem>
-                    {teams.map((team) => (
-                      <SelectItem
-                        key={team.id}
-                        value={team.id}
-                        className="text-[11px]"
-                      >
-                        {team.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableFilterSelect value={filters.teamId ?? null} options={teams.map(team => ({ value: team.id, label: team.name }))} allLabel="Todas as equipes" ariaLabel="Equipe" loading={isLoadingTeams} onChange={value => {
+                    const teamId = value ?? undefined;
+                    const memberIds = teams.find(team => team.id === teamId)?.userIds;
+                    const retainsUser = !teamId || !filters.userId || !memberIds || memberIds.includes(filters.userId);
+                    onChange({ ...filters, teamId, userId: retainsUser ? filters.userId : undefined });
+                  }} />
               </FilterField>
             ) : null}
 
             <FilterField label="Usuário">
-              <Select
-                value={filters.userId ?? ALL_VALUE}
-                onValueChange={(value) =>
-                  onChange({
-                    ...filters,
-                    userId: value === ALL_VALUE ? undefined : value,
-                  })
-                }
-              >
-                <SelectTrigger
-                  className="h-9 rounded-[6px] text-[11px]"
-                  aria-label="Usuário"
-                >
-                  <SelectValue
-                    placeholder={
-                      isLoadingUsers ? "Carregando..." : "Todos os usuários"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_VALUE} className="text-[11px]">
-                    Todos os usuários
-                  </SelectItem>
-                  {availableUsers.map((user) => (
-                    <SelectItem
-                      key={user.id}
-                      value={user.id}
-                      className="text-[11px]"
-                    >
-                      {user.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableFilterSelect value={filters.userId ?? null} options={availableUsers.map(user => ({ value: user.id, label: user.name }))} allLabel="Todos os usuários" ariaLabel="Usuário" loading={isLoadingUsers} onChange={value => onChange({ ...filters, userId: value ?? undefined })} />
             </FilterField>
 
             <FilterField label="Origem">
-              <Select
-                value={filters.source ?? ALL_VALUE}
-                onValueChange={(value) => {
-                  if (value !== ALL_VALUE) {
-                    setRetainedSourceOptions(availableSources);
-                  }
-                  onChange({
-                    ...filters,
-                    source: value === ALL_VALUE ? undefined : value,
-                  });
-                }}
-              >
-                <SelectTrigger
-                  className="h-9 rounded-[6px] text-[11px]"
-                  aria-label="Origem"
-                >
-                  <SelectValue placeholder="Todas as origens" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_VALUE} className="text-[11px]">
-                    Todas as origens
-                  </SelectItem>
-                  {availableSources.map((source) => (
-                    <SelectItem
-                      key={source.value}
-                      value={source.value}
-                      className="text-[11px]"
-                    >
-                      {source.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableFilterSelect value={filters.source ?? null} options={availableSources.map(source => ({ value: source.value, label: source.label }))} allLabel="Todas as origens" ariaLabel="Origem" onChange={value => {
+                  if (value) setRetainedSourceOptions(availableSources);
+                  onChange({ ...filters, source: value ?? undefined });
+                }} />
             </FilterField>
 
             <FilterField label="Tipo de atividade">

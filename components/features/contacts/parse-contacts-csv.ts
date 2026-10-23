@@ -1,3 +1,5 @@
+import { ContactImportFileError, validateContactImportHeaders } from '@/components/features/contacts/contact-import-columns';
+
 export type ContactCSVRow = Record<string, string>;
 
 export type ContactCSVRecord = {
@@ -90,6 +92,7 @@ function parseRows(
   let row: string[] = [];
   let field = '';
   let quoted = false;
+  let closedQuote = false;
   let lineNumber = firstLineNumber;
   let rowNumber = firstLineNumber;
 
@@ -100,6 +103,7 @@ function parseRows(
     }
     row = [];
     field = '';
+    closedQuote = false;
   };
 
   for (let index = 0; index < text.length; index += 1) {
@@ -111,6 +115,7 @@ function parseRows(
         index += 1;
       } else if (character === '"') {
         quoted = false;
+        closedQuote = true;
       } else {
         field += character;
         if (character === '\n') lineNumber += 1;
@@ -123,11 +128,16 @@ function parseRows(
       continue;
     }
 
+    if (closedQuote && character !== delimiter && character !== '\n' && character !== '\r') {
+      if (character === ' ' || character === '\t') continue;
+      throw new ContactImportFileError(`Linha ${rowNumber}: há texto após o fechamento das aspas de uma célula`);
+    }
     if (character === '"' && field.length === 0) {
       quoted = true;
     } else if (character === delimiter) {
       row.push(field.trim());
       field = '';
+      closedQuote = false;
     } else if (character === '\n') {
       finishRow();
       lineNumber += 1;
@@ -157,13 +167,11 @@ export function parseContactsCSVRecords(text: string): ContactCSVRecord[] {
   if (rows.length < 2) return [];
 
   const headers = rows[0].values.map((header) => header.toLowerCase().trim());
+  validateContactImportHeaders(headers, rows[0].rowNumber);
   return rows.slice(1).flatMap(({ rowNumber, values }) => {
-    const record: ContactCSVRow = {};
-    headers.forEach((header, index) => {
-      if (header && values[index] !== undefined) {
-        record[header] = normalizeContactImportCellText(values[index]);
-      }
-    });
+    if (values.length > headers.length) throw new ContactImportFileError(`Linha ${rowNumber}: há ${values.length} células para ${headers.length} colunas`);
+    if (values.some((value, index) => value && !headers[index])) throw new ContactImportFileError(`Linha ${rowNumber}: há uma célula preenchida sem cabeçalho`);
+    const record: ContactCSVRow = Object.fromEntries(headers.flatMap((header, index) => header ? [[header, normalizeContactImportCellText(values[index] ?? '')]] : []));
     return Object.keys(record).length > 0 ? [{ rowNumber, values: record }] : [];
   });
 }
@@ -198,10 +206,10 @@ export function excelCellValueToText(value: unknown, formattedText = ''): string
     ) {
       return String(value);
     }
-    return normalizeContactImportCellText(displayText);
+    return displayText;
   }
   if (value == null) return '';
-  if (typeof value === 'string') return normalizeContactImportCellText(value);
+  if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') {
     return String(value);
   }
@@ -217,12 +225,10 @@ export function excelCellValueToText(value: unknown, formattedText = ''): string
     error?: unknown;
   };
   if (typeof cellValue.text === 'string') {
-    return normalizeContactImportCellText(cellValue.text);
+    return cellValue.text.trim();
   }
   if (Array.isArray(cellValue.richText)) {
-    return normalizeContactImportCellText(
-      cellValue.richText.map((part) => String(part.text ?? '')).join(''),
-    );
+    return cellValue.richText.map((part) => String(part.text ?? '')).join('').trim();
   }
   if ('result' in cellValue && cellValue.result != null) {
     return excelCellValueToText(cellValue.result);

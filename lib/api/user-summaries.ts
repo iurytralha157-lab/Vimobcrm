@@ -11,12 +11,14 @@ type ListResponse<T> = {
   data: T[]
 }
 
-export async function getUserSummaries(ids: string[], organizationId?: string | null) {
+export async function getUserSummaries(ids: string[], organizationId?: string | null,
+  transport?: { signal?: AbortSignal; expectedUserId?: string | null }) {
   const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
   if (uniqueIds.length === 0) return []
   const userIds = parseDomainInput(uuidListSchema, uniqueIds, 'user-summaries.list.ids')
 
   const response = await vimobAPIRequest<ListResponse<UserSummary>>('/v1/user-summaries', {
+    ...transport,
     organizationId,
     query: {
       ids: userIds.join(','),

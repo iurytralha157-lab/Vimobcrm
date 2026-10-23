@@ -1,4 +1,6 @@
 ﻿import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { invalidateWhatsAppAvatarCaches } from "@/lib/whatsapp-avatar-cache";
 import NextImage from "next/image";
 import { useTheme } from "next-themes";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +36,8 @@ import { usePasswordChangeStatus } from "@/hooks/use-password-change-status";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { settingsAPI } from "@/lib/api/settings";
-import { getErrorMessageOrFallback as getErrorMessage } from "@/lib/api/vimob-error";
+import { supabase } from "@/lib/supabase/client";
+import { getErrorMessageOrFallback as getErrorMessage, VimobAPIError } from "@/lib/api/vimob-error";
 import { canManageOrganization } from "@/lib/access/organization";
 import { PASSWORD_POLICY } from "@/lib/validation/password";
 import { toast } from "sonner";
@@ -98,7 +101,8 @@ interface OrganizationFormData {
 }
 
 export function AccountTab() {
-  const { activeOrganization, profile, organization, refreshProfile, isSuperAdmin, userOrganizations } = useAuth();
+  const { activeOrganization, profile, organization, refreshProfile, isSuperAdmin, userOrganizations, signOut } = useAuth();
+  const queryClient = useQueryClient();
   const { language, setLanguage, t } = useLanguage();
   const { setTheme } = useTheme();
   const { hasPermission } = useUserPermissions();
@@ -219,6 +223,9 @@ export function AccountTab() {
     try {
       await settingsAPI.uploadProfileAvatar(blob, activeOrganizationId);
       await refreshProfile();
+      const avatarOrganizations = new Set(userOrganizations.map(member => member.organization_id));
+      if (activeOrganizationId) avatarOrganizations.add(activeOrganizationId);
+      await Promise.all([...avatarOrganizations].map(orgId => invalidateWhatsAppAvatarCaches(queryClient, orgId, profile.id)));
       toast.success(t.settings.profile.saveSuccess);
     } catch (error) {
       console.error("Error uploading avatar:", error);
@@ -352,13 +359,37 @@ export function AccountTab() {
         await passwordStatus.refetch();
         return;
       }
-      toast.success(data?.message || "Senha alterada com sucesso!");
+      if (data.sessionsRevoked === true) {
+        toast.success("Senha alterada. Os outros dispositivos precisarão entrar novamente quando o acesso atual expirar.");
+        if (data.emailNotificationSent !== true) {
+          toast.warning("Não conseguimos confirmar o envio do aviso de segurança por e-mail.");
+        }
+      } else {
+        toast.error("A senha foi alterada, mas não conseguimos confirmar o encerramento das outras sessões. Contate o suporte se notar atividade desconhecida.");
+      }
       setPasswordData({ newPassword: "", confirmPassword: "" });
       setEditingPassword(false);
+      let currentSessionValid = false;
+      try {
+        const { error } = await supabase.auth.refreshSession();
+        currentSessionValid = !error;
+      } catch {
+        // Auth may revoke the current session when the admin password changes.
+      }
+      if (!currentSessionValid) {
+        await signOut().catch(() => undefined);
+        return;
+      }
       await passwordStatus.refetch();
     } catch (error: unknown) {
       console.error("Error changing password:", error);
-      toast.error(getErrorMessage(error, "Erro ao alterar senha"));
+      if (error instanceof VimobAPIError && error.code === "password_update_unconfirmed_after_revocation") {
+        toast.error("A revogação das outras sessões foi aceita, mas não conseguimos confirmar se a nova senha foi salva. Verifique o acesso e solicite a recuperação de senha se necessário.");
+      } else if (error instanceof VimobAPIError && error.code === "password_session_revocation_unconfirmed") {
+        toast.error("A senha não foi atualizada porque não conseguimos confirmar a revogação das outras sessões. Tente novamente.");
+      } else {
+        toast.error(getErrorMessage(error, "Erro ao alterar senha"));
+      }
     } finally {
       setChangingPassword(false);
     }

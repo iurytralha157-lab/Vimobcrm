@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleDashboardEvents } from "@/hooks/schedule/use-schedule-dashboard-events";
 import { getPublicErrorMessage } from "@/lib/api/vimob-error";
-import { getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
+import { getScheduleAllDayLastOccupiedInstant, getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
 import { cn } from "@/lib/utils";
 import type {
   ScheduleDashboardEvent,
@@ -275,7 +275,7 @@ export function AgendaEventsPanel({
       aria-label="Agendamentos do período"
       aria-busy={eventsQuery.isFetching}
       className={cn(
-        "flex h-[440px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none",
+        "flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[440px]",
         className,
       )}
     >
@@ -404,7 +404,10 @@ function AgendaEventCard({
   const presentation = getEventTypePresentation(event.event_type);
   const Icon = presentation.icon;
   const startDate = formatEventDate(event.start_time, reportTimezone);
-  const endDate = formatEventDate(event.end_time, reportTimezone);
+  const occupiedEnd = event.is_all_day
+    ? getScheduleAllDayLastOccupiedInstant(event.start_time, event.end_time, reportTimezone)
+    : null;
+  const endDate = formatEventDate(occupiedEnd == null ? event.end_time : new Date(occupiedEnd).toISOString(), reportTimezone);
   const displayStatus = getDisplayStatus(event, lifecycleNow);
   const statusPresentation = STATUS_PRESENTATION[displayStatus];
   const statusLabel = getStatusLabel(event, displayStatus);

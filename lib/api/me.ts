@@ -1,5 +1,6 @@
 import { vimobAPIRequest } from './vimob-client'
 import {
+  accountStatusSchema,
   apiMeProfileResponseSchema,
   apiMeResponseSchema,
 } from '@/lib/validation/auth-context'
@@ -19,6 +20,10 @@ export type {
 } from '@/lib/validation/auth-context'
 
 export const meAPI = {
+  async getAccountStatus() {
+    const response = await vimobAPIRequest<unknown>('/v1/me/account-status')
+    return validateDomainResponse(accountStatusSchema, response, 'me.account-status')
+  },
   async getMe(organizationId?: string | null) {
     const response = await vimobAPIRequest<unknown>('/v1/me', {
       organizationId,

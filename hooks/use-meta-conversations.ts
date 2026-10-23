@@ -42,7 +42,7 @@ export interface MetaMessage {
 }
 
 export function useMetaConversations(pageId?: string, options: { enabled?: boolean } = {}) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
 
   return useQuery({
@@ -59,7 +59,7 @@ export function useMetaConversations(pageId?: string, options: { enabled?: boole
 }
 
 export function useMetaMessages(conversationId: string | null, options: { enabled?: boolean } = {}) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
 
   return useQuery({
@@ -77,7 +77,7 @@ export function useMetaMessages(conversationId: string | null, options: { enable
 
 export function useSendMetaMessage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
 
   return useMutation({

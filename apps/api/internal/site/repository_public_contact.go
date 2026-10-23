@@ -455,6 +455,9 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		return nil, err
 	}
 
+	if err := distribution.ValidatePersistedIntakeDestination(ctx, tx, organizationID, leadID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

@@ -40,6 +40,7 @@ import {
   RoundRobinRule,
 } from '@/hooks/use-round-robin-rules';
 import { useTags } from '@/hooks/use-tags';
+import { useRoundRobin } from '@/hooks/use-round-robins';
 import { useWebhooks } from '@/hooks/use-webhooks';
 import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
 import { useProperties } from '@/hooks/use-properties';
@@ -79,7 +80,7 @@ function toMetaFormConfigRow(value: Record<string, unknown>): MetaFormConfigRow 
 }
 
 function useAllMetaFormConfigs() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -100,6 +101,7 @@ interface RulesManagerProps {
 }
 
 export function RulesManager({ roundRobinId }: RulesManagerProps) {
+  const queueQuery = useRoundRobin(roundRobinId);
   const { data: rules = [], isLoading } = useRoundRobinRules(roundRobinId);
   const { data: tags = [] } = useTags();
   const { data: webhooks = [] } = useWebhooks();
@@ -114,7 +116,9 @@ export function RulesManager({ roundRobinId }: RulesManagerProps) {
   const [ruleToDelete, setRuleToDelete] = useState<string | null>(null);
 
   const handleCreateRule = async () => {
+    if (!queueQuery.data) return;
     await createRule.mutateAsync({
+      expectedRevision: queueQuery.data.revision,
       round_robin_id: roundRobinId,
       match_type: 'source',
       match_value: 'meta',
@@ -122,8 +126,8 @@ export function RulesManager({ roundRobinId }: RulesManagerProps) {
   };
 
   const handleDeleteRule = async () => {
-    if (!ruleToDelete) return;
-    await deleteRule.mutateAsync({ id: ruleToDelete, roundRobinId });
+    if (!ruleToDelete || !queueQuery.data) return;
+    await deleteRule.mutateAsync({ id: ruleToDelete, roundRobinId, expectedRevision: queueQuery.data.revision });
     setRuleToDelete(null);
     setDeleteDialogOpen(false);
   };

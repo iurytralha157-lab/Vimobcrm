@@ -1,15 +1,25 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useLayoutEffect, useState } from 'react';
 import { leadsAPI, type LeadSensitiveProfile, type LeadUpdateInput } from '@/lib/api/leads';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import type { Tables } from '@/lib/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
-import { VimobAPIError } from '@/lib/api/vimob-client';
+import { VimobAPIError, getVimobAPIAccessTokenSessionId, getVimobAPIAccessTokenUserId } from '@/lib/api/vimob-client';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
+import { captureLeadRequestIntent } from '@/lib/lead-request-intent';
+import { isDefinitiveLeadReadDenial } from '@/lib/lead-read-access';
+import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
 import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 import { runLeadImportBatch, type ImportBatchProgress } from '@/lib/lead-import-batch';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
-import { mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
+import { invalidateTagCounts } from '@/lib/tags/management';
+import { canReuseLeadReadOnMount, type VerifiedLeadRead } from '@/lib/lead-read-snapshot';
+import { LeadReadSupersededError, readConsistentLeadSnapshot, reconcileLeadReadCache } from '@/lib/lead-read-consistency';
+import { useLeadUpdateCache } from '@/hooks/leads/use-lead-update-cache';
+import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
+import { assertLeadFinancialFields } from '@/lib/validation/lead-financial-values';
 import {
   countImportDistributionOutcome,
   createEmptyImportDistributionSummary,
@@ -35,6 +45,7 @@ export type CreateLeadInput = {
   tag_ids?: string[];
   conversation_id?: string;
   expected_previous_lead_id?: string;
+  confirm_history_link?: true;
   cargo?: string;
   empresa?: string;
   profissao?: string;
@@ -51,6 +62,7 @@ export type CreateLeadInput = {
   lost_reason?: string;
   is_own_resource?: boolean;
   import_mode?: boolean;
+  import_request_key?: string;
   auto_distribute?: boolean;
   round_robin_id?: string;
   import_row_number?: number;
@@ -68,7 +80,10 @@ export type CreateLeadInput = {
     stateRegistration?: string;
   };
 };
-type CreateLeadResult = Lead & {
+type CreateLeadResult = {
+  id: string;
+  lead: Lead | null;
+  leadVisible: boolean;
   reentry?: boolean;
   assignedUserName?: string;
   distributionOutcome?: LeadDistributionOutcome;
@@ -89,6 +104,8 @@ export type ImportLeadsResult = {
     code: string;
     message: string;
   }>;
+  unstarted: Array<{ index: number; rowNumber: number; name: string }>;
+  stopped: boolean;
   reasons: Array<{ code: string; message: string; count: number }>;
   distribution: ImportDistributionSummary;
 };
@@ -102,11 +119,14 @@ export type ImportLeadsProgress = ImportBatchProgress & {
 export type ImportLeadsMutationInput = {
   rows: CreateLeadInput[];
   onProgress?: (progress: ImportLeadsProgress) => void;
+  signal?: AbortSignal;
+  shouldContinue?: () => boolean;
 };
 
 export type BulkDeleteLeadsResult = {
   deletedIds: string[];
   failures: Array<{ id: string; message: string }>;
+  unstartedIds: string[];
 };
 
 function invalidateLeadSourceOptions(queryClient: QueryClient) {
@@ -122,16 +142,19 @@ const getErrorCode = (error: unknown) => {
 };
 
 export type Lead = Tables<'leads'> & {
+  queue_pool?: import('@/lib/validation/queue-runtime').QueuePool | null;
   can_operate?: boolean;
+  financial_review_required?: boolean;
   tags?: LeadTag[];
   assignee?: { id: string; name: string; avatar_url: string | null };
   stage?: { id: string; name: string; color: string | null; stage_key: string | null };
 };
 
-const leadReadRelationKeys = new Set<keyof Lead>(['can_operate', 'tags', 'assignee', 'stage']);
+const leadReadRelationKeys = new Set<keyof Lead>(['can_operate', 'financial_review_required', 'queue_pool', 'tags', 'assignee', 'stage']);
 
 export type UpdateLeadInput = Partial<Lead> & {
   id: string;
+  expectedUpdatedAt?: string;
   interest_property_ids?: string[];
   profile?: LeadUpdateInput['profile'];
 };
@@ -172,48 +195,89 @@ export function useLeads(filters?: {
   });
 }
 
-export function useLead(id: string | null, options: { freshOnMount?: boolean } = {}) {
+export function useLead(id: string | null, options: {
+  freshOnMount?: boolean;
+  verifiedRead?: VerifiedLeadRead<Lead>;
+} = {}) {
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const queryClient = useQueryClient();
+  const queryKey = ['lead', organizationId, id];
+  const cached = queryClient.getQueryState<Lead>(queryKey);
+  const reuseVerifiedRead = canReuseLeadReadOnMount(options.verifiedRead, {
+    data: cached?.data,
+    dataUpdatedAt: cached?.dataUpdatedAt,
+    organizationId,
+    leadId: id,
+  });
 
   return useQuery({
-    queryKey: ['lead', organizationId, id],
-    queryFn: async () => {
+    queryKey,
+    structuralSharing: (current, incoming) => reconcileLeadReadCache(current as Lead | null | undefined, incoming as Lead | null),
+    queryFn: async ({ signal }) => {
       if (!id || !organizationId) return null;
 
-      const { data, error } = await leadsAPI.getLead(id, organizationId);
-      if (error) throw error;
-
-      return data as Lead;
+      try {
+        return await readConsistentLeadSnapshot<Lead>({
+          organizationId, leadId: id, signal,
+          read: async () => {
+            const { data, error } = await leadsAPI.getLead(id, organizationId, signal);
+            if (error) throw error;
+            return data as Lead | null;
+          },
+          getCached: () => queryClient.getQueryData<Lead>(queryKey),
+        });
+      } catch (error) {
+        if (isDefinitiveLeadReadDenial(error)) {
+          // Query errors retain previous data by default. Erase this denied
+          // snapshot and refresh scoped lists before reporting the error.
+          queryClient.setQueryData(queryKey, null);
+          void queryClient.invalidateQueries({ queryKey: ['contacts-list', organizationId] });
+          void queryClient.invalidateQueries({ queryKey: ['leads', organizationId] });
+        }
+        throw error;
+      }
     },
     enabled: !!id && !!organizationId,
-    ...(options.freshOnMount ? { refetchOnMount: 'always' as const } : {}),
+    retry: (count, error) => !(error instanceof LeadReadSupersededError) && !isDefinitiveLeadReadDenial(error) && count < 3,
+    ...(options.freshOnMount ? { refetchOnMount: reuseVerifiedRead ? false : 'always' as const } : {}),
   });
 }
 
 export function useLeadSensitiveProfile(id: string | null, options: { enabled?: boolean } = {}) {
-	const { activeOrganization } = useAuth();
-	const organizationId = activeOrganization.organizationId || undefined;
-
-	return useQuery<LeadSensitiveProfile>({
-		queryKey: ['lead-sensitive-profile', organizationId, id],
-		queryFn: async () => {
-			if (!id || !organizationId) return {};
-			return leadsAPI.getSensitiveProfile(id, organizationId);
-		},
-		enabled: Boolean(id && organizationId && options.enabled !== false),
-		staleTime: 0,
-		gcTime: 0,
-	});
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
+  const queryClient = useQueryClient();
+  const queryKey = ['lead-sensitive-profile', organizationId, id];
+  const query = useQuery<LeadSensitiveProfile>({
+    queryKey,
+    queryFn: async ({ signal }) => {
+      if (!id || !organizationId) return {};
+      try {
+        return await leadsAPI.getSensitiveProfile(id, organizationId, { signal });
+      } catch (error) {
+        if (!signal.aborted && isDefinitiveLeadReadDenial(error)) queryClient.setQueryData(queryKey, {});
+        throw error;
+      }
+    },
+    enabled: Boolean(id && organizationId && options.enabled !== false),
+    retry: (count, error) => !isDefinitiveLeadReadDenial(error) && count < 3,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  return { ...query, data: options.enabled === false || isDefinitiveLeadReadDenial(query.error) ? undefined : query.data };
 }
 
 export function useCreateLead() {
   const queryClient = useQueryClient();
   const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const requestScope = useLeadRequestScope();
 
-  return useMutation<CreateLeadResult, Error, CreateLeadInput>({
+  return useMutation<CreateLeadResult, Error, CreateLeadInput, LeadRequestOperation>({
+    onMutate: lead => requestScope.bind(lead),
     mutationFn: async (lead) => {
+      const operation = requestScope.require(lead);
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
 
@@ -222,23 +286,20 @@ export function useCreateLead() {
         { limit: 10, windowMs: 60_000 },
       ]);
 
-      const { data, error, reentry, assignedUserName, distributionOutcome } = await leadsAPI.createLead(organizationId, {
+      const { data, error, leadId, leadVisible, reentry, assignedUserName, distributionOutcome } = await leadsAPI.createLead(operation.organizationId, {
         ...lead,
         source: lead.source || 'manual',
-      });
+      }, operation.intent);
 
       if (error) throw error;
-      if (!data) {
-        throw new Error('Não foi possível concluir a criação do lead. Tente novamente.');
-      }
-
-      return { ...data, reentry, assignedUserName, distributionOutcome };
+      return { id: leadId, lead: data, leadVisible, reentry, assignedUserName, distributionOutcome };
     },
-    onSuccess: (data) => {
+    onSuccess: (data, _variables, operation) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-list', operation?.organizationId] });
       invalidateLeadSourceOptions(queryClient);
-      if (organizationId) {
+      if (organizationId && requestScope.isCurrent(operation)) {
         notifyLeadRealtimeChange({
           organizationId,
           leadId: data.id,
@@ -247,18 +308,22 @@ export function useCreateLead() {
       }
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       if (data?.id) {
-        queryClient.invalidateQueries({ queryKey: ['lead', data.id] });
+        queryClient.invalidateQueries({ queryKey: ['lead', operation?.organizationId, data.id] });
         invalidateLeadHistorySoon(queryClient, data.id);
       }
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
-      if (data?.reentry) {
+      if (!requestScope.isCurrent(operation)) return;
+      if (!data.leadVisible) {
+        toast.success('Lead salvo com sucesso. Você não tem acesso para visualizar esse lead.');
+      } else if (data?.reentry) {
         toast.success(`Lead ja existia e foi atualizado. Responsavel atual: ${data.assignedUserName || 'sem responsavel'}`);
       } else {
         toast.success('Lead criado com sucesso!');
       }
     },
-    onError: (error) => {
+    onError: (error, variables, operation) => {
+      if (!requestScope.isCurrent(operation || requestScope.contextFor(variables))) return;
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -274,13 +339,18 @@ export function useCreateLead() {
       }
       toast.error('Erro ao criar lead: ' + getErrorMessage(error));
     },
+    onSettled: (_data, _error, variables) => requestScope.release(variables),
   });
 }
 
 export function useImportLeads() {
   const queryClient = useQueryClient();
-  const { activeOrganization, user } = useAuth();
+  const { activeOrganization, user, session } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const sessionId = getGlobalSignOutSessionId(session);
+  const scopeKey = contactImportScopeKey(organizationId, user?.id, sessionId);
+  const [importScope] = useState(createLeadImportScope);
+  useLayoutEffect(() => importScope.activate(scopeKey), [importScope, scopeKey]);
 
   return useMutation<ImportLeadsResult, Error, CreateLeadInput[] | ImportLeadsMutationInput>({
     mutationFn: async (input) => {
@@ -288,11 +358,17 @@ export function useImportLeads() {
       const onProgress = Array.isArray(input) ? undefined : input.onProgress;
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
+      if (!sessionId) throw new Error('Não foi possível confirmar a sessão. Entre novamente antes de importar.');
       if (rows.length === 0) throw new Error('Nenhum contato válido para importar');
 
       let created = 0;
       let reentered = 0;
       const distribution = createEmptyImportDistributionSummary();
+      const isCurrentScope = importScope.capture(scopeKey);
+      const shouldContinue = () => isCurrentScope()
+        && getVimobAPIAccessTokenUserId() === user.id
+        && getVimobAPIAccessTokenSessionId() === sessionId
+        && (Array.isArray(input) || (input.shouldContinue?.() ?? true));
 
       const batch = await runLeadImportBatch(
         rows,
@@ -309,7 +385,7 @@ export function useImportLeads() {
           const result = await leadsAPI.createLead(organizationId, {
             ...lead,
             import_mode: true,
-          });
+          }, { expectedUserId: user.id, expectedSessionId: sessionId });
           if (result.reentry) reentered += 1;
           else created += 1;
           countImportDistributionOutcome(distribution, resolveImportDistributionOutcome({
@@ -320,6 +396,8 @@ export function useImportLeads() {
         },
         {
           concurrency: 4,
+          signal: Array.isArray(input) ? undefined : input.signal,
+          shouldContinue,
           onProgress: progress => onProgress?.({
             ...progress,
             created,
@@ -353,13 +431,15 @@ export function useImportLeads() {
 
       return {
         total: rows.length,
-        processed: rows.length,
-        remaining: 0,
+        processed: success + failures.length,
+        remaining: batch.unstartedIndexes.length,
         created,
         reentered,
         success,
         failed: failures.length,
         failures,
+        unstarted: batch.unstartedIndexes.map(index => ({ index, rowNumber: rows[index].import_row_number ?? index + 2, name: rows[index].name })),
+        stopped: batch.stopped,
         reasons: Array.from(reasonMap.values()).sort((left, right) =>
           right.count - left.count || left.message.localeCompare(right.message),
         ),
@@ -382,73 +462,44 @@ export function useImportLeads() {
 export function useUpdateLead() {
   const queryClient = useQueryClient();
   const { activeOrganization, user } = useAuth();
+  const requestOperations = useLeadRequestScope();
   const organizationId = activeOrganization.organizationId || undefined;
+  const updateCache = useLeadUpdateCache(queryClient, organizationId, user?.id);
 
   return useMutation({
-    mutationFn: async ({ id, ...updates }: UpdateLeadInput) => {
-      if (!user?.id) throw new Error('Usuário não autenticado');
-      if (!organizationId) throw new Error('Usuário não possui organização');
+    onMutate: (variables: UpdateLeadInput) => {
+      assertLeadFinancialFields(variables);
+      const operation = requestOperations.bind(variables);
+      return updateCache.onMutate(variables, operation);
+    },
+    mutationFn: async (variables: UpdateLeadInput) => {
+      const { id, ...updates } = variables;
+      const operation = requestOperations.require(variables);
+      const requestScope = updateCache.requireRequestScope(variables);
 
-      enforceClientActionRateLimit(`lead:update:${user.id}:${id}`, [
+      enforceClientActionRateLimit(`lead:update:${requestScope.actorId}:${id}`, [
         { limit: 2, windowMs: 1000 },
         { limit: 30, windowMs: 60_000 },
       ]);
 
       const updateData = toLeadUpdateInput(updates);
 
-      const { data, error } = await leadsAPI.updateLead(id, updateData, organizationId);
+      const { data, error } = await leadsAPI.updateLead(id, updateData, requestScope.organizationId, operation.intent);
       if (error) throw error;
       if (!data) {
         throw new Error('Nenhuma alteração foi gravada. Verifique se você tem permissão para editar este lead.');
       }
+      if (data.id !== id || data.organization_id !== requestScope.organizationId) {
+        throw new Error('Não foi possível confirmar os dados salvos. Abra o lead novamente.');
+      }
 
       return data;
     },
-    onSuccess: (data, variables) => {
-      if (data?.id) {
-        queryClient.setQueryData<Lead>(['lead', organizationId, data.id], (current) =>
-          mergeLeadOperationCapability(current, data));
-        queryClient.setQueriesData<Lead[]>({ queryKey: ['leads'] }, (current) => {
-          if (!Array.isArray(current)) return current;
-          return current.map((lead) => lead.id === data.id ? mergeLeadOperationCapability(lead, data) : lead);
-        });
-        queryClient.setQueriesData<Lead[]>({ queryKey: ['contacts-list'] }, (current) => {
-          if (!Array.isArray(current)) return current;
-          return current.map((lead) => lead.id === data.id ? mergeLeadOperationCapability(lead, data) : lead);
-        });
-        queryClient.setQueriesData<Array<{ leads?: Array<Partial<Lead> & { id: string }> }>>(
-          { queryKey: ['stages-with-leads'] },
-          (current) => {
-            if (!Array.isArray(current)) return current;
-            return current.map((stage) => {
-              if (!Array.isArray(stage?.leads)) return stage;
-              return {
-                ...stage,
-                leads: stage.leads.map((lead) => lead.id === data.id
-                  ? mergeLeadOperationCapability(lead, data)
-                  : lead),
-              };
-            });
-          },
-        );
-
-        queryClient.invalidateQueries({ queryKey: ['lead', organizationId, data.id] });
-        invalidateLeadHistorySoon(queryClient, data.id);
-      }
-
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
-      queryClient.invalidateQueries({ queryKey: ['contacts-list'], refetchType: 'active' });
-      if (variables.source !== undefined) invalidateLeadSourceOptions(queryClient);
-      if (organizationId && data?.id) {
-        notifyLeadRealtimeChange({
-          organizationId,
-          leadId: data.id,
-          reason: 'lead.updated',
-        });
-      }
-      queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'none' });
-    },
-    onError: (error) => {
+    onSuccess: updateCache.onSuccess,
+    onError: (error, variables, context) => {
+      const failedContext = context || updateCache.contextFor(variables);
+      updateCache.onError(failedContext);
+      if (!updateCache.isCurrent(failedContext)) return;
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -456,15 +507,23 @@ export function useUpdateLead() {
       }
       toast.error('Erro ao atualizar lead: ' + error.message);
     },
+    onSettled: (_data, _error, variables) => {
+      requestOperations.release(variables);
+      updateCache.release(variables);
+    },
   });
 }
 
 export function useDeleteLead() {
   const queryClient = useQueryClient();
-  const { activeOrganization, user } = useAuth();
+  const { activeOrganization, user, session } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const scopeKey = contactImportScopeKey(organizationId, user?.id, getGlobalSignOutSessionId(session));
+  const [operationScope] = useState(createLeadImportScope);
+  useLayoutEffect(() => operationScope.activate(scopeKey), [operationScope, scopeKey]);
 
   return useMutation({
+    onMutate: () => ({ isCurrent: operationScope.capture(scopeKey) }),
     mutationFn: async (id: string) => {
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
@@ -474,19 +533,23 @@ export function useDeleteLead() {
         { limit: 10, windowMs: 60_000 },
       ]);
 
-      const { error } = await leadsAPI.deleteLead(id, organizationId);
+      const intent = captureLeadRequestIntent(user.id, getGlobalSignOutSessionId(session));
+      if (!operationScope.capture(scopeKey)()) throw new Error('Seu acesso mudou. Confira a lista antes de excluir.');
+      const { error } = await leadsAPI.deleteLead(id, organizationId, intent);
       if (error) throw error;
     },
-    onSuccess: (_, leadId) => {
+    onSuccess: (_, leadId, context) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
+      if (!context?.isCurrent()) return;
       if (organizationId) {
         notifyLeadRealtimeChange({ organizationId, leadId, reason: 'lead.deleted' });
       }
       toast.success('Contato excluído!');
     },
-    onError: (error) => {
+    onError: (error, _id, context) => {
+      if (!context?.isCurrent()) return;
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -499,8 +562,12 @@ export function useDeleteLead() {
 
 export function useBulkDeleteLeads() {
   const queryClient = useQueryClient();
-  const { activeOrganization, user } = useAuth();
+  const { activeOrganization, user, session } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const sessionId = getGlobalSignOutSessionId(session);
+  const scopeKey = contactImportScopeKey(organizationId, user?.id, sessionId);
+  const [operationScope] = useState(createLeadImportScope);
+  useLayoutEffect(() => operationScope.activate(scopeKey), [operationScope, scopeKey]);
 
   return useMutation<BulkDeleteLeadsResult, Error, string[]>({
     mutationFn: async (inputIds) => {
@@ -510,6 +577,12 @@ export function useBulkDeleteLeads() {
       const ids = Array.from(new Set(inputIds.filter(Boolean)));
       if (ids.length === 0) throw new Error('Nenhum contato selecionado');
       if (ids.length > 500) throw new Error('Selecione no máximo 500 contatos por operação');
+      const intent = captureLeadRequestIntent(user.id, sessionId);
+      const isCurrentScope = operationScope.capture(scopeKey);
+      if (!isCurrentScope()) throw new Error('Seu acesso mudou. Confira a lista antes de excluir.');
+      const shouldContinue = () => isCurrentScope()
+        && getVimobAPIAccessTokenUserId() === user.id
+        && getVimobAPIAccessTokenSessionId() === sessionId;
 
       let cursor = 0;
       const deletedIds: string[] = [];
@@ -517,11 +590,12 @@ export function useBulkDeleteLeads() {
 
       const deleteNext = async () => {
         while (cursor < ids.length) {
+          if (!shouldContinue()) break;
           const id = ids[cursor];
           cursor += 1;
 
           try {
-            await leadsAPI.deleteLead(id, organizationId);
+            await leadsAPI.deleteLead(id, organizationId, intent);
             deletedIds.push(id);
           } catch (error) {
             failures.push({ id, message: getErrorMessage(error) });
@@ -533,7 +607,7 @@ export function useBulkDeleteLeads() {
         Array.from({ length: Math.min(3, ids.length) }, () => deleteNext()),
       );
 
-      return { deletedIds, failures };
+      return { deletedIds, failures, unstartedIds: ids.slice(cursor) };
     },
     onSuccess: (result) => {
       if (result.deletedIds.length === 0) return;
@@ -552,9 +626,12 @@ export function useAddLeadTag() {
   const queryClient = useQueryClient();
   const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const requestScope = useLeadRequestScope();
 
   return useMutation({
-    mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
+    mutationFn: async (variables: { leadId: string; tagId: string }) => {
+      const operation = requestScope.require(variables);
+      const { leadId, tagId } = variables;
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
 
@@ -564,17 +641,19 @@ export function useAddLeadTag() {
       ]);
 
       // Verificar se a tag já está associada ao lead
-      const { error } = await leadsAPI.addLeadTag(leadId, tagId, organizationId);
+      const { error } = await leadsAPI.addLeadTag(leadId, tagId, operation.organizationId, operation.intent);
 
       if (error) throw error;
     },
-    onSuccess: (_, variables) => {
+    onMutate: variables => ({ organizationId, operation: requestScope.bind(variables) }),
+    onSuccess: (_, variables, mutationScope) => {
+      if (mutationScope?.organizationId) void invalidateTagCounts(queryClient, mutationScope.organizationId);
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      if (organizationId) {
+      if (mutationScope?.organizationId && requestScope.isCurrent(mutationScope.operation)) {
         notifyLeadRealtimeChange({
-          organizationId,
+          organizationId: mutationScope.organizationId,
           leadId: variables.leadId,
           reason: 'lead.tagged',
         });
@@ -584,9 +663,10 @@ export function useAddLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
       invalidateLeadHistorySoon(queryClient, variables.leadId);
-      toast.success('Tag adicionada!');
+      if (requestScope.isCurrent(mutationScope?.operation)) toast.success('Tag adicionada!');
     },
-    onError: (error: unknown) => {
+    onError: (error, variables, context) => {
+      if (!requestScope.isCurrent(context?.operation || requestScope.contextFor(variables))) return;
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -599,6 +679,7 @@ export function useAddLeadTag() {
         toast.error('Erro ao adicionar tag: ' + message);
       }
     },
+    onSettled: (_data, _error, variables) => requestScope.release(variables),
   });
 }
 
@@ -606,9 +687,12 @@ export function useRemoveLeadTag() {
   const queryClient = useQueryClient();
   const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const requestScope = useLeadRequestScope();
 
   return useMutation({
-    mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
+    mutationFn: async (variables: { leadId: string; tagId: string }) => {
+      const operation = requestScope.require(variables);
+      const { leadId, tagId } = variables;
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
 
@@ -617,17 +701,19 @@ export function useRemoveLeadTag() {
         { limit: 20, windowMs: 60_000 },
       ]);
 
-      const { error } = await leadsAPI.removeLeadTag(leadId, tagId, organizationId);
+      const { error } = await leadsAPI.removeLeadTag(leadId, tagId, operation.organizationId, operation.intent);
 
       if (error) throw error;
     },
-    onSuccess: (_, variables) => {
+    onMutate: variables => ({ organizationId, operation: requestScope.bind(variables) }),
+    onSuccess: (_, variables, mutationScope) => {
+      if (mutationScope?.organizationId) void invalidateTagCounts(queryClient, mutationScope.organizationId);
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      if (organizationId) {
+      if (mutationScope?.organizationId && requestScope.isCurrent(mutationScope.operation)) {
         notifyLeadRealtimeChange({
-          organizationId,
+          organizationId: mutationScope.organizationId,
           leadId: variables.leadId,
           reason: 'lead.untagged',
         });
@@ -637,9 +723,10 @@ export function useRemoveLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
       invalidateLeadHistorySoon(queryClient, variables.leadId);
-      toast.success('Tag removida!');
+      if (requestScope.isCurrent(mutationScope?.operation)) toast.success('Tag removida!');
     },
-    onError: (error) => {
+    onError: (error, variables, context) => {
+      if (!requestScope.isCurrent(context?.operation || requestScope.contextFor(variables))) return;
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -647,5 +734,6 @@ export function useRemoveLeadTag() {
       }
       toast.error('Erro ao remover tag: ' + error.message);
     },
+    onSettled: (_data, _error, variables) => requestScope.release(variables),
   });
 }

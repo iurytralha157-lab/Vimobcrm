@@ -36,6 +36,9 @@ export function EventRelationsSections({
   showLeadSelector,
   leadSearch,
   searchedLeads,
+  leadsLoading,
+  leadsError,
+  onRetryLeads,
   canViewProperties,
   selectedPropertyId,
   selectedPropertyLabel,
@@ -59,6 +62,9 @@ export function EventRelationsSections({
   showLeadSelector: boolean;
   leadSearch: string;
   searchedLeads: readonly Lead[];
+  leadsLoading: boolean;
+  leadsError: boolean;
+  onRetryLeads: () => void;
   canViewProperties: boolean;
   selectedPropertyId: string | null;
   selectedPropertyLabel: string | null;
@@ -135,28 +141,43 @@ export function EventRelationsSections({
                   onValueChange={onLeadSearchChange}
                 />
                 <CommandList>
-                  <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
-                  <CommandGroup>
-                    {searchedLeads.map((lead) => (
-                      <CommandItem
-                        key={lead.id}
-                        value={lead.id}
-                        onSelect={() => onLeadSelect(lead)}
-                      >
-                        <User className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <div className="flex min-w-0 flex-col">
-                          <span className="truncate text-[12px] font-light">
-                            {lead.name}
-                          </span>
-                          <span className="truncate text-[10px] text-muted-foreground">
-                            {[lead.phone, lead.email]
-                              .filter(Boolean)
-                              .join(" · ") || "Sem contato"}
-                          </span>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
+                  {leadsLoading ? (
+                    <div role="status" className="px-3 py-3 text-[12px] text-muted-foreground">
+                      Buscando leads...
+                    </div>
+                  ) : leadsError ? (
+                    <div role="alert" className="px-3 py-3 text-[12px] text-muted-foreground">
+                      <p>Não foi possível buscar os leads.</p>
+                      <Button type="button" variant="ghost" size="sm" className="mt-1 h-8 text-[12px]" onClick={onRetryLeads}>
+                        Tentar novamente
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {searchedLeads.map((lead) => (
+                          <CommandItem
+                            key={lead.id}
+                            value={lead.id}
+                            onSelect={() => onLeadSelect(lead)}
+                          >
+                            <User className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <div className="flex min-w-0 flex-col">
+                              <span className="truncate text-[12px] font-light">
+                                {lead.name}
+                              </span>
+                              <span className="truncate text-[10px] text-muted-foreground">
+                                {[lead.phone, lead.email]
+                                  .filter(Boolean)
+                                  .join(" · ") || "Sem contato"}
+                              </span>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </>
+                  )}
                 </CommandList>
               </Command>
             </PopoverContent>

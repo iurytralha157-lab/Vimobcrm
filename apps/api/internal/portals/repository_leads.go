@@ -186,6 +186,9 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 		return leadWebhookResult{}, err
 	}
 
+	if err := distribution.ValidatePersistedIntakeDestination(ctx, tx, integration.OrganizationID, leadID); err != nil {
+		return leadWebhookResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return leadWebhookResult{}, err
 	}

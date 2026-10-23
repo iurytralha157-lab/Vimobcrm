@@ -25,7 +25,7 @@ type ImoviewSyncResult = {
 };
 
 export function useImoviewIntegration(options: { enabled?: boolean } = {}) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const orgId = activeOrganization.organizationId;
 
   return useQuery({
@@ -36,7 +36,7 @@ export function useImoviewIntegration(options: { enabled?: boolean } = {}) {
 }
 
 export function useSaveImoviewIntegration() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
   const orgId = activeOrganization.organizationId;
 
@@ -54,7 +54,7 @@ export function useSaveImoviewIntegration() {
 }
 
 export function useTestImoviewConnection() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation<ImoviewTestResult, Error>({
     mutationFn: async () => {
@@ -69,7 +69,7 @@ export function useTestImoviewConnection() {
 }
 
 export function useSyncImoviewProperties() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation<ImoviewSyncResult, Error>({
@@ -91,7 +91,7 @@ export function useSyncImoviewProperties() {
 }
 
 export function useDeleteImoviewIntegration() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({

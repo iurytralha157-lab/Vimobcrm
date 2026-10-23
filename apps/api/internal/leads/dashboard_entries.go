@@ -101,6 +101,17 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 			select l.id, l.organization_id, l.created_at
 			from public.leads l
 			where ` + strings.Join(cardWhere, " and ") + `
+		), initial_entries as (
+			-- Select first-arrival facts together. A per-card lateral sort makes
+			-- a broad dashboard do thousands of index probes and can trigger JIT.
+			-- Non-countable initial events still participate in the first fact.
+			select distinct on (e.lead_id) e.organization_id, e.lead_id,
+				e.id, e.occurred_at, e.source, e.page_id, e.page_name, e.campaign_id, e.campaign_name,
+				e.utm_campaign, e.adset_id, e.adset_name, e.ad_id, e.ad_name, e.provider, e.metadata
+			from public.lead_entry_events e
+			join visible_cards l on e.organization_id = l.organization_id and e.lead_id = l.id
+			where e.entry_type = 'initial'
+			order by e.lead_id, e.occurred_at, e.created_at, e.id
 		), entries as (
 			select coalesce(initial.id::text, 'initial:' || l.id::text) as entry_id,
 				l.id as lead_id, false as is_reentry,
@@ -131,16 +142,7 @@ func (repo Repository) buildDashboardEntriesCTE(tenantContext tenant.Context, fi
 			-- duplicate provider delivery marked it non-countable. If it is
 			-- absent, only the card creation time is safe to synthesize: current
 			-- lead and lead_meta attribution may belong to a later reentry.
-			left join lateral (
-				select e.id, e.occurred_at, e.source, e.page_id, e.page_name, e.campaign_id, e.campaign_name,
-					e.utm_campaign, e.adset_id, e.adset_name, e.ad_id, e.ad_name, e.provider, e.metadata
-				from public.lead_entry_events e
-				where e.organization_id = l.organization_id
-				  and e.lead_id = l.id
-				  and e.entry_type = 'initial'
-				order by e.occurred_at, e.created_at, e.id
-				limit 1
-			) initial on true
+			left join initial_entries initial on initial.organization_id = l.organization_id and initial.lead_id = l.id
 			union all
 			select e.id::text as entry_id, l.id as lead_id,
 				true as is_reentry, e.occurred_at,

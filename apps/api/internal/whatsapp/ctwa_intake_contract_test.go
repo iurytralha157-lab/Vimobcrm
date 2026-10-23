@@ -359,6 +359,8 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 	))
 	requireCTWAContractContains(t, strings.ToLower(confirmationWrapper),
 		"return boolean(clicktowhatsappadconfirmationmethod(message))")
+	requireCTWAContractContains(t, confirmationWrapper,
+		"return isConfirmedClickToWhatsAppAd(message) && !isPostFormFollowUpWithoutLeadIntake(message)")
 
 	ruleSelection := compactCTWAContract(sectionCTWAContract(
 		t,
@@ -367,7 +369,7 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 		"async function lookupManagedWhatsAppLeadEntry(",
 	))
 	for _, fragment := range []string{
-		"const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message)",
+		"const confirmedCtwaAd = isEligibleClickToWhatsAppLeadIntake(message)",
 		"const targetsSessionQueue = Boolean(optionalUuid(rule?.target_round_robin_id)) && optionalUuid(rule?.session_id) === session.id",
 		"if (managed && confirmedCtwaAd)",
 		"return { ...rule, __managed_whatsapp_message_distribution: true }",
@@ -414,7 +416,7 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 	}
 	for _, fragment := range []string{
 		"const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message)",
-		"const confirmedCtwaAd = Boolean(ctwaConfirmationMethod)",
+		"const confirmedCtwaAd = Boolean(ctwaConfirmationMethod) && !isPostFormFollowUpWithoutLeadIntake(message)",
 		"await findEstablishedWhatsAppConversationLead(session, message, identity)",
 		"if (isAmbiguousWhatsAppLeadPhone(error))",
 		`return quarantinedWhatsAppLeadResolution("whatsapp_lead_phone_ambiguous")`,
@@ -683,7 +685,7 @@ func TestEvolutionGoEdgePersistsCTWAAttributionAcrossManagedRetryLifecycle(t *te
 		"async function logCreativeActivity(",
 	))
 	for _, fragment := range []string{
-		"if (!isConfirmedClickToWhatsAppAd(message)) return false",
+		"if (!isEligibleClickToWhatsAppLeadIntake(message)) return false",
 		`.rpc("enrich_whatsapp_lead_entry_attribution", {`,
 		"p_organization_id: session.organization_id",
 		"p_lead_id: leadId",

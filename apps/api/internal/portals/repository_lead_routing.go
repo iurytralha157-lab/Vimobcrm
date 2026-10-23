@@ -210,6 +210,7 @@ func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID
 	err := tx.QueryRow(ctx, `
 		with entries as (
 			select rrm.id, rrm.round_robin_id, rrm.organization_id, rrm.user_id, rrm.team_id,
+			       rrm.membership_generation,
 			       coalesce(rrm.position, 0) as position, rrm.created_at
 			from public.round_robin_members rrm
 			where rrm.organization_id = $1::uuid
@@ -217,7 +218,7 @@ func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID
 			  and coalesce(rrm.is_active, true)
 		), candidates as (
 			select entries.id, entries.round_robin_id, entries.organization_id, entries.user_id,
-			       entries.team_id, entries.position, entries.created_at,
+			       entries.team_id, entries.membership_generation, entries.position, entries.created_at,
 			       tm.id as team_member_id, tm.created_at as team_member_created_at
 			from entries
 			left join public.teams direct_team
@@ -228,12 +229,13 @@ func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
+			 and tm.membership_generation = entries.membership_generation
 			 and coalesce(tm.is_active, true)
 			where entries.user_id is not null
 			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
 			union all
 			select entries.id, entries.round_robin_id, entries.organization_id, tm.user_id,
-			       entries.team_id, entries.position, entries.created_at,
+			       entries.team_id, tm.membership_generation, entries.position, entries.created_at,
 			       tm.id, tm.created_at
 			from entries
 			join public.teams team
@@ -250,6 +252,8 @@ func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID
 		  on om.organization_id = candidates.organization_id
 		 and om.user_id = candidates.user_id
 		 and coalesce(om.is_active, true)
+		 and om.deleted_at is null
+		 and om.membership_generation = candidates.membership_generation
 		join public.users user_profile
 		  on user_profile.id = candidates.user_id and coalesce(user_profile.is_active, true)
 		left join lateral (

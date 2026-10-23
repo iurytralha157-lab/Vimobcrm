@@ -187,6 +187,8 @@ func TestEvolutionWebhookRateLimiterConcurrentAccessStaysBounded(t *testing.T) {
 
 func TestEvolutionWebhookRateLimitRejectsBeforeRepositoryOrBodyRead(t *testing.T) {
 	limiter := newEvolutionWebhookRateLimiter()
+	now := time.Date(2026, time.October, 21, 12, 0, 0, 0, time.UTC)
+	limiter.now = func() time.Time { return now }
 	requestURL := "/v1/whatsapp/webhook/evolution-go?session_id=45c7cc1f-6dad-4cf4-8df3-561858de4725&instance_id=instance-1"
 	newRequest := func(body io.ReadCloser) *http.Request {
 		request := httptest.NewRequest(http.MethodPost, requestURL, nil)

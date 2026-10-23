@@ -8,6 +8,10 @@ import {
   shouldRefreshLeadMetaFilters,
 } from "@/lib/lead-realtime-policy";
 import { getPipelineRealtimeRefreshDelay } from "@/lib/pipeline-reliability";
+import { invalidateTagCounts, shouldRefreshTagCounts } from "@/lib/tags/management";
+import { isLeadResourceQuery } from "@/lib/queue-pool-cache";
+import { createDashboardQueryRefresh, isDashboardRefreshQueryKey } from "@/lib/dashboard-query-refresh";
+import { createContactsQueryRefresh } from "@/lib/contacts-query-refresh";
 
 type LeadRealtimeChange = {
   organizationId: string;
@@ -74,6 +78,7 @@ const LEAD_LIST_QUERY_KEYS = [
   "leads",
   "contacts-list",
   "dashboard-stats",
+  "financial-dashboard",
   "enhanced-dashboard-stats",
   "leads-chart-data",
   "funnel-data",
@@ -82,6 +87,8 @@ const LEAD_LIST_QUERY_KEYS = [
   "dashboard-extra-counts",
   "dashboard-lead-distribution",
   "dashboard-campaigns",
+  "dashboard-creatives",
+  "dashboard-creative-media",
   "dashboard-first-contact",
   "dashboard-first-contact-leads",
   "dashboard-lead-entries",
@@ -162,6 +169,8 @@ export function LeadRealtimeBus() {
 
     let isActive = true;
     const orgId = organizationId;
+    const dashboardRefresh = createDashboardQueryRefresh(queryClient, orgId);
+    const contactsRefresh = createContactsQueryRefresh(queryClient, orgId);
     const pendingLeadIds = pendingLeadIdsRef.current;
     const pendingReasons = pendingReasonsRef.current;
     const pipelineBoardQuery = { queryKey: ["stages-with-leads", orgId] };
@@ -252,6 +261,9 @@ export function LeadRealtimeBus() {
       debounceRef.current = setTimeout(() => {
         const leadIdsToSync = [...pendingLeadIds];
         const reasonsToSync = [...pendingReasons];
+        if (shouldRefreshTagCounts(reasonsToSync)) {
+          void invalidateTagCounts(queryClient, orgId);
+        }
         const hasUnscopedChange = hasUnscopedChangeRef.current;
         const isWhatsAppOnlyBatch = isWhatsAppOnlyLeadRealtimeBatch(reasonsToSync);
         pendingLeadIds.clear();
@@ -282,10 +294,18 @@ export function LeadRealtimeBus() {
 
         listQueryKeys.forEach((queryKey) => {
           if (queryKey === "stages-with-leads") return;
+          if (queryKey === "contacts-list") {
+            contactsRefresh.invalidate();
+            return;
+          }
+          if (isDashboardRefreshQueryKey(queryKey)) {
+            dashboardRefresh.invalidate(queryKey);
+            return;
+          }
 
           void queryClient.invalidateQueries(
             {
-              queryKey: [queryKey],
+              queryKey: queryKey === "financial-dashboard" ? [queryKey, orgId] : [queryKey],
               refetchType: "active",
             },
             { cancelRefetch: false },
@@ -304,6 +324,9 @@ export function LeadRealtimeBus() {
           });
         }
 
+        if (hasUnscopedChange) {
+          void queryClient.invalidateQueries({ predicate: (query) => LEAD_DETAIL_QUERY_KEYS.includes(query.queryKey[0] as typeof LEAD_DETAIL_QUERY_KEYS[number]) && isLeadResourceQuery(query.queryKey, orgId), refetchType: 'active' }, { cancelRefetch: false });
+        }
         leadIdsToSync.forEach((pendingLeadId) => {
           LEAD_DETAIL_QUERY_KEYS.forEach((queryKey) => {
             void queryClient.invalidateQueries(
@@ -366,6 +389,8 @@ export function LeadRealtimeBus() {
 
     return () => {
       isActive = false;
+      dashboardRefresh.dispose();
+      contactsRefresh.dispose();
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;

@@ -276,7 +276,7 @@ func (repo Repository) UpsertOperationalRules(ctx context.Context, tenantContext
 	}
 	defer tx.Rollback(ctx)
 
-	stage, err := repo.loadOperationalStage(ctx, tx, tenantContext.OrganizationID, request.StageID, true)
+	stage, err := repo.lockOperationalStageParentFirst(ctx, tx, tenantContext.OrganizationID, request.StageID)
 	if err != nil {
 		return OperationalRules{}, err
 	}
@@ -472,11 +472,22 @@ func (repo Repository) loadOperationalRules(ctx context.Context, queryer operati
 			select
 				ct.id,
 				(
-				  nullif(soc.config->>'cadence_template_id', '') is null
+				  ct.stage_id is distinct from s.id
+				  or nullif(soc.config->>'cadence_template_id', '') is null
 				  or ct.id::text <> soc.config->>'cadence_template_id'
 				) as inherited
 			from public.cadence_templates ct
 			where ct.organization_id = s.organization_id
+			  and (
+				-- The dedicated editor must retain its own paused or empty draft.
+				(ct.stage_id = s.id and ct.id::text = soc.config->>'cadence_template_id')
+				or (
+				  coalesce(soc.config->>'operational_rules_version', '') <> '1'
+				  and ct.is_active = true
+				  and exists (select 1 from public.cadence_tasks_template task
+				    where task.organization_id = ct.organization_id and task.cadence_template_id = ct.id)
+				)
+			  )
 			  and (
 				ct.stage_id = s.id
 				or (

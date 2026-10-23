@@ -45,6 +45,12 @@ jobs:
       - name: Test validation contracts
         run: npm run validation:test
 
+      - name: Test team revision OpenAPI contract
+        run: node --test packages/contracts/openapi/team-revision-contract.test.mjs
+
+      - name: Test team editor snapshot consistency
+        run: node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test lib/teams/team-editor-snapshot.test.ts
+
       - name: Test Meta Page confirmation contract
         run: node --test scripts/tests/meta-connect-flow-ui.test.mjs
 
@@ -59,6 +65,9 @@ jobs:
 
       - name: Test canonical auth and admin contracts
         run: npm run validation:auth-admin
+
+      - name: Test OpenAPI contracts
+        run: node --test packages/contracts/openapi/*.test.mjs
 
       - name: Type-check application sources
         run: npm run typecheck
@@ -95,9 +104,187 @@ jobs:
       - name: Test API and shared Go packages
         run: go test ./apps/api/... ./packages/auth/... ./packages/db/...
 
+  invitation-integration:
+    name: Invitation PostgreSQL checks
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: invitation_test
+          POSTGRES_PASSWORD: invitation_test
+          POSTGRES_DB: invitation_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U invitation_test -d invitation_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Test invitation locks and inactive accounts against disposable PostgreSQL
+        env:
+          ADMIN_INVITATION_TEST_DATABASE_URL: postgresql://invitation_test:invitation_test@127.0.0.1:5432/invitation_test?sslmode=disable
+        run: go test -count=1 -v ./apps/api/internal/admin -run '^(TestInvitationIdentityLock|TestInvitationActivationPreservesSuspensionAcrossOrganizations)'
+
+  membership-access-integration:
+    name: Member access PostgreSQL checks
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: membership_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Test member removal and re-entry against disposable PostgreSQL
+        env:
+          VIMOB_RUN_MEMBERSHIP_ACCESS_DB_TESTS: LOCAL_WRITE_TEST
+          MEMBERSHIP_ACCESS_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/users
+          -run '^(TestMembershipRemoval(DoesNotRestoreOldAccessAcrossOrganizations|SerializesNewQueueAndTeamParticipants)|TestLegacyParticipantsRemainIneligibleAfterReinvite)$'
+
+      - name: Test old queue members stay visibly inactive after re-entry
+        env:
+          VIMOB_RUN_MEMBERSHIP_ACCESS_DB_TESTS: LOCAL_WRITE_TEST
+          MEMBERSHIP_ACCESS_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/roundrobin
+          -run '^TestMemberReadShowsRemovedEpochAsInactive$'
+
+      - name: Test role revocation on a cached member session
+        env:
+          VIMOB_RUN_TENANT_ROLE_DB_TESTS: LOCAL_WRITE_TEST
+          TENANT_ROLE_TEST_ADMIN_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/tenant
+          -run '^TestRoleDeactivationRevalidatesCachedAccessAcrossOrganizations$'
+
+      - name: Test role lifecycle hierarchy and delegated reactivation
+        env:
+          VIMOB_RUN_TENANT_ROLE_DB_TESTS: LOCAL_WRITE_TEST
+          TENANT_ROLE_TEST_ADMIN_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/settings
+          -run '^TestRoleLifecycleProtectsSystemRolesAndTenantScope$'
+
+  whatsapp-contracts:
+    name: WhatsApp disposable PostgreSQL and mobile contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Install web dependencies and isolated browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Download locked Go dependencies before the closed test phase
+        run: |
+          go -C apps/api mod download
+          go -C packages/auth mod download
+          go -C packages/db mod download
+
+      - name: Install PostgreSQL 17 and pgTAP without a default cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          test "$VERSION_CODENAME" = noble
+          sudo systemctl mask postgresql.service
+          sudo install -d /etc/postgresql-common /usr/share/postgresql-common/pgdg
+          printf 'create_main_cluster = false\n' | sudo tee /etc/postgresql-common/createcluster.conf >/dev/null
+          sudo curl --fail --show-error --silent -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main\n' | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-17 postgresql-17-pgtap
+          /usr/lib/postgresql/17/bin/postgres --version
+
+      - name: Test WhatsApp queue, permissions, quick replies and mobile surfaces
+        run: node scripts/tests/whatsapp-ci-run.mjs all "$RUNNER_TEMP/vimob-whatsapp-ci" /usr/lib/postgresql/17/bin
+
+      - name: Stop only the owned disposable WhatsApp cluster
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/vimob-whatsapp-ci/runtime.json" ]; then
+            node scripts/tests/whatsapp-ci-fixture.mjs stop "$RUNNER_TEMP/vimob-whatsapp-ci"
+          fi
+
+      - name: Preserve redacted WhatsApp gate proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-contract-proof
+          path: |
+            ${{ runner.temp }}/vimob-whatsapp-ci/results/*.log
+            ${{ runner.temp }}/vimob-whatsapp-ci/results/*.json
+            ${{ runner.temp }}/vimob-whatsapp-ci/results/*.jsonl
+            ${{ runner.temp }}/vimob-whatsapp-ci/results/*.tap
+          if-no-files-found: warn
+          retention-days: 7
+
   build-and-push:
     name: Build and push images
-    needs: release-gates
+    needs: [release-gates, invitation-integration, membership-access-integration, whatsapp-contracts]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

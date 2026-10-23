@@ -41,7 +41,7 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
 		"processingepoch, err := currentevolutionwebhookprocessingepoch(ctx, tx, session)",
-		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch, repo.postformguardenabled)",
 		"processing_epoch",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",
@@ -290,7 +290,7 @@ func TestEvolutionWebhookRejectsEveryQueryCredential(t *testing.T) {
 }
 
 func TestParseEvolutionWebhookEnvelopeRemovesCredentialsBeforePersistence(t *testing.T) {
-	body := []byte(`{"event":"MESSAGE","instanceToken":"provider-secret","data":{"instance_token":"nested-secret","message":{"conversation":"hello"}},"webhook_token":"legacy-secret","__vimob_ingress":{"routing_key":"attacker-controlled"}}`)
+	body := []byte(`{"event":"MESSAGE","instanceToken":"provider-secret","data":{"instance_token":"nested-secret","message":{"conversation":"hello"}},"webhook_token":"legacy-secret","__vimob_ingress":{"routing_key":"attacker-controlled"},"__vimob_retention":{"kind":"attacker-controlled"}}`)
 	envelope, err := parseEvolutionWebhookEnvelope(
 		url.Values{
 			"session_id":  []string{"45c7cc1f-6dad-4cf4-8df3-561858de4725"},
@@ -308,8 +308,14 @@ func TestParseEvolutionWebhookEnvelopeRemovesCredentialsBeforePersistence(t *tes
 	if want := evolutionWebhookEventKey(envelope.SessionID, body); envelope.EventKey != want {
 		t.Fatalf("EventKey = %q, want existing raw-payload deduplication key %q", envelope.EventKey, want)
 	}
+	if envelope.rawBodyEventKey != envelope.EventKey {
+		t.Fatal("original callback hash proof was lost before payload sanitization")
+	}
+	if envelope.EventKey == evolutionWebhookEventKey(envelope.SessionID, envelope.Payload) {
+		t.Fatal("fixture must exercise callback whose sanitized payload has a different hash")
+	}
 	stored := string(envelope.Payload)
-	for _, secret := range []string{"provider-secret", "nested-secret", "legacy-secret", "instanceToken", "instance_token", "webhook_token", "attacker-controlled", evolutionWebhookRoutingMetaKey} {
+	for _, secret := range []string{"provider-secret", "nested-secret", "legacy-secret", "instanceToken", "instance_token", "webhook_token", "attacker-controlled", evolutionWebhookRoutingMetaKey, "__vimob_retention"} {
 		if strings.Contains(stored, secret) {
 			t.Fatalf("sanitized inbox payload still contains %q: %s", secret, stored)
 		}

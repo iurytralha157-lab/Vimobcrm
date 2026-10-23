@@ -5,7 +5,6 @@ import {
   type PropertyPickerProperty,
 } from "@/components/features/properties/PropertyPickerDialog";
 import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -52,7 +51,7 @@ interface DistributionQueueConditionValueEditorProps {
 
 function conditionOptionBadgeClass(selected: boolean) {
   return cn(
-    "min-h-8 max-w-full cursor-pointer whitespace-normal break-words rounded-[5px] border border-transparent px-2.5 py-1.5 text-left text-[12px] font-light leading-4 shadow-none transition-colors",
+    "inline-flex min-h-8 max-w-full cursor-pointer items-center whitespace-normal break-words rounded-[5px] border border-transparent px-2.5 py-1.5 text-left text-[12px] font-light leading-4 shadow-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
     selected
       ? "bg-primary text-primary-foreground hover:bg-primary/90"
       : "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]",
@@ -98,9 +97,10 @@ export function DistributionQueueConditionValueEditor({
       return (
         <div className={compactOptionListClassName}>
           {DISTRIBUTION_QUEUE_SOURCE_OPTIONS.map((option) => (
-            <Badge
+            <button
               key={option.value}
-              variant="outline"
+              type="button"
+              aria-pressed={condition.values.includes(option.value)}
               className={conditionOptionBadgeClass(
                 condition.values.includes(option.value),
               )}
@@ -112,7 +112,7 @@ export function DistributionQueueConditionValueEditor({
               }}
             >
               {option.label}
-            </Badge>
+            </button>
           ))}
         </div>
       );
@@ -125,9 +125,10 @@ export function DistributionQueueConditionValueEditor({
             </span>
           )}
           {incomingWebhooks.map((webhook) => (
-            <Badge
+            <button
               key={webhook.id}
-              variant="outline"
+              type="button"
+              aria-pressed={condition.values.includes(webhook.id)}
               className={cn(
                 conditionOptionBadgeClass(
                   condition.values.includes(webhook.id),
@@ -141,9 +142,9 @@ export function DistributionQueueConditionValueEditor({
                 onUpdate(condition.id, { values });
               }}
             >
-              <Webhook className="h-3 w-3" />
+              <Webhook className="h-3 w-3" aria-hidden="true" />
               {webhook.name}
-            </Badge>
+            </button>
           ))}
         </div>
       );
@@ -156,9 +157,10 @@ export function DistributionQueueConditionValueEditor({
             </span>
           )}
           {activeWhatsAppSessions.map((session) => (
-            <Badge
+            <button
               key={session.id}
-              variant="outline"
+              type="button"
+              aria-pressed={condition.values.includes(session.id)}
               className={cn(
                 conditionOptionBadgeClass(
                   condition.values.includes(session.id),
@@ -172,11 +174,11 @@ export function DistributionQueueConditionValueEditor({
                 onUpdate(condition.id, { values });
               }}
             >
-              <MessageSquare className="h-3 w-3" />
+              <MessageSquare className="h-3 w-3" aria-hidden="true" />
               {session.display_name ||
                 session.phone_number ||
                 session.instance_name}
-            </Badge>
+            </button>
           ))}
         </div>
       );
@@ -346,9 +348,10 @@ export function DistributionQueueConditionValueEditor({
       return (
         <div className={compactOptionListClassName}>
           {DISTRIBUTION_QUEUE_WEBSITE_CATEGORY_OPTIONS.map((option) => (
-            <Badge
+            <button
               key={option.value}
-              variant="outline"
+              type="button"
+              aria-pressed={condition.values.includes(option.value)}
               className={cn(
                 conditionOptionBadgeClass(
                   condition.values.includes(option.value),
@@ -362,9 +365,9 @@ export function DistributionQueueConditionValueEditor({
                 onUpdate(condition.id, { values });
               }}
             >
-              <Globe className="h-3 w-3" />
+              <Globe className="h-3 w-3" aria-hidden="true" />
               {option.label}
-            </Badge>
+            </button>
           ))}
         </div>
       );
@@ -372,6 +375,7 @@ export function DistributionQueueConditionValueEditor({
       return (
         <Input
           placeholder="Digite parte do nome da campanha..."
+          maxLength={180}
           value={condition.values[0] || ""}
           onChange={(event) =>
             onUpdate(condition.id, { values: [event.target.value] })
@@ -421,7 +425,7 @@ export function DistributionQueueConditionValueEditor({
               >
                 <SelectValue placeholder="Selecione uma conexão..." />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-[min(24rem,var(--radix-select-content-available-height))] max-w-[var(--radix-select-content-available-width)] [&_[role=option]>span:last-child]:min-w-0 [&_[role=option]>span:last-child]:break-words">
                 {selectedSessionUnavailable && condition.sessionId && (
                   <SelectItem value={condition.sessionId} disabled>
                     {selectedSessionLabel} (indisponível)
@@ -523,13 +527,12 @@ export function DistributionQueueConditionValueEditor({
       return (
         <Input
           placeholder="Ex: Sao Paulo, Campinas"
-          value={condition.values.join(", ")}
+          value={condition.values.join(",")}
           onChange={(event) =>
             onUpdate(condition.id, {
-              values: event.target.value
-                .split(",")
-                .map((value) => value.trim())
-                .filter(Boolean),
+              // Keep spaces and unfinished separators in the draft. Submit
+              // sanitization already trims values and removes empty cities.
+              values: event.target.value.split(","),
             })
           }
           className={textEntryClassName}

@@ -42,7 +42,7 @@ export function CurrencyInput({
       <Input
         value={draft}
         onChange={(event) => {
-          const nextDraft = event.target.value.replace(/[^\d,.]/g, "");
+          const nextDraft = event.target.value;
           setDraft(nextDraft);
           onValueChange(parseCurrencyInput(nextDraft));
         }}

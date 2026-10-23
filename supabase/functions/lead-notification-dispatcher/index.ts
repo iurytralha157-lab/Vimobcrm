@@ -51,7 +51,10 @@ function formatLeadDate(value: string) {
   return `${datePart} | ${timePart}`;
 }
 
-async function fetchCampaignName(supabase: any, lead: LeadRecord) {
+async function fetchCampaignName(
+  supabase: ReturnType<typeof createClient>,
+  lead: LeadRecord,
+) {
   const { data: meta } = await supabase
     .from("lead_meta")
     .select("campaign_name, utm_campaign")

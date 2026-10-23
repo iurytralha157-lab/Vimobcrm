@@ -19,6 +19,13 @@ const PROPERTY_ID = "22222222-2222-4222-8222-222222222222";
 const OWNERSHIP_ID = "33333333-3333-4333-8333-333333333333";
 const OWNER_ID = "44444444-4444-4444-8444-444444444444";
 
+test("workspace retains canonical publication state alongside visibility", () => {
+  const fixture = workspaceResponseFixture();
+  const state = { id: OWNERSHIP_ID, desired_state: "published", observed_state: "error", published_version: 1, public_visible: false, last_error_code: "worker_timeout", last_error_message: "Tente novamente." };
+  const parsed = apiPropertyWorkspaceResponseSchema.parse({ ...fixture, data: { ...fixture.data, property: { ...fixture.data.property, site_publication: state } } });
+  assert.deepEqual(parsed.data.property.site_publication, state);
+});
+
 function workspaceResponseFixture() {
   return {
     data: {

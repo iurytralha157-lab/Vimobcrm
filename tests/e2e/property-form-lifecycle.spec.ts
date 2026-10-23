@@ -57,8 +57,9 @@ async function openTab(page: Page, name: string, section: string) {
 
 async function expectPropertyFormSegmentedTabs(page: Page) {
   const tabList = page.getByRole('tablist', {
-    name: 'Etapas do formulário do imóvel',
+    name: 'Etapas do formulário',
   });
+  await expect(page.getByRole('dialog', { name: /Novo Imóvel|Editar Imóvel/ })).toBeVisible();
   await expect(tabList).toBeVisible();
   await expect(tabList.getByRole('tab')).toHaveCount(
     PROPERTY_FORM_TAB_NAMES.length,
@@ -67,21 +68,16 @@ async function expectPropertyFormSegmentedTabs(page: Page) {
     const tab = tabList.getByRole('tab', { name, exact: true });
     await expect(tab).toHaveAccessibleName(name);
     await expect(tab.locator('svg')).toHaveCount(1);
-    await expect(tab).toHaveText('');
+    await expect(tab).toHaveText(name);
+    await expect(tab).toHaveAttribute('aria-controls', /^property-panel-/);
   }
-  await expect(tabList.locator('xpath=..')).toHaveAttribute(
-    'data-collapse',
-    'compact',
-  );
-  await expect(tabList).toHaveAttribute('data-responsive-tab-scroll', /.*/);
-
-  for (const name of [
-    PROPERTY_FORM_TAB_NAMES[0],
-    PROPERTY_FORM_TAB_NAMES.at(-1)!,
-  ]) {
-    await tabList.getByRole('tab', { name, exact: true }).focus();
-    await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
-  }
+  await expect(tabList.locator('xpath=../..')).toHaveAttribute('data-form-wizard', '');
+  await expect(page.locator('[data-testid="property-form-public-preview"], [data-testid="property-form-history"]')).toBeVisible();
+  await tabList.getByRole('tab', { name: PROPERTY_FORM_TAB_NAMES[0], exact: true }).focus();
+  await page.keyboard.press('End');
+  await expect(tabList.getByRole('tab', { name: PROPERTY_FORM_TAB_NAMES.at(-1)!, exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Home');
+  await expect(tabList.getByRole('tab', { name: PROPERTY_FORM_TAB_NAMES[0], exact: true })).toHaveAttribute('aria-selected', 'true');
 }
 
 async function fillCreationForm(page: Page, title: string, suffix: string) {

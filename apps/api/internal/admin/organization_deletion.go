@@ -647,12 +647,8 @@ func (repo Repository) lockAndDisableOrganization(ctx context.Context, organizat
 	}
 	if _, err := tx.Exec(ctx, `
 		update public.users u
-		set is_active = false,
-		    updated_at = now()
-		where u.organization_id = $1::uuid
-		  and coalesce(u.role, '') <> 'super_admin'
-		  and not exists (
-			select 1
+		set organization_id = (
+			select other_membership.organization_id
 			from public.organization_members other_membership
 			join public.organizations other_organization
 			  on other_organization.id = other_membership.organization_id
@@ -660,7 +656,12 @@ func (repo Repository) lockAndDisableOrganization(ctx context.Context, organizat
 			where other_membership.user_id = u.id
 			  and other_membership.organization_id <> $1::uuid
 			  and other_membership.is_active = true
-		  )
+			  and other_membership.deleted_at is null
+			order by other_membership.joined_at, other_membership.organization_id
+			limit 1
+		),
+		    updated_at = now()
+		where u.organization_id = $1::uuid
 	`, organizationID); err != nil {
 		return err
 	}
@@ -1051,22 +1052,10 @@ func (repo Repository) purgeOrganizationDatabaseWithExplicitUsers(
 			where other_membership.user_id = target_user.id
 			  and other_membership.organization_id <> $1::uuid
 			  and other_membership.is_active = true
+			  and other_membership.deleted_at is null
 			order by other_membership.joined_at, other_membership.organization_id
 			limit 1
 		),
-		    is_active = case
-		      when coalesce(target_user.role, '') = 'super_admin' then true
-		      else exists (
-		        select 1
-		        from public.organization_members active_membership
-		        join public.organizations active_organization
-		          on active_organization.id = active_membership.organization_id
-		         and active_organization.is_active = true
-		        where active_membership.user_id = target_user.id
-		          and active_membership.organization_id <> $1::uuid
-		          and active_membership.is_active = true
-		      )
-		    end,
 		    updated_at = now()
 		where target_user.organization_id = $1::uuid
 	`, organizationID); err != nil {
@@ -1184,7 +1173,9 @@ func organizationScopedDeletionPlan(
 		if err := rows.Scan(&table.Schema, &table.Name); err != nil {
 			return nil, nil, err
 		}
-		if table.key() == "public.organizations" || table.key() == "public.users" {
+		// Device ownership is user_id; organization_id is registration metadata.
+		// Its SET NULL FK preserves the device when that organization disappears.
+		if table.key() == "public.organizations" || table.key() == "public.users" || table.key() == "public.push_tokens" {
 			continue
 		}
 		tables = append(tables, table)

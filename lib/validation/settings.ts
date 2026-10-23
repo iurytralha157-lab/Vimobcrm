@@ -555,5 +555,6 @@ export const apiChangePasswordResponseSchema = z
     allowed: z.boolean(),
     message: z.string(),
     emailNotificationSent: z.boolean().optional(),
+    sessionsRevoked: z.boolean().optional(),
   })
   .passthrough();

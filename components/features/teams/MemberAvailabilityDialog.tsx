@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useReducer, type SetStateAction } from "react";
 import { AlertTriangle, Clock, Copy, Loader2, RefreshCw, X } from "lucide-react";
 import {
   Dialog,
@@ -22,10 +22,14 @@ import {
   useMemberAvailability,
   useBulkUpdateMemberAvailability,
   getDayName,
-  type MemberAvailability,
 } from "@/hooks/use-member-availability";
-import { isValidAvailabilityWeek } from "./availability-week";
+import { isValidAvailabilityWeek, availabilityTimeOptions, toAvailabilityInput } from "./availability-week";
+import { isAvailabilityClock } from "@/lib/teams/availability-clock";
 import { getInitials } from "@/lib/user-display";
+import { useActiveOrganizationId } from "@/hooks/use-active-organization";
+import { VimobAPIError } from "@/lib/api/vimob-error";
+import { toast } from "sonner";
+import { availabilityDraftReducer, EMPTY_AVAILABILITY_DRAFT } from "./member-availability-draft";
 
 interface MemberAvailabilityDialogProps {
   open: boolean;
@@ -44,62 +48,6 @@ interface DaySchedule {
   end_time: string;
 }
 
-const TIME_OPTIONS = [
-  "00:00",
-  "00:30",
-  "01:00",
-  "01:30",
-  "02:00",
-  "02:30",
-  "03:00",
-  "03:30",
-  "04:00",
-  "04:30",
-  "05:00",
-  "05:30",
-  "06:00",
-  "06:30",
-  "07:00",
-  "07:30",
-  "08:00",
-  "08:30",
-  "09:00",
-  "09:30",
-  "10:00",
-  "10:30",
-  "11:00",
-  "11:30",
-  "12:00",
-  "12:30",
-  "13:00",
-  "13:30",
-  "14:00",
-  "14:30",
-  "15:00",
-  "15:30",
-  "16:00",
-  "16:30",
-  "17:00",
-  "17:30",
-  "18:00",
-  "18:30",
-  "19:00",
-  "19:30",
-  "20:00",
-  "20:30",
-  "21:00",
-  "21:30",
-  "22:00",
-  "22:30",
-  "23:00",
-  "23:30",
-  "23:59",
-];
-
-const DEFAULT_START = "08:00";
-const DEFAULT_END = "18:00";
-const EMPTY_AVAILABILITY: MemberAvailability[] = [];
-
 export function MemberAvailabilityDialog({
   open,
   onOpenChange,
@@ -108,61 +56,54 @@ export function MemberAvailabilityDialog({
   memberAvatar,
   readOnly = false,
 }: MemberAvailabilityDialogProps) {
-  const {
-    data: existingAvailabilityData,
-    isLoading,
-    isError,
-    refetch,
-  } = useMemberAvailability(teamMemberId);
-  const existingAvailability = existingAvailabilityData ?? EMPTY_AVAILABILITY;
+  const organizationId = useActiveOrganizationId();
+  const scopeKey = `${organizationId}:${teamMemberId}`;
+  const scopeRef = useRef(scopeKey);
+  const saveInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const availabilityQuery = useMemberAvailability(teamMemberId);
+  const { data: snapshot, isLoading, isError, refetch } = availabilityQuery;
   const bulkUpdate = useBulkUpdateMemberAvailability();
 
-  const [schedules, setSchedules] = useState<DaySchedule[]>([]);
-  const [globalAllDay, setGlobalAllDay] = useState(false);
-  const [legacyConfirmed, setLegacyConfirmed] = useState(false);
+  const [draft, dispatchDraft] = useReducer(availabilityDraftReducer, EMPTY_AVAILABILITY_DRAFT);
+  const schedules = draft.scopeKey === scopeKey ? draft.schedules : [];
+  const baseRevision = draft.scopeKey === scopeKey ? draft.revision : null;
+  const legacyConfirmed = draft.scopeKey === scopeKey && draft.legacyConfirmed;
+  const reviewReason = draft.scopeKey === scopeKey ? draft.reviewReason : null;
+  const activeSchedules = schedules.filter((entry) => entry.is_active);
+  const globalAllDay = activeSchedules.length > 0 && activeSchedules.every((entry) => entry.is_all_day);
+  const setSchedules = (update: SetStateAction<DaySchedule[]>) => dispatchDraft({ type: "edit", scopeKey, update: typeof update === "function" ? update : () => update });
+  const [saveConflict, setSaveConflict] = useState(false);
+
+  useEffect(() => { scopeRef.current = scopeKey; }, [scopeKey]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   useEffect(() => {
-    if (open) {
-      if (isLoading || isError) return;
-      const initialSchedules: DaySchedule[] = [];
-      const hasExisting = existingAvailability.length > 0;
-
-      for (let day = 0; day < 7; day++) {
-        const existing = existingAvailability.find(
-          (item) => item.day_of_week === day,
-        );
-        initialSchedules.push({
-          day_of_week: day,
-          is_active: existing
-            ? existing.is_active
-            : hasExisting
-              ? false
-              : day >= 1 && day <= 5,
-          is_all_day: existing?.is_all_day ?? false,
-          start_time: existing?.start_time?.slice(0, 5) || DEFAULT_START,
-          end_time: existing?.end_time?.slice(0, 5) || DEFAULT_END,
-        });
-      }
-
+    if (!open) {
+      let cancelled = false;
+      queueMicrotask(() => { if (!cancelled) { dispatchDraft({ type: "close" }); setSaveConflict(false); } });
+      return () => { cancelled = true; };
+    }
+    if (isLoading || isError || availabilityQuery.isFetching || !snapshot) return;
       let cancelled = false;
       queueMicrotask(() => {
         if (cancelled) return;
-        setSchedules(initialSchedules);
-        const activeSchedules = initialSchedules.filter(
-          (schedule) => schedule.is_active,
-        );
-        setGlobalAllDay(
-          activeSchedules.length > 0 &&
-            activeSchedules.every((schedule) => schedule.is_all_day),
-        );
-        setLegacyConfirmed(hasExisting);
+        dispatchDraft(open ? { type: "observe", scopeKey, snapshot } : { type: "close" });
       });
 
       return () => {
         cancelled = true;
       };
-    }
-  }, [existingAvailability, isError, isLoading, open]);
+  }, [snapshot, availabilityQuery.isFetching, isError, isLoading, open, scopeKey]);
+
+  const hasRevisionConflict = saveConflict || (baseRevision !== null && snapshot?.revision !== baseRevision);
+  const handleReload = async () => {
+    const requestedScope = scopeKey;
+    const current = await refetch();
+    if (current.isError || !current.data || !mountedRef.current || scopeRef.current !== requestedScope) return;
+    dispatchDraft({ type: "reload", scopeKey: requestedScope, snapshot: current.data });
+    setSaveConflict(false);
+  };
 
   const toggleDay = (dayOfWeek: number) => {
     setSchedules((prev) =>
@@ -189,7 +130,6 @@ export function MemberAvailabilityDialog({
   };
 
   const toggleGlobalAllDay = (checked: boolean) => {
-    setGlobalAllDay(checked);
     setSchedules((prev) =>
       prev.map((schedule) => ({
         ...schedule,
@@ -206,7 +146,6 @@ export function MemberAvailabilityDialog({
           : schedule,
       ),
     );
-    if (!checked) setGlobalAllDay(false);
   };
 
   const applyDayToAllDays = (dayOfWeek: number) => {
@@ -227,25 +166,31 @@ export function MemberAvailabilityDialog({
   };
 
   const handleSave = async () => {
-    if (readOnly) return;
+    if (!organizationId || readOnly || saveInFlightRef.current || baseRevision === null || hasRevisionConflict || !isValidAvailabilityWeek(schedules) || !legacyConfirmed) return;
+    saveInFlightRef.current = true;
+    const requestedScope = scopeKey;
+    try {
     await bulkUpdate.mutateAsync({
       teamMemberId,
-      availability: schedules.map((schedule) => ({
-        day_of_week: schedule.day_of_week,
-        start_time: schedule.is_all_day ? null : `${schedule.start_time}:00`,
-        end_time: schedule.is_all_day ? null : `${schedule.end_time}:00`,
-        is_all_day: schedule.is_all_day,
-        is_active: schedule.is_active,
-      })),
+      organizationId,
+      expectedRevision: baseRevision,
+      availability: toAvailabilityInput(schedules),
     });
-    onOpenChange(false);
+    if (mountedRef.current && scopeRef.current === requestedScope) onOpenChange(false);
+    } catch (error) {
+      if (mountedRef.current && scopeRef.current === requestedScope && error instanceof VimobAPIError && error.code === "team_revision_conflict") {
+        setSaveConflict(true);
+        toast.error("A equipe mudou em outra sessão. Sua escala foi preservada; carregue a versão atual antes de salvar.");
+        void refetch();
+      }
+    } finally { saveInFlightRef.current = false; }
   };
 
   const activeDays = schedules.filter((schedule) => schedule.is_active).length;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[12px] font-light text-[var(--app-text-primary)] shadow-none sm:max-h-[88dvh] sm:max-w-lg [&_button.absolute]:hidden">
+    <Dialog open={open} onOpenChange={(value) => { if (!bulkUpdate.isPending) onOpenChange(value); }}>
+      <DialogContent data-management-editor className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[12px] font-light text-[var(--app-text-primary)] shadow-none sm:max-h-[88dvh] sm:max-w-lg [&_button.absolute]:hidden">
         <div className="p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -278,13 +223,22 @@ export function MemberAvailabilityDialog({
               type="button"
               className="grid h-8 w-8 place-items-center rounded-[6px] text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               aria-label="Fechar disponibilidade"
-              onClick={() => onOpenChange(false)}
+              onClick={() => { if (!bulkUpdate.isPending) onOpenChange(false); }}
+              disabled={bulkUpdate.isPending}
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          {isLoading ? (
+          {hasRevisionConflict && !readOnly && (
+            <div role="alert" className="mb-3 rounded-[6px] bg-amber-500/10 p-3 text-[11px] text-amber-700 dark:text-amber-300">
+              <p>A equipe mudou em outra sessão. Sua escala permanece no formulário.</p>
+              <Button type="button" variant="ghost" onClick={() => void handleReload()} disabled={availabilityQuery.isFetching || bulkUpdate.isPending} className="mt-1 h-8 px-2 text-[11px] font-light">
+                Descartar rascunho e carregar versão atual
+              </Button>
+            </div>
+          )}
+          {isLoading || (!isError && baseRevision === null) ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
             </div>
@@ -306,25 +260,25 @@ export function MemberAvailabilityDialog({
             </div>
           ) : (
             <div className="max-h-[55vh] space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-              {existingAvailability.length === 0 && (
+              {reviewReason && (
                 <div className="rounded-[6px] bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
                       <p className="text-[12px] font-normal">
-                        Sem escala configurada: recebe leads 24h
+                        {reviewReason === "missing" ? "Sem escala configurada: recebe leads 24h" : "A escala salva precisa de revisão"}
                       </p>
                       <p className="mt-1 text-[10px] leading-4 opacity-80">
                         {readOnly
-                          ? "Esta equipe ainda não possui uma escala configurada."
-                          : "Revise os sete dias abaixo. Ao salvar, esta escala passará a controlar a distribuição."}
+                          ? "A escala está ausente, incompleta ou contém horários inválidos."
+                          : "Corrija os horários pendentes e revise os sete dias. Confirme a revisão antes de salvar a escala que controla a distribuição."}
                       </p>
                       {!readOnly && (
                         <label className="mt-2 flex cursor-pointer items-center gap-2 text-[10px]">
                           <input
                             type="checkbox"
                             checked={legacyConfirmed}
-                            onChange={(event) => setLegacyConfirmed(event.target.checked)}
+                            onChange={(event) => dispatchDraft({ type: "confirm", scopeKey, confirmed: event.target.checked })}
                             className="h-3.5 w-3.5 rounded-[4px] accent-primary"
                           />
                           Confirmo que revisei a escala.
@@ -346,7 +300,7 @@ export function MemberAvailabilityDialog({
                 <Switch
                   checked={globalAllDay}
                   onCheckedChange={toggleGlobalAllDay}
-                  disabled={readOnly}
+                  disabled={readOnly || bulkUpdate.isPending}
                 />
               </div>
 
@@ -377,7 +331,7 @@ export function MemberAvailabilityDialog({
                         checked={schedule.is_active}
                         onCheckedChange={() => toggleDay(schedule.day_of_week)}
                         className="shrink-0"
-                        disabled={readOnly}
+                        disabled={readOnly || bulkUpdate.isPending}
                       />
 
                       <span
@@ -396,7 +350,7 @@ export function MemberAvailabilityDialog({
                                 toggleDayAllDay(schedule.day_of_week, checked)
                               }
                               className="scale-75"
-                              disabled={readOnly}
+                              disabled={readOnly || bulkUpdate.isPending}
                             />
                             <Label
                               htmlFor={`all-day-${schedule.day_of_week}`}
@@ -409,7 +363,7 @@ export function MemberAvailabilityDialog({
                           {!schedule.is_all_day ? (
                             <div className="flex min-w-0 flex-1 items-center gap-1">
                               <Select
-                                value={schedule.start_time}
+                                value={isAvailabilityClock(schedule.start_time) ? schedule.start_time : undefined}
                                 onValueChange={(value) =>
                                   updateDayTime(
                                     schedule.day_of_week,
@@ -417,13 +371,13 @@ export function MemberAvailabilityDialog({
                                     value,
                                   )
                                 }
-                                disabled={readOnly}
+                                disabled={readOnly || bulkUpdate.isPending}
                               >
                                 <SelectTrigger className="h-8 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Revisar horário" />
                                 </SelectTrigger>
                                 <SelectContent className="app-header-popover rounded-[8px] border-0 p-1">
-                                  {TIME_OPTIONS.map((time) => (
+                                  {availabilityTimeOptions(schedule.start_time).map((time) => (
                                     <SelectItem
                                       key={time}
                                       value={time}
@@ -438,7 +392,7 @@ export function MemberAvailabilityDialog({
                                 -
                               </span>
                               <Select
-                                value={schedule.end_time}
+                                value={isAvailabilityClock(schedule.end_time) ? schedule.end_time : undefined}
                                 onValueChange={(value) =>
                                   updateDayTime(
                                     schedule.day_of_week,
@@ -446,13 +400,13 @@ export function MemberAvailabilityDialog({
                                     value,
                                   )
                                 }
-                                disabled={readOnly}
+                                disabled={readOnly || bulkUpdate.isPending}
                               >
                                 <SelectTrigger className="h-8 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Revisar horário" />
                                 </SelectTrigger>
                                 <SelectContent className="app-header-popover rounded-[8px] border-0 p-1">
-                                  {TIME_OPTIONS.map((time) => (
+                                  {availabilityTimeOptions(schedule.end_time).map((time) => (
                                     <SelectItem
                                       key={time}
                                       value={time}
@@ -485,6 +439,7 @@ export function MemberAvailabilityDialog({
                         <button
                           type="button"
                           onClick={() => applyDayToAllDays(schedule.day_of_week)}
+                          disabled={bulkUpdate.isPending}
                           className="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-solid)] hover:text-[var(--app-text-primary)]"
                           title={`Aplicar horário de ${getDayName(schedule.day_of_week, true)} a todos os dias ativos`}
                           aria-label={`Aplicar horário de ${getDayName(schedule.day_of_week, true)} a todos os dias ativos`}
@@ -503,6 +458,7 @@ export function MemberAvailabilityDialog({
             <Button
               className={`h-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)] ${readOnly ? "w-full" : "w-[36%]"}`}
               onClick={() => onOpenChange(false)}
+              disabled={bulkUpdate.isPending}
             >
               {readOnly ? "Fechar" : "Cancelar"}
             </Button>
@@ -514,6 +470,9 @@ export function MemberAvailabilityDialog({
                   bulkUpdate.isPending ||
                   isLoading ||
                   isError ||
+                  baseRevision === null ||
+                  hasRevisionConflict ||
+                  availabilityQuery.isFetching ||
                   !legacyConfirmed ||
                   !isValidAvailabilityWeek(schedules)
                 }

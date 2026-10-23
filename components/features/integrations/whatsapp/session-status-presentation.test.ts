@@ -14,6 +14,10 @@ test("normalizes provider connection states without treating unknown as connecte
   });
   assert.equal(getWhatsAppStatusPresentation("qr_ready").tone, "waiting");
   assert.equal(getWhatsAppStatusPresentation("logged_out").tone, "disconnected");
+  assert.deepEqual(getWhatsAppStatusPresentation(" error "), {
+    label: "Erro",
+    tone: "disconnected",
+  });
   assert.equal(getWhatsAppStatusPresentation("provider_new_state").tone, "unknown");
 });
 

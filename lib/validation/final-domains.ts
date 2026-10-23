@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { adminUpdateOrganizationInputSchema } from './admin'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
+import { filterTextSchema } from '@/lib/validation/filter-text'
+import { MAX_DASHBOARD_SOURCE_FILTER_LENGTH } from '@/lib/validation/dashboard-filter-text'
 
 export const dynamicRecordSchema = z.record(z.unknown())
 export const nonEmptyDynamicRecordSchema = dynamicRecordSchema.refine(
@@ -432,8 +434,8 @@ const dashboardOptionalUserFilterSchema = z.preprocess(
   emptyOrAllToNull,
   z.union([uuidSchema, z.literal('unassigned')]).nullish(),
 )
-const dashboardOptionalTextFilterSchema = (max: number) => z.preprocess(emptyOrAllToNull, z.string().trim().max(max).nullish())
-const dashboardSearchSchema = z.preprocess(emptyToNull, z.string().trim().max(180).nullish())
+const dashboardOptionalTextFilterSchema = (max: number) => z.preprocess(emptyOrAllToNull, filterTextSchema(max).nullish())
+const dashboardSearchSchema = z.preprocess(emptyToNull, filterTextSchema(180).nullish())
 const dashboardDealStatusSchema = z.preprocess(
   emptyOrAllToNull,
   z.enum(['open', 'won', 'lost']).nullish(),
@@ -468,10 +470,10 @@ export const dashboardFiltersSchema = z.object({
   pipelineId: dashboardOptionalUuidFilterSchema,
   teamId: dashboardOptionalUuidFilterSchema,
   userId: dashboardOptionalUserFilterSchema,
-  source: dashboardOptionalTextFilterSchema(180),
+  source: dashboardOptionalTextFilterSchema(MAX_DASHBOARD_SOURCE_FILTER_LENGTH),
   pageId: dashboardOptionalTextFilterSchema(255),
   campaignId: dashboardOptionalTextFilterSchema(255),
-  campaignIds: z.array(z.string().trim().min(1).max(255)).max(50)
+  campaignIds: z.array(filterTextSchema(255, 1)).max(50)
     .transform((campaignIds) => Array.from(new Set(campaignIds))).optional(),
   adSetId: dashboardOptionalTextFilterSchema(255),
   adId: dashboardOptionalTextFilterSchema(255),
@@ -496,7 +498,7 @@ export const apiDashboardWonDealSchema = z.object({
   id: uuidSchema,
   name: dashboardTextSchema(300),
   phone: dashboardNullableTextSchema(80),
-  source: dashboardNullableTextSchema(180),
+  source: z.string().trim().min(1).nullable(),
   value: dashboardNonNegativeNumberSchema,
   createdAt: dashboardTimestampSchema.nullable(),
   wonAt: dashboardTimestampSchema.nullable(),
@@ -516,7 +518,7 @@ export const apiDashboardLostDealSchema = z.object({
   id: uuidSchema,
   name: dashboardTextSchema(300),
   phone: dashboardNullableTextSchema(80),
-  source: dashboardNullableTextSchema(180),
+  source: z.string().trim().min(1).nullable(),
   lostReason: dashboardTextSchema(500),
   lostReasonGroup: dashboardTextSchema(300),
   createdAt: dashboardTimestampSchema.nullable(),
@@ -586,9 +588,9 @@ export const apiDashboardFunnelSchema = z.array(z.object({
   stage_key: dashboardTextSchema(180),
 }).passthrough())
 export const apiDashboardSourceSchema = z.array(z.object({
-  name: dashboardTextSchema(300),
+  name: z.string().trim().min(1),
   value: nonNegativeIntegerSchema,
-  rawSource: z.string().trim().max(180),
+  rawSource: z.string().trim(),
 }).passthrough())
 export const apiDashboardTopBrokerSchema = z.object({
   id: uuidSchema,
@@ -596,7 +598,7 @@ export const apiDashboardTopBrokerSchema = z.object({
   avatar_url: z.string().trim().max(2_048).nullable(),
   closedLeads: nonNegativeIntegerSchema,
   salesValue: dashboardNonNegativeNumberSchema,
-  totalCommissions: dashboardNonNegativeNumberSchema,
+  totalCommissions: dashboardNonNegativeNumberSchema.nullable(),
 }).passthrough()
 export const apiDashboardTopBrokersSchema = z.object({
   brokers: z.array(apiDashboardTopBrokerSchema),
@@ -692,7 +694,7 @@ const apiDashboardFirstContactBrokerSchema = z.object({
   redistributedReceived: nonNegativeIntegerSchema,
 }).passthrough()
 const apiDashboardFirstContactSourceSchema = z.object({
-  source: dashboardTextSchema(180),
+  source: z.string().trim().min(1),
   leadCount: nonNegativeIntegerSchema,
   contactedLeads: nonNegativeIntegerSchema,
   averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
@@ -713,7 +715,7 @@ export const apiDashboardFirstContactLeadPageSchema = z.object({
   items: z.array(z.object({
     id: uuidSchema,
     name: dashboardTextSchema(300),
-    source: dashboardTextSchema(180),
+    source: z.string().trim().min(1),
     createdAt: dashboardTimestampSchema,
     respondedAt: dashboardTimestampSchema,
     responseSeconds: nonNegativeIntegerSchema,

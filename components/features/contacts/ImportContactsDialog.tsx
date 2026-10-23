@@ -1,11 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useId, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { FormWizardLayout } from '@/components/shared/forms/FormWizardLayout';
+import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from '@/config/form-wizard';
+import { ContactImportPreview } from '@/components/features/contacts/ContactImportPreview';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -36,17 +40,17 @@ import {
   type ImportLeadsResult,
 } from '@/hooks/use-leads';
 import { useRoundRobins } from '@/hooks/use-round-robins';
-import { useTags, useCreateTag } from '@/hooks/use-tags';
+import { useTags } from '@/hooks/use-tags';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { toast } from 'sonner';
 import ExcelJS from 'exceljs';
 import { cn } from '@/lib/utils';
+import styles from '@/components/features/contacts/ContactTransferDialog.module.css';
 import { contactsAPI } from '@/lib/api/contacts';
 import { pipelinesAPI } from '@/lib/api/pipelines';
 import {
   decodeContactsCSV,
-  excelCellValueToText,
   parseContactsCSVRecords,
 } from './parse-contacts-csv';
 import { DEFAULT_TAG_COLOR } from '@/config/tag-colors';
@@ -57,27 +61,24 @@ import {
 } from '@/lib/lead-distribution-outcome';
 import { createTagInputSchema } from '@/lib/validation/crm-support';
 import { leadCreateInputSchema } from '@/lib/validation/leads';
-import { resolveImportRowTagsIfValid } from './import-contacts-validation';
+import { createImportTagResolver, importTagOutcomeUnknown, resolveImportRowTagsIfValid } from '@/components/features/contacts/import-contacts-validation';
+import { assignContactImportKeys, ContactImportFileError, ignoredContactImportColumns, normalizeContactImportLookup, normalizeContactImportRows, resolveContactImportReference, type ParsedContact } from '@/components/features/contacts/contact-import-columns';
+import { parseContactsWorksheet } from '@/components/features/contacts/parse-contacts-xlsx';
+import { parseContactTags } from '@/lib/contact-tag-transfer';
+import { contactImportTagAdapter } from '@/lib/api/contact-import-tags';
+import { invalidateTagConsumers } from '@/lib/tags/management';
+import { contactImportFailureReport, isConfirmedContactImportFailure } from '@/components/features/contacts/contact-import-result';
+import { buildContactExportCSV } from '@/lib/export-contacts-csv';
+import { DEFAULT_LEAD_SOURCE_OPTIONS } from '@/lib/lead-source-options';
+import { resolveContactImportSource } from '@/components/features/contacts/contact-import-source';
+import { contactImportRecovery } from '@/components/features/contacts/contact-import-recovery';
+import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
+import { getVimobAPIAccessTokenSessionId, getVimobAPIAccessTokenUserId } from '@/lib/api/vimob-client';
 
 interface ImportContactsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-interface ParsedContact {
-  rowNumber: number;
-  nome: string;
-  telefone?: string;
-  email?: string;
-  status?: string;
-  pipeline?: string;
-  estagio?: string;
-  responsavel?: string;
-  tags?: string;
-  fonte?: string;
-  motivo_perda?: string;
-  mensagem?: string;
-  [key: string]: string | number | undefined;
 }
 
 const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024;
@@ -89,15 +90,15 @@ const getStagePosition = (stage: object) => {
   return typeof value === 'number' ? value : 0;
 };
 
-const normalizeLookupValue = (value: string) => value.trim().toLocaleLowerCase('pt-BR');
+const normalizeLookupValue = normalizeContactImportLookup;
 
 const resolveDealStatus = (value?: string) => {
   const normalized = normalizeLookupValue(value || '');
   if (!normalized || normalized === 'open' || normalized === 'aberto' || normalized === 'em aberto') {
     return { status: 'open' as const };
   }
-  if (normalized === 'won' || normalized.includes('ganho')) return { status: 'won' as const };
-  if (normalized === 'lost' || normalized.includes('perdido')) return { status: 'lost' as const };
+  if (normalized === 'won' || normalized === 'ganho') return { status: 'won' as const };
+  if (normalized === 'lost' || normalized === 'perdido') return { status: 'lost' as const };
   return {
     status: 'open' as const,
     error: `Status "${value?.trim()}" não reconhecido`,
@@ -105,6 +106,7 @@ const resolveDealStatus = (value?: string) => {
 };
 
 export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialogProps) {
+  const wizardId = useId();
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<ParsedContact[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<string>('');
@@ -121,6 +123,17 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   const [isAutoDistribute, setIsAutoDistribute] = useState(false);
   const [selectedRoundRobin, setSelectedRoundRobin] = useState<string>('automatic');
   const [dynamicSources, setDynamicSources] = useState<string[]>([]);
+  const [activeStep, setActiveStep] = useState('file');
+  const [ignoredColumns, setIgnoredColumns] = useState<string[]>([]);
+  const [preparationProgress, setPreparationProgress] = useState({ processed: 0, createdTags: 0 });
+  const [preparationIssue, setPreparationIssue] = useState<string | null>(null);
+  const [failurePage, setFailurePage] = useState(0);
+  const [unknownPreparationRows, setUnknownPreparationRows] = useState<ReadonlySet<number>>(() => new Set());
+  const unknownPreparationRowsRef = useRef(new Set<number>());
+  const importScopeActiveRef = useRef(true);
+  const importRunRef = useRef<AbortController | null>(null);
+  const [dialogScope] = useState(createLeadImportScope);
+  const queryClient = useQueryClient();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const parseRequestRef = useRef(0);
@@ -137,33 +150,94 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     isLoading: isLoadingStages,
     error: stagesError,
   } = useStages(selectedPipeline || undefined);
-  const { data: users = [] } = useOrganizationUsers({
+  const { data: users = [], isLoading: isLoadingUsers, error: usersError, refetch: refetchUsers } = useOrganizationUsers({
     enabled: open && canAssignImportedLeads,
   });
   const {
     data: roundRobins = [],
     isLoading: isLoadingRoundRobins,
+    error: roundRobinsError,
+    refetch: refetchRoundRobins,
   } = useRoundRobins({
     enabled: open && isAutoDistribute && canSelectDistributionQueue,
   });
-  const { data: allTags = [] } = useTags({ enabled: open });
+  const { isLoading: isLoadingTags, error: tagsError, refetch: refetchTags } = useTags({ enabled: open });
   const importLeads = useImportLeads();
-  const createTag = useCreateTag();
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, user, session } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
+  const sessionId = getGlobalSignOutSessionId(session);
+  const scopeKey = contactImportScopeKey(organizationId, user?.id, sessionId);
+  useLayoutEffect(() => {
+    const deactivate = dialogScope.activate(open ? scopeKey : null);
+    importScopeActiveRef.current = open;
+    return () => {
+      deactivate();
+      importScopeActiveRef.current = false;
+      parseRequestRef.current += 1;
+      importRunRef.current?.abort();
+      importRunRef.current = null;
+    };
+  }, [dialogScope, open, scopeKey]);
+  useEffect(() => {
+    if (!open || !scopeKey) return;
+    const restore = (resetIfMissing = false) => {
+      const saved = contactImportRecovery.get(scopeKey);
+      if (!saved) {
+        if (!resetIfMissing) return;
+        setFile(null); setParsedData([]); setIgnoredColumns([]);
+        setIsParsing(false);
+        setSelectedPipeline(''); setSelectedAssignee('none'); setSelectedSource('import');
+        setCustomSource(''); setShowCustomSourceInput(false); setIsAutoDistribute(false); setSelectedRoundRobin('automatic');
+        setIsImporting(false); setImportPhase(null); setImportProgress(null); setImportResult(null);
+        setPreparationProgress({ processed: 0, createdTags: 0 }); setPreparationIssue(null); setUnknownPreparationRows(new Set()); setActiveStep('file');
+        return;
+      }
+      setFile(saved.file);
+      setIsParsing(false);
+      setParsedData(saved.rows);
+      setIgnoredColumns(saved.ignoredColumns || []);
+      setPreparationIssue(saved.preparationIssue || null);
+      setSelectedPipeline(saved.destination.pipeline);
+      setSelectedAssignee(canAssignImportedLeads ? saved.destination.assignee : 'none');
+      setSelectedSource(saved.destination.source);
+      setCustomSource(saved.destination.customSource);
+      setShowCustomSourceInput(saved.destination.source === 'custom');
+      setIsAutoDistribute(canAssignImportedLeads && saved.destination.autoDistribute);
+      setSelectedRoundRobin(canSelectDistributionQueue ? saved.destination.roundRobin : 'automatic');
+      setIsImporting(saved.pending);
+      setImportPhase(saved.phase);
+      setImportProgress(saved.progress);
+      setImportResult(saved.result);
+      setUnknownPreparationRows(new Set(saved.unknownPreparationRows));
+      setPreparationProgress({ processed: saved.preparedRows, createdTags: saved.createdTags });
+      setActiveStep(saved.result ? 'result' : 'review');
+    };
+    restore(true);
+    return contactImportRecovery.subscribe(scopeKey, () => restore());
+  }, [open, scopeKey, canAssignImportedLeads, canSelectDistributionQueue]);
   const activeRoundRobins = roundRobins.filter(
     roundRobin => roundRobin.is_active !== false,
   );
+  const selectedQueueIssue = !isAutoDistribute || selectedRoundRobin === 'automatic'
+    ? null
+    : !canSelectDistributionQueue
+      ? 'Você não possui permissão para selecionar uma fila específica. Escolha as regras automáticas.'
+      : isLoadingRoundRobins
+        ? 'Aguarde o carregamento da fila de distribuição selecionada.'
+        : roundRobinsError
+          ? 'Não foi possível validar a fila selecionada. Recarregue as filas antes de importar.'
+          : !activeRoundRobins.some(queue => queue.id === selectedRoundRobin)
+            ? 'A fila selecionada não está mais disponível. Escolha outra fila ou as regras automáticas.'
+            : null;
+  const needsTags = useMemo(() => parsedData.some((row) => parseContactTags(row.tags || '').names.length > 0), [parsedData]);
+  const needsUsers = canAssignImportedLeads && !isAutoDistribute && (selectedAssignee !== 'none' || parsedData.some((row) => row.responsavel || row.assigned_user_id));
+  const cataloguesPending = (needsTags && isLoadingTags) || (needsUsers && isLoadingUsers);
+  const cataloguesFailed = (needsTags && Boolean(tagsError)) || (needsUsers && Boolean(usersError));
+  const confirmedFailures = importResult?.failures.filter((failure) => isConfirmedContactImportFailure(failure, unknownPreparationRows)) || [];
 
   const sourceOptions = [
-    { value: 'import', label: 'Importação' },
-    { value: 'facebook', label: 'Facebook' },
-    { value: 'instagram', label: 'Instagram' },
-    { value: 'google', label: 'Google Ads' },
-    { value: 'whatsapp', label: 'WhatsApp' },
-    { value: 'indicacao', label: 'Indicação' },
-    { value: 'manual', label: 'Manual' },
-    ...dynamicSources.filter(s => ![ 'import', 'facebook', 'instagram', 'google', 'whatsapp', 'indicacao', 'manual' ].includes(s.toLowerCase())).map(s => ({ value: s, label: s })),
+    ...DEFAULT_LEAD_SOURCE_OPTIONS,
+    ...dynamicSources.filter(s => s !== 'custom' && !DEFAULT_LEAD_SOURCE_OPTIONS.some((source) => source.value === s.toLowerCase())).map(s => ({ value: s, label: s })),
     { value: 'custom', label: '+ Nova Origem' },
   ];
 
@@ -199,6 +273,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       toast.info('Aguarde a importação terminar antes de trocar o arquivo');
       return;
     }
+    setIgnoredColumns([]);
 
     const validTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -232,6 +307,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     parseRequestRef.current = requestId;
     setFile(selectedFile);
     setParsedData([]);
+    setIgnoredColumns([]);
     setImportResult(null);
     setImportProgress(null);
     setIsParsing(true);
@@ -240,7 +316,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
 
   const parseFile = async (file: File, requestId: number) => {
     try {
-      const sourceRows: Array<{ rowNumber: number; values: Record<string, string> }> = [];
+      let sourceRows: Array<{ rowNumber: number; values: Record<string, string> }> = [];
 
       if (file.name.toLowerCase().endsWith('.csv')) {
         const text = decodeContactsCSV(await file.arrayBuffer());
@@ -252,7 +328,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           toast.error('Arquivo CSV vazio ou inválido');
           return;
         }
-        sourceRows.push(...parsedRows);
+        sourceRows = parsedRows;
       } else {
         const workbook = new ExcelJS.Workbook();
         const arrayBuffer = await file.arrayBuffer();
@@ -267,63 +343,14 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           return;
         }
 
-        const headers: string[] = [];
-
-        worksheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) {
-            row.eachCell((cell, colNumber) => {
-              headers[colNumber - 1] = excelCellValueToText(cell.value, cell.text).toLowerCase().trim();
-            });
-          } else {
-            const rowData: Record<string, string> = {};
-            row.eachCell((cell, colNumber) => {
-              const header = headers[colNumber - 1];
-              if (header) {
-                rowData[header] = excelCellValueToText(cell.value, cell.text);
-              }
-            });
-            if (Object.values(rowData).some(value => value.length > 0)) {
-              sourceRows.push({ rowNumber, values: rowData });
-            }
-          }
-        });
+        sourceRows = parseContactsWorksheet(worksheet);
       }
 
-      const normalizedData = sourceRows.map(({ rowNumber, values }) => {
-        const normalized: ParsedContact = { rowNumber, nome: '' };
-        Object.entries(values).forEach(([key, value]) => {
-          const lowerKey = key.toLowerCase().trim();
-          if (lowerKey === 'nome' || lowerKey === 'name') {
-            normalized.nome = value.trim();
-          } else if (lowerKey === 'telefone' || lowerKey === 'phone' || lowerKey === 'tel') {
-            normalized.telefone = value.trim();
-          } else if (lowerKey === 'email' || lowerKey === 'e-mail') {
-            normalized.email = value.trim();
-          } else if (lowerKey === 'status' || lowerKey === 'situacao' || lowerKey === 'situação') {
-            normalized.status = value.trim();
-          } else if (lowerKey === 'pipeline' || lowerKey === 'funil') {
-            normalized.pipeline = value.trim();
-          } else if (lowerKey === 'estagio' || lowerKey === 'estágio' || lowerKey === 'stage' || lowerKey === 'fase') {
-            normalized.estagio = value.trim();
-          } else if (lowerKey === 'responsavel' || lowerKey === 'responsável' || lowerKey === 'corretor' || lowerKey === 'assignee') {
-            normalized.responsavel = value.trim();
-          } else if (lowerKey === 'tags' || lowerKey === 'etiquetas') {
-            normalized.tags = value.trim();
-          } else if (lowerKey === 'fonte' || lowerKey === 'origem' || lowerKey === 'source') {
-            normalized.fonte = value.trim();
-          } else if (lowerKey === 'motivo de perda' || lowerKey === 'motivo_perda' || lowerKey === 'loss_reason') {
-            normalized.motivo_perda = value.trim();
-          } else if (lowerKey === 'mensagem' || lowerKey === 'message' || lowerKey === 'observacao' || lowerKey === 'observação' || lowerKey === 'note') {
-            normalized.mensagem = value.trim();
-          } else {
-            normalized[lowerKey] = value.trim();
-          }
-        });
-        return normalized;
-      });
+      const normalizedData = assignContactImportKeys(normalizeContactImportRows(sourceRows), () => crypto.randomUUID());
 
       if (parseRequestRef.current !== requestId) return;
       setParsedData(normalizedData);
+      setIgnoredColumns(ignoredContactImportColumns(Object.keys(sourceRows[0]?.values || {})));
 
       if (normalizedData.length === 0) {
         setFile(null);
@@ -340,7 +367,8 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       console.error('Error parsing file:', error);
       setFile(null);
       setParsedData([]);
-      toast.error('Erro ao processar arquivo');
+      setIgnoredColumns([]);
+      toast.error(error instanceof ContactImportFileError ? error.message : 'Erro ao processar arquivo. Confira o formato e as aspas das células.');
     } finally {
       if (parseRequestRef.current === requestId) setIsParsing(false);
     }
@@ -368,6 +396,19 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   };
 
   const handleImport = async () => {
+    if (isImporting || importRunRef.current) return;
+    const controller = new AbortController();
+    const isCurrentDialog = dialogScope.capture(scopeKey);
+    const isCurrentScope = () => isCurrentDialog() && importScopeActiveRef.current && !controller.signal.aborted
+      && getVimobAPIAccessTokenUserId() === user?.id
+      && getVimobAPIAccessTokenSessionId() === sessionId;
+    const assertImportScope = () => {
+      if (!isCurrentScope()) throw Object.assign(new Error('A sessão ou organização mudou. A importação foi interrompida antes de iniciar novas linhas.'), { code: 'contact_import_scope_changed' });
+    };
+    if (cataloguesPending || cataloguesFailed) {
+      toast.error('Aguarde ou recarregue os catálogos de tags e responsáveis necessários para este arquivo');
+      return;
+    }
     if (isParsing) {
       toast.info('Aguarde a leitura da planilha terminar');
       return;
@@ -382,9 +423,22 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       toast.error('Não foi possível identificar a organização ativa');
       return;
     }
+    if (!user?.id) {
+      toast.error('Sua sessão não está disponível. Entre novamente antes de importar.');
+      return;
+    }
+    if (!scopeKey || !isCurrentScope()) {
+      toast.error('Sua sessão mudou ou não pôde ser confirmada. Reabra a importação antes de continuar.');
+      return;
+    }
 
     if (selectedSource === 'custom' && !customSource.trim()) {
       toast.error('Informe o nome da origem personalizada');
+      return;
+    }
+    const sourceResolution = resolveContactImportSource(selectedSource === 'custom' ? customSource : selectedSource);
+    if (!sourceResolution.success) {
+      toast.error(sourceResolution.error);
       return;
     }
 
@@ -414,12 +468,8 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     }
 
     if (isAutoDistribute) {
-      if (
-        selectedRoundRobin !== 'automatic'
-        && (!canSelectDistributionQueue
-          || !activeRoundRobins.some(roundRobin => roundRobin.id === selectedRoundRobin))
-      ) {
-        toast.error('A fila de distribuição selecionada não está mais disponível');
+      if (selectedQueueIssue) {
+        toast.error(selectedQueueIssue);
         return;
       }
     } else if (
@@ -430,9 +480,22 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       return;
     }
 
+    const run = contactImportRecovery.start(scopeKey, {
+      rows: parsedData, file, ignoredColumns,
+      destination: { pipeline: selectedPipeline, assignee: selectedAssignee, source: selectedSource, customSource, autoDistribute: isAutoDistribute, roundRobin: selectedRoundRobin },
+      pending: true, phase: 'preparing', progress: null, result: null,
+      unknownPreparationRows: [], preparedRows: 0, createdTags: 0,
+    });
+    if (!run) { toast.info('Uma importação deste contexto ainda está finalizando as linhas enviadas.'); return; }
+    importRunRef.current = controller;
     setIsImporting(true);
     setImportPhase('preparing');
     setImportResult(null);
+    setFailurePage(0);
+    const unknownRows = new Set<number>();
+    unknownPreparationRowsRef.current = unknownRows;
+    setUnknownPreparationRows(new Set());
+    setPreparationProgress({ processed: 0, createdTags: 0 });
     setImportProgress({
       total: parsedData.length,
       processed: 0,
@@ -443,29 +506,31 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       reentered: 0,
       distribution: createEmptyImportDistributionSummary(),
     });
+    let createdTags = 0;
+    let preparedRows = 0;
+    let dispatchStarted = false;
     try {
-      const pipelineMap = new Map<string, string>();
+      const activePipelines = pipelines.filter((pipeline) => pipeline.is_active !== false);
       const pipelineNameById = new Map<string, string>();
-      pipelines
-        .filter(pipeline => pipeline.is_active !== false)
+      activePipelines
         .forEach(pipeline => {
-          pipelineMap.set(normalizeLookupValue(pipeline.name), pipeline.id);
           pipelineNameById.set(pipeline.id, pipeline.name);
         });
 
-      const usersMap = new Map<string, string>();
-      if (canAssignImportedLeads) {
-        users
-          .filter(user => user.is_active)
-          .forEach(user => {
-            usersMap.set(normalizeLookupValue(user.name), user.id);
-            if (user.email) usersMap.set(normalizeLookupValue(user.email), user.id);
-          });
-      }
+      const activeUsers = users.filter((user) => user.is_active);
 
+      assertImportScope();
+      const originalTagAdapter = contactImportTagAdapter(organizationId, user.id, sessionId);
+      const tagAdapter = { load: originalTagAdapter.load, create: (name: string) => { assertImportScope(); return originalTagAdapter.create(name); } };
+      // A fresh read distinguishes a stale/error catalogue from an absent tag.
+      const importTags = needsTags ? await tagAdapter.load() : [];
       const tagsMap = new Map<string, string>();
-      allTags.forEach(tag => tagsMap.set(normalizeLookupValue(tag.name), tag.id));
-      const unavailableTags = new Map<string, string>();
+      importTags.forEach(tag => tagsMap.set(normalizeLookupValue(tag.name), tag.id));
+      const resolveTagIds = createImportTagResolver(organizationId, importTags, tagAdapter, () => {
+        createdTags += 1;
+        contactImportRecovery.update(scopeKey, run, { preparedRows, createdTags });
+        if (isCurrentScope()) setPreparationProgress({ processed: preparedRows, createdTags });
+      });
 
       const defaultPipelineId = selectedPipeline;
       const defaultStageId = sortedDefaultStages[0]?.id;
@@ -473,7 +538,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         canAssignImportedLeads && !isAutoDistribute && selectedAssignee !== 'none'
           ? selectedAssignee
           : undefined;
-      const finalSource = selectedSource === 'custom' ? customSource.trim() : selectedSource;
+      const finalSource = sourceResolution.value;
       type StageLookup = { stages: typeof stagesData; error?: string };
       const stagesByPipeline = new Map<string, StageLookup>();
       stagesByPipeline.set(defaultPipelineId, { stages: sortedDefaultStages });
@@ -503,6 +568,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
 
       const rows: CreateLeadInput[] = [];
       for (const contact of parsedData) {
+        assertImportScope();
         const validationErrors: string[] = [];
         const contactName = contact.nome.trim();
         if (contactName.length < 2) {
@@ -510,10 +576,10 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         }
 
         let contactPipelineId = defaultPipelineId;
-        if (contact.pipeline) {
-          const mappedPipelineId = pipelineMap.get(normalizeLookupValue(contact.pipeline));
-          if (mappedPipelineId) contactPipelineId = mappedPipelineId;
-          else validationErrors.push(`Funil "${contact.pipeline}" não encontrado`);
+        if (contact.pipeline || contact.pipeline_id) {
+          const reference = resolveContactImportReference(contact.pipeline, contact.pipeline_id, activePipelines, 'Funil');
+          if (reference.id) contactPipelineId = reference.id;
+          if (reference.error) validationErrors.push(reference.error);
         }
 
         const stageLookup = await getStagesForPipeline(contactPipelineId);
@@ -526,22 +592,20 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         let contactStageId = contactPipelineId === defaultPipelineId
           ? defaultStageId
           : stageLookup.stages[0]?.id;
-        if (contact.estagio) {
-          const mappedStage = stageLookup.stages.find(
-            stage => normalizeLookupValue(stage.name) === normalizeLookupValue(contact.estagio || ''),
-          );
-          if (mappedStage) contactStageId = mappedStage.id;
-          else validationErrors.push(`Estágio "${contact.estagio}" não encontrado no funil informado`);
+        if (contact.estagio || contact.stage_id) {
+          const reference = resolveContactImportReference(contact.estagio, contact.stage_id, stageLookup.stages, 'Estágio');
+          if (reference.id) contactStageId = reference.id;
+          if (reference.error) validationErrors.push(reference.error);
         }
 
         let contactAssigneeId = defaultAssigneeId;
-        if (!isAutoDistribute && contact.responsavel) {
+        if (!isAutoDistribute && (contact.responsavel || contact.assigned_user_id)) {
           if (!canAssignImportedLeads) {
             validationErrors.push(`Responsável "${contact.responsavel}" não pode ser aplicado com sua permissão`);
           } else {
-            const mappedAssigneeId = usersMap.get(normalizeLookupValue(contact.responsavel));
-            if (mappedAssigneeId) contactAssigneeId = mappedAssigneeId;
-            else validationErrors.push(`Responsável "${contact.responsavel}" não encontrado`);
+            const reference = resolveContactImportReference(contact.responsavel, contact.assigned_user_id, activeUsers, 'Responsável');
+            if (reference.id) contactAssigneeId = reference.id;
+            if (reference.error) validationErrors.push(reference.error);
           }
         }
 
@@ -556,13 +620,16 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
             ? selectedRoundRobin
             : undefined;
 
+        const rowSource = resolveContactImportSource(contact.fonte?.trim() || finalSource);
+        if (!rowSource.success) validationErrors.push(`Origem: ${rowSource.error}`);
+        const contactSource = rowSource.success ? rowSource.value : contact.fonte?.trim() || finalSource;
         if (validationErrors.length === 0) {
           const leadValidation = leadCreateInputSchema.safeParse({
             name: contactName,
             phone: contact.telefone?.trim() || undefined,
             email: contact.email?.trim() || undefined,
             message: contact.mensagem?.trim() || undefined,
-            source: contact.fonte?.trim() || finalSource,
+            source: contactSource,
             pipelineId: contactPipelineId,
             stageId: contactStageId,
             assignedUserId: isAutoDistribute ? undefined : contactAssigneeId,
@@ -581,11 +648,9 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         }
 
         const tagIds: string[] = [];
-        const tagNames = contact.tags
-          ? Array.from(
-              new Set(contact.tags.split(/[,;|]/).map(tag => tag.trim()).filter(Boolean)),
-            )
-          : [];
+        const parsedTags = parseContactTags(contact.tags || '');
+        const tagNames = parsedTags.names;
+        if (parsedTags.error) validationErrors.push(parsedTags.error);
         if (tagNames.length > 50) {
           validationErrors.push('A linha possui mais de 50 tags');
         }
@@ -604,40 +669,21 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
             }
 
             const normalizedTagName = normalizeLookupValue(tagName);
-            const cachedTagError = unavailableTags.get(normalizedTagName);
-            if (cachedTagError) {
-              validationErrors.push(cachedTagError);
-            } else if (!tagsMap.has(normalizedTagName) && !canManageTags) {
+            if (!tagsMap.has(normalizedTagName) && !canManageTags) {
               const reason = `Tag "${tagName}" não existe e você não possui permissão para criá-la`;
-              unavailableTags.set(normalizedTagName, reason);
               validationErrors.push(reason);
             }
           }
         }
 
         const resolvedTagIds = await resolveImportRowTagsIfValid(validationErrors, async () => {
-          const ids: string[] = [];
-          for (const tagName of tagNames) {
-            const normalizedTagName = normalizeLookupValue(tagName);
-            let tagId = tagsMap.get(normalizedTagName);
-            if (!tagId) {
-              try {
-                const newTag = await createTag.mutateAsync({ name: tagName, color: DEFAULT_TAG_COLOR });
-                tagId = newTag.id;
-                tagsMap.set(normalizedTagName, tagId);
-              } catch (error) {
-                console.error('Error creating tag:', error);
-                const reason = error instanceof Error && error.message
-                  ? `Tag "${tagName}" não pôde ser criada: ${error.message}`
-                  : `Tag "${tagName}" não pôde ser criada`;
-                unavailableTags.set(normalizedTagName, reason);
-                validationErrors.push(reason);
-                break;
-              }
-            }
-            ids.push(tagId);
+          try {
+            return await resolveTagIds(tagNames);
+          } catch (error) {
+            if (importTagOutcomeUnknown(error)) unknownRows.add(contact.rowNumber);
+            validationErrors.push(error instanceof Error ? error.message : 'Não foi possível resolver as tags desta linha');
+            return [];
           }
-          return ids;
         });
         if (resolvedTagIds && validationErrors.length === 0) tagIds.push(...resolvedTagIds);
 
@@ -646,7 +692,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           phone: contact.telefone?.trim() || undefined,
           email: contact.email?.trim() || undefined,
           message: contact.mensagem?.trim() || undefined,
-          source: contact.fonte?.trim() || finalSource,
+          source: contactSource,
           pipeline_id: contactPipelineId,
           stage_id: contactStageId,
           assigned_user_id: isAutoDistribute ? undefined : contactAssigneeId,
@@ -654,6 +700,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           deal_status: dealStatus,
           lost_reason: lostReason,
           import_mode: true,
+          import_request_key: contact.importRequestKey,
           auto_distribute: isAutoDistribute,
           round_robin_id: roundRobinId,
           import_row_number: contact.rowNumber,
@@ -661,12 +708,27 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
             ? validationErrors.join('; ')
             : undefined,
         });
+        preparedRows += 1;
+        if (preparedRows === parsedData.length || preparedRows % 50 === 0) {
+          contactImportRecovery.update(scopeKey, run, { preparedRows, createdTags });
+          if (isCurrentScope()) setPreparationProgress({ processed: preparedRows, createdTags });
+        }
+        if (preparedRows % 50 === 0) {
+          // Let navigation/session changes run even when every lookup is cached.
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          assertImportScope();
+        }
       }
 
       setImportPhase('importing');
+      assertImportScope();
+      contactImportRecovery.update(scopeKey, run, { phase: 'importing', preparedRows, createdTags });
       lastProgressUpdateRef.current = 0;
+      dispatchStarted = true;
       const result = await importLeads.mutateAsync({
         rows,
+        signal: controller.signal,
+        shouldContinue: isCurrentScope,
         onProgress: progress => {
           const now = Date.now();
           if (
@@ -674,10 +736,17 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
             || now - lastProgressUpdateRef.current >= 100
           ) {
             lastProgressUpdateRef.current = now;
-            setImportProgress(progress);
+            contactImportRecovery.update(scopeKey, run, { progress });
+            if (isCurrentScope()) setImportProgress(progress);
           }
         },
       });
+      contactImportRecovery.update(scopeKey, run, {
+        result, pending: false, phase: null, preparedRows, createdTags,
+        unknownPreparationRows: [...unknownRows],
+        progress: { total: result.total, processed: result.processed, success: result.success, failed: result.failed, remaining: result.remaining, created: result.created, reentered: result.reentered, distribution: result.distribution },
+      });
+      if (!isCurrentScope()) return;
       setImportProgress({
         total: result.total,
         processed: result.processed,
@@ -688,7 +757,9 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         reentered: result.reentered,
         distribution: result.distribution,
       });
+      setUnknownPreparationRows(new Set(unknownRows));
       setImportResult(result);
+      if (result.stopped) toast.info(`${formatPtBRNumber(result.remaining)} linha(s) não iniciada(s). Revise o resultado parcial antes de continuar.`);
 
       if (result.success > 0) {
         toast.success(`${formatPtBRNumber(result.success)} contatos processados com sucesso!`);
@@ -703,10 +774,19 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         );
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Não foi possível concluir a importação');
+      contactImportRecovery.update(scopeKey, run, {
+        pending: false, phase: null, preparedRows, createdTags,
+        unknownPreparationRows: [...unknownRows],
+        preparationIssue: dispatchStarted
+          ? 'O resultado não pôde ser concluído. Confira os contatos já enviados antes de repetir qualquer linha.'
+          : 'Preparação interrompida; contatos não enviados. Revise o catálogo de tags antes de confirmar uma nova tentativa.',
+      });
+      if (isCurrentScope()) toast.error(error instanceof Error ? error.message : 'Não foi possível concluir a importação');
     } finally {
-      setImportPhase(null);
-      setIsImporting(false);
+      if (createdTags > 0) void invalidateTagConsumers(queryClient, organizationId);
+      else if (needsTags) void queryClient.invalidateQueries({ queryKey: ['tags', organizationId] });
+      if (isCurrentScope()) { setImportPhase(null); setIsImporting(false); }
+      if (importRunRef.current === controller) importRunRef.current = null;
     }
   };
 
@@ -730,9 +810,10 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       ];
 
     // Get a sample user and pipeline for the template
-      const sampleUser = users[0]?.name || 'Corretor Exemplo';
-      const firstPipeline = pipelines[0]?.name || 'Vendas';
-      const firstStage = stagesData[0]?.name || 'Novo Lead';
+      const sampleUser = users.find((user) => user.id === selectedAssignee && user.is_active);
+      const sampleAssignee = sampleUser?.email || sampleUser?.id || '';
+      const firstPipeline = pipelines.find((pipeline) => pipeline.id === selectedPipeline && pipeline.is_active !== false)?.name || '';
+      const firstStage = firstPipeline ? [...stagesData].filter((stage) => stage.is_active !== false).sort((left, right) => getStagePosition(left) - getStagePosition(right))[0]?.name || '' : '';
 
       worksheet.addRows([
       {
@@ -742,8 +823,8 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         Status: 'Aberto',
         Pipeline: firstPipeline,
         Estagio: firstStage,
-        Responsavel: sampleUser,
-        Tags: 'quente, investidor',
+        Responsavel: sampleAssignee,
+        Tags: '',
         Fonte: 'Facebook Ads',
         'Motivo de perda': '',
         Mensagem: 'Interessado no imóvel de alto padrão'
@@ -752,27 +833,27 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         Nome: 'Maria Souza',
         Telefone: '+14155552671',
         Email: 'maria@email.com',
-        Status: 'Ganho',
+        Status: 'Aberto',
         Pipeline: firstPipeline,
-        Estagio: 'Contrato Assinado',
-        Responsavel: sampleUser,
-        Tags: 'imediato',
+        Estagio: firstStage,
+        Responsavel: sampleAssignee,
+        Tags: '',
         Fonte: 'Indicação',
         'Motivo de perda': '',
-        Mensagem: 'Cliente já fechou negócio'
+        Mensagem: 'Cliente interessado em uma visita'
       },
       {
         Nome: 'Pedro Oliveira',
         Telefone: '+351912345678',
         Email: 'pedro@email.com',
-        Status: 'Perdido',
+        Status: 'Aberto',
         Pipeline: firstPipeline,
-        Estagio: 'Desqualificado',
-        Responsavel: sampleUser,
-        Tags: 'curioso',
+        Estagio: firstStage,
+        Responsavel: sampleAssignee,
+        Tags: '',
         Fonte: 'Instagram',
-        'Motivo de perda': 'Preço acima do orçamento',
-        Mensagem: 'Não possui perfil no momento'
+        'Motivo de perda': '',
+        Mensagem: 'Busca opções compatíveis com seu orçamento'
       }
       ]);
 
@@ -803,9 +884,17 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   };
 
   const resetDialog = () => {
+    if (scopeKey) contactImportRecovery.clear(scopeKey);
+    setActiveStep('file');
     parseRequestRef.current += 1;
     setFile(null);
     setParsedData([]);
+    setIgnoredColumns([]);
+    setFailurePage(0);
+    setPreparationProgress({ processed: 0, createdTags: 0 });
+    setPreparationIssue(null);
+    unknownPreparationRowsRef.current = new Set();
+    setUnknownPreparationRows(new Set());
     setSelectedPipeline('');
     setSelectedAssignee('none');
     setSelectedSource('import');
@@ -820,6 +909,22 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     setImportResult(null);
   };
 
+  const downloadFailures = () => {
+    if (!importResult) return;
+    try {
+      const csv = buildContactExportCSV(['Linha', 'Nome', 'Código', 'Motivo', 'Resultado'], contactImportFailureReport(importResult.failures, unknownPreparationRows));
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      link.href = url;
+      link.download = 'falhas-importacao-contatos.csv';
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(() => { URL.revokeObjectURL(url); link.remove(); }, 1_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível gerar o relatório de falhas');
+    }
+  };
+
   const handleClose = (open: boolean) => {
     if (!open && isImporting) {
       toast.info('Aguarde a importação terminar antes de fechar');
@@ -831,23 +936,75 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     onOpenChange(open);
   };
 
+  const isFileStep = activeStep === 'file' && !isImporting && !importResult;
+
   return (
-    <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent side="right" className="flex h-full w-[94%] flex-col border-0 bg-[var(--app-bg)] p-0 shadow-none sm:w-[560px] sm:max-w-[560px]">
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className={cn(FORM_WIZARD_DIALOG_CLASS_NAME, styles.dialog)}
+        onEscapeKeyDown={(event) => { if (isImporting) event.preventDefault(); }}
+        onInteractOutside={(event) => { if (isImporting) event.preventDefault(); }}
+      >
         <div className="bg-[var(--app-surface-solid)] p-4 pr-12">
-          <SheetHeader className="space-y-1">
-            <SheetTitle className="flex items-center gap-2.5 text-[14px] font-medium">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="flex items-center gap-2.5 text-[14px] font-medium">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)]">
                 <Upload className="h-4 w-4" />
               </span>
               Importar contatos/leads
-            </SheetTitle>
-            <SheetDescription className="sr-only">
+            </DialogTitle>
+            <DialogDescription className="sr-only">
               Envie uma planilha para importar contatos e acompanhe o processamento.
-            </SheetDescription>
-          </SheetHeader>
+            </DialogDescription>
+          </DialogHeader>
         </div>
 
+        <FormWizardLayout
+          className={styles.wizard}
+          contentClassName={isFileStep ? styles.fileContent : undefined}
+          newsButtonClassName={styles.newsButton}
+          steps={[
+            { id: 'file', label: 'Arquivo', icon: FileSpreadsheet, disabled: isImporting || Boolean(importResult), buttonId: `${wizardId}-tab-file`, panelId: `${wizardId}-panel` },
+            { id: 'destination', label: 'Destino e origem', icon: Upload, disabled: isImporting || Boolean(importResult), buttonId: `${wizardId}-tab-destination`, panelId: `${wizardId}-panel` },
+            { id: 'assignment', label: 'Atribuição', icon: Users, disabled: isImporting || Boolean(importResult), buttonId: `${wizardId}-tab-assignment`, panelId: `${wizardId}-panel` },
+            { id: 'review', label: 'Revisão', icon: CheckCircle2, disabled: isImporting || Boolean(importResult), buttonId: `${wizardId}-tab-review`, panelId: `${wizardId}-panel` },
+            ...(importResult ? [{ id: 'result', label: 'Resultado', icon: CheckCircle2, buttonId: `${wizardId}-tab-result`, panelId: `${wizardId}-panel` }] : []),
+          ]}
+          activeStep={importResult ? 'result' : activeStep}
+          onStepChange={(step) => { if (!isImporting && !importResult) setActiveStep(step); }}
+          asideTitle="Prévia da importação"
+          aside={<ContactImportPreview
+            fileName={file?.name}
+            rows={parsedData}
+            ignoredColumns={ignoredColumns}
+            isParsing={isParsing}
+            pipelineName={pipelines.find((pipeline) => pipeline.id === selectedPipeline)?.name || ''}
+            sourceName={selectedSource === 'custom' ? customSource : sourceOptions.find((source) => source.value === selectedSource)?.label || selectedSource}
+            assignment={!canAssignImportedLeads ? { mode: 'protected' } : isAutoDistribute
+              ? { mode: 'automatic', explicitQueue: selectedRoundRobin !== 'automatic', queueName: activeRoundRobins.find((queue) => queue.id === selectedRoundRobin)?.name, issue: selectedQueueIssue }
+              : { mode: 'manual', selected: selectedAssignee !== 'none', name: users.find((user) => user.id === selectedAssignee)?.name }}
+          />}
+          footer={importResult ? <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)} onClick={() => handleClose(false)}>Concluir</Button> : <>
+            <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={isImporting} onClick={() => {
+              const steps = ['file', 'destination', 'assignment', 'review'];
+              const index = steps.indexOf(activeStep);
+              if (index <= 0) handleClose(false); else setActiveStep(steps[index - 1]);
+            }}>{activeStep === 'file' ? 'Cancelar' : 'Voltar'}</Button>
+            {activeStep !== 'review' ? <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}
+              disabled={isImporting || isParsing || (activeStep === 'file' && (!file || parsedData.length === 0)) || (activeStep === 'destination' && (!selectedPipeline || isLoadingStages)) || (activeStep === 'assignment' && Boolean(selectedQueueIssue))}
+              onClick={() => { const steps = ['file', 'destination', 'assignment', 'review']; setActiveStep(steps[steps.indexOf(activeStep) + 1]); }}
+            >Avançar</Button> : <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}
+              onClick={() => { void handleImport(); }}
+              disabled={!file || !selectedPipeline || parsedData.length === 0 || isParsing || isLoadingStages || isImporting || cataloguesPending || cataloguesFailed || Boolean(selectedQueueIssue)}
+            >{isImporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{importPhase === 'preparing' ? 'Preparando linhas...' : 'Importando...'}</> : `Iniciar importação (${formatPtBRNumber(parsedData.length)})`}</Button>}
+          </>}
+        >
+        <div id={`${wizardId}-panel`} role="tabpanel" aria-labelledby={`${wizardId}-tab-${importResult ? 'result' : activeStep}`} className={isFileStep ? styles.filePanel : undefined}>
+        {!importResult && !isImporting && preparationIssue && <p className="mb-3 break-words rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[11px] text-amber-700">{preparationIssue}{unknownPreparationRows.size > 0 ? ' Há criação de tag sem confirmação; confira o catálogo antes de repetir.' : ''}</p>}
+        {!importResult && !isImporting && preparationProgress.createdTags > 0 && <p className="mb-3 break-words text-[11px] text-[var(--app-text-tertiary)]">{formatPtBRNumber(preparationProgress.createdTags)} tag(s) já foram criadas durante a preparação anterior e permanecem no catálogo.</p>}
+        {!importResult && (cataloguesPending || cataloguesFailed) && <div className="mb-3 space-y-2 rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px]" role="status">
+          <p>{cataloguesPending ? 'Carregando tags e responsáveis necessários para este arquivo...' : 'Não foi possível validar o catálogo necessário. Recarregue antes de iniciar.'}</p>
+          {cataloguesFailed && <Button type="button" variant="secondary" size="sm" disabled={isImporting} onClick={() => { if (needsTags) void refetchTags(); if (needsUsers) void refetchUsers(); }}>Recarregar catálogos</Button>}
+        </div>}
         {!importResult && isImporting && importProgress && (
           <div
             className="space-y-2 bg-[var(--app-surface-solid)] px-4 pb-4"
@@ -857,7 +1014,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
             <div className="flex items-center justify-between text-[11px] font-light text-[var(--app-text-tertiary)]">
               <span>{importPhase === 'preparing' ? 'Preparando linhas' : 'Importando contatos'}</span>
               <span>
-                {formatPtBRNumber(importProgress.processed)} de {formatPtBRNumber(importProgress.total)}
+                {formatPtBRNumber(importPhase === 'preparing' ? preparationProgress.processed : importProgress.processed)} de {formatPtBRNumber(importProgress.total)}
               </span>
             </div>
             <div
@@ -866,17 +1023,18 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               aria-label="Progresso da importação"
               aria-valuemin={0}
               aria-valuemax={importProgress.total}
-              aria-valuenow={importProgress.processed}
+              aria-valuenow={importPhase === 'preparing' ? preparationProgress.processed : importProgress.processed}
             >
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-200"
+                className="h-full rounded-full bg-primary/50 transition-[width] duration-200"
                 style={{
                   width: importProgress.total > 0
-                    ? `${Math.round((importProgress.processed / importProgress.total) * 100)}%`
+                    ? `${Math.round(((importPhase === 'preparing' ? preparationProgress.processed : importProgress.processed) / importProgress.total) * 100)}%`
                     : '0%',
                 }}
               />
             </div>
+            {importPhase === 'preparing' && <p className="text-[11px] text-[var(--app-text-tertiary)]">Linhas preparadas: {formatPtBRNumber(preparationProgress.processed)} · Tags criadas: {formatPtBRNumber(preparationProgress.createdTags)}</p>}
             <div className="grid grid-cols-4 gap-1 text-center">
               {[
                 ['Processados', importProgress.processed],
@@ -896,6 +1054,11 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
                 {[
                   ['Distribuídos', importProgress.distribution.assigned],
+                  ['Aguardando no bolsão', importProgress.distribution.pooled],
+                  ['Fora do horário da fila', importProgress.distribution.queue_closed],
+                  ['Aguardando na fila', importProgress.distribution.queue_waiting],
+                  ['Limite da rotação atingido', importProgress.distribution.queue_limit_reached],
+                  ['Atendimento preservado', importProgress.distribution.queue_protected],
                   ['Já atribuídos', importProgress.distribution.already_assigned],
                   ['Sem fila', importProgress.distribution.no_matching_queue],
                   ['Sem membros', importProgress.distribution.no_available_members],
@@ -918,13 +1081,14 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               <CheckCircle2 className="h-4 w-4" />
             </div>
             <div className="mt-3 w-full max-w-[440px] space-y-3">
-              <p className="text-[14px] font-medium text-[var(--app-text-primary)]">Importação concluída!</p>
+              <p className="text-[14px] font-medium text-[var(--app-text-primary)]">{importResult.stopped ? 'Importação interrompida' : 'Importação concluída!'}</p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
                   ['Total', importResult.total],
                   ['Criados', importResult.created],
                   ['Reentradas', importResult.reentered],
                   ['Falhas', importResult.failed],
+                  ...(importResult.remaining > 0 ? [['Não iniciadas', importResult.remaining]] : []),
                 ].map(([label, value]) => (
                   <div key={String(label)} className="rounded-[6px] bg-[var(--app-surface-soft)] p-2">
                     <p className="text-[14px] font-medium text-[var(--app-text-primary)]">
@@ -942,6 +1106,15 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                   </span>
                 )}
               </p>
+              {importResult.remaining > 0 && <div className="space-y-2 rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-left text-[11px]">
+                <p>As linhas já enviadas mantêm o resultado recebido. As demais não foram enviadas. Este relatório fica apenas nesta aba e será perdido ao recarregá-la.</p>
+                <Button type="button" variant="secondary" size="sm" onClick={() => {
+                  const rowNumbers = new Set(importResult.unstarted.map(row => row.rowNumber));
+                  setParsedData(rows => rows.filter(row => rowNumbers.has(row.rowNumber)));
+                  if (scopeKey) contactImportRecovery.clear(scopeKey);
+                  setImportResult(null); setActiveStep('review');
+                }}>Revisar {formatPtBRNumber(importResult.remaining)} linha(s) não iniciada(s)</Button>
+              </div>}
               {importResult.success > 0 && (
                 <div className="space-y-1 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-left">
                   <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">
@@ -953,6 +1126,26 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                       count: importResult.distribution.assigned,
                       message: 'Distribuídos automaticamente',
                       warning: false,
+                    },
+                    {
+                      code: 'pooled', count: importResult.distribution.pooled,
+                      message: 'Aguardando no bolsão da fila', warning: false,
+                    },
+                    {
+                      code: 'queue_closed', count: importResult.distribution.queue_closed,
+                      message: 'Fila fora do horário: aguardando no bolsão', warning: false,
+                    },
+                    {
+                      code: 'queue_waiting', count: importResult.distribution.queue_waiting,
+                      message: 'Aguardando disponibilidade na fila', warning: false,
+                    },
+                    {
+                      code: 'queue_limit_reached', count: importResult.distribution.queue_limit_reached,
+                      message: 'Limite da rotação atingido; revise o bolsão da fila', warning: true,
+                    },
+                    {
+                      code: 'queue_protected', count: importResult.distribution.queue_protected,
+                      message: 'Atendimento humano ou atribuição manual preservados', warning: false,
                     },
                     {
                       code: 'already_assigned',
@@ -1000,38 +1193,47 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                   ))}
                 </div>
               )}
-              {importResult.reasons.length > 0 && (
-                <div className="max-h-44 space-y-1 overflow-y-auto rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-left">
-                  <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">
-                    Motivos das falhas
-                  </p>
-                  {importResult.reasons.slice(0, 8).map(reason => (
-                    <div key={`${reason.code}:${reason.message}`} className="flex items-start justify-between gap-3 rounded-[4px] px-1 py-1 text-[11px]">
-                      <span className="font-light leading-4 text-[var(--app-text-secondary)]">{reason.message}</span>
-                      <span className="shrink-0 font-medium text-red-500">{formatPtBRNumber(reason.count)}</span>
-                    </div>
-                  ))}
-                  {importResult.reasons.length > 8 && (
-                    <p className="px-1 pt-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
-                      Mais {formatPtBRNumber(importResult.reasons.length - 8)} motivo(s) agrupado(s)
-                    </p>
-                  )}
+              {preparationProgress.createdTags > 0 && <p className="text-[11px] text-[var(--app-text-tertiary)]">{formatPtBRNumber(preparationProgress.createdTags)} tag(s) criada(s) no catálogo durante a preparação.</p>}
+              {importResult.failures.length > 0 && <section className="space-y-3 text-left" aria-label="Todas as falhas da importação">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] font-normal">Falhas por linha ({formatPtBRNumber(importResult.failures.length)})</p>
+                  <Button type="button" variant="secondary" size="sm" onClick={downloadFailures}>Baixar falhas</Button>
                 </div>
-              )}
+                <div className="max-h-64 space-y-2 overflow-y-auto rounded-[6px] bg-[var(--app-surface-soft)] p-3">
+                  {importResult.failures.slice(failurePage * 50, (failurePage + 1) * 50).map((failure) => <div key={`${failure.rowNumber}:${failure.index}`} className="space-y-1 break-words text-[11px]">
+                    <p className="font-normal">Linha {failure.rowNumber} · {failure.name || 'Sem nome'}</p>
+                    <p className="text-destructive">{failure.message}</p>
+                    {!isConfirmedContactImportFailure(failure, unknownPreparationRows) && <p className="text-amber-600">{unknownPreparationRows.has(failure.rowNumber) ? 'Criação de tag sem confirmação; contato não enviado. Confira o catálogo antes de repetir.' : failure.code === 'lead_import_request_conflict' ? 'A identificação pertence a uma tentativa com dados diferentes. Revise a operação; este botão não repetirá a linha.' : 'Resultado sem confirmação. Confira se a linha foi gravada antes de repetir.'}</p>}
+                  </div>)}
+                </div>
+                {importResult.failures.length > 50 && <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <Button type="button" variant="secondary" size="sm" disabled={failurePage === 0} onClick={() => setFailurePage((page) => page - 1)}>Anterior</Button>
+                  <span>Página {failurePage + 1} de {Math.ceil(importResult.failures.length / 50)}</span>
+                  <Button type="button" variant="secondary" size="sm" disabled={(failurePage + 1) * 50 >= importResult.failures.length} onClick={() => setFailurePage((page) => page + 1)}>Próxima</Button>
+                </div>}
+                {confirmedFailures.length > 0 && <Button type="button" variant="secondary" className="h-auto min-h-9 whitespace-normal text-left text-[12px]" onClick={() => {
+                  const rowNumbers = new Set(confirmedFailures.map((failure) => failure.rowNumber));
+                  setParsedData((rows) => rows.filter((row) => rowNumbers.has(row.rowNumber)));
+                  if (scopeKey) contactImportRecovery.clear(scopeKey);
+                  setFailurePage(0);
+                  setImportResult(null);
+                  setActiveStep('review');
+                }}>Revisar nova tentativa: {formatPtBRNumber(confirmedFailures.length)} falha(s) confirmada(s)</Button>}
+                <p className="text-[11px] text-[var(--app-text-tertiary)]">A nova tentativa exige confirmação e conserva a identificação de cada linha. Sucessos e resultados sem confirmação não são repetidos por este botão.</p>
+              </section>}
             </div>
-            <Button onClick={() => handleClose(false)} className="mt-4 h-9 rounded-[6px] bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground">
-              Concluir e ver leads
-            </Button>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            <div className="space-y-4 p-4">
+          <div className={cn("min-w-0", isFileStep && styles.fileStage)}>
+            <div className={isFileStep ? styles.fileStack : "space-y-4"}>
               {/* Drop Zone */}
               <div
+                hidden={activeStep !== 'file'}
+                data-highlighted={Boolean(file || isDragging)}
                 className={cn(
                   "group rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-center transition-colors duration-200",
-                  isDragging ? "bg-primary/10 ring-1 ring-primary/25" : "hover:bg-[var(--app-surface-hover)]",
-                  file && "bg-primary/10",
+                  styles.uploadArea,
+                  isDragging && "ring-1 ring-primary/25",
                   isImporting && "pointer-events-none opacity-60",
                 )}
                 onDragOver={handleDragOver}
@@ -1078,7 +1280,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors group-hover:bg-primary">
+                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors">
                       <Upload className="h-4 w-4" />
                     </div>
                     <div>
@@ -1099,7 +1301,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div hidden={activeStep !== 'destination'} className={activeStep === 'destination' ? 'grid grid-cols-1 gap-3 md:grid-cols-2' : 'hidden'}>
                 {/* Pipeline Selection */}
                 <div className="space-y-1.5">
                   <Label className="flex items-center gap-2 text-[12px] font-light">
@@ -1174,6 +1376,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               </div>
 
               {/* Attribution Selection */}
+              <div hidden={activeStep !== 'assignment'}>
               {canAssignImportedLeads ? (
                 <div className="space-y-3 pt-1">
                   <div className="flex items-center justify-between rounded-[6px] bg-[var(--app-surface-soft)] p-2.5">
@@ -1211,6 +1414,11 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="automatic">Pelas regras automáticas</SelectItem>
+                          {selectedRoundRobin !== 'automatic' && !activeRoundRobins.some(queue => queue.id === selectedRoundRobin) && (
+                            <SelectItem value={selectedRoundRobin} disabled>
+                              {isLoadingRoundRobins ? 'Carregando fila selecionada...' : roundRobinsError ? 'Fila selecionada sem validação' : 'Fila selecionada indisponível'}
+                            </SelectItem>
+                          )}
                           {canSelectDistributionQueue && activeRoundRobins.map(roundRobin => (
                             <SelectItem key={roundRobin.id} value={roundRobin.id}>
                               {roundRobin.name}
@@ -1221,9 +1429,18 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                           ))}
                         </SelectContent>
                       </Select>
+                      {!canSelectDistributionQueue && <p className="text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">Você pode usar as regras automáticas. A escolha de uma fila específica exige permissão para gerenciar a distribuição.</p>}
+                      {canSelectDistributionQueue && isLoadingRoundRobins && <p role="status" className="text-[11px] font-light text-[var(--app-text-secondary)]">Carregando filas de distribuição...</p>}
+                      {canSelectDistributionQueue && roundRobinsError && <div role="alert" className="space-y-2 text-[11px] font-light text-[var(--app-text-secondary)]">
+                        <p>Não foi possível carregar as filas. Você ainda pode escolher as regras automáticas.</p>
+                        <Button type="button" variant="secondary" size="sm" disabled={isImporting || isLoadingRoundRobins} onClick={() => { void refetchRoundRobins(); }}>Recarregar filas</Button>
+                      </div>}
+                      {canSelectDistributionQueue && !isLoadingRoundRobins && !roundRobinsError && activeRoundRobins.length === 0 && <p role="status" className="text-[11px] font-light text-[var(--app-text-secondary)]">Nenhuma fila ativa está disponível para seleção. Você pode usar as regras automáticas ou desativar a distribuição para definir um responsável.</p>}
+                      {selectedQueueIssue && !isLoadingRoundRobins && !roundRobinsError && <p role="alert" className="text-[11px] font-light text-[var(--app-text-secondary)]">{selectedQueueIssue}</p>}
+                      {selectedQueueIssue && <Button type="button" variant="secondary" size="sm" disabled={isImporting} onClick={() => setSelectedRoundRobin('automatic')}>Usar regras automáticas</Button>}
                       <p className="text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">
                         {selectedRoundRobin === 'automatic'
-                          ? 'O CRM escolherá uma fila ativa pelas regras do contato e pelo funil. Responsáveis da planilha não serão aplicados.'
+                          ? 'O CRM tentará selecionar uma fila ativa pelas regras do contato e pelo funil. Sem fila correspondente ou membro disponível, o resultado indicará a atribuição pendente. Responsáveis da planilha não serão aplicados.'
                           : 'A fila escolhida será validada e usada explicitamente para todos os contatos do arquivo.'}
                       </p>
                     </div>
@@ -1260,24 +1477,38 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                   </div>
                 </div>
               )}
+              </div>
+
+              {activeStep === 'review' && <section className="space-y-4 text-[12px] font-light" aria-label="Revisar importação">
+                <h2 className="text-[14px] font-normal">Revisar importação</h2>
+                <dl className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
+                  <div><dt className="text-[var(--app-text-tertiary)]">Arquivo</dt><dd className="break-words">{file?.name || 'Não selecionado'}</dd></div>
+                  <div><dt className="text-[var(--app-text-tertiary)]">Linhas encontradas</dt><dd>{formatPtBRNumber(parsedData.length)}</dd></div>
+                  <div><dt className="text-[var(--app-text-tertiary)]">Pipeline padrão</dt><dd>{pipelines.find((pipeline) => pipeline.id === selectedPipeline)?.name || 'Não selecionada'}</dd></div>
+                  <div><dt className="text-[var(--app-text-tertiary)]">Origem padrão</dt><dd>{selectedSource === 'custom' ? customSource || 'Não informada' : sourceOptions.find((source) => source.value === selectedSource)?.label || selectedSource}</dd></div>
+                </dl>
+                <p className="text-[var(--app-text-secondary)]">A amostra ao lado verifica apenas o nome e o formato dos contatos. Cada linha ainda terá seu destino, responsável, tags e permissões validados ao importar.</p>
+                <p className="text-[var(--app-text-tertiary)]">O processamento pode criar contatos, registrar reentradas e criar tags permitidas. O resultado mostrará também falhas e atribuições pendentes.</p>
+              </section>}
 
               {/* Sample Download Card */}
-              <div className="group relative overflow-hidden rounded-[6px] bg-primary/10 p-3">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
+              <div hidden={activeStep !== 'file'} className={cn("group relative overflow-hidden rounded-[6px] bg-[var(--app-surface-soft)] p-3", styles.sampleCard)}>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-2">
-                      <TagIcon className="h-4 w-4 text-primary" />
-                      <p className="text-[12px] font-medium text-primary">Baixe nosso novo modelo</p>
+                      <TagIcon className="h-4 w-4 shrink-0 text-primary" />
+                      <p className="min-w-0 break-words text-[12px] font-medium text-primary">Baixe nosso novo modelo</p>
                     </div>
-                    <p className="pr-8 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                    <p className="text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
                       Use telefone internacional (+DDI e número). Também aceita tags, status, pipeline, estágio, origem e responsável.
+                      {' '}Para preservar separadores no nome de uma tag, use uma lista JSON de nomes. Listas antigas por vírgula, ponto e vírgula ou | continuam aceitas.
                     </p>
                   </div>
                   <Button
                     type="button"
                     variant="link"
                     aria-label="Baixar modelo de importação"
-                   className="h-8 w-8 rounded-[6px] bg-primary/50 p-0 text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground"
+                    className="h-9 w-9 shrink-0 self-center rounded-[6px] bg-primary/50 p-2 text-white shadow-none transition-colors hover:bg-primary/50 hover:text-white"
                     disabled={isImporting}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1292,46 +1523,9 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           </div>
         )}
 
-        {!importResult && (
-          <div className="flex gap-2 bg-[var(--app-surface-solid)] p-3">
-            <Button type="button" variant="ghost" className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]" onClick={() => handleClose(false)} disabled={isImporting}>
-              Cancelar
-            </Button>
-            <Button
-              className="h-9 flex-[2] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
-              type="button"
-              onClick={handleImport}
-              disabled={
-                !file
-                || !selectedPipeline
-                || parsedData.length === 0
-                || isParsing
-                || isLoadingStages
-                || isImporting
-                || (isAutoDistribute
-                  && selectedRoundRobin !== 'automatic'
-                  && !activeRoundRobins.some(roundRobin => roundRobin.id === selectedRoundRobin))
-              }
-            >
-              {isImporting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {importPhase === 'preparing'
-                    ? `Preparando ${formatPtBRNumber(parsedData.length)} linhas...`
-                    : importProgress
-                      ? `${formatPtBRNumber(importProgress.processed)}/${formatPtBRNumber(importProgress.total)} · restam ${formatPtBRNumber(importProgress.remaining)}`
-                      : 'Importando...'}
-                </>
-              ) : (
-                <>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Iniciar importação {parsedData.length > 0 ? `(${formatPtBRNumber(parsedData.length)})` : ''}
-                </>
-              )}
-            </Button>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
+        </div>
+        </FormWizardLayout>
+      </DialogContent>
+    </Dialog>
   );
 }

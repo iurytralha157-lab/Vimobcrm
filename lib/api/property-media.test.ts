@@ -11,6 +11,56 @@ import type { PropertyWorkspaceAsset } from '../validation/property-workspace'
 const ORGANIZATION_ID = '11111111-1111-4111-8111-111111111111'
 const PROPERTY_ID = '22222222-2222-4222-8222-222222222222'
 
+test('session change after upload stops asset creation and does not discard under a different actor', async () => {
+  const preview = stagePropertyPhoto(file('scope.jpg'), () => 'blob:scope-change-after-upload')
+  let current = true
+  let creates = 0
+  let discards = 0
+  const execution = { expectedUserId: 'actor-a', canContinue: () => current }
+  const client = {
+    async uploadAssetFile() { current = false; return { storage_path: 'uploaded-by-actor-a' } },
+    async createAsset() { creates += 1; return asset('unused', 0) },
+    async deleteAsset() { throw new Error('unexpected delete') },
+    async discardAssetUpload() { discards += 1 },
+  }
+  await assert.rejects(persistStagedPropertyPhotosWithClient(ORGANIZATION_ID, PROPERTY_ID, {
+    mainImage: preview, galleryImages: [],
+  }, client, execution), (error: unknown) => {
+    assert.ok(error instanceof PropertyMediaPersistenceError)
+    assert.deepEqual(error.rollbackFailedUploadPaths, ['uploaded-by-actor-a'])
+    assert.match(error.message, /sessão ou organização/)
+    return true
+  })
+  assert.equal(creates, 0)
+  assert.equal(discards, 0)
+})
+
+test('session change does not compensate original actor photos using the replacement session', async () => {
+  const previews = ['primary', 'gallery'].map((name) => stagePropertyPhoto(file(`${name}.jpg`), () => `blob:scope-change-${name}`))
+  let current = true
+  let uploads = 0
+  let deletes = 0
+  const execution = { expectedUserId: 'actor-a', canContinue: () => current }
+  const client = {
+    async uploadAssetFile() {
+      uploads += 1
+      if (uploads > 1) { current = false; throw new Error('session switched while gallery was uploading') }
+      return { storage_path: 'primary-by-actor-a' }
+    },
+    async createAsset() { return asset('primary-actor-a', 0) },
+    async deleteAsset() { deletes += 1 },
+    async discardAssetUpload() { throw new Error('unexpected discard') },
+  }
+  await assert.rejects(persistStagedPropertyPhotosWithClient(ORGANIZATION_ID, PROPERTY_ID, {
+    mainImage: previews[0], galleryImages: previews.slice(1),
+  }, client, execution), (error: unknown) => {
+    assert.ok(error instanceof PropertyMediaPersistenceError)
+    assert.deepEqual(error.rollbackFailedAssetIds, ['primary-actor-a'])
+    return true
+  })
+  assert.equal(deletes, 0)
+})
+
 function file(name: string) {
   return { name, size: 1_024, type: 'image/jpeg' } as File
 }

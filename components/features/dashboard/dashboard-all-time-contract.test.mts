@@ -29,23 +29,28 @@ test('dashboard starts with all data and only applies the persisted shared perio
   assert.match(dashboardScreenSource, /"Todos os dados"/);
 });
 
-test('dashboard waits for persisted non-date filters before any aggregate query', () => {
+test('dashboard waits for persisted filters and a supported period before any aggregate query', () => {
   assert.match(
     dashboardScreenSource,
-    /useEnhancedDashboardStats\(dashboardFilters, \{[\s\S]{0,100}enabled: isFiltersHydrated/,
+    /const canQueryDashboard = isFiltersHydrated && !periodError/,
   );
   assert.match(
     dashboardScreenSource,
-    /useDealsEvolutionData\(dashboardFilters, \{ enabled: isFiltersHydrated \}\)/,
+    /useEnhancedDashboardStats\(dashboardFilters, \{[\s\S]{0,100}enabled: canQueryDashboard/,
   );
   assert.match(
     dashboardScreenSource,
-    /useLeadSourcesData\(dashboardFilters, undefined, \{[\s\S]{0,100}enabled: isFiltersHydrated/,
+    /useDealsEvolutionData\(dashboardFilters, \{ enabled: canQueryDashboard \}\)/,
   );
   assert.match(
     dashboardScreenSource,
-    /enabled: dashboardQueryScope\.isReady && isFiltersHydrated/,
+    /useLeadSourcesData\(dashboardFilters, undefined, \{[\s\S]{0,100}enabled: canQueryDashboard/,
   );
+  assert.match(
+    dashboardScreenSource,
+    /enabled: dashboardQueryScope\.isReady && canQueryDashboard/,
+  );
+  assert.match(dashboardScreenSource, /enabled=\{canQueryDashboard\}/);
   assert.match(
     funnelSource,
     /useFunnelData\([\s\S]{0,160}\{ enabled \}/,
@@ -69,7 +74,7 @@ test('dashboard keeps lead details out of the initial request and loads them on 
   );
   assert.match(
     dashboardScreenSource,
-    /isFiltersHydrated && \(lostDialogOpen \|\| wonDialogOpen\)/,
+    /canQueryDashboard && \(lostDialogOpen \|\| wonDialogOpen\)/,
   );
   assert.match(
     dashboardScreenSource,

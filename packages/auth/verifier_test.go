@@ -32,6 +32,7 @@ func TestVerifierAcceptsValidSupabaseToken(t *testing.T) {
 func TestVerifierParsesSignedAuthenticationMethods(t *testing.T) {
 	verifier := newTestVerifier(t)
 	token := signTestToken(t, Claims{
+		SessionID: "20000000-0000-0000-0000-000000000001",
 		AuthenticationMethods: []AuthenticationMethod{
 			{Method: "password", Timestamp: time.Now().Add(-time.Minute).Unix()},
 			{Method: "recovery", Timestamp: time.Now().Unix()},
@@ -51,6 +52,9 @@ func TestVerifierParsesSignedAuthenticationMethods(t *testing.T) {
 	}
 	if !user.IsPasswordRecovery() {
 		t.Fatal("signed recovery AMR was not preserved")
+	}
+	if user.SessionID != "20000000-0000-0000-0000-000000000001" {
+		t.Fatalf("signed session ID was not preserved: %q", user.SessionID)
 	}
 	if got, want := len(user.AuthenticationMethods), 3; got != want {
 		t.Fatalf("authentication methods = %d, want %d", got, want)

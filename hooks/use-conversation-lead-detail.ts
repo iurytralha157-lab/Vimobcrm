@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { conversationLeadDetailAPI } from "@/lib/api/conversation-lead-detail";
 
 export function useConversationLeadDetail(leadId: string | null | undefined) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
 
   return useQuery({

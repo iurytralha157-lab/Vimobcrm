@@ -13,6 +13,7 @@ import {
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
   mergeWhatsAppLatestMessagePage,
+  mergeWhatsAppHistoricalMessagePage,
   mergeWhatsAppMessagesWithLocalState,
   resolveWhatsAppConversationSessionFilter,
   resolveWhatsAppSessionStatus,
@@ -42,6 +43,18 @@ const scopeB: WhatsAppQueryScope = {
   userId: 'user-a',
   accessScope: 'role:user',
 }
+
+test('segrega catálogo temporal e atribuição avançada no cache de lista e contador', () => {
+  const base = { hideGroups: false, showArchived: false, onlyLeads: false, withoutLead: false,
+    pendingReply: false, accessibleSessionKey: 'authorized-sessions', limit: 80 };
+  for (const change of [{ adSetId: 'set-a' }, { adId: 'ad-a' },
+    { leadCreatedFrom: '2026-10-01T03:00:00Z' }, { leadCreatedTo: '2026-10-13T02:59:59Z' }]) {
+    assert.notDeepEqual(whatsappQueryKeys.conversations(scopeA, base), whatsappQueryKeys.conversations(scopeA, { ...base, ...change }));
+    assert.notDeepEqual(whatsappQueryKeys.unreadCount(scopeA, base), whatsappQueryKeys.unreadCount(scopeA, { ...base, ...change }));
+    assert.equal(isWhatsAppQueryKeyForScope(whatsappQueryKeys.conversations(scopeA, { ...base, ...change }), scopeA), true);
+    assert.equal(isWhatsAppQueryKeyForScope(whatsappQueryKeys.conversations(scopeB, { ...base, ...change }), scopeA), false);
+  }
+});
 
 test('segrega as chaves por organizacao, usuario e escopo de acesso', () => {
   const keyA = whatsappQueryKeys.messages(scopeA, {
@@ -281,9 +294,32 @@ test('modo todos deixa o backend aplicar acesso por lead sem exigir sessao propr
   )
 })
 
-test('sinal privado do inbox nao aceita ids, status ou conteudo', () => {
+test('sinal do inbox invalida tambem o contador de nao lidas no mesmo escopo', () => {
+  const conversationScope = whatsappQueryKeys.conversationsScope(scopeA)
+  const unreadCountKey = whatsappQueryKeys.unreadCount(scopeA, {
+    hideGroups: false,
+    showArchived: false,
+    onlyLeads: false,
+    withoutLead: false,
+    pendingReply: false,
+    accessibleSessionKey: 'all',
+  })
+
+  assert.deepEqual(unreadCountKey.slice(0, conversationScope.length), conversationScope)
+  assert.notDeepEqual(
+    unreadCountKey.slice(0, conversationScope.length),
+    whatsappQueryKeys.conversationsScope(scopeB),
+  )
+})
+
+test('sinal privado do inbox aceita apenas o id tecnico do Realtime, sem dados do chat', () => {
   assert.equal(whatsappInboxTopic('organization-a'), 'whatsapp:organization-a:inbox')
   assert.equal(isWhatsAppInboxWakePayload({ scope: 'conversations' }), true)
+  assert.equal(isWhatsAppInboxWakePayload({
+    id: '12345678-1234-4234-8234-123456789abc',
+    scope: 'conversations',
+  }), true)
+  assert.equal(isWhatsAppInboxWakePayload({ scope: 'conversations', id: 'secret' }), false)
   assert.equal(isWhatsAppInboxWakePayload({ scope: 'conversations', conversationId: 'secret' }), false)
   assert.equal(isWhatsAppInboxWakePayload({ scope: 'conversations', status: 'received' }), false)
   assert.equal(isWhatsAppInboxWakePayload({ scope: 'conversations', content: 'secret' }), false)
@@ -363,6 +399,59 @@ test('ordena paginas antigas antes das novas e elimina sobreposicao de cursor', 
     flattenWhatsAppMessagePages(pages).map((message) => message.id),
     ['message-1', 'message-2', 'message-3', 'message-4'],
   )
+})
+
+test('mantem a ordem canonica e coloca a mensagem local depois no mesmo instante', () => {
+  // Go omits a zero fraction while optimistic JavaScript rows keep milliseconds.
+  const canonical = ['capture-0', 'capture-1', 'capture-2'].map((id) => ({
+    id, message_id: `provider-${id}`, status: 'received', sent_at: '2026-10-11T12:00:00Z',
+  }))
+  const local = {
+    id: 'local-send', message_id: 'local-send', client_message_id: 'local-send',
+    status: 'confirming', sent_at: '2026-10-11T12:00:00.000Z',
+  }
+  const expected = ['capture-0', 'capture-1', 'capture-2', 'local-send']
+
+  assert.deepEqual(mergeWhatsAppMessagesWithLocalState(canonical, [local]).map((row) => row.id), expected)
+  const refreshed = mergeWhatsAppLatestMessagePage(
+    [{ messages: [canonical[0], local], nextCursor: null }],
+    { messages: canonical, nextCursor: null },
+  )
+  assert.deepEqual(flattenWhatsAppMessagePages(refreshed).map((row) => row.id), expected)
+})
+
+test('preserva ordem v2 entre paginas, cabeca sobreposta e substituicao otimista', () => {
+  const canonical = (index: number, clientMessageId?: string) => ({
+    id: `capture-${index}`, message_id: `provider-${index}`, client_message_id: clientMessageId,
+    status: 'received', sent_at: '2026-10-11T12:00:00.123456Z',
+  })
+  const cached = [
+    { messages: [canonical(2), { ...canonical(3, 'local-3'), id: 'local-3', message_id: 'local-3', status: 'confirming' }], nextCursor: 'v2-boundary-2' },
+    { messages: [canonical(0), canonical(1)], nextCursor: 'v2-boundary-0' },
+  ]
+  const refreshed = mergeWhatsAppLatestMessagePage(cached,
+    { messages: [canonical(2), canonical(3, 'local-3'), canonical(4)], nextCursor: 'v2-boundary-new' },
+    { pageSize: 3 })
+  const withOlder = [...refreshed, { messages: [canonical(-1)], nextCursor: null }]
+  assert.deepEqual(flattenWhatsAppMessagePages(withOlder).map(({ id }) => id),
+    ['capture--1', 'capture-0', 'capture-1', 'capture-2', 'capture-3', 'capture-4'])
+  assert.equal(refreshed.at(-1)?.nextCursor, 'v2-boundary-0')
+  assert.equal(flattenWhatsAppMessagePages(withOlder).find(({ id }) => id === 'capture-3')?.status, 'received')
+})
+
+test('separa cache v2 dos cursores antigos sem alterar os indices de autorizacao', () => {
+  const paginated = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-a', 40, 'lead-a')
+  const history = whatsappQueryKeys.leadMessages(scopeA, 'lead-a', 40)
+  const messages = whatsappQueryKeys.messages(scopeA, {
+    conversationId: 'conversation-a', leadId: 'lead-a', limit: 40, includeLeadHistory: true,
+  })
+  assert.equal(paginated.at(-1), 'ordering-v2')
+  assert.equal(history.at(-1), 'ordering-v2')
+  assert.equal(messages.at(-1), 'ordering-v2')
+  assert.equal(paginated[5], 'conversation-a')
+  assert.equal(paginated[7], 'lead-a')
+  assert.equal(history[5], 'lead-a')
+  assert.equal(matchesPaginatedWhatsAppMessagesQueryKey(paginated, scopeA, 'conversation-a', 'lead-a'), true)
 })
 
 test('segrega a projecao historica por conversa e card esperado', () => {
@@ -548,6 +637,39 @@ test('na pagina mais recente, ausência de confirmação não vira falha nem dup
   })
   assert.equal(confirmed.messages.length, 1)
   assert.deepEqual(confirmed.messages[0], canonical)
+})
+
+test('revalidacao historica substitui DTO canonico, preserva janela, cursores e optimistic CID', () => {
+  const old = { id: 'old', status: 'received', content: 'private', quoted_message: { content: 'old quote' } }
+  const optimistic = { id: 'client-one', message_id: 'client-one', client_message_id: 'client-one', status: 'confirming', content: 'keep draft outcome' }
+  const recent = { id: 'recent', status: 'received', content: 'recent' }
+  const pages = [{ messages: [recent, optimistic], nextCursor: 'older' }, { messages: [old], nextCursor: 'not-loaded' }]
+  const deleted = { id: 'old', status: 'received', content: 'Esta mensagem foi apagada', message_type: 'deleted' }
+  const refreshed = mergeWhatsAppHistoricalMessagePage(pages, [deleted, { id: 'outside-window', status: 'received', content: 'do not append' }], pages.flatMap(page => page.messages))
+  assert.strictEqual(refreshed[0], pages[0])
+  assert.strictEqual(refreshed[0].messages[1], optimistic)
+  assert.deepEqual(refreshed[1].messages, [deleted])
+  assert.equal('quoted_message' in refreshed[1].messages[0], false)
+  assert.equal(refreshed[1].nextCursor, 'not-loaded')
+})
+
+test('revalidacao historica antiga nao sobrescreve uma linha alterada apos o snapshot', () => {
+  const snapshot = { id: 'old', message_id: 'provider-old', status: 'sent' }
+  const current = { ...snapshot, status: 'read' }
+  const pages = [{ messages: [current], nextCursor: null }]
+  const freshOlderResponse = { ...snapshot, status: 'delivered' }
+  assert.strictEqual(mergeWhatsAppHistoricalMessagePage(pages, [freshOlderResponse], [snapshot]), pages)
+  assert.equal(pages[0].messages[0].status, 'read')
+})
+
+test('revalidacao historica reconcilia pelo client id sem duplicar e ignora fora da janela', () => {
+  const pending = { id: 'client-one', message_id: 'client-one', client_message_id: 'client-one', status: 'confirming' }
+  const pages = [{ messages: [pending], nextCursor: 'older' }]
+  const canonical = { id: 'row-one', message_id: 'provider-one', client_message_id: 'client-one', status: 'delivered' }
+  const refreshed = mergeWhatsAppHistoricalMessagePage(pages, [canonical], [pending])
+  assert.deepEqual(refreshed[0].messages, [canonical])
+  assert.equal(refreshed[0].nextCursor, 'older')
+  assert.strictEqual(mergeWhatsAppHistoricalMessagePage(refreshed, [{ ...canonical, id: 'outside', message_id: 'other-provider', client_message_id: 'other-client' }], [canonical]), refreshed)
 })
 
 test('distingue falha definitiva de entrega incerta', () => {

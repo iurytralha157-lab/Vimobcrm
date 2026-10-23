@@ -7,11 +7,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/schedule"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	"golang.org/x/sync/errgroup"
@@ -42,6 +44,7 @@ const currentAssigneeTeamFilterSQL = `exists (
 	 and dom.user_id = dtm.user_id
 	 and coalesce(dom.is_active, false) = true
 	 and dom.deleted_at is null
+	 and dom.membership_generation = dtm.membership_generation
 	where dtm.organization_id = l.organization_id
 	  and dtm.team_id = $%[1]d::uuid
 	  and dtm.user_id = l.assigned_user_id
@@ -57,6 +60,7 @@ type dashboardAggregate struct {
 	Total               int64
 	Open                int64
 	Lost                int64
+	Won                 int64
 	AverageResponseSecs *float64
 }
 
@@ -121,8 +125,6 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	var wonDeals []WonDealDetail
 	var lostDeals []LostDealDetail
 	var lostLeads int64
-	var previousWonCount int64
-	var previousLostCount int64
 
 	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -162,14 +164,6 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 		if err != nil {
 			return DashboardStats{}, err
 		}
-		previousWonCount, err = repo.dashboardWonCount(ctx, tx, tenantContext, previousFilter)
-		if err != nil {
-			return DashboardStats{}, err
-		}
-		previousLostCount, err = repo.dashboardLostCount(ctx, tx, tenantContext, previousFilter)
-		if err != nil {
-			return DashboardStats{}, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return DashboardStats{}, err
@@ -189,8 +183,8 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 		entriesTrend = calculateTrend(currentEntries.TotalEntries, previousEntries.TotalEntries)
 		leadsTrend = calculateTrend(currentAggregate.Total, previousAggregate.Total)
 		openTrend = calculateTrend(currentAggregate.Open, previousAggregate.Open)
-		lostTrend = calculateTrend(lostLeads, previousLostCount)
-		closedTrend = calculateTrend(closedLeads, previousWonCount)
+		lostTrend = calculateTrend(lostLeads, previousAggregate.Lost)
+		closedTrend = calculateTrend(closedLeads, previousAggregate.Won)
 	}
 
 	return DashboardStats{
@@ -349,9 +343,11 @@ func (repo Repository) GetDashboardSources(ctx context.Context, tenantContext te
 	return result, rows.Err()
 }
 
-func dashboardSourcePoint(source string, count int64, countEntries bool) SourceDataPoint {
+func dashboardSourcePoint(source string, count int64, _ bool) SourceDataPoint {
 	name := source
-	if countEntries && source == "" {
+	// Only the display label changes. Card SQL still maps NULL/empty to manual;
+	// legacy whitespace and import BOMs must not invalidate name.trim().min(1).
+	if strings.TrimFunc(name, func(value rune) bool { return unicode.IsSpace(value) || value == '\ufeff' }) == "" {
 		name = "Não informada"
 	}
 	return SourceDataPoint{Name: name, Value: count, RawSource: source}
@@ -524,6 +520,7 @@ func dashboardLeadDistributionUserSQL(where []string, argCount int) string {
 				where tm.organization_id = om.organization_id and tm.user_id = u.id
 				  and tm.team_id::text = ` + teamID + `::text
 				  and coalesce(tm.is_active, true) = true
+				  and tm.membership_generation = om.membership_generation
 			  ))
 		)
 		select
@@ -565,6 +562,7 @@ func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
 			join public.users u on u.id = tm.user_id and coalesce(u.is_active, false) = true
 			join public.organization_members om on om.organization_id = tm.organization_id
 			  and om.user_id = tm.user_id and coalesce(om.is_active, false) = true and om.deleted_at is null
+			  and om.membership_generation = tm.membership_generation
 			group by tm.team_id
 		), unassigned_counts as (
 			select f.team_id, count(distinct f.id)::bigint as lead_count
@@ -573,7 +571,7 @@ func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
 			where f.assigned_user_id is null
 			group by f.team_id
 		)
-		select e.id::text, e.name, (coalesce(c.lead_count, 0) + coalesce(uc.lead_count, 0))::bigint
+		select e.id::text, e.name, (coalesce(c.lead_count, 0) + coalesce(uc.lead_count, 0))::bigint as lead_count
 		from eligible e
 		left join counts c on c.team_id = e.id
 		left join unassigned_counts uc on uc.team_id = e.id
@@ -648,6 +646,7 @@ func (repo Repository) GetDashboardUpcomingTasks(ctx context.Context, tenantCont
 		    )
 		  )
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
+		  and ($2::boolean or l.assigned_user_id is not null)
 		order by lt.due_date asc, lt.created_at asc
 		limit $5
 	`,
@@ -711,7 +710,11 @@ func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantCon
 		}
 	}
 
-	data, err := repo.dashboardDealsEvolutionAggregate(ctx, queryer, tenantContext, filter, from, to)
+	location, err := repo.dashboardReportLocation(ctx, queryer, tenantContext.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := repo.dashboardDealsEvolutionAggregate(ctx, queryer, tenantContext, filter, from.In(location), to.In(location))
 	if err != nil {
 		return nil, err
 	}
@@ -880,30 +883,37 @@ func (repo Repository) GetDashboardRecentActivities(ctx context.Context, tenantC
 	if limit > 50 {
 		limit = 50
 	}
+	args := []any{
+		tenantContext.OrganizationID,
+		canViewAllLeads(tenantContext),
+		tenantContext.UserID,
+		tenantContext.HasPermission(permissions.LeadViewTeam),
+	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "activity_property")
+	args = append(args, limit)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			a.id::text,
 			a.type,
-			a.content,
+			`+activityContentSQL("activity_property.id is not null")+`,
 			a.created_at,
 			coalesce(nullif(l.name, ''), 'Lead') as lead_name,
 			u.name
 		from public.activities a
 		join public.leads l on l.id = a.lead_id and l.organization_id = a.organization_id
 		left join public.users u on u.id = a.user_id
+		left join public.properties activity_property
+		  on activity_property.organization_id = a.organization_id
+		 and activity_property.id::text = `+activityPropertyReferenceSQL()+`
+		 and `+propertyVisibility+`
 		where a.organization_id = $1::uuid
 		  and l.organization_id = $1::uuid
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
+		  and ($2::boolean or l.assigned_user_id is not null)
+		  and `+schedule.HistoryReadableRecordSQL(tenantContext, "a", "type", "$3")+`
 		order by a.created_at desc
-		limit $5
-	`,
-		tenantContext.OrganizationID,
-		canViewAllLeads(tenantContext),
-		tenantContext.UserID,
-		tenantContext.HasPermission("lead_view_team"),
-		limit,
-	)
+		limit $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1088,6 +1098,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 			count(*)::bigint,
 			count(*) filter (where coalesce(l.deal_status, 'open') not in ('won', 'lost'))::bigint,
 			count(*) filter (where l.deal_status = 'lost')::bigint,
+			count(*) filter (where l.deal_status = 'won')::bigint,
 			avg(l.first_response_seconds) filter (
 				where l.first_response_actor_user_id is not null
 				  and coalesce(l.first_response_is_automation, false) = false
@@ -1097,7 +1108,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 		from public.leads l
 		where `+strings.Join(where, " and "),
 		args...,
-	).Scan(&aggregate.Total, &aggregate.Open, &aggregate.Lost, &average)
+	).Scan(&aggregate.Total, &aggregate.Open, &aggregate.Lost, &aggregate.Won, &average)
 	if err != nil {
 		return dashboardAggregate{}, err
 	}
@@ -1447,12 +1458,7 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
 	propertyValue := dashboardPropertyValueSQL(tenantContext)
 
-	commissionSelect := "0::double precision as total_commissions"
-	commissionJoin := ""
-	if !fallback {
-		commissionSelect = "coalesce(c.total_commissions, 0)::double precision as total_commissions"
-		commissionJoin = dashboardTopBrokerCommissionJoinSQL()
-	}
+	commissionSelect, commissionJoin, commissionGroup, args := dashboardBrokerCommissionSQL(tenantContext, fallback, args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		with filtered_leads as (
@@ -1477,7 +1483,7 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 		from filtered_leads fl
 		join public.users u on u.id = fl.assigned_user_id
 		`+commissionJoin+`
-		group by u.id, u.name, u.avatar_url`+groupByCommission(fallback)+`
+		group by u.id, u.name, u.avatar_url`+commissionGroup+`
 		order by count(fl.assigned_user_id) desc, coalesce(sum(fl.value), 0) desc
 		limit 5
 	`, args...)
@@ -1500,21 +1506,6 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 	return brokers, rows.Err()
 }
 
-// Restrict commission amounts to the same visible, filtered lead cohort as the
-// broker ranking. A broker can belong to several teams, so grouping only by
-// user_id would reveal commissions from leads outside a leader's scope.
-func dashboardTopBrokerCommissionJoinSQL() string {
-	return `
-		left join (
-			select cm.user_id, sum(coalesce(cm.amount, 0)) as total_commissions
-			from public.commissions cm
-			join filtered_leads visible_lead on visible_lead.id = cm.lead_id
-			where cm.organization_id = $1::uuid
-			  and cm.status in ('forecast', 'approved', 'paid', 'prevista', 'aprovada', 'paga')
-			group by cm.user_id
-		) c on c.user_id = u.id`
-}
-
 func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) ([]string, []any, error) {
 	args := []any{
 		tenantContext.OrganizationID,
@@ -1525,6 +1516,11 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 	where := []string{
 		"l.organization_id = $1::uuid",
 		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
+	}
+	// Dashboard leadership follows people, never an unassigned queue card. Keep
+	// the shared Pipeline/WhatsApp visibility contract unchanged.
+	if !canViewAllLeads(tenantContext) {
+		where = append(where, "l.assigned_user_id is not null")
 	}
 
 	add := func(clause string, value any) {
@@ -1606,7 +1602,12 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		value := searchtext.Pattern(filter.SearchQuery)
 		args = append(args, value)
 		index := len(args)
-		where = append(where, searchtext.AnySQL([]string{"l.name", "l.email", "l.phone"}, fmt.Sprintf("$%d", index)))
+		searchClause := searchtext.AnySQL([]string{"l.name", "l.email", "l.phone"}, fmt.Sprintf("$%d", index))
+		if digits := searchtext.PhoneDigits(filter.SearchQuery); digits != "" {
+			args = append(args, "%"+digits+"%")
+			searchClause = fmt.Sprintf("(%s or %s)", searchClause, searchtext.PhoneSQL("l.phone", fmt.Sprintf("$%d", len(args))))
+		}
+		where = append(where, searchClause)
 	}
 
 	campaignIDs, err := normalizeDashboardCampaignFilterIDs(filter.CampaignID, filter.CampaignIDs)
@@ -1665,6 +1666,12 @@ func buildDashboardPropertyWhere(tenantContext tenant.Context, filter DashboardF
 		add(`exists (
 			select 1
 			from public.team_members ptm
+			join public.organization_members pom
+			  on pom.organization_id = ptm.organization_id
+			 and pom.user_id = ptm.user_id
+			 and pom.is_active = true
+			 and pom.deleted_at is null
+			 and pom.membership_generation = ptm.membership_generation
 			where ptm.organization_id = $1::uuid
 			  and ptm.team_id = $%d::uuid
 			  and ptm.is_active = true
@@ -1905,14 +1912,6 @@ func normalizeLostReason(value string) string {
 	return replacer.Replace(value)
 }
 
-func groupByCommission(fallback bool) string {
-	if fallback {
-		return ""
-	}
-
-	return ", c.total_commissions"
-}
-
 func normalizeDashboardTaskType(value string) string {
 	switch value {
 	case "call", "email", "meeting", "message", "task":
@@ -1920,101 +1919,4 @@ func normalizeDashboardTaskType(value string) string {
 	default:
 		return "task"
 	}
-}
-
-func dashboardEvolutionIntervals(from time.Time, to time.Time, granularity string) ([]time.Time, []string) {
-	if granularity == "hour" || sameDashboardDay(from, to) || isSingleDashboardDayRange(from, to) {
-		intervals := make([]time.Time, 0, 24)
-		labels := make([]string, 0, 24)
-		for hour := 0; hour < 24; hour++ {
-			current := from.Add(time.Duration(hour) * time.Hour)
-			intervals = append(intervals, current)
-			labels = append(labels, fmt.Sprintf("%02d:00", hour))
-		}
-		return intervals, labels
-	}
-
-	days := int(math.Ceil(to.Sub(from).Hours() / 24))
-	if days <= 31 {
-		start := startOfDashboardDay(from)
-		intervals := []time.Time{}
-		labels := []string{}
-		for current := start; !current.After(to); current = current.AddDate(0, 0, 1) {
-			intervals = append(intervals, current)
-			labels = append(labels, current.Format("02/01"))
-		}
-		return limitDashboardIntervals(intervals, labels)
-	}
-
-	if days <= 90 {
-		start := startOfDashboardWeek(from)
-		intervals := []time.Time{}
-		labels := []string{}
-		for current := start; !current.After(to); current = current.AddDate(0, 0, 7) {
-			_, week := current.ISOWeek()
-			intervals = append(intervals, current)
-			labels = append(labels, fmt.Sprintf("Sem %d", week))
-		}
-		return limitDashboardIntervals(intervals, labels)
-	}
-
-	start := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, from.Location())
-	intervals := []time.Time{}
-	labels := []string{}
-	for current := start; !current.After(to); current = current.AddDate(0, 1, 0) {
-		intervals = append(intervals, current)
-		labels = append(labels, dashboardMonthLabel(current))
-	}
-
-	return limitDashboardIntervals(intervals, labels)
-}
-
-func limitDashboardIntervals(intervals []time.Time, labels []string) ([]time.Time, []string) {
-	if len(intervals) <= dashboardMaxEvolutionBucketCount {
-		return intervals, labels
-	}
-	step := int(math.Ceil(float64(len(intervals)) / dashboardMaxEvolutionBucketCount))
-	limitedIntervals := []time.Time{}
-	limitedLabels := []string{}
-	for index := range intervals {
-		if index%step == 0 {
-			limitedIntervals = append(limitedIntervals, intervals[index])
-			limitedLabels = append(limitedLabels, labels[index])
-		}
-	}
-
-	return limitedIntervals, limitedLabels
-}
-
-func sameDashboardDay(left time.Time, right time.Time) bool {
-	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
-}
-
-func isSingleDashboardDayRange(from time.Time, to time.Time) bool {
-	duration := to.Sub(from)
-	return duration > 0 && duration <= 24*time.Hour
-}
-
-func startOfDashboardDay(value time.Time) time.Time {
-	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, value.Location())
-}
-
-func startOfDashboardWeek(value time.Time) time.Time {
-	start := startOfDashboardDay(value)
-	weekday := int(start.Weekday())
-	if weekday == 0 {
-		weekday = 7
-	}
-
-	return start.AddDate(0, 0, -(weekday - 1))
-}
-
-func dashboardMonthLabel(value time.Time) string {
-	labels := []string{"Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"}
-	index := int(value.Month()) - 1
-	if index < 0 || index >= len(labels) {
-		return value.Format("Jan")
-	}
-
-	return labels[index]
 }

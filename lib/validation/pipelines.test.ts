@@ -5,6 +5,7 @@ import {
   apiPipelineListResponseSchema,
   leadMetaFiltersResponseSchema,
   pipelineBoardResponseSchema,
+  pipelineStageLeadsResponseSchema,
   pipelineCreateInputSchema,
   stageCreateInputSchema,
   stageHexColorInputSchema,
@@ -14,6 +15,19 @@ import {
 
 const ID = '11111111-1111-4111-8111-111111111111'
 const ORG_ID = '22222222-2222-4222-8222-222222222222'
+
+test('continuação da pagina e booleana opcional e preserva API anterior', () => {
+  const baseline = { stageId: ID, leads: [{ id: ID, team_id: null }] }
+  for (const hasMore of [true, false]) {
+    const parsed = pipelineStageLeadsResponseSchema.parse({ ...baseline, hasMore })
+    assert.equal(parsed.hasMore, hasMore)
+  }
+  const legacy = pipelineStageLeadsResponseSchema.parse(baseline)
+  assert.equal(Object.hasOwn(legacy, 'hasMore'), false)
+  for (const hasMore of ['false', 0, null, {}]) {
+    assert.equal(pipelineStageLeadsResponseSchema.safeParse({ ...baseline, hasMore }).success, false)
+  }
+})
 
 test('normaliza e aceita pipeline valida', () => {
   const result = pipelineCreateInputSchema.safeParse({ name: '  Vendas  ', isDefault: true })
@@ -49,7 +63,7 @@ test('aplica a cor hexadecimal estrita em todas as mutacoes de etapa', () => {
     name: 'Entrada',
     color: '#A1b2C3',
   }).success, true)
-  assert.equal(stageUpdateInputSchema.safeParse({ color: null }).success, true)
+  assert.equal(stageUpdateInputSchema.safeParse({ color: null, expectedUpdatedAt: '2026-10-16T12:00:00.123456Z' }).success, true)
   assert.equal(stagesReorderInputSchema.safeParse({
     stages: [{ id: ID, name: 'Entrada', color: '#A1b2C3', isNew: true }],
   }).success, true)
@@ -62,7 +76,7 @@ test('aplica a cor hexadecimal estrita em todas as mutacoes de etapa', () => {
     }).success, false)
   }
 
-  const invalidPatch = stageUpdateInputSchema.safeParse({ color: 'red' })
+  const invalidPatch = stageUpdateInputSchema.safeParse({ color: 'red', expectedUpdatedAt: '2026-10-16T12:00:00.123456Z' })
   assert.equal(invalidPatch.success, false)
   if (!invalidPatch.success) {
     assert.match(invalidPatch.error.issues[0]?.message || '', /#RRGGBB/)
@@ -179,7 +193,7 @@ test('preserva todas as origens quando a organizacao tem mais de 500 opcoes', ()
 })
 
 test('preserva isQualified no patch e na resposta de etapa', () => {
-  const patchResult = stageUpdateInputSchema.safeParse({ isQualified: false })
+  const patchResult = stageUpdateInputSchema.safeParse({ isQualified: false, expectedUpdatedAt: '2026-10-16T12:00:00.123456Z' })
   assert.equal(patchResult.success, true)
   if (patchResult.success) assert.equal(patchResult.data.isQualified, false)
 
@@ -210,4 +224,12 @@ test('rejeita etapa qualificada terminal ou inativa', () => {
   ]) {
     assert.equal(stageUpdateInputSchema.safeParse(input).success, false)
   }
+})
+
+test('PATCH de coluna exige revisão exata e mudanças além da revisão', () => {
+  const expectedUpdatedAt = '2026-10-16T12:00:00.123456Z'
+  assert.equal(stageUpdateInputSchema.safeParse({ name: 'Renomeada' }).success, false)
+  assert.equal(stageUpdateInputSchema.safeParse({ expectedUpdatedAt }).success, false)
+  const parsed = stageUpdateInputSchema.parse({ expectedUpdatedAt, name: 'Renomeada' })
+  assert.equal(parsed.expectedUpdatedAt, expectedUpdatedAt)
 })

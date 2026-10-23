@@ -14,7 +14,7 @@ export const dashboardVisitSchema = z.object({
   end_time: z.string().min(1),
   lead_id: uuid,
   lead_name: text(300),
-  source: text(180),
+  source: z.string(),
   created_by_id: uuid.nullable(),
   created_by_name: text(300),
   created_by_avatar: text(2_048).nullable(),
@@ -40,7 +40,7 @@ export const dashboardVisitsSchema = z.object({
     avatarUrl: text(2_048).nullable(),
     count,
   })).max(50),
-  sources: z.array(z.object({ source: text(180), count })).max(50),
+  sources: z.array(z.object({ source: z.string(), count })).max(50),
 }).passthrough().superRefine((report, context) => {
   if (report.upcoming > report.total || report.overdue > report.total || report.visits.length > report.total) {
     context.addIssue({

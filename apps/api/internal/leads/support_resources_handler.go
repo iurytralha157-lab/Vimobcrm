@@ -29,6 +29,15 @@ func (handler Handler) ListContacts(w http.ResponseWriter, r *http.Request) {
 		writeLeadError(w, r, err)
 		return
 	}
+	if filter.ResponseMode == "page" {
+		page, err := handler.repo.ListContactsPage(r.Context(), tenantContext, filter)
+		if err != nil {
+			writeLeadError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, page)
+		return
+	}
 
 	contacts, err := handler.repo.ListContacts(r.Context(), tenantContext, filter)
 	if err != nil {
@@ -43,6 +52,15 @@ func (handler Handler) ListTags(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	if r.URL.Query().Get("view") == "catalog" {
+		tags, err := handler.repo.ListTagCatalog(r.Context(), tenantContext)
+		if err != nil {
+			writeLeadError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string][]TagCatalog{"data": tags})
 		return
 	}
 
@@ -76,6 +94,7 @@ func (handler Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		writeLeadError(w, r, err)
 		return
 	}
+	handler.publisher.Publish(realtime.NewEvent("tag.created", tenantContext.OrganizationID, tenantContext.UserID, map[string]any{"tagId": tag.ID}))
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]Tag{"data": tag})
 }
 
@@ -100,6 +119,7 @@ func (handler Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
 		writeLeadError(w, r, err)
 		return
 	}
+	handler.publisher.Publish(realtime.NewEvent("tag.updated", tenantContext.OrganizationID, tenantContext.UserID, map[string]any{"tagId": tag.ID}))
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Tag{"data": tag})
 }
 
@@ -110,11 +130,31 @@ func (handler Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := handler.repo.DeleteTag(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	revision, err := parseTagRevision(r.Header.Get("If-Match"))
+	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
+	if err := handler.repo.DeleteTag(r.Context(), tenantContext, r.PathValue("id"), revision); err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	tagID, _ := normalizeUUID(r.PathValue("id"))
+	handler.publisher.Publish(realtime.NewEvent("tag.deleted", tenantContext.OrganizationID, tenantContext.UserID, map[string]any{"tagId": tagID}))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (handler Handler) TagUsage(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+	usage, err := handler.repo.TagUsage(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]TagUsage{"data": usage})
 }
 
 func (handler Handler) ListLeadSources(w http.ResponseWriter, r *http.Request) {
@@ -219,12 +259,32 @@ func (handler Handler) ListLeadAttachments(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	attachments, err := handler.repo.ListLeadAttachments(r.Context(), tenantContext, r.URL.Query().Get("leadId"))
+	filter, err := ParseLeadAttachmentListFilter(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	attachments, err := handler.repo.ListLeadAttachmentsWithOptions(r.Context(), tenantContext, filter)
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string][]LeadAttachment{"data": attachments})
+}
+
+func (handler Handler) ShowLeadAttachmentAccess(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	attachment, err := handler.repo.GetLeadAttachmentAccess(r.Context(), tenantContext, r.PathValue("id"), r.PathValue("attachmentId"))
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	httpserver.WriteJSON(w, http.StatusOK, map[string]LeadAttachment{"data": attachment})
 }
 
 func (handler Handler) CreateLeadAttachment(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +408,12 @@ func (handler Handler) ListNotifications(w http.ResponseWriter, r *http.Request)
 		writeLeadError(w, r, err)
 		return
 	}
-	notifications, nextCursor, err := handler.repo.ListNotifications(r.Context(), tenantContext, r.URL.Query().Get("userId"), cursor, limit)
+	filter, err := parseNotificationListFilters(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	notifications, nextCursor, err := handler.repo.ListNotificationsFiltered(r.Context(), tenantContext, r.URL.Query().Get("userId"), cursor, limit, filter)
 	if err != nil {
 		writeLeadError(w, r, err)
 		return

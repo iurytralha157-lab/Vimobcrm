@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -14,6 +15,8 @@ const (
 	maxDashboardDateRange     = 5 * 366 * 24 * time.Hour
 	maxDashboardSearchLength  = 180
 	maxDashboardCampaignIDs   = 50
+	maxLeadSourceFilterLength = 4096
+	maxDashboardSourceLength  = maxLeadSourceFilterLength
 )
 
 type DashboardFilter struct {
@@ -146,12 +149,12 @@ type DashboardCampaigns struct {
 }
 
 type TopBroker struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	AvatarURL        *string `json:"avatar_url"`
-	ClosedLeads      int64   `json:"closedLeads"`
-	SalesValue       float64 `json:"salesValue"`
-	TotalCommissions float64 `json:"totalCommissions"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	AvatarURL        *string  `json:"avatar_url"`
+	ClosedLeads      int64    `json:"closedLeads"`
+	SalesValue       float64  `json:"salesValue"`
+	TotalCommissions *float64 `json:"totalCommissions"`
 }
 
 type TopBrokersResult struct {
@@ -301,7 +304,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	if searchQuery == "" {
 		searchQuery = strings.TrimSpace(values.Get("search"))
 	}
-	if len(searchQuery) > maxDashboardSearchLength {
+	if utf8.RuneCountInString(searchQuery) > maxDashboardSearchLength {
 		return DashboardFilter{}, fmt.Errorf("%w: searchQuery is too long", ErrInvalidInput)
 	}
 
@@ -353,7 +356,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		return DashboardFilter{}, err
 	}
 
-	source, err := normalizeDashboardTextFilter("source", values.Get("source"), 180)
+	source, err := normalizeDashboardTextFilter("source", values.Get("source"), maxDashboardSourceLength)
 	if err != nil {
 		return DashboardFilter{}, err
 	}
@@ -438,7 +441,7 @@ func normalizeDashboardTextFilter(name string, raw string, maxLength int) (strin
 	if strings.EqualFold(value, "all") {
 		return "all", nil
 	}
-	if len(value) > maxLength {
+	if utf8.RuneCountInString(value) > maxLength {
 		return "", fmt.Errorf("%w: %s is too long", ErrInvalidInput, name)
 	}
 	return value, nil
@@ -456,7 +459,7 @@ func normalizeDashboardCampaignFilterIDs(campaignID string, campaignIDs []string
 		return nil, fmt.Errorf("%w: campaignIds can contain at most %d items", ErrInvalidInput, maxDashboardCampaignIDs)
 	}
 	for _, value := range values {
-		if len(value) > 255 {
+		if utf8.RuneCountInString(value) > 255 {
 			return nil, fmt.Errorf("%w: campaignIds contains an oversized value", ErrInvalidInput)
 		}
 	}

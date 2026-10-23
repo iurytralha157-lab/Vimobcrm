@@ -1151,8 +1151,8 @@ func TestWhatsAppMediaQueueSourceContracts(t *testing.T) {
 	}
 
 	retry := mustReadWhatsAppMediaContractFile(t, filepath.Join(whatsappDir, "media_retry_operations.go"))
-	if !strings.Contains(retry, "enqueueManualWhatsAppMediaJob(ctx, message)") {
-		t.Fatal("manual retry does not enqueue the global media worker")
+	if !strings.Contains(retry, "enqueueManualWhatsAppMediaJob(ctx, message, tenantContext)") {
+		t.Fatal("manual retry does not enqueue the global media worker with its original actor")
 	}
 	if strings.Contains(retry, "media, err := repo.recoverWhatsAppMedia(ctx, message)") {
 		t.Fatal("manual retry still downloads media inline")

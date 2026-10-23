@@ -270,7 +270,12 @@ export function getWhatsAppHref(site: PublicSiteConfig, message?: string) {
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 
-export function getThemeTokens(site: PublicSiteConfig) {
+export type PublicSiteThemeSettings = Pick<PublicSiteConfig,
+  "site_theme" | "background_color" | "card_color" | "text_color" |
+  "primary_color" | "secondary_color" | "accent_color"
+>;
+
+export function getThemeTokens(site: PublicSiteThemeSettings) {
   const isDark = site.site_theme !== "light";
   const defaults = isDark ? PUBLIC_SITE_DEFAULTS.dark : PUBLIC_SITE_DEFAULTS.light;
   const background = normalizeThemeColor(site.background_color, defaults.background);

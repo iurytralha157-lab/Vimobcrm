@@ -1,39 +1,30 @@
-import { useMutation } from "@tanstack/react-query";
+import { useWhatsAppIntentMutation } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
 import { whatsappAPI } from "@/lib/api/whatsapp";
-import { useAuth } from "@/contexts/AuthContext";
 
 export function useCheckWhatsAppNumber() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (args: { sessionId: string; numbers: string[] }) =>
-      whatsappAPI.checkNumbers(args.sessionId, args.numbers, activeOrganization.organizationId),
+  return useWhatsAppIntentMutation({
+    mutationFn: async (args: { sessionId: string; numbers: string[] }, intent) =>
+      whatsappAPI.checkNumbers(args.sessionId, args.numbers, intent.scope.organizationId, intent),
   });
 }
 
 export function useFetchAvatar() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (args: { sessionId: string; jid: string }) =>
-      whatsappAPI.fetchAvatar(args.sessionId, args.jid, activeOrganization.organizationId),
+  return useWhatsAppIntentMutation({
+    mutationFn: async (args: { sessionId: string; jid: string }, intent) =>
+      whatsappAPI.fetchAvatar(args.sessionId, args.jid, intent.scope.organizationId, intent),
   });
 }
 
 export function useSyncContactsAvatars() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (sessionId: string) =>
-      whatsappAPI.syncContactsAvatars(sessionId, activeOrganization.organizationId),
+  return useWhatsAppIntentMutation({
+    mutationFn: async (sessionId: string, intent) =>
+      whatsappAPI.syncContactsAvatars(sessionId, intent.scope.organizationId, intent),
   });
 }
 
 export function useHistorySync() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (args: { sessionId: string; jid?: string }) =>
-      whatsappAPI.historySync(args.sessionId, args.jid, activeOrganization.organizationId),
+  return useWhatsAppIntentMutation({
+    mutationFn: async (args: { sessionId: string; jid?: string }, intent) =>
+      whatsappAPI.historySync(args.sessionId, args.jid, intent.scope.organizationId, intent),
   });
 }

@@ -23,7 +23,7 @@ func TestAuthenticatedWhatsAppRoutesRequireModuleAndPermission(t *testing.T) {
 	for _, match := range matches {
 		registration := match[0]
 		guard := match[1]
-		if !strings.Contains(guard, `withModulePermission("whatsapp", permissions.WhatsApp`) {
+		if !strings.Contains(guard, `withActiveModulePermission("whatsapp", permissions.WhatsApp`) {
 			t.Fatalf("WhatsApp route is missing module + permission guard: %s", registration)
 		}
 	}
@@ -35,7 +35,7 @@ func TestWhatsAppUnreadCountRouteUsesViewPermission(t *testing.T) {
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	expected := `mux.Handle("GET /v1/whatsapp/conversations/unread-count", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.CountUnreadConversations)))`
+	expected := `mux.Handle("GET /v1/whatsapp/conversations/unread-count", withActiveModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.CountUnreadConversations)))`
 	if !strings.Contains(string(raw), expected) {
 		t.Fatal("WhatsApp unread count must stay behind the WhatsApp view permission")
 	}
@@ -47,7 +47,7 @@ func TestWhatsAppConversationSnapshotRouteUsesViewPermission(t *testing.T) {
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	expected := `mux.Handle("GET /v1/whatsapp/conversations/{id}/snapshot", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversationSnapshot)))`
+	expected := `mux.Handle("GET /v1/whatsapp/conversations/{id}/snapshot", withActiveModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversationSnapshot)))`
 	if !strings.Contains(string(raw), expected) {
 		t.Fatal("WhatsApp conversation snapshot must stay behind the WhatsApp view permission")
 	}
@@ -60,8 +60,8 @@ func TestWhatsAppAttendanceRoutesUseReadAndOperatePermissions(t *testing.T) {
 	}
 	source := string(raw)
 	for _, expected := range []string{
-		`mux.Handle("GET /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetConversationAttendance)))`,
-		`mux.Handle("POST /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.JoinConversationAttendance)))`,
+		`mux.Handle("GET /v1/whatsapp/conversations/{id}/attendance", withActiveModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetConversationAttendance)))`,
+		`mux.Handle("POST /v1/whatsapp/conversations/{id}/attendance", withActiveModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.JoinConversationAttendance)))`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("WhatsApp attendance route has the wrong permission contract: %s", expected)
@@ -75,7 +75,7 @@ func TestWhatsAppSessionStatusesRouteUsesViewPermission(t *testing.T) {
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	expected := `mux.Handle("GET /v1/whatsapp/session-statuses", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListSessionStatuses)))`
+	expected := `mux.Handle("GET /v1/whatsapp/session-statuses", withActiveModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListSessionStatuses)))`
 	if !strings.Contains(string(raw), expected) {
 		t.Fatal("WhatsApp session statuses must stay behind the WhatsApp module and view permission")
 	}
@@ -87,7 +87,7 @@ func TestWhatsAppLazyMediaURLRouteUsesViewPermission(t *testing.T) {
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	expected := `mux.Handle("GET /v1/whatsapp/messages/{id}/media-url", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetMessageMediaURL)))`
+	expected := `mux.Handle("GET /v1/whatsapp/messages/{id}/media-url", withActiveModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetMessageMediaURL)))`
 	if !strings.Contains(string(raw), expected) {
 		t.Fatal("WhatsApp lazy media URL must stay behind the WhatsApp view permission")
 	}

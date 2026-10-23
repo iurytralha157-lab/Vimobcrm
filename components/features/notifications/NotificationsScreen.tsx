@@ -232,7 +232,7 @@ export default function Notifications() {
     isFetchingNextPage,
     isFetchNextPageError,
     refetch: refetchNotifications,
-  } = useNotifications();
+  } = useNotifications({ unreadOnly: filter === 'unread', categories: categoryFilters });
   const {
     data: unreadCountFromAPI,
     isError: unreadCountError,

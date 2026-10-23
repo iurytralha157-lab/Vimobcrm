@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -31,7 +33,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	t.Cleanup(postgres.Close)
 
 	suffix := fmt.Sprintf("wa-native-%d", time.Now().UnixNano())
-	var organizationID, userID, leadID, sessionID, conversationID, outboundRowID string
+	var organizationID, userID, roundRobinUserID, leadID, sessionID, conversationID, outboundRowID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.organizations (name, slug) values ($1, $1) returning id::text
 	`, suffix).Scan(&organizationID); err != nil {
@@ -43,8 +45,21 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		if _, err := postgres.Pool().Exec(cleanupCtx, `
+			delete from private.whatsapp_unlinked_history_links where organization_id=$1::uuid;
+			delete from public.whatsapp_messages where organization_id=$1::uuid;
+			delete from public.whatsapp_conversations where organization_id=$1::uuid;
+			delete from public.whatsapp_conversation_lead_bindings where organization_id=$1::uuid;
+			delete from public.whatsapp_sessions where organization_id=$1::uuid;
+			delete from public.leads where organization_id=$1::uuid;
+			delete from public.round_robins where organization_id=$1::uuid;
+			delete from public.organization_members where organization_id=$1::uuid;
+			delete from public.users where id=$2::uuid or id=nullif($3,'')::uuid;
+			delete from auth.users where id=$2::uuid or id=nullif($3,'')::uuid;
+			delete from public.organizations where id=$1::uuid
+		`, organizationID, userID, roundRobinUserID); err != nil {
+			t.Errorf("cleanup synthetic native core fixture: %v", err)
+		}
 	})
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into auth.users (
@@ -115,11 +130,11 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, lead_id,
 			provider_message_id, message_id, client_message_id, from_me, direction,
-			content, message_type, status, sent_at
+			content, message_type, status, sent_at, capture_state
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			'provider-outbound-status', 'provider-outbound-status', 'client-native-status',
-			true, 'outbound', 'Mensagem enviada', 'text', 'sent', now()
+			true, 'outbound', 'Mensagem enviada', 'text', 'sent', now(), 'captured'
 		) returning id::text
 	`, organizationID, conversationID, sessionID, leadID).Scan(&outboundRowID); err != nil {
 		t.Fatal(err)
@@ -139,13 +154,49 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	}
 
 	repo := NewRepository(postgres, nil, StorageConfig{})
+	// Visible live capture begins with explicit attendance. Static provider
+	// timestamps predating this fixture cannot prove live unread/media effects.
+	if _, err := repo.JoinConversationAttendance(ctx, tenant.Context{
+		OrganizationID: organizationID, UserID: userID, MemberRole: "user", UserRole: "user",
+		Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate, permissions.WhatsAppView, permissions.WhatsAppOperate},
+	}, conversationID, attendanceInput{ExpectedLeadID: leadID, SendSessionID: sessionID}); err != nil {
+		t.Fatalf("enter live native fixture attendance: %v", err)
+	}
 	item := func(event, fixture string) pendingEvolutionWebhook {
+		raw := readNativeFixture(t, fixture)
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		occurredAt := time.Now().UTC().Format(time.RFC3339Nano)
+		refreshMessageTime := func(message map[string]any) {
+			if info, ok := message["Info"].(map[string]any); ok {
+				info["Timestamp"] = occurredAt
+			}
+			if _, present := message["messageTimestamp"]; present {
+				message["messageTimestamp"] = occurredAt
+			}
+		}
+		data := mapFromAny(payload["data"])
+		if message, ok := data["message"].(map[string]any); ok {
+			refreshMessageTime(message)
+		}
+		if messages, ok := data["messages"].([]any); ok {
+			for _, message := range messages {
+				refreshMessageTime(mapFromAny(message))
+			}
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
 		return pendingEvolutionWebhook{
 			OrganizationID: organizationID,
 			SessionID:      sessionID,
 			EventType:      event,
-			Payload:        readNativeFixture(t, fixture),
+			Payload:        raw,
 			ProcessingLane: evolutionWebhookLaneLive,
+			CreatedAt:      time.Now().UTC(),
 		}
 	}
 
@@ -153,8 +204,9 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if err := postgres.Pool().QueryRow(ctx, `select unread_count from public.whatsapp_conversations where id = $1::uuid`, conversationID).Scan(&unreadBefore); err != nil {
 		t.Fatal(err)
 	}
+	textItem := item("messages.upsert", "message_text.json")
 	for attempt := 0; attempt < 2; attempt++ {
-		handled, err := repo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_text.json"))
+		handled, err := repo.processEvolutionWebhookNative(ctx, textItem)
 		if err != nil || !handled {
 			t.Fatalf("native text attempt %d = handled:%v error:%v", attempt+1, handled, err)
 		}
@@ -447,11 +499,47 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		)
 	}
 
-	reactionPayload := strings.ReplaceAll(string(readNativeFixture(t, "message_reaction.json")), "provider-outbound-for-reaction", "provider-outbound-status")
-	reactionItem := pendingEvolutionWebhook{OrganizationID: organizationID, SessionID: sessionID, EventType: "messages.upsert", Payload: []byte(reactionPayload)}
+	// Mutations require canonical ingress provenance. Exercise the actual
+	// admission, FIFO claim and worker instead of constructing a legacy item.
+	if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_sessions
+		set advanced_settings=coalesce(advanced_settings,'{}'::jsonb)||'{"token":"synthetic-native-instance"}'::jsonb
+		where id=$1::uuid and organization_id=$2::uuid`, sessionID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `select private.activate_whatsapp_webhook_session_cutover($1::uuid,$2::uuid)`, organizationID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	repo.functions.webhookProcessorMode = webhookProcessorNative
+	repo.functions.webhookRolloutSessionIDs = []string{sessionID}
+	processedMutations := map[string]string{}
+	processCanonicalMutation := func(mutation pendingEvolutionWebhook) error {
+		envelope := evolutionWebhookEnvelope{SessionID: sessionID, InstanceID: suffix,
+			InstanceToken: "synthetic-native-instance", WebhookHeaderTokens: []string{"native-secret"},
+			EventType: mutation.EventType, Payload: mutation.Payload, ReceivedAt: time.Now().UTC()}
+		key := string(mutation.Payload)
+		if prior := processedMutations[key]; prior != "" {
+			receipt, err := repo.AcceptEvolutionWebhook(ctx, envelope)
+			if err != nil || !receipt.Duplicate || receipt.ID != prior {
+				return fmt.Errorf("canonical mutation replay = %+v: %w", receipt, err)
+			}
+			return nil
+		}
+		claimed := claimCanonicalMutationFixture(t, ctx, postgres.Pool(), repo, envelope)
+		if err := repo.processClaimedEvolutionWebhook(ctx, claimed); err != nil {
+			return err
+		}
+		var status string
+		if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_webhook_inbox where id=$1::uuid`, claimed.ID).Scan(&status); err != nil || status != "processed" {
+			return fmt.Errorf("canonical mutation status=%s: %w", status, err)
+		}
+		processedMutations[key] = claimed.ID
+		return nil
+	}
+	reactionItem := item("messages.upsert", "message_reaction.json")
+	reactionItem.Payload = []byte(strings.ReplaceAll(string(reactionItem.Payload), "provider-outbound-for-reaction", "provider-outbound-status"))
 	for attempt := 0; attempt < 2; attempt++ {
-		if handled, err := repo.processEvolutionWebhookNative(ctx, reactionItem); err != nil || !handled {
-			t.Fatalf("native reaction attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		if err := processCanonicalMutation(reactionItem); err != nil {
+			t.Fatalf("native reaction attempt %d: %v", attempt+1, err)
 		}
 	}
 	var normalizedReactionCount, reactionMessageCount int
@@ -494,11 +582,11 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	`, conversationID, outboundRowID); err != nil {
 		t.Fatal(err)
 	}
-	deletionPayload := strings.ReplaceAll(string(readNativeFixture(t, "message_delete.json")), "provider-delete-target", "provider-outbound-status")
-	deletionItem := pendingEvolutionWebhook{OrganizationID: organizationID, SessionID: sessionID, EventType: "messages.upsert", Payload: []byte(deletionPayload)}
+	deletionItem := item("messages.upsert", "message_delete.json")
+	deletionItem.Payload = []byte(strings.ReplaceAll(string(deletionItem.Payload), "provider-delete-target", "provider-outbound-status"))
 	for attempt := 0; attempt < 2; attempt++ {
-		if handled, err := repo.processEvolutionWebhookNative(ctx, deletionItem); err != nil || !handled {
-			t.Fatalf("native deletion attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		if err := processCanonicalMutation(deletionItem); err != nil {
+			t.Fatalf("native deletion attempt %d: %v", attempt+1, err)
 		}
 	}
 	var deletedType, deletedContent, deletedPreview string
@@ -522,11 +610,26 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("canonical deletion state = type:%s content:%s event:%s preview:%s extra:%d", deletedType, deletedContent, messageStatus, deletedPreview, deletionEventRows)
 	}
 
-	if handled, err := repo.processEvolutionWebhookNative(ctx, item("qrcode.updated", "qr.json")); err != nil || !handled {
-		t.Fatalf("native QR = handled:%v error:%v", handled, err)
-	}
-	if handled, err := repo.processEvolutionWebhookNative(ctx, item("connection.update", "connection.json")); err != nil || !handled {
-		t.Fatalf("native connection = handled:%v error:%v", handled, err)
+	for _, control := range []struct{ label, event, fixture string }{
+		{"QR", "qrcode.updated", "qr.json"},
+		{"connection", "connection.update", "connection.json"},
+	} {
+		claimed := leaseObservationControl(t, ctx, postgres, item(control.event, control.fixture))
+		if handled, err := repo.processEvolutionWebhookNative(ctx, claimed); err != nil || !handled {
+			t.Fatalf("native %s = handled:%v error:%v", control.label, handled, err)
+		}
+		// These processor-level assertions own real leases. Complete them via
+		// the worker's fenced CAS before a later canonical intake is claimed.
+		if err := repo.markEvolutionWebhookProcessed(ctx, claimed); err != nil {
+			t.Fatalf("native %s completion: %v", control.label, err)
+		}
+		var status string
+		var leaseReleased bool
+		if err := postgres.Pool().QueryRow(ctx, `select status, locked_at is null and locked_by is null
+			from public.whatsapp_webhook_inbox where id=$1::uuid and organization_id=$2::uuid and session_id=$3::uuid`,
+			claimed.ID, organizationID, sessionID).Scan(&status, &leaseReleased); err != nil || status != "processed" || !leaseReleased {
+			t.Fatalf("native %s terminal lease = status:%s released:%v error:%v", control.label, status, leaseReleased, err)
+		}
 	}
 	var sessionStatus, sessionPhone string
 	if err := postgres.Pool().QueryRow(ctx, `select status, coalesce(phone_number, '') from public.whatsapp_sessions where id = $1::uuid`, sessionID).Scan(&sessionStatus, &sessionPhone); err != nil {
@@ -754,15 +857,10 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("unverified Meta referral created %d leads", invalidCampaignLeadCount)
 	}
 
-	var roundRobinUserID, pipelineID, stageID, roundRobinID, inboundRuleID string
+	var pipelineID, stageID, roundRobinID, inboundRuleID string
 	if err := postgres.Pool().QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&roundRobinUserID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, roundRobinUserID)
-	})
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into auth.users (
 		  id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -827,6 +925,13 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	`, organizationID, roundRobinID, roundRobinUserID); err != nil {
 		t.Fatal(err)
 	}
+	// CTWA distribution resolves the canonical CRM intake rules. A legacy
+	// inbound display rule alone must not authorize a destination queue.
+	if _, err := postgres.Pool().Exec(ctx, `insert into public.round_robin_rules
+		(organization_id,round_robin_id,match_type,match_value,is_active,priority)
+		values($1::uuid,$2::uuid,'whatsapp_session',$3,true,100)`, organizationID, roundRobinID, sessionID); err != nil {
+		t.Fatal(err)
+	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_inbound_rules (
 		  organization_id, session_id, name, match_type, match_field, match_value,
@@ -842,8 +947,8 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	verifiedCampaign := item("messages.upsert", "meta_ctwa_instagram.json")
 	var verifiedLeadCount int
 	for attempt := 0; attempt < 2; attempt++ {
-		if handled, err := repo.processEvolutionWebhookNative(ctx, verifiedCampaign); err != nil || !handled {
-			t.Fatalf("confirmed CTWA attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		if err := processCanonicalMutation(verifiedCampaign); err != nil {
+			t.Fatalf("confirmed CTWA attempt %d = %v", attempt+1, err)
 		}
 	}
 	var campaignConversationLeadID, campaignMessageLeadID string

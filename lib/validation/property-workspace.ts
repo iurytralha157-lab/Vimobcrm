@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiPropertySitePublicationSchema } from "./properties";
 
 import { uuidSchema } from "./common";
 
@@ -42,6 +43,7 @@ export const propertyWorkspacePropertySchema = z
     finalidade: nullableStringSchema.optional(),
     published_on_site: nullableBooleanSchema,
     anunciar: nullableBooleanSchema,
+    site_publication: apiPropertySitePublicationSchema.nullable().optional(),
     imagem_principal: nullableStringSchema,
     image_urls: z.array(z.string()).nullable(),
     fotos: z.array(z.string()).nullable(),

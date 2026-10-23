@@ -18,7 +18,7 @@ export type UseOrganizationPresenceListOptions = {
 export function useOrganizationPresenceList({
   enabled,
 }: UseOrganizationPresenceListOptions) {
-  const { activeOrganization, organization, profile, tenantContext } = useAuth()
+  const { activeOrganization, organization, tenantContext } = useAuth()
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions()
   const organizationId = organization?.is_active === false
     ? undefined

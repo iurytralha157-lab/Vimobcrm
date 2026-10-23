@@ -1,8 +1,12 @@
-import type { ChangeEventHandler, KeyboardEventHandler, RefObject } from "react";
-import { Loader2, Paperclip, Square, Zap } from "lucide-react";
+import type { ChangeEventHandler, KeyboardEventHandler, ReactNode, RefObject } from "react";
+import { Paperclip } from "lucide-react";
 
-import { AudioRecorderButton } from "@/components/features/whatsapp/AudioRecorderButton";
-import { MessageBox } from "@/components/ui/message-box";
+import { ConversationAutomationAction } from "@/components/features/whatsapp/ConversationAutomationAction";
+import type { AudioRecorderButtonProps } from "@/components/features/whatsapp/AudioRecorderButton";
+import { ScopedMessageBox } from "@/components/features/whatsapp/ScopedMessageBox";
+import type { WhatsAppQuotedMessage } from "@/lib/api/whatsapp";
+import type { WhatsAppAttachments } from "@/hooks/use-whatsapp-attachments";
+import { AttachmentPreviewComposer } from "@/components/features/whatsapp/AttachmentPreviewComposer";
 
 type ConversationComposerProps = {
   layout: "mobile" | "desktop";
@@ -15,6 +19,9 @@ type ConversationComposerProps = {
   placeholder: string;
   disabled: boolean;
   isSending: boolean;
+  readOnly?: boolean;
+  whatsAppControls?: boolean;
+  startNotice?: ReactNode;
   selectedLeadId: string | null;
   canStartAutomations: boolean;
   hasActiveAutomation: boolean;
@@ -23,7 +30,14 @@ type ConversationComposerProps = {
   onStartAutomation: () => void;
   onCancelAutomation: () => void;
   isCancellingAutomation: boolean;
-  onSendAudio: (base64: string, mimetype: string) => Promise<boolean | void>;
+  audioContextKey: string;
+  audioDisabled: boolean;
+  onSendAudio: AudioRecorderButtonProps["onSend"];
+  onResolveAudio: AudioRecorderButtonProps["onResolveUnconfirmed"];
+  quotedMessage?: WhatsAppQuotedMessage | null;
+  onClearQuote?: () => void;
+  attachments?: WhatsAppAttachments;
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
 export function ConversationComposer({
@@ -37,6 +51,9 @@ export function ConversationComposer({
   placeholder,
   disabled,
   isSending,
+  readOnly = false,
+  whatsAppControls = true,
+  startNotice,
   selectedLeadId,
   canStartAutomations,
   hasActiveAutomation,
@@ -46,55 +63,25 @@ export function ConversationComposer({
   onCancelAutomation,
   isCancellingAutomation,
   onSendAudio,
+  audioContextKey,
+  audioDisabled,
+  onResolveAudio,
+  quotedMessage,
+  onClearQuote,
+  attachments,
+  inputRef,
 }: ConversationComposerProps) {
   const isMobile = layout === "mobile";
+  if (startNotice) return <footer className="shrink-0 bg-[var(--app-surface-soft)]">{startNotice}</footer>;
+  if (readOnly) return <footer role="status" className="shrink-0 bg-[var(--app-surface-soft)] px-3 py-3 text-xs text-muted-foreground">{placeholder || "Somente leitura"}</footer>;
   const leftActions = (
     <>
-      <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={disabled}>
+      {whatsAppControls && <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={disabled}>
         <Paperclip className="w-5 h-5" />
-      </button>
-      {selectedLeadId && canStartAutomations && (
-        isLoadingAutomationState ? (
-          <span
-            className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground"
-            role="status"
-            aria-label="Verificando automações ativas"
-            title="Verificando automações ativas"
-          >
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          </span>
-        ) : isAutomationStateUnavailable ? (
-          <span
-            className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground/50"
-            role="img"
-            aria-label="Estado das automações indisponível"
-            title="Não foi possível verificar as automações agora"
-          >
-            <Zap className="h-4 w-4" aria-hidden="true" />
-          </span>
-        ) : hasActiveAutomation ? (
-          <button
-            type="button"
-            onClick={onCancelAutomation}
-            disabled={isCancellingAutomation}
-            aria-label="Parar automação ativa"
-            title="Parar automação ativa"
-          >
-            {isCancellingAutomation
-              ? <Loader2 className="w-5 h-5 animate-spin" />
-              : <Square className="w-5 h-5" />}
-          </button>
-        ) : (
-          <button
-            aria-label="Iniciar automação"
-            type="button"
-            onClick={onStartAutomation}
-            title="Iniciar automação"
-          >
-            <Zap className="w-5 h-5" />
-          </button>
-        )
-      )}
+      </button>}
+      {selectedLeadId && canStartAutomations && <ConversationAutomationAction
+        loading={isLoadingAutomationState} unavailable={isAutomationStateUnavailable} active={hasActiveAutomation}
+        cancelling={isCancellingAutomation} onStart={onStartAutomation} onCancel={onCancelAutomation} />}
     </>
   );
 
@@ -102,15 +89,29 @@ export function ConversationComposer({
     <footer
       {...(!isMobile ? { "data-tour": "conversations-composer" } : {})}
       className="shrink-0 bg-[var(--app-surface-soft)] px-3 pb-3 pt-2"
+      onPaste={attachments?.onPaste}
+      onDrop={attachments?.onDrop}
+      onDragOver={attachments?.onDragOver}
     >
       <input
+        key={audioContextKey}
         type="file"
         ref={fileInputRef}
-        onChange={onFileSelect}
+        onChange={attachments?.onFileSelect || onFileSelect}
+        multiple={Boolean(attachments)}
         accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx"
         className="hidden"
+        disabled={!whatsAppControls || disabled}
       />
-      <MessageBox
+      {attachments && <AttachmentPreviewComposer attachments={attachments} />}
+      {quotedMessage && (
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2 rounded border-l-2 border-primary bg-muted px-2 py-1 text-xs" role="status">
+          <span className="truncate">Respondendo: {quotedMessage.content || quotedMessage.media_filename || "Mensagem"}</span>
+          <button type="button" aria-label="Cancelar resposta citada" className="shrink-0 px-2 py-1" onClick={onClearQuote}>×</button>
+        </div>
+      )}
+      <ScopedMessageBox
+        showAudio={whatsAppControls}
         value={messageText}
         inputAriaLabel="Digite sua mensagem"
         onChange={onMessageTextChange}
@@ -120,16 +121,10 @@ export function ConversationComposer({
         disabled={disabled}
         isSending={isSending}
         multiline
-        {...(!isMobile ? { showRightActionsWhenEmpty: !isSending } : {})}
+        inputRef={inputRef}
         leftActions={leftActions}
-        {...(!isMobile ? {
-          rightActions: (
-            <AudioRecorderButton
-              onSend={onSendAudio}
-              disabled={disabled}
-            />
-          ),
-        } : {})}
+        audio={{ contextKey: audioContextKey, onSend: onSendAudio,
+          onResolveUnconfirmed: onResolveAudio, disabled: audioDisabled }}
       />
     </footer>
   );

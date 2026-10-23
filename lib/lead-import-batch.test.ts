@@ -75,3 +75,31 @@ test('imports 5,000 rows with bounded concurrency and exact progress totals', as
     remaining: 0,
   });
 });
+
+test('scope cancellation stops scheduling and preserves successes, failures and unstarted rows', async () => {
+  let activeScope = true;
+  const started: number[] = [];
+  const completions: Array<() => void> = [];
+  const task = runLeadImportBatch([0, 1, 2, 3, 4, 5], async row => {
+    started.push(row);
+    await new Promise<void>(resolve => completions.push(resolve));
+    if (row === 1) throw new Error('response without confirmation');
+  }, { concurrency: 2, shouldContinue: () => activeScope });
+  assert.deepEqual(started, [0, 1]);
+  activeScope = false;
+  completions.forEach(resolve => resolve());
+  const result = await task;
+  assert.deepEqual(result.successIndexes, [0]);
+  assert.deepEqual(result.failures.map(failure => failure.index), [1]);
+  assert.deepEqual(result.unstartedIndexes, [2, 3, 4, 5]);
+  assert.equal(result.stopped, true);
+});
+
+test('an aborted batch sends no rows and does not turn unstarted rows into failures', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let sent = 0;
+  const result = await runLeadImportBatch([0, 1], async () => { sent += 1; }, { signal: controller.signal });
+  assert.equal(sent, 0);
+  assert.deepEqual(result, { successIndexes: [], failures: [], unstartedIndexes: [0, 1], stopped: true });
+});

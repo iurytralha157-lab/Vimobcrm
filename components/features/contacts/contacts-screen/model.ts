@@ -2,6 +2,17 @@ import type { ContactListFilters } from '@/hooks/use-contacts-list';
 
 export const CONTACT_PAGE_SIZE_OPTIONS = [5, 10, 30, 50, 100] as const;
 
+export const CONTACT_TABLE_COLUMN_CLASSES = {
+  selection: 'w-10',
+  status: 'w-24',
+  lostReason: 'w-52',
+  stage: 'w-32',
+  assignee: 'w-14',
+  tags: 'w-36',
+  created: 'w-36',
+  actions: 'w-14',
+} as const;
+
 export const CONTACT_SOURCE_LABELS: Record<string, string> = {
   manual: 'Manual',
   meta: 'Meta Ads',
@@ -23,6 +34,7 @@ export type ContactFilterModel = {
   source: string | null;
   pageId: string | null;
   campaignId: string | null;
+  campaignIds?: string[];
   adSetId: string | null;
   adId: string | null;
   dealStatus: string | null;
@@ -45,6 +57,7 @@ export type ContactExportFilters = Pick<
   | 'source'
   | 'pageId'
   | 'campaignId'
+  | 'campaignIds'
   | 'adSetId'
   | 'adId'
   | 'dealStatus'
@@ -62,6 +75,7 @@ export function buildContactListFilters({
   source,
   pageId,
   campaignId,
+  campaignIds,
   adSetId,
   adId,
   dealStatus,
@@ -88,6 +102,7 @@ export function buildContactListFilters({
     source: source && source !== 'all' ? source : undefined,
     pageId: pageId && pageId !== 'all' ? pageId : undefined,
     campaignId: campaignId || undefined,
+    ...(campaignIds?.length ? { campaignIds: [...new Set(campaignIds)].sort() } : {}),
     adSetId: adSetId || undefined,
     adId: adId || undefined,
     dealStatus:
@@ -118,6 +133,7 @@ export function buildContactExportFilters(
     source,
     pageId,
     campaignId,
+    campaignIds,
     adSetId,
     adId,
     dealStatus,
@@ -136,6 +152,7 @@ export function buildContactExportFilters(
     source,
     pageId,
     campaignId,
+    ...(campaignIds?.length ? { campaignIds } : {}),
     adSetId,
     adId,
     dealStatus,
@@ -155,13 +172,26 @@ export function toggleCurrentPageSelection(
   currentPageIds: readonly string[],
 ): Set<string> {
   if (
-    selectedIds.size === currentPageIds.length &&
+    currentPageIds.every((id) => selectedIds.has(id)) &&
     currentPageIds.length > 0
   ) {
     return new Set();
   }
 
   return new Set(currentPageIds);
+}
+
+export function getCurrentPageSelection(
+  selectedIds: ReadonlySet<string>,
+  currentPageIds: readonly string[],
+): boolean | 'indeterminate' {
+  const count = currentPageIds.filter((id) => selectedIds.has(id)).length;
+  return count === 0 ? false : count === currentPageIds.length ? true : 'indeterminate';
+}
+
+export function contactSelectionScope(filters: ContactListFilters, search: string, identity?: { organizationId?: string | null; userId?: string }): string {
+  // Include the immediate search, so the debounce cannot keep old IDs actionable.
+  return JSON.stringify({ ...filters, search, identity });
 }
 
 export function toggleContactSelection({

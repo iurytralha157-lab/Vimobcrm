@@ -8,7 +8,7 @@ test("read-only lead history keeps incoming messages in a visible bubble", () =>
   const thread = readSource("../leads/LeadUnifiedThread.tsx");
   const bubble = readSource("./MessageBubble.tsx");
 
-  assert.match(thread, /<WhatsAppMessageBubble[\s\S]*?plainHistory=\{readOnly\}[\s\S]*?\/>/);
+  assert.match(thread, /<WhatsAppMessageBubble[\s\S]*?plainHistory(?:=\{true\})?[\s\S]*?\/>/);
   assert.match(bubble, /plainHistory \? "bg-\[var\(--lead-history-message-bg\)\]" : "bg-\[var\(--app-surface-soft\)\]"/);
   assert.doesNotMatch(bubble, /plainHistory \? "bg-transparent"/);
 });

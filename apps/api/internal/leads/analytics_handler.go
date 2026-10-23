@@ -51,6 +51,21 @@ func (handler Handler) ShowLeadHistoryRaw(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	pageFilter, paginated, err := ParseLeadHistoryPageFilter(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	if paginated {
+		page, err := handler.repo.LeadHistoryPage(r.Context(), tenantContext, r.PathValue("id"), pageFilter)
+		if err != nil {
+			writeLeadError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, page)
+		return
+	}
+
 	history, err := handler.repo.LeadHistoryRaw(r.Context(), tenantContext, r.PathValue("id"))
 	if err != nil {
 		writeLeadError(w, r, err)
@@ -145,7 +160,12 @@ func (handler Handler) UploadLeadAttachment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	attachment, err := handler.repo.UploadLeadAttachment(r.Context(), tenantContext, r.PathValue("id"), fileName, contentType, size, body)
+	keys := r.MultipartForm.Value["uploadRequestKey"]
+	if len(keys) != 1 {
+		writeLeadError(w, r, fmtInvalidInput("uploadRequestKey is required exactly once"))
+		return
+	}
+	attachment, err := handler.repo.UploadLeadAttachment(r.Context(), tenantContext, r.PathValue("id"), fileName, contentType, size, body, keys[0])
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
@@ -156,7 +176,7 @@ func (handler Handler) UploadLeadAttachment(w http.ResponseWriter, r *http.Reque
 
 func parseLeadAttachmentUpload(w http.ResponseWriter, r *http.Request) (string, string, int64, io.Reader, func(), error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLeadAttachmentUploadBytes+(1<<20))
-	if err := r.ParseMultipartForm(maxLeadAttachmentUploadBytes + (1 << 20)); err != nil {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		return "", "", 0, nil, nil, fmtInvalidInput("invalid multipart form")
 	}
 

@@ -24,7 +24,7 @@ import {
 } from '@/lib/api/automations';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 import { getErrorObjectMessage as getErrorMessage } from '@/lib/api/vimob-error';
-import { searchTextIncludes } from '@/lib/search-text';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAutomationMedia } from '@/hooks/use-automations';
 
 interface AutomationMediaGalleryProps {
@@ -42,12 +42,13 @@ export function AutomationMediaGallery({
   accept = 'image/*',
   mediaType = 'image',
 }: AutomationMediaGalleryProps) {
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const onSelectRef = useRef(onSelect);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
   const [deleteTarget, setDeleteTarget] = useState<AutomationMediaFile | null>(null);
 
   const orgId = activeOrganization.organizationId;
@@ -61,7 +62,7 @@ export function AutomationMediaGallery({
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAutomationMedia(mediaType);
+  } = useAutomationMedia(mediaType, debouncedSearch);
 
   useEffect(() => {
     onSelectRef.current = onSelect;
@@ -138,9 +139,7 @@ export function AutomationMediaGallery({
     }
   };
 
-  const filteredFiles = files.filter((file: AutomationMediaFile) => {
-    return !search || searchTextIncludes(file.name, search);
-  });
+  const filteredFiles = files;
 
   const typeLabels: Record<AutomationMediaType, string> = {
     image: 'imagem',
@@ -176,11 +175,12 @@ export function AutomationMediaGallery({
         />
       </div>
 
-      {files.length > 3 && (
+      {(files.length > 0 || Boolean(search)) && (
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
           <Input
             value={search}
+            maxLength={120}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Buscar..."
             className="h-7 text-xs pl-7"
@@ -189,7 +189,7 @@ export function AutomationMediaGallery({
         </div>
       )}
 
-      <ScrollArea className="max-h-[180px]">
+      <ScrollArea className="h-[180px] max-h-[40dvh]">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-4 text-[11px] text-muted-foreground" role="status" aria-live="polite">
             <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />

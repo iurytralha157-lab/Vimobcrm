@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -584,6 +585,8 @@ func writeSiteError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_site_input", "Site input is invalid.")
+	case errors.Is(err, distribution.ErrIntakeDestinationUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_intake_destination_unavailable", "The contact destination is unavailable.")
 	case errors.Is(err, ErrSiteNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "site_not_found", "Site was not found.")
 	case errors.Is(err, ErrMenuItemNotFound):

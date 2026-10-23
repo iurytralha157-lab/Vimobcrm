@@ -72,18 +72,15 @@ func TestUpdateRequestRejectsInvalidAssigneeDraft(t *testing.T) {
 	}
 }
 
-func TestUpdateRequestAcceptsDailyRecurrence(t *testing.T) {
+func TestUpdateRequestRejectsRecurrenceMetadataOnlyChanges(t *testing.T) {
 	t.Parallel()
-
-	value := "daily"
-	input, err := (UpdateRequest{
-		RecurrenceRule: patchString{Set: true, Value: &value},
-	}).Validate()
-	if err != nil {
-		t.Fatalf("expected daily recurrence update to be valid: %v", err)
+	for _, value := range []string{"daily", "none", "", "weekly"} {
+		if _, err := (UpdateRequest{RecurrenceRule: patchString{Set: true, Value: &value}}).Validate(); err == nil {
+			t.Fatalf("expected a recurrence patch to be rejected: %q", value)
+		}
 	}
-	if input.RecurrenceRule.Value == nil || *input.RecurrenceRule.Value != "daily" {
-		t.Fatalf("unexpected recurrence rule: %#v", input.RecurrenceRule.Value)
+	if _, err := (UpdateRequest{RecurrenceRule: patchString{Set: true}}).Validate(); err == nil {
+		t.Fatal("null recurrence patch must also be rejected")
 	}
 }
 

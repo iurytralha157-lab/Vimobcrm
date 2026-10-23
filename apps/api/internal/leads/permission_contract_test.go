@@ -1,6 +1,8 @@
 package leads
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +25,71 @@ func TestImportModeUsesLeadImportPermission(t *testing.T) {
 	createOnlyContext := tenant.Context{UserID: "user-1", OrganizationID: "org-1", Permissions: []string{permissions.LeadCreate}}
 	if canCreateLeadInput(createOnlyContext, createInput{ImportMode: true}) {
 		t.Fatal("lead_create must not authorize import rows without lead_import")
+	}
+}
+
+func TestLeadCreationHistoryBindingRequiresWhatsAppAndLeadOperate(t *testing.T) {
+	conversationID := "11111111-1111-4111-8111-111111111111"
+	testCases := []struct {
+		name       string
+		context    tenant.Context
+		importMode bool
+		allowed    bool
+	}{
+		{
+			name: "all link capabilities",
+			context: tenant.Context{
+				UserID: "user-1", OrganizationID: "org-1", EnabledModules: []string{"whatsapp"},
+				Permissions: []string{permissions.LeadCreate, permissions.WhatsAppOperate, permissions.LeadOperate},
+			},
+			allowed: true,
+		},
+		{
+			name: "whatsapp module disabled",
+			context: tenant.Context{
+				UserID: "user-1", OrganizationID: "org-1",
+				Permissions: []string{permissions.LeadCreate, permissions.WhatsAppOperate, permissions.LeadOperate},
+			},
+		},
+		{
+			name: "whatsapp operation revoked",
+			context: tenant.Context{
+				UserID: "user-1", OrganizationID: "org-1", EnabledModules: []string{"whatsapp"},
+				Permissions: []string{permissions.LeadCreate, permissions.LeadOperate},
+			},
+		},
+		{
+			name: "lead operation revoked",
+			context: tenant.Context{
+				UserID: "user-1", OrganizationID: "org-1", EnabledModules: []string{"whatsapp"},
+				Permissions: []string{permissions.LeadCreate, permissions.WhatsAppOperate},
+			},
+		},
+		{
+			name: "import alone cannot bind history",
+			context: tenant.Context{
+				UserID: "user-1", OrganizationID: "org-1", EnabledModules: []string{"whatsapp"},
+				Permissions: []string{permissions.LeadImport, permissions.WhatsAppOperate},
+			},
+			importMode: true,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := canBindWhatsAppConversationDuringLeadCreation(testCase.context); got != testCase.allowed {
+				t.Fatalf("history binding authorization = %v, want %v", got, testCase.allowed)
+			}
+			if testCase.allowed {
+				return
+			}
+			_, err := (Repository{}).Create(context.Background(), testCase.context, createInput{
+				ConversationID: &conversationID,
+				ImportMode:     testCase.importMode,
+			})
+			if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+				t.Fatalf("lead creation with forbidden history binding error = %v, want access denied", err)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useAuth } from '@/contexts/AuthContext'
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
 import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyCatalogAPI, type PropertyCatalogItem } from '@/lib/api/property-catalog'
 
@@ -58,38 +58,36 @@ export function usePropertyFeatures() {
 
 export function useCreatePropertyFeature() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (name: string, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      const { data } = await propertyCatalogAPI.createFeature(organizationId, name)
+      const { data } = await propertyCatalogAPI.createFeature(organizationId, name, scope.requestIntent)
       return toPropertyFeature(data)
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-features'] })
-      toast.success('Característica adicionada!')
+      if (scope.isCurrent()) toast.success('Característica adicionada!')
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error, _input, scope) => {
+      if (scope.isCurrent()) toast.error(error.message)
     },
   })
 }
 
 export function useSeedDefaultFeatures() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async () => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (_input: void, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyCatalogAPI.seedFeatures(organizationId, DEFAULT_FEATURES)
+      await propertyCatalogAPI.seedFeatures(organizationId, DEFAULT_FEATURES, scope.requestIntent)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['property-features'] })

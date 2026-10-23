@@ -9,9 +9,11 @@ import {
   getSafePostLoginPath,
   isProtectedAppPath,
 } from '@/lib/auth/post-login-redirect'
-import { hasPasswordRecoveryAuthenticationMethod } from '@/lib/auth/password-recovery'
+import {
+  getPasswordRecoveryRedirect,
+  isPublicAuthRoute,
+} from '@/lib/auth/password-recovery'
 
-const publicAuthRoutes = ['/login', '/cadastro', '/onboarding']
 const RELEASE_SHA = normalizeReleaseSha(process.env.NEXT_PUBLIC_VIMOB_RELEASE_SHA)
 
 function withReleaseIdentity(response: NextResponse) {
@@ -74,15 +76,19 @@ export async function proxy(request: NextRequest) {
   // Refresh session
   const { data } = await supabase.auth.getClaims()
   const user = data?.claims
-  const isPasswordRecoverySession = hasPasswordRecoveryAuthenticationMethod(user)
+  const recoveryRedirect = getPasswordRecoveryRedirect(user, request.nextUrl.pathname)
+  if (recoveryRedirect) {
+    const recoveryURL = new URL('/reset-password', request.url)
+    if (recoveryRedirect.kind === 'cancel') {
+      recoveryURL.searchParams.set('cancel', '1')
+      recoveryURL.searchParams.set('next', recoveryRedirect.next)
+    }
+    return redirectWithSessionCookies(recoveryURL, response)
+  }
 
   // Protected routes - require authentication
   const isProtectedRoute = isProtectedAppPath(request.nextUrl.pathname)
   if (isProtectedRoute) {
-    if (isPasswordRecoverySession) {
-      return redirectWithSessionCookies(new URL('/reset-password', request.url), response)
-    }
-
     if (!user) {
       const loginURL = new URL('/login', request.url)
       loginURL.searchParams.set(
@@ -96,21 +102,11 @@ export async function proxy(request: NextRequest) {
   // Public auth routes - redirect to the authenticated landing page if already logged in.
   // Keep /reset-password out of this list: Supabase recovery links create a
   // temporary session, and that session must be allowed to reach the reset page.
-  const isPublicAuthRoute = publicAuthRoutes.some(route => request.nextUrl.pathname.startsWith(route))
+  const publicAuthRoute = isPublicAuthRoute(request.nextUrl.pathname)
   const isPasswordResetReturnToLogin =
     request.nextUrl.pathname.startsWith('/login') &&
     request.nextUrl.searchParams.get('passwordReset') === 'success'
-  if (isPublicAuthRoute) {
-    if (isPasswordRecoverySession) {
-      const cancelURL = new URL('/reset-password', request.url)
-      cancelURL.searchParams.set('cancel', '1')
-      cancelURL.searchParams.set(
-        'next',
-        request.nextUrl.pathname.startsWith('/cadastro') ? '/cadastro' : '/login',
-      )
-      return redirectWithSessionCookies(cancelURL, response)
-    }
-
+  if (publicAuthRoute) {
     if (user && !isPasswordResetReturnToLogin) {
       const destination = getSafePostLoginPath(
         request.nextUrl.searchParams.get('redirectTo'),

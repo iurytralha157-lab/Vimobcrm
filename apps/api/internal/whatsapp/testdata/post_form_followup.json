@@ -1,0 +1,137 @@
+[
+  {
+    "name": "Portuguese structured follow up",
+    "content": "Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": true
+  },
+  {
+    "name": "English structured follow up",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100\nFull name: Example Person",
+    "want": true
+  },
+  {
+    "name": "CRLF blank lines and reverse field order",
+    "content": "\r\nHi! I filled out your form and would like to learn more about your business.\r\n\r\nFull name: Example Person\r\nPhone number: +1 202 555 0100\r\n",
+    "want": true
+  },
+  {
+    "name": "case accents and repeated whitespace",
+    "content": "  OLA!  PREENCHI\tSEU FORMULARIO E GOSTARIA DE SABER MAIS SOBRE SUA EMPRESA.\n  NUMERO  DE\tTELEFONE : +55 11 00000-0000\nNOME COMPLETO: Pessoa Exemplo  ",
+    "want": true
+  },
+  {
+    "name": "decomposed accents and non breaking spaces",
+    "content": "Ola\u0301! Preenchi seu formula\u0301rio e gostaria de saber mais sobre sua empresa.\nNu\u0301mero\u00a0de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": true
+  },
+  {
+    "name": "wrapped introduction",
+    "content": "Olá! Preenchi seu formulário e gostaria\nde saber mais sobre sua empresa.\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": true
+  },
+  {
+    "name": "additional structured form field",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nEmail: example@example.invalid\nPhone number: +1 202 555 0100\nFull name: Example Person",
+    "want": true
+  },
+  {
+    "name": "empty content",
+    "content": "",
+    "want": false
+  },
+  {
+    "name": "ordinary click to WhatsApp ad",
+    "content": "Olá! Vi o anúncio e gostaria de saber mais sobre o apartamento.",
+    "want": false
+  },
+  {
+    "name": "ordinary ad with structured identity",
+    "content": "Olá! Tenho interesse no anúncio.\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "casual form mention",
+    "content": "Já preenchi seu formulário ontem. Podemos conversar?\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "Portuguese introduction alone",
+    "content": "Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.",
+    "want": false
+  },
+  {
+    "name": "English introduction alone",
+    "content": "Hi! I filled out your form and would like to learn more about your business.",
+    "want": false
+  },
+  {
+    "name": "missing phone field",
+    "content": "Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\nNome completo: Pessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "missing full name field",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100",
+    "want": false
+  },
+  {
+    "name": "empty phone value",
+    "content": "Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\nNúmero de telefone: \t\nNome completo: Pessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "empty full name value",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100\nFull name: \t",
+    "want": false
+  },
+  {
+    "name": "unstructured identity values",
+    "content": "Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\n+55 11 00000-0000\nPessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "inline identity is not structured lines",
+    "content": "Hi! I filled out your form and would like to learn more about your business. Full name: Example Person; Phone number: +1 202 555 0100",
+    "want": false
+  },
+  {
+    "name": "quoted full template",
+    "content": "> Hi! I filled out your form and would like to learn more about your business.\n> Phone number: +1 202 555 0100\n> Full name: Example Person",
+    "want": false
+  },
+  {
+    "name": "quotation marks around template",
+    "content": "\"Olá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo\"",
+    "want": false
+  },
+  {
+    "name": "fenced template",
+    "content": "```\nHi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100\nFull name: Example Person\n```",
+    "want": false
+  },
+  {
+    "name": "narration before template",
+    "content": "A mensagem automática era esta:\nOlá! Preenchi seu formulário e gostaria de saber mais sobre sua empresa.\nNúmero de telefone: +55 11 00000-0000\nNome completo: Pessoa Exemplo",
+    "want": false
+  },
+  {
+    "name": "casual text after template",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100\nFull name: Example Person\nThis is an example of a message, not my form.",
+    "want": false
+  },
+  {
+    "name": "quoted fields after valid introduction",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\n> Phone number: +1 202 555 0100\n> Full name: Example Person",
+    "want": false
+  },
+  {
+    "name": "duplicate identity fields are ambiguous",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone number: +1 202 555 0100\nFull name: Example Person\nFull name: Another Example",
+    "want": false
+  },
+  {
+    "name": "renamed identity labels are not known envelope",
+    "content": "Hi! I filled out your form and would like to learn more about your business.\nPhone: +1 202 555 0100\nName: Example Person",
+    "want": false
+  }
+]

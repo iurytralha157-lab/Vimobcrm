@@ -1,10 +1,13 @@
 import type { Tables, TablesInsert, TablesUpdate } from '@/lib/supabase/types'
 import {
+  apiCreateLeadResponseSchema,
   apiLeadListResponseSchema,
   apiLeadResponseSchema,
   apiLeadRoundRobinResponseSchema,
 	apiLeadSensitiveProfileResponseSchema,
   leadAssignInputSchema,
+  queuePoolClaimInputSchema,
+  uuidSchema,
   leadCreateInputSchema,
   leadListQuerySchema,
   leadMoveStageInputSchema,
@@ -14,11 +17,21 @@ import {
   parseDomainInput,
   validateDomainResponse,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 import type { LeadDistributionOutcome } from '@/lib/lead-distribution-outcome'
+import { captureCurrentLeadRequestIntent } from '@/lib/api/lead-request-intent'
+import { VimobAPIError } from '@/lib/api/vimob-error'
+import {
+  assertLeadMoveStageContractCurrent, getLeadMoveStageContract, invalidateLeadMoveStageContract,
+  LeadMoveContractError, type LeadMoveStageContract,
+} from '@/lib/api/lead-move-contract'
+import { leadHistoryLegacyResponseSchema, leadHistoryPageInputSchema, leadHistoryPageResponseSchema } from '@/lib/validation/lead-history-pagination'
+import { toQueuePool } from '@/lib/queue-pool'
+import type { APIQueuePool, QueuePool, QueuePoolClaimInput } from '@/lib/validation/queue-runtime'
 
 type LeadInsert = TablesInsert<'leads'>
 export type LeadUpdateInput = TablesUpdate<'leads'> & {
+  expectedUpdatedAt?: string
   team_id?: string | null
   interest_property_ids?: string[]
   profile?: {
@@ -44,6 +57,9 @@ type APILead = {
   id: string
   organizationId: string
   canOperate?: boolean
+  financialReviewRequired?: boolean
+  queuePool?: APIQueuePool | null
+  tags?: Array<{ id: string; name: string | null; color: string | null }> | null
   name: string
   email?: string
   phone?: string
@@ -160,7 +176,9 @@ type LeadCreateInput = Partial<LeadInsert> & {
   tag_ids?: string[]
   conversation_id?: string
   expected_previous_lead_id?: string
+  confirm_history_link?: true
   import_mode?: boolean
+  import_request_key?: string
   auto_distribute?: boolean
   round_robin_id?: string
   team_id?: string
@@ -183,6 +201,7 @@ type LeadCreateInput = Partial<LeadInsert> & {
 type LeadMoveStageInput = {
   stageId: string
   expectedStageId?: string | null
+  expectedUpdatedAt?: string
   isOwnResource?: boolean | null
   boardOrderAt?: string | null
   lostReason?: string | null
@@ -215,11 +234,13 @@ export const leadsAPI = {
     }
   },
 
-  async getLead(leadId: string, organizationId: string, signal?: AbortSignal) {
+  async getLead(leadId: string, organizationId: string, signal?: AbortSignal, options: VimobAPIRequestIntent & { retry?: boolean } = {}) {
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
+      ...options,
       organizationId,
       cache: 'no-store',
       signal,
+      retry: options.retry,
     })
     validateDomainResponse(apiLeadResponseSchema, response, 'leads.get')
 
@@ -229,15 +250,16 @@ export const leadsAPI = {
     }
   },
 
-	async getSensitiveProfile(leadId: string, organizationId: string) {
+	async getSensitiveProfile(leadId: string, organizationId: string, intent?: VimobAPIRequestIntent) {
 		const response = await vimobAPIRequest<{ data: LeadSensitiveProfile }>(`/v1/leads/${leadId}/sensitive-profile`, {
+			...intent,
 			organizationId,
 		})
 		validateDomainResponse(apiLeadSensitiveProfileResponseSchema, response, 'leads.sensitive-profile')
 		return response.data
 	},
 
-  async createLead(organizationId: string, data: LeadCreateInput) {
+  async createLead(organizationId: string, data: LeadCreateInput, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(leadCreateInputSchema, {
       name: data.name,
       email: data.email,
@@ -258,6 +280,7 @@ export const leadsAPI = {
       isOwnResource: data.is_own_resource,
       conversationId: data.conversation_id,
       expectedPreviousLeadId: data.expected_previous_lead_id,
+      confirmHistoryLink: data.confirm_history_link,
       tagIds: data.tag_ids,
       cargo: data.cargo,
       empresa: data.empresa,
@@ -272,31 +295,37 @@ export const leadsAPI = {
       faixaValorImovel: data.faixa_valor_imovel,
       profile: data.profile,
       importMode: data.import_mode,
+      importRequestKey: data.import_request_key,
       autoDistribute: data.auto_distribute,
       roundRobinId: data.round_robin_id,
     }, 'leads.create')
-    const response = await vimobAPIRequest<APILeadResponse>('/v1/leads', {
+    const payload = await vimobAPIRequest<unknown>('/v1/leads', {
       method: 'POST',
       organizationId,
       body,
+      ...intent,
     })
-    validateDomainResponse(apiLeadResponseSchema, response, 'leads.create')
+    const response = validateDomainResponse(apiCreateLeadResponseSchema, payload, 'leads.create')
 
     return {
-      data: toLegacyLead(response.data),
+      data: response.data ? toLegacyLead(response.data) : null,
+      leadId: response.leadId,
+      leadVisible: response.leadVisible,
       error: null,
       reentry: Boolean(response.reentry),
-      assignedUserName: response.assignedUserName,
+      assignedUserName: 'assignedUserName' in response ? response.assignedUserName : undefined,
       distributionOutcome: response.distributionOutcome,
     }
   },
 
-  async updateLead(leadId: string, data: LeadUpdateInput, organizationId?: string) {
+  async updateLead(leadId: string, data: LeadUpdateInput, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const body = parseDomainInput(leadUpdateInputSchema, toAPILeadUpdateBody(data), 'leads.update')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
       method: 'PATCH',
       organizationId,
       body,
+      ...requestIntent,
     })
     validateDomainResponse(apiLeadResponseSchema, response, 'leads.update')
 
@@ -306,13 +335,29 @@ export const leadsAPI = {
     }
   },
 
-  async moveLeadStage(leadId: string, data: LeadMoveStageInput, organizationId?: string) {
+  async moveLeadStage(leadId: string, data: LeadMoveStageInput, organizationId?: string, intent?: VimobAPIRequestIntent, preparedContract?: LeadMoveStageContract) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const body = parseDomainInput(leadMoveStageInputSchema, data, 'leads.move-stage')
-    const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/move-stage`, {
-      method: 'POST',
-      organizationId,
-      body,
-    })
+    if (!body.expectedUpdatedAt) throw new VimobAPIError('Atualize o lead antes de mudar de etapa.', { code: 'lead_move_revision_required', status: 409 })
+    const contract = preparedContract ?? await getLeadMoveStageContract(organizationId || '', requestIntent)
+    assertLeadMoveStageContractCurrent(contract, organizationId || '', requestIntent)
+    let response: APILeadResponse
+    try {
+      response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/move-stage`, {
+        method: 'POST', ...requestIntent, organizationId, body, retry: false,
+        onRequestStart: () => {
+          assertLeadMoveStageContractCurrent(contract, organizationId || '', requestIntent)
+          requestIntent.onRequestStart?.()
+        },
+      })
+    } catch (error) {
+      if (error instanceof VimobAPIError && ((error.status === 400 && error.code === 'invalid_json')
+        || (error.status === 404 && ['api_error', 'not_found', 'route_not_found'].includes(error.code)))) {
+        invalidateLeadMoveStageContract(contract)
+        throw new LeadMoveContractError(error.requestId)
+      }
+      throw error
+    }
     validateDomainResponse(apiLeadResponseSchema, response, 'leads.move-stage')
 
     return {
@@ -321,12 +366,28 @@ export const leadsAPI = {
     }
   },
 
-  async assignLead(leadId: string, assignedUserId: string | null, organizationId?: string) {
-    const body = parseDomainInput(leadAssignInputSchema, { assignedUserId }, 'leads.assign')
+  async claimQueuePool(leadId: string, input: QueuePoolClaimInput, idempotencyKey: string, organizationId: string, intent: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
+    const body = parseDomainInput(queuePoolClaimInputSchema, input, 'leads.queue-pool.claim')
+    const key = parseDomainInput(uuidSchema, idempotencyKey, 'leads.queue-pool.claim-key')
+    const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/claim-queue-pool`, {
+      method: 'POST', ...requestIntent, organizationId, body, retry: false,
+      headers: { 'Idempotency-Key': key },
+    })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.queue-pool.claim')
+    if (response.data.id !== leadId || response.data.organizationId !== organizationId) throw new Error('Não foi possível confirmar o lead assumido. Atualize os dados.')
+    return { data: toLegacyLead(response.data), error: null }
+  },
+
+  async assignLead(leadId: string, assignedUserId: string | null, organizationId?: string, intent?: VimobAPIRequestIntent, expectedUpdatedAt?: string) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
+    const body = parseDomainInput(leadAssignInputSchema, { assignedUserId, expectedUpdatedAt }, 'leads.assign')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/assign`, {
       method: 'POST',
+      ...requestIntent,
       organizationId,
       body,
+      retry: false,
     })
     validateDomainResponse(apiLeadResponseSchema, response, 'leads.assign')
 
@@ -340,9 +401,12 @@ export const leadsAPI = {
     leadId: string,
     organizationId?: string,
     options?: { expectedUnassigned: boolean },
+    intent?: VimobAPIRequestIntent,
   ) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const response = await vimobAPIRequest<APIRoundRobinResponse>(`/v1/leads/${leadId}/redistribute`, {
       method: 'POST',
+      ...requestIntent,
       organizationId,
       ...(options ? { body: parseDomainInput(leadRedistributeInputSchema, options, 'leads.redistribute') } : {}),
     })
@@ -360,19 +424,22 @@ export const leadsAPI = {
     }
   },
 
-  async deleteLead(leadId: string, organizationId?: string) {
+  async deleteLead(leadId: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
     await vimobAPIRequest<null>(`/v1/leads/${leadId}`, {
       method: 'DELETE',
       organizationId,
+      ...intent,
     })
 
     return { error: null }
   },
 
-  async addLeadTag(leadId: string, tagId: string, organizationId?: string) {
+  async addLeadTag(leadId: string, tagId: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const body = parseDomainInput(leadTagInputSchema, { tagId }, 'leads.add-tag')
     await vimobAPIRequest<{ ok: boolean }>(`/v1/leads/${leadId}/tags`, {
       method: 'POST',
+      ...requestIntent,
       organizationId,
       body,
     })
@@ -380,9 +447,11 @@ export const leadsAPI = {
     return { error: null }
   },
 
-  async removeLeadTag(leadId: string, tagId: string, organizationId?: string) {
+  async removeLeadTag(leadId: string, tagId: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     await vimobAPIRequest<null>(`/v1/leads/${leadId}/tags/${tagId}`, {
       method: 'DELETE',
+      ...requestIntent,
       organizationId,
     })
 
@@ -403,11 +472,34 @@ export const leadsAPI = {
     return response.data
   },
 
-  async getLeadHistoryRaw<T = unknown>(leadId: string, organizationId?: string) {
+  async getLeadHistoryRaw<T = unknown>(leadId: string, organizationId?: string, options: { signal?: AbortSignal } = {}) {
     const response = await vimobAPIRequest<Envelope<T>>(`/v1/leads/${leadId}/history-raw`, {
       organizationId,
+      signal: options.signal,
     })
     return response.data
+  },
+
+  async getLeadHistoryPage<T = unknown>(
+    leadId: string,
+    organizationId: string,
+    options: { signal?: AbortSignal; pageSize?: number; cursor?: string; allowLegacy?: boolean } = {},
+  ): Promise<{ data: T; pagination: { nextCursor: string | null; hasOlder: boolean; snapshotAt: string }; legacy?: false }
+    | { data: T; legacy: true; pagination?: undefined }> {
+    const query = parseDomainInput(leadHistoryPageInputSchema, {
+      pageSize: options.pageSize ?? 100, cursor: options.cursor,
+    }, 'lead history pagination')
+    const response = await vimobAPIRequest<unknown>(`/v1/leads/${leadId}/history-raw`, {
+      organizationId, query, signal: options.signal,
+    })
+    if (options.allowLegacy === true && !query.cursor) {
+      const legacy = leadHistoryLegacyResponseSchema.safeParse(response)
+      if (legacy.success && legacy.data.data.lead.id === leadId) {
+        return { data: legacy.data.data as T, legacy: true }
+      }
+    }
+    const validated = validateDomainResponse(leadHistoryPageResponseSchema, response, 'lead history page')
+    return { data: validated.data as T, pagination: validated.pagination }
   },
 
   async getFirstResponseMetrics<T = unknown>(
@@ -451,9 +543,12 @@ export const leadsAPI = {
       actorUserId?: string | null
       isAutomation?: boolean
     },
+    intent?: VimobAPIRequestIntent,
   ) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const response = await vimobAPIRequest<Envelope<Record<string, unknown>>>(`/v1/leads/${leadId}/first-response`, {
       method: 'POST',
+      ...requestIntent,
       organizationId: params.organizationId,
       body: {
         lead_id: leadId,
@@ -475,6 +570,7 @@ function nullableDecimal(value: number | null | undefined) {
 
 function toAPILeadUpdateBody(data: LeadUpdateInput) {
   return {
+    expectedUpdatedAt: data.expectedUpdatedAt,
     name: data.name,
     email: data.email,
     phone: data.phone,
@@ -514,13 +610,17 @@ function toAPILeadUpdateBody(data: LeadUpdateInput) {
 }
 
 export function toLegacyLead(lead: APILead): LeadRow & {
+  queue_pool: QueuePool | null
   can_operate?: boolean
+  financial_review_required?: boolean
   stage?: { id: string; name: string; color: string | null; stage_key: string | null }
   assignee?: { id: string; name: string; avatar_url: string | null }
-  tags?: []
+  tags?: Array<{ id: string; name: string; color: string }>
 } {
   return {
+    queue_pool: toQueuePool(lead.queuePool),
     ...(typeof lead.canOperate === 'boolean' ? { can_operate: lead.canOperate } : {}),
+    financial_review_required: lead.financialReviewRequired === true,
     assigned_at: null,
     assigned_user_id: lead.assignedUserId || null,
     attention_eligible: false,
@@ -628,6 +728,8 @@ export function toLegacyLead(lead: APILead): LeadRow & {
           avatar_url: lead.assignee.avatarUrl || null,
         }
       : undefined,
-    tags: [],
+    ...(Array.isArray(lead.tags) ? { tags: lead.tags.map(tag => ({
+      id: tag.id, name: tag.name ?? '', color: tag.color ?? '',
+    })) } : {}),
   }
 }

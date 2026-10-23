@@ -81,7 +81,6 @@ export function MobileSidebar({
   const previousLocationKeyRef = useRef(locationKey);
   const {
     activeOrganization,
-    profile,
     isSuperAdmin,
     organization,
     tenantContext,

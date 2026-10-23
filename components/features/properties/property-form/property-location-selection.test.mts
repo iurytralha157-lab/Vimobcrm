@@ -4,7 +4,7 @@ import test from 'node:test'
 import type { PropertyFormData } from './property-form-model'
 
 const locationSelectionPath = './property-location-selection.ts'
-const { selectLocationCity, selectLocationNeighborhood, setManualLocationField } = await import(locationSelectionPath)
+const { selectLocationCity, selectLocationNeighborhood, selectLocationCondominium, setManualLocationField } = await import(locationSelectionPath)
 
 function location(overrides: Partial<PropertyFormData> = {}): PropertyFormData {
   return {
@@ -54,4 +54,41 @@ test('editar bairro manualmente remove vínculo anterior do catálogo', () => {
   assert.equal(changed.bairro, 'Maringá')
   assert.equal(changed.neighborhood_id, '')
   assert.equal(changed.condominium_id, '')
+})
+
+test('condomínio da mesma cidade preserva endereço do CEP com IDs ausentes ou diferentes', () => {
+  for (const city_id of ['', 'derived-city']) {
+    const previous = location({ city_id })
+    const result = selectLocationCondominium(previous, {
+      id: 'new-condo', city: { id: 'catalog-city', name: '  MACAE ', uf: 'rj' },
+      address: null, cep: null,
+    })
+    assert.equal(result.city_id, 'catalog-city')
+    assert.equal(result.condominium_id, 'new-condo')
+    assert.equal(result.cep, previous.cep)
+    assert.equal(result.endereco, previous.endereco)
+    assert.equal(result.bairro, previous.bairro)
+  }
+})
+
+test('condomínio de outra cidade ou UF limpa endereço antigo sem endereço próprio', () => {
+  for (const city of [{ id: 'other-city', name: 'Niterói', uf: 'RJ' }, { id: 'other-state', name: 'Macaé', uf: 'SP' }]) {
+    const result = selectLocationCondominium(location(), { id: 'other-condo', city })
+    assert.equal(result.cep, '')
+    assert.equal(result.endereco, '')
+    assert.equal(result.bairro, '')
+    assert.equal(result.neighborhood_id, '')
+  }
+})
+
+test('endereço explícito do condomínio substitui os dados anteriores e desmarcar preserva localização', () => {
+  const selected = selectLocationCondominium(location(), {
+    id: 'new-condo', city: { id: 'city-rio', name: 'Rio de Janeiro', uf: 'RJ' },
+    neighborhood: { id: 'new-neighborhood', name: 'Centro' },
+    address: 'Rua do condomínio', cep: '20040002', default_condominium_fee: 800.5,
+  })
+  assert.equal(selected.cep, '20040-002')
+  assert.equal(selected.endereco, 'Rua do condomínio')
+  assert.equal(selected.condominio, '800,5')
+  assert.deepEqual(selectLocationCondominium(selected, null), { ...selected, condominium_id: '' })
 })

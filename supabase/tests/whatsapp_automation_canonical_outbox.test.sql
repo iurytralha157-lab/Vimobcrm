@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(28);
+select plan(30);
 
 -- Local development still has the retired `name` column as NOT NULL. Give it
 -- a transaction-local compatibility default while keeping every fixture and
@@ -99,7 +99,7 @@ insert into public.whatsapp_sessions (
   id, organization_id, owner_user_id, instance_name, provider, status, is_active
 ) values
   ('ca200000-0000-4000-8000-000000000001', 'ca000000-0000-4000-8000-000000000001', 'cb000000-0000-4000-8000-000000000001', 'canonical-connected', 'evolution_go', 'connected', true),
-  ('ca200000-0000-4000-8000-000000000002', 'ca000000-0000-4000-8000-000000000001', 'cb000000-0000-4000-8000-000000000001', 'canonical-disconnected', 'evolution_go', 'disconnected', true),
+  ('ca200000-0000-4000-8000-000000000002', 'ca000000-0000-4000-8000-000000000001', 'cb000000-0000-4000-8000-000000000001', 'canonical-disconnected', 'evolution_go', 'connected', true),
   ('ca200000-0000-4000-8000-000000000003', 'ca000000-0000-4000-8000-000000000002', 'cb000000-0000-4000-8000-000000000002', 'canonical-foreign', 'evolution_go', 'connected', true);
 
 insert into public.whatsapp_conversations (
@@ -173,6 +173,46 @@ insert into public.automation_effect_dispatches (
   ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000001', 'text', 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000001"}'),
   ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000002', 'text', 'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000002"}'),
   ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000003', 'media', 'automation:ca600000-0000-4000-8000-000000000003:media:send_image', 'send_image', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000001"}');
+
+select throws_ok(
+  $$select public.enqueue_automation_whatsapp_outbox(
+    'ca000000-0000-4000-8000-000000000001',
+    'ca600000-0000-4000-8000-000000000001', 'text', 'lease-text',
+    'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp',
+    'ca300000-0000-4000-8000-000000000001', 'ca200000-0000-4000-8000-000000000001',
+    'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp',
+    'text', 'Ola pelo outbox', null, null, null, null
+  )$$,
+  '23514', 'automation_whatsapp_attendance_required',
+  'automated text cannot bypass current attendance'
+);
+select is(
+  (select count(*)::integer from public.whatsapp_outbox
+   where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
+  0, 'attendance rejection does not reserve a provider send'
+);
+
+insert into public.whatsapp_attendance_entries (
+  organization_id, conversation_id, session_id, lead_id, binding_id,
+  user_id, actor_name_snapshot, ingress_sequence_cutoff, entry_source
+)
+select binding.organization_id, binding.conversation_id, conversation.session_id,
+  binding.lead_id, binding.id,
+  'cb000000-0000-4000-8000-000000000001'::uuid, 'Canonical Owner A', 0, 'manual'
+from public.whatsapp_conversation_lead_bindings binding
+join public.whatsapp_conversations conversation on conversation.id = binding.conversation_id
+where binding.organization_id = 'ca000000-0000-4000-8000-000000000001'::uuid
+  and binding.conversation_id in (
+    'ca300000-0000-4000-8000-000000000001'::uuid,
+    'ca300000-0000-4000-8000-000000000002'::uuid,
+    'ca300000-0000-4000-8000-000000000003'::uuid
+  )
+  and binding.active_to is null;
+
+-- This actor entered while connected; the later disconnect must independently
+-- block sending even though the exact attendance entry still exists.
+update public.whatsapp_sessions set status='disconnected'
+where id='ca200000-0000-4000-8000-000000000002'::uuid;
 
 create temporary table canonical_text_result as
 select public.enqueue_automation_whatsapp_outbox(

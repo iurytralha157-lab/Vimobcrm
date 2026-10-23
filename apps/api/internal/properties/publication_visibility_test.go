@@ -28,7 +28,8 @@ func TestPropertySitePublicationProjectionFollowsPublicSiteEligibility(t *testin
 		"site_publication.desired_state = 'published'",
 		"site_publication.published_version is not null",
 		"else coalesce(p.published_on_site, false)",
-		"'available', 'disponivel'",
+		"in ('active', 'ativo', 'available', 'disponivel', 'disponível')",
+		"p.autorizado_comercializacao is distinct from false",
 	} {
 		if !strings.Contains(visibility, required) {
 			t.Errorf("Site publication projection is missing %q: %s", required, visibility)

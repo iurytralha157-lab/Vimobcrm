@@ -190,11 +190,11 @@ func TestCollectLeadMetaFilterOptionsRequiresCompleteParentHierarchy(t *testing.
 	if !ok || campaign.Name != "Campanha completa" {
 		t.Fatalf("campaign was not normalized: %#v", campaigns)
 	}
-	adset, ok := adsets["campaign-1-adset-1"]
+	adset, ok := adsets[leadMetaFilterTupleKey("campaign-1", "adset-1")]
 	if !ok || adset.CampaignID != "campaign-1" || adset.Name != "Conjunto completo" {
 		t.Fatalf("adset hierarchy is invalid: %#v", adsets)
 	}
-	ad, ok := ads["campaign-1-adset-1-ad-1"]
+	ad, ok := ads[leadMetaFilterTupleKey("campaign-1", "adset-1", "ad-1")]
 	if !ok || ad.CampaignID != "campaign-1" || ad.AdsetID != "adset-1" || ad.Name != "Anúncio completo" {
 		t.Fatalf("ad hierarchy is invalid: %#v", ads)
 	}
@@ -237,15 +237,15 @@ func TestInitialPipelineBoardSeparatesExactMetricsFromLimitedCards(t *testing.T)
 	}
 	functionSource := string(source)
 
-	getStart := strings.Index(functionSource, "func (repo Repository) GetPipelineBoard(")
+	snapshotSource, err := os.ReadFile("pipeline_board_snapshot.go")
+	if err != nil {
+		t.Fatalf("read pipeline_board_snapshot.go: %v", err)
+	}
+	getStart := strings.Index(string(snapshotSource), "func readPipelineBoardInSnapshot(")
 	if getStart < 0 {
-		t.Fatal("could not isolate GetPipelineBoard")
+		t.Fatal("could not isolate readPipelineBoardInSnapshot")
 	}
-	getEnd := strings.Index(functionSource[getStart:], "func (repo Repository) ListPipelineStageLeads")
-	if getEnd < 0 {
-		t.Fatal("could not isolate GetPipelineBoard")
-	}
-	getSource := functionSource[getStart : getStart+getEnd]
+	getSource := string(snapshotSource)[getStart:]
 	for _, contract := range []string{
 		"listInitialPipelineBoardLeadsByStage",
 		"listPipelineBoardStageMetrics",
@@ -310,7 +310,7 @@ func TestOperationalLeadMutationsAdvanceBoardClock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read repository.go: %v", err)
 	}
-	functionSource := string(source)
+	functionSource := strings.ReplaceAll(string(source), "\r\n", "\n")
 	for _, contract := range []string{
 		`if !hasLeadColumnAssignment(assignments, "board_order_at")`,
 		`addRawAssignment("board_order_at = now()")`,

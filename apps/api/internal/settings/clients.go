@@ -155,6 +155,34 @@ func (client authAdminClient) updatePassword(ctx context.Context, userID string,
 	return nil
 }
 
+func (client authAdminClient) revokeSessions(ctx context.Context, authorization string, scope string) error {
+	if client.projectURL == "" || client.apiKey == "" {
+		return ErrAuthNotConfigured
+	}
+	if (scope != "global" && scope != "others") ||
+		!strings.HasPrefix(authorization, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")) == "" {
+		return ErrAuthOperation
+	}
+
+	endpoint := client.projectURL + "/auth/v1/logout?scope=" + scope
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("%w: prepare session revocation: %v", ErrAuthOperation, err)
+	}
+	supabasehttp.SetServiceAuth(request, client.apiKey)
+	request.Header.Set("Authorization", authorization)
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("%w: revoke sessions: %v", ErrAuthOperation, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("%w: session revocation returned HTTP %d", ErrAuthOperation, response.StatusCode)
+	}
+	return nil
+}
+
 func (client passwordNotificationClient) sendPasswordChanged(ctx context.Context, input passwordChangedEmailInput) error {
 	email := cleanEmailHeader(input.Email)
 	if client.apiKey == "" || email == "" {
@@ -201,9 +229,9 @@ func (client passwordNotificationClient) sendPasswordChanged(ctx context.Context
 
 func (client passwordNotificationClient) renderPasswordChangedHTML(input passwordChangedEmailInput, changedAt time.Time) string {
 	name := strings.TrimSpace(input.Name)
-	greeting := "Ola."
+	greeting := "Olá."
 	if name != "" {
-		greeting = fmt.Sprintf("Ola, %s.", html.EscapeString(name))
+		greeting = fmt.Sprintf("Olá, %s.", html.EscapeString(name))
 	}
 
 	appURL := html.EscapeString(client.appURL)
@@ -215,46 +243,47 @@ func (client passwordNotificationClient) renderPasswordChangedHTML(input passwor
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="color-scheme" content="light" />
     <title>Senha alterada com sucesso</title>
+    <style>
+      :root { color-scheme: light; }
+      @media only screen and (max-width: 600px) {
+        .email-page { padding:32px 18px !important; }
+        .email-logo { padding-bottom:36px !important; }
+        .email-title { font-size:22px !important; }
+      }
+    </style>
   </head>
-  <body style="margin:0;padding:0;background:#f5f6f3;color:#151515;font-family:Arial,Helvetica,sans-serif">
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;background:#f5f6f3;border-collapse:collapse">
+  <body bgcolor="#f7f8f6" style="margin:0;padding:0;background:#f7f8f6;color:#151515;font-family:Geist,'Segoe UI',Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%%">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;line-height:1px;mso-hide:all">
+      A senha da sua conta Vimob CRM foi alterada. Se não reconhece esta alteração, entre em contato com o suporte.
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" bgcolor="#f7f8f6" style="width:100%%;background:#f7f8f6;border-collapse:collapse">
       <tr>
-        <td align="center" style="padding:32px 16px">
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;max-width:640px;border-collapse:collapse">
+        <td class="email-page" align="center" style="padding:52px 24px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="width:100%%;max-width:560px;border-collapse:collapse">
             <tr>
-              <td style="background:#ffffff;border:1px solid #e2e5df;border-radius:14px;overflow:hidden;box-shadow:0 16px 42px rgba(21,21,21,.06)">
-                <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="border-collapse:collapse">
-                  <tr>
-                    <td style="height:6px;background:#ff4529;font-size:0;line-height:0">&nbsp;</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:34px 34px 10px">
-                      <p style="margin:0 0 10px;color:#d9341d;font-size:12px;font-weight:700;line-height:1.4;text-transform:uppercase;letter-spacing:1.8px">Seguran&ccedil;a da conta</p>
-                      <h1 style="margin:0;color:#151515;font-size:30px;font-weight:700;line-height:1.18;letter-spacing:0">Senha alterada com sucesso</h1>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="padding:18px 34px 36px">
-                      <p style="margin:0 0 16px;color:#151515;font-size:16px;line-height:1.65">%s</p>
-                      <p style="margin:0 0 16px;color:#151515;font-size:16px;line-height:1.65">A senha da sua conta no Vimob CRM foi alterada em %s.</p>
-                      <p style="margin:0 0 16px;color:#151515;font-size:16px;line-height:1.65">Se foi voc&ecirc;, nenhuma a&ccedil;&atilde;o adicional &eacute; necess&aacute;ria.</p>
-                      <p style="margin:24px 0 0;padding:14px 16px;border-left:4px solid #ff4529;background:#fff0ed;color:#151515;font-size:14px;line-height:1.6;border-radius:0 8px 8px 0">Se voc&ecirc; n&atilde;o reconhece essa altera&ccedil;&atilde;o, entre em contato imediatamente pelo e-mail <a href="mailto:%s" style="color:#d9341d;text-decoration:underline">%s</a>.</p>
-                      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 6px">
-                        <tr>
-                          <td bgcolor="#ff4529" style="border-radius:8px">
-                            <a href="%s/login" style="display:inline-block;padding:14px 22px;color:#ffffff;font-size:15px;font-weight:700;line-height:1;text-decoration:none;border-radius:8px;background:#ff4529">Acessar Vimob CRM</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
+              <td class="email-logo" align="left" style="padding:0 0 48px">
+                <img src="https://vimobcrm.com.br/images/logo-black.png" width="85" height="29" alt="Vimob CRM" style="display:block;width:85px;height:29px;border:0;outline:none;text-decoration:none" />
               </td>
             </tr>
             <tr>
-              <td align="left" style="padding:22px 8px 0;color:#626872;font-size:12px;line-height:1.65">
-                <p style="margin:0">Por seguranca, o Vimob CRM nunca envia senhas por e-mail.</p>
+              <td align="left">
+                <p style="margin:0 0 10px;color:#d9341d;font-size:12px;font-weight:600;line-height:1.4;text-transform:uppercase;letter-spacing:1.4px">Seguran&ccedil;a da conta</p>
+                <h1 class="email-title" style="margin:0 0 28px;color:#151515;font-size:24px;font-weight:400;line-height:1.25">Senha alterada com sucesso</h1>
+                <p style="margin:0 0 16px;color:#151515;font-size:15px;line-height:1.6">%s</p>
+                <p style="margin:0 0 16px;color:#151515;font-size:15px;line-height:1.6">A senha da sua conta no Vimob CRM foi alterada em %s.</p>
+                <p style="margin:0 0 24px;color:#151515;font-size:15px;line-height:1.6">Se foi voc&ecirc;, nenhuma a&ccedil;&atilde;o adicional &eacute; necess&aacute;ria.</p>
+                <p style="margin:0 0 32px;color:#626872;font-size:14px;line-height:1.6">Se voc&ecirc; n&atilde;o reconhece essa altera&ccedil;&atilde;o, entre em contato imediatamente pelo e-mail <a href="mailto:%s" style="color:#d9341d;text-decoration:underline">%s</a>.</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate">
+                  <tr>
+                    <td align="left" height="48" bgcolor="#ff4529" style="height:48px;background:#ff4529;border-radius:6px;white-space:nowrap">
+                      <a href="%s/login" style="display:block;height:48px;line-height:48px;padding:0 20px;color:#ffffff;font-size:15px;font-weight:400;text-align:center;text-decoration:none;border-radius:6px;background:#ff4529;white-space:nowrap">Acessar Vimob CRM</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:32px 0 0;color:#626872;font-size:12px;line-height:1.6">Por segurança, o Vimob CRM nunca envia senhas por e-mail.</p>
               </td>
             </tr>
           </table>

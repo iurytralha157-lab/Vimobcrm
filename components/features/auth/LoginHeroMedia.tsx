@@ -15,7 +15,13 @@ type NavigatorWithConnection = Navigator & {
   };
 };
 
-export function LoginHeroMedia() {
+export function LoginHeroMedia({
+  posterSizes = "(min-width: 1024px) 58vw, 1px",
+  alwaysPlay = false,
+}: {
+  posterSizes?: string;
+  alwaysPlay?: boolean;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoReady, setIsVideoReady] = useState(false);
 
@@ -29,7 +35,7 @@ export function LoginHeroMedia() {
     const connection = (navigator as NavigatorWithConnection).connection;
 
     const syncPlayback = () => {
-      if (!desktop.matches) {
+      if (!alwaysPlay && !desktop.matches) {
         setIsVideoReady(false);
         video.pause();
         video.removeAttribute("poster");
@@ -45,7 +51,8 @@ export function LoginHeroMedia() {
       }
 
       const canLoadVideo =
-        !reducedMotion.matches && !reducedData.matches && !connection?.saveData;
+        alwaysPlay ||
+        (!reducedMotion.matches && !reducedData.matches && !connection?.saveData);
 
       if (!canLoadVideo) {
         setIsVideoReady(false);
@@ -62,7 +69,7 @@ export function LoginHeroMedia() {
         video.load();
       }
 
-      if (document.visibilityState === "hidden") {
+      if (!alwaysPlay && document.visibilityState === "hidden") {
         video.pause();
         return;
       }
@@ -72,18 +79,22 @@ export function LoginHeroMedia() {
       });
     };
 
-    desktop.addEventListener("change", syncPlayback);
-    reducedMotion.addEventListener("change", syncPlayback);
-    reducedData.addEventListener("change", syncPlayback);
-    connection?.addEventListener("change", syncPlayback);
+    if (!alwaysPlay) {
+      desktop.addEventListener("change", syncPlayback);
+      reducedMotion.addEventListener("change", syncPlayback);
+      reducedData.addEventListener("change", syncPlayback);
+      connection?.addEventListener("change", syncPlayback);
+    }
     document.addEventListener("visibilitychange", syncPlayback);
     syncPlayback();
 
     return () => {
-      desktop.removeEventListener("change", syncPlayback);
-      reducedMotion.removeEventListener("change", syncPlayback);
-      reducedData.removeEventListener("change", syncPlayback);
-      connection?.removeEventListener("change", syncPlayback);
+      if (!alwaysPlay) {
+        desktop.removeEventListener("change", syncPlayback);
+        reducedMotion.removeEventListener("change", syncPlayback);
+        reducedData.removeEventListener("change", syncPlayback);
+        connection?.removeEventListener("change", syncPlayback);
+      }
       document.removeEventListener("visibilitychange", syncPlayback);
 
       video.pause();
@@ -91,7 +102,7 @@ export function LoginHeroMedia() {
       video.removeAttribute("poster");
       video.load();
     };
-  }, []);
+  }, [alwaysPlay]);
 
   return (
     <>
@@ -99,7 +110,7 @@ export function LoginHeroMedia() {
         src={POSTER_SOURCE}
         alt=""
         fill
-        sizes="(min-width: 1024px) 58vw, 1px"
+        sizes={posterSizes}
         loading="eager"
         className="object-cover object-center"
       />
@@ -119,7 +130,7 @@ export function LoginHeroMedia() {
           const video = event.currentTarget;
           video.currentTime = 0;
 
-          if (document.visibilityState !== "hidden") {
+          if (alwaysPlay || document.visibilityState !== "hidden") {
             void video.play().catch(() => {
               // The poster remains visible when a browser blocks replay.
             });

@@ -77,11 +77,8 @@ test("desktop and mobile broker charts receive the selected user, including Sem 
   assert.match(distributionSource, /visibleBrokerDistributionRows\(data\?\.users, selectedUserId\)/);
 });
 
-test("visible team preference is separate from shared dashboard filters and survives reloads", () => {
-  assert.match(distributionSource, /TEAM_SELECTION_STORAGE_PREFIX/);
-  assert.match(distributionSource, /organizationId && currentUserId/);
-  assert.match(distributionSource, /localStorage\.getItem\(storageKey\)/);
-  assert.match(distributionSource, /localStorage\.setItem\(storageKey/);
+test("visible team selection is temporary and separate from shared dashboard filters", () => {
+  assert.doesNotMatch(distributionSource, /TEAM_SELECTION_STORAGE_PREFIX|localStorage|sessionStorage/);
   assert.match(distributionSource, /availableTeams\.map\(\(team\) => team\.id\)/);
   assert.match(distributionSource, /activeSelection\.includes\(team\.id\)/);
   assert.match(distributionSource, /counts\.get\(team\.id\) \?\? \(hasOther \? null : 0\)/);
@@ -97,7 +94,8 @@ test("visible team preference is separate from shared dashboard filters and surv
 
 test("first contact KPI opens a filtered, management-only aggregate on both layouts", () => {
   assert.match(dashboardSource, /useDashboardFirstContact\(dashboardFilters/);
-  assert.match(dashboardSource, /enabled: isFiltersHydrated && firstContactDialogOpen/);
+  assert.match(dashboardSource, /const canQueryDashboard = isFiltersHydrated && !periodError/);
+  assert.match(dashboardSource, /enabled: canQueryDashboard && firstContactDialogOpen/);
   assert.match(dashboardSource, /<FirstContactDialog/);
   assert.match(dashboardSource, /onFirstContactClick=\{dashboardQueryScope\.canViewLeadDistribution/);
   assert.match(mobileKpisSource, /onFirstContactClick/);

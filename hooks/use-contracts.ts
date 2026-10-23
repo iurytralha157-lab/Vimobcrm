@@ -79,7 +79,7 @@ export function useContracts(
   filters?: { status?: string; type?: string; limit?: number; offset?: number },
   options: { enabled?: boolean } = {},
 ) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -90,7 +90,7 @@ export function useContracts(
 }
 
 export function useContract(id: string | undefined) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -102,7 +102,7 @@ export function useContract(id: string | undefined) {
 
 export function useCreateContract() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -123,7 +123,7 @@ export function useCreateContract() {
 
 export function useUpdateContract() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -145,7 +145,7 @@ export function useUpdateContract() {
 
 export function useActivateContract() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -171,7 +171,7 @@ export function useActivateContract() {
 
 export function useRegenerateCommissions() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -199,7 +199,7 @@ export function useRegenerateCommissions() {
 
 export function useDeleteContract() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({

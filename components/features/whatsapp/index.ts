@@ -6,5 +6,8 @@ export { ConversationLeadPanel } from "./ConversationLeadPanel";
 export { DateSeparator, shouldShowDateSeparator } from "./DateSeparator";
 export { MediaViewer } from "./MediaViewer";
 export { MessageBubble } from "./MessageBubble";
+export { ScrollToLatestButton } from "./ScrollToLatestButton";
+export { LoadOlderMessagesButton } from "./LoadOlderMessagesButton";
+export { CONVERSATION_LIST_UI } from "./conversation-list-ui";
 export { EnterAttendanceDialog } from "./EnterAttendanceDialog";
 export { StartAutomationDialog } from "./StartAutomationDialog";

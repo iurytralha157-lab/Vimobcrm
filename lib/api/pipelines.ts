@@ -6,21 +6,24 @@ import {
   apiStageResponseSchema,
   parseDomainInput,
   pipelineCreateInputSchema,
+  pipelineDeleteInputSchema,
   pipelineRoundRobinInputSchema,
   pipelineUpdateInputSchema,
   stageCreateInputSchema,
+  stageDeleteInputSchema,
   stageUpdateInputSchema,
   stagesReorderInputSchema,
   uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
 import { PIPELINE_READ_TIMEOUT_MS } from '@/lib/pipeline-reliability'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 
 type PipelineRow = Tables<'pipelines'> & {
   is_active?: boolean | null
   position?: number | null
   updated_at?: string | null
+  revision?: string
 }
 
 type StageRow = Tables<'stages'>
@@ -35,6 +38,7 @@ type APIPipeline = {
   defaultRoundRobinId?: string
   createdAt: string
   updatedAt: string
+  revision?: string
 }
 
 type APIStage = {
@@ -85,10 +89,10 @@ export const pipelinesAPI = {
     return response.data.map(toLegacyPipeline)
   },
 
-  async createPipeline(input: { name: string; isDefault?: boolean }, organizationId?: string) {
+  async createPipeline(input: { name: string; isDefault?: boolean }, organizationId?: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(pipelineCreateInputSchema, input, 'pipelines.create')
     const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>('/v1/pipelines', {
-      method: 'POST',
+      ...intent, method: 'POST', retry: false,
       organizationId,
       body,
     })
@@ -97,10 +101,11 @@ export const pipelinesAPI = {
     return toLegacyPipeline(response.data)
   },
 
-  async updatePipeline(id: string, input: { name?: string; isDefault?: boolean }, organizationId?: string) {
+  async updatePipeline(id: string, input: { expectedRevision: string; name?: string; isDefault?: boolean }, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const pipelineId = parseDomainInput(uuidSchema, id, 'pipelines.update.id')
     const body = parseDomainInput(pipelineUpdateInputSchema, input, 'pipelines.update')
-    const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${id}`, {
-      method: 'PATCH',
+    const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${pipelineId}`, {
+      ...intent, method: 'PATCH', retry: false,
       organizationId,
       body,
     })
@@ -109,10 +114,11 @@ export const pipelinesAPI = {
     return toLegacyPipeline(response.data)
   },
 
-  async deletePipeline(id: string, organizationId?: string) {
-    await vimobAPIRequest<null>(`/v1/pipelines/${id}`, {
-      method: 'DELETE',
-      organizationId,
+  async deletePipeline(id: string, expectedRevision: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const pipelineId = parseDomainInput(uuidSchema, id, 'pipelines.delete.id')
+    const body = parseDomainInput(pipelineDeleteInputSchema, { expectedRevision }, 'pipelines.delete')
+    await vimobAPIRequest<null>(`/v1/pipelines/${pipelineId}`, {
+      ...intent, method: 'DELETE', organizationId, body, retry: false,
     })
   },
 
@@ -130,11 +136,11 @@ export const pipelinesAPI = {
     return response.data.map(toLegacyStage)
   },
 
-  async createStage(input: { pipelineId: string; name: string; color?: string }, organizationId?: string) {
+  async createStage(input: { pipelineId: string; name: string; color?: string }, organizationId?: string, intent?: VimobAPIRequestIntent) {
     const pipelineId = parseDomainInput(uuidSchema, input.pipelineId, 'stages.create.pipeline-id')
     const body = parseDomainInput(stageCreateInputSchema, { name: input.name, color: input.color }, 'stages.create')
     const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/pipelines/${pipelineId}/stages`, {
-      method: 'POST',
+      ...intent, method: 'POST', retry: false,
       organizationId,
       body,
     })
@@ -143,10 +149,10 @@ export const pipelinesAPI = {
     return toLegacyStage(response.data)
   },
 
-  async updateStage(id: string, input: { name?: string; color?: string; stageKey?: string; isWon?: boolean; isLost?: boolean; isQualified?: boolean; isActive?: boolean }, organizationId?: string) {
+  async updateStage(id: string, input: { expectedUpdatedAt: string; name?: string; color?: string; stageKey?: string; isWon?: boolean; isLost?: boolean; isQualified?: boolean; isActive?: boolean }, organizationId?: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(stageUpdateInputSchema, input, 'stages.update')
     const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/stages/${id}`, {
-      method: 'PATCH',
+      ...intent, method: 'PATCH', retry: false,
       organizationId,
       body,
     })
@@ -155,8 +161,9 @@ export const pipelinesAPI = {
     return toLegacyStage(response.data)
   },
 
-  async reorderStages(pipelineId: string, stages: StageOrderItem[], organizationId?: string) {
+  async reorderStages(pipelineId: string, stages: StageOrderItem[], organizationId?: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(stagesReorderInputSchema, {
+      preserveStageKeys: true,
       stages: stages.map((stage) => ({
         id: stage.id,
         name: stage.name,
@@ -167,7 +174,7 @@ export const pipelinesAPI = {
       })),
     }, 'stages.reorder')
     const response = await vimobAPIRequest<APIListResponse<APIStage>>(`/v1/pipelines/${pipelineId}/stages/reorder`, {
-      method: 'POST',
+      ...intent, method: 'POST', retry: false,
       organizationId,
       body,
     })
@@ -176,19 +183,19 @@ export const pipelinesAPI = {
     return response.data.map(toLegacyStage)
   },
 
-  async deleteStage(id: string, organizationId?: string) {
-    await vimobAPIRequest<null>(`/v1/stages/${id}`, {
-      method: 'DELETE',
-      organizationId,
+  async deleteStage(id: string, expectedUpdatedAt: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const stageId = parseDomainInput(uuidSchema, id, 'stages.delete.id')
+    const body = parseDomainInput(stageDeleteInputSchema, { expectedUpdatedAt }, 'stages.delete')
+    await vimobAPIRequest<null>(`/v1/stages/${stageId}`, {
+      ...intent, method: 'DELETE', organizationId, body, retry: false,
     })
   },
 
-  async setPipelineRoundRobin(pipelineId: string, roundRobinId: string | null, organizationId?: string) {
-    const body = parseDomainInput(pipelineRoundRobinInputSchema, { roundRobinId }, 'pipelines.round-robin')
-    const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${pipelineId}/round-robin`, {
-      method: 'POST',
-      organizationId,
-      body,
+  async setPipelineRoundRobin(pipelineId: string, roundRobinId: string | null, expectedRevision: string, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const id = parseDomainInput(uuidSchema, pipelineId, 'pipelines.round-robin.id')
+    const body = parseDomainInput(pipelineRoundRobinInputSchema, { roundRobinId, expectedRevision }, 'pipelines.round-robin')
+    const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${id}/round-robin`, {
+      ...intent, method: 'POST', organizationId, body, retry: false,
     })
     validateDomainResponse(apiPipelineResponseSchema, response, 'pipelines.round-robin')
 
@@ -214,6 +221,7 @@ function toLegacyPipeline(pipeline: APIPipeline): PipelineRow {
     is_active: pipeline.isActive,
     position: pipeline.position,
     updated_at: pipeline.updatedAt,
+    revision: pipeline.revision,
   }
 }
 

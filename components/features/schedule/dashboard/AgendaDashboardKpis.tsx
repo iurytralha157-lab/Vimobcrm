@@ -174,7 +174,7 @@ export function AgendaDashboardKpis({
 
   return (
     <div className="space-y-2.5">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 @[580px]/agenda-dashboard:grid-cols-3 @[960px]/agenda-dashboard:grid-cols-6">
         {primaryItems.map((item) => (
           <PrimaryKpi
             key={item.label}
@@ -189,7 +189,7 @@ export function AgendaDashboardKpis({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 @[580px]/agenda-dashboard:grid-cols-3 @[960px]/agenda-dashboard:grid-cols-6">
         {supportingMetrics.map((item) => (
           <SupportingKpi key={item.label} item={item} />
         ))}
@@ -211,7 +211,7 @@ function PrimaryKpi({
   const content = (
     <>
       <span className="flex items-center justify-between gap-3">
-        <span className="block min-w-0 truncate text-[10px] font-medium text-[var(--app-text-secondary)]">
+        <span className="block min-w-0 text-[10px] font-medium leading-tight text-[var(--app-text-secondary)]" title={item.label}>
           {item.label}
         </span>
         <Icon

@@ -1,4 +1,6 @@
 import type { Json } from '@/lib/supabase/types'
+import { whatsAppConversationListQuerySchema, whatsAppConversationOptionsQuerySchema } from '@/lib/validation/whatsapp-conversation-filters'
+import { WHATSAPP_MESSAGE_ORDERING_VERSION } from '@/lib/whatsapp-message-order'
 import {
   createWhatsAppSessionInputSchema,
   linkWhatsAppConversationLeadInputSchema,
@@ -15,6 +17,8 @@ import {
   whatsAppConversationResponseSchema,
   whatsAppConversationsResponseSchema,
   whatsAppConversationFilterOptionsResponseSchema,
+  whatsAppConversationLinkPreviewResponseSchema,
+  whatsAppConversationLinkResultResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessageMediaURLResponseSchema,
   whatsAppMessagesResponseSchema,
@@ -25,9 +29,14 @@ import {
   whatsAppSessionResponseSchema,
   whatsAppSessionStatusesResponseSchema,
   whatsAppSessionsResponseSchema,
+  whatsAppSendStatusQuerySchema,
+  whatsAppSendStatusResponseSchema,
   whatsAppUnreadCountResponseSchema,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, getVimobAPIAccessTokenUserId } from '@/lib/api/vimob-client'
+import { VimobAPIError } from '@/lib/api/vimob-error'
+import { decodeWhatsAppPhoneChangeConfirmation } from '@/lib/whatsapp-phone-change'
+export { getWhatsAppPhoneChangeConfirmation, type WhatsAppPhoneChangeConfirmation } from '@/lib/whatsapp-phone-change'
 
 type Envelope<T> = {
   data: T
@@ -132,6 +141,10 @@ export interface WhatsAppConversation {
   presence_updated_at: string | null
   last_message: string | null
   last_message_at: string | null
+  last_message_from_me?: boolean | null
+  last_message_status?: string | null
+  last_message_id?: string | null
+  last_message_sent_at?: string | null
   unread_count: number
   is_group: boolean
   archived_at: string | null
@@ -178,6 +191,43 @@ export interface WhatsAppConversation {
   }
 }
 
+export interface WhatsAppConversationLinkPreview {
+  conversationId: string
+  sessionId: string
+  sessionDisplayName: string
+  contactDisplayName: string
+  leadId: string | null
+  expectedPreviousLeadId: string
+  eligibleMessageCount: number
+  firstEligibleAt: string | null
+  lastEligibleAt: string | null
+  expiresAt: string | null
+  bindingMode: 'active' | 'history_only'
+}
+
+export interface WhatsAppConversationLinkResult {
+  bindingMode: 'active' | 'history_only'
+  attachedMessageCount: number
+  historyFirstAt?: string | null
+  historyLastAt?: string | null
+  expiresAt?: string | null
+  confirmedAt?: string | null
+}
+
+export type WhatsAppContactCard = { display_name: string; phones?: string[] }
+export type WhatsAppLocation = { latitude: number; longitude: number; name?: string; address?: string }
+export type WhatsAppQuotedMessage = {
+  message_id: string
+  available: boolean
+  id?: string
+  from_me?: boolean
+  content?: string
+  message_type?: string
+  sender_name?: string
+  sender_user_id?: string | null
+  media_filename?: string
+}
+
 export interface WhatsAppMessage {
   id: string
   conversation_id: string
@@ -189,6 +239,10 @@ export interface WhatsAppMessage {
   message_type: string
   media_url: string | null
   media_mime_type: string | null
+  media_filename?: string | null
+  contacts?: WhatsAppContactCard[]
+  location?: WhatsAppLocation
+  quoted_message?: WhatsAppQuotedMessage
   media_status?: 'pending' | 'ready' | 'failed' | null
   media_error?: string | null
   media_size?: number | null
@@ -200,13 +254,17 @@ export interface WhatsAppMessage {
   reaction_sender_name?: string | null
   metadata?: Record<string, unknown>
   status: string
+  can_quote?: boolean
+  can_react?: boolean
   delivery_error_code?: 'recipient_not_registered' | 'outcome_unknown' | 'send_failed' | null
+  delivery_error_reason?: 'media_integrity_unverified'
   delivery_failed_at?: string | null
   sent_at: string
   delivered_at: string | null
   read_at: string | null
   sender_jid: string | null
   sender_name: string | null
+  sender_user_id?: string | null
 }
 
 export type WhatsAppMediaDownloadRequestData = {
@@ -236,6 +294,10 @@ export interface ConversationFilters {
   dealStatus?: 'open' | 'won' | 'lost'
   pageId?: string
   campaignIds?: string[]
+  adSetId?: string
+  adId?: string
+  leadCreatedFrom?: string
+  leadCreatedTo?: string
   hideGroups?: boolean
   showArchived?: boolean
   onlyLeads?: boolean
@@ -256,9 +318,13 @@ export type WhatsAppConversationFilterOptions = {
   teams: { id: string; name: string }[]
   users: { id: string; name: string }[]
   sources: string[]
-  tags: { id: string; name: string }[]
+  tags: { id: string; name: string; color?: string }[]
   pages: { id: string; name: string }[]
   campaigns: { id: string; name: string }[]
+  adSets?: { id: string; name: string; campaignId: string }[]
+  ads?: { id: string; name: string; campaignId: string; adsetId: string }[]
+  hasMore?: boolean
+  nextOffset?: number | null
 }
 
 export type WhatsAppUnreadCountResponse = {
@@ -286,6 +352,7 @@ export type SendWhatsAppMessageInput = {
   filename?: string
   sendSessionId?: string
   clientMessageId?: string
+  quotedMessageId?: string
 }
 
 export type SendWhatsAppMessageResult = Record<string, unknown> & {
@@ -294,6 +361,9 @@ export type SendWhatsAppMessageResult = Record<string, unknown> & {
   status?: string
   message?: WhatsAppMessage
   providerData?: Record<string, unknown>
+  /** Local hook metadata: an explicit lookup of the original file intent. */
+  fileIntentChecked?: boolean
+  fileIntentResolution?: 'pending' | 'accepted' | 'failed' | 'cancelled'
 }
 
 export type WhatsAppAttendanceEntry = {
@@ -382,20 +452,41 @@ export interface WhatsAppGroup {
   updated_at: string
 }
 
+export type WhatsAppRequestIntent = {
+  signal?: AbortSignal
+  expectedUserId?: string | null
+  onRequestStart?: () => void
+}
+
+// Pin the actor before token resolution. The intent stays private to transport.
+function requestWhatsAppAPI<T>(
+  path: string,
+  options: Parameters<typeof vimobAPIRequest>[1],
+  intent?: WhatsAppRequestIntent,
+) {
+  return vimobAPIRequest<T>(path, {
+    ...options,
+    ...intent,
+    expectedUserId: intent?.expectedUserId === undefined
+      ? getVimobAPIAccessTokenUserId()
+      : intent.expectedUserId,
+  })
+}
+
 export const whatsappAPI = {
-  async getSessions(organizationId?: string | null, timeoutMs?: number) {
-    const response = await vimobAPIRequest<WhatsAppSessionsResponse>('/v1/whatsapp/sessions', {
+  async getSessions(organizationId?: string | null, timeoutMs?: number, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<WhatsAppSessionsResponse>('/v1/whatsapp/sessions', {
       organizationId,
       timeoutMs,
-    })
+    }, transport)
     validateDomainResponse(whatsAppSessionsResponseSchema, response, 'whatsapp.sessions.list')
     return response
   },
 
-  async getSessionStatuses(organizationId?: string | null) {
-    const response = await vimobAPIRequest<WhatsAppSessionStatusesResponse>(
+  async getSessionStatuses(organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<WhatsAppSessionStatusesResponse>(
       '/v1/whatsapp/session-statuses',
-      { organizationId },
+      { organizationId }, transport,
     )
     validateDomainResponse(
       whatsAppSessionStatusesResponseSchema,
@@ -405,92 +496,92 @@ export const whatsappAPI = {
     return response
   },
 
-  async createSession(input: { displayName: string; provider?: WhatsAppProvider }, organizationId?: string | null) {
+  async createSession(input: { displayName: string; provider?: WhatsAppProvider }, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
     const body = parseDomainInput(createWhatsAppSessionInputSchema, input, 'whatsapp.sessions.create')
-    const response = await vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>('/v1/whatsapp/sessions', {
+    const response = await requestWhatsAppAPI<{ session: WhatsAppSession; evolutionData?: unknown }>('/v1/whatsapp/sessions', {
       method: 'POST',
       organizationId,
       body,
       timeoutMs: 30_000,
-    })
+    }, transport)
     validateDomainResponse(whatsAppSessionOperationResponseSchema, response, 'whatsapp.sessions.create')
     return response
   },
 
-  async getSession(sessionId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppSession>>(`/v1/whatsapp/sessions/${sessionId}`, {
+  async getSession(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppSession>>(`/v1/whatsapp/sessions/${sessionId}`, {
       organizationId,
-    })
+    }, transport)
     validateDomainResponse(whatsAppSessionResponseSchema, response, 'whatsapp.sessions.get')
     return response.data
   },
 
-  async deleteSession(sessionId: string, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}`, {
+  async deleteSession(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}`, {
       method: 'DELETE',
       organizationId,
       skipTelemetry: true,
       timeoutMs: 15_000,
-    })
+    }, transport)
   },
 
-  async getQRCode(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<WhatsAppQRCode>(`/v1/whatsapp/sessions/${sessionId}/qr`, {
+  async getQRCode(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<WhatsAppQRCode>(`/v1/whatsapp/sessions/${sessionId}/qr`, {
       method: 'POST',
       organizationId,
       skipTelemetry: true,
       timeoutMs: 20_000,
-    })
+    }, transport)
   },
 
-  async getConnectionStatus(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<WhatsAppConnectionStatus>(`/v1/whatsapp/sessions/${sessionId}/status`, {
+  async getConnectionStatus(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<WhatsAppConnectionStatus>(`/v1/whatsapp/sessions/${sessionId}/status`, {
       method: 'POST',
       organizationId,
       skipTelemetry: true,
       timeoutMs: 8_000,
-    })
+    }, transport)
   },
 
-  async recreateSession(sessionId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>(
+  async recreateSession(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<{ session: WhatsAppSession; evolutionData?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/recreate`,
-      { method: 'POST', organizationId, skipTelemetry: true, timeoutMs: 30_000 },
+      { method: 'POST', organizationId, skipTelemetry: true, timeoutMs: 30_000 }, transport,
     )
     validateDomainResponse(whatsAppSessionOperationResponseSchema, response, 'whatsapp.sessions.recreate')
     return response
   },
 
-  async logoutSession(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/logout`, {
+  async logoutSession(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/logout`, {
       method: 'POST',
       organizationId,
       skipTelemetry: true,
       timeoutMs: 15_000,
-    })
+    }, transport)
   },
 
-  async toggleNotificationSession(sessionId: string, enabled: boolean, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/notification-session`, {
+  async toggleNotificationSession(sessionId: string, enabled: boolean, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/notification-session`, {
       method: 'POST',
       organizationId,
       body: { enabled },
-    })
+    }, transport)
   },
 
-  async toggleAIAutoReplySession(sessionId: string, input: AIAutoReplySessionInput, organizationId?: string | null) {
+  async toggleAIAutoReplySession(sessionId: string, input: AIAutoReplySessionInput, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
     const body = parseDomainInput(whatsAppAIAutoReplyInputSchema, input, 'whatsapp.sessions.ai-auto-reply')
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/ai-auto-reply`, {
+    await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/ai-auto-reply`, {
       method: 'POST',
       organizationId,
       body,
-    })
+    }, transport)
   },
 
-  async getSessionAccess(sessionId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppSessionAccess[]>>(
+  async getSessionAccess(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppSessionAccess[]>>(
       `/v1/whatsapp/sessions/${sessionId}/access`,
-      { organizationId },
+      { organizationId }, transport,
     )
     validateDomainResponse(whatsAppSessionAccessResponseSchema, response, 'whatsapp.sessions.access.list')
     return response.data
@@ -504,21 +595,21 @@ export const whatsappAPI = {
       canSend?: boolean
       accessMode?: WhatsAppAccessMode
     },
-    organizationId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
   ) {
     const body = parseDomainInput(whatsAppSessionAccessInputSchema, input, 'whatsapp.sessions.access.grant')
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/access`, {
+    await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/access`, {
       method: 'POST',
       organizationId,
       body,
-    })
+    }, transport)
   },
 
-  async revokeSessionAccess(sessionId: string, userId: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/whatsapp/sessions/${sessionId}/access/${userId}`, {
+  async revokeSessionAccess(sessionId: string, userId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    await requestWhatsAppAPI<null>(`/v1/whatsapp/sessions/${sessionId}/access/${userId}`, {
       method: 'DELETE',
       organizationId,
-    })
+    }, transport)
   },
 
   async getConversationsPage(params: {
@@ -528,12 +619,12 @@ export const whatsappAPI = {
     accessibleSessionIds?: string[]
     limit?: number
     cursor?: string | null
-  }) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation[]> & {
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversation[]> & {
       meta?: { nextCursor?: string | null }
     }>('/v1/whatsapp/conversations', {
       organizationId: params.organizationId,
-      query: {
+      query: parseDomainInput(whatsAppConversationListQuerySchema, {
         sessionId: params.sessionId,
         pipelineId: params.filters?.pipelineId,
         teamId: params.filters?.teamId,
@@ -543,6 +634,10 @@ export const whatsappAPI = {
         dealStatus: params.filters?.dealStatus,
         pageId: params.filters?.pageId,
         campaignIds: params.filters?.campaignIds,
+        adSetId: params.filters?.adSetId,
+        adId: params.filters?.adId,
+        leadCreatedFrom: params.filters?.leadCreatedFrom,
+        leadCreatedTo: params.filters?.leadCreatedTo,
         hideGroups: params.filters?.hideGroups,
         showArchived: params.filters?.showArchived,
         onlyLeads: params.filters?.onlyLeads,
@@ -554,8 +649,8 @@ export const whatsappAPI = {
         sessionIds: params.accessibleSessionIds?.join(','),
         limit: params.limit,
         cursor: params.cursor,
-      },
-    })
+      }, 'whatsapp.conversations.list.filters'),
+    }, transport)
     validateDomainResponse(whatsAppConversationsResponseSchema, response, 'whatsapp.conversations.list')
     return {
       conversations: response.data,
@@ -569,8 +664,8 @@ export const whatsappAPI = {
     filters?: ConversationFilters
     accessibleSessionIds?: string[]
     limit?: number
-  }) {
-    const page = await this.getConversationsPage(params)
+  }, transport?: WhatsAppRequestIntent) {
+    const page = await this.getConversationsPage(params, transport)
     return page.conversations
   },
 
@@ -582,13 +677,20 @@ export const whatsappAPI = {
     lastMessageFrom?: string
     lastMessageTo?: string
     pageId?: string
-  }) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversationFilterOptions>>(
+    campaignIds?: string[]
+    adSetId?: string
+    leadCreatedFrom?: string
+    leadCreatedTo?: string
+    optionsSearch?: string
+    optionsOffset?: number
+    optionsLimit?: number
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversationFilterOptions>>(
       '/v1/whatsapp/conversations/filter-options',
       {
         organizationId: params.organizationId,
         timeoutMs: 8_000,
-        query: {
+        query: parseDomainInput(whatsAppConversationOptionsQuerySchema, {
           sessionId: params.sessionId,
           sessionIds: params.accessibleSessionIds?.join(','),
           hideGroups: true,
@@ -596,8 +698,16 @@ export const whatsappAPI = {
           lastMessageFrom: params.lastMessageFrom,
           lastMessageTo: params.lastMessageTo,
           pageId: params.pageId,
-        },
-      },
+          campaignIds: params.campaignIds,
+          adSetId: params.adSetId,
+          leadCreatedFrom: params.leadCreatedFrom,
+          leadCreatedTo: params.leadCreatedTo,
+          expandedOptions: true,
+          optionsSearch: params.optionsSearch,
+          optionsOffset: params.optionsOffset,
+          optionsLimit: params.optionsLimit,
+        }, 'whatsapp.conversations.filter-options.filters'),
+      }, transport,
     )
     validateDomainResponse(whatsAppConversationFilterOptionsResponseSchema, response, 'whatsapp.conversations.filter-options')
     return response.data
@@ -608,12 +718,12 @@ export const whatsappAPI = {
     sessionId?: string
     filters?: ConversationFilters
     accessibleSessionIds?: string[]
-  }) {
-    const response = await vimobAPIRequest<WhatsAppUnreadCountResponse>(
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<WhatsAppUnreadCountResponse>(
       '/v1/whatsapp/conversations/unread-count',
       {
         organizationId: params.organizationId,
-        query: {
+        query: parseDomainInput(whatsAppConversationListQuerySchema, {
           sessionId: params.sessionId,
           pipelineId: params.filters?.pipelineId,
           teamId: params.filters?.teamId,
@@ -623,6 +733,10 @@ export const whatsappAPI = {
           dealStatus: params.filters?.dealStatus,
           pageId: params.filters?.pageId,
           campaignIds: params.filters?.campaignIds,
+          adSetId: params.filters?.adSetId,
+          adId: params.filters?.adId,
+          leadCreatedFrom: params.filters?.leadCreatedFrom,
+          leadCreatedTo: params.filters?.leadCreatedTo,
           hideGroups: params.filters?.hideGroups,
           showArchived: params.filters?.showArchived,
           onlyLeads: params.filters?.onlyLeads,
@@ -632,8 +746,8 @@ export const whatsappAPI = {
           lastMessageFrom: params.filters?.lastMessageFrom,
           lastMessageTo: params.filters?.lastMessageTo,
           sessionIds: params.accessibleSessionIds?.join(','),
-        },
-      },
+        }, 'whatsapp.conversations.unread-count.filters'),
+      }, transport,
     )
     validateDomainResponse(whatsAppUnreadCountResponseSchema, response, 'whatsapp.conversations.unread-count')
     return response.count
@@ -645,13 +759,19 @@ export const whatsappAPI = {
     leadId?: string
     leadName?: string
     expectedPreviousLeadId: string
-  }, organizationId?: string | null) {
+    ownSessionOnly?: boolean
+    confirmPhoneChange?: boolean
+    expectedPreviousConversationId?: string
+    confirmDestinationHistory?: boolean
+    expectedDestinationConversationId?: string
+  }, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
     const body = parseDomainInput(startWhatsAppConversationInputSchema, input, 'whatsapp.conversations.start')
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>('/v1/whatsapp/conversations/start', {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversation>>('/v1/whatsapp/conversations/start', {
       method: 'POST',
       organizationId,
       body,
-    })
+      decodeErrorData: decodeWhatsAppPhoneChangeConfirmation,
+    }, transport)
     validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.start')
     return response.data
   },
@@ -661,15 +781,15 @@ export const whatsappAPI = {
     leadId?: string
     sessionId?: string
     organizationId?: string | null
-  }) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation | null>>('/v1/whatsapp/conversations/find', {
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversation | null>>('/v1/whatsapp/conversations/find', {
       organizationId: params.organizationId,
       query: {
         phone: params.phone,
         leadId: params.leadId,
         sessionId: params.sessionId,
       },
-    })
+    }, transport)
     validateDomainResponse(whatsAppOptionalConversationResponseSchema, response, 'whatsapp.conversations.find')
     return response.data
   },
@@ -680,10 +800,12 @@ export const whatsappAPI = {
     allMessages?: boolean
     limit?: number
     cursor?: string | null
+    includeMediaUrls?: boolean
+    includeConversations?: boolean
     organizationId?: string | null
     signal?: AbortSignal
-  }) {
-    const response = await vimobAPIRequest<Envelope<{
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<{
       conversation?: WhatsAppConversation
       conversations?: WhatsAppConversation[]
       messages: WhatsAppMessage[]
@@ -697,28 +819,31 @@ export const whatsappAPI = {
           conversationId: params.conversationId || undefined,
           leadId: params.leadId || undefined,
           allMessages: params.allMessages,
+          includeMediaUrls: params.includeMediaUrls,
+          includeConversations: params.includeConversations,
           limit: params.limit,
           cursor: params.cursor || undefined,
+          orderingVersion: WHATSAPP_MESSAGE_ORDERING_VERSION,
         },
-      },
+      }, transport,
     )
     validateDomainResponse(whatsAppHistoryResponseSchema, response, 'whatsapp.history')
     return response.data
   },
 
-	async getConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>(
+	async getConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversation>>(
       `/v1/whatsapp/conversations/${conversationId}`,
-	  { organizationId, query: { expectedLeadId } },
+	  { organizationId, query: { expectedLeadId } }, transport,
     )
     validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.get')
     return response.data
   },
 
-  async getConversationSnapshot(conversationId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>(
+  async getConversationSnapshot(conversationId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversation>>(
       `/v1/whatsapp/conversations/${conversationId}/snapshot`,
-      { organizationId },
+      { organizationId }, transport,
     )
     validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.snapshot')
     return response.data
@@ -731,8 +856,8 @@ export const whatsappAPI = {
     cursor?: string | null
     includeMediaUrls?: boolean
 	expectedLeadId: string
-  }) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppMessagesPage>>(
+  }, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppMessagesPage>>(
       `/v1/whatsapp/conversations/${params.conversationId}/messages`,
       {
         organizationId: params.organizationId,
@@ -740,59 +865,82 @@ export const whatsappAPI = {
           limit: params.limit,
           cursor: params.cursor,
           includeMediaUrls: params.includeMediaUrls,
+          orderingVersion: WHATSAPP_MESSAGE_ORDERING_VERSION,
 		  expectedLeadId: params.expectedLeadId,
         },
-      },
+      }, transport,
     )
     validateDomainResponse(whatsAppMessagesResponseSchema, response, 'whatsapp.messages.list')
     return response.data
   },
 
-  async getMessageMediaURL(messageId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppMessageMediaURL>>(
+  async getMessageMediaURL(messageId: string, organizationId?: string | null, options?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppMessageMediaURL>>(
       `/v1/whatsapp/messages/${messageId}/media-url`,
-      { organizationId },
+      { organizationId, signal: options?.signal }, options,
     )
     validateDomainResponse(whatsAppMessageMediaURLResponseSchema, response, 'whatsapp.messages.media-url')
     return response.data
   },
 
-	async markConversationAsRead(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
-		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-read`, {
+	async markConversationAsRead(conversationId: string, expectedLeadId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+		await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-read`, {
 			method: 'POST',
 			organizationId,
 			query: { expectedLeadId },
-    })
+    }, transport)
   },
 
-  async sendMessage(conversationId: string, input: SendWhatsAppMessageInput, organizationId?: string | null) {
+  async sendMessage(conversationId: string, input: SendWhatsAppMessageInput, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
     const body = parseDomainInput(sendWhatsAppMessageInputSchema, input, 'whatsapp.messages.send')
-    const response = await vimobAPIRequest<SendWhatsAppMessageResult>(`/v1/whatsapp/conversations/${conversationId}/send-message`, {
+    const response = await requestWhatsAppAPI<SendWhatsAppMessageResult>(`/v1/whatsapp/conversations/${conversationId}/send-message`, {
       method: 'POST',
       organizationId,
       body,
       timeoutMs: 30_000,
-    })
+    }, transport)
     validateDomainResponse(sendWhatsAppMessageResponseSchema, response, 'whatsapp.messages.send')
+    return response
+  },
+
+  async getSendStatus(params: {
+    conversationId: string
+    expectedLeadId: string
+    clientMessageId: string
+    organizationId?: string | null
+    signal?: AbortSignal
+  }, transport?: WhatsAppRequestIntent) {
+    const query = parseDomainInput(whatsAppSendStatusQuerySchema, {
+      expectedLeadId: params.expectedLeadId, clientMessageId: params.clientMessageId,
+    }, 'whatsapp.messages.send-status')
+    const response = await requestWhatsAppAPI<SendWhatsAppMessageResult>(
+      `/v1/whatsapp/conversations/${params.conversationId}/send-status`,
+      {
+        organizationId: params.organizationId,
+        signal: params.signal,
+        query,
+      }, transport,
+    )
+    validateDomainResponse(whatsAppSendStatusResponseSchema, response, 'whatsapp.messages.send-status')
     return response
   },
 
   async getConversationAttendance(
     conversationId: string,
     input: WhatsAppAttendanceRequest,
-    organizationId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
   ) {
     const query = parseDomainInput(
       whatsAppAttendanceRequestSchema,
       input,
       'whatsapp.attendance.get',
     )
-    const response = await vimobAPIRequest<Envelope<WhatsAppAttendanceState>>(
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppAttendanceState>>(
       `/v1/whatsapp/conversations/${conversationId}/attendance`,
       {
         organizationId,
         query,
-      },
+      }, transport,
     )
     validateDomainResponse(
       whatsAppAttendanceResponseSchema,
@@ -805,20 +953,20 @@ export const whatsappAPI = {
   async joinConversationAttendance(
     conversationId: string,
     input: WhatsAppAttendanceRequest,
-    organizationId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
   ) {
     const body = parseDomainInput(
       whatsAppAttendanceRequestSchema,
       input,
       'whatsapp.attendance.join',
     )
-    const response = await vimobAPIRequest<Envelope<WhatsAppAttendanceState>>(
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppAttendanceState>>(
       `/v1/whatsapp/conversations/${conversationId}/attendance`,
       {
         method: 'POST',
         organizationId,
         body,
-      },
+      }, transport,
     )
     validateDomainResponse(
       whatsAppAttendanceResponseSchema,
@@ -832,90 +980,122 @@ export const whatsappAPI = {
     conversationId: string,
     messageId: string,
     input: ReactWhatsAppMessageInput,
-    organizationId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
   ) {
     const body = parseDomainInput(reactWhatsAppMessageInputSchema, input, 'whatsapp.messages.react')
-    const response = await vimobAPIRequest<ReactWhatsAppMessageResult>(
+    const response = await requestWhatsAppAPI<ReactWhatsAppMessageResult>(
       `/v1/whatsapp/conversations/${conversationId}/messages/${messageId}/reaction`,
       {
         method: 'POST',
         organizationId,
         body,
         timeoutMs: 30_000,
-      },
+      }, transport,
     )
     validateDomainResponse(reactWhatsAppMessageResponseSchema, response, 'whatsapp.messages.react')
     return response
   },
 
-	async markAsSeenOnWhatsApp(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
-		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-seen`, {
+	async markAsSeenOnWhatsApp(conversationId: string, expectedLeadId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+		await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-seen`, {
 			method: 'POST',
 			organizationId,
 			query: { expectedLeadId },
-		})
+		}, transport)
 	},
 
-	async archiveConversation(conversationId: string, archive: boolean, expectedLeadId: string, organizationId?: string | null) {
-		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/archive`, {
+	async archiveConversation(conversationId: string, archive: boolean, expectedLeadId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+		const response = await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/archive`, {
 			method: 'POST',
 			organizationId,
 			body: { archive, expectedLeadId },
+		}, transport)
+		if (response?.ok !== true) throw new VimobAPIError('O arquivamento não foi confirmado. Atualize a conversa e tente novamente.', {
+			code: 'whatsapp_archive_not_confirmed', status: 502,
 		})
 	},
 
-	async deleteConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
-		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}`, {
+	async deleteConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+		await requestWhatsAppAPI<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}`, {
 			method: 'DELETE',
 			organizationId,
 			query: { expectedLeadId },
-		})
+		}, transport)
   },
 
   async linkConversationToLead(
     conversationId: string,
     leadId: string,
     expectedPreviousLeadId: string,
-    organizationId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
+    ownSessionOnly?: boolean,
   ) {
     const body = parseDomainInput(linkWhatsAppConversationLeadInputSchema, {
       leadId,
       expectedPreviousLeadId,
+      ownSessionOnly,
     }, 'whatsapp.conversations.link-lead')
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/link-lead`, {
+    const response = await requestWhatsAppAPI<{ ok: true; data: WhatsAppConversationLinkResult }>(`/v1/whatsapp/conversations/${conversationId}/link-lead`, {
       method: 'POST',
       organizationId,
       body,
-    })
-  },
-
-  async retryMediaDownload(messageId: string, organizationId?: string | null) {
-    return vimobAPIRequest<WhatsAppMediaDownloadRequestResult>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
-      method: 'POST',
-      organizationId,
-    })
-  },
-
-  async getLabels(sessionId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppLabel[]>>(`/v1/whatsapp/sessions/${sessionId}/labels`, {
-      organizationId,
-    })
-    return response.data
-  },
-
-  async getChatLabels(conversationId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppLabel[]>>(
-      `/v1/whatsapp/conversations/${conversationId}/labels`,
-      { organizationId },
+    }, transport)
+    validateDomainResponse(
+      whatsAppConversationLinkResultResponseSchema,
+      response,
+      'whatsapp.conversations.link-lead',
     )
     return response.data
   },
 
-  async syncLabels(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ raw?: unknown; synced: number }>(`/v1/whatsapp/sessions/${sessionId}/labels/sync`, {
+  async getConversationLinkPreview(
+    conversationId: string,
+    expectedPreviousLeadId: string,
+    leadId?: string | null,
+    organizationId?: string | null, transport?: WhatsAppRequestIntent,
+  ) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppConversationLinkPreview>>(
+      `/v1/whatsapp/conversations/${conversationId}/link-preview`,
+      {
+        organizationId,
+        query: { expectedPreviousLeadId, leadId: leadId || undefined },
+      }, transport,
+    )
+    validateDomainResponse(
+      whatsAppConversationLinkPreviewResponseSchema,
+      response,
+      'whatsapp.conversations.link-preview',
+    )
+    return response.data
+  },
+
+  async retryMediaDownload(messageId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<WhatsAppMediaDownloadRequestResult>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
       method: 'POST',
       organizationId,
-    })
+    }, transport)
+  },
+
+  async getLabels(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppLabel[]>>(`/v1/whatsapp/sessions/${sessionId}/labels`, {
+      organizationId,
+    }, transport)
+    return response.data
+  },
+
+  async getChatLabels(conversationId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppLabel[]>>(
+      `/v1/whatsapp/conversations/${conversationId}/labels`,
+      { organizationId }, transport,
+    )
+    return response.data
+  },
+
+  async syncLabels(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ raw?: unknown; synced: number }>(`/v1/whatsapp/sessions/${sessionId}/labels/sync`, {
+      method: 'POST',
+      organizationId,
+    }, transport)
   },
 
   async assignLabel(sessionId: string, input: {
@@ -923,44 +1103,44 @@ export const whatsappAPI = {
     labelId: string
     conversationId: string
     add: boolean
-  }, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/labels/assign`, {
+  }, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/labels/assign`, {
       method: 'POST',
       organizationId,
       body: input,
-    })
+    }, transport)
   },
 
-  async getGroups(sessionId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppGroup[]>>(`/v1/whatsapp/sessions/${sessionId}/groups`, {
+  async getGroups(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<Envelope<WhatsAppGroup[]>>(`/v1/whatsapp/sessions/${sessionId}/groups`, {
       organizationId,
-    })
+    }, transport)
     return response.data
   },
 
-  async syncGroups(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/sync`, {
+  async syncGroups(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/sync`, {
       method: 'POST',
       organizationId,
-    })
+    }, transport)
   },
 
-  async groupInfo(sessionId: string, jid: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/info`, {
+  async groupInfo(sessionId: string, jid: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/info`, {
       method: 'POST',
       organizationId,
       body: { jid },
-    })
+    }, transport)
   },
 
-  async groupInviteLink(sessionId: string, jid: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<{ ok: boolean; data?: unknown }>(
+  async groupInviteLink(sessionId: string, jid: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/groups/invite-link`,
       {
         method: 'POST',
         organizationId,
         body: { jid },
-      },
+      }, transport,
     )
     return response.data
   },
@@ -969,53 +1149,53 @@ export const whatsappAPI = {
     jid: string
     field: 'name' | 'description' | 'photo'
     value: string
-  }, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/update`, {
+  }, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/groups/update`, {
       method: 'POST',
       organizationId,
       body: input,
-    })
+    }, transport)
   },
 
-  async checkNumbers(sessionId: string, numbers: string[], organizationId?: string | null) {
-    const response = await vimobAPIRequest<{ ok: boolean; data?: unknown }>(
+  async checkNumbers(sessionId: string, numbers: string[], organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/contacts/check`,
       {
         method: 'POST',
         organizationId,
         body: { numbers },
-      },
+      }, transport,
     )
     return response.data
   },
 
-  async fetchAvatar(sessionId: string, jid: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<{ ok: boolean; data?: unknown }>(
+  async fetchAvatar(sessionId: string, jid: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/contacts/avatar`,
       {
         method: 'POST',
         organizationId,
         body: { jid },
-      },
+      }, transport,
     )
     return response.data
   },
 
-  async syncContactsAvatars(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/contacts/sync`, {
+  async syncContactsAvatars(sessionId: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/contacts/sync`, {
       method: 'POST',
       organizationId,
-    })
+    }, transport)
   },
 
-  async historySync(sessionId: string, jid?: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<{ ok: boolean; data?: unknown }>(
+  async historySync(sessionId: string, jid?: string, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    const response = await requestWhatsAppAPI<{ ok: boolean; data?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/history-sync`,
       {
         method: 'POST',
         organizationId,
         body: { jid },
-      },
+      }, transport,
     )
     return response.data
   },
@@ -1025,11 +1205,11 @@ export const whatsappAPI = {
     session_id: string
     instance_id?: string
     body?: Record<string, unknown>
-  }, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: T; error?: string }>('/v1/whatsapp/provider-action', {
+  }, organizationId?: string | null, transport?: WhatsAppRequestIntent) {
+    return requestWhatsAppAPI<{ ok: boolean; data?: T; error?: string }>('/v1/whatsapp/provider-action', {
       method: 'POST',
       organizationId,
       body: input,
-    })
+    }, transport)
   },
 }

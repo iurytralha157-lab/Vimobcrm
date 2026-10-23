@@ -6,11 +6,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var ErrInvalidInput = errors.New("invalid analytics input")
+
+const maxLeadSourceFilterLength = 4096
 
 func dateOnly(values url.Values, key string) string {
 	value := strings.TrimSpace(values.Get(key))
@@ -112,9 +115,15 @@ func validateCampaignInsightsValues(values url.Values) error {
 		return fmt.Errorf("%w: date range cannot exceed 366 days", ErrInvalidInput)
 	}
 
-	for _, key := range []string{"teamId", "userId", "tagId"} {
+	for _, key := range []string{"teamId", "userId", "tagId", "pipelineId"} {
 		value := strings.TrimSpace(values.Get(key))
 		if value == "" {
+			continue
+		}
+		if key == "userId" && value == "unassigned" {
+			if values.Get(key) != value {
+				return fmt.Errorf("%w: userId must use unassigned without surrounding whitespace", ErrInvalidInput)
+			}
 			continue
 		}
 		var id pgtype.UUID
@@ -122,24 +131,24 @@ func validateCampaignInsightsValues(values url.Values) error {
 			return fmt.Errorf("%w: %s must be a UUID", ErrInvalidInput, key)
 		}
 	}
+	if _, err := normalizeCampaignInsightIDs(values); err != nil {
+		return err
+	}
 
 	if _, err := normalizeCampaignInsightTagIDs(values.Get("tagIds")); err != nil {
 		return err
 	}
 
-	for key, maximumLength := range map[string]int{
-		"source":     120,
+	if err := validateAnalyticsFilterText(values, map[string]int{
+		"source":     maxLeadSourceFilterLength,
 		"accountId":  255,
 		"objective":  255,
 		"pageId":     255,
 		"campaignId": 255,
 		"adSetId":    255,
 		"adId":       255,
-	} {
-		value := strings.TrimSpace(values.Get(key))
-		if len(value) > maximumLength || strings.ContainsRune(value, '\x00') {
-			return fmt.Errorf("%w: %s is invalid", ErrInvalidInput, key)
-		}
+	}); err != nil {
+		return err
 	}
 
 	dealStatus := strings.TrimSpace(values.Get("dealStatus"))
@@ -148,4 +157,37 @@ func validateCampaignInsightsValues(values url.Values) error {
 	}
 
 	return nil
+}
+
+func validateAnalyticsFilterText(values url.Values, bounds map[string]int) error {
+	for key, maximum := range bounds {
+		value := strings.TrimSpace(values.Get(key))
+		if !utf8.ValidString(value) || utf8.RuneCountInString(value) > maximum || strings.ContainsRune(value, '\x00') {
+			return fmt.Errorf("%w: %s is invalid", ErrInvalidInput, key)
+		}
+	}
+	return nil
+}
+
+func normalizeCampaignInsightIDs(values url.Values) ([]string, error) {
+	ids := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, raw := range append([]string{values.Get("campaignId")}, values["campaignIds"]...) {
+		value := strings.TrimSpace(raw)
+		if value == "" || strings.EqualFold(value, "all") {
+			continue
+		}
+		if !utf8.ValidString(value) || utf8.RuneCountInString(value) > 255 || strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("%w: campaignIds contains an invalid value", ErrInvalidInput)
+		}
+		if seen[value] {
+			continue
+		}
+		if len(ids) >= 50 {
+			return nil, fmt.Errorf("%w: campaignIds cannot exceed 50 values", ErrInvalidInput)
+		}
+		seen[value] = true
+		ids = append(ids, value)
+	}
+	return ids, nil
 }

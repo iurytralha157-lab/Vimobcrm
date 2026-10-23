@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, Mic, Pause, Play, Square, Upload, X } from "lucide-react";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
@@ -51,11 +51,25 @@ function WaveformBars({ isActive }: { isActive: boolean }) {
 }
 
 export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization, user, profile } = useAuth();
+  const recorderId = useId();
+  const orgId = activeOrganization.organizationId;
+  const actorId = user?.id || profile?.id || null;
+  const contextKey = JSON.stringify(["automation-audio", orgId, actorId, recorderId]);
   const queryClient = useQueryClient();
   const [isUploading, setIsUploading] = useState(false);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const contextRef = useRef(contextKey);
+  const generationRef = useRef(0);
+  useLayoutEffect(() => {
+    contextRef.current = contextKey;
+    generationRef.current += 1;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Mask playback/upload state before another actor or organization can paint.
+    setIsUploading(false);
+    setIsPlaying(false);
+    return () => { contextRef.current = ""; generationRef.current += 1; };
+  }, [contextKey]);
   const {
     isRecording,
     duration,
@@ -67,9 +81,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
     cancelRecording,
     clearRecording,
     formatDuration,
-  } = useAudioRecorder();
-
-  const orgId = activeOrganization.organizationId;
+  } = useAudioRecorder(contextKey);
 
   const handleStart = async () => {
     try {
@@ -80,7 +92,9 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
   };
 
   const handleUpload = async () => {
-    if (!audioBlob || !orgId) return;
+    if (!audioBlob || !orgId || !actorId || isUploading) return;
+    const generation = generationRef.current;
+    const isCurrent = () => contextRef.current === contextKey && generationRef.current === generation;
 
     setIsUploading(true);
     try {
@@ -104,15 +118,16 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
         },
         orgId,
       );
+      if (!isCurrent()) return;
 
       queryClient.invalidateQueries({ queryKey: ["automation-media", orgId, "audio"] });
       onUploaded(uploaded);
       clearRecording();
       toast.success("Audio gravado e salvo!");
     } catch (err: unknown) {
-      toast.error("Erro ao salvar audio: " + getErrorMessage(err));
+      if (isCurrent()) toast.error("Erro ao salvar audio: " + getErrorMessage(err));
     } finally {
-      setIsUploading(false);
+      if (isCurrent()) setIsUploading(false);
     }
   };
 
@@ -122,7 +137,11 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
       audioPlayRef.current.pause();
       setIsPlaying(false);
     } else {
-      void audioPlayRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+      const audio = audioPlayRef.current;
+      const generation = generationRef.current;
+      const isCurrent = () => audioPlayRef.current === audio && contextRef.current === contextKey && generationRef.current === generation;
+      void audio.play().then(() => { if (isCurrent()) setIsPlaying(true); else audio.pause(); }).catch(() => {
+        if (!isCurrent()) return;
         setIsPlaying(false);
         toast.error("Não foi possível reproduzir a prévia");
       });
@@ -209,6 +228,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
       size="sm"
       className="h-8 text-xs w-full"
       onClick={handleStart}
+      disabled={!orgId || !actorId}
     >
       <Mic className="h-3.5 w-3.5 mr-1.5" />
       Gravar audio

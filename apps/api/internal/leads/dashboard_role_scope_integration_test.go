@@ -143,6 +143,9 @@ func TestDashboardRoleScopeReadOnlyIntegration(t *testing.T) {
 		with led_teams as (
 			select leader.team_id from public.team_members leader
 			join public.teams t on t.id = leader.team_id and t.organization_id = leader.organization_id
+			join public.organization_members leader_member on leader_member.organization_id = leader.organization_id
+			  and leader_member.user_id = leader.user_id and leader_member.is_active = true and leader_member.deleted_at is null
+			  and leader_member.membership_generation = leader.membership_generation
 			where leader.organization_id = $1::uuid and leader.user_id = $2::uuid
 			  and leader.is_active = true and leader.is_leader = true and coalesce(t.is_active, true) = true
 		), led_users as (
@@ -151,12 +154,12 @@ func TestDashboardRoleScopeReadOnlyIntegration(t *testing.T) {
 			join public.users u on u.id = member.user_id and coalesce(u.is_active, false) = true
 			join public.organization_members om on om.organization_id = member.organization_id
 			  and om.user_id = member.user_id and om.is_active = true and om.deleted_at is null
+			  and om.membership_generation = member.membership_generation
 			where member.organization_id = $1::uuid and member.is_active = true
 		)
 		select
 		  count(*) filter (where l.assigned_user_id = $2::uuid
-		    or l.assigned_user_id in (select user_id from led_users)
-		    or (l.assigned_user_id is null and l.team_id in (select team_id from led_teams)))::bigint,
+		    or l.assigned_user_id in (select user_id from led_users))::bigint,
 		  count(*) filter (where l.assigned_user_id = $3::uuid)::bigint,
 		  count(*)::bigint
 		from public.leads l where l.organization_id = $1::uuid

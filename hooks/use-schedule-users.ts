@@ -9,7 +9,7 @@ function normalizeRole(value: string | null | undefined) {
 
 export function useScheduleUsers(options?: { enabled?: boolean }) {
   const usersQuery = useUsers(options)
-  const { activeOrganization, profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
+  const { activeOrganization, profile, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
 
   const profileId = profile?.id
   const tenantLedUserIds = tenantContext?.ledUserIds

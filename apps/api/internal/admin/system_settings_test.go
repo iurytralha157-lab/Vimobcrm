@@ -141,7 +141,7 @@ func TestNotificationDispatchSettingsAcceptExplicitWriteOnlySecretActions(t *tes
 }
 
 func TestGenericAdminTablesCannotReadOrMutateSystemSettings(t *testing.T) {
-	if isAllowedAdminTable("system_settings") || isAllowedAdminReadTable("system_settings") {
+	if isAllowedAdminWriteTable("system_settings") || isAllowedAdminDeleteTable("system_settings") || isAllowedAdminReadTable("system_settings") {
 		t.Fatal("system_settings must only be reachable through the purpose-built masked endpoint")
 	}
 	if !isAllowedAdminReadTable("notifications") {

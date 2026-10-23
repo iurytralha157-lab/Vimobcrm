@@ -71,6 +71,7 @@ export function useScheduleDashboardEvents(
     },
     enabled: isReady && options.enabled !== false,
     staleTime: SCHEDULE_DASHBOARD_EVENTS_STALE_TIME_MS,
+    refetchOnMount: true,
     gcTime: 5 * 60 * 1_000,
     refetchOnWindowFocus: true,
     retry: (failureCount, error) => {

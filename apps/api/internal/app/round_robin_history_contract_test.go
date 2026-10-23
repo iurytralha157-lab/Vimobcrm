@@ -11,9 +11,9 @@ func TestRoundRobinHistoryRouteUsesDistributionManagementBoundary(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read routes.go: %v", err)
 	}
-	required := `mux.Handle("GET /v1/round-robins/{id}/history", withPermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.ListHistory)))`
+	required := `mux.Handle("GET /v1/round-robins/{id}/history", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.ListHistory)))`
 	if !strings.Contains(string(routes), required) {
-		t.Fatalf("distribution queue history route must require DistributionManage")
+		t.Fatalf("distribution queue history route must require an active session and DistributionManage")
 	}
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 import Image from 'next/image';
 import {
   DragDropContext,
@@ -21,11 +21,12 @@ import {
   normalizePropertyPhotoSelection,
   PROPERTY_MEDIA_MAX_PHOTOS,
   releaseStagedPropertyPhoto,
+  releaseStagedPropertyPhotos,
   stagePropertyPhoto,
   validatePropertyMainPhotoCapacity,
-  validatePropertyPhotoFile,
 } from '@/lib/property-media-draft';
 import { cn } from '@/lib/utils';
+import { preparePropertyPhoto, PROPERTY_PHOTO_PICKER_ACCEPT } from '@/lib/property-photo-preparation';
 
 interface ImageUploaderProps {
   images: string[];
@@ -33,6 +34,9 @@ interface ImageUploaderProps {
   onImagesChange: (images: string[], mainImage: string) => void;
   hiddenSiteImages?: string[];
   onHiddenSiteImagesChange?: (images: string[]) => void;
+  disabled?: boolean;
+  onPreparingChange?: (preparing: boolean) => void;
+  canContinue?: () => boolean;
 }
 
 interface MediaActionButtonProps {
@@ -40,9 +44,10 @@ interface MediaActionButtonProps {
   onClick: () => void;
   children: ReactNode;
   className?: string;
+  disabled?: boolean;
 }
 
-function MediaActionButton({ label, onClick, children, className }: MediaActionButtonProps) {
+function MediaActionButton({ label, onClick, children, className, disabled }: MediaActionButtonProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -55,6 +60,7 @@ function MediaActionButton({ label, onClick, children, className }: MediaActionB
             'h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)]/95 text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]',
             className,
           )}
+          disabled={disabled}
           onClick={onClick}
         >
           {children}
@@ -73,41 +79,58 @@ export function ImageUploader({
   onImagesChange,
   hiddenSiteImages = [],
   onHiddenSiteImagesChange,
+  disabled = false,
+  onPreparingChange,
+  canContinue,
 }: ImageUploaderProps) {
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const mountedRef = useRef(true);
+  const pendingPreviewURLsRef = useRef(new Set<string>());
+  useEffect(() => {
+    const stableSet = pendingPreviewURLsRef.current;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!canContinue || !canContinue()) {
+        releaseStagedPropertyPhotos(stableSet);
+        stableSet.clear();
+      }
+    };
+  }, [canContinue]);
+  const canContinuePreparation = useCallback(
+    () => canContinue ? canContinue() : mountedRef.current,
+    [canContinue],
+  );
+  const releasePendingPhotos = useCallback(() => {
+    releaseStagedPropertyPhotos(pendingPreviewURLsRef.current);
+    pendingPreviewURLsRef.current.clear();
+  }, []);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const safeMainImage = isStagedPropertyPhoto(mainImage)
     ? mainImage
     : getSafePropertyImageSource(mainImage);
 
   const uploadFile = useCallback(
-    (file: File): string | null => {
-      const validationError = validatePropertyPhotoFile(file);
-      if (validationError) {
-        toast.error(validationError);
-        return null;
-      }
-
+    async (file: File): Promise<string | null> => {
       try {
-        return stagePropertyPhoto(file);
+        const prepared = await preparePropertyPhoto(file);
+        if (!canContinuePreparation()) return null;
+        const url = stagePropertyPhoto(prepared);
+        pendingPreviewURLsRef.current.add(url);
+        return url;
       } catch (error: unknown) {
-        toast.error(`Falha ao preparar ${file.name}: ${getErrorMessage(error)}`);
+        if (canContinuePreparation()) toast.error(`Falha ao preparar ${file.name}: ${getErrorMessage(error)}`);
         return null;
       }
     },
-    [],
+    [canContinuePreparation],
   );
 
   const handleMainImageUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (!file) return;
-
-      if (!file.type.startsWith('image/')) {
-        toast.error('Arquivo nao e uma imagem valida');
-        return;
-      }
+      if (!file || disabled || uploadingMain || uploadingGallery) return;
 
       const capacityError = validatePropertyMainPhotoCapacity(images, mainImage);
       if (capacityError) {
@@ -117,58 +140,62 @@ export function ImageUploader({
       }
 
       setUploadingMain(true);
+      onPreparingChange?.(true);
       try {
-        const url = uploadFile(file);
-        if (url) {
+        const url = await uploadFile(file);
+        if (url && canContinuePreparation()) {
+          onImagesChange(images, url);
           if (isStagedPropertyPhoto(mainImage)) {
             releaseStagedPropertyPhoto(mainImage);
           }
-          onImagesChange(images, url);
+          pendingPreviewURLsRef.current.delete(url);
           toast.success('Imagem principal pronta para salvar!');
         }
       } catch (error: unknown) {
-        toast.error('Erro ao enviar imagem: ' + getErrorMessage(error));
+        if (canContinuePreparation()) toast.error('Erro ao enviar imagem: ' + getErrorMessage(error));
       } finally {
-        setUploadingMain(false);
+        releasePendingPhotos();
+        if (mountedRef.current) setUploadingMain(false);
+        if (!canContinue || canContinuePreparation()) onPreparingChange?.(false);
         event.target.value = '';
       }
     },
-    [images, mainImage, onImagesChange, uploadFile],
+    [canContinue, canContinuePreparation, disabled, images, mainImage, onImagesChange, onPreparingChange, releasePendingPhotos, uploadFile, uploadingGallery, uploadingMain],
   );
 
   const handleGalleryUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
-      if (!files || files.length === 0) return;
+      if (!files || files.length === 0 || disabled || uploadingMain || uploadingGallery) return;
 
       const availableSlots = getRemainingPropertyPhotoSlots(images, mainImage);
       const selectedFiles = Array.from(files);
       if (selectedFiles.length > availableSlots) {
         toast.error(`Cada imóvel pode ter no máximo ${PROPERTY_MEDIA_MAX_PHOTOS} fotos.`);
       }
-      const validFiles = selectedFiles.slice(0, availableSlots).filter((file) => {
-        const validationError = validatePropertyPhotoFile(file);
-        if (!validationError) return true;
-        toast.error(validationError);
-        return false;
-      });
-
+      const validFiles = selectedFiles.slice(0, availableSlots);
       if (validFiles.length === 0) {
         event.target.value = '';
         return;
       }
 
       setUploadingGallery(true);
+      onPreparingChange?.(true);
       try {
-        const results = validFiles.map((file) => uploadFile(file));
+        const results: Array<string | null> = [];
+        for (const file of validFiles) {
+          if (!canContinuePreparation()) break;
+          results.push(await uploadFile(file));
+        }
         const newUrls = results.filter((url): url is string => url !== null);
 
-        if (newUrls.length > 0) {
+        if (newUrls.length > 0 && canContinuePreparation()) {
           const normalized = normalizePropertyPhotoSelection(
             [...images, ...newUrls],
             mainImage,
           );
           onImagesChange(normalized.galleryImages, normalized.mainImage);
+          for (const url of newUrls) pendingPreviewURLsRef.current.delete(url);
           if (
             normalized.mainImage &&
             hiddenSiteImages.includes(normalized.mainImage)
@@ -180,23 +207,36 @@ export function ImageUploader({
           toast.success(`${newUrls.length} imagem(s) pronta(s) para salvar!`);
         }
       } catch (error: unknown) {
-        toast.error('Erro ao enviar imagens: ' + getErrorMessage(error));
+        if (canContinuePreparation()) toast.error('Erro ao enviar imagens: ' + getErrorMessage(error));
       } finally {
-        setUploadingGallery(false);
+        releasePendingPhotos();
+        if (mountedRef.current) setUploadingGallery(false);
+        if (!canContinue || canContinuePreparation()) onPreparingChange?.(false);
         event.target.value = '';
       }
     },
     [
+      disabled,
+      canContinue,
+      canContinuePreparation,
       hiddenSiteImages,
       images,
       mainImage,
       onHiddenSiteImagesChange,
       onImagesChange,
       uploadFile,
+      onPreparingChange,
+      releasePendingPhotos,
+      uploadingGallery,
+      uploadingMain,
     ],
   );
 
+  const preparing = uploadingMain || uploadingGallery;
+  const controlsDisabled = disabled || preparing;
+
   const removeFromGallery = (url: string) => {
+    if (controlsDisabled) return;
     if (url !== mainImage && isStagedPropertyPhoto(url)) releaseStagedPropertyPhoto(url);
     onImagesChange(
       images.filter((image) => image !== url),
@@ -206,6 +246,7 @@ export function ImageUploader({
   };
 
   const removeMainImage = () => {
+    if (controlsDisabled) return;
     if (isStagedPropertyPhoto(mainImage)) releaseStagedPropertyPhoto(mainImage);
     const normalized = normalizePropertyPhotoSelection(
       images.filter((image) => image !== mainImage),
@@ -223,6 +264,7 @@ export function ImageUploader({
   };
 
   const promoteToMain = (url: string) => {
+    if (controlsDisabled) return;
     const nextImages = images.filter((image) => image !== url);
     if (mainImage) {
       nextImages.unshift(mainImage);
@@ -238,7 +280,7 @@ export function ImageUploader({
   };
 
   const toggleSiteVisibility = (url: string) => {
-    if (!onHiddenSiteImagesChange) return;
+    if (!onHiddenSiteImagesChange || controlsDisabled) return;
 
     const isHidden = hiddenSiteImages.includes(url);
     onHiddenSiteImagesChange(
@@ -250,7 +292,7 @@ export function ImageUploader({
   };
 
   const handleDragEnd = (result: DropResult) => {
-    if (!result.destination) return;
+    if (!result.destination || controlsDisabled) return;
 
     const sourceIndex = result.source.index;
     const destinationIndex = result.destination.index;
@@ -266,7 +308,8 @@ export function ImageUploader({
 
   return (
     <TooltipProvider delayDuration={100}>
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div className="@container grid grid-cols-1 gap-6 @[760px]:grid-cols-2">
+      {preparing && <p role="status" aria-live="polite" className="text-xs text-muted-foreground @[760px]:col-span-2">Preparando fotos… Aguarde antes de salvar.</p>}
       <div className="space-y-3">
         <Label className="text-[14px] font-normal">Imagem Principal</Label>
         <p className="text-[12px] font-light text-muted-foreground">
@@ -288,7 +331,7 @@ export function ImageUploader({
               Principal
             </div>
             <div className="absolute right-2 top-2 flex items-center gap-1.5">
-              <MediaActionButton label="Ver imagem inteira" onClick={() => setPreviewImage({ url: safeMainImage, title: 'Imagem principal' })}>
+              <MediaActionButton disabled={controlsDisabled} label="Ver imagem inteira" onClick={() => setPreviewImage({ url: safeMainImage, title: 'Imagem principal' })}>
                 <Maximize2 className="h-4 w-4" />
               </MediaActionButton>
               <label
@@ -302,12 +345,12 @@ export function ImageUploader({
                 <input
                   type="file"
                   className="hidden"
-                  accept="image/*"
+                  accept={PROPERTY_PHOTO_PICKER_ACCEPT}
                   onChange={handleMainImageUpload}
-                  disabled={uploadingMain}
+                  disabled={controlsDisabled}
                 />
               </label>
-              <MediaActionButton label="Remover imagem principal" onClick={removeMainImage} className="text-primary hover:text-primary">
+              <MediaActionButton disabled={controlsDisabled} label="Remover imagem principal" onClick={removeMainImage} className="text-primary hover:text-primary">
                 <X className="h-4 w-4" />
               </MediaActionButton>
             </div>
@@ -330,7 +373,7 @@ export function ImageUploader({
                     <span className="font-normal text-primary">Clique para enviar</span> a imagem
                     principal
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">PNG, JPG ate 10MB</p>
+                  <p className="text-xs text-muted-foreground mt-1">Fotos até 30 MB; reduzidas antes de salvar</p>
                 </>
               )}
             </div>
@@ -339,13 +382,13 @@ export function ImageUploader({
               className="hidden"
               accept="image/*"
               onChange={handleMainImageUpload}
-              disabled={uploadingMain}
+              disabled={controlsDisabled}
             />
           </label>
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="@container space-y-3">
         <Label className="text-[14px] font-normal">Galeria de Fotos</Label>
         <p className="text-[12px] font-light text-muted-foreground">
           Adicione as fotos do imóvel. Sem destaque definido, a primeira vira principal. Arraste as demais para reordenar.
@@ -380,7 +423,7 @@ export function ImageUploader({
             accept="image/*"
             multiple
             onChange={handleGalleryUpload}
-            disabled={uploadingGallery}
+            disabled={controlsDisabled}
           />
         </label>
 
@@ -391,7 +434,7 @@ export function ImageUploader({
                 <div
                   ref={provided.innerRef}
                   {...provided.droppableProps}
-                  className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
+                  className="grid grid-cols-1 @[320px]:grid-cols-2 @[640px]:grid-cols-3 gap-3"
                 >
                   {images.map((url, index) => {
                     const isHiddenFromSite = hiddenSiteImages.includes(url);
@@ -400,7 +443,7 @@ export function ImageUploader({
                       : getSafePropertyImageSource(url);
 
                     return (
-                      <Draggable key={url} draggableId={url} index={index}>
+                      <Draggable key={url} draggableId={url} index={index} isDragDisabled={controlsDisabled}>
                         {(draggableProvided, snapshot) => {
                           const { style, ...draggableProps } = draggableProvided.draggableProps;
 
@@ -443,7 +486,7 @@ export function ImageUploader({
                                 <ImageIcon className="h-8 w-8 text-[var(--app-text-tertiary)]" />
                               </div>
                             )}
-                            <div className="absolute inset-x-1.5 bottom-1.5 flex justify-end gap-1.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                            <div className="absolute inset-x-1.5 bottom-1.5 flex flex-wrap justify-end gap-1.5 opacity-100">
                               {safeImageURL ? (
                                 <MediaActionButton label="Ver foto" onClick={() => setPreviewImage({ url: safeImageURL, title: `Foto ${index + 1}` })}>
                                   <Maximize2 className="h-4 w-4" />

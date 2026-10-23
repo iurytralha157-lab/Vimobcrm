@@ -8,7 +8,8 @@ export const sitePublicationFormReadinessSchema = z.object({
   title: z.string().trim().min(1),
   propertyType: z.string().trim().min(1),
   dealTypeSupported: z.literal(true),
-  status: z.enum(['active', 'ativo', 'disponivel']),
+  status: z.enum(['active', 'ativo', 'available', 'disponivel']),
+  commercializationAuthorized: z.boolean().optional(),
   cep: z.string().trim().regex(/^(?:\d{8}|\d{5}-\d{3})$/),
   uf: z.string().trim().regex(/^[A-Za-z]{2}$/),
   cidade: z.string().trim().min(1),
@@ -23,6 +24,9 @@ export const sitePublicationFormReadinessSchema = z.object({
   publicPhotoRequired: z.boolean(),
   publicPhotoCount: z.number().int().nonnegative(),
 }).superRefine((input, context) => {
+  if (input.commercializationAuthorized === false) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['commercializationAuthorized'], message: 'Autorize a comercialização antes de publicar.' })
+  }
   if (input.saleRequired && input.salePrice <= 0) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['salePrice'], message: 'Informe um preço de venda positivo.' })
   }
@@ -159,6 +163,7 @@ export const propertyChannelPublicationSchema = z.object({
   checks: z.array(propertyPublicationCheckSchema),
   current_version: z.number().int().min(0),
   published_version: z.number().int().min(1).nullable(),
+  legacy_visible: z.boolean().optional(),
   is_outdated: z.boolean(),
   public_url: safePublicURLSchema.nullable(),
   preview: propertyPublicationPreviewSchema,

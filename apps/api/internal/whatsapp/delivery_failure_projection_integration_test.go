@@ -209,7 +209,7 @@ func TestWhatsAppDeliveryFailureProjectionOnIsolatedDatabase(t *testing.T) {
 				) values (
 					$1::uuid, $2::uuid, $3::uuid,
 					$4::uuid, $5, $6,
-					'text', '{"action":"send.text"}'::jsonb, 'dead', 1,
+					'text', '{"action":"send.text","body":{"text":"Teste"}}'::jsonb, 'dead', 1,
 					12, now(), $7
 				)
 			`, fixture.organizationID, fixture.sessionID,

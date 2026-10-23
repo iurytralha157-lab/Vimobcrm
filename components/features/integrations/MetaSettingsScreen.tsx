@@ -12,7 +12,6 @@ export default function MetaSettingsScreen() {
   const {
     activeOrganization,
     profile,
-    organization,
     isSuperAdmin,
     userOrganizations,
     loading,

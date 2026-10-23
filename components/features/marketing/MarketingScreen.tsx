@@ -16,6 +16,7 @@ import {
 
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { SharedFilters } from "@/components/shared/SharedFilters";
+import { MarketingPeriodNotice } from "@/components/shared/filters/MarketingPeriodNotice";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -24,6 +25,7 @@ import {
 } from "@/hooks/marketing";
 import { getDateRangeFromPreset } from "@/hooks/use-dashboard-filters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
+import { useRelativeDateClock } from "@/hooks/shared/use-relative-date-clock";
 import { getMarketingDashboardErrorState } from "@/lib/analytics/marketing-dashboard-error";
 import { cn } from "@/lib/utils";
 
@@ -94,12 +96,15 @@ function MarketingSkeleton() {
 
 export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const usesPaidMediaScope = activeTab !== "social";
-  const sharedFilters = useSharedFilters({ loadDynamicOptions: true });
+  const sharedFilters = useSharedFilters({ loadDynamicOptions: true, multiCampaigns: true });
   const marketingScope = useMarketingScopeFilters();
+  const relativeDateClock = useRelativeDateClock(!sharedFilters.filters.dateRange);
   const marketingDateRange = useMemo(
-    () =>
-      sharedFilters.filters.dateRange ?? getDateRangeFromPreset("last30days"),
-    [sharedFilters.filters.dateRange],
+    () => {
+      void relativeDateClock;
+      return sharedFilters.filters.dateRange ?? getDateRangeFromPreset("last30days");
+    },
+    [sharedFilters.filters.dateRange, relativeDateClock],
   );
   const dashboardFilters = useMemo(
     () => ({
@@ -107,12 +112,14 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
       datePreset: sharedFilters.datePreset ?? "last30days",
       dateRange: marketingDateRange,
       teamId: null,
+      pipelineId: null,
       userId: null,
       source: null,
       pageId: sharedFilters.filters.pageId,
       campaignId: usesPaidMediaScope
         ? sharedFilters.filters.campaignId
         : null,
+      campaignIds: usesPaidMediaScope ? sharedFilters.campaignIds : [],
       adSetId: usesPaidMediaScope ? sharedFilters.filters.adSetId : null,
       adId: usesPaidMediaScope ? sharedFilters.filters.adId : null,
       tagIds: [],
@@ -127,14 +134,15 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
       marketingDateRange,
       sharedFilters.datePreset,
       sharedFilters.filters,
+      sharedFilters.campaignIds,
       usesPaidMediaScope,
     ],
   );
-  const model = useMarketingDashboard(dashboardFilters);
+  const model = useMarketingDashboard(dashboardFilters, { enabled: sharedFilters.isFiltersHydrated });
   const data = model.insightsQuery.data;
   const insightsError = model.insightsQuery.error;
   const errorState = getMarketingDashboardErrorState(insightsError);
-  const hasStaleDataError = Boolean(data && model.insightsQuery.isError);
+  const hasStaleDataError = Boolean(data && model.insightsQuery.isError && !model.insightsQuery.periodError);
   const hasInvalidFilters = errorState.shouldClearFilters;
   const dataDependentTab = activeTab !== "social";
   // prettier-ignore
@@ -180,9 +188,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
         value: campaign.campaign_id,
         label: campaign.campaign_name,
       })),
-      ...(sharedFilters.campaignId
-        ? [{ value: sharedFilters.campaignId, label: sharedFilters.campaignId }]
-        : []),
+      ...sharedFilters.campaignIds.map((id) => ({ value: id, label: id })),
     ]);
 
     const pages = uniqueScopeOptions([
@@ -198,7 +204,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     const adSets = uniqueScopeOptions([
       ...(!marketingScope.accountId &&
       !marketingScope.objective &&
-      !sharedFilters.campaignId
+       sharedFilters.campaignIds.length === 0
         ? sharedFilters.adSets.map((adSet) => ({
             value: adSet.id,
             label: adSet.name,
@@ -207,8 +213,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
       ...(data?.campaigns ?? [])
         .filter(
           (campaign) =>
-            !sharedFilters.campaignId ||
-            campaign.campaign_id === sharedFilters.campaignId,
+            sharedFilters.campaignIds.length === 0 ||
+            sharedFilters.campaignIds.includes(campaign.campaign_id),
         )
         .flatMap((campaign) =>
           campaign.adsets.map((adSet) => ({
@@ -252,7 +258,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     sharedFilters.pages,
     sharedFilters.adSetId,
     sharedFilters.adSets,
-    sharedFilters.campaignId,
+    sharedFilters.campaignIds,
     sharedFilters.campaigns,
   ]);
 
@@ -281,7 +287,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const hasActiveMarketingScope = Boolean(
     sharedFilters.pageId ||
     marketingScope.accountId ||
-    sharedFilters.campaignId ||
+    sharedFilters.campaignIds.length > 0 ||
     sharedFilters.adSetId ||
     marketingScope.objective,
   );
@@ -389,18 +395,19 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 size="icon"
                 onClick={model.sync}
                 disabled={
+                  Boolean(model.insightsQuery.periodError) ||
                   !model.integrationState.hasAdAccount ||
                   !model.integrationState.hasMarketingToken ||
                   model.syncMutation.isPending
                 }
                 title={
-                  !model.integrationState.hasAdAccount
+                  model.insightsQuery.periodError ?? (!model.integrationState.hasAdAccount
                     ? "Selecione uma conta de anúncios na integração Meta"
                     : !model.integrationState.hasMarketingToken
                       ? "Reconecte a Meta para liberar ads_read e sincronizar Marketing"
                       : model.syncMutation.isPending
-                        ? "Sincronização em andamento"
-                        : "Sincronizar o período selecionado com a Meta"
+                         ? "Sincronização em andamento"
+                         : "Sincronizar o período selecionado com a Meta")
                 }
                 className="mx-0.5 h-8 w-8 min-w-8 shrink-0 rounded-[6px] border-0 bg-primary/50 p-0 text-primary-foreground shadow-none hover:bg-primary"
               >
@@ -450,6 +457,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               onPageChange={sharedFilters.setPageId}
               campaignId={sharedFilters.campaignId}
               onCampaignChange={sharedFilters.setCampaignId}
+              campaignIds={sharedFilters.campaignIds}
+              onCampaignsChange={sharedFilters.setCampaignIds}
               adSetId={sharedFilters.adSetId}
               onAdSetChange={sharedFilters.setAdSetId}
               adId={sharedFilters.adId}
@@ -482,8 +491,9 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 Boolean(sharedFilters.pageId) ||
                 (usesPaidMediaScope && hasActiveMarketingScope)
               }
-              advancedContent={
+              advancedContent={(layerScope) => (
                 <MarketingScopeFilters
+                  layerScope={layerScope}
                   accountId={marketingScope.accountId}
                   onAccountChange={changeMarketingAccount}
                   accounts={scopeOptions.accounts}
@@ -492,6 +502,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   pages={scopeOptions.pages}
                   campaignId={sharedFilters.campaignId}
                   onCampaignChange={sharedFilters.setCampaignId}
+                  campaignIds={sharedFilters.campaignIds}
+                  onCampaignsChange={sharedFilters.setCampaignIds}
                   campaigns={scopeOptions.campaigns}
                   adSetId={sharedFilters.adSetId}
                   onAdSetChange={sharedFilters.setAdSetId}
@@ -504,7 +516,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   pageOnly={!usesPaidMediaScope}
                   variant="panel"
                 />
-              }
+              )}
             />
           </div>
         </div>
@@ -550,7 +562,9 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
             </Button>
           </div>
         ) : null}
-        {model.insightsQuery.isLoading ? (
+        {model.insightsQuery.periodError ? (
+          <MarketingPeriodNotice message={model.insightsQuery.periodError} />
+        ) : model.insightsQuery.isLoading ? (
           <MarketingSkeleton />
         ) : model.insightsQuery.isError && !data ? (
           <MarketingDataState

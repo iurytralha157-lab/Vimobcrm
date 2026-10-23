@@ -1,12 +1,35 @@
 package automations
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestStorageSearchRunsBeforePagingAndKeepsOrganizationPrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if payload["search"] != "campanha" || payload["prefix"] != "organization/image" || payload["limit"] != float64(51) || payload["offset"] != float64(100) {
+			t.Errorf("scoped search payload: %v", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"campanha.png"}]`))
+	}))
+	defer server.Close()
+	client := newStorageClient(StorageConfig{ProjectURL: server.URL, APIKey: "synthetic-test-key"})
+	objects, err := client.list(context.Background(), "automation-media", "organization/image", 51, 100, " campanha ")
+	if err != nil || len(objects) != 1 || objects[0].Name != "campanha.png" {
+		t.Fatalf("storage search: %v, %v", objects, err)
+	}
+}
 
 func TestGetAutomationMediaPage(t *testing.T) {
 	tests := []struct {

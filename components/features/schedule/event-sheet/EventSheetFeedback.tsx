@@ -15,6 +15,7 @@ export function EventSheetFeedback({
   performedByName,
   completedAt,
   attendanceOutcome,
+  timeZone,
 }: {
   isCompleted: boolean;
   isMasked: boolean;
@@ -25,6 +26,7 @@ export function EventSheetFeedback({
   performedByName?: string | null;
   completedAt?: string | null;
   attendanceOutcome: boolean;
+  timeZone: string;
 }) {
   return (
     <>
@@ -88,7 +90,7 @@ export function EventSheetFeedback({
             <span className="font-normal text-[var(--app-text-primary)]">
               {performedByName}
             </span>
-            {completedAt ? ` · ${formatScheduleTimestamp(completedAt)}` : ""}
+            {completedAt ? ` · ${formatScheduleTimestamp(completedAt, timeZone)}` : ""}
           </span>
         </AgendaRow>
       )}

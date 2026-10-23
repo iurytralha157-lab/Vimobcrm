@@ -16,7 +16,7 @@ interface UserPermissions {
  * Admins and super admins always have all permissions.
  */
 export function useUserPermissions(): UserPermissions {
-  const { activeOrganization, profile, organization, tenantContext, isSuperAdmin, loading } = useAuth();
+  const { activeOrganization, profile, tenantContext, isSuperAdmin, loading } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
   const permissions = hasCurrentTenantContext && tenantContext

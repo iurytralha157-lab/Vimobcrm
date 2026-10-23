@@ -5,7 +5,23 @@ const modulePath = "./property-form-hydration.ts";
 const {
   arePropertySnapshotsEqualOutsideMedia,
   resolvePropertyFormRefetch,
+  rebasePropertyFormMedia,
 } = await import(modulePath);
+
+test("privacidade das fotos rebasa só a mídia, sem esconder conflitos dos demais metadados", async () => {
+  const modelPath = "./property-form-model.ts";
+  const { initialFormData } = await import(modelPath);
+  const before = { title: "Casa", metadata: { financing_mode: "sim", hidden_site_image_urls: [] } };
+  const after = { ...before, metadata: { financing_mode: "sim", hidden_site_image_urls: ["hidden.jpg"] } };
+  assert.equal(arePropertySnapshotsEqualOutsideMedia(before, after), true);
+  assert.equal(arePropertySnapshotsEqualOutsideMedia(before, { ...after, metadata: { ...after.metadata, financing_mode: "não" } }), false);
+  const local = { ...initialFormData, title: "Rascunho", preco: "700000" };
+  const merged = rebasePropertyFormMedia(local, { ...initialFormData, title: "Servidor", preco: "500000", imagem_principal: "new.jpg", hidden_site_image_urls: ["hidden.jpg"] });
+  assert.equal(merged.title, "Rascunho");
+  assert.equal(merged.preco, "700000");
+  assert.equal(merged.imagem_principal, "new.jpg");
+  assert.deepEqual(merged.hidden_site_image_urls, ["hidden.jpg"]);
+});
 
 test("refetch concorrente preserva rascunho e a versão-base do CAS", () => {
   assert.deepEqual(

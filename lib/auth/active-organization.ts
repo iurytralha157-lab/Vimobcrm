@@ -76,6 +76,10 @@ export function resolveActiveOrganization(
     return { status: 'resolving', organizationId: null, reason: 'organization-switch' }
   }
 
+  if (input.organizationsError) {
+    return { status: 'missing', organizationId: null, reason: 'organization-load-failed' }
+  }
+
   const organizationId = normalizeOrganizationId(input.organizationId)
   const tenantOrganizationId = normalizeOrganizationId(input.tenantOrganizationId)
   const impersonatedOrganizationId = normalizeOrganizationId(input.impersonatedOrganizationId)
@@ -107,9 +111,34 @@ export function resolveActiveOrganization(
     return { status: 'ready', organizationId: resolvedOrganizationId, reason: null }
   }
 
-  if (input.organizationsError) {
-    return { status: 'missing', organizationId: null, reason: 'organization-load-failed' }
-  }
-
   return { status: 'missing', organizationId: null, reason: 'no-active-organization' }
+}
+
+export type ProtectedAppAccessInput = {
+  userId: string | null
+  authInitialized: boolean
+  authLoading: boolean
+  organizationsLoaded: boolean
+  organizationsError: string | null
+  isInitializingOrganization: boolean
+  activeOrganization: ActiveOrganizationResolution
+  organizationId: string | null
+  tenantOrganizationId: string | null
+  isSuperAdmin: boolean
+  isImpersonating: boolean
+  hasProfile: boolean
+}
+
+export function hasValidatedProtectedAppAccess(input: ProtectedAppAccessInput): boolean {
+  if (
+    !input.userId || !input.authInitialized || input.authLoading
+    || !input.organizationsLoaded || input.organizationsError
+    || input.isInitializingOrganization
+  ) return false
+
+  if (input.isSuperAdmin && !input.isImpersonating) return input.hasProfile
+
+  return input.activeOrganization.status === 'ready'
+    && input.organizationId === input.activeOrganization.organizationId
+    && input.tenantOrganizationId === input.activeOrganization.organizationId
 }

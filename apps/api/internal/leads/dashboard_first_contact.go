@@ -195,6 +195,7 @@ func dashboardFirstContactTeamMemberSQL(actor, team string) string {
 		  and tm.user_id = ` + actor + ` and coalesce(tm.is_active, true) = true
 		  and coalesce(fc_team.is_active, true) = true and coalesce(u.is_active, false) = true
 		  and coalesce(om.is_active, false) = true and om.deleted_at is null
+		  and om.membership_generation = tm.membership_generation
 	)`
 }
 

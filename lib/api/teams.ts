@@ -1,7 +1,11 @@
+import { managementAPIRequest } from '@/lib/api/management-request'
 import {
   apiAvailabilityListResponseSchema,
-  apiAvailabilityResponseSchema,
+  apiAvailabilityMutationResponseSchema,
+  apiAvailabilitySnapshotResponseSchema,
   apiTeamListResponseSchema,
+  teamFilterCatalogResponseSchema,
+  type TeamFilterCatalog,
   apiTeamLogoResponseSchema,
   apiTeamHistoryListResponseSchema,
   apiTeamDistributionStatsResponseSchema,
@@ -19,7 +23,7 @@ import {
 } from "@/lib/validation";
 import { chunkUniqueTeamMemberIDs } from "@/lib/teams/member-availability-batches";
 import { PIPELINE_READ_TIMEOUT_MS } from "@/lib/pipeline-reliability";
-import { vimobAPIRequest } from "./vimob-client";
+import { vimobAPIRequest, type VimobAPIRequestIntent } from "./vimob-client";
 
 type Envelope<T> = {
   data: T;
@@ -46,6 +50,7 @@ export interface Team {
   name: string;
   organization_id: string;
   created_at: string;
+  revision: number;
   is_active?: boolean;
   logo_url?: string | null;
   created_by?: string | null;
@@ -101,6 +106,11 @@ export interface MemberAvailability {
   updated_at: string;
 }
 
+export interface MemberAvailabilitySnapshot {
+  availability: MemberAvailability[];
+  revision: number;
+}
+
 export interface TeamMemberInput {
   userId: string;
   isLeader?: boolean;
@@ -125,6 +135,8 @@ export type CreateTeamInput = {
 
 export type UpdateTeamInput = {
   id: string;
+  expected_revision: number;
+  expected_member_ids: string[];
   name?: string;
   memberIds?: string[];
   members?: TeamMemberInput[];
@@ -134,6 +146,7 @@ export type UpdateTeamInput = {
 };
 
 export interface AvailabilityInput {
+  expected_revision: number;
   team_member_id: string;
   day_of_week: number;
   start_time?: string | null;
@@ -145,6 +158,22 @@ export interface AvailabilityInput {
 const TEAM_MUTATION_TIMEOUT_MS = 30_000;
 
 export const teamsAPI = {
+  async catalog(organizationId: string, options: VimobAPIRequestIntent & { includeInactive?: boolean } = {}): Promise<TeamFilterCatalog[]> {
+    const { includeInactive = false, ...intent } = options;
+    const response = await vimobAPIRequest<Envelope<TeamFilterCatalog[]>>("/v1/teams", {
+      ...intent,
+      organizationId,
+      query: { includeInactive },
+      timeoutMs: PIPELINE_READ_TIMEOUT_MS,
+      retry: false,
+    });
+    const parsed = validateDomainResponse(teamFilterCatalogResponseSchema, response, "teams.catalog");
+    if (parsed.data.some(team => team.organization_id !== organizationId)) {
+      throw new Error("O catálogo de equipes pertence a outra organização.");
+    }
+    return parsed.data;
+  },
+
   async listTeams(options?: {
     includeInactive?: boolean;
     organizationId?: string | null;
@@ -163,19 +192,21 @@ export const teamsAPI = {
     return response.data;
   },
 
-  async getTeam(id: string, organizationId?: string | null) {
+  async getTeam(id: string, organizationId?: string | null, signal?: AbortSignal) {
     const response = await vimobAPIRequest<Envelope<Team>>(`/v1/teams/${id}`, {
       organizationId,
+      signal,
     });
     validateDomainResponse(apiTeamResponseSchema, response, "teams.get");
     return response.data;
   },
 
-  async getTeamHistory(id: string, organizationId?: string | null) {
+  async getTeamHistory(id: string, organizationId?: string | null, options?: { limit?: number; offset?: number }) {
     const response = await vimobAPIRequest<Envelope<TeamHistoryEvent[]>>(
       `/v1/teams/${id}/history`,
       {
         organizationId,
+        query: { limit: options?.limit, offset: options?.offset },
       },
     );
     validateDomainResponse(
@@ -199,11 +230,14 @@ export const teamsAPI = {
     return response.data;
   },
 
-  async createTeam(input: CreateTeamInput, organizationId?: string | null) {
+  async createTeam(input: CreateTeamInput, organizationId: string | null, idempotencyKey: string, userId: string, intent: VimobAPIRequestIntent = {}) {
     const body = parseDomainInput(createTeamInputSchema, input, "teams.create");
-    const response = await vimobAPIRequest<Envelope<Team>>("/v1/teams", {
+    const response = await managementAPIRequest<Envelope<Team>>("/v1/teams", {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       organizationId,
+      ...intent,
+      expectedUserId: userId,
       body,
       timeoutMs: TEAM_MUTATION_TIMEOUT_MS,
     });
@@ -211,14 +245,15 @@ export const teamsAPI = {
     return response.data;
   },
 
-  async updateTeam(input: UpdateTeamInput, organizationId?: string | null) {
+  async updateTeam(input: UpdateTeamInput, organizationId?: string | null, intent: VimobAPIRequestIntent = {}) {
     const { id, ...body } = input;
     const validatedBody = parseDomainInput(
       updateTeamBodySchema,
       body,
       "teams.update",
     );
-    const response = await vimobAPIRequest<Envelope<Team>>(`/v1/teams/${id}`, {
+    const response = await managementAPIRequest<Envelope<Team>>(`/v1/teams/${id}`, {
+      ...intent,
       method: "PATCH",
       organizationId,
       body: validatedBody,
@@ -229,7 +264,7 @@ export const teamsAPI = {
   },
 
   async deleteTeam(id: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/teams/${id}`, {
+    await managementAPIRequest<null>(`/v1/teams/${id}`, {
       method: "DELETE",
       organizationId,
     });
@@ -239,7 +274,7 @@ export const teamsAPI = {
     input: { id: string; is_active: boolean },
     organizationId?: string | null,
   ) {
-    const response = await vimobAPIRequest<Envelope<Team>>(
+    const response = await managementAPIRequest<Envelope<Team>>(
       `/v1/teams/${input.id}/status`,
       {
         method: "PATCH",
@@ -251,12 +286,13 @@ export const teamsAPI = {
     return response.data;
   },
 
-  async uploadLogo(file: File, organizationId?: string | null) {
+  async uploadLogo(file: File, organizationId?: string | null, intent: VimobAPIRequestIntent = {}) {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await vimobAPIRequest<Envelope<{ url: string }>>(
+    const response = await managementAPIRequest<Envelope<{ url: string }>>(
       "/v1/teams/logo",
       {
+        ...intent,
         method: "POST",
         organizationId,
         body: formData,
@@ -296,7 +332,7 @@ export const teamsAPI = {
       input,
       "teams.pipelines.assign",
     );
-    const response = await vimobAPIRequest<Envelope<TeamPipelineRelation>>(
+    const response = await managementAPIRequest<Envelope<TeamPipelineRelation>>(
       "/v1/team-pipelines",
       {
         method: "POST",
@@ -321,7 +357,7 @@ export const teamsAPI = {
       input,
       "teams.pipelines.remove",
     );
-    await vimobAPIRequest<null>("/v1/team-pipelines", {
+    await managementAPIRequest<null>("/v1/team-pipelines", {
       method: "DELETE",
       organizationId,
       query,
@@ -333,7 +369,7 @@ export const teamsAPI = {
     organizationId?: string | null,
   ) {
     const body = parseDomainInput(teamLeaderInputSchema, input, "teams.leader");
-    await vimobAPIRequest<null>("/v1/team-members/leader", {
+    await managementAPIRequest<null>("/v1/team-members/leader", {
       method: "PATCH",
       organizationId,
       body,
@@ -344,6 +380,7 @@ export const teamsAPI = {
     teamMemberId?: string | null;
     teamMemberIds?: string[];
     organizationId?: string | null;
+    signal?: AbortSignal;
   }) {
     const batches = chunkUniqueTeamMemberIDs(options?.teamMemberIds);
     const responses = await Promise.all(
@@ -352,6 +389,7 @@ export const teamsAPI = {
           "/v1/member-availability",
           {
             organizationId: options?.organizationId,
+            signal: options?.signal,
             query: {
               teamMemberId: options?.teamMemberId,
               teamMemberIds: teamMemberIds?.join(","),
@@ -373,6 +411,15 @@ export const teamsAPI = {
     return [...items.values()];
   },
 
+  async getMemberAvailabilitySnapshot(teamMemberId: string, organizationId?: string | null, signal?: AbortSignal): Promise<MemberAvailabilitySnapshot> {
+    const response = await vimobAPIRequest<Envelope<MemberAvailability[]> & { revision: number }>(
+      `/v1/team-members/${teamMemberId}/availability`,
+      { organizationId, signal },
+    );
+    validateDomainResponse(apiAvailabilitySnapshotResponseSchema, response, "teams.availability.snapshot");
+    return { availability: response.data, revision: response.revision };
+  },
+
   async updateMemberAvailability(
     input: AvailabilityInput,
     organizationId?: string | null,
@@ -382,7 +429,7 @@ export const teamsAPI = {
       input,
       "teams.availability.update",
     );
-    const response = await vimobAPIRequest<Envelope<MemberAvailability>>(
+    const response = await managementAPIRequest<Envelope<MemberAvailability> & { revision: number }>(
       "/v1/member-availability",
       {
         method: "PATCH",
@@ -391,26 +438,27 @@ export const teamsAPI = {
       },
     );
     validateDomainResponse(
-      apiAvailabilityResponseSchema,
+      apiAvailabilityMutationResponseSchema,
       response,
       "teams.availability.update",
     );
-    return response.data;
+    return { availability: response.data, revision: response.revision };
   },
 
   async replaceMemberAvailability(
     input: {
       teamMemberId: string;
-      availability: Omit<AvailabilityInput, "team_member_id">[];
+      expected_revision: number;
+      availability: Omit<AvailabilityInput, "team_member_id" | "expected_revision">[];
     },
     organizationId?: string | null,
   ) {
     const body = parseDomainInput(
       bulkAvailabilityInputSchema,
-      { availability: input.availability },
+      { availability: input.availability, expected_revision: input.expected_revision },
       "teams.availability.replace",
     );
-    const response = await vimobAPIRequest<Envelope<MemberAvailability[]>>(
+    const response = await managementAPIRequest<Envelope<MemberAvailability[]> & { revision: number }>(
       `/v1/team-members/${input.teamMemberId}/availability`,
       {
         method: "PUT",
@@ -419,10 +467,10 @@ export const teamsAPI = {
       },
     );
     validateDomainResponse(
-      apiAvailabilityListResponseSchema,
+      apiAvailabilitySnapshotResponseSchema,
       response,
       "teams.availability.replace",
     );
-    return response.data;
+    return { availability: response.data, revision: response.revision };
   },
 };

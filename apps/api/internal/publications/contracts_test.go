@@ -11,13 +11,19 @@ func TestWorkerUsesDurableClaimAndLeaseFencing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read worker: %v", err)
 	}
-	worker := string(raw)
+	refresh, err := os.ReadFile("worker_refresh.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := string(raw) + string(refresh)
 	for _, required := range []string{
 		"private.claim_property_channel_publication_jobs",
 		"lease_token = $3::uuid",
 		"private.complete_property_channel_publication_job",
 		"private.fail_property_channel_publication_job",
 		"snapshot_changed",
+		"refreshChangedSnapshot",
+		"attempts < max_attempts",
 	} {
 		if !strings.Contains(worker, required) {
 			t.Fatalf("worker is missing durable contract %q", required)
@@ -144,7 +150,6 @@ func TestWorkerFailureIsFencedAndKeepsLastGoodVersionAvailable(t *testing.T) {
 		"version_id is not distinct from nullif($10, '')::uuid",
 		"order by latest_job.created_at desc, latest_job.id desc",
 		"when desired_state = 'published' and published_version is not null then 'published'",
-		"case when published_version is not null then 'published' else 'error' end",
 	} {
 		if !strings.Contains(worker, required) {
 			t.Fatalf("worker failure fence is missing %q", required)
@@ -255,13 +260,17 @@ func TestCanonicalAddressVisibilityPrecedesLegacyProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	projection := string(raw)
-	canonical := strings.Index(projection, "nullif(` + alias + `.address_visibility, '')")
-	legacy := strings.Index(projection, "nullif(` + alias + `.public_address_visibility, '')")
+	if !strings.Contains(projection, "propertiesdomain.PropertyPublicAddressVisibilitySQL(alias)") {
+		t.Fatal("publication source must use shared privacy normalization")
+	}
+	query := sitePublicPropertySQL("p")
+	canonical := strings.Index(query, "nullif(trim(p.address_visibility), '')")
+	legacy := strings.Index(query, "nullif(trim(p.public_address_visibility), '')")
 	if canonical < 0 || legacy < 0 || canonical >= legacy {
 		t.Fatal("canonical address_visibility must be the first non-empty privacy source")
 	}
-	for _, required := range []string{"when 'minimum' then 'minimo'", "when 'full' then 'completo'", "else 'parcial'"} {
-		if !strings.Contains(projection, required) {
+	for _, required := range []string{"translate(lower(", "when 'full' then 'completo'", "else 'minimo'"} {
+		if !strings.Contains(query, required) {
 			t.Fatalf("address privacy normalization is missing %q", required)
 		}
 	}

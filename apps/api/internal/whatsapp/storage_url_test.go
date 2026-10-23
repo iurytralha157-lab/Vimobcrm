@@ -232,7 +232,7 @@ func TestDownloadWhatsAppMediaNeverSendsProviderCredentialsToWebhookURL(t *testi
 	}
 }
 
-func TestHydrateMessageMediaURLsSignsOnlySameOrganizationPaths(t *testing.T) {
+func TestHydrateMessageMediaURLsCannotSignWithoutActor(t *testing.T) {
 	const organizationID = "20000000-0000-0000-0000-000000000001"
 	modernPath := "orgs/" + organizationID + "/sessions/session-1/incoming/modern.png"
 	legacyPath := organizationID + "/sessions/session-1/incoming/legacy.png"
@@ -264,11 +264,11 @@ func TestHydrateMessageMediaURLsSignsOnlySameOrganizationPaths(t *testing.T) {
 	if err := repo.hydrateMessageMediaURLs(context.Background(), organizationID, messages); err != nil {
 		t.Fatal(err)
 	}
-	if signingRequests.Load() != 2 {
-		t.Fatalf("storage signing requests = %d, want 2 same-organization objects", signingRequests.Load())
+	if signingRequests.Load() != 0 {
+		t.Fatalf("storage signing requests = %d without a current actor", signingRequests.Load())
 	}
-	if messages[0].MediaURL == nil || messages[1].MediaURL == nil {
-		t.Fatalf("same-organization media was not signed: %#v", messages)
+	if messages[0].MediaURL != nil || messages[1].MediaURL != nil {
+		t.Fatalf("media was signed without a current actor: %#v", messages)
 	}
 	if messages[2].MediaURL != nil {
 		t.Fatalf("foreign organization media retained/signed URL: %#v", messages[2])

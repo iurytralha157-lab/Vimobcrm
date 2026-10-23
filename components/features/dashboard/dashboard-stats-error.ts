@@ -21,6 +21,7 @@ export function shouldDisplayCachedDashboardStats(error: unknown) {
     details.status !== 403 &&
     ![
       "missing_session",
+      "session_check_unavailable",
       "permission_denied",
       "organization_required",
       "recovery_session_restricted",
@@ -46,6 +47,9 @@ export function getDashboardStatsErrorDescription(error: unknown) {
 
   if (status === 401 || code === "missing_session") {
     return "Sua sessão expirou. Entre novamente para carregar os indicadores.";
+  }
+  if (code === "session_check_unavailable") {
+    return "Não foi possível validar sua sessão agora. Tente novamente para carregar os indicadores.";
   }
   if (status === 403 || code === "permission_denied" || code === "organization_required" ||
       code === "recovery_session_restricted") {

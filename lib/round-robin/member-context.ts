@@ -4,6 +4,8 @@ export type QueueMemberDraft = {
   entityId: string;
   teamId?: string;
   weight: number;
+  isActive?: boolean;
+  reenroll?: boolean;
   name?: string;
 };
 
@@ -12,6 +14,7 @@ export type QueueMemberSource = {
   team_id?: string | null;
   user_id?: string | null;
   weight?: number | null;
+  is_active?: boolean | null;
   user?: {
     name?: string | null;
   } | null;
@@ -41,6 +44,30 @@ export function queueMemberKey(member: QueueMemberDraft): string {
   return `${member.type}:${member.entityId}:${member.teamId || "none"}`;
 }
 
+export function canEditQueueMember(member: QueueMemberDraft, allowedUserIds?: string[], allowedTeamIds?: string[]): boolean {
+  if (member.type === "team") return !allowedTeamIds || allowedTeamIds.includes(member.entityId);
+  return (!allowedUserIds || allowedUserIds.includes(member.entityId)) &&
+    (!member.teamId || !allowedTeamIds || allowedTeamIds.includes(member.teamId));
+}
+
+export function isUnchangedQueueMember(member: QueueMemberDraft, source?: QueueMemberSource): boolean {
+  if (!source?.id || source.id !== member.id || member.reenroll) return false;
+  const sameIdentity = member.type === "user"
+    ? source.user_id === member.entityId && (source.team_id || undefined) === member.teamId
+    : !source.user_id && source.team_id === member.entityId;
+  return sameIdentity && member.weight === (source.weight || 10);
+}
+
+export function moveEditableQueueMember(members: QueueMemberDraft[], activeKey: string, overKey: string, editable: (member: QueueMemberDraft) => boolean): QueueMemberDraft[] {
+  const from = members.findIndex((member) => queueMemberKey(member) === activeKey);
+  const to = members.findIndex((member) => queueMemberKey(member) === overKey);
+  if (from < 0 || to < 0 || from === to || members.slice(Math.min(from, to), Math.max(from, to) + 1).some((member) => !editable(member))) return members;
+  const moved = [...members];
+  const [member] = moved.splice(from, 1);
+  moved.splice(to, 0, member);
+  return moved;
+}
+
 export function hydrateQueueMembers(
   members: QueueMemberSource[],
   teams: QueueTeamSource[],
@@ -54,6 +81,7 @@ export function hydrateQueueMembers(
           entityId: member.user_id,
           teamId: member.team_id || undefined,
           weight: member.weight || 10,
+          isActive: member.is_active !== false,
           name: member.user?.name || "Usuario",
         },
       ];
@@ -67,6 +95,7 @@ export function hydrateQueueMembers(
         type: "team" as const,
         entityId: member.team_id,
         weight: member.weight || 10,
+        isActive: member.is_active !== false,
         name: team?.name || "Equipe",
       },
     ];

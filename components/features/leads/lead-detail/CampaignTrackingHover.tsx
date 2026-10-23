@@ -3,6 +3,7 @@ import { ptBR } from 'date-fns/locale';
 import { ExternalLink, Info } from 'lucide-react';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { getSafeAbsoluteHttpUrl } from '@/lib/safe-http-url';
+import { cn } from '@/lib/utils';
 import type { CampaignTrackingDetails } from './types';
 import { formatDateSafely } from './utils';
 import {
@@ -14,8 +15,16 @@ import {
 
 export function CampaignTrackingHover({
   leadMeta,
+  variant = 'default',
+  loading = false,
+  error = false,
+  onRetry,
 }: {
   leadMeta: CampaignTrackingDetails | null | undefined;
+  variant?: 'default' | 'pipeline';
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -40,7 +49,7 @@ export function CampaignTrackingHover({
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   }, []);
 
-  if (!hasLeadTrackingData(leadMeta)) return null;
+  if (!hasLeadTrackingData(leadMeta) && !loading && !error) return null;
 
   const sourceLabel =
     trackingSourceLabel(leadMeta?.platform) || trackingSourceLabel(leadMeta?.source_type);
@@ -50,7 +59,7 @@ export function CampaignTrackingHover({
     metaText(leadMeta?.ad_name) ||
     metaText(leadMeta?.form_name) ||
     sourceLabel ||
-    'Campanha registrada';
+    (loading ? 'Carregando campanha...' : error ? 'Campanha indisponível' : 'Campanha registrada');
 
   const mainRows = [
     ['Campanha', metaText(leadMeta?.campaign_name) || metaText(leadMeta?.utm_campaign)],
@@ -147,13 +156,15 @@ export function CampaignTrackingHover({
         onBlurCapture={scheduleClose}
         onPointerEnter={keepOpen}
         onPointerLeave={scheduleClose}
-        className="vimob-popover-content w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
+        className={cn('vimob-popover-content w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none', variant === 'pipeline' && '[&_div]:text-xs [&_p]:text-xs [&_a]:text-xs [&_button]:text-xs')}
       >
         <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
           <p className="text-[11px] font-normal text-primary">Rastreamento de campanha</p>
         </div>
 
-        <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
+        <div className={cn('space-y-3 overflow-y-auto p-3 text-left', variant === 'pipeline' ? 'max-h-[min(420px,calc(100dvh-72px))]' : 'max-h-[420px]')}>
+          {loading && <p role="status" className="text-xs">Carregando rastreamento...</p>}
+          {error && <div role="alert" className="space-y-1 text-xs"><p>Não foi possível atualizar o rastreamento da campanha.</p>{onRetry && <button type="button" disabled={loading} onClick={onRetry} className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1">Tentar novamente</button>}</div>}
           <div className="space-y-1.5">
             {mainRows.map(([label, value]) => (
               <DetailRow key={label} label={label} value={value} />

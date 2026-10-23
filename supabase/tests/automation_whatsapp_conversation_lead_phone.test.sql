@@ -27,7 +27,7 @@ select ok(
 
 select ok(
   position(
-    $$nullif(l.phone, '')$$
+    $$nullif(lead.phone, '')$$
     in pg_get_functiondef(
       'public.resolve_automation_whatsapp_conversation(uuid,uuid,text,text,uuid)'::regprocedure
     )

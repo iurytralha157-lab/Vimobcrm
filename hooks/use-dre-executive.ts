@@ -40,7 +40,7 @@ interface UseDREParams {
 }
 
 export function useDREExecutive({ startDate, endDate, regime, compareWithPrevious = false }: UseDREParams) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ['dre-executive', activeOrganization.organizationId, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],

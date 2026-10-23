@@ -36,13 +36,13 @@ func (handler Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := handler.repo.List(r.Context(), tenantContext, filter)
+	page, err := handler.repo.ListPage(r.Context(), tenantContext, filter)
 	if err != nil {
 		writeScheduleError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Event]{Data: events})
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Event]{Data: page.Events, Pagination: &page.Pagination})
 }
 
 func (handler Handler) ShowDashboard(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,7 @@ func (handler Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	var request CreateRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -137,7 +137,7 @@ func (handler Handler) UpdateEvent(w http.ResponseWriter, r *http.Request) {
 	var request UpdateRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -174,7 +174,7 @@ func (handler Handler) CompleteEvent(w http.ResponseWriter, r *http.Request) {
 	var request CompleteRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -212,7 +212,7 @@ func (handler Handler) RescheduleEvent(w http.ResponseWriter, r *http.Request) {
 	var request RescheduleRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -289,7 +289,7 @@ func (handler Handler) AddComment(w http.ResponseWriter, r *http.Request) {
 	var request AddCommentRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -300,7 +300,7 @@ func (handler Handler) AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := handler.repo.AddComment(r.Context(), tenantContext, r.PathValue("id"), content)
+	comment, err := handler.repo.AddComment(r.Context(), tenantContext, r.PathValue("id"), content, request.ClientRequestID)
 	if err != nil {
 		writeScheduleError(w, r, err)
 		return
@@ -340,7 +340,7 @@ func (handler Handler) AddAssignee(w http.ResponseWriter, r *http.Request) {
 	var request AddAssigneeRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeSingleScheduleJSON(decoder, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -385,14 +385,11 @@ func (handler Handler) RemoveAssignee(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) publishScheduleEvent(tenantContext tenant.Context, eventType string, eventID string, leadID *string, data map[string]any) {
-	if data == nil {
-		data = map[string]any{}
-	}
-	data["eventId"] = eventID
-	if leadID != nil {
-		data["leadId"] = *leadID
-	}
-	handler.publisher.Publish(realtime.NewEvent(eventType, tenantContext.OrganizationID, tenantContext.UserID, data))
+	// Organization-wide invalidation must carry no resource, actor, relation or
+	// outcome identifiers: some subscribers cannot read this appointment at all.
+	// Details are fetched again through the caller-scoped schedule endpoints.
+	// Use the same minimal payload in durable storage/replay as in live fan-out.
+	handler.publisher.Publish(realtime.NewEvent("schedule.changed", tenantContext.OrganizationID, "", nil))
 }
 
 func (handler Handler) ShowCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +409,13 @@ func (handler Handler) ShowCapabilities(w http.ResponseWriter, r *http.Request) 
 }
 
 func writeScheduleError(w http.ResponseWriter, r *http.Request, err error) {
+	if isGoogleCalendarDisconnectingError(err) {
+		httpserver.WriteError(w, r, http.StatusConflict, "google_calendar_disconnecting", "A integração Google está sendo desconectada. Aguarde para salvar.")
+		return
+	}
 	switch {
+	case errors.Is(err, ErrScheduleConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "schedule_conflict", "Esta atividade mudou ou este comando ja foi usado. Atualize a agenda antes de tentar novamente.")
 	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrNoScheduleChanges):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_schedule_input", err.Error())
 	case errors.Is(err, ErrInvalidReference):

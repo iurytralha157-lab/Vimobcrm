@@ -2,11 +2,27 @@ package settings
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestPermissionTargetLeaderRequiresCurrentMembershipGeneration(t *testing.T) {
+	for _, required := range []string{
+		"tm.organization_id = om.organization_id",
+		"tm.user_id = om.user_id",
+		"tm.membership_generation = om.membership_generation",
+		"tm.is_active = true",
+		"tm.is_leader = true",
+		"om.deleted_at is null",
+	} {
+		if !strings.Contains(permissionTargetQuery, required) {
+			t.Fatalf("permission target query is missing %q", required)
+		}
+	}
+}
 
 func TestCanManageSettingDoesNotBypassManagerOverrides(t *testing.T) {
 	manager := tenant.Context{UserID: "manager", OrganizationID: "org", MemberRole: "manager"}

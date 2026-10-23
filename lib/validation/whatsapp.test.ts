@@ -4,6 +4,8 @@ import test from 'node:test'
 import {
   createWhatsAppSessionInputSchema,
   linkWhatsAppConversationLeadInputSchema,
+  whatsAppConversationLinkPreviewResponseSchema,
+  whatsAppConversationLinkResultResponseSchema,
   reactWhatsAppMessageInputSchema,
   reactWhatsAppMessageResponseSchema,
   sendWhatsAppMessageResponseSchema,
@@ -17,6 +19,9 @@ import {
   whatsAppSessionStatusesResponseSchema,
   whatsAppSessionsResponseSchema,
   whatsAppUnreadCountResponseSchema,
+  whatsAppMessageSchema,
+  whatsAppSendStatusQuerySchema,
+  whatsAppSendStatusResponseSchema,
 } from './whatsapp'
 import {
   formatPhoneForDisplay,
@@ -31,6 +36,40 @@ const ORG_ID = '22222222-2222-4222-8222-222222222222'
 const USER_ID = '33333333-3333-4333-8333-333333333333'
 const floatingChatContextSource = readFileSync('contexts/FloatingChatContext.tsx', 'utf8')
 const floatingChatSource = readFileSync('components/features/chat/FloatingChat.tsx', 'utf8')
+
+const safeMessage = {
+  id: ID, conversation_id: ORG_ID, session_id: USER_ID, message_id: 'provider-fixture',
+  client_message_id: 'intent-fixture', from_me: true, content: 'Hello', message_type: 'text',
+  media_url: null, media_mime_type: null, status: 'queued', sent_at: '2026-10-11T12:00:00Z',
+  delivered_at: null, read_at: null, sender_jid: null, sender_name: null,
+}
+
+test('send-status requires exact lead and bounded intent and excludes provider data', () => {
+  assert.equal(whatsAppSendStatusQuerySchema.safeParse({ expectedLeadId: ID, clientMessageId: 'intent-fixture' }).success, true)
+  for (const invalid of [{ clientMessageId: 'x' }, { expectedLeadId: ID, clientMessageId: '' }, { expectedLeadId: ID, clientMessageId: 'x'.repeat(201) }]) {
+    assert.equal(whatsAppSendStatusQuerySchema.safeParse(invalid).success, false)
+  }
+  const response = { clientMessageId: 'intent-fixture', conversationId: ORG_ID, status: 'queued', message: safeMessage }
+  assert.equal(whatsAppSendStatusResponseSchema.safeParse(response).success, true)
+  assert.equal(whatsAppSendStatusResponseSchema.safeParse({ ...response, providerData: { raw: 'private' } }).success, false)
+})
+
+test('structured presentation bounds fields and unavailable quotes cannot carry prior content', () => {
+  assert.equal(whatsAppMessageSchema.safeParse({ ...safeMessage,
+    contacts: [{ display_name: 'Portaria', phones: ['+5511999999999'] }],
+    location: { latitude: -23.5, longitude: -46.6 },
+    media_filename: 'Proposta.pdf', quoted_message: { message_id: 'target', available: true, id: ID, content: 'Captured' },
+  }).success, true)
+  for (const extra of [
+    { quoted_message: { message_id: 'target', available: false, content: 'Before attendance' } },
+    { quoted_message: { message_id: 'target', available: true, content: 'No canonical ID' } },
+    { contacts: [{ display_name: 'Portaria', vcard: 'private' }] },
+    { contacts: Array(6).fill({ display_name: 'Too many' }) },
+    { location: { latitude: 91, longitude: 0 } },
+    { location: { latitude: 0, longitude: 181 } },
+    { media_filename: 'x'.repeat(256) },
+  ]) assert.equal(whatsAppMessageSchema.safeParse({ ...safeMessage, ...extra }).success, false)
+})
 
 test('exibe telefone WhatsApp digits-only como country-inclusive', () => {
   assert.equal(normalizeWhatsAppContactPhoneToE164('14155552671'), '+14155552671')
@@ -83,7 +122,7 @@ test('preserva E.164 no contexto e usa o telefone canonico ao iniciar conversa',
   assert.match(floatingChatContextSource, /normalizePhoneToE164\(phone\)/)
   assert.doesNotMatch(floatingChatContextSource, /phone\.replace\(\/\\D\/g/)
   assert.match(floatingChatSource, /const canonicalPhone = normalizePhoneToE164\(phone\)/)
-  assert.equal((floatingChatSource.match(/phone: canonicalPhone/g) || []).length, 2)
+  assert.match(floatingChatSource, /findConversation\(\{\s*phone: canonicalPhone/)
   assert.match(floatingChatSource, /handleStartConversationWithSession\(canonicalPhone,/)
 })
 
@@ -127,6 +166,39 @@ test('exige snapshot anterior nos vinculos manuais de conversa', () => {
     expectedPreviousLeadId: USER_ID,
   }).success, true)
   assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({ leadId: ID }).success, false)
+})
+
+test('previa do vinculo aceita apenas resumo sem conteudo e resultado auditavel', () => {
+  const preview = {
+    data: {
+      conversationId: ID,
+      sessionId: ORG_ID,
+      sessionDisplayName: 'WhatsApp de teste',
+      contactDisplayName: 'Contato de teste',
+      leadId: null,
+      expectedPreviousLeadId: 'unlinked',
+      bindingMode: 'active',
+      eligibleMessageCount: 2,
+      firstEligibleAt: '2026-10-01T12:00:00.000Z',
+      lastEligibleAt: '2026-10-02T12:00:00.000Z',
+      expiresAt: '2026-10-08T12:00:00.000Z',
+    },
+  }
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse(preview).success, true)
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({
+    data: { ...preview.data, eligibleMessageCount: -1 },
+  }).success, false)
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({
+    data: { ...preview.data, content: 'Não expor mensagem na prévia' },
+  }).success, false)
+  assert.equal(whatsAppConversationLinkResultResponseSchema.safeParse({
+    ok: true,
+    data: { bindingMode: 'history_only', attachedMessageCount: 2 },
+  }).success, true)
+  assert.equal(whatsAppConversationLinkResultResponseSchema.safeParse({
+    ok: true,
+    data: { bindingMode: 'history_only', attachedMessageCount: -1 },
+  }).success, false)
 })
 
 test('exige texto ou midia no envio', () => {
@@ -266,8 +338,8 @@ test('valida contador leve de mensagens WhatsApp nao lidas', () => {
   assert.equal(whatsAppUnreadCountResponseSchema.safeParse({ count: 1.5 }).success, false)
 })
 
-test('aceita conversa historica sem sessao confiavel', () => {
-  const result = whatsAppConversationResponseSchema.safeParse({
+test('aceita conversa historica sem sessao confiavel e valida recibo aditivo da previa', () => {
+  const response = {
     data: {
       id: ID,
       session_id: null,
@@ -287,9 +359,41 @@ test('aceita conversa historica sem sessao confiavel', () => {
       created_at: '2026-07-12T12:00:00Z',
       updated_at: '2026-07-12T12:00:00Z',
     },
-  })
+  }
 
-  assert.equal(result.success, true)
+  assert.equal(whatsAppConversationResponseSchema.safeParse(response).success, true)
+  for (const summary of [
+    { last_message_from_me: true, last_message_status: 'read' },
+    { last_message_from_me: false, last_message_status: 'received' },
+    { last_message_from_me: null, last_message_status: null },
+  ]) {
+    const parsed = whatsAppConversationResponseSchema.safeParse({ data: { ...response.data, ...summary } })
+    assert.equal(parsed.success, true)
+    if (parsed.success) {
+      assert.equal(parsed.data.data.last_message_from_me, summary.last_message_from_me)
+      assert.equal(parsed.data.data.last_message_status, summary.last_message_status)
+    }
+  }
+  for (const summary of [
+    { last_message_from_me: 'true', last_message_status: 'read' },
+    { last_message_from_me: true, last_message_status: { raw: 'provider' } },
+    { last_message_id: 'not-a-message-uuid' },
+    { last_message_sent_at: 'not-an-iso-instant' },
+    { last_message_sent_at: '2026-02-30T10:00:00Z' },
+  ]) {
+    assert.equal(whatsAppConversationResponseSchema.safeParse({ data: { ...response.data, ...summary } }).success, false)
+  }
+  for (const identity of [
+    { last_message_id: ID, last_message_sent_at: '2026-10-18T10:01:00.123456Z' },
+    { last_message_id: null, last_message_sent_at: null },
+  ]) {
+    const parsed = whatsAppConversationResponseSchema.safeParse({ data: { ...response.data, ...identity } })
+    assert.equal(parsed.success, true)
+    if (parsed.success) {
+      assert.equal(parsed.data.data.last_message_id, identity.last_message_id)
+      assert.equal(parsed.data.data.last_message_sent_at, identity.last_message_sent_at)
+    }
+  }
 })
 
 test('rejeita pagina de mensagens com contador negativo', () => {
@@ -370,6 +474,23 @@ test('valida cursor composto no historico paginado do lead', () => {
       nextCursor: null,
     },
   }).success, true)
+})
+
+test('aceita cursor v2 sem contador e preserva os formatos legados', () => {
+  const cursor = `v2|2026-10-11T12:00:00.123456Z|2026-10-11T12:00:00.654321Z|${ID.toLowerCase()}`
+  for (const nextCursor of [cursor, '2026-10-11T12:00:00Z', `2026-10-11T12:00:00Z|${ID}`]) {
+    assert.equal(whatsAppMessagesResponseSchema.safeParse({ data: { messages: [], nextCursor } }).success, true)
+    assert.equal(whatsAppHistoryResponseSchema.safeParse({ data: { messages: [], nextCursor } }).success, true)
+  }
+  for (const nextCursor of [
+    cursor.replace('v2|', 'v3|'),
+    cursor.replace('.123456Z', '.123Z'),
+    cursor.replace('2026-10-11T12:00:00.123456Z', '2026-02-30T12:00:00.123456Z'),
+    `${cursor}|00000000000000000001`,
+    cursor.replace(ID.toLowerCase(), 'not-a-uuid'),
+  ]) {
+    assert.equal(whatsAppMessagesResponseSchema.safeParse({ data: { messages: [], nextCursor } }).success, false)
+  }
 })
 
 test('valida resposta de envio com mensagem canonica na fila', () => {

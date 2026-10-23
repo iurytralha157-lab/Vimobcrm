@@ -81,7 +81,7 @@ export function ContactsBulkSelectionBar({
   if (!canDeleteLeads || selectedCount === 0) return null;
 
   return (
-    <div className="app-card-soft fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-50 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-[8px] border border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] p-2 shadow-sm">
+    <div className="app-card-soft flex shrink-0 flex-wrap items-center justify-center gap-2 rounded-[8px] border border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] p-2 shadow-sm">
       <span className="whitespace-nowrap px-1 text-[12px] font-light text-[var(--app-text-primary)]">
         {selectedCount} selecionado(s)
       </span>
@@ -132,6 +132,7 @@ type ContactsOverlaysProps = {
   onConfirmDelete: () => void;
   bulkDeleteDialogOpen: boolean;
   selectedCount: number;
+  selectedNames: string[];
   isBulkDeletePending: boolean;
   onBulkDeleteDialogOpenChange: (open: boolean) => void;
   onConfirmBulkDelete: () => void;
@@ -141,6 +142,7 @@ type ContactsOverlaysProps = {
   canExportLeads: boolean;
   exportDialogOpen: boolean;
   exportFilters: ContactExportFilters;
+  exportFilterValues?: Partial<Record<keyof ContactExportFilters, string>>;
   organizationId: string | null;
   totalCount: number;
   onExportDialogOpenChange: (open: boolean) => void;
@@ -173,6 +175,7 @@ export function ContactsOverlays({
   onConfirmDelete,
   bulkDeleteDialogOpen,
   selectedCount,
+  selectedNames,
   isBulkDeletePending,
   onBulkDeleteDialogOpenChange,
   onConfirmBulkDelete,
@@ -182,6 +185,7 @@ export function ContactsOverlays({
   canExportLeads,
   exportDialogOpen,
   exportFilters,
+  exportFilterValues,
   organizationId,
   totalCount,
   onExportDialogOpenChange,
@@ -243,6 +247,8 @@ export function ContactsOverlays({
       {selectedContactId && selectedLead && (
         <LeadDetailDialog
           key={selectedLead.id}
+          variant="contacts"
+          hideWhatsAppAction
           lead={selectedLead}
           stages={stages}
           onClose={onCloseSelectedLead}
@@ -274,18 +280,18 @@ export function ContactsOverlays({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir contato</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle className="text-[14px] font-medium">Excluir contato</AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
               Tem certeza que deseja excluir este contato? Esta ação não pode
               ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeletePending}>
+            <AlertDialogCancel className="h-9 min-w-24 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]" disabled={isDeletePending}>
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90"
+              className="h-9 min-w-24 rounded-[6px] bg-destructive px-4 text-[12px] font-light shadow-none hover:bg-destructive/90"
               disabled={isDeletePending}
               onClick={(event) => {
                 event.preventDefault();
@@ -302,25 +308,28 @@ export function ContactsOverlays({
       </AlertDialog>
 
       <AlertDialog
-        open={canDeleteLeads && bulkDeleteDialogOpen}
+        open={canDeleteLeads && bulkDeleteDialogOpen && selectedCount > 0}
         onOpenChange={onBulkDeleteDialogOpenChange}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
+            <AlertDialogTitle className="text-[14px] font-medium">
               Excluir {selectedCount} contatos
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
               Tem certeza que deseja excluir {selectedCount} contatos
               selecionados? Esta ação não pode ser desfeita.
             </AlertDialogDescription>
+            <ul className="max-h-48 space-y-1 overflow-y-auto text-[12px] font-light text-[var(--app-text-secondary)]" aria-label="Contatos selecionados para exclusão">
+              {selectedNames.map((name, index) => <li key={index} className="break-words">{name}</li>)}
+            </ul>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isBulkDeletePending}>
+            <AlertDialogCancel className="h-9 min-w-24 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]" disabled={isBulkDeletePending}>
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90"
+              className="h-9 min-w-24 rounded-[6px] bg-destructive px-4 text-[12px] font-light shadow-none hover:bg-destructive/90"
               disabled={isBulkDeletePending}
               onClick={(event) => {
                 event.preventDefault();
@@ -350,6 +359,7 @@ export function ContactsOverlays({
           open={exportDialogOpen}
           onOpenChange={onExportDialogOpenChange}
           filters={exportFilters}
+          filterValues={exportFilterValues}
           organizationId={organizationId}
           totalCount={totalCount}
           onExportingChange={onExportingChange}

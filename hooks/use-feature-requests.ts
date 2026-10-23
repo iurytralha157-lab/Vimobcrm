@@ -56,7 +56,7 @@ export function useAllFeatureRequests() {
 
 export function useCreateFeatureRequest() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const { toast } = useToast();
 
   return useMutation({

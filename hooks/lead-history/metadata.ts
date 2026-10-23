@@ -8,12 +8,12 @@ export function asMetadata(metadata: unknown): HistoryMetadata {
 
 export function metadataString(value: unknown): string | null {
   if (typeof value === 'string') return value;
-  if (value === null || value === undefined) return null;
-  return String(value);
+  if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return String(value);
+  return null;
 }
 
 export function metadataNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
 }
@@ -38,19 +38,19 @@ export const FORM_ANSWER_VALUE_KEYS = [
   'displayValue',
 ];
 
-export function answerText(value: unknown): string | null {
+export function answerText(value: unknown, options: { preserveFalse?: boolean } = {}): string | null {
   if (Array.isArray(value)) {
-    const items = value.map(answerText).filter(Boolean);
+    const items = value.map((item) => answerText(item, options)).filter(Boolean);
     return items.length > 0 ? items.join(', ') : null;
   }
-  if (value === null || value === undefined || value === false) return null;
+  if (value === null || value === undefined || (value === false && !options.preserveFalse)) return null;
   if (typeof value === 'object') {
     const record = metadataRecord(value);
     if (!record) return null;
 
     for (const key of FORM_ANSWER_VALUE_KEYS) {
       if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-      const nested = answerText(record[key]);
+      const nested = answerText(record[key], options);
       if (nested) return nested;
     }
 

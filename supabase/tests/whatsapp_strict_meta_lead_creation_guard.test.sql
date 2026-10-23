@@ -45,8 +45,8 @@ select is(
   public.whatsapp_webhook_has_lead_creation_context(
     '{"whatsapp_attribution":{"source_id":"1234567890","source_referral":{"explicit_source_type":"ad"}}}'::jsonb
   ),
-  true,
-  'legacy webhook metadata without a version marker keeps the prior explicit Meta ad contract during rollout'
+  false,
+  'unversioned source/ad identifiers without provider CTWA proof fail closed'
 );
 
 select is(
@@ -111,10 +111,16 @@ select ok(
   position(
     'whatsapp_webhook_has_lead_creation_context'
     in pg_get_functiondef(
+      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb,uuid)'::regprocedure
+    )
+  ) > 0
+  and position(
+    'public.upsert_whatsapp_webhook_lead('
+    in pg_get_functiondef(
       'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)'::regprocedure
     )
   ) > 0,
-  'the canonical lead upsert still invokes the strict guard'
+  'the legacy wrapper delegates to the origin-aware canonical upsert with its strict guard'
 );
 
 select is(

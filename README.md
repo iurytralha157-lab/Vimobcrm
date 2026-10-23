@@ -34,6 +34,14 @@ powershell -ExecutionPolicy Bypass -File scripts/local/start-local.ps1 -ExposeLa
 Use `.env.example` como catálogo de variáveis. Nunca copie segredos reais para
 o repositório ou exponha variáveis server-only com prefixo `NEXT_PUBLIC_`.
 
+Com o frontend local em `next dev` e `NEXT_PUBLIC_LOCAL_READ_ONLY=true`, a rota
+`/preview/sem-organizacao` mostra somente o visual do aviso para usuários sem
+imobiliária. Ela não recebe parâmetros nem executa ações; o provedor global
+ainda pode carregar a sessão normalmente. Os botões ficam desativados nessa
+prévia. Fora desse modo local, a página chama `notFound()`.
+O fluxo real continua em `/select-organization` e exige uma conta autenticada
+sem organização para validação funcional.
+
 ## Verificação local
 
 ```powershell

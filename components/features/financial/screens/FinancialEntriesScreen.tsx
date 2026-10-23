@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FILTER_UI } from '@/config/filter-ui';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -157,6 +159,9 @@ export default function FinancialEntries() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [dueFrom, setDueFrom] = useState('');
+  const [dueTo, setDueTo] = useState('');
+  const invalidDueRange = Boolean(dueFrom && dueTo && dueFrom > dueTo);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<FinancialEntry | null>(null);
   const [payDialog, setPayDialog] = useState<{ open: boolean; entry: FinancialEntry | null }>({ open: false, entry: null });
@@ -168,7 +173,9 @@ export default function FinancialEntries() {
   const { data: entries, isLoading, error, refetch } = useFinancialEntries({
     type: typeFilter !== 'all' ? typeFilter : undefined,
     status: statusFilter !== 'all' ? statusFilter : undefined,
-  });
+    startDate: dueFrom || undefined,
+    endDate: dueTo || undefined,
+  }, { enabled: !invalidDueRange });
 
   const markAsPaid = useMarkEntryAsPaid();
   const deleteEntry = useDeleteFinancialEntry();
@@ -189,6 +196,7 @@ export default function FinancialEntries() {
   ) || [];
 
   const handleExport = () => {
+    if (invalidDueRange) { toast.error('Revise o período de vencimento antes de exportar.'); return; }
     if (!filteredEntries.length) {
       toast.error('Nenhum dado para exportar');
       return;
@@ -227,7 +235,7 @@ export default function FinancialEntries() {
     setEditingEntry(null);
   };
 
-  const activeFilterCount = (typeFilter !== 'all' ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0);
+  const activeFilterCount = (typeFilter !== 'all' ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0) + (dueFrom || dueTo ? 1 : 0) + (searchQuery.trim() ? 1 : 0);
 
   return (
     <AppLayout title="Contas">
@@ -255,6 +263,7 @@ export default function FinancialEntries() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
+                  aria-label="Buscar lançamentos por descrição ou categoria"
                   placeholder="Buscar..."
                   className="pl-9"
                   value={searchQuery}
@@ -266,6 +275,8 @@ export default function FinancialEntries() {
                 <Button
                   variant="outline"
                   onClick={() => setShowFilters(!showFilters)}
+                  aria-expanded={showFilters}
+                  aria-controls={showFilters ? "financial-entry-filters" : undefined}
                   className="w-full sm:w-auto"
                 >
                   <SlidersHorizontal className="h-4 w-4 mr-2" />
@@ -277,7 +288,7 @@ export default function FinancialEntries() {
               ) : (
                 <>
                   <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger aria-label="Tipo de lançamento" className={cn(FILTER_UI.control, 'w-40')}>
                       <SelectValue placeholder="Tipo" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
@@ -288,12 +299,13 @@ export default function FinancialEntries() {
                   </Select>
 
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger aria-label="Status do lançamento" className={cn(FILTER_UI.control, 'w-40')}>
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
                       <SelectItem value="all">Todos</SelectItem>
                       <SelectItem value="pending">Pendente</SelectItem>
+                      <SelectItem value="partial">Parcial</SelectItem>
                       <SelectItem value="paid">Pago</SelectItem>
                       <SelectItem value="overdue">Vencido</SelectItem>
                       <SelectItem value="cancelled">Cancelado</SelectItem>
@@ -304,10 +316,16 @@ export default function FinancialEntries() {
             </div>
 
             {/* Mobile Filters Expanded */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-[12px]">Vencimento de <Input type="date" aria-label="Vencimento inicial" value={dueFrom} max={dueTo || undefined} onChange={event => setDueFrom(event.target.value)} className="mt-1 h-9 w-full sm:w-40" /></label>
+              <label className="text-[12px]">Até <Input type="date" aria-label="Vencimento final" value={dueTo} min={dueFrom || undefined} onChange={event => setDueTo(event.target.value)} className="mt-1 h-9 w-full sm:w-40" /></label>
+              {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={() => { setDueFrom(''); setDueTo(''); setSearchQuery(''); setTypeFilter('all'); setStatusFilter('all'); }}>Limpar filtros</Button>}
+              {invalidDueRange && <p role="alert" className="text-[12px] text-destructive">O vencimento final deve ser igual ou posterior ao inicial.</p>}
+            </div>
             {isMobile && showFilters && (
-              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+              <div id="financial-entry-filters" className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="Tipo de lançamento" className={FILTER_UI.control}>
                     <SelectValue placeholder="Tipo" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
@@ -318,12 +336,13 @@ export default function FinancialEntries() {
                 </Select>
 
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="Status do lançamento" className={FILTER_UI.control}>
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
                     <SelectItem value="all">Todos status</SelectItem>
                     <SelectItem value="pending">Pendente</SelectItem>
+                    <SelectItem value="partial">Parcial</SelectItem>
                     <SelectItem value="paid">Pago</SelectItem>
                     <SelectItem value="overdue">Vencido</SelectItem>
                     <SelectItem value="cancelled">Cancelado</SelectItem>

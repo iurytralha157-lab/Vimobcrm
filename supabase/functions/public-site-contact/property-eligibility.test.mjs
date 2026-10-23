@@ -9,9 +9,16 @@ import {
 
 const property = {
   id: "10000000-0000-4000-8000-000000000001",
+  organization_id: "20000000-0000-4000-8000-000000000001",
   status: "active",
   published_on_site: true,
 };
+
+function publication(overrides = {}) {
+  return { id: "30000000-0000-4000-8000-000000000001", organization_id: property.organization_id,
+    property_id: property.id, channel: "site", channel_account_key: "default", desired_state: "published", published_version: 7,
+    ...overrides };
+}
 
 test("public contact accepts only canonical UUID property references", () => {
   assert.equal(canonicalPublicPropertyId(property.id), property.id);
@@ -26,7 +33,7 @@ test("legacy publication is accepted only before an authoritative publication ro
   assert.equal(
     publicContactPropertyIsEligible(
       property,
-      { desired_state: "unpublished", published_version: null },
+      publication({ desired_state: "unpublished", published_version: null }),
       false,
     ),
     false,
@@ -37,7 +44,7 @@ test("versioned publication requires published desired state and a durable publi
   assert.equal(
     publicContactPropertyIsEligible(
       { ...property, published_on_site: false },
-      { desired_state: "published", published_version: 7 },
+      publication(),
       true,
     ),
     true,
@@ -45,7 +52,7 @@ test("versioned publication requires published desired state and a durable publi
   assert.equal(
     publicContactPropertyIsEligible(
       property,
-      { desired_state: "published", published_version: 7 },
+      publication(),
       false,
     ),
     false,
@@ -81,14 +88,23 @@ test("only active properties can be attached to a public contact", () => {
   );
 });
 
-test("the Edge handler validates public eligibility before any lead mutation", async () => {
+test("the retired Edge endpoint cannot restore a second lead writer", async () => {
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
-  const validation = source.indexOf("loadPublicContactProperty(supabase, organization_id, property_id)");
-  const leadLookup = source.indexOf(".from('leads')");
+  assert.match(source, /status:\s*410/);
+  assert.match(source, /public_site_contact_endpoint_retired/);
+  assert.doesNotMatch(source, /\.from\(['"]leads['"]\)|\.insert\(|\.update\(/);
+});
 
-  assert.ok(validation >= 0, "handler must call the canonical public-property guard");
-  assert.ok(leadLookup > validation, "property eligibility must be checked before lead lookup/write");
-  assert.match(source, /interest_property_id:\s*validatedPropertyId/);
-  assert.doesNotMatch(source, /interest_property_id:\s*property_id/);
-  assert.match(source, /\.eq\('id', leadId\)\s*\.eq\('organization_id', organization_id\)/);
+test("a first delivery preserves only a same-tenant authorized legacy listing", () => {
+  const pending = publication({ published_version: null });
+  assert.equal(publicContactPropertyIsEligible(property, pending, false), true);
+  for (const bad of [{ ...pending, organization_id: "other" }, { ...pending, desired_state: "unpublished" },
+    { ...pending, desired_state: "paused" }, { ...pending, channel_account_key: "other" }]) {
+    assert.equal(publicContactPropertyIsEligible(property, bad, false), false);
+  }
+  assert.equal(publicContactPropertyIsEligible({ ...property, autorizado_comercializacao: false }, pending, false), false);
+  assert.equal(publicContactPropertyIsEligible({ ...property, autorizado_comercializacao: false }, publication(), true), false);
+  for (const status of ["active", "ativo", "available", "disponivel"]) {
+    assert.equal(publicContactPropertyIsEligible({ ...property, status, autorizado_comercializacao: null }, pending, false), true);
+  }
 });

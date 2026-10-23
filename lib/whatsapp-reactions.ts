@@ -1,3 +1,5 @@
+import { sortWhatsAppMessages } from "@/lib/whatsapp-message-order";
+
 type ReactionMessage = {
   id: string;
   message_id?: string | null;
@@ -19,6 +21,7 @@ type ReactableMessage = {
   message_id?: string | null;
   client_message_id?: string | null;
   status?: string | null;
+  can_react?: boolean;
 };
 
 export type GroupedWhatsAppReaction = {
@@ -32,7 +35,7 @@ const metadataString = (metadata: Record<string, unknown> | null | undefined, ke
   return typeof value === "string" || typeof value === "number" ? String(value) : null;
 };
 
-const NON_REACTABLE_MESSAGE_STATUSES = new Set(["pending", "confirming", "failed", "error"]);
+const CONFIRMED_MESSAGE_STATUSES = new Set(["sent", "delivered", "read", "played", "received"]);
 
 /**
  * Reactions target a persisted WhatsApp message row. Optimistic messages use
@@ -46,17 +49,16 @@ export function canReactToWhatsAppMessage(message: ReactableMessage) {
   const clientMessageId = message.client_message_id?.trim() || "";
   const status = message.status?.trim().toLowerCase() || "";
 
-  if (!rowId || !providerMessageId || NON_REACTABLE_MESSAGE_STATUSES.has(status)) return false;
+  if (message.can_react !== true || !rowId || !providerMessageId || !CONFIRMED_MESSAGE_STATUSES.has(status)) return false;
   if (clientMessageId && rowId === clientMessageId && providerMessageId === clientMessageId) return false;
   return true;
 }
 
 export function groupLatestWhatsAppReactions(messages: ReactionMessage[]) {
   const reactionsByTarget = new Map<string, Map<string, GroupedWhatsAppReaction>>();
-  const orderedMessages = [...messages].sort((left, right) => {
-    const sentAtDifference = new Date(left.sent_at || 0).getTime() - new Date(right.sent_at || 0).getTime();
-    return sentAtDifference || left.id.localeCompare(right.id);
-  });
+  // The API supplies canonical order for equal timestamps; private ingress
+  // metadata is redacted. Preserve that feed order and provider microseconds.
+  const orderedMessages = sortWhatsAppMessages(messages);
 
   for (const message of orderedMessages) {
     if (message.status === "failed" || message.status === "error") continue;

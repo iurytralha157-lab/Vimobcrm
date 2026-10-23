@@ -8,6 +8,7 @@ import {
   apiScheduleRescheduleResponseSchema,
   completeScheduleEventInputSchema,
   createScheduleEventInputSchema,
+  nonNegativeIntegerSchema,
   parseDomainInput,
   scheduleAssigneeInputSchema,
   scheduleCommentInputSchema,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/validation";
 import { vimobAPIRequest } from "./vimob-client";
 import { normalizeScheduleEventBody } from "./schedule-body";
+import { collectSchedulePages, type SchedulePage } from "@/lib/api/schedule-pagination";
 
 type Envelope<T> = {
   data: T;
@@ -125,6 +127,7 @@ export interface AssigneeUser {
 }
 
 export type CreateScheduleEventInput = {
+  client_request_id?: string;
   title: string;
   description?: string;
   event_type?: EventType;
@@ -160,16 +163,17 @@ export type UpdateScheduleEventInput = Partial<
       | "status"
       | "visibility"
       | "reminder_minutes"
-      | "recurrence_rule"
     >,
     "user_id"
   > & {
+    expected_updated_at: string;
     user_id: string;
     assignee_ids: string[];
   }
 >;
 
 export type RescheduleScheduleEventInput = {
+  expected_updated_at?: string;
   start_time: string;
   end_time: string;
   is_all_day?: boolean;
@@ -183,6 +187,24 @@ export type RescheduleScheduleEventResult = {
 };
 
 export const scheduleAPI = {
+  // The lead popup can show the first page without waiting for all its history.
+  // Existing Agenda consumers keep the complete getScheduleEvents contract.
+  async getLeadSchedulePage(params: { organizationId: string; leadId: string; offset: number; signal?: AbortSignal }): Promise<SchedulePage<ScheduleEvent>> {
+    const query = parseDomainInput(scheduleListQuerySchema, { leadId: params.leadId }, "schedule.lead-preview");
+    const offset = parseDomainInput(nonNegativeIntegerSchema, params.offset, "schedule.lead-preview.offset");
+    const response = await vimobAPIRequest<SchedulePage<ScheduleEvent>>("/v1/schedule/events", {
+      organizationId: params.organizationId, signal: params.signal,
+      query: { leadId: query.leadId, leadPreview: true, limit: 50, offset },
+    });
+    validateDomainResponse(apiScheduleEventListResponseSchema, response, "schedule.lead-preview");
+    if (response.pagination && (response.pagination.offset !== offset || response.pagination.limit > 50 || response.data.length > response.pagination.limit)) {
+      throw new Error("Não foi possível carregar os compromissos. Atualize a lista.");
+    }
+    if (response.pagination?.has_more && response.data.length === 0) {
+      throw new Error("Não foi possível carregar os próximos compromissos. Atualize a lista.");
+    }
+    return response;
+  },
   async getScheduleEvents(params: {
     organizationId?: string | null;
     eventId?: string;
@@ -190,6 +212,7 @@ export const scheduleAPI = {
     leadId?: string;
     startDate?: Date;
     endDate?: Date;
+    signal?: AbortSignal;
   }) {
     const query = parseDomainInput(
       scheduleListQuerySchema,
@@ -202,26 +225,26 @@ export const scheduleAPI = {
       },
       "schedule.events.list",
     );
-    const response = await vimobAPIRequest<Envelope<ScheduleEvent[]>>(
-      "/v1/schedule/events",
-      {
-        organizationId: params.organizationId,
-        query: {
-          eventId: query.eventId,
-          userId: query.userId,
-          leadId: query.leadId,
-          startDate: query.startDate?.toISOString(),
-          endDate: query.endDate?.toISOString(),
+    return collectSchedulePages<ScheduleEvent>(async (offset, limit) => {
+      const response = await vimobAPIRequest<SchedulePage<ScheduleEvent>>(
+        "/v1/schedule/events",
+        {
+          organizationId: params.organizationId,
+          signal: params.signal,
+          query: {
+            eventId: query.eventId,
+            userId: query.userId,
+            leadId: query.leadId,
+            startDate: query.startDate?.toISOString(),
+            endDate: query.endDate?.toISOString(),
+            limit,
+            offset,
+          },
         },
-      },
-    );
-    validateDomainResponse(
-      apiScheduleEventListResponseSchema,
-      response,
-      "schedule.events.list",
-    );
-
-    return response.data;
+      );
+      validateDomainResponse(apiScheduleEventListResponseSchema, response, "schedule.events.list");
+      return response;
+    }, params.signal);
   },
 
   async createScheduleEvent(
@@ -280,6 +303,7 @@ export const scheduleAPI = {
   async completeScheduleEvent(
     eventId: string,
     input: {
+      expected_updated_at?: string;
       status: string;
       outcome?: ScheduleOutcome | null;
       outcome_notes?: string | null;
@@ -372,10 +396,11 @@ export const scheduleAPI = {
     eventId: string,
     content: string,
     organizationId?: string | null,
+    clientRequestId?: string,
   ) {
     const body = parseDomainInput(
       scheduleCommentInputSchema,
-      { content },
+      normalizeScheduleEventBody({ content, client_request_id: clientRequestId }),
       "schedule.comments.create",
     );
     const response = await vimobAPIRequest<Envelope<ScheduleComment>>(

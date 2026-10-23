@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+  [switch]$ReadOnly
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -99,6 +101,9 @@ $start.Environment['VIMOB_API_URL'] = 'https://api.vimobcrm.com.br'
 $start.Environment['NEXT_PUBLIC_SITE_URL'] = 'http://127.0.0.1:3000'
 $start.Environment['APP_PUBLIC_URL'] = 'http://127.0.0.1:3000'
 $start.Environment['NEXT_TELEMETRY_DISABLED'] = '1'
+if ($ReadOnly) {
+  $start.Environment['NEXT_PUBLIC_LOCAL_READ_ONLY'] = 'true'
+}
 
 $start.Arguments = ('"{0}" dev --webpack --hostname 127.0.0.1 --port 3000' -f $nextExecutable)
 

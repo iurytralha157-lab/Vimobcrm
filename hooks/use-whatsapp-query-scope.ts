@@ -2,19 +2,19 @@ import { useMemo } from 'react'
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useActiveOrganization } from '@/hooks/use-active-organization'
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out'
 import {
   createWhatsAppAccessScope,
   type WhatsAppQueryScope,
 } from '@/lib/whatsapp-query-cache'
 
 export function useWhatsAppQueryScope(): WhatsAppQueryScope {
-  const { profile, tenantContext } = useAuth()
+  const { profile, tenantContext, session } = useAuth()
   const activeOrganization = useActiveOrganization()
+  const authSessionId = getGlobalSignOutSessionId(session)
 
-  return useMemo(() => ({
-    organizationId: activeOrganization.organizationId,
-    userId: profile?.id ?? null,
-    accessScope: createWhatsAppAccessScope({
+  return useMemo(() => {
+    const draftAccessScope = createWhatsAppAccessScope({
       memberRole: tenantContext?.memberRole,
       permissions: tenantContext?.permissions,
       isTeamLeader: tenantContext?.isTeamLeader,
@@ -22,6 +22,14 @@ export function useWhatsAppQueryScope(): WhatsAppQueryScope {
       ledUserIds: tenantContext?.ledUserIds,
       ledPipelineIds: tenantContext?.ledPipelineIds,
       isSuperAdmin: tenantContext?.isSuperAdmin,
-    }),
-  }), [activeOrganization.organizationId, profile?.id, tenantContext])
+    })
+    return {
+      organizationId: activeOrganization.organizationId,
+      userId: profile?.id ?? null,
+      draftAccessScope,
+      // This is an opaque client lifetime pin, never proof of authorization.
+      // Same-SID token refresh stays stable; replacing SID retires old WA data.
+      accessScope: JSON.stringify([draftAccessScope, authSessionId]),
+    }
+  }, [activeOrganization.organizationId, profile?.id, tenantContext, authSessionId])
 }

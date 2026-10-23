@@ -148,3 +148,28 @@ test("CEP inválido não chama provedores externos", async () => {
     kind: "not_found",
   });
 });
+
+test("fonte reserva responde sem esperar o timeout do ViaCEP", async () => {
+  const calls: string[] = [];
+  const fetcher = ((input: RequestInfo | URL) => {
+    calls.push(String(input));
+    if (String(input).includes("viacep")) return new Promise<Response>(() => {});
+    return Promise.resolve(Response.json({ street: "Rua A", neighborhood: "Centro", city: "Cidade", state: "SP" }));
+  }) as typeof fetch;
+  const result = await lookupPropertyCep("01001000", fetcher, { timeoutMs: 200, fallbackDelayMs: 1 });
+  assert.equal(result.kind, "found");
+  assert.equal(calls.length, 2);
+});
+
+test("orçamento total limita provedores que não atendem o AbortSignal", async () => {
+  const fetcher = (() => new Promise<Response>(() => {})) as typeof fetch;
+  assert.deepEqual(await lookupPropertyCep("01001000", fetcher, { timeoutMs: 15, fallbackDelayMs: 1 }), { kind: "unavailable" });
+});
+
+test("cancelamento do usuário é distinto de CEP ausente ou provedor indisponível", async () => {
+  const controller = new AbortController();
+  const fetcher = (() => new Promise<Response>(() => {})) as typeof fetch;
+  const lookup = lookupPropertyCep("01001000", fetcher, { signal: controller.signal, fallbackDelayMs: 1 });
+  controller.abort();
+  assert.deepEqual(await lookup, { kind: "cancelled" });
+});

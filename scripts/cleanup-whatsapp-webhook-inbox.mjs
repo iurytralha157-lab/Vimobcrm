@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
 import pg from 'pg'
+import { inboxMaintenanceClasses as classDefinitions, inboxMaintenancePredicate,
+  buildInboxMaintenanceDeleteQuery } from './maintenance/whatsapp-inbox-maintenance.mjs'
 
 const PROJECT_REF = 'iemalzlfnbouobyjwlwi'
 const DEFAULT_BATCH_SIZE = 1000
@@ -88,26 +90,6 @@ const db = new Client({
   ssl: { rejectUnauthorized: false },
 })
 
-const classDefinitions = Object.freeze({
-  stale_qrcode: {
-    predicate: `
-      event_type = 'qrcode'
-      and status in ('pending', 'retry')
-      and created_at < $1::timestamptz
-    `,
-    order: 'created_at, id',
-    cutoffKey: 'qrcode_cutoff',
-  },
-  processed_older_24h: {
-    predicate: `
-      status = 'processed'
-      and processed_at < $1::timestamptz
-    `,
-    order: 'processed_at, id',
-    cutoffKey: 'processed_cutoff',
-  },
-})
-
 async function assertSchema() {
   const { rows } = await db.query(`
     select column_name
@@ -123,6 +105,8 @@ async function assertSchema() {
     'created_at',
     'processed_at',
     'dead_lettered_at',
+    'expires_at',
+    'payload',
   ]) {
     if (!columns.has(required)) throw new Error(`Schema guard failed: ${required} is missing`)
   }
@@ -146,13 +130,10 @@ async function audit() {
       count(*) filter (where status = 'processed')::bigint as processed_rows,
       count(*) filter (where status = 'dead')::bigint as dead_rows,
       count(*) filter (
-        where event_type = 'qrcode'
-          and status in ('pending', 'retry')
-          and created_at < $1::timestamptz
+        where ${inboxMaintenancePredicate('stale_qrcode')}
       )::bigint as stale_qrcode,
       count(*) filter (
-        where status = 'processed'
-          and processed_at < $2::timestamptz
+        where ${inboxMaintenancePredicate('processed_older_24h', 2)}
       )::bigint as processed_older_24h,
       count(*) filter (
         where status = 'dead'
@@ -184,27 +165,12 @@ async function audit() {
   return result
 }
 
-async function deleteBatch(definition, cutoff) {
+async function deleteBatch(name, cutoff) {
   await db.query('begin')
   try {
     await db.query(`set local lock_timeout = '3s'`)
     await db.query(`set local statement_timeout = '60s'`)
-    const { rows: [result] } = await db.query(`
-      with candidates as materialized (
-        select id
-        from public.whatsapp_webhook_inbox
-        where ${definition.predicate}
-        order by ${definition.order}
-        limit $2
-        for update skip locked
-      ), deleted as (
-        delete from public.whatsapp_webhook_inbox inbox
-        using candidates
-        where inbox.id = candidates.id
-        returning inbox.id
-      )
-      select count(*)::integer as deleted from deleted
-    `, [cutoff, batchSize])
+    const { rows: [result] } = await db.query(buildInboxMaintenanceDeleteQuery(name), [cutoff, batchSize])
     await db.query('commit')
     return result.deleted
   } catch (error) {
@@ -220,7 +186,7 @@ async function drainClass(name, definition, cutoffs) {
     let deleted
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
-        deleted = await deleteBatch(definition, cutoffs[definition.cutoffKey])
+        deleted = await deleteBatch(name, cutoffs[definition.cutoffKey])
         break
       } catch (error) {
         const retryable = ['55P03', '57014', '40P01', '40001'].includes(error.code)

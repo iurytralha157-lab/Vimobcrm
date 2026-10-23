@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(12);
 
-select col_is(
+select col_type_is(
   'public',
   'whatsapp_webhook_inbox',
   'processing_lane',
@@ -15,11 +15,11 @@ select col_default_is(
   'public',
   'whatsapp_webhook_inbox',
   'processing_lane',
-  '''backlog''::text',
+  'backlog',
   'pre-cutover webhook rows remain in the backlog lane by default'
 );
 
-select col_is(
+select col_type_is(
   'public',
   'whatsapp_webhook_inbox',
   'provider_occurred_at',
@@ -27,10 +27,17 @@ select col_is(
   'provider occurrence time is retained for lane auditing'
 );
 
-select has_check(
-  'public',
-  'whatsapp_webhook_inbox',
-  'whatsapp_webhook_inbox_processing_lane_check',
+select ok(
+  exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid='public.whatsapp_webhook_inbox'::regclass
+      and conname='whatsapp_webhook_inbox_processing_lane_check'
+      and contype='c'
+      -- NOT VALID deliberately skips historical rows; new writes still obey
+      -- this exact allowed-value expression without validating old backlog.
+      and regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')
+        = '(processing_lane=ANY(ARRAY[''live''::text,''backlog''::text]))'
+  ),
   'processing lane is constrained to the supported values'
 );
 

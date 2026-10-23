@@ -6,6 +6,7 @@ import {
   uuidSchema,
 } from "./common";
 import { dynamicRecordSchema, safePathSegmentSchema } from "./final-domains";
+import { stageInactivityPolicySchema } from '@/lib/validation/stage-inactivity';
 
 const nullableString = z.string().nullable();
 const optionalNullableString = z.string().max(20_000).nullish();
@@ -51,17 +52,6 @@ export const auditLogListInputSchema = z
     organizationId: uuidSchema.nullish(),
   })
   .strict();
-export const auditLogCreateInputSchema = z
-  .object({
-    action: z.string().trim().min(1).max(120),
-    entity_type: z.string().trim().min(1).max(120),
-    entity_id: z.string().trim().min(1).max(160).optional(),
-    old_data: dynamicRecordSchema.optional(),
-    new_data: dynamicRecordSchema.optional(),
-    organization_id: uuidSchema.optional(),
-    user_agent: z.string().max(500).optional(),
-  })
-  .strict();
 const auditLogSchema = z
   .object({
     id: uuidSchema,
@@ -90,13 +80,7 @@ export const apiAuditLogListResponseSchema = z
 
 export const auditFeedEventPayloadSchema = z
   .object({
-    auditId: uuidSchema,
     organizationId: uuidSchema,
-    actorUserId: uuidSchema.nullish(),
-    action: z.string().trim().min(1).max(120),
-    entityType: z.string().trim().min(1).max(120),
-    entityId: z.string().trim().max(160).nullish(),
-    createdAt: timestampSchema,
   })
   .passthrough();
 
@@ -107,6 +91,7 @@ const conversationLeadDetailSchema = z
     phone: nullableString,
     email: nullableString,
     created_at: timestampSchema,
+    updated_at: z.string().datetime({ offset: true }).optional(),
     deal_status: z.string(),
     tags: z.array(
       z
@@ -143,14 +128,18 @@ const leadAttachmentSchema = z
     id: uuidSchema,
     lead_id: uuidSchema,
     file_name: z.string(),
-    file_url: z.string(),
+    file_url: z.string().nullable(),
+    availability: z.enum(['ready', 'signing_unavailable', 'not_requested']).optional(),
     file_type: nullableString,
     file_size: z.number().int().min(0).nullable(),
     created_at: timestampSchema,
     created_by: uuidSchema.nullable(),
     message_id: uuidSchema.nullable(),
   })
-  .passthrough();
+  .passthrough().superRefine((attachment, ctx) => {
+    if ((attachment.availability === 'signing_unavailable' || attachment.availability === 'not_requested') && attachment.file_url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_url'], message: 'Documento indisponível não deve expor uma URL' });
+    if (attachment.availability === 'ready' && !attachment.file_url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['file_url'], message: 'Documento disponível exige uma URL' });
+  });
 export const apiLeadAttachmentResponseSchema =
   apiEnvelopeSchema(leadAttachmentSchema);
 export const apiLeadAttachmentListResponseSchema = apiEnvelopeSchema(
@@ -250,7 +239,8 @@ export const cadenceTaskCompletionInputSchema = z
     title: z.string().trim().min(1).max(500).optional(),
     description: z.string().max(10_000).optional(),
     outcome: z.string().trim().max(500).optional(),
-    outcomeNotes: z.string().max(10_000).optional(),
+      outcomeNotes: z.string().refine(value => Array.from(value.trim()).length <= 1_000,
+        'Use até 1.000 caracteres nas anotações do resultado.').optional(),
   })
   .strict()
   .refine((value) => Boolean(value.taskId || value.templateTaskId), {
@@ -1032,6 +1022,8 @@ const stageAutomationSchema = z
     organization_id: uuidSchema,
     trigger_type: z.string(),
     is_active: z.boolean().nullable(),
+    inactivity_policy: stageInactivityPolicySchema.nullish(),
+    inactivity_runtime_available: z.boolean().optional(),
   })
   .passthrough();
 const stageOperationalConfigSchema = z

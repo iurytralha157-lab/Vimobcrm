@@ -75,10 +75,23 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     await expect(page.getByRole('heading', { name: /Entrar no Vimob crm/i })).toBeVisible();
   });
 
+  test('logout local sem confirmação de revogação global mostra aviso', async ({ page }) => {
+    await page.goto('/login?logout=unverified');
+    await expect(page.getByText('Você saiu deste dispositivo, mas não conseguimos confirmar o encerramento das outras sessões.', { exact: false })).toBeVisible();
+    await expect(page).not.toHaveURL(/logout=unverified/);
+  });
+
   test('login inválido e recuperação usam respostas Auth mockadas', async ({ page }) => {
     let loginRequests = 0;
     let recoveryRequests = 0;
     let recoveryRedirectTo: string | null = null;
+    let loginErrorCode = 'invalid_credentials';
+    let loginStatus = 400;
+    let recoveryStatus = 200;
+    const consoleErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
 
     await page.route('**/auth/v1/token**', async (route) => {
       if (route.request().method() !== 'POST') {
@@ -88,12 +101,16 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
 
       loginRequests += 1;
       await route.fulfill({
-        status: 400,
+        status: loginStatus,
         contentType: 'application/json',
         body: JSON.stringify({
-          code: 'invalid_credentials',
-          message: 'Invalid login credentials',
-          msg: 'Invalid login credentials',
+          code: loginErrorCode,
+          message: loginErrorCode === 'over_request_rate_limit'
+            ? 'Too many requests'
+            : loginErrorCode === 'email_not_confirmed' ? 'Email not confirmed' : 'Invalid login credentials',
+          msg: loginErrorCode === 'over_request_rate_limit'
+            ? 'Too many requests'
+            : loginErrorCode === 'email_not_confirmed' ? 'Email not confirmed' : 'Invalid login credentials',
         }),
       });
     });
@@ -107,9 +124,13 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
       recoveryRequests += 1;
       recoveryRedirectTo = new URL(route.request().url()).searchParams.get('redirect_to');
       await route.fulfill({
-        status: 200,
+        status: recoveryStatus,
         contentType: 'application/json',
-        body: '{}',
+        body: recoveryStatus === 200
+          ? '{}'
+          : JSON.stringify(recoveryStatus === 429
+            ? { code: 'over_email_send_rate_limit', msg: 'Too many requests' }
+            : { code: 'user_not_found', msg: 'User not found' }),
       });
     });
 
@@ -119,9 +140,26 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     await page.getByRole('button', { name: 'Acessar o CRM', exact: true }).click();
 
     await expect(
-      page.getByText('E-mail ou senha inválidos. Confira os dados e tente novamente.'),
+      page.getByText('Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.'),
     ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reenviar e-mail de confirmação' })).toBeVisible();
     expect(loginRequests).toBe(1);
+
+    loginErrorCode = 'email_not_confirmed';
+    await page.getByRole('button', { name: 'Acessar o CRM', exact: true }).click();
+    await expect(
+      page.getByText('Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.'),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reenviar e-mail de confirmação' })).toBeVisible();
+    expect(loginRequests).toBe(2);
+
+    loginErrorCode = 'over_request_rate_limit';
+    loginStatus = 429;
+    await page.getByRole('button', { name: 'Acessar o CRM', exact: true }).click();
+    await expect(
+      page.getByText('Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.'),
+    ).toBeVisible();
+    expect(loginRequests).toBe(3);
 
     await page.getByRole('button', { name: 'Esqueceu sua senha?' }).click();
     await expect(page.getByRole('button', { name: 'Voltar para o login' })).toBeVisible();
@@ -133,7 +171,119 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     ).toBeVisible();
     expect(recoveryRequests).toBe(1);
     expect(recoveryRedirectTo).toBe(`${new URL(page.url()).origin}/reset-password`);
+
+    recoveryStatus = 400;
+    await page.getByLabel('Seu e-mail').fill('outro@vimob.test');
+    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
+    await expect(
+      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
+    ).toBeVisible();
+    expect(recoveryRequests).toBe(2);
+
+    recoveryStatus = 429;
+    await page.getByLabel('Seu e-mail').fill('limite@vimob.test');
+    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
+    await expect(
+      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
+    ).toBeVisible();
+    expect(recoveryRequests).toBe(3);
+    expect(consoleErrors.join(' ')).not.toMatch(/user_not_found|User not found/i);
   });
+
+  for (const failure of [
+    {
+      code: 'password_session_revocation_unconfirmed',
+      expected: 'A senha não foi atualizada porque não conseguimos confirmar a revogação das sessões.',
+    },
+    {
+      code: 'password_update_unconfirmed_after_revocation',
+      expected: 'A revogação das sessões foi aceita, mas não conseguimos confirmar se a nova senha foi salva.',
+    },
+  ]) {
+    test(`recuperação apresenta falha parcial sem declarar sucesso: ${failure.code}`, async ({ page }) => {
+      const userId = '10000000-0000-4000-8000-000000000001';
+      const user = {
+        id: userId,
+        email: 'recuperacao@vimob.test',
+        aud: 'authenticated',
+        role: 'authenticated',
+        app_metadata: { provider: 'email', providers: ['email'] },
+        user_metadata: {},
+        created_at: new Date().toISOString(),
+      };
+      const claims = Buffer.from(JSON.stringify({
+        sub: userId,
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        amr: [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }],
+      })).toString('base64url');
+      const accessToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${claims}.synthetic-signature`;
+      let passwordRequests = 0;
+      const corsHeaders = {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-supabase-api-version, x-organization-id',
+      };
+
+      await page.route('**/auth/v1/verify**', async (route) => {
+        if (route.request().method() === 'OPTIONS') {
+          await route.fulfill({ status: 204, headers: corsHeaders });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: corsHeaders,
+          body: JSON.stringify({
+            access_token: accessToken,
+            refresh_token: 'synthetic-refresh-token',
+            token_type: 'bearer',
+            expires_in: 3600,
+            user,
+          }),
+        });
+      });
+      await page.route('**/auth/v1/user**', async (route) => {
+        if (route.request().method() === 'OPTIONS') {
+          await route.fulfill({ status: 204, headers: corsHeaders });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: corsHeaders,
+          body: JSON.stringify(user),
+        });
+      });
+      await page.route('**/auth/v1/logout**', async (route) => {
+        await route.fulfill({ status: 204, headers: corsHeaders });
+      });
+      await page.route('**/v1/settings/password', async (route) => {
+        if (route.request().method() === 'OPTIONS') {
+          await route.fulfill({ status: 204, headers: corsHeaders });
+          return;
+        }
+        passwordRequests += 1;
+        await route.fulfill({
+          status: 502,
+          contentType: 'application/json',
+          headers: corsHeaders,
+          body: JSON.stringify({ error: { code: failure.code, message: 'Password change incomplete.' } }),
+        });
+      });
+
+      await page.goto('/reset-password?token_hash=synthetic-recovery&type=recovery');
+      await expect(page.getByRole('heading', { name: 'Defina sua nova senha' })).toBeVisible();
+      await page.getByLabel('Nova senha', { exact: true }).fill('VimobRecovery!2026');
+      await page.getByLabel('Confirmar nova senha').fill('VimobRecovery!2026');
+      await page.getByRole('button', { name: 'Alterar senha' }).click();
+
+      await expect(page.getByRole('heading', { name: 'Não foi possível concluir' })).toBeVisible();
+      await expect(page.getByText(failure.expected, { exact: false })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Senha alterada com sucesso' })).toHaveCount(0);
+      expect(passwordRequests).toBe(1);
+    });
+  }
 
   test('cadastro e reset bloqueiam avanço inválido sem mutação remota', async ({ page }) => {
     const mutationRequests: string[] = [];

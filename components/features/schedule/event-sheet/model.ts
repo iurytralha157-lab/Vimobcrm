@@ -1,11 +1,11 @@
-import { differenceInMinutes, format, isSameDay } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { differenceInMinutes, isSameDay } from "date-fns";
 import { formatBRLCurrencyWithDefaultDecimals } from "../../../../lib/utils/formatting";
 import {
   getLocalScheduleCivilDateKey,
   getNextScheduleCivilDate,
   scheduleCivilDateTimeToDate,
 } from "../../../../lib/schedule-time-zone";
+import { DEFAULT_SCHEDULE_TIME_ZONE } from "@/lib/schedule-outcome";
 
 export const recurrenceOptions = [
   { value: "none", label: "Não se repete" },
@@ -143,18 +143,32 @@ export function getInitialStartDate({
   return selected;
 }
 
-export function formatScheduleTimestamp(value: string | null | undefined) {
+export function formatScheduleTimestamp(value: string | null | undefined, timeZone = DEFAULT_SCHEDULE_TIME_ZONE) {
   if (!value) return "Data indisponível";
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? "Data indisponível"
-    : format(date, "dd/MM HH:mm", { locale: ptBR });
+    : new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone,
+      }).format(date).replace(",", "");
 }
 
 export function getDefaultDurationMinutes(
   eventType: string | null | undefined,
 ) {
   return eventType === "visit" || eventType === "meeting" ? 60 : 30;
+}
+
+export function getSchedulePerformerName(event: {
+  performed_by?: string | null;
+  completed_by?: string | null;
+  performed_by_user?: { name: string } | null;
+  completed_by_user?: { name: string } | null;
+}) {
+  return event.performed_by_user?.name ||
+    (event.performed_by && event.performed_by === event.completed_by
+      ? event.completed_by_user?.name
+      : null) || null;
 }
 
 export function getStoredDurationMinutes({
@@ -168,7 +182,7 @@ export function getStoredDurationMinutes({
 }) {
   const fallback = getDefaultDurationMinutes(eventType);
   if (!end || Number.isNaN(end.getTime())) return fallback;
-  const duration = differenceInMinutes(end, start);
+  const duration = (end.getTime() - start.getTime()) / 60_000;
   return duration > 0 ? duration : fallback;
 }
 

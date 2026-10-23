@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 
 import { CONTACT_PAGE_SIZE_OPTIONS, parseContactPageInput } from "./model";
+import { useContactPaginationClearance } from "@/hooks/contacts/use-contact-pagination-clearance";
 
 type ContactsPaginationProps = {
   page: number;
@@ -36,6 +37,8 @@ export function ContactsPagination({
   onPageSizeChange,
 }: ContactsPaginationProps) {
   const [pageInputValue, setPageInputValue] = useState("1");
+  const footerRef = useRef<HTMLDivElement>(null);
+  useContactPaginationClearance(footerRef, totalPages > 1 || totalCount > 0);
 
   useEffect(() => {
     let isActive = true;
@@ -59,9 +62,10 @@ export function ContactsPagination({
   };
 
   return (
-    <div className="app-toolbar contacts-pagination flex min-h-10 flex-wrap items-center justify-between gap-2 rounded-none px-2 py-1">
-      <div className="flex items-center gap-2">
-        <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
+    <div ref={footerRef} className="app-toolbar contacts-pagination flex min-h-10 flex-col items-stretch gap-1.5 rounded-none py-2 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-2 md:py-1"
+      style={{ paddingLeft: "max(8px, env(safe-area-inset-left), var(--contacts-pagination-clearance-left, 0px))", paddingRight: "max(8px, env(safe-area-inset-right), var(--contacts-pagination-clearance-right, 0px))" }}>
+      <div className="flex min-w-0 items-center justify-between gap-2 md:flex-wrap md:justify-start">
+        <p className="min-w-0 break-words text-[10px] font-light text-[var(--app-text-secondary)] md:text-[12px]">
           Página {page} de {totalPages || 1}
         </p>
         <Select
@@ -73,9 +77,12 @@ export function ContactsPagination({
         >
           <SelectTrigger
             aria-label="Contatos por página"
-            className="h-8 w-[112px] rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none"
+            className="h-8 w-24 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[10px] font-light shadow-none md:w-[112px] md:text-[11px]"
           >
-            <SelectValue />
+            <SelectValue>
+              <span className="md:hidden">{pageSize} / pág.</span>
+              <span className="hidden md:inline">{pageSize} por página</span>
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {CONTACT_PAGE_SIZE_OPTIONS.map((size) => (
@@ -87,7 +94,7 @@ export function ContactsPagination({
         </Select>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="grid w-full min-w-0 grid-cols-[32px_32px_minmax(32px,1fr)_32px_32px] items-center gap-1 md:flex md:w-auto md:max-w-full md:flex-wrap">
         <Button
           variant="outline"
           size="icon"
@@ -111,7 +118,7 @@ export function ContactsPagination({
           <ChevronLeft className="h-4 w-4" />
         </Button>
 
-        <div className="flex items-center gap-1 mx-2">
+        <div className="flex min-w-0 items-center justify-center gap-1 md:mx-2">
           <Input
             type="text"
             inputMode="numeric"
@@ -122,9 +129,9 @@ export function ContactsPagination({
               if (event.key === "Enter") applyPageInput();
             }}
             onBlur={applyPageInput}
-            className="h-8 w-12 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-1 text-center text-[11px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
+            className="h-8 w-full min-w-0 max-w-12 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-1 text-center text-[11px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 md:w-12"
           />
-          <span className="text-[12px] font-light text-[var(--app-text-secondary)]">
+          <span className="hidden text-[12px] font-light text-[var(--app-text-secondary)] md:inline">
             / {totalPages}
           </span>
         </div>

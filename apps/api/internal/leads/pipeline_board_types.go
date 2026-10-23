@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 )
 
 const (
@@ -43,6 +44,7 @@ type PipelineBoardFilter struct {
 	FilterDealStatus string
 	FilterPage       string
 	FilterCampaign   string
+	FilterCampaigns  []string
 	FilterAdSet      string
 	FilterAd         string
 	FilterSource     string
@@ -86,6 +88,7 @@ type PipelineBoardLead struct {
 	AssignedUserID            *string                 `json:"assigned_user_id"`
 	TeamID                    *string                 `json:"team_id"`
 	CanOperate                bool                    `json:"can_operate"`
+	QueuePool                 *QueuePoolMetadata      `json:"queuePool,omitempty"`
 	PipelineID                *string                 `json:"pipeline_id"`
 	Message                   *string                 `json:"message"`
 	StageEnteredAt            *time.Time              `json:"stage_entered_at"`
@@ -118,6 +121,7 @@ type PipelineBoardLead struct {
 type PipelineStageLeadsResponse struct {
 	StageID string              `json:"stageId"`
 	Leads   []PipelineBoardLead `json:"leads"`
+	HasMore bool                `json:"hasMore"`
 }
 
 type PipelineStageCountsResponse struct {
@@ -221,8 +225,29 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		}
 	}
 	filterPage := strings.TrimSpace(values.Get("filterPage"))
-	if len(filterPage) > maxPipelineMetaFilterText {
+	if len([]rune(filterPage)) > maxPipelineMetaFilterText {
 		return PipelineBoardFilter{}, fmt.Errorf("%w: filterPage is too long", ErrInvalidInput)
+	}
+	filterCampaigns, err := normalizeDashboardCampaignFilterIDs(values.Get("filterCampaign"), values["filterCampaigns"])
+	if err != nil {
+		return PipelineBoardFilter{}, err
+	}
+	for _, value := range filterCampaigns {
+		if strings.ContainsRune(value, '\x00') {
+			return PipelineBoardFilter{}, fmt.Errorf("%w: invalid filterCampaigns", ErrInvalidInput)
+		}
+	}
+	for name, maximum := range map[string]int{"search": 180, "filterSource": maxLeadSourceFilterLength, "filterPage": 255, "filterAdSet": 255, "filterAd": 255} {
+		value := strings.TrimSpace(values.Get(name))
+		if name == "search" {
+			value = searchtext.PipelineTrim(values.Get(name))
+		}
+		if len([]rune(value)) > maximum || strings.ContainsRune(value, '\x00') {
+			return PipelineBoardFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, name)
+		}
+	}
+	if status := cleanContactFilterValue(values.Get("filterDealStatus")); status != "" && !validEnum(status, "open", "won", "lost") {
+		return PipelineBoardFilter{}, fmt.Errorf("%w: filterDealStatus is invalid", ErrInvalidInput)
 	}
 
 	return PipelineBoardFilter{
@@ -231,7 +256,7 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		StageIDs:         stageIDs,
 		Offset:           offset,
 		Limit:            limit,
-		Search:           strings.TrimSpace(values.Get("search")),
+		Search:           searchtext.PipelineTrim(values.Get("search")),
 		Unassigned:       unassigned,
 		TeamID:           strings.TrimSpace(values.Get("teamId")),
 		FilterUserID:     strings.TrimSpace(values.Get("filterUserId")),
@@ -242,6 +267,7 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		FilterDealStatus: strings.TrimSpace(values.Get("filterDealStatus")),
 		FilterPage:       filterPage,
 		FilterCampaign:   strings.TrimSpace(values.Get("filterCampaign")),
+		FilterCampaigns:  filterCampaigns,
 		FilterAdSet:      strings.TrimSpace(values.Get("filterAdSet")),
 		FilterAd:         strings.TrimSpace(values.Get("filterAd")),
 		FilterSource:     strings.TrimSpace(values.Get("filterSource")),

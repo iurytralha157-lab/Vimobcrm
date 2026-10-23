@@ -3,6 +3,9 @@ export type JsonRecord = Record<string, unknown>;
 export type PublicPropertyPublication = {
   id: string;
   property_id: string;
+  organization_id: string;
+  channel: unknown;
+  channel_account_key: unknown;
   desired_state: unknown;
   published_version: unknown;
 };
@@ -23,7 +26,11 @@ export type PublicPropertyFilters = {
   bedrooms?: number | null;
 };
 
-const PUBLIC_PROPERTY_STATUSES = new Set(["active", "ativo"]);
+const PUBLIC_PROPERTY_STATUSES = new Set(["active", "ativo", "available", "disponivel"]);
+
+function normalizedPublicStatus(value: unknown) {
+  return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
 
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -100,11 +107,15 @@ export function normalizePublicAddressVisibility(value: unknown) {
     case "minimo":
     case "mínimo":
     case "minimum":
+    case "minimal":
     case "city":
     case "cidade":
       return "minimo";
-    default:
+    case "parcial":
+    case "partial":
       return "parcial";
+    default:
+      return "minimo";
   }
 }
 
@@ -116,18 +127,23 @@ export function extractPublishedPropertySnapshot(payload: unknown) {
 /**
  * Mirrors the Go public-site boundary. Once a site/default publication row
  * exists, its desired state and immutable published version are authoritative;
- * the compatibility boolean is considered only while no canonical row exists.
+ * the compatibility boolean remains usable during its first canonical delivery.
  */
 export function publicPropertyIsEligible(
   property: JsonRecord | null,
   context: PublicPropertyPublicationContext,
 ) {
-  if (!property || !PUBLIC_PROPERTY_STATUSES.has(text(property.status).toLowerCase())) {
+  if (!property || property.autorizado_comercializacao === false || !PUBLIC_PROPERTY_STATUSES.has(normalizedPublicStatus(property.status))) {
     return false;
   }
   if (context.ambiguous) return false;
 
   if (context.publication) {
+    if (text(context.publication.id) === "" || text(context.publication.property_id) !== text(property.id)
+      || !text(property.organization_id) || context.publication.organization_id !== property.organization_id
+      || context.publication.channel !== "site" || context.publication.channel_account_key !== "default"
+      || context.publication.desired_state !== "published") return false;
+    if (context.publication.published_version === null) return property.published_on_site === true;
     const publishedVersion = finiteNumber(context.publication.published_version);
     return text(context.publication.id) !== "" &&
       text(context.publication.property_id) === text(property.id) &&

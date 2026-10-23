@@ -59,7 +59,24 @@ func lockOwnedConnectedEvolutionSession(
 	return err
 }
 
-// Send acquires the session fence before locking the conversation and lead.
+// Actors precede the session, conversation and lead. Discover the owner without
+// a resource lock, then recheck that exact identity after acquiring the session.
+func lockWhatsAppSessionActors(ctx context.Context, tx pgx.Tx, actor tenant.Context, sessionID string) (string, error) {
+	var ownerID string
+	err := tx.QueryRow(ctx, `select owner_user_id::text from public.whatsapp_sessions where organization_id=$1::uuid and id=$2::uuid`, actor.OrganizationID, sessionID).Scan(&ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrSessionNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := lockWhatsAppUserMembershipRows(ctx, tx, actor.OrganizationID, actor.UserID, ownerID); err != nil {
+		return "", err
+	}
+	return ownerID, nil
+}
+
+// Send acquires actor fences before the session, conversation and lead.
 // A grant alone is insufficient: SendMessage rechecks assignment under the
 // lead lock before writing the durable outbound.
 func lockConversationSendSession(
@@ -68,8 +85,12 @@ func lockConversationSendSession(
 	tenantContext tenant.Context,
 	sessionID string,
 ) error {
+	ownerID, err := lockWhatsAppSessionActors(ctx, tx, tenantContext, sessionID)
+	if err != nil {
+		return err
+	}
 	var lockedSessionID, lockedStatus string
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		select ws.id::text, coalesce(ws.status, '')
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
@@ -77,9 +98,10 @@ func lockConversationSendSession(
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
+		  and ws.owner_user_id = $4::uuid
 		  and (ws.owner_user_id = $3::uuid or `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`)
 		for share of ws
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&lockedSessionID, &lockedStatus)
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, ownerID).Scan(&lockedSessionID, &lockedStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrSessionNotFound
 	}

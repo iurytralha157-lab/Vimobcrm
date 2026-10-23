@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
+import { isWhatsAppUTC6Timestamp } from '@/lib/whatsapp-message-order'
 
 export const whatsAppProviderSchema = z.enum(['evolution', 'evolution_go'])
 export const whatsAppAccessModeSchema = z.literal('assigned_leads_only')
@@ -34,11 +35,64 @@ export const startWhatsAppConversationInputSchema = z.object({
   leadId: uuidSchema.optional(),
   leadName: z.string().trim().max(180).optional(),
   expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
-}).strict()
+  ownSessionOnly: z.boolean().optional(),
+  confirmPhoneChange: z.boolean().optional(),
+  expectedPreviousConversationId: uuidSchema.optional(),
+  confirmDestinationHistory: z.boolean().optional(),
+  expectedDestinationConversationId: uuidSchema.optional(),
+}).strict().refine(input => input.confirmPhoneChange
+  ? Boolean(input.leadId && input.sessionId && input.expectedPreviousConversationId && input.expectedPreviousLeadId === input.leadId)
+  : !input.expectedPreviousConversationId,
+  'A confirmação da troca de telefone exige o lead, sessão e conversa anteriores',
+).refine(input => input.confirmDestinationHistory
+  ? Boolean(input.confirmPhoneChange && input.expectedDestinationConversationId)
+  : !input.expectedDestinationConversationId,
+  'O vínculo do histórico de destino exige confirmação da troca e a conversa exata',
+)
+
+export const whatsAppPhoneChangeConfirmationSchema = z.object({
+  conversationId: uuidSchema,
+  leadId: uuidSchema,
+  sessionId: uuidSchema,
+  destinationConversationId: uuidSchema.optional(),
+  requiresDestinationHistoryConfirmation: z.literal(true).optional(),
+}).strict().refine(input => Boolean(input.destinationConversationId) === Boolean(input.requiresDestinationHistoryConfirmation),
+  'A referência de destino exige confirmação do histórico')
 
 export const linkWhatsAppConversationLeadInputSchema = z.object({
   leadId: uuidSchema,
   expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
+  ownSessionOnly: z.boolean().optional(),
+}).strict()
+
+export const whatsAppConversationLinkPreviewSchema = z.object({
+  conversationId: uuidSchema,
+  sessionId: uuidSchema,
+  sessionDisplayName: z.string().min(1),
+  contactDisplayName: z.string().min(1),
+  leadId: uuidSchema.nullable(),
+  expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
+  eligibleMessageCount: nonNegativeIntegerSchema,
+  firstEligibleAt: timestampSchema.nullable(),
+  lastEligibleAt: timestampSchema.nullable(),
+  expiresAt: timestampSchema.nullable(),
+  bindingMode: z.enum(['active', 'history_only']),
+}).strict()
+
+export const whatsAppConversationLinkPreviewResponseSchema = apiEnvelopeSchema(
+  whatsAppConversationLinkPreviewSchema,
+)
+
+export const whatsAppConversationLinkResultResponseSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    bindingMode: z.enum(['active', 'history_only']),
+    attachedMessageCount: nonNegativeIntegerSchema,
+    historyFirstAt: timestampSchema.nullish(),
+    historyLastAt: timestampSchema.nullish(),
+    expiresAt: timestampSchema.nullish(),
+    confirmedAt: timestampSchema.nullish(),
+  }).strict(),
 }).strict()
 
 export const sendWhatsAppMessageInputSchema = z.object({
@@ -51,6 +105,7 @@ export const sendWhatsAppMessageInputSchema = z.object({
   filename: z.string().trim().max(255).optional(),
   sendSessionId: uuidSchema.optional(),
   clientMessageId: z.string().trim().min(1).max(200).optional(),
+  quotedMessageId: uuidSchema.optional(),
 }).strict().refine(
   (input) => input.text.trim().length > 0 || Boolean(input.mediaUrl || input.base64),
   'Informe texto ou midia',
@@ -184,6 +239,10 @@ export const whatsAppConversationSchema = z.object({
   presence_updated_at: timestampSchema.nullable(),
   last_message: z.string().nullable(),
   last_message_at: timestampSchema.nullable(),
+  last_message_from_me: z.boolean().nullable().optional(),
+  last_message_status: z.string().nullable().optional(),
+  last_message_id: uuidSchema.nullable().optional(),
+  last_message_sent_at: z.string().datetime({ offset: true }).nullable().optional(),
   unread_count: nonNegativeIntegerSchema,
   is_group: z.boolean(),
   archived_at: timestampSchema.nullable(),
@@ -213,6 +272,27 @@ export const whatsAppMessageSchema = z.object({
   message_type: z.string().min(1),
   media_url: z.string().nullable(),
   media_mime_type: z.string().nullable(),
+  media_filename: z.string().max(255).nullable().optional(),
+  contacts: z.array(z.object({
+    display_name: z.string().max(160),
+    phones: z.array(z.string().max(32)).max(5).optional(),
+  }).strict()).max(5).optional(),
+  location: z.object({
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+    name: z.string().max(160).optional(),
+    address: z.string().max(300).optional(),
+  }).strict().optional(),
+  quoted_message: z.discriminatedUnion('available', [
+    z.object({ message_id: z.string().min(1).max(200), available: z.literal(false) }).strict(),
+    z.object({
+      message_id: z.string().min(1).max(200), available: z.literal(true), id: uuidSchema,
+      from_me: z.boolean().optional(), content: z.string().max(10_000).optional(),
+      message_type: z.string().max(64).optional(), sender_name: z.string().max(160).optional(),
+      sender_user_id: uuidSchema.nullable().optional(),
+      media_filename: z.string().max(255).optional(),
+    }).strict(),
+  ]).optional(),
   media_status: z.enum(['pending', 'ready', 'failed']).nullable().optional(),
   media_error: z.string().nullable().optional(),
   media_size: nonNegativeIntegerSchema.nullable().optional(),
@@ -224,13 +304,17 @@ export const whatsAppMessageSchema = z.object({
   reaction_sender_name: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   status: z.string(),
+  can_quote: z.boolean().optional(),
+  can_react: z.boolean().optional(),
   delivery_error_code: z.enum(['recipient_not_registered', 'outcome_unknown', 'send_failed']).nullable().optional(),
+  delivery_error_reason: z.literal('media_integrity_unverified').optional(),
   delivery_failed_at: timestampSchema.nullable().optional(),
   sent_at: timestampSchema,
   delivered_at: timestampSchema.nullable(),
   read_at: timestampSchema.nullable(),
   sender_jid: z.string().nullable(),
   sender_name: z.string().nullable(),
+  sender_user_id: uuidSchema.nullable().optional(),
 }).passthrough()
 
 export const whatsAppSessionsResponseSchema = z.object({
@@ -259,6 +343,9 @@ export const whatsAppConversationsResponseSchema = apiEnvelopeSchema(z.array(wha
 const whatsAppConversationFilterOptionSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
+  color: z.string().max(32).optional(),
+  campaignId: z.string().optional(),
+  adsetId: z.string().optional(),
 }).strict()
 export const whatsAppConversationFilterOptionsResponseSchema = apiEnvelopeSchema(z.object({
   pipelines: z.array(whatsAppConversationFilterOptionSchema),
@@ -268,6 +355,10 @@ export const whatsAppConversationFilterOptionsResponseSchema = apiEnvelopeSchema
   tags: z.array(whatsAppConversationFilterOptionSchema),
   pages: z.array(whatsAppConversationFilterOptionSchema),
   campaigns: z.array(whatsAppConversationFilterOptionSchema),
+  adSets: z.array(whatsAppConversationFilterOptionSchema.extend({ campaignId: z.string().min(1) })).optional(),
+  ads: z.array(whatsAppConversationFilterOptionSchema.extend({ campaignId: z.string().min(1), adsetId: z.string().min(1) })).optional(),
+  hasMore: z.boolean().optional(),
+  nextOffset: z.number().int().nonnegative().nullable().optional(),
 }).strict())
 export const whatsAppUnreadCountResponseSchema = z.object({
   count: nonNegativeIntegerSchema,
@@ -275,6 +366,14 @@ export const whatsAppUnreadCountResponseSchema = z.object({
 export const whatsAppConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema)
 export const whatsAppOptionalConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema.nullable())
 const whatsAppMessageCursorSchema = z.string().refine((cursor) => {
+  const parts = cursor.split('|')
+  if (parts[0] === 'v2') {
+    return parts.length === 4
+      && isWhatsAppUTC6Timestamp(parts[1])
+      && isWhatsAppUTC6Timestamp(parts[2])
+      && parts[3] === parts[3].toLowerCase()
+      && uuidSchema.safeParse(parts[3]).success
+  }
   const [timestamp, id, ...extra] = cursor.split('|')
   if (extra.length > 0 || Number.isNaN(Date.parse(timestamp))) return false
   return id === undefined || uuidSchema.safeParse(id).success
@@ -303,6 +402,14 @@ export const sendWhatsAppMessageResponseSchema = z.object({
   message: whatsAppMessageSchema.optional(),
   providerData: z.record(z.unknown()).optional(),
 }).passthrough()
+
+export const whatsAppSendStatusQuerySchema = z.object({
+  expectedLeadId: uuidSchema,
+  clientMessageId: z.string().trim().min(1).max(200),
+}).strict()
+
+export const whatsAppSendStatusResponseSchema = sendWhatsAppMessageResponseSchema
+  .omit({ providerData: true }).strict()
 
 export const reactWhatsAppMessageInputSchema = z.object({
 	emoji: z.string()

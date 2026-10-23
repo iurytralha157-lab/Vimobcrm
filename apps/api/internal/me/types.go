@@ -16,6 +16,12 @@ type SessionProfile struct {
 	Organization map[string]any `json:"organization"`
 }
 
+type AccountStatus struct {
+	ProfileExists  bool `json:"profileExists"`
+	GloballyActive bool `json:"globallyActive"`
+	IsSuperAdmin   bool `json:"isSuperAdmin"`
+}
+
 type SwitchOrganizationRequest struct {
 	OrganizationID string `json:"organizationId"`
 }

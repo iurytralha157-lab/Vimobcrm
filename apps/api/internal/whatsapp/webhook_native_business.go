@@ -131,6 +131,9 @@ func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvoluti
 			return recoveredRule, nil
 		}
 	}
+	if nativePostFormFollowUp(message) && !message.legacyContextualIntake {
+		return nativeInboundRule{}, nil
+	}
 
 	rows, err := tx.Query(ctx, nativeInboundRulesQuery, session.OrganizationID, session.ID)
 	if err != nil {
@@ -251,7 +254,7 @@ func nativeManagedWhatsAppEntryLookupFailure(lookup nativeManagedWhatsAppEntryLo
 }
 
 func validateNativeManagedProviderMessageIdentity(message nativeEvolutionMessage, rule nativeInboundRule) error {
-	if !rule.ManagedMessageDistribution && !message.IsCTWAAd {
+	if !rule.ManagedMessageDistribution && !nativeCTWAIntakeEligible(message) {
 		return nil
 	}
 	providerMessageID := strings.TrimSpace(message.ProviderMessageID)
@@ -269,13 +272,16 @@ func validateNativeManagedProviderMessageIdentity(message nativeEvolutionMessage
 // rules: a matching managed mirror always wins for a confirmed CTWA ad, while
 // normal WhatsApp messages ignore managed mirrors entirely.
 func selectNativeInboundRule(rules []nativeInboundRule, message nativeEvolutionMessage) nativeInboundRule {
+	if nativePostFormFollowUp(message) && !message.legacyContextualIntake {
+		return nativeInboundRule{}
+	}
 	firstManual := nativeInboundRule{}
 	for _, rule := range rules {
 		if !nativeInboundRuleMatches(rule, message) {
 			continue
 		}
 		if rule.ManagedMessageDistribution {
-			if message.IsCTWAAd {
+			if nativeCTWAIntakeEligible(message) {
 				return rule
 			}
 			continue
@@ -588,7 +594,7 @@ func applyNativeInboundBusinessEffects(
 			"last_whatsapp_session_id": session.ID,
 			"last_whatsapp_remote_jid": conversation.RemoteJID,
 		}
-		if message.IsCTWAAd {
+		if nativeCTWAIntakeEligible(message) {
 			leadMetadata["whatsapp_attribution"] = attribution
 		}
 		metadataPatch := jsonb(leadMetadata)
@@ -602,7 +608,7 @@ func applyNativeInboundBusinessEffects(
 			return err
 		}
 	}
-	if !message.IsCTWAAd {
+	if !nativeCTWAIntakeEligible(message) {
 		if rule.ManagedMessageDistribution {
 			return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule, suppressLeadMessage)
 		}
@@ -828,7 +834,7 @@ func processNativeManagedWhatsAppLeadEntry(
 	if err := validateNativeManagedWhatsAppLeadEntryResult(result); err != nil {
 		return err
 	}
-	if !message.IsCTWAAd {
+	if !nativeCTWAIntakeEligible(message) {
 		return nil
 	}
 	return enrichNativeManagedWhatsAppLeadEntryAttribution(
@@ -853,7 +859,7 @@ func enrichNativeManagedWhatsAppLeadEntryAttribution(
 	message nativeEvolutionMessage,
 	allowMissing bool,
 ) error {
-	if !message.IsCTWAAd || strings.TrimSpace(leadID) == "" {
+	if !nativeCTWAIntakeEligible(message) || strings.TrimSpace(leadID) == "" {
 		return nil
 	}
 	var enriched bool

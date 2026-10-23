@@ -1,9 +1,9 @@
-import { DREData, DRELine } from '@/hooks/use-dre';
+import type { DREData, DRELine } from '@/hooks/use-dre';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { formatLocalizedBRLCurrency } from '@/lib/utils/formatting';
 
@@ -75,7 +75,7 @@ export function DREReport({ data, showPrevious, regime }: DREReportProps) {
     return '';
   };
 
-  const periodLabel = `${format(new Date(data.period.start), 'dd/MM/yyyy', { locale: ptBR })} a ${format(new Date(data.period.end), 'dd/MM/yyyy', { locale: ptBR })}`;
+  const periodLabel = `${format(parseISO(data.period.start), 'dd/MM/yyyy', { locale: ptBR })} a ${format(parseISO(data.period.end), 'dd/MM/yyyy', { locale: ptBR })}`;
   return (
     <Card>
       <CardHeader className="pb-3">

@@ -29,6 +29,7 @@ import {
 import { notificationsAPI } from "@/lib/api/notifications";
 import { cn } from "@/lib/utils";
 import { AdminWarning, KpiCard } from "@/components/features/admin/AdminPrimitives";
+import { WhatsAppNotificationQueueReset } from "@/components/features/admin/WhatsAppNotificationQueueReset";
 import { formatDate, getErrorMessage } from "@/components/features/admin/admin-display";
 import {
   getNotificationDispatchForm,
@@ -44,7 +45,7 @@ function NotificationDispatcherSettings({
   settings?: AdminNotificationDispatchSettings;
   isLoading: boolean;
 }) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
   const organizationId = activeOrganization.organizationId || "";
   const userId = profile?.id || "";
@@ -563,6 +564,7 @@ export function AdminSettingsContent({ technical = false }: { technical?: boolea
       {technical ? (
         <>
           <NotificationDispatcherSettings settings={settings} isLoading={settingsQuery.isPending} />
+          <WhatsAppNotificationQueueReset />
           <NotificationDeliveryOperationsPanel />
         </>
       ) : (

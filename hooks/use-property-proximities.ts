@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useAuth } from '@/contexts/AuthContext'
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
 import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyCatalogAPI, type PropertyCatalogItem } from '@/lib/api/property-catalog'
 
@@ -56,38 +56,36 @@ export function usePropertyProximities() {
 
 export function useCreatePropertyProximity() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (name: string, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      const { data } = await propertyCatalogAPI.createProximity(organizationId, name)
+      const { data } = await propertyCatalogAPI.createProximity(organizationId, name, scope.requestIntent)
       return toPropertyProximity(data)
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-proximities'] })
-      toast.success('Proximidade adicionada!')
+      if (scope.isCurrent()) toast.success('Proximidade adicionada!')
     },
-    onError: (error) => {
-      toast.error(error.message)
+    onError: (error, _input, scope) => {
+      if (scope.isCurrent()) toast.error(error.message)
     },
   })
 }
 
 export function useSeedDefaultProximities() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async () => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (_input: void, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyCatalogAPI.seedProximities(organizationId, DEFAULT_PROXIMITIES)
+      await propertyCatalogAPI.seedProximities(organizationId, DEFAULT_PROXIMITIES, scope.requestIntent)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['property-proximities'] })

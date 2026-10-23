@@ -1,3 +1,5 @@
+import { filterOpenPropertyInventory } from "../_shared/property-inventory-eligibility.ts";
+
 const PUBLICATION_QUERY_BATCH_SIZE = 50;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -43,6 +45,14 @@ function normalizeStatus(value: unknown) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+}
+
+function publicAddressVisibility(property: PropertyRecord) {
+  const value = typeof property.address_visibility === "string" && property.address_visibility.trim()
+    ? property.address_visibility : property.public_address_visibility;
+  const normalized = normalizeStatus(value);
+  return ["completo", "complete", "full"].includes(normalized) ? "completo"
+    : ["parcial", "partial"].includes(normalized) ? "parcial" : "minimo";
 }
 
 function chunk<T>(values: T[]) {
@@ -92,6 +102,7 @@ function publishedPropertySnapshot(
   const payload = record(row.payload);
   const property = record(payload?.property);
   if (!property || property.id !== liveProperty.id) return null;
+  const visibility = publicAddressVisibility({ public_address_visibility: property.public_address_visibility });
 
   // Canonical versions use the public-site schema. Project only those frozen
   // public fields; never merge unpublished live values over the snapshot.
@@ -105,7 +116,7 @@ function publishedPropertySnapshot(
     tipo_de_negocio: property.finalidade,
     status: liveProperty.status,
     destaque: property.destaque,
-    bairro: property.bairro,
+    bairro: visibility === "minimo" ? null : property.bairro,
     cidade: property.cidade,
     uf: property.estado,
     quartos: property.quartos,
@@ -121,12 +132,30 @@ function publishedPropertySnapshot(
   };
 }
 
+function legacyPublicProperty(live: PropertyRecord) {
+  // A compatibility announcement still obeys the public field boundary. Its
+  // internal description and private metadata must not enter an AI response.
+  const hidden = record(live.metadata)?.hidden_site_image_urls;
+  const image = Array.isArray(hidden) && hidden.includes(live.imagem_principal) ? null : live.imagem_principal;
+  const visibility = publicAddressVisibility(live);
+  return {
+    id: live.id, organization_id: live.organization_id, code: live.code,
+    title: live.title, descricao: live.descricao_site, tipo_de_imovel: live.tipo_de_imovel,
+    tipo_de_negocio: live.tipo_de_negocio, status: live.status, destaque: live.destaque,
+    bairro: visibility === "minimo" ? null : live.bairro, cidade: live.cidade, uf: live.uf, quartos: live.quartos,
+    suites: live.suites, banheiros: live.banheiros, vagas: live.vagas,
+    area_util: live.area_util, area_total: live.area_total, preco: live.preco,
+    valor_locacao: live.valor_locacao, imagem_principal: image, published_on_site: true,
+  };
+}
+
 /**
  * Mirrors the Go public-site boundary. A property is externally visible only
  * while its live status is active. Once a site/default publication row exists,
  * that row is authoritative and requires both the published desired state and
  * the exact durable version referenced by published_version. The legacy flag
- * is accepted only when no canonical site/default row exists.
+ * remains accepted during the first canonical delivery of an already-public
+ * legacy listing. Withdrawal, pauses and malformed versions never fall back.
  */
 export function eligiblePublicPropertyIds(input: {
   organizationId: string;
@@ -141,8 +170,10 @@ export function eligiblePublicPropertyIds(input: {
     if (
       !propertyId ||
       property.organization_id !== input.organizationId ||
-      !["active", "ativo"].includes(normalizeStatus(property.status))
+      property.autorizado_comercializacao === false ||
+      !["active", "ativo", "available", "disponivel"].includes(normalizeStatus(property.status))
     ) continue;
+    if (input.publications.some((row) => row.property_id === propertyId && !canonicalSitePublication(row, input.organizationId, propertyId))) continue;
 
     const publications = input.publications.filter((publication) =>
       canonicalSitePublication(publication, input.organizationId, propertyId)
@@ -157,6 +188,11 @@ export function eligiblePublicPropertyIds(input: {
     }
 
     const publication = publications[0];
+    if (typeof publication.id !== "string" || !UUID_PATTERN.test(publication.id) || publication.desired_state !== "published") continue;
+    if (publication.published_version === null) {
+      if (property.published_on_site === true) eligibleIds.add(propertyId);
+      continue;
+    }
     const publishedVersion = positivePublishedVersion(publication.published_version);
     if (publication.desired_state !== "published" || publishedVersion === null) continue;
 
@@ -188,11 +224,11 @@ export async function filterPublicSiteEligibleProperties(
   organizationId: string,
   properties: PropertyRecord[],
 ) {
-  const candidates = properties.filter((property) =>
+  const candidates = await filterOpenPropertyInventory(supabase, organizationId, properties.filter((property) =>
     property?.organization_id === organizationId &&
     typeof property?.id === "string" &&
     property.id.length > 0
-  );
+  ));
   const propertyIds = [...new Set(candidates.map((property) => property.id as string))];
   if (!propertyIds.length) return [];
 
@@ -261,11 +297,11 @@ export async function filterPublicSiteEligibleProperties(
     const matchingPublications = publications.filter((publication) =>
       canonicalSitePublication(publication, organizationId, propertyId)
     );
-    if (matchingPublications.length === 0) return [property];
+    if (matchingPublications.length === 0) return [legacyPublicProperty(property)];
 
     const publication = matchingPublications[0];
     const publishedVersion = positivePublishedVersion(publication.published_version);
-    if (publishedVersion === null) return [];
+    if (publishedVersion === null) return publication.published_version === null && publication.desired_state === "published" && property.published_on_site === true ? [legacyPublicProperty(property)] : [];
     const matchingVersions = versions.filter((version) =>
       isMatchingDurableVersion(
         version,

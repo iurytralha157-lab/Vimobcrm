@@ -1,14 +1,18 @@
-import { useEffect, useMemo } from "react";
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, useIsMutating, type Query, type QueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
-import { whatsappAPI, type SendWhatsAppMessageResult } from "@/lib/api/whatsapp";
+import { whatsappAPI, type SendWhatsAppMessageResult, type WhatsAppContactCard, type WhatsAppLocation, type WhatsAppQuotedMessage } from "@/lib/api/whatsapp";
 import { VimobAPIError } from "@/lib/api/vimob-error";
 import { reportErrorEvent } from "@/lib/api/telemetry";
 import { canSubscribeToWhatsAppRealtime } from "@/lib/access/whatsapp-realtime";
 import { createClientId } from "@/lib/client-id";
+import { fingerprintWhatsAppFile, getWhatsAppFileIntentStore, getWhatsAppFileIntentOwnerKey, runWhatsAppFileIntent, settleWhatsAppFileIntent } from '@/lib/whatsapp-file-send-intent';
+import { reserveWhatsAppSendAdmission } from '@/lib/whatsapp-send-admission';
+import { sortWhatsAppMessages } from "@/lib/whatsapp-message-order";
+import { canDiscardFailedLocalWhatsAppMessage, getWhatsAppSendIntentResolution, isWhatsAppSendScopeCurrent, type WhatsAppSendIntentResolution } from "@/lib/whatsapp-send-intent";
 import { canReactToWhatsAppMessage } from "@/lib/whatsapp-reactions";
 import { createClient } from "@/lib/supabase/client";
 import { getPrivateBroadcastRegistry } from "@/lib/supabase/private-broadcast";
@@ -17,6 +21,7 @@ import type {
   PrivateBroadcastStatus,
 } from "@/lib/realtime/private-broadcast-registry";
 import {
+  createWhatsAppInboxSubscriptionCatchUp,
   WhatsAppRealtimeRefreshCoordinator,
   type WhatsAppRealtimeRefreshRequest,
 } from "@/lib/realtime/whatsapp-refresh-coordinator";
@@ -28,6 +33,7 @@ import {
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
   isWhatsAppInboxWakePayload,
+  isWhatsAppQueryKeyForScope,
   mergeWhatsAppMessagesWithLocalState,
   WHATSAPP_MESSAGES_RECONCILE_EVENT,
   whatsappInboxTopic,
@@ -36,15 +42,22 @@ import {
 } from "@/lib/whatsapp-query-cache";
 import { WHATSAPP_UNLINKED_LEAD_SNAPSHOT } from "@/lib/whatsapp-message-input";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { mergeWhatsAppFilterOptionPages } from "@/lib/filters/whatsapp-filter-options";
+import { refreshWhatsAppQueries } from "@/lib/realtime/whatsapp-query-refresh";
+import { readWhatsAppInbox } from '@/lib/whatsapp-inbox-access';
+import { getWhatsAppLocalSendPreviewStore, getWhatsAppLocalSendPreviewText, type SendPreviewOwner } from '@/lib/whatsapp-local-send-preview';
 
-const WHATSAPP_SEND_COOLDOWN_MS = 1000;
+import { runWhatsAppRequestIntent, abortWhatsAppRequestIntents } from '@/lib/whatsapp-request-intent';
+
+import { useWhatsAppIntentMutation } from '@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent';
+import { isWhatsAppArchiveInvocation, matchesWhatsAppArchiveQuery, runExclusiveWhatsAppArchive } from '@/lib/whatsapp-archive';
+
 const WHATSAPP_SEND_RECONCILE_DELAYS_MS = [4_000, 15_000] as const;
 const WHATSAPP_UNCERTAIN_SEND_RECONCILE_DELAYS_MS = [0, 4_000, 15_000, 60_000] as const;
 const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
 const WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS = 5 * 60_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
-const lastWhatsAppSendByUser = new Map<string, number>();
 const realtimeDiagnosticReportedAt = new Map<string, number>();
 const scheduledMessageReconciliations = new Map<string, ReturnType<typeof setTimeout>>();
 const WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS = 60_000;
@@ -65,6 +78,10 @@ export interface WhatsAppConversation {
   presence_updated_at: string | null;
   last_message: string | null;
   last_message_at: string | null;
+  last_message_id?: string | null;
+  last_message_sent_at?: string | null;
+  last_message_from_me?: boolean | null;
+  last_message_status?: string | null;
   unread_count: number;
   is_group: boolean;
   archived_at: string | null;
@@ -122,6 +139,10 @@ export interface WhatsAppMessage {
   message_type: string;
   media_url: string | null;
   media_mime_type: string | null;
+  media_filename?: string | null;
+  contacts?: WhatsAppContactCard[];
+  location?: WhatsAppLocation;
+  quoted_message?: WhatsAppQuotedMessage;
   media_status?: "pending" | "ready" | "failed" | null;
   media_error?: string | null;
   media_size?: number | null;
@@ -133,13 +154,17 @@ export interface WhatsAppMessage {
   reaction_sender_name?: string | null;
   metadata?: Record<string, unknown>;
   status: string;
+  can_quote?: boolean;
+  can_react?: boolean;
   delivery_error_code?: "recipient_not_registered" | "outcome_unknown" | "send_failed" | null;
+  delivery_error_reason?: "media_integrity_unverified";
   delivery_failed_at?: string | null;
   sent_at: string;
   delivered_at: string | null;
   read_at: string | null;
   sender_jid: string | null;
   sender_name: string | null;
+  sender_user_id?: string | null;
 }
 
 export interface ConversationFilters {
@@ -151,6 +176,10 @@ export interface ConversationFilters {
   dealStatus?: 'open' | 'won' | 'lost';
   pageId?: string;
   campaignIds?: string[];
+  adSetId?: string;
+  adId?: string;
+  leadCreatedFrom?: string;
+  leadCreatedTo?: string;
   hideGroups?: boolean;
   showArchived?: boolean;
   onlyLeads?: boolean;
@@ -164,18 +193,19 @@ export interface ConversationFilters {
 export function useWhatsAppConversationFilterOptions(
   sessionId?: string,
   accessibleSessionIds?: string[],
-  context?: Pick<ConversationFilters, 'showArchived' | 'lastMessageFrom' | 'lastMessageTo' | 'pageId'>,
+  context?: Pick<ConversationFilters, 'showArchived' | 'lastMessageFrom' | 'lastMessageTo' | 'pageId' | 'campaignIds' | 'adSetId' | 'leadCreatedFrom' | 'leadCreatedTo'> & { optionsSearch?: string },
   enabled = false,
 ) {
+  const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const accessibleSessionKey = accessibleSessionIds
     ? [...accessibleSessionIds].sort().join(',')
     : 'backend-visibility';
 
-  return useQuery({
-    queryKey: ['whatsapp-conversation-filter-options', scope, sessionId ?? '', accessibleSessionKey, context?.showArchived ?? false, context?.lastMessageFrom ?? '', context?.lastMessageTo ?? '', context?.pageId ?? ''],
-    queryFn: () => accessibleSessionIds?.length === 0
-      ? Promise.resolve({ pipelines: [], teams: [], users: [], sources: [], tags: [], pages: [], campaigns: [] })
+  const query = useInfiniteQuery({
+    queryKey: [...whatsappQueryKeys.conversationsScope(scope), 'filter-options', sessionId ?? '', accessibleSessionKey, context?.showArchived ?? false, context?.lastMessageFrom ?? '', context?.lastMessageTo ?? '', context?.pageId ?? '', [...(context?.campaignIds ?? [])].sort(), context?.adSetId ?? '', context?.leadCreatedFrom ?? '', context?.leadCreatedTo ?? '', context?.optionsSearch ?? ''],
+    queryFn: ({ signal, pageParam, queryKey }) => readWhatsAppInbox(queryClient, scope, queryKey, signal, () => accessibleSessionIds?.length === 0
+      ? Promise.resolve({ pipelines: [], teams: [], users: [], sources: [], tags: [], pages: [], campaigns: [], adSets: [], ads: [], hasMore: false, nextOffset: null })
       : whatsappAPI.getConversationFilterOptions({
         organizationId: scope.organizationId,
         sessionId,
@@ -184,13 +214,24 @@ export function useWhatsAppConversationFilterOptions(
         lastMessageFrom: context?.lastMessageFrom,
         lastMessageTo: context?.lastMessageTo,
         pageId: context?.pageId,
-      }),
+        campaignIds: context?.campaignIds,
+        adSetId: context?.adSetId,
+        leadCreatedFrom: context?.leadCreatedFrom,
+        leadCreatedTo: context?.leadCreatedTo,
+        optionsSearch: context?.optionsSearch,
+        optionsOffset: pageParam,
+        optionsLimit: 100,
+      }, { signal, expectedUserId: scope.userId })),
     enabled: enabled && !!scope.organizationId && !!scope.userId &&
       accessibleSessionIds?.length !== 0,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     retry: false,
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.nextOffset ?? undefined,
   });
+  const data = useMemo(() => mergeWhatsAppFilterOptionPages(query.data?.pages ?? []), [query.data]);
+  return { ...query, data };
 }
 
 type WhatsAppConversationsQueryOptions = {
@@ -211,6 +252,8 @@ type ReactToWhatsAppMessageVariables = {
   targetMessage: WhatsAppMessage;
   emoji: string;
   _clientReactionId?: string;
+  _scope?: WhatsAppQueryScope;
+  _scopeGeneration?: number;
 };
 
 type UseWhatsAppMessagesOptions = {
@@ -262,7 +305,7 @@ const upsertCachedWhatsAppMessage = (
   } else {
     next.push(nextMessage);
   }
-  return next.sort((left, right) => left.sent_at.localeCompare(right.sent_at));
+  return sortWhatsAppMessages(next);
 };
 
 const RETRYABLE_LOCAL_MESSAGE_STATUSES = new Set([
@@ -283,7 +326,7 @@ const upsertOptimisticWhatsAppMessage = (
     messageIdentityAliases(message).some((alias) => optimisticAliases.has(alias)),
   );
 
-  if (existingIndex < 0) return [...messages, optimisticMessage];
+  if (existingIndex < 0) return sortWhatsAppMessages([...messages, optimisticMessage]);
   if (!RETRYABLE_LOCAL_MESSAGE_STATUSES.has(messages[existingIndex].status)) return messages;
 
   const next = [...messages];
@@ -299,7 +342,7 @@ const upsertOptimisticWhatsAppMessage = (
       local_delivery_state: "retrying_same_client_id",
     },
   };
-  return next;
+  return sortWhatsAppMessages(next);
 };
 
 const matchesWhatsAppMessagesQuery = (
@@ -309,10 +352,10 @@ const matchesWhatsAppMessagesQuery = (
   leadId?: string | null,
 ) => matchesWhatsAppMessagesQueryKey(query.queryKey, scope, conversationId, leadId);
 
-function dispatchWhatsAppMessagesReconcile(conversationIds?: readonly string[]) {
+function dispatchWhatsAppMessagesReconcile(scope: WhatsAppQueryScope, conversationIds?: readonly string[]) {
   if (typeof window === "undefined") return false;
   window.dispatchEvent(new CustomEvent(WHATSAPP_MESSAGES_RECONCILE_EVENT, {
-    detail: conversationIds?.length ? { conversationIds: [...new Set(conversationIds)] } : undefined,
+    detail: { scope, ...(conversationIds?.length ? { conversationIds: [...new Set(conversationIds)] } : {}) },
   }));
   return true;
 }
@@ -331,10 +374,7 @@ function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
     const { scope } = batch;
 
     if (batch.refreshConversations) {
-      void queryClient.invalidateQueries({
-        queryKey: whatsappQueryKeys.conversationsScope(scope),
-        refetchType: "active",
-      });
+      refreshWhatsAppQueries(queryClient, whatsappQueryKeys.conversationsScope(scope));
     }
 
     if (batch.refreshMessages) {
@@ -368,6 +408,7 @@ function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
       const refreshEveryPaginatedConversation = batch.allMessages
         || batch.conversationIds.length === 0;
       if (!dispatchWhatsAppMessagesReconcile(
+        scope,
         refreshEveryPaginatedConversation ? undefined : batch.conversationIds,
       )) {
         void queryClient.invalidateQueries({
@@ -422,6 +463,7 @@ function reconcileWhatsAppMessageQueries(
   leadId?: string | null,
 ) {
   const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))];
+  refreshWhatsAppQueries(queryClient, whatsappQueryKeys.conversationsScope(scope));
   void queryClient.invalidateQueries({
     predicate: (query) => query.isActive() && matchesWhatsAppAttendanceQueryKey(
       query.queryKey,
@@ -445,7 +487,7 @@ function reconcileWhatsAppMessageQueries(
     });
   }
 
-  if (!dispatchWhatsAppMessagesReconcile(uniqueConversationIds)) {
+  if (!dispatchWhatsAppMessagesReconcile(scope, uniqueConversationIds)) {
     void queryClient.invalidateQueries({
       predicate: (query) => matchesWhatsAppMessageRefreshQueryKey(
         query.queryKey,
@@ -503,6 +545,7 @@ export function useWhatsAppConversations(
   limit: number = 80,
   options?: WhatsAppConversationsQueryOptions,
 ) {
+  const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const accessibleSessionKey = accessibleSessionIds
     ? [...accessibleSessionIds].sort().join(",")
@@ -519,6 +562,10 @@ export function useWhatsAppConversations(
       dealStatus: filters?.dealStatus ?? '',
       pageId: filters?.pageId ?? '',
       campaignIds: JSON.stringify([...(filters?.campaignIds ?? [])].sort()),
+      adSetId: filters?.adSetId ?? '',
+      adId: filters?.adId ?? '',
+      leadCreatedFrom: filters?.leadCreatedFrom ?? '',
+      leadCreatedTo: filters?.leadCreatedTo ?? '',
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
       onlyLeads: filters?.onlyLeads ?? false,
@@ -530,7 +577,7 @@ export function useWhatsAppConversations(
       accessibleSessionKey,
       limit,
     }),
-    queryFn: async ({ pageParam }) => {
+    queryFn: ({ pageParam, signal, queryKey }) => readWhatsAppInbox(queryClient, scope, queryKey, signal, async () => {
       if (!scope.organizationId) return { conversations: [], nextCursor: null };
       if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) {
         return { conversations: [], nextCursor: null };
@@ -543,8 +590,8 @@ export function useWhatsAppConversations(
         accessibleSessionIds,
         limit,
         cursor: pageParam,
-      }) as Promise<{ conversations: WhatsAppConversation[]; nextCursor: string | null }>;
-    },
+      }, { signal, expectedUserId: scope.userId }) as Promise<{ conversations: WhatsAppConversation[]; nextCursor: string | null }>;
+    }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
@@ -586,6 +633,7 @@ export function useWhatsAppUnreadCount(
   accessibleSessionIds?: string[],
   options?: WhatsAppConversationsQueryOptions,
 ) {
+  const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const accessibleSessionKey = accessibleSessionIds
     ? [...accessibleSessionIds].sort().join(",")
@@ -602,6 +650,10 @@ export function useWhatsAppUnreadCount(
       dealStatus: filters?.dealStatus ?? '',
       pageId: filters?.pageId ?? '',
       campaignIds: JSON.stringify([...(filters?.campaignIds ?? [])].sort()),
+      adSetId: filters?.adSetId ?? '',
+      adId: filters?.adId ?? '',
+      leadCreatedFrom: filters?.leadCreatedFrom ?? '',
+      leadCreatedTo: filters?.leadCreatedTo ?? '',
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
       onlyLeads: filters?.onlyLeads ?? false,
@@ -612,7 +664,7 @@ export function useWhatsAppUnreadCount(
       lastMessageTo: filters?.lastMessageTo ?? "",
       accessibleSessionKey,
     }),
-    queryFn: async () => {
+    queryFn: ({ signal, queryKey }) => readWhatsAppInbox(queryClient, scope, queryKey, signal, async () => {
       if (!scope.organizationId) return 0;
       if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) {
         return 0;
@@ -623,11 +675,10 @@ export function useWhatsAppUnreadCount(
         sessionId,
         filters,
         accessibleSessionIds,
-      });
-    },
+      }, { signal, expectedUserId: scope.userId });
+    }),
     enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
-    refetchInterval: (currentQuery) =>
-      currentQuery.state.status === 'error' ? false : WHATSAPP_CONVERSATIONS_REFETCH_MS,
+    refetchInterval: WHATSAPP_CONVERSATIONS_REFETCH_MS,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: options?.refetchOnWindowFocus ?? true,
@@ -642,9 +693,9 @@ export function useWhatsAppConversation(conversationId: string | null, expectedL
 
   return useQuery({
 	queryKey: whatsappQueryKeys.conversation(scope, conversationId, expectedLeadId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
 	  if (!conversationId || !expectedLeadId) return null;
-	  return whatsappAPI.getConversation(conversationId, expectedLeadId, scope.organizationId) as Promise<WhatsAppConversation>;
+	  return whatsappAPI.getConversation(conversationId, expectedLeadId, scope.organizationId, { signal, expectedUserId: scope.userId }) as Promise<WhatsAppConversation>;
     },
 	enabled: !!conversationId && !!expectedLeadId && !!scope.organizationId && !!scope.userId,
   });
@@ -655,11 +706,11 @@ export function useWhatsAppConversationSnapshot(conversationId: string | null) {
 
   return useQuery({
     queryKey: whatsappQueryKeys.conversationSnapshot(scope, conversationId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!conversationId) return null;
       return whatsappAPI.getConversationSnapshot(
         conversationId,
-        scope.organizationId,
+        scope.organizationId, { signal, expectedUserId: scope.userId },
       ) as Promise<WhatsAppConversation>;
     },
     enabled: !!conversationId && !!scope.organizationId && !!scope.userId,
@@ -680,7 +731,7 @@ export function useWhatsAppConversationForLead(
     queryKey: conversationId
       ? whatsappQueryKeys.conversationHistoryProjection(scope, conversationId, leadId ?? null)
       : whatsappQueryKeys.conversationForLead(scope, leadId ?? null),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!leadId || !scope.organizationId) return null;
 	  if (conversationId) {
 		const history = await whatsappAPI.getHistoryAccess({
@@ -688,7 +739,7 @@ export function useWhatsAppConversationForLead(
 		  leadId,
 		  limit: 1,
 		  organizationId: scope.organizationId,
-		});
+		}, { signal, expectedUserId: scope.userId });
 		const conversation = history.conversations?.find((item) => item.id === conversationId)
 		  ?? (history.conversation?.id === conversationId ? history.conversation : null);
 		return conversation as WhatsAppConversation | null;
@@ -697,7 +748,7 @@ export function useWhatsAppConversationForLead(
         leadId,
         phone: "",
         organizationId: scope.organizationId,
-      }) as Promise<WhatsAppConversation | null>;
+      }, { signal, expectedUserId: scope.userId }) as Promise<WhatsAppConversation | null>;
     },
     enabled: !!leadId && !!scope.organizationId && !!scope.userId,
     retry: false,
@@ -729,7 +780,7 @@ export function useWhatsAppMessages(
 
   return useQuery({
     queryKey,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!conversationId && !leadId) return [];
 
       if (conversationId && !includeLeadHistory) {
@@ -739,7 +790,7 @@ export function useWhatsAppMessages(
           organizationId: scope.organizationId,
           limit,
 		  expectedLeadId: leadId,
-        });
+        }, { signal, expectedUserId: scope.userId });
         return mergeWithLocalState(page.messages as WhatsAppMessage[]);
       }
 
@@ -749,7 +800,7 @@ export function useWhatsAppMessages(
           leadId,
           limit,
           organizationId: scope.organizationId,
-        });
+        }, { signal, expectedUserId: scope.userId });
         return mergeWithLocalState((history.messages || []) as WhatsAppMessage[]);
       }
 
@@ -759,7 +810,7 @@ export function useWhatsAppMessages(
         organizationId: scope.organizationId,
         limit,
 		expectedLeadId: leadId,
-      });
+      }, { signal, expectedUserId: scope.userId });
       return mergeWithLocalState(page.messages as WhatsAppMessage[]);
     },
 	enabled: !!scope.organizationId && !!scope.userId && !!leadId,
@@ -777,8 +828,46 @@ export function useSendWhatsAppMessage() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
   const scope = useWhatsAppQueryScope();
+  const previewStore = getWhatsAppLocalSendPreviewStore(queryClient);
+  const previewOwner = useRef<SendPreviewOwner | null>(null);
+  const { organizationId: previewOrganizationId, userId: previewUserId, accessScope: previewAccessScope } = scope;
+  useLayoutEffect(() => {
+    const owner = previewStore.createOwner({ organizationId: previewOrganizationId, userId: previewUserId, accessScope: previewAccessScope });
+    previewOwner.current = owner;
+    return () => {
+      previewStore.retireOwner(owner, true);
+      if (previewOwner.current === owner) previewOwner.current = null;
+    };
+  }, [previewStore, previewOrganizationId, previewUserId, previewAccessScope]);
+  const resolveFileIntent = useResolveWhatsAppSendIntent();
+  const resolveFileIntentRef = useRef(resolveFileIntent);
+  useLayoutEffect(() => { resolveFileIntentRef.current = resolveFileIntent; }, [resolveFileIntent]);
+  const currentScopeRef = useRef(scope);
+  const originalOrganizationRef = useRef(profile?.organization_id ?? null);
+  const currentScopeGenerationRef = useRef(0);
+  const mountedRef = useRef(false);
+  const requestsRef = useRef(new Set<AbortController>());
+  const [pendingAdmissions, setPendingAdmissions] = useState(() => ({ generation: 0, tokens: new Map<symbol, number>() }));
+  useLayoutEffect(() => {
+    const requests = requestsRef.current;
+    mountedRef.current = true;
+    const generation = currentScopeGenerationRef.current;
+    setPendingAdmissions(current => current.generation === generation ? current : { ...current, generation });
+    return () => { mountedRef.current = false; currentScopeGenerationRef.current += 1; abortWhatsAppRequestIntents(requests); };
+  }, []);
+  useLayoutEffect(() => {
+    if (!isWhatsAppSendScopeCurrent(scope, currentScopeRef.current)
+      || originalOrganizationRef.current !== (profile?.organization_id ?? null)) {
+      currentScopeGenerationRef.current += 1;
+      abortWhatsAppRequestIntents(requestsRef.current);
+      const generation = currentScopeGenerationRef.current;
+      setPendingAdmissions(current => ({ ...current, generation }));
+    }
+    currentScopeRef.current = scope;
+    originalOrganizationRef.current = profile?.organization_id ?? null;
+  }, [profile?.organization_id, scope]);
 
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: async ({
       conversation,
       text,
@@ -789,7 +878,11 @@ export function useSendWhatsAppMessage() {
       filename,
       sendSessionId,
       clientMessageId,
+      quotedMessageId,
+      _scope,
+      _scopeGeneration,
       _optimisticId,
+      _admissionQueued,
     }: {
       conversation: WhatsAppConversation;
       text: string;
@@ -801,24 +894,50 @@ export function useSendWhatsAppMessage() {
       sendSessionId?: string;
       previewMediaUrl?: string;
       clientMessageId?: string;
+      quotedMessageId?: string;
+      optimisticQuotedMessage?: WhatsAppQuotedMessage;
+      fileIntentSource?: File;
+      fileIntentIsCurrent?: () => boolean;
+      fileIntentVerificationOnly?: boolean;
+      _scope?: WhatsAppQueryScope;
+      _scopeGeneration?: number;
       _optimisticId?: string;
+      _admissionQueued?: boolean;
     }): Promise<SendWhatsAppMessageResult> => {
+      const sendScope = _scope ?? scope;
+      if (!sendScope.organizationId || sendScope.organizationId !== originalOrganizationRef.current) {
+        throw new VimobAPIError("O atendimento WhatsApp está disponível somente na organização original do seu cadastro.", { status: 403, code: "whatsapp_original_organization_required" });
+      }
+      if (!mountedRef.current || !isWhatsAppSendScopeCurrent(sendScope, currentScopeRef.current)
+        || (_scopeGeneration !== undefined && _scopeGeneration !== currentScopeGenerationRef.current)) {
+        throw new VimobAPIError("O contexto do atendimento mudou. Reabra a conversa antes de enviar.", { status: 409, code: "whatsapp_send_context_changed" });
+      }
       if (!conversation.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
 	  const expectedLeadId = requireConversationLeadId(conversation);
-
-      const rateLimitUserId = profile?.id || "anonymous";
-      const now = Date.now();
-      const lastSendAt = lastWhatsAppSendByUser.get(rateLimitUserId) || 0;
-
-      if (now - lastSendAt < WHATSAPP_SEND_COOLDOWN_MS) {
-        throw new Error("RATE_LIMIT_LOCAL");
+      if (_admissionQueued) {
+        // An admission waited behind another hook/gesture. Recheck attendance
+        // after that wait and asynchronous onMutate; the POST rechecks grants.
+        const sessionId = sendSessionId || conversation.session_id;
+        const [attendance, authorized] = await runWhatsAppRequestIntent(sendScope, requestsRef.current, intent => Promise.all([
+          whatsappAPI.getConversationAttendance(conversation.id, { expectedLeadId, sendSessionId: sessionId }, sendScope.organizationId, intent),
+          whatsappAPI.getSessions(sendScope.organizationId, undefined, intent),
+        ]));
+        if (!mountedRef.current || !isWhatsAppSendScopeCurrent(sendScope, currentScopeRef.current)
+          || _scopeGeneration !== currentScopeGenerationRef.current) {
+          throw new VimobAPIError("O contexto do atendimento mudou. Reabra a conversa antes de enviar.", { status: 409, code: "whatsapp_send_context_changed" });
+        }
+        if (!attendance.joined) throw new VimobAPIError("Confirme o início do atendimento antes de enviar.", { status: 409, code: "whatsapp_attendance_required" });
+        const freshSession = authorized.data.find(session => session.id === sessionId && session.organization_id === sendScope.organizationId);
+        if (!freshSession || freshSession.is_active === false || freshSession.provider !== "evolution_go") {
+          throw new VimobAPIError("Você não tem mais acesso para enviar por este WhatsApp.", { status: 403, code: "whatsapp_session_access_revoked" });
+        }
+        if (freshSession.status !== "connected") throw new VimobAPIError("WhatsApp desconectado.", { status: 400, code: "whatsapp_disconnected" });
+        if (freshSession.can_send !== true) throw new VimobAPIError("Você não tem mais acesso para enviar por este WhatsApp.", { status: 403, code: "whatsapp_session_access_revoked" });
       }
 
-      lastWhatsAppSendByUser.set(rateLimitUserId, now);
-
-      return whatsappAPI.sendMessage(
+      return runWhatsAppRequestIntent(sendScope, requestsRef.current, (intent) => whatsappAPI.sendMessage(
         conversation.id,
         {
           text,
@@ -830,11 +949,21 @@ export function useSendWhatsAppMessage() {
           filename,
           sendSessionId,
           clientMessageId: clientMessageId || _optimisticId,
+          quotedMessageId,
         },
-        scope.organizationId,
-      );
+        sendScope.organizationId,
+        intent,
+      ));
     },
     onMutate: async (variables) => {
+      const scope = variables._scope ?? currentScopeRef.current;
+      const scopeGeneration = variables._scopeGeneration ?? currentScopeGenerationRef.current;
+      if (!mountedRef.current) {
+        throw new VimobAPIError("O contexto do atendimento mudou. Reabra a conversa antes de enviar.", { status: 409, code: "whatsapp_send_context_changed" });
+      }
+      if (!scope.organizationId || scope.organizationId !== originalOrganizationRef.current) {
+        throw new VimobAPIError("O atendimento WhatsApp está disponível somente na organização original do seu cadastro.", { status: 403, code: "whatsapp_original_organization_required" });
+      }
       if (!variables.conversation.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
@@ -854,6 +983,10 @@ export function useSendWhatsAppMessage() {
         queryClient.cancelQueries({ predicate: messagesPredicate }),
         queryClient.cancelQueries({ predicate: leadMessagesPredicate }),
       ]);
+      if (!mountedRef.current || !isWhatsAppSendScopeCurrent(scope, currentScopeRef.current)
+        || scopeGeneration !== currentScopeGenerationRef.current) {
+        throw new VimobAPIError("O contexto do atendimento mudou. Reabra a conversa antes de enviar.", { status: 409, code: "whatsapp_send_context_changed" });
+      }
 
       const isMediaMessage = !!(variables.mediaType && variables.mediaType !== "text");
       const isFilenameContent = variables.text && (
@@ -874,6 +1007,8 @@ export function useSendWhatsAppMessage() {
         message_type: variables.mediaType || "text",
         media_url: variables.previewMediaUrl || variables.mediaUrl || null,
         media_mime_type: variables.mimetype || null,
+        media_filename: variables.filename || null,
+        quoted_message: variables.optimisticQuotedMessage,
         remote_jid: variables.conversation.remote_jid,
         status: "pending",
         sent_at: new Date().toISOString(),
@@ -881,6 +1016,7 @@ export function useSendWhatsAppMessage() {
         read_at: null,
         sender_jid: null,
         sender_name: profile?.name || null,
+        sender_user_id: scope.userId || null,
         media_status: (variables.previewMediaUrl || variables.mediaUrl) ? "ready" : null,
         media_storage_path: null,
         media_error: null,
@@ -941,13 +1077,25 @@ export function useSendWhatsAppMessage() {
         );
       }
 
-      return { optimisticId, conversationId };
+      const previewToken = previewOwner.current ? previewStore.begin(previewOwner.current, variables.conversation, {
+        clientId: optimisticId, sessionId: optimisticMessage.session_id!, sentAt: optimisticMessage.sent_at,
+        preview: getWhatsAppLocalSendPreviewText(optimisticContent, variables.mediaType),
+      }) : undefined;
+      return { optimisticId, conversationId, scope, scopeGeneration, previewToken };
     },
     onSuccess: (result, variables, context) => {
+      const scope = context?.scope ?? variables._scope ?? currentScopeRef.current;
       const conversationId = result?.conversationId || variables.conversation.id;
       const originalConversationId = context?.conversationId || variables.conversation.id;
       const leadId = getConversationLeadId(variables.conversation);
       const messageKeys = new Set([conversationId, originalConversationId]);
+      const acceptedMessage = result.message;
+      if (conversationId !== originalConversationId) previewStore.discard(context?.previewToken);
+      else previewStore.advance(context?.previewToken, {
+        status: acceptedMessage?.status || result.status || 'confirming', messageId: acceptedMessage?.id,
+        conversationId, sessionId: acceptedMessage?.session_id, sentAt: acceptedMessage?.sent_at, fromMe: acceptedMessage?.from_me,
+        clientId: acceptedMessage?.client_message_id || result.clientMessageId, canonical: Boolean(acceptedMessage?.id),
+      });
 
       if (context?.optimisticId) {
         const canonicalMessage = result.message as WhatsAppMessage | undefined;
@@ -1032,10 +1180,13 @@ export function useSendWhatsAppMessage() {
       );
     },
     onError: (error: Error, variables, context) => {
+      const scope = context?.scope ?? variables._scope ?? currentScopeRef.current;
       const errorMessage = error.message || "";
       const leadId = getConversationLeadId(variables.conversation);
       const failureStatus = getWhatsAppSendFailureStatus(error);
       const accessRevoked = error instanceof VimobAPIError && error.code === "whatsapp_session_access_revoked";
+      if (accessRevoked) previewStore.discard(context?.previewToken);
+      else previewStore.advance(context?.previewToken, { status: failureStatus });
       if (accessRevoked) {
         // The active composer must reflect the revocation immediately. The
         // caller keeps its draft after this definite send failure.
@@ -1154,6 +1305,8 @@ export function useSendWhatsAppMessage() {
         description = "Você está enviando mensagens muito rápido. Tente novamente em alguns segundos.";
       }
 
+      if (!isWhatsAppSendScopeCurrent(scope, currentScopeRef.current)
+        || (context?.scopeGeneration ?? variables._scopeGeneration) !== currentScopeGenerationRef.current) return;
       toast({
         title,
         description,
@@ -1161,14 +1314,230 @@ export function useSendWhatsAppMessage() {
       });
     },
   });
+  // TanStack may replace mutation callbacks while onMutate is awaiting cache
+  // cancellation. Snapshot the tenant synchronously at the user's send gesture.
+  type Variables = Parameters<typeof mutation.mutate>[0];
+  const { mutateAsync } = mutation;
+  const stableMutateAsync = useCallback(async (variables: Variables, options?: Parameters<typeof mutateAsync>[1]): Promise<SendWhatsAppMessageResult> => {
+    const snapshot = {
+      ...variables,
+      conversation: {
+        ...variables.conversation,
+        lead: variables.conversation.lead ? { ...variables.conversation.lead,
+          assignee: variables.conversation.lead.assignee ? { ...variables.conversation.lead.assignee } : variables.conversation.lead.assignee,
+        } : variables.conversation.lead,
+        session: variables.conversation.session ? { ...variables.conversation.session } : variables.conversation.session,
+      },
+      _scope: { ...currentScopeRef.current },
+      _scopeGeneration: currentScopeGenerationRef.current,
+    };
+    const admission = reserveWhatsAppSendAdmission(snapshot._scope, snapshot.sendSessionId || snapshot.conversation.session_id, snapshot.conversation.id);
+    const pendingToken = Symbol();
+    if (mountedRef.current) setPendingAdmissions(current => ({ ...current,
+      tokens: new Map(current.tokens).set(pendingToken, snapshot._scopeGeneration),
+    }));
+    const admittedSend = async (value: Variables) => {
+      await admission.wait();
+      if (!mountedRef.current || snapshot._scopeGeneration !== currentScopeGenerationRef.current
+        || !isWhatsAppSendScopeCurrent(snapshot._scope, currentScopeRef.current)
+        || (snapshot.fileIntentIsCurrent && !snapshot.fileIntentIsCurrent())) {
+        throw new VimobAPIError("O contexto do atendimento mudou. Reabra a conversa antes de enviar.", { status: 409, code: "whatsapp_send_context_changed" });
+      }
+      if (!snapshot._scope.organizationId || snapshot._scope.organizationId !== originalOrganizationRef.current) {
+        throw new VimobAPIError("O atendimento WhatsApp está disponível somente na organização original do seu cadastro.", { status: 403, code: "whatsapp_original_organization_required" });
+      }
+      return mutateAsync({ ...value, _admissionQueued: admission.queued }, options);
+    };
+    try {
+      if (!snapshot.fileIntentSource) {
+        if (snapshot.fileIntentVerificationOnly) return { clientMessageId: snapshot.clientMessageId || '',
+          conversationId: snapshot.conversation.id, fileIntentChecked: true, fileIntentResolution: 'pending' };
+        return await admittedSend(snapshot);
+      }
+      const isCurrent = () => mountedRef.current && snapshot._scopeGeneration === currentScopeGenerationRef.current
+        && isWhatsAppSendScopeCurrent(snapshot._scope, currentScopeRef.current)
+        && snapshot._scope.organizationId === originalOrganizationRef.current
+        && (!snapshot.fileIntentIsCurrent || snapshot.fileIntentIsCurrent());
+      await admission.wait();
+      if (!isCurrent()) return { clientMessageId: '', conversationId: snapshot.conversation.id, fileIntentChecked: true, fileIntentResolution: 'cancelled' };
+      const fingerprint = await fingerprintWhatsAppFile(snapshot.fileIntentSource);
+      if (!isCurrent()) return { clientMessageId: '', conversationId: snapshot.conversation.id, fileIntentChecked: true, fileIntentResolution: 'cancelled' };
+      const store = getWhatsAppFileIntentStore(getWhatsAppFileIntentOwnerKey(snapshot._scope));
+      const key = JSON.stringify([snapshot.conversation.id, requireConversationLeadId(snapshot.conversation),
+        snapshot.sendSessionId || snapshot.conversation.session_id, fingerprint]);
+      const originalId = admission.fileIntent(key);
+      const outcome = originalId ? { kind: 'checked' as const, clientMessageId: originalId,
+        resolution: await resolveFileIntentRef.current({ conversation: snapshot.conversation, clientMessageId: originalId }),
+      } : await runWhatsAppFileIntent(store, key, {
+        isCurrent,
+        verificationOnly: snapshot.fileIntentVerificationOnly,
+        send: clientMessageId => {
+          admission.rememberFileIntent(key, clientMessageId);
+          return admittedSend({ ...snapshot, clientMessageId });
+        },
+        check: clientMessageId => resolveFileIntentRef.current({ conversation: snapshot.conversation, clientMessageId }),
+        isUnconfirmed: result => getWhatsAppSendIntentResolution(result, {
+          conversationId: snapshot.conversation.id, clientMessageId: result.clientMessageId,
+        }) === 'pending',
+      });
+      if (outcome.kind === 'sent') return outcome.result;
+      // Checking an earlier unknown intent may settle/remove its store entry.
+      // Gestures already overlapping this original check still use that ID;
+      // a duplicate checking F1's receipt must not widen F1's overlap boundary.
+      if (!originalId && outcome.clientMessageId) admission.rememberFileIntent(key, outcome.clientMessageId);
+      if (isCurrent() && outcome.resolution !== 'cancelled') toast({
+        title: outcome.resolution === 'pending' ? 'Confirmando envio' : 'Envio verificado',
+        description: outcome.resolution === 'pending'
+          ? outcome.clientMessageId
+            ? 'Ainda não foi possível confirmar o envio original. Confira o estado na conversa antes de enviar novamente.'
+            : 'A referência da tentativa não está disponível. Reabra a conversa e confira o envio original antes de continuar.'
+          : outcome.resolution === 'accepted' ? 'O envio original está registrado na conversa.' : 'A tentativa original falhou. Você pode escolher o arquivo novamente.',
+      });
+      return { clientMessageId: outcome.clientMessageId, conversationId: snapshot.conversation.id,
+        fileIntentChecked: true, fileIntentResolution: outcome.resolution };
+    } finally {
+      admission.release();
+      if (mountedRef.current) setPendingAdmissions(current => {
+        const tokens = new Map(current.tokens);
+        tokens.delete(pendingToken);
+        return { ...current, tokens };
+      });
+    }
+  }, [mutateAsync]);
+  const stableMutate = useCallback((variables: Variables, options?: Parameters<typeof mutateAsync>[1]) => {
+    void stableMutateAsync(variables, options).catch(() => {});
+  }, [stableMutateAsync]);
+  return {
+    ...mutation,
+    isPending: [...pendingAdmissions.tokens.values()].some(generation => generation === pendingAdmissions.generation)
+      || (mutation.isPending && mutation.variables?._scopeGeneration === pendingAdmissions.generation),
+    mutate: stableMutate,
+    mutateAsync: stableMutateAsync,
+  };
+}
+
+export function useResolveWhatsAppSendIntent() {
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
+  const currentRef = useRef({ scope, originalOrganization: profile?.organization_id ?? null, generation: 0, mounted: false });
+  const pendingRef = useRef(new Set<AbortController>());
+  useLayoutEffect(() => {
+    const lifecycle = currentRef.current;
+    lifecycle.mounted = true;
+    const pending = pendingRef.current;
+    return () => {
+      lifecycle.mounted = false;
+      lifecycle.generation += 1;
+      for (const controller of pending) controller.abort();
+      pending.clear();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!isWhatsAppSendScopeCurrent(scope, currentRef.current.scope)) {
+      currentRef.current.generation += 1;
+      for (const controller of pendingRef.current) controller.abort();
+      pendingRef.current.clear();
+    }
+    currentRef.current.scope = scope;
+    currentRef.current.originalOrganization = profile?.organization_id ?? null;
+  }, [profile?.organization_id, scope]);
+  return async ({ conversation, clientMessageId }: {
+    conversation: WhatsAppConversation; clientMessageId: string;
+  }): Promise<WhatsAppSendIntentResolution> => {
+    const generation = currentRef.current.generation;
+    const isCurrent = () => currentRef.current.mounted
+      && generation === currentRef.current.generation
+      && isWhatsAppSendScopeCurrent(scope, currentRef.current.scope);
+    if (!isCurrent()) return 'cancelled';
+    const leadId = requireConversationLeadId(conversation);
+    const controller = new AbortController();
+    pendingRef.current.add(controller);
+    try {
+      const result = await whatsappAPI.getSendStatus({
+        conversationId: conversation.id, expectedLeadId: leadId, clientMessageId,
+        organizationId: scope.organizationId,
+        signal: controller.signal,
+      }, { expectedUserId: scope.userId });
+      if (!isCurrent()) return 'cancelled';
+      const resolution = getWhatsAppSendIntentResolution(result, { conversationId: conversation.id, clientMessageId });
+      if (resolution === 'accepted' || resolution === 'failed') {
+        settleWhatsAppFileIntent(getWhatsAppFileIntentStore(getWhatsAppFileIntentOwnerKey(scope)), clientMessageId);
+      }
+      if (resolution !== 'pending' && result.message) {
+        // Canonical data replaces a local attempt only in its original scope.
+        scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+          refreshConversations: true, refreshMessages: true, refreshLeadMessages: true,
+          conversationIds: [conversation.id], leadIds: [leadId],
+        });
+      }
+      return resolution;
+    } catch (error) {
+      if (!isCurrent()) return 'cancelled';
+      if (error instanceof VimobAPIError) {
+        if (error.status === 404 && error.code === 'whatsapp_message_not_found') return 'pending';
+        if (error.code === 'api_request_identity_changed') return 'cancelled';
+        if (error.status === 403 || error.status === 404 || error.status === 410
+          || (error.status === 400 && error.code === 'invalid_whatsapp_reference')) return 'cancelled';
+      }
+      return 'pending';
+    } finally {
+      pendingRef.current.delete(controller);
+    }
+  };
+}
+
+export function useDiscardFailedLocalWhatsAppMessage() {
+  const queryClient = useQueryClient();
+  const scope = useWhatsAppQueryScope();
+  return ({ conversation, message }: { conversation: WhatsAppConversation; message: WhatsAppMessage }) => {
+    if (!canDiscardFailedLocalWhatsAppMessage(message)) return;
+    const leadId = requireConversationLeadId(conversation);
+    const remove = (messages: WhatsAppMessage[]) => messages.filter((current) =>
+      current.id !== message.id || !canDiscardFailedLocalWhatsAppMessage(current));
+    const predicate = (query: Query) => matchesWhatsAppMessagesQuery(query, scope, conversation.id, leadId)
+      || matchesPaginatedWhatsAppMessagesQueryKey(query.queryKey, scope, conversation.id, leadId)
+      || matchesLeadMessagesQueryKey(query.queryKey, scope, leadId);
+    queryClient.setQueriesData<WhatsAppMessage[] | PaginatedWhatsAppMessages>({ predicate }, (old) => {
+      if (Array.isArray(old)) return remove(old);
+      return old ? { ...old, pages: old.pages.map((page) => ({ ...page, messages: remove(page.messages) })) } : old;
+    });
+  };
 }
 
 export function useReactToWhatsAppMessage() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
   const scope = useWhatsAppQueryScope();
+  const lifecycleRef = useRef({ scope, original: profile?.organization_id ?? null, generation: 0, mounted: false });
+  const requestsRef = useRef(new Set<AbortController>());
+  useLayoutEffect(() => {
+    const lifecycle = lifecycleRef.current;
+    const requests = requestsRef.current;
+    lifecycle.mounted = true;
+    return () => { lifecycle.mounted = false; lifecycle.generation += 1; abortWhatsAppRequestIntents(requests); };
+  }, []);
+  useLayoutEffect(() => {
+    const lifecycle = lifecycleRef.current;
+    if (!isWhatsAppSendScopeCurrent(scope, lifecycle.scope) || lifecycle.original !== (profile?.organization_id ?? null)) {
+      lifecycle.generation += 1;
+      abortWhatsAppRequestIntents(requestsRef.current);
+    }
+    lifecycle.scope = scope;
+    lifecycle.original = profile?.organization_id ?? null;
+  }, [profile?.organization_id, scope]);
+  const isCurrent = (variables: ReactToWhatsAppMessageVariables) => lifecycleRef.current.mounted
+    && variables._scopeGeneration === lifecycleRef.current.generation
+    && !!variables._scope && isWhatsAppSendScopeCurrent(variables._scope, lifecycleRef.current.scope);
+  const assertCurrent = (variables: ReactToWhatsAppMessageVariables) => {
+    if (!isCurrent(variables)) throw new VimobAPIError('O contexto do atendimento mudou. Reabra a conversa antes de reagir.', { status: 409, code: 'whatsapp_send_context_changed' });
+    if (!variables._scope?.organizationId || variables._scope.organizationId !== lifecycleRef.current.original) {
+      throw new VimobAPIError('O atendimento WhatsApp está disponível somente na organização original do cadastro.', { status: 403, code: 'whatsapp_original_organization_required' });
+    }
+  };
 
   const updateReactionCaches = (
+    scope: WhatsAppQueryScope,
     conversationId: string,
     leadId: string | null,
     updater: (messages: WhatsAppMessage[]) => WhatsAppMessage[],
@@ -1225,7 +1594,7 @@ export function useReactToWhatsAppMessage() {
     }
   };
 
-  const refreshReactionCaches = (conversationId: string, leadId: string | null) => {
+  const refreshReactionCaches = (scope: WhatsAppQueryScope, conversationId: string, leadId: string | null) => {
     void queryClient.invalidateQueries({
       predicate: (query) => matchesWhatsAppMessagesQuery(
         query,
@@ -1244,8 +1613,10 @@ export function useReactToWhatsAppMessage() {
     }
   };
 
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: async (variables: ReactToWhatsAppMessageVariables) => {
+      assertCurrent(variables);
+      const reactionScope = variables._scope!;
       if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
@@ -1254,7 +1625,7 @@ export function useReactToWhatsAppMessage() {
       }
 	  const expectedLeadId = requireConversationLeadId(variables.conversation);
 
-      return whatsappAPI.reactToMessage(
+      return runWhatsAppRequestIntent(reactionScope, requestsRef.current, (intent) => whatsappAPI.reactToMessage(
         variables.conversation.id,
         variables.targetMessage.id,
         {
@@ -1262,10 +1633,13 @@ export function useReactToWhatsAppMessage() {
           clientReactionId: variables._clientReactionId || createClientId('reaction'),
 		  expectedLeadId,
         },
-        scope.organizationId,
-      );
+        reactionScope.organizationId,
+        intent,
+      ));
     },
     onMutate: async (variables) => {
+      assertCurrent(variables);
+      const scope = variables._scope!;
       if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
@@ -1298,6 +1672,7 @@ export function useReactToWhatsAppMessage() {
           : Promise.resolve(),
       ]);
 
+      assertCurrent(variables);
       const optimisticReaction: WhatsAppMessage = {
         id: clientReactionId,
         conversation_id: conversationId,
@@ -1323,23 +1698,26 @@ export function useReactToWhatsAppMessage() {
       };
 
       updateReactionCaches(
+        scope,
         conversationId,
         leadId,
         (messages) => upsertCachedWhatsAppMessage(messages, optimisticReaction),
       );
 
-      return { clientReactionId, conversationId, leadId };
+      return { clientReactionId, conversationId, leadId, scope };
     },
     onSuccess: (result, variables, context) => {
       const conversationId = result.conversationId || context?.conversationId || variables.conversation.id;
       const leadId = context?.leadId ?? getConversationLeadId(variables.conversation);
+      const scope = context?.scope ?? variables._scope!;
       updateReactionCaches(
+        scope,
         conversationId,
         leadId,
         (messages) => upsertCachedWhatsAppMessage(messages, result.reaction as WhatsAppMessage),
       );
 
-      const refresh = () => refreshReactionCaches(conversationId, leadId);
+      const refresh = () => refreshReactionCaches(scope, conversationId, leadId);
       if (typeof window === 'undefined') refresh();
       else window.setTimeout(refresh, 4_000);
     },
@@ -1348,6 +1726,7 @@ export function useReactToWhatsAppMessage() {
       const status = getWhatsAppSendFailureStatus(error);
       const isDefinitive = status === 'failed';
       updateReactionCaches(
+        context.scope,
         context.conversationId,
         context.leadId,
         (messages) => isDefinitive
@@ -1356,7 +1735,8 @@ export function useReactToWhatsAppMessage() {
             ? { ...message, status: 'confirming' }
             : message),
       );
-      refreshReactionCaches(context.conversationId, context.leadId);
+      refreshReactionCaches(context.scope, context.conversationId, context.leadId);
+      if (!isCurrent(variables)) return;
       toast({
         title: isDefinitive ? 'Reacao nao enviada' : 'Confirmando reacao',
         description: isDefinitive
@@ -1366,13 +1746,23 @@ export function useReactToWhatsAppMessage() {
       });
     },
   });
+  const { mutate, mutateAsync } = mutation;
+  const stableMutate = useCallback((variables: ReactToWhatsAppMessageVariables, options?: Parameters<typeof mutate>[1]) =>
+    mutate({ ...variables, _scope: { ...lifecycleRef.current.scope }, _scopeGeneration: lifecycleRef.current.generation }, options), [mutate]);
+  const stableMutateAsync = useCallback((variables: ReactToWhatsAppMessageVariables, options?: Parameters<typeof mutateAsync>[1]) =>
+    mutateAsync({ ...variables, _scope: { ...lifecycleRef.current.scope }, _scopeGeneration: lifecycleRef.current.generation }, options), [mutateAsync]);
+  return {
+    ...mutation,
+    mutate: stableMutate,
+    mutateAsync: stableMutateAsync,
+  };
 }
 
 export function useMarkConversationAsRead() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async (conversation: {
       id: string;
       session_id: string | null;
@@ -1380,9 +1770,9 @@ export function useMarkConversationAsRead() {
       is_group?: boolean;
 	  lead_id?: string | null;
 	  lead?: { id: string };
-    }) => {
+    }, intent) => {
 	  const expectedLeadId = requireConversationBindingSnapshot(conversation as WhatsAppConversation);
-	  await whatsappAPI.markConversationAsRead(conversation.id, expectedLeadId, scope.organizationId);
+	  await whatsappAPI.markConversationAsRead(conversation.id, expectedLeadId, scope.organizationId, intent);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
@@ -1393,7 +1783,7 @@ export function useMarkConversationAsRead() {
 export function useMarkAsSeenOnWhatsApp() {
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async (conversation: {
       id: string;
       session_id: string | null;
@@ -1401,12 +1791,12 @@ export function useMarkAsSeenOnWhatsApp() {
       is_group?: boolean;
 	  lead_id?: string | null;
 	  lead?: { id: string };
-    }) => {
+    }, intent) => {
 	  if (!conversation.session_id) {
 		throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
 	  }
 	  const expectedLeadId = requireConversationBindingSnapshot(conversation as WhatsAppConversation);
-	  await whatsappAPI.markAsSeenOnWhatsApp(conversation.id, expectedLeadId, scope.organizationId);
+	  await whatsappAPI.markAsSeenOnWhatsApp(conversation.id, expectedLeadId, scope.organizationId, intent);
     },
     onError: () => {
       toast({
@@ -1427,14 +1817,27 @@ export function useMarkAsSeenOnWhatsApp() {
 export function useArchiveConversation() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
+  useIsMutating({ predicate: mutation => isWhatsAppArchiveInvocation(mutation.state.variables, scope) });
 
-  return useMutation({
-	mutationFn: async ({ conversation, archive }: { conversation: WhatsAppConversation; archive: boolean }) => {
+	const mutation = useWhatsAppIntentMutation({
+	mutationFn: async ({ conversation, archive }: { conversation: WhatsAppConversation; archive: boolean }, intent) => {
 	  const expectedLeadId = requireConversationBindingSnapshot(conversation);
-	  await whatsappAPI.archiveConversation(conversation.id, archive, expectedLeadId, scope.organizationId);
+	  return runExclusiveWhatsAppArchive(queryClient, intent.scope, conversation.id, async () => {
+	    try {
+	      await whatsappAPI.archiveConversation(conversation.id, archive, expectedLeadId, intent.scope.organizationId, intent);
+	    } finally {
+	      // A transport abort after HTTP cannot undo a server effect. Mark only the
+	      // captured owner's entries stale, including inactive physical snapshots.
+	      await queryClient.invalidateQueries({ refetchType: 'none', predicate: query =>
+	        matchesWhatsAppArchiveQuery(query.queryKey, intent.scope, conversation.id, expectedLeadId) });
+	    }
+	  });
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+    onSuccess: async (_, variables, _context, intent) => {
+      const expectedLeadId = requireConversationBindingSnapshot(variables.conversation);
+      await queryClient.invalidateQueries({ predicate: query =>
+        matchesWhatsAppArchiveQuery(query.queryKey, intent.scope, variables.conversation.id, expectedLeadId) });
+      if (!intent.isCurrent()) return;
       toast({
         title: variables.archive ? "Conversa arquivada" : "Conversa desarquivada",
         description: variables.archive
@@ -1450,16 +1853,19 @@ export function useArchiveConversation() {
       });
     },
   });
+  return { ...mutation, isPendingFor: (conversation: Pick<WhatsAppConversation, 'id'>) =>
+    queryClient.getMutationCache().findAll({ status: 'pending', predicate: entry =>
+      isWhatsAppArchiveInvocation(entry.state.variables, scope, conversation.id) }).length > 0 };
 }
 
 export function useDeleteConversation() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-	mutationFn: async (conversation: WhatsAppConversation) => {
+  return useWhatsAppIntentMutation({
+	mutationFn: async (conversation: WhatsAppConversation, intent) => {
 	  const expectedLeadId = requireConversationBindingSnapshot(conversation);
-	  await whatsappAPI.deleteConversation(conversation.id, expectedLeadId, scope.organizationId);
+	  await whatsappAPI.deleteConversation(conversation.id, expectedLeadId, scope.organizationId, intent);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
@@ -1482,24 +1888,37 @@ export function useLinkConversationToLead() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async ({ conversation, leadId }: { conversation: WhatsAppConversation; leadId: string }) => {
-      const expectedPreviousLeadId = requireConversationBindingSnapshot(conversation);
-      await whatsappAPI.linkConversationToLead(
+  return useWhatsAppIntentMutation({
+    mutationFn: async ({ conversation, leadId, expectedPreviousLeadId, ownSessionOnly }: {
+      conversation: WhatsAppConversation;
+      leadId: string;
+      expectedPreviousLeadId: string;
+      ownSessionOnly?: boolean;
+    }, intent) => {
+      if (requireConversationBindingSnapshot(conversation) !== expectedPreviousLeadId) {
+        throw new Error('A conversa mudou depois da prévia de vínculo');
+      }
+      return whatsappAPI.linkConversationToLead(
         conversation.id,
         leadId,
         expectedPreviousLeadId,
-        scope.organizationId,
+        scope.organizationId, intent, ownSessionOnly,
       );
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({
 		queryKey: whatsappQueryKeys.conversation(scope, variables.conversation.id, variables.leadId),
       });
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+      queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, variables.leadId) });
+      queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
       toast({
-        title: "Conversa vinculada",
-        description: "A conversa foi vinculada ao lead",
+        title: result.bindingMode === 'history_only' ? "Histórico vinculado" : "Conversa vinculada",
+        description: result.attachedMessageCount > 0
+          ? result.attachedMessageCount === 1
+            ? "1 mensagem preservada foi anexada ao lead."
+            : `${result.attachedMessageCount} mensagens preservadas foram anexadas ao lead.`
+          : "Nenhuma mensagem preservada foi anexada ao lead.",
       });
     },
     onError: () => {
@@ -1568,11 +1987,11 @@ function useCanSubscribeWhatsAppRealtime(enabled: boolean) {
     modulesLoading,
     permissionsLoading,
     hasWhatsAppModule: hasModule("whatsapp"),
-    hasWhatsAppViewPermission: hasPermission("whatsapp_view"),
+    hasWhatsAppViewPermission: hasPermission("whatsapp_view") || hasPermission("whatsapp_operate"),
   });
 }
 
-export function useWhatsAppInboxRealtime(enabled: boolean = true) {
+export function useWhatsAppInboxRealtime(enabled: boolean = true, activeInbox: boolean = false) {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const canSubscribe = useCanSubscribeWhatsAppRealtime(enabled);
@@ -1586,7 +2005,6 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
     });
     const supabase = createClient();
     const registry = getPrivateBroadcastRegistry(supabase, reportWhatsAppRealtimeDiagnostic);
-    const reconcileTimers: ReturnType<typeof setTimeout>[] = [];
     let cancelled = false;
 
     const reconcileInbox = () => {
@@ -1599,6 +2017,10 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
         allLeadMessages: true,
       });
     };
+    const catchUp = createWhatsAppInboxSubscriptionCatchUp(reconcileInbox);
+    // The app shell may already own a subscribed physical channel. An active
+    // inbox must reconcile on mount even if the registry sends no new status.
+    if (activeInbox) catchUp.start(true);
 
     // The organization inbox channel is only a content-free wake-up signal.
     // Canonical data still comes from the scoped API.
@@ -1607,21 +2029,20 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
       event: "whatsapp.inbox.changed",
       onPayload: (payload) => {
         if (!isWhatsAppInboxWakePayload(payload)) return;
-        reconcileInbox();
+        catchUp.hint();
       },
       onStatus: (status: PrivateBroadcastStatus) => {
         if (status !== "SUBSCRIBED") return;
-        reconcileInbox();
-        reconcileTimers.push(setTimeout(reconcileInbox, 1_000));
+        catchUp.start(activeInbox);
       },
     });
 
     return () => {
       cancelled = true;
-      reconcileTimers.forEach((timer) => clearTimeout(timer));
+      catchUp.dispose();
       lease.release();
     };
-  }, [canSubscribe, scope, queryClient]);
+  }, [activeInbox, canSubscribe, scope, queryClient]);
 }
 
 export function useWhatsAppLeadRealtime(
@@ -1680,8 +2101,41 @@ export function useWhatsAppLeadRealtime(
       },
     }));
 
+    const handleLeadChange = (browserEvent: Event) => {
+      const change = (browserEvent as CustomEvent<{
+        organizationId?: string; leadId?: string; reason?: string;
+      }>).detail;
+      if (cancelled || change?.organizationId !== organizationId
+        || (change.leadId && !scopedLeadIds.includes(change.leadId))
+        || !change.reason?.startsWith("lead.") || change.reason === "lead.whatsapp_activity") return;
+      const changedLeadIds = change.leadId ? [change.leadId] : scopedLeadIds;
+      // The lead bus carries IDs/reasons only. Refetch current authorization;
+      // neither the event nor an older cached card grants conversation access.
+      window.dispatchEvent(new CustomEvent(WHATSAPP_MESSAGES_RECONCILE_EVENT, {
+        detail: { scope, leadIds: changedLeadIds, authorizationChanged: true },
+      }));
+      // Authorization changes must supersede an older authorized list read;
+      // ordinary content hints below can wait for the current read to finish.
+      void queryClient.cancelQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+      void queryClient.invalidateQueries({
+        queryKey: whatsappQueryKeys.conversationsScope(scope), refetchType: "active",
+      }, { cancelRefetch: true });
+      scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+        refreshMessages: true,
+        refreshLeadMessages: true,
+        leadIds: changedLeadIds,
+      });
+      void queryClient.invalidateQueries({
+        predicate: (query) => query.isActive() && isWhatsAppQueryKeyForScope(query.queryKey, scope)
+          && ["whatsapp-conversation", "whatsapp-conversation-snapshot", "whatsapp-conversation-history"].includes(String(query.queryKey[0])),
+        refetchType: "active",
+      });
+    };
+    window.addEventListener("vimob:lead-realtime-change", handleLeadChange);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("vimob:lead-realtime-change", handleLeadChange);
       reconcileTimers.forEach((timer) => clearTimeout(timer));
       leases.forEach((lease) => lease.release());
     };

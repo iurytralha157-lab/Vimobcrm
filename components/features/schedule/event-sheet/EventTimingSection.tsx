@@ -38,6 +38,8 @@ export function EventTimingSection({
   time,
   endTimePreview,
   isAllDay,
+  allDaySpanDays = 1,
+  isMasked = false,
   recurrenceRule,
   reminderMinutes,
   isExisting,
@@ -54,6 +56,8 @@ export function EventTimingSection({
   time: string;
   endTimePreview: string;
   isAllDay: boolean;
+  allDaySpanDays?: number;
+  isMasked?: boolean;
   recurrenceRule: RecurrenceRule;
   reminderMinutes: number | null;
   isExisting: boolean;
@@ -68,6 +72,7 @@ export function EventTimingSection({
   const hasLegacyReminder = !reminderOptions.some(
     (option) => option.value === reminderValue,
   );
+  const allDayLabel = allDaySpanDays > 1 ? `Dia inteiro · ${allDaySpanDays} dias` : "Dia inteiro";
 
   return (
     <AgendaRow
@@ -79,11 +84,11 @@ export function EventTimingSection({
         <div className="space-y-1 text-[12px] font-light text-[var(--app-text-primary)]">
           <div>
             {date ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR }) : "-"}{" "}
-            · {time} - {endTimePreview || "-"}
+            · {isAllDay ? allDayLabel : `${time} - ${endTimePreview || "-"}`}
           </div>
-          <div className="flex items-center gap-1 text-[11px] text-[var(--app-text-tertiary)]">
+          {!isMasked && <div className="flex items-center gap-1 text-[11px] text-[var(--app-text-tertiary)]">
             <Bell className="h-3 w-3" /> {getReminderLabel(reminderMinutes)}
-          </div>
+          </div>}
         </div>
       ) : (
         <div className="space-y-2 sm:space-y-1">
@@ -93,7 +98,7 @@ export function EventTimingSection({
                 {date
                   ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR })
                   : "-"}{" "}
-                · {time} - {endTimePreview || "-"}
+                · {isAllDay ? allDayLabel : `${time} - ${endTimePreview || "-"}`}
               </div>
               <p className="max-w-[430px] pt-1 text-[11px] leading-[16px] text-[var(--app-text-tertiary)]">
                 Para alterar data ou horário, use “Resultado ou remarcar”. O
@@ -170,7 +175,7 @@ export function EventTimingSection({
                   onChange={(event) => onAllDayChange(event.target.checked)}
                   className="h-4 w-4 rounded-sm bg-transparent accent-primary"
                 />
-                Dia inteiro
+                {allDayLabel}
               </label>
             )}
             <Select

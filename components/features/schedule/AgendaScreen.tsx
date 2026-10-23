@@ -5,15 +5,8 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   format,
-  startOfDay,
-  endOfDay,
   startOfWeek,
   endOfWeek,
-  addDays,
-  startOfMonth,
-  endOfMonth,
-  startOfYear,
-  endOfYear,
   isSameDay,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -41,6 +34,8 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { CalendarView } from "@/components/features/schedule/CalendarView";
 import { EventsList } from "@/components/features/schedule/EventsList";
+import { getAgendaLocalPeriod, navigateAgendaPeriod } from "@/components/features/schedule/agenda-period";
+import { matchesScheduleEventType } from "@/components/features/schedule/schedule-event-presentation";
 import { EventSheet } from "@/components/features/schedule/EventSheet";
 import { UserFilter } from "@/components/features/schedule/UserFilter";
 import {
@@ -122,7 +117,7 @@ export default function Agenda() {
 
   if (searchParams.get("tab") === "dashboard") {
     return (
-      <AppLayout title="Dashboard da agenda">
+      <AppLayout title="Agenda">
         <AgendaDashboard />
       </AppLayout>
     );
@@ -142,7 +137,9 @@ function AgendaCalendar() {
   const searchParamsString = searchParams.toString();
   const focusedEventId = searchParams.get("event") || searchParams.get("task");
 
-  const { data: scheduleCapabilities } = useScheduleCapabilities();
+  const scheduleCapabilitiesQuery = useScheduleCapabilities();
+  const scheduleCapabilities = scheduleCapabilitiesQuery.data;
+  const capabilitiesReady = scheduleCapabilitiesQuery.isSuccess && Boolean(scheduleCapabilities?.timeZone?.trim());
   const scheduleTimeZone =
     scheduleCapabilities?.timeZone || DEFAULT_SCHEDULE_TIME_ZONE;
 
@@ -183,6 +180,7 @@ function AgendaCalendar() {
   const [googleCalendarOpen, setGoogleCalendarOpen] = useState(false);
   const handledGoogleOAuthRef = useRef(false);
   const updateEventMutation = useUpdateScheduleEvent();
+  const canModifySchedule = canManageSchedule && capabilitiesReady && !updateEventMutation.isPending;
   const effectiveViewMode: AgendaViewMode = isMobile ? "day" : viewMode;
 
   useEffect(() => {
@@ -250,31 +248,7 @@ function AgendaCalendar() {
   ]);
 
   const dateRange = useMemo(() => {
-    let localStart: Date;
-    let localEnd: Date;
-
-    switch (effectiveViewMode) {
-      case "day":
-        localStart = startOfDay(pivotDate);
-        localEnd = endOfDay(pivotDate);
-        break;
-      case "week":
-        localStart = startOfWeek(pivotDate, { weekStartsOn: 0 });
-        localEnd = endOfWeek(pivotDate, { weekStartsOn: 0 });
-        break;
-      case "month":
-        localStart = startOfWeek(startOfMonth(pivotDate), { weekStartsOn: 0 });
-        localEnd = endOfWeek(endOfMonth(pivotDate), { weekStartsOn: 0 });
-        break;
-      case "year":
-        localStart = startOfYear(pivotDate);
-        localEnd = endOfYear(pivotDate);
-        break;
-      default:
-        localStart = startOfDay(pivotDate);
-        localEnd = endOfDay(addDays(pivotDate, 30));
-        break;
-    }
+    const { start: localStart, end: localEnd } = getAgendaLocalPeriod(pivotDate, effectiveViewMode);
 
     const startDate =
       getScheduleCivilDayStart(
@@ -298,58 +272,57 @@ function AgendaCalendar() {
     isError: eventsFailed,
     refetch: refetchEvents,
   } = useScheduleEvents({
+    enabled: capabilitiesReady,
     userId: selectedUserId || undefined,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
   });
-  const { data: focusedEvents = EMPTY_SCHEDULE_EVENTS } = useScheduleEvents({
-    enabled: Boolean(focusedEventId),
+  const {
+    data: focusedEvents = EMPTY_SCHEDULE_EVENTS,
+    isLoading: focusedEventLoading,
+    isFetching: focusedEventFetching,
+    isError: focusedEventFailed,
+    isSuccess: focusedEventReady,
+    refetch: refetchFocusedEvent,
+  } = useScheduleEvents({
+    enabled: capabilitiesReady && Boolean(focusedEventId),
     eventId: focusedEventId || undefined,
   });
+  const focusedEvent = [...events, ...focusedEvents].find(
+    (event) => event.id === focusedEventId && event.organization_id === organizationId,
+  );
+  const focusedEventPending = focusedEventLoading || focusedEventFetching;
+  const focusedEventNotice = !capabilitiesReady || !focusedEventId || focusedEvent
+    ? null
+    : focusedEventPending
+      ? "Carregando atividade solicitada..."
+      : focusedEventFailed
+        ? "Não foi possível carregar a atividade solicitada."
+        : focusedEventReady
+          ? "Atividade não encontrada ou sem acesso."
+          : null;
+  const dismissFocusedEvent = () => {
+    const cleanParams = new URLSearchParams(searchParamsString);
+    cleanParams.delete("event");
+    cleanParams.delete("task");
+    const cleanSearch = cleanParams.toString();
+    router.replace(`/agenda${cleanSearch ? `?${cleanSearch}` : ""}`);
+  };
 
   const filteredEvents = useMemo(
     () =>
       selectedEventType
-        ? events.filter((event) => event.event_type === selectedEventType)
+        ? events.filter((event) => matchesScheduleEventType(event, selectedEventType))
         : events,
     [events, selectedEventType],
   );
 
-  const upcomingEvents = useMemo(() => {
-    const todayKey = getLocalScheduleCivilDateKey(
-      scheduleInstantToLocalDateProxy(agendaNow, scheduleTimeZone) ||
-        new Date(),
-    );
-    const today = getScheduleCivilDayStart(todayKey, scheduleTimeZone);
-    const nextKey = getLocalScheduleCivilDateKey(
-      addDays(
-        scheduleInstantToLocalDateProxy(agendaNow, scheduleTimeZone) ||
-          new Date(),
-        7,
-      ),
-    );
-    const nextRange = getScheduleCivilDayRange(nextKey, scheduleTimeZone);
-    const next = nextRange ? new Date(nextRange.endTime) : null;
-    if (!today || !next) return [];
-    return filteredEvents
-      .filter((ev) => {
-        const d = new Date(ev.start_time);
-        return (
-          d >= today &&
-          d <= next &&
-          !["completed", "no_show", "cancelled", "canceled"].includes(
-            ev.status || "",
-          )
-        );
-      })
-      .slice(0, 10);
-  }, [agendaNow, filteredEvents, scheduleTimeZone]);
-
   const openCreateSheet = useCallback(() => {
+    if (!canModifySchedule) return;
     setSheetEvent(null);
     setSheetDefaultTime(undefined);
     setSheetOpen(true);
-  }, []);
+  }, [canModifySchedule]);
 
   const openEventSheet = (event: ScheduleEvent) => {
     setSheetDefaultTime(undefined);
@@ -362,12 +335,11 @@ function AgendaCalendar() {
       handledFocusedEventRef.current = null;
       return;
     }
+    if (!capabilitiesReady) return;
 
     const focusKey = `${organizationId}:${focusedEventId}`;
     if (handledFocusedEventRef.current === focusKey) return;
 
-    const focusedEvent =
-      events.find((event) => event.id === focusedEventId) || focusedEvents[0];
     if (!focusedEvent) return;
 
     const eventDate =
@@ -398,9 +370,9 @@ function AgendaCalendar() {
       isActive = false;
     };
   }, [
-    events,
+    capabilitiesReady,
     focusedEventId,
-    focusedEvents,
+    focusedEvent,
     organizationId,
     router,
     scheduleTimeZone,
@@ -479,14 +451,11 @@ function AgendaCalendar() {
 
   const activeFiltersCount =
     (selectedUserId ? 1 : 0) + (selectedEventType ? 1 : 0);
-  const navigationStep =
-    effectiveViewMode === "week"
-      ? 7
-      : effectiveViewMode === "month"
-        ? 30
-        : effectiveViewMode === "year"
-          ? 365
-          : 1;
+  const navigatePeriod = (direction: -1 | 1) => {
+    const nextDate = navigateAgendaPeriod(pivotDate, effectiveViewMode, direction);
+    setPivotDate(nextDate);
+    setSelectedDate(nextDate);
+  };
   const periodLabel =
     effectiveViewMode === "day"
       ? format(pivotDate, "EEEE, d 'de' MMMM", { locale: ptBR })
@@ -526,14 +495,12 @@ function AgendaCalendar() {
             {!isMobile && (
               <button
                 className="h-8 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-white shadow-none transition-colors hover:bg-primary"
-                onClick={() =>
-                  setPivotDate(
-                    scheduleInstantToLocalDateProxy(
-                      Date.now(),
-                      scheduleTimeZone,
-                    ) || new Date(),
-                  )
-                }
+                disabled={!capabilitiesReady}
+                onClick={() => {
+                  const today = scheduleInstantToLocalDateProxy(Date.now(), scheduleTimeZone) || new Date();
+                  setPivotDate(today);
+                  setSelectedDate(today);
+                }}
               >
                 Hoje
               </button>
@@ -541,21 +508,23 @@ function AgendaCalendar() {
             <div className="flex gap-1">
               <button
                 className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
-                onClick={() => setPivotDate((d) => addDays(d, -navigationStep))}
+                disabled={!capabilitiesReady}
+                onClick={() => navigatePeriod(-1)}
                 aria-label="Período anterior"
               >
                 <ChevronLeft size={14} />
               </button>
               <button
                 className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
-                onClick={() => setPivotDate((d) => addDays(d, navigationStep))}
+                disabled={!capabilitiesReady}
+                onClick={() => navigatePeriod(1)}
                 aria-label="Próximo período"
               >
                 <ChevronRight size={14} />
               </button>
             </div>
             <span className="min-w-0 flex-1 truncate text-[14px] font-light capitalize text-[var(--color-text-primary)]">
-              {periodLabel}
+              {capabilitiesReady ? periodLabel : "Configurações da agenda"}
             </span>
 
             <div className="flex items-center gap-2">
@@ -579,6 +548,7 @@ function AgendaCalendar() {
                 <PopoverTrigger asChild>
                   <Button
                     data-tour="agenda-filters"
+                    aria-label="Filtros da agenda"
                     variant="ghost"
                     size="sm"
                     className={cn(
@@ -617,6 +587,7 @@ function AgendaCalendar() {
                               <button
                                 key={m.value}
                                 onClick={() => setViewMode(m.value)}
+                                 aria-pressed={active}
                                 className={cn(
                                   "flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
                                   active
@@ -640,6 +611,7 @@ function AgendaCalendar() {
                         <button
                           type="button"
                           onClick={() => setSelectedEventType(null)}
+                           aria-pressed={selectedEventType === null}
                           className={cn(
                             "col-span-2 flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
                             selectedEventType === null
@@ -659,6 +631,7 @@ function AgendaCalendar() {
                               key={option.value}
                               type="button"
                               onClick={() => setSelectedEventType(option.value)}
+                               aria-pressed={active}
                               className={cn(
                                 "flex min-w-0 items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-left text-[12px] font-light transition-colors",
                                 active
@@ -708,6 +681,7 @@ function AgendaCalendar() {
               {!isMobile && canManageSchedule && (
                 <Button
                   data-tour="agenda-new"
+                  disabled={!canModifySchedule}
                   onClick={openCreateSheet}
                   className="h-8 gap-2 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
                 >
@@ -717,12 +691,38 @@ function AgendaCalendar() {
             </div>
           </div>
 
+          {focusedEventNotice && (
+            <div role={focusedEventPending ? "status" : "alert"} className="mx-3 mb-2 flex flex-wrap items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-sm text-[var(--app-text-secondary)]">
+              <span className="flex-1">{focusedEventNotice}</span>
+              {!focusedEventPending && (
+                <Button variant="outline" size="sm" aria-label="Tentar carregar atividade novamente" onClick={() => void refetchFocusedEvent()}>
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" /> Tentar novamente
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={dismissFocusedEvent}>Fechar aviso da atividade</Button>
+            </div>
+          )}
+
           {/* Calendário / lista */}
           <div
             data-tour="agenda-calendar"
             style={{ flex: 1, overflow: "hidden" }}
           >
-            {eventsLoading ? (
+            {!capabilitiesReady ? (
+              scheduleCapabilitiesQuery.isError || scheduleCapabilitiesQuery.isSuccess ? (
+                <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                  <AlertCircle className="h-6 w-6 text-destructive" />
+                  <p className="text-sm text-[var(--app-text-secondary)]">Não foi possível carregar as configurações da agenda.</p>
+                  <Button variant="outline" size="sm" className="gap-2 rounded-[6px]" onClick={() => void scheduleCapabilitiesQuery.refetch()}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex h-full items-center justify-center">
+                  <VimobLoader showLabel label="Carregando as configurações da agenda..." />
+                </div>
+              )
+            ) : eventsLoading ? (
               <div className="flex h-full items-center justify-center">
                 <VimobLoader showLabel label="Carregando agenda..." />
               </div>
@@ -751,16 +751,16 @@ function AgendaCalendar() {
                 viewMode={effectiveViewMode}
                 onEditEvent={openEventSheet}
                 onEventUpdate={(id, updates) =>
-                  canManageSchedule &&
+                  canModifySchedule &&
                   updateEventMutation.mutate({
                     id,
                     ...updates,
                   })
                 }
-                canManageEvents={canManageSchedule}
-                timeZone={scheduleCapabilities?.timeZone}
+                canManageEvents={canModifySchedule}
+                timeZone={scheduleTimeZone}
                 onQuickCreate={
-                  canManageSchedule
+                  canModifySchedule
                     ? (date, time) => {
                         setSelectedDate(date);
                         setSheetEvent(null);
@@ -771,13 +771,15 @@ function AgendaCalendar() {
                 }
               />
             ) : (
-              <div style={{ height: "100%", padding: 24, overflowY: "auto" }}>
+              <div className="h-full overflow-y-auto p-3 md:p-4">
                 <EventsList
-                  events={upcomingEvents}
+                  key={`${organizationId}:${pivotDate.getTime()}:${selectedUserId}:${selectedEventType}`}
+                  events={filteredEvents}
+                  paginate
                   onEditEvent={openEventSheet}
                   showUser={true}
-                  canManage={canManageSchedule}
-                  timeZone={scheduleCapabilities?.timeZone}
+                  canManage={canModifySchedule}
+                  timeZone={scheduleTimeZone}
                 />
               </div>
             )}
@@ -786,7 +788,7 @@ function AgendaCalendar() {
       </div>
 
       <Dialog open={googleCalendarOpen} onOpenChange={setGoogleCalendarOpen}>
-        <DialogContent className="w-[calc(100vw-16px)] max-w-xl rounded-[8px] border-0 bg-[var(--app-background)] p-4 sm:p-5">
+        <DialogContent className="max-h-[90dvh] w-[calc(100vw-16px)] max-w-xl overflow-y-auto rounded-[8px] border-0 bg-[var(--app-background)] p-4 sm:p-5">
           <DialogHeader className="gap-1.5">
             <DialogTitle className="text-[14px] font-light text-[var(--app-text-primary)]">
               Google Agenda

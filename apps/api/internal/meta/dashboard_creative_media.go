@@ -36,6 +36,11 @@ type dashboardCreativeMediaCacheEntry struct {
 	expiresAt time.Time
 }
 
+type dashboardCreativeMediaFlight struct {
+	done  chan struct{}
+	value DashboardCreativeMedia
+}
+
 // DashboardCreativeMediaResolver performs a bounded, read-only Graph lookup
 // using an active ads_read integration belonging to the requested organization.
 // The caller must first verify that the creative is visible in its dashboard
@@ -47,6 +52,7 @@ type DashboardCreativeMediaResolver struct {
 	now       func() time.Time
 	mu        sync.Mutex
 	cache     map[string]dashboardCreativeMediaCacheEntry
+	inflight  map[string]*dashboardCreativeMediaFlight
 }
 
 func NewDashboardCreativeMediaResolver(database *dbpkg.Postgres, config Config) *DashboardCreativeMediaResolver {
@@ -64,6 +70,7 @@ func NewDashboardCreativeMediaResolver(database *dbpkg.Postgres, config Config) 
 		slots:     make(chan struct{}, 2),
 		now:       time.Now,
 		cache:     make(map[string]dashboardCreativeMediaCacheEntry),
+		inflight:  make(map[string]*dashboardCreativeMediaFlight),
 	}
 	if database != nil {
 		resolver.tokens = func(ctx context.Context, organizationID string) ([]string, error) {
@@ -83,6 +90,10 @@ func (resolver *DashboardCreativeMediaResolver) ResolveDashboardCreativeMedia(ct
 		(adID != "" && !dashboardMetaObjectID.MatchString(adID)) {
 		return DashboardCreativeMedia{}
 	}
+	if ctx.Err() != nil {
+		return DashboardCreativeMedia{}
+	}
+	organizationID = strings.ToLower(organizationID)
 	cacheKey := organizationID + ":" + creativeID + ":" + adID
 	now := resolver.now()
 	resolver.mu.Lock()
@@ -90,10 +101,62 @@ func (resolver *DashboardCreativeMediaResolver) ResolveDashboardCreativeMedia(ct
 		resolver.mu.Unlock()
 		return cached.value
 	}
+	flight, exists := resolver.inflight[cacheKey]
+	if !exists {
+		// Coalesce each organization/key once, with bounded distinct pending
+		// flights as well as bounded Graph concurrency. Saturation is a preview
+		// miss, never an unbounded queue of provider goroutines.
+		if len(resolver.inflight) >= dashboardCreativeMediaCacheEntries {
+			resolver.mu.Unlock()
+			return DashboardCreativeMedia{}
+		}
+		flight = &dashboardCreativeMediaFlight{done: make(chan struct{})}
+		resolver.inflight[cacheKey] = flight
+		go resolver.resolveDashboardCreativeMediaFlight(context.WithoutCancel(ctx), cacheKey, organizationID, creativeID, adID, flight)
+	}
 	resolver.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(ctx, dashboardCreativeMediaTimeout)
 	defer cancel()
+	select {
+	case <-flight.done:
+		return flight.value
+	case <-ctx.Done():
+		return DashboardCreativeMedia{}
+	}
+}
+
+func (resolver *DashboardCreativeMediaResolver) resolveDashboardCreativeMediaFlight(ctx context.Context, cacheKey, organizationID, creativeID, adID string, flight *dashboardCreativeMediaFlight) {
+	ctx, cancel := context.WithTimeout(ctx, dashboardCreativeMediaTimeout)
+	defer cancel()
+	var result DashboardCreativeMedia
+	defer func() {
+		// A provider adapter panic must release its flight and cannot crash the
+		// API from this shared goroutine or strand every waiter for the key.
+		if recover() != nil {
+			result = DashboardCreativeMedia{}
+		}
+		resolver.mu.Lock()
+		defer resolver.mu.Unlock()
+		if len(resolver.cache) >= dashboardCreativeMediaCacheEntries {
+			for key := range resolver.cache {
+				delete(resolver.cache, key)
+				break
+			}
+		}
+		ttl := dashboardCreativeMediaFailureTTL
+		if result.ThumbnailURL != nil {
+			ttl = dashboardCreativeMediaSuccessTTL
+		}
+		resolver.cache[cacheKey] = dashboardCreativeMediaCacheEntry{value: result, expiresAt: resolver.now().Add(ttl)}
+		flight.value = result
+		delete(resolver.inflight, cacheKey)
+		close(flight.done)
+	}()
+	result = resolver.lookupDashboardCreativeMedia(ctx, organizationID, creativeID, adID)
+}
+
+func (resolver *DashboardCreativeMediaResolver) lookupDashboardCreativeMedia(ctx context.Context, organizationID, creativeID, adID string) DashboardCreativeMedia {
 	select {
 	case resolver.slots <- struct{}{}:
 		defer func() { <-resolver.slots }()
@@ -131,21 +194,6 @@ func (resolver *DashboardCreativeMediaResolver) ResolveDashboardCreativeMedia(ct
 		}
 	}
 
-	resolver.mu.Lock()
-	if len(resolver.cache) >= dashboardCreativeMediaCacheEntries {
-		// A bounded cache is sufficient for the small visible ranking; dropping
-		// older entries is safe because the provider remains the source of truth.
-		for key := range resolver.cache {
-			delete(resolver.cache, key)
-			break
-		}
-	}
-	ttl := dashboardCreativeMediaFailureTTL
-	if result.ThumbnailURL != nil {
-		ttl = dashboardCreativeMediaSuccessTTL
-	}
-	resolver.cache[cacheKey] = dashboardCreativeMediaCacheEntry{value: result, expiresAt: resolver.now().Add(ttl)}
-	resolver.mu.Unlock()
 	return result
 }
 
@@ -226,15 +274,26 @@ func dashboardCreativeMediaFirstSafeURL(values ...any) *string {
 }
 
 func dashboardCreativeMediaSafeURL(raw string) *string {
+	return SafeDashboardCreativeURL(raw)
+}
+
+// SafeDashboardCreativeURL is shared by recorded snapshots and Graph results.
+// Keep credentials, explicit ports, fragments and secret-bearing query parameters out of
+// every media response, including its first render and historical fallback.
+func SafeDashboardCreativeURL(raw string) *string {
 	value := strings.TrimSpace(raw)
-	if value == "" || len(value) > 4096 {
+	if value == "" || len(value) > 4096 || strings.Contains(value, "#") {
 		return nil
 	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Port() != "" {
 		return nil
 	}
-	for key := range parsed.Query() {
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return nil
+	}
+	for key := range query {
 		lower := strings.ToLower(key)
 		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "proof") {
 			return nil

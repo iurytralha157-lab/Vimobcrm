@@ -1,4 +1,5 @@
-import { useCallback, useState, memo, type CSSProperties } from 'react';
+import { useCallback, useState, memo, type CSSProperties, type HTMLAttributes, type RefCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Phone, Mail, MessageCircle, Clock, User, Zap, Trophy, XCircle, Loader2 } from 'lucide-react';
@@ -9,7 +10,7 @@ import { useFloatingChat } from '@/contexts/FloatingChatContext';
 import { formatPhoneForDisplay, normalizePhoneToE164 } from '@/lib/phone-utils';
 import { SlaBadge } from './SlaBadge';
 import { useRecordFirstResponseOnAction } from '@/hooks/use-first-response';
-import { useCreateActivity } from '@/hooks/use-activities';
+import { useRecordLeadContactOutcome } from '@/hooks/leads/use-record-lead-contact-outcome';
 import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
@@ -22,6 +23,12 @@ import {
 import { getErrorObjectMessage } from '@/lib/api/vimob-error';
 import { getLeadDisplayValue } from '@/lib/lead-display-value';
 import { toast } from 'sonner';
+import { QueuePoolClaimButton } from '@/components/features/leads/QueuePoolClaimButton';
+import type { QueuePool } from '@/lib/validation/queue-runtime';
+import { getDisplayInitial, normalizeDisplayName } from '@/lib/display-name';
+import { useLeadDetailOperationScope } from '@/hooks/leads/use-lead-detail-operation-scope';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
+import { useLeadCardOutcomeDraft } from '@/hooks/leads/use-lead-card-outcome-draft';
 
 // Deal status labels and colors
 const dealStatusConfig = {
@@ -56,6 +63,7 @@ type LeadInterest = {
 };
 
 type LeadCardLead = {
+  queue_pool?: QueuePool | null;
   id: string;
   can_operate?: boolean;
   name?: string | null;
@@ -91,6 +99,18 @@ type LeadCardLead = {
   } | null;
 };
 
+export type LeadCardDragPresentation = {
+  innerRef: RefCallback<HTMLElement>;
+  cardProps?: HTMLAttributes<HTMLElement>;
+  handleProps?: HTMLAttributes<HTMLDivElement>;
+  handleRef?: RefCallback<HTMLDivElement>;
+  style?: CSSProperties;
+  isDragging?: boolean;
+  /** Measured sortable origins keep their geometry; clones/legacy keep decoration. */
+  decorateDragging?: boolean;
+  isDropAnimating?: boolean;
+};
+
 interface LeadCardProps {
   lead: LeadCardLead;
   onClick: (lead: LeadCardLead) => void;
@@ -102,6 +122,9 @@ interface LeadCardProps {
   canOperateWhatsApp: boolean;
   tourTarget?: string;
   nowMs?: number;
+  className?: string;
+  dragPresentation?: LeadCardDragPresentation;
+  isMovePending?: boolean;
 }
 
 // Formata tempo sempre em horas (ex: "30min", "2h", "72h")
@@ -127,21 +150,33 @@ export const LeadCard = memo(function LeadCard({
   canOperateWhatsApp,
   tourTarget,
   nowMs = Date.now(),
+  className,
+  dragPresentation,
+  isMovePending = false,
 }: LeadCardProps) {
   const { openNewChat } = useFloatingChat();
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization, profile, user, session } = useAuth();
+  const queryClient = useQueryClient();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
-  const createActivity = useCreateActivity();
+  const recordContactOutcome = useRecordLeadContactOutcome();
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
   const [outcomeType, setOutcomeType] = useState<'call' | 'email'>('call');
-  const leadName = lead.name || 'Lead';
+  const cardOutcomeDraft = useLeadCardOutcomeDraft(activeOrganization.organizationId, user?.id,
+    getGlobalSignOutSessionId(session), lead.id, outcomeType);
+  const leadName = normalizeDisplayName(lead.name, 'Lead');
   const stageTime = lead.stage_entered_at
     ? formatShortTime(new Date(lead.stage_entered_at), nowMs)
     : '-';
+  const poolReadOnly = Boolean(lead.queue_pool && !lead.assigned_user_id);
+  const canRecordContact = !poolReadOnly && lead.can_operate === true;
+  const captureCardOperation = useLeadDetailOperationScope(
+    lead.id, activeOrganization.organizationId, user?.id || null, queryClient,
+    canRecordContact, getGlobalSignOutSessionId(session),
+  );
   const hasPhone = !!lead.phone;
   const hasEmail = !!lead.email;
-  const canUseWhatsApp = hasPhone && hasWhatsAppModule && canViewWhatsApp;
-  const whatsappActionLabel = !hasPhone
+  const canUseWhatsApp = !poolReadOnly && hasPhone && hasWhatsAppModule && canViewWhatsApp;
+  const whatsappActionLabel = poolReadOnly ? 'Assuma o lead antes de iniciar o atendimento' : !hasPhone
     ? 'Sem telefone'
     : !hasWhatsAppModule
       ? 'Módulo de WhatsApp indisponível'
@@ -174,6 +209,7 @@ export const LeadCard = memo(function LeadCard({
   };
   const handlePhoneClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!canRecordContact) return;
     if (lead.phone) {
       const phoneHref = normalizePhoneToE164(lead.phone);
       if (!phoneHref) return;
@@ -190,6 +226,7 @@ export const LeadCard = memo(function LeadCard({
   };
   const handleEmailClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!canRecordContact) return;
     if (lead.email) {
       const gmailUrl = `https://mail.google.com/mail/view=cm&fs=1&tf=1&to=${encodeURIComponent(lead.email)}`;
       window.open(gmailUrl, '_blank');
@@ -199,17 +236,31 @@ export const LeadCard = memo(function LeadCard({
   };
 
   const handleOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
+    if (!canRecordContact) return false;
+    let operation: ReturnType<typeof captureCardOperation>;
     try {
-      await createActivity.mutateAsync({
-        lead_id: lead.id,
-        type: outcomeType === 'call' ? 'call' : 'email',
-        content: outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
-        metadata: { outcome, notes, channel: outcomeType },
-      });
-    } catch (error) {
-      toast.error(`Não foi possível registrar a atividade: ${getErrorObjectMessage(error)}`);
-      throw error;
+      operation = captureCardOperation();
+    } catch {
+      return false;
     }
+    let command: ReturnType<typeof cardOutcomeDraft.getSubmission>;
+    try {
+      command = cardOutcomeDraft.getSubmission(outcome, notes);
+      if (!cardOutcomeDraft.beginSubmission(command)) return false;
+    } catch {
+      if (operation.isCurrent()) toast.error('Não foi possível preparar o registro. Confira o resultado e as anotações.');
+      return false;
+    }
+    try {
+      try {
+        await recordContactOutcome.mutateAsync({ leadId: lead.id, ...command });
+      } catch (error) {
+        if (!operation.isCurrent()) return false;
+        toast.error(`Não foi possível registrar a atividade: ${getErrorObjectMessage(error)}`);
+        throw error;
+      }
+    const draftAcknowledged = cardOutcomeDraft.acknowledgeSavedCommand(command);
+    if (!operation.isCurrent()) return false;
     const responseParams = {
       leadId: lead.id,
       organizationId: lead.organization_id || activeOrganization.organizationId || '',
@@ -221,19 +272,30 @@ export const LeadCard = memo(function LeadCard({
     try {
       await recordFirstResponse(responseParams);
     } catch {
+      if (!operation.isCurrent()) return false;
       toast.warning('Atividade salva, mas o tempo do primeiro contato não foi registrado.', {
         action: {
           label: 'Tentar registro',
           onClick: () => {
+            if (!operation.isCurrent()) return;
             void recordFirstResponse(responseParams).then(
-              () => toast.success('Primeiro contato registrado.'),
-              () => toast.error('Ainda não foi possível registrar o tempo do primeiro contato.'),
+              () => { if (operation.isCurrent()) toast.success('Primeiro contato registrado.'); },
+              () => { if (operation.isCurrent()) toast.error('Ainda não foi possível registrar o tempo do primeiro contato.'); },
             );
           },
         },
       });
     }
+    if (!operation.isCurrent()) return false;
+    if (!draftAcknowledged) {
+      toast.info('O resultado anterior foi confirmado. Suas novas anotações foram mantidas.');
+      return false;
+    }
     setOutcomeDialogOpen(false);
+    return true;
+    } finally {
+      cardOutcomeDraft.endSubmission(command);
+    }
   };
   const isLost = lead.deal_status === 'lost';
   const isWon = lead.deal_status === 'won';
@@ -259,13 +321,7 @@ export const LeadCard = memo(function LeadCard({
     (nowMs - new Date(lead.created_at).getTime()) < 10000;
   const isAssigneeHydrating = Boolean(lead.assigned_user_id && !lead.assignee);
 
-  return <>
-    <Draggable draggableId={lead.id} index={index} isDragDisabled={isDragDisabled}>
-      {(provided, snapshot) => {
-        const { style, ...draggableProps } = provided.draggableProps;
-        const providedStyle = style as CSSProperties | undefined;
-        const isDragging = Boolean(snapshot.isDragging);
-        const isDropAnimating = Boolean(snapshot.isDropAnimating);
+  const renderCard = ({ innerRef, cardProps, handleProps, handleRef, style: providedStyle, isDragging = false, decorateDragging = true, isDropAnimating = false }: LeadCardDragPresentation) => {
         const cardStyle = {
           ...providedStyle,
           transition: isDropAnimating
@@ -279,28 +335,33 @@ export const LeadCard = memo(function LeadCard({
         return (
         <article
           data-tour={tourTarget}
-          ref={provided.innerRef}
-          {...draggableProps}
+          ref={innerRef}
+          {...cardProps}
           style={cardStyle}
           className={cn(
             "group relative rounded-[8px] bg-[var(--app-lead-card)] p-3 hover:-translate-y-0.5 hover:bg-[var(--app-lead-card-hover)]",
             isDragging || isDropAnimating
               ? "transition-none"
               : "transition-[background-color,box-shadow,transform] duration-150",
-            isDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45",
+            isDragging && decorateDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45",
             isLost && "bg-[var(--lead-status-lost-card)] hover:bg-[var(--lead-status-lost-card-hover)]",
             isWon && "bg-[var(--lead-status-won-card)] hover:bg-[var(--lead-status-won-card-hover)]",
+             className,
           )}
         >
           <div
-            {...(provided.dragHandleProps ?? {})}
+            ref={handleRef}
+            {...handleProps}
             role="button"
             tabIndex={0}
             aria-label={isDragDisabled
               ? `Abrir detalhes do lead ${leadName}`
               : `${leadName}: pressione Enter para abrir os detalhes ou Espaço para mover o card`}
             onClick={handleCardClick}
-            onKeyDown={handleCardKeyDown}
+            onKeyDown={(event) => {
+              if (!isDragging) handleCardKeyDown(event);
+              if (!event.defaultPrevented) handleProps?.onKeyDown?.(event);
+            }}
             className="absolute inset-0 z-20 cursor-pointer rounded-[8px] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/50"
           />
 
@@ -309,7 +370,7 @@ export const LeadCard = memo(function LeadCard({
           {hasLeadLabels && (
             <div className="mb-2 flex flex-wrap items-center gap-1">
               {/* Deal Status Badge */}
-              {lead.deal_status && lead.deal_status !== 'open' && <span className={cn("inline-flex h-[18px] items-center justify-center gap-0.5 rounded px-1.5 text-[9px] font-normal leading-none", dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].color)}>
+              {lead.deal_status && lead.deal_status !== 'open' && <span data-lead-card-part="label" className={cn("inline-flex h-[18px] items-center justify-center gap-0.5 rounded px-1.5 text-[9px] font-normal leading-none", dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].color)}>
                   {dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].icon && (() => {
               const Icon = dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].icon;
               return Icon ? <Icon className="h-2.5 w-2.5" /> : null;
@@ -321,7 +382,9 @@ export const LeadCard = memo(function LeadCard({
               {lead.tags && lead.tags.length > 0 ? (
                   <>
                     <span
-                      className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-normal leading-none"
+                      data-lead-card-part="label tag"
+                      title={lead.tags[0].name || undefined}
+                      className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[10px] font-light leading-none"
                       style={getTagColorStyleWithWhiteText(lead.tags[0].color)}
                     >
                       {lead.tags[0].name}
@@ -331,6 +394,7 @@ export const LeadCard = memo(function LeadCard({
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span
+                              data-lead-card-part="caption tag-count"
                               className="pointer-events-auto relative z-30 inline-flex h-[18px] cursor-help items-center text-[10px] leading-none text-muted-foreground"
                               aria-label={`Ver mais ${lead.tags.length - 1} tags`}
                               tabIndex={0}
@@ -345,7 +409,7 @@ export const LeadCard = memo(function LeadCard({
                               {lead.tags.slice(1).map((tag, hiddenTagIndex) => (
                                 <span
                                   key={`${tag.name || 'tag'}-${hiddenTagIndex}`}
-                                  className="inline-flex h-[18px] items-center rounded-[4px] px-1.5 text-[9px] font-normal leading-none"
+                                  className="inline-flex h-[18px] items-center rounded-[4px] px-1.5 text-[10px] font-light leading-none"
                                   style={getTagColorStyleWithWhiteText(tag.color)}
                                 >
                                   {tag.name || 'Sem nome'}
@@ -368,21 +432,21 @@ export const LeadCard = memo(function LeadCard({
               <div className="relative shrink-0">
                 <Avatar className="h-8 w-8">
                   <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
-                  <AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium">
-                    {leadName[0]?.toUpperCase() || <User className="h-4 w-4" />}
+                  <AvatarFallback className="bg-primary/50 text-white text-xs font-medium">
+                    {getDisplayInitial(leadName) || <User className="h-4 w-4" />}
                   </AvatarFallback>
                 </Avatar>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <h4 className="truncate text-[13px] font-normal text-foreground">{leadName}</h4>
+                  <h4 data-lead-card-part="name" className="truncate text-[13px] font-normal text-foreground">{leadName}</h4>
                   <ReentryBadge
                     count={lead.reentry_count}
                     lastEntryAt={lead.last_entry_at}
                     className="pointer-events-auto relative z-30"
                   />
                 </div>
-                {lead.phone && <p className="text-[11px] text-muted-foreground truncate">{formatPhoneForDisplay(lead.phone)}</p>}
+                {lead.phone && <p data-lead-card-part="caption" className="text-[12px] text-muted-foreground truncate">{formatPhoneForDisplay(lead.phone)}</p>}
               </div>
             </div>
 
@@ -401,6 +465,7 @@ export const LeadCard = memo(function LeadCard({
             if (source === 'whatsapp') {
               return (
                 <div
+                  data-lead-card-part="source"
                   aria-label={campaignName ? `WhatsApp: ${campaignName}` : 'WhatsApp'}
                   className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0"
                   role="img"
@@ -416,7 +481,7 @@ export const LeadCard = memo(function LeadCard({
                     <path d="M21.94 18.55c-.32-.16-1.89-.92-2.18-1.03-.29-.1-.5-.16-.71.16-.21.31-.82 1.02-1 1.23-.18.21-.37.24-.69.08-.32-.16-1.34-.49-2.55-1.55-.94-.83-1.58-1.86-1.76-2.17-.18-.31-.02-.48.14-.64.14-.14.32-.37.48-.55.16-.18.21-.31.32-.52.1-.21.05-.39-.03-.55-.08-.16-.71-1.69-.97-2.32-.26-.61-.52-.53-.71-.54h-.6c-.21 0-.55.08-.84.39-.29.31-1.1 1.07-1.1 2.61s1.13 3.03 1.29 3.24c.16.21 2.22 3.34 5.38 4.68.75.32 1.34.51 1.8.65.76.24 1.45.2 2 .12.61-.09 1.89-.76 2.16-1.5.26-.73.26-1.36.18-1.5-.08-.13-.29-.21-.61-.37Z" />
                   </svg>
                   {campaignName && (
-                    <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
+                    <span data-lead-card-part="source-label" className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
                   )}
                 </div>
               );
@@ -426,11 +491,11 @@ export const LeadCard = memo(function LeadCard({
             if (platform === 'meta' || platform === 'facebook' || source === 'meta' || source === 'facebook') {
               if (!campaignName) return null;
               return (
-                <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
+                <div data-lead-card-part="source" className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
                   <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill={BRAND_COLORS.meta}>
                     <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.018 1.793-4.684 4.533-4.684 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.93-1.956 1.886v2.273h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
                   </svg>
-                  <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
+                  <span data-lead-card-part="source-label" className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
                 </div>
               );
             }
@@ -439,14 +504,14 @@ export const LeadCard = memo(function LeadCard({
             if (platform === 'google' || source === 'google') {
               if (!campaignName) return null;
               return (
-                <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
+                <div data-lead-card-part="source" className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
                   <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill={BRAND_COLORS.google.blue}/>
                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill={BRAND_COLORS.google.green}/>
                     <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 001 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z" fill={BRAND_COLORS.google.yellow}/>
                     <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill={BRAND_COLORS.google.red}/>
                   </svg>
-                  <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
+                  <span data-lead-card-part="source-label" className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
                 </div>
               );
             }
@@ -458,11 +523,11 @@ export const LeadCard = memo(function LeadCard({
                  `${interestProp.code} · ${(interestProp.title || '').substring(0, 20)}${(interestProp.title || '').length > 20 ? '…' : ''}`
                 : (interestProp.title || '').substring(0, 30);
               return (
-                <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
+                <div data-lead-card-part="source" className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
                   <svg className="h-3 w-3 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                   </svg>
-                  <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{label}</span>
+                  <span data-lead-card-part="source-label" className="text-[10px] text-muted-foreground/80 truncate leading-none">{label}</span>
                 </div>
               );
             }
@@ -470,11 +535,11 @@ export const LeadCard = memo(function LeadCard({
             // Generic source
             if (lead.source) {
               return (
-                <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
+                <div data-lead-card-part="source" className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
                   <div className="h-3 w-3 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                     <Zap className="h-2 w-2 text-primary" />
                   </div>
-                  <span className="text-[10px] text-muted-foreground/80 truncate leading-none capitalize">{lead.source}</span>
+                  <span data-lead-card-part="source-label" className="text-[10px] text-muted-foreground/80 truncate leading-none capitalize">{lead.source}</span>
                 </div>
               );
             }
@@ -483,33 +548,35 @@ export const LeadCard = memo(function LeadCard({
           })()}
 
           {/* Separador */}
-          <div className="my-2 -mx-3 border-t border-[var(--app-lead-card-divider)]" />
+          <div data-lead-card-part="divider" className="my-2 -mx-3 border-t border-[var(--app-lead-card-divider)]" />
           </div>
 
           {/* Linha de ações rápidas e infos */}
           <TooltipProvider delayDuration={100}>
-            <div className="pointer-events-none relative z-30 flex flex-wrap items-center gap-1.5">
+            <div data-lead-card-part="actions" className="pointer-events-none relative z-30 flex flex-wrap items-center gap-1.5">
               {/* Avatar do responsável ou badge "Sem responsável" / "Atribuindo..." */}
-              {lead.assignee ? <Tooltip>
+              {lead.queue_pool && !lead.assigned_user_id ? <QueuePoolClaimButton lead={lead} compact /> : lead.assignee ? <Tooltip>
                   <TooltipTrigger asChild>
                     <Avatar
+                      data-lead-card-part="owner"
                       tabIndex={0}
                       aria-label={`Responsável: ${lead.assignee.name || 'não informado'}`}
                       className="pointer-events-auto h-10 w-10 shrink-0 md:h-6 md:w-6"
                     >
                       <AvatarImage src={lead.assignee.avatar_url || undefined} alt="" />
-                      <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
+                      <AvatarFallback className="text-[10px] bg-primary/50 text-white">
                         {lead.assignee.name?.[0] || ''}
                       </AvatarFallback>
                     </Avatar>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
+                  <TooltipContent data-lead-card-part="owner-tooltip" side="bottom" className="text-xs font-light">
                     {lead.assignee.name}
                   </TooltipContent>
                 </Tooltip> : isAssigneeHydrating ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Badge
+                        data-lead-card-part="assignment"
                         tabIndex={0}
                         aria-label="Carregando responsável"
                         variant="secondary"
@@ -524,19 +591,21 @@ export const LeadCard = memo(function LeadCard({
                   </Tooltip>
                 ) : lead.can_operate !== true ? (
                   <Badge
+                    data-lead-card-part="assignment"
                     variant="secondary"
                     className="bg-[var(--app-surface-soft)] px-1.5 py-0.5 text-[9px] font-normal text-muted-foreground"
                   >
                     Sem responsável
                   </Badge>
                 ) : isRecentlyCreated ? (
-                  <Badge variant="secondary" className="animate-pulse px-1.5 py-0.5 text-[9px] font-normal">
+                  <Badge data-lead-card-part="assignment" variant="secondary" className="animate-pulse px-1.5 py-0.5 text-[9px] font-normal">
                     <Loader2 className="h-2 w-2 mr-1 animate-spin" />
                     Atribuindo...
                   </Badge>
                 ) : <Tooltip>
                   <TooltipTrigger asChild>
                     <button
+                      data-lead-card-part="assignment"
                       type="button"
                       aria-label={`Atribuir ${leadName} via round-robin`}
                       className="pointer-events-auto inline-flex h-10 cursor-pointer items-center rounded-[6px] bg-destructive px-1.5 text-[9px] font-normal text-destructive-foreground outline-none transition-colors hover:bg-destructive/90 focus-visible:ring-1 focus-visible:ring-destructive/50 md:h-6"
@@ -556,18 +625,18 @@ export const LeadCard = memo(function LeadCard({
               {/* Ícones de ação */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={hasPhone ? `Ligar para ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasPhone ? iconColors.phone : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button data-lead-card-part="quick-action" type="button" aria-label={!canRecordContact ? `Sem permissão para registrar atendimento: ${leadName}` : hasPhone ? `Ligar para ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone || !canRecordContact} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors disabled:opacity-50 focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasPhone ? iconColors.phone : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <Phone aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
-                  {hasPhone ? `Ligar: ${formatPhoneForDisplay(lead.phone || '')}` : 'Sem telefone'}
+                  {!canRecordContact ? 'Sem permissão para realizar e registrar atendimento' : hasPhone ? `Ligar: ${formatPhoneForDisplay(lead.phone || '')}` : 'Sem telefone'}
                 </TooltipContent>
               </Tooltip>
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={`${whatsappActionLabel}: ${leadName}`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!canUseWhatsApp} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", canUseWhatsApp ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button data-lead-card-part="quick-action" type="button" aria-label={`${whatsappActionLabel}: ${leadName}`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!canUseWhatsApp} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", canUseWhatsApp ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <MessageCircle aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
@@ -578,12 +647,12 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={hasEmail ? `Enviar e-mail para ${leadName}` : `${leadName} está sem e-mail`} onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasEmail ? iconColors.email : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button data-lead-card-part="quick-action" type="button" aria-label={!canRecordContact ? `Sem permissão para registrar e-mail: ${leadName}` : hasEmail ? `Enviar e-mail para ${leadName}` : `${leadName} está sem e-mail`} onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail || !canRecordContact} className={cn("pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full outline-none transition-colors disabled:opacity-50 focus-visible:ring-1 focus-visible:ring-primary/50 md:h-6 md:w-6", hasEmail ? iconColors.email : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <Mail aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
-                  {hasEmail ? `Email: ${lead.email}` : 'Sem email'}
+                  {!canRecordContact ? 'Sem permissão para realizar e registrar atendimento' : hasEmail ? `Email: ${lead.email}` : 'Sem email'}
                 </TooltipContent>
               </Tooltip>
 
@@ -593,7 +662,7 @@ export const LeadCard = memo(function LeadCard({
                     <div className={cn(
                       "pointer-events-auto rounded-[6px] px-1.5 py-0.5 text-[10px] font-normal",
                       "bg-[var(--lead-value-bg)] text-[var(--lead-value-fg)]"
-                    )}>
+                    )} data-lead-card-part="caption value">
                       {formatCurrency(valorInteresse)}
                     </div>
                   </TooltipTrigger>
@@ -618,21 +687,33 @@ export const LeadCard = memo(function LeadCard({
               {/* Tempo no estágio */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div tabIndex={0} aria-label={`Tempo neste estágio: ${stageTime}`} className="pointer-events-auto ml-auto flex items-center gap-1 text-[10px] font-light text-muted-foreground">
-                    <Clock className="h-3 w-3" />
+                  <div data-lead-card-part="caption elapsed" tabIndex={0} aria-label={`${isMovePending ? 'Salvando movimentação. ' : ''}Tempo neste estágio: ${stageTime}`} className="pointer-events-auto ml-auto flex items-center gap-1 text-[10px] font-light text-muted-foreground">
+                    {isMovePending
+                      ? <Loader2 data-lead-move-pending role="status" aria-label="Salvando movimentação" className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+                      : <Clock className="h-3 w-3" />}
                     {stageTime}
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
-                  Tempo neste estágio
+                  {isMovePending ? 'Salvando movimentação. Tempo neste estágio' : 'Tempo neste estágio'}
                 </TooltipContent>
               </Tooltip>
             </div>
           </TooltipProvider>
     </article>
         );
-      }}
-    </Draggable>
+  };
+
+  return <>
+    {dragPresentation ? renderCard(dragPresentation) : (
+      <Draggable draggableId={lead.id} index={index} isDragDisabled={isDragDisabled || poolReadOnly}>
+        {(provided, snapshot) => {
+          const { style, ...cardProps } = provided.draggableProps;
+          return renderCard({ innerRef: provided.innerRef, cardProps, handleProps: provided.dragHandleProps ?? undefined,
+            style: style ? { ...style } : undefined, isDragging: snapshot.isDragging, isDropAnimating: snapshot.isDropAnimating });
+        }}
+      </Draggable>
+    )}
 
     {/* Outcome Dialog for Phone/Email */}
     {outcomeDialogOpen && (
@@ -642,7 +723,11 @@ export const LeadCard = memo(function LeadCard({
         taskType={outcomeType}
         taskTitle={outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado'}
         onConfirm={handleOutcomeConfirm}
-        isLoading={createActivity.isPending}
+        draft={cardOutcomeDraft.draft}
+        onDraftChange={cardOutcomeDraft.updateDraft}
+        confirmationBlockedReason={!canRecordContact ? 'Não é possível registrar o resultado com o acesso atual a este lead.' : undefined}
+        isLoading={recordContactOutcome.isPending || cardOutcomeDraft.isSubmitting}
+        notesLimit={2000}
       />
     )}
   </>;

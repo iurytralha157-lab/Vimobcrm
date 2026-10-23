@@ -91,12 +91,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.PropertyType != "" {
 		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
-	if filter.City != "" {
-		addFilter(normalizedTextMatchClause("p.cidade"), normalizedSearchPattern(filter.City))
-	}
-	if filter.Neighborhood != "" {
-		addFilter(normalizedTextMatchClause("p.bairro"), normalizedSearchPattern(filter.Neighborhood))
-	}
+	args, where = addPropertyLocationFilters(args, where, filter)
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
 	}
@@ -144,16 +139,16 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.UsableAreaMin > 0 {
 		addFilter("p.area_util >= $%d::numeric", filter.UsableAreaMin)
 	}
-	if filter.UsableAreaMax > 0 {
+	if filter.UsableAreaMax > 0 || filter.UsableAreaMaxProvided {
 		addFilter("p.area_util <= $%d::numeric", filter.UsableAreaMax)
 	}
 	if filter.TotalAreaMin > 0 {
 		addFilter("p.area_total >= $%d::numeric", filter.TotalAreaMin)
 	}
-	if filter.TotalAreaMax > 0 {
+	if filter.TotalAreaMax > 0 || filter.TotalAreaMaxProvided {
 		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
-	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax)
+	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax, filter.PriceMaxProvided)
 
 	args = append(args, filter.Limit, filter.Offset)
 	limitIndex := len(args) - 1
@@ -205,6 +200,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'destaque', p.destaque,
 				'super_destaque', p.super_destaque,
 				'published_on_site', `+propertyPublishedOnSiteSQL("p", "site_publication")+`,
+				'site_publication', `+propertySitePublicationMetadataSQL("site_publication")+`,
 				'created_at', p.created_at,
 				'updated_at', p.updated_at,
 				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
@@ -332,12 +328,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.PropertyType != "" {
 		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
-	if filter.City != "" {
-		addFilter(normalizedTextMatchClause("p.cidade"), normalizedSearchPattern(filter.City))
-	}
-	if filter.Neighborhood != "" {
-		addFilter(normalizedTextMatchClause("p.bairro"), normalizedSearchPattern(filter.Neighborhood))
-	}
+	args, where = addPropertyLocationFilters(args, where, filter)
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
 	}
@@ -385,16 +376,16 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.UsableAreaMin > 0 {
 		addFilter("p.area_util >= $%d::numeric", filter.UsableAreaMin)
 	}
-	if filter.UsableAreaMax > 0 {
+	if filter.UsableAreaMax > 0 || filter.UsableAreaMaxProvided {
 		addFilter("p.area_util <= $%d::numeric", filter.UsableAreaMax)
 	}
 	if filter.TotalAreaMin > 0 {
 		addFilter("p.area_total >= $%d::numeric", filter.TotalAreaMin)
 	}
-	if filter.TotalAreaMax > 0 {
+	if filter.TotalAreaMax > 0 || filter.TotalAreaMaxProvided {
 		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
-	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax)
+	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax, filter.PriceMaxProvided)
 
 	saleAliasIndex := len(args) + 1
 	rentalAliasIndex := len(args) + 2
@@ -559,6 +550,37 @@ func normalizedTextMatchClause(expression string) string {
 	return normalizedTextSQL(expression) + " like $%d"
 }
 
+func addPropertyLocationFilters(args []any, where []string, filter ListFilter) ([]any, []string) {
+	add := func(value any, clause string) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if filter.CityID != "" {
+		add(filter.CityID, `exists (select 1 from public.property_cities selected_city
+			where selected_city.organization_id = p.organization_id and selected_city.id = $%d::uuid
+			and `+cityCatalogPropertyMatchSQL("p", "selected_city")+`)`)
+	} else if filter.City != "" {
+		add(normalizeASCII(filter.City), normalizedTextSQL("btrim(p.cidade)")+" = $%d")
+	}
+	// Catalog ids carry their own city/UF identity. Requiring duplicated
+	// property.uf as well would hide canonical records with legacy empty text.
+	if filter.UF != "" && filter.CityID == "" && filter.NeighborhoodID == "" {
+		add(filter.UF, "upper(btrim(coalesce(p.uf, ''))) = $%d")
+	}
+	if filter.NeighborhoodID != "" {
+		add(filter.NeighborhoodID, `exists (select 1 from public.property_neighborhoods selected_neighborhood
+			left join public.property_cities selected_neighborhood_city on selected_neighborhood_city.id = selected_neighborhood.city_id
+			and selected_neighborhood_city.organization_id = selected_neighborhood.organization_id
+			where selected_neighborhood.organization_id = p.organization_id and selected_neighborhood.id = $%d::uuid
+			and `+neighborhoodCatalogPropertyMatchSQL("p", "selected_neighborhood", "selected_neighborhood_city")+`
+			and (p.neighborhood_id = selected_neighborhood.id or nullif(btrim(selected_neighborhood_city.uf), '') is null
+				or upper(btrim(coalesce(p.uf, ''))) = upper(btrim(selected_neighborhood_city.uf))))`)
+	} else if filter.Neighborhood != "" {
+		add(normalizeASCII(filter.Neighborhood), normalizedTextSQL("btrim(p.bairro)")+" = $%d")
+	}
+	return args, where
+}
+
 func normalizedTextSQL(expression string) string {
 	return fmt.Sprintf("translate(lower(coalesce(%s, '')), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')", expression)
 }
@@ -644,8 +666,9 @@ func propertyDealTypeSQL(alias string) string {
 	end)`
 }
 
-func addPropertyPriceRangeFilter(args []any, where []string, dealType string, minPrice float64, maxPrice float64) ([]any, []string) {
-	if minPrice <= 0 && maxPrice <= 0 {
+func addPropertyPriceRangeFilter(args []any, where []string, dealType string, minPrice float64, maxPrice float64, maximumProvided ...bool) ([]any, []string) {
+	hasMaximum := maxPrice > 0 || (len(maximumProvided) > 0 && maximumProvided[0])
+	if minPrice <= 0 && !hasMaximum {
 		return args, where
 	}
 
@@ -655,7 +678,7 @@ func addPropertyPriceRangeFilter(args []any, where []string, dealType string, mi
 		args = append(args, minPrice)
 		minPlaceholder = len(args)
 	}
-	if maxPrice > 0 {
+	if hasMaximum {
 		args = append(args, maxPrice)
 		maxPlaceholder = len(args)
 	}
@@ -753,6 +776,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 		select (
 			to_jsonb(p) || jsonb_build_object(
 				'published_on_site', `+propertyPublishedOnSiteSQL("p", "site_publication")+`,
+				'site_publication', `+propertySitePublicationMetadataSQL("site_publication")+`,
 				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
 				'_property_owner_contact_visibility', coalesce(property_organization.property_owner_contact_visibility, 'hidden')
 			)
@@ -889,12 +913,22 @@ func (repo Repository) createPropertyTx(
 	}
 	property = normalizePropertyOutput(property)
 
-	if err := repo.insertPropertyCreatedActivity(ctx, tx, tenantContext, property); err != nil {
+	if err := optionalPropertyTransaction(ctx, tx, func(optional pgx.Tx) error {
+		return repo.insertPropertyCreatedActivity(ctx, optional, tenantContext, property)
+	}); err != nil {
+		if errors.Is(err, errPropertySavepointFailed) {
+			return nil, err
+		}
 		slog.Warn("property activity insert skipped", "error", err)
 	}
 
 	if shouldCleanupDemoPropertiesAfterCreate(property) {
-		if err := repo.removeDemoProperties(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+		if err := optionalPropertyTransaction(ctx, tx, func(optional pgx.Tx) error {
+			return repo.removeDemoProperties(ctx, optional, tenantContext.OrganizationID, propertyID)
+		}); err != nil {
+			if errors.Is(err, errPropertySavepointFailed) {
+				return nil, err
+			}
 			slog.Warn("demo property cleanup skipped", "error", err)
 		}
 	}
@@ -1038,7 +1072,12 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	property = normalizePropertyOutput(property)
 
-	if err := repo.insertPropertyUpdatedActivity(ctx, tx, tenantContext, current, input, property); err != nil {
+	if err := optionalPropertyTransaction(ctx, tx, func(optional pgx.Tx) error {
+		return repo.insertPropertyUpdatedActivity(ctx, optional, tenantContext, current, input, property)
+	}); err != nil {
+		if errors.Is(err, errPropertySavepointFailed) {
+			return nil, err
+		}
 		slog.Warn("property activity insert skipped", "error", err)
 	}
 
@@ -1939,6 +1978,7 @@ func normalizePropertyOutput(property Property) Property {
 	if property == nil {
 		return property
 	}
+	scrubCreationLedger(property)
 
 	if strings.TrimSpace(anyString(property["tipo_de_imovel"])) == "" {
 		property["tipo_de_imovel"] = anyString(property["tipo"])
@@ -1952,9 +1992,11 @@ func normalizePropertyOutput(property Property) Property {
 	property["status"] = displayPropertyStatus(anyString(property["status"]))
 	property["destaque"] = anyBool(property["is_featured"])
 	property["anunciar"] = anyBool(property["published_on_site"])
-	if addressVisibility := anyString(property["address_visibility"]); addressVisibility != "" {
-		property["public_address_visibility"] = addressVisibility
+	addressVisibility := anyString(property["address_visibility"])
+	if strings.TrimSpace(addressVisibility) == "" {
+		addressVisibility = anyString(property["public_address_visibility"])
 	}
+	property["public_address_visibility"] = NormalizePublicAddressVisibility(addressVisibility)
 	if originMedia := anyString(property["origin_media"]); originMedia != "" {
 		property["owner_media_source"] = originMedia
 	}

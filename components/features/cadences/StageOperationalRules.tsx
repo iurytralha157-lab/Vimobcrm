@@ -17,12 +17,14 @@ interface StageOperationalRulesProps {
   stageId: string
   stageName: string
   canEdit: boolean
+  onEditorStateChange?: (state: { isDirty: boolean; isSaving: boolean }) => void
 }
 
 export function StageOperationalRules({
   stageId,
   stageName,
   canEdit,
+  onEditorStateChange,
 }: StageOperationalRulesProps) {
   const { hasPermission } = useUserPermissions()
   const canViewAttention = hasPermission('attention_view')
@@ -76,10 +78,11 @@ export function StageOperationalRules({
         </p>
       )}
       <RulesEditor
-        key={stageId}
+        key={`${rulesQuery.scopeKey}:${stageId}`}
         initialRules={rulesQuery.data}
         stageName={stageName}
         canEdit={canEdit && !localReadOnly}
+        onEditorStateChange={onEditorStateChange}
         onReloadCurrent={async () => {
           const result = await rulesQuery.refetch()
           if (result.isError || !result.data) {

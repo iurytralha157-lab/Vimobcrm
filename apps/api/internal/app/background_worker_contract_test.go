@@ -51,10 +51,12 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"publicationsRepository.StartWorker":                      1,
 		"developmentsRepository.StartReservationExpirationWorker": 1,
 		"automationsRepository.StartRuntimeWorker":                1,
+		"stageInactivityRepository.StartStageInactivityWorker":    1,
 		"whatsappHandler.StartAIWorker":                           1,
 		"whatsappHandler.StartOutboxWorker":                       1,
 		"whatsappHandler.StartWebhookWorker":                      1,
 		"whatsappHandler.StartMediaWorker":                        1,
+		"whatsappHandler.StartUnlinkedRetentionWorker":            1,
 		"whatsappHandler.StartSessionSupervisor":                  1,
 		"metaHandler.StartWebhookWorker":                          1,
 		"metaHandler.StartConversionFeedbackWorker":               1,
@@ -93,7 +95,17 @@ func TestBackgroundWorkerGlobalGateIsDocumentedEnabledByDefault(t *testing.T) {
 		t.Fatalf("read .env.example: %v", err)
 	}
 	const setting = "API_BACKGROUND_WORKERS_ENABLED=true"
-	if count := strings.Count(string(source), setting); count != 1 {
+	count := 0
+	for _, line := range strings.Split(string(source), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "API_BACKGROUND_WORKERS_ENABLED=") {
+			count++
+			if line != setting {
+				t.Fatalf(".env.example default must be %q, got %q", setting, line)
+			}
+		}
+	}
+	if count != 1 {
 		t.Fatalf(".env.example contains %q %d times, want exactly once", setting, count)
 	}
 }

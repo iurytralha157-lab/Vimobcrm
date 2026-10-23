@@ -23,21 +23,24 @@ type Tag struct {
 	Description    *string   `json:"description"`
 	OrganizationID string    `json:"organization_id"`
 	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 	LeadCount      int64     `json:"lead_count"`
 }
 
 type TagMutationRequest struct {
-	Name        string  `json:"name"`
-	Color       string  `json:"color"`
-	Description *string `json:"description"`
+	Name              string  `json:"name"`
+	Color             string  `json:"color"`
+	Description       *string `json:"description"`
+	ExpectedUpdatedAt *string `json:"expected_updated_at"`
 }
 
 var tagHexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 type tagMutationInput struct {
-	Name        string
-	Color       string
-	Description *string
+	Name              string
+	Color             string
+	Description       *string
+	ExpectedUpdatedAt *time.Time
 }
 
 type Activity struct {
@@ -111,39 +114,28 @@ func (request TagMutationRequest) Validate() (tagMutationInput, error) {
 		Description: optionalStringFromPointer(request.Description, 300),
 	}
 	if input.Name == "" {
-		return tagMutationInput{}, fmt.Errorf("%w: name is required", ErrInvalidInput)
+		return tagMutationInput{}, fmt.Errorf("%w: name is required", ErrInvalidTagInput)
 	}
 	if input.Color == "" {
 		input.Color = "#64748b"
 	}
 	if !tagHexColorPattern.MatchString(input.Color) {
-		return tagMutationInput{}, fmt.Errorf("%w: color must use hexadecimal format #RRGGBB", ErrInvalidInput)
+		return tagMutationInput{}, fmt.Errorf("%w: color must use hexadecimal format #RRGGBB", ErrInvalidTagInput)
+	}
+	if request.ExpectedUpdatedAt != nil {
+		revision, err := parseTagRevision(*request.ExpectedUpdatedAt)
+		if err != nil {
+			return tagMutationInput{}, err
+		}
+		input.ExpectedUpdatedAt = &revision
 	}
 	return input, nil
 }
 
 func (request ActivityCreateRequest) Validate() (activityCreateInput, error) {
-	leadID, ok := normalizeUUID(request.LeadID)
-	if !ok {
-		return activityCreateInput{}, fmt.Errorf("%w: lead_id is invalid", ErrInvalidInput)
-	}
-
-	activityType := trimMax(request.Type, 80)
-	if activityType == "" {
-		return activityCreateInput{}, fmt.Errorf("%w: type is required", ErrInvalidInput)
-	}
-
-	metadata := request.Metadata
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-
-	return activityCreateInput{
-		LeadID:   leadID,
-		Type:     activityType,
-		Content:  optionalStringFromPointer(request.Content, 2_000),
-		Metadata: metadata,
-	}, nil
+	return normalizeManualActivityInput(activityCreateInput{
+		LeadID: request.LeadID, Type: request.Type, Content: request.Content, Metadata: request.Metadata,
+	})
 }
 
 func (repo Repository) ListTags(ctx context.Context, tenantContext tenant.Context) ([]Tag, error) {
@@ -155,12 +147,13 @@ func (repo Repository) ListTags(ctx context.Context, tenantContext tenant.Contex
 			t.description,
 			t.organization_id::text,
 			t.created_at,
+			t.updated_at,
 			count(distinct l.id)::bigint as lead_count
 		from public.tags t
 		left join public.lead_tags lt on lt.tag_id = t.id
 		left join public.leads l on l.id = lt.lead_id and l.organization_id = t.organization_id
 		where t.organization_id = $1::uuid
-		group by t.id, t.name, t.color, t.description, t.organization_id, t.created_at
+		group by t.id, t.name, t.color, t.description, t.organization_id, t.created_at, t.updated_at
 		order by t.name asc
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -183,11 +176,12 @@ func (repo Repository) CreateTag(ctx context.Context, tenantContext tenant.Conte
 	if !tenantContext.HasPermission(permissions.TagManage) {
 		return Tag{}, tenant.ErrOrganizationAccessDenied
 	}
-	return scanTag(repo.db.Pool().QueryRow(ctx, `
+	tag, err := scanTag(repo.db.Pool().QueryRow(ctx, `
 		insert into public.tags (organization_id, name, color, description)
 		values ($1::uuid, $2, $3, $4)
-		returning id::text, name, color, description, organization_id::text, created_at, 0::bigint
+		returning id::text, name, color, description, organization_id::text, created_at, updated_at, 0::bigint
 	`, tenantContext.OrganizationID, input.Name, input.Color, input.Description))
+	return tag, normalizeTagMutationError(err)
 }
 
 func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Context, tagID string, input tagMutationInput) (Tag, error) {
@@ -196,44 +190,50 @@ func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Conte
 	}
 	tagID, ok := normalizeUUID(tagID)
 	if !ok {
-		return Tag{}, ErrInvalidInput
+		return Tag{}, ErrInvalidTagInput
 	}
-	return scanTag(repo.db.Pool().QueryRow(ctx, `
+	if input.ExpectedUpdatedAt == nil {
+		return Tag{}, fmt.Errorf("%w: expected_updated_at is required", ErrInvalidTagInput)
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return Tag{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockTagRevision(ctx, tx, tenantContext.OrganizationID, tagID, *input.ExpectedUpdatedAt); err != nil {
+		return Tag{}, err
+	}
+	tag, err := scanTag(tx.QueryRow(ctx, `
 		update public.tags
-		set name = $3, color = $4, description = $5
-		where id = $1::uuid and organization_id = $2::uuid
-		returning id::text, name, color, description, organization_id::text, created_at,
+		set name = $3, color = $4, description = $5, updated_at = clock_timestamp()
+		where id = $1::uuid and organization_id = $2::uuid and updated_at = $6::timestamptz
+		returning id::text, name, color, description, organization_id::text, created_at, updated_at,
 			(select count(*)::bigint from public.lead_tags lt where lt.tag_id = public.tags.id)
-	`, tagID, tenantContext.OrganizationID, input.Name, input.Color, input.Description))
+	`, tagID, tenantContext.OrganizationID, input.Name, input.Color, input.Description, *input.ExpectedUpdatedAt))
+	if err != nil {
+		return Tag{}, normalizeTagMutationError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Tag{}, err
+	}
+	return tag, nil
 }
 
-func (repo Repository) DeleteTag(ctx context.Context, tenantContext tenant.Context, tagID string) error {
+func (repo Repository) DeleteTag(ctx context.Context, tenantContext tenant.Context, tagID string, expectedUpdatedAt time.Time) error {
 	if !tenantContext.HasPermission(permissions.TagManage) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	tagID, ok := normalizeUUID(tagID)
 	if !ok {
-		return ErrInvalidInput
+		return ErrInvalidTagInput
 	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `
-		delete from public.lead_tags
-		where tag_id = $1::uuid
-		  and lead_id in (select id from public.leads where organization_id = $2::uuid)
-	`, tagID, tenantContext.OrganizationID); err != nil {
+	if err := deleteTagWithQueryer(ctx, tx, tenantContext.OrganizationID, tagID, expectedUpdatedAt); err != nil {
 		return err
-	}
-	result, err := tx.Exec(ctx, `delete from public.tags where id = $1::uuid and organization_id = $2::uuid`, tagID, tenantContext.OrganizationID)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() == 0 {
-		return ErrInvalidReference
 	}
 	return tx.Commit(ctx)
 }
@@ -267,23 +267,8 @@ func (repo Repository) ListActivities(ctx context.Context, tenantContext tenant.
 	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "activity_property")
 	args = append(args, limit)
 	limitIndex := len(args)
-	propertyVisibleSQL := "activity_property.id is not null"
-
-	rows, err := repo.db.Pool().Query(ctx, `
-		select `+activitySelectFields(
-		activityMetadataSQL(tenantContext, propertyVisibleSQL),
-		activityContentSQL(propertyVisibleSQL),
-	)+`
-		from public.activities a
-		join public.leads l on l.id = a.lead_id
-		left join public.users u on u.id = a.user_id
-		left join public.properties activity_property
-		  on activity_property.organization_id = a.organization_id
-		 and activity_property.id::text = `+activityPropertyReferenceSQL()+`
-		 and `+propertyVisibility+`
-		where `+strings.Join(where, " and ")+`
-		order by a.created_at desc, a.id desc
-		limit $`+fmt.Sprint(limitIndex), args...)
+	rows, err := repo.db.Pool().Query(ctx,
+		leadHistoryScheduleActivityListSQL(tenantContext, where, propertyVisibility, limitIndex), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,15 +286,31 @@ func (repo Repository) ListActivities(ctx context.Context, tenantContext tenant.
 }
 
 func (repo Repository) CreateActivity(ctx context.Context, tenantContext tenant.Context, input activityCreateInput) (Activity, error) {
-	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
+	return createActivityWithTransaction(ctx, repo.db.Pool().Begin, tenantContext, input)
+}
+
+// The canonical write guard locks the lead before both insertion and response
+// hydration, so a transfer cannot invalidate this authorization mid-operation.
+func createActivityWithTransaction(ctx context.Context, begin func(context.Context) (pgx.Tx, error), actor tenant.Context, input activityCreateInput) (Activity, error) {
+	input, err := normalizeManualActivityInput(input)
+	if err != nil {
 		return Activity{}, err
 	}
-
-	args := []any{tenantContext.OrganizationID, input.LeadID, tenantContext.UserID, input.Type, input.Content, jsonb(input.Metadata)}
-	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "activity_property")
+	// Stamp only after validation. A request cannot choose even this origin, and
+	// the normalized map is detached before any transaction/await can mutate it.
+	input.Metadata["origin"] = manualActivityOrigin
+	tx, err := begin(ctx)
+	if err != nil {
+		return Activity{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := ensureLeadEditableForUpdate(ctx, tx, actor, input.LeadID); err != nil {
+		return Activity{}, err
+	}
+	args := []any{actor.OrganizationID, input.LeadID, actor.UserID, input.Type, input.Content, jsonb(input.Metadata)}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, actor, "activity_property")
 	propertyVisibleSQL := "activity_property.id is not null"
-
-	return scanActivity(repo.db.Pool().QueryRow(ctx, `
+	activity, err := scanActivity(tx.QueryRow(ctx, `
 		with inserted as (
 			insert into public.activities (
 				organization_id,
@@ -323,7 +324,7 @@ func (repo Repository) CreateActivity(ctx context.Context, tenantContext tenant.
 			returning *
 		)
 		select `+activitySelectFields(
-		activityMetadataSQL(tenantContext, propertyVisibleSQL),
+		activityMetadataSQL(actor, propertyVisibleSQL),
 		activityContentSQL(propertyVisibleSQL),
 	)+`
 		from inserted a
@@ -334,6 +335,13 @@ func (repo Repository) CreateActivity(ctx context.Context, tenantContext tenant.
 		 and activity_property.id::text = `+activityPropertyReferenceSQL()+`
 		 and `+propertyVisibility+`
 	`, args...))
+	if err != nil {
+		return Activity{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Activity{}, err
+	}
+	return activity, nil
 }
 
 func (repo Repository) GetLeadMeta(ctx context.Context, tenantContext tenant.Context, leadID string) (*LeadMeta, error) {
@@ -390,7 +398,7 @@ func (repo Repository) GetLeadMeta(ctx context.Context, tenantContext tenant.Con
 func scanTag(row scanner) (Tag, error) {
 	var tag Tag
 	var description pgtype.Text
-	if err := row.Scan(&tag.ID, &tag.Name, &tag.Color, &description, &tag.OrganizationID, &tag.CreatedAt, &tag.LeadCount); err != nil {
+	if err := row.Scan(&tag.ID, &tag.Name, &tag.Color, &description, &tag.OrganizationID, &tag.CreatedAt, &tag.UpdatedAt, &tag.LeadCount); err != nil {
 		if err == pgx.ErrNoRows {
 			return Tag{}, ErrInvalidReference
 		}
@@ -509,6 +517,7 @@ func scanActivity(row scanner) (Activity, error) {
 			return Activity{}, err
 		}
 	}
+	redactLeadHistoryAttachmentURLs(activity.Metadata)
 	if userRefID.Valid {
 		activity.User = &ActivityUser{
 			ID:   userRefID.String,

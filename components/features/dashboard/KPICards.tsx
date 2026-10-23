@@ -74,11 +74,11 @@ interface KPICardsProps {
   scheduledVisits?: number | string;
   propertyCount?: number | string;
   siteVisits?: number | string;
-  onLeadsClick?: () => void;
-  onLostClick?: () => void;
-  onWonClick?: () => void;
-  onFirstContactClick?: () => void;
-  onVisitsClick?: () => void;
+  onLeadsClick?: (trigger: HTMLElement) => void;
+  onLostClick?: (trigger: HTMLElement) => void;
+  onWonClick?: (trigger: HTMLElement) => void;
+  onFirstContactClick?: (trigger: HTMLElement) => void;
+  onVisitsClick?: (trigger: HTMLElement) => void;
 }
 
 interface KPICardItemProps {
@@ -95,7 +95,7 @@ interface KPICardItemProps {
   accentColor?: DashboardKPIAccent;
   iconColor?: string;
   iconBgColor?: string;
-  onClick?: () => void;
+  onClick?: (trigger: HTMLElement) => void;
   interactive?: boolean;
   tourTarget?: string;
   className?: string;
@@ -155,7 +155,7 @@ function KPICardItem({
     if (!onClick) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onClick();
+      onClick(event.currentTarget);
     }
   };
 
@@ -174,7 +174,7 @@ function KPICardItem({
               )}
               role={interactive ? "button" : undefined}
               tabIndex={interactive ? 0 : undefined}
-              onClick={onClick}
+              onClick={onClick ? (event) => onClick(event.currentTarget) : undefined}
               onKeyDown={handleKeyDown}
             >
               <CardContent
@@ -242,7 +242,7 @@ function KPICardItem({
                     {rate !== undefined && (
                       <div
                         className={cn(
-                          "mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight",
+                          "mt-1 max-w-full text-[10px] font-light leading-tight",
                           rateColorClass,
                         )}
                       >
@@ -399,7 +399,7 @@ export function KPICards({
       title: "Visitas",
       value: scheduledVisits ?? 0,
       icon: CalendarCheck,
-      tooltip: `Visitas e reuniões marcadas no período - ${periodLabel}. A data usada é a do agendamento, independente da entrada do lead.`,
+      tooltip: `Visitas e reuniões criadas no período - ${periodLabel}. O filtro usa a data de criação da marcação, independente do dia da visita e da entrada do lead.`,
       format: "number",
       accentColor: "visits",
       onClick: onVisitsClick,
@@ -413,7 +413,7 @@ export function KPICards({
       title: "VGV",
       value: data.totalSalesValue,
       icon: DollarSign,
-      tooltip: `Valor total em vendas (VGV) - ${periodLabel}`,
+      tooltip: `VGV estimado dos cards ganhos captados no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`,
       format: "currency",
       accentColor: "vgv",
       tourTarget: "dashboard-kpi-vgv",

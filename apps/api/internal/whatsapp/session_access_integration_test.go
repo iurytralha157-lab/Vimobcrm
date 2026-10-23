@@ -30,7 +30,7 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	}
 	// Loopback alone can be an SSH tunnel to a live server. This destructive
 	// fixture must also target a deliberately named, disposable database.
-	if strings.TrimPrefix(target.Path, "/") != "vimob_whatsapp_test" {
+	if name := strings.TrimPrefix(target.Path, "/"); name != "vimob_whatsapp_test" && name != "vimob_whatsapp_clone" {
 		t.Fatal("WHATSAPP_TEST_DATABASE_URL must name the disposable vimob_whatsapp_test database")
 	}
 
@@ -46,15 +46,39 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	if err := pool.QueryRow(ctx, `select current_database()`).Scan(&databaseName); err != nil {
 		t.Fatal(err)
 	}
-	if databaseName != "vimob_whatsapp_test" {
-		t.Fatalf("sharing fixture requires vimob_whatsapp_test, connected to %q", databaseName)
+	if databaseName != "vimob_whatsapp_test" && databaseName != "vimob_whatsapp_clone" {
+		t.Fatalf("sharing fixture requires an explicit disposable WhatsApp DB, connected to %q", databaseName)
 	}
 	fixture := createSessionConversationLockFixture(t, ctx, pool, "sharing")
-	defer cleanupSessionConversationLockFixture(t, pool, fixture)
+	var recipientID string
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		// Keep the organization alive while child deletion triggers record their
+		// audit events. Organization-first cascades can otherwise insert an audit
+		// row after its organization disappeared and roll this cleanup back.
+		_, err := pool.Exec(cleanupCtx, `
+			delete from private.whatsapp_unlinked_history_links where organization_id = $1::uuid;
+			delete from public.whatsapp_outbox where organization_id = $1::uuid;
+			delete from public.whatsapp_messages where organization_id = $1::uuid;
+			delete from public.whatsapp_conversations where organization_id = $1::uuid;
+			delete from public.whatsapp_sessions where organization_id = $1::uuid;
+			delete from public.leads where organization_id = $1::uuid;
+			delete from public.teams where organization_id = $1::uuid;
+			delete from public.round_robins where organization_id = $1::uuid;
+			delete from public.organization_members where organization_id = $1::uuid;
+			update public.users set organization_id = null where organization_id = $1::uuid;
+			delete from public.organizations where id = $1::uuid;
+			delete from public.users where id = $2::uuid or id = nullif($3, '')::uuid;
+			delete from auth.users where id = $2::uuid or id = nullif($3, '')::uuid
+		`, fixture.organizationID, fixture.userID, recipientID)
+		if err != nil {
+			t.Errorf("cleanup sharing fixture and recipient: %v", err)
+		}
+	}()
 	foreign := createSessionConversationLockFixture(t, ctx, pool, "sharing-foreign")
 	defer cleanupSessionConversationLockFixture(t, pool, foreign)
 
-	var recipientID string
 	if err := pool.QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&recipientID); err != nil {
 		t.Fatal(err)
 	}
@@ -81,22 +105,6 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	`, recipientID, recipientEmail, fixture.organizationID); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		// Deleting the test organization first cascades its lead activity and
-		// attendance rows, which can still reference the recipient after transfer.
-		_, err := pool.Exec(cleanupCtx, `
-			update public.users set organization_id = null where organization_id = $1::uuid;
-			delete from public.organizations where id = $1::uuid;
-			delete from public.users where id = $2::uuid;
-			delete from auth.users where id = $2::uuid
-		`, fixture.organizationID, recipientID)
-		if err != nil {
-			t.Errorf("cleanup sharing recipient fixture: %v", err)
-		}
-	}()
-
 	repo := NewRepository(postgres, nil, StorageConfig{})
 	grant := grantAccessInput{UserID: recipientID, CanView: true, CanSend: true}
 	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
@@ -701,14 +709,97 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	}
 	_ = checkTx.Rollback(ctx)
 
-	if _, err := pool.Exec(ctx, `update public.organization_members set role = 'user' where organization_id = $1::uuid and user_id = $2::uuid`, fixture.organizationID, fixture.userID); err != nil {
+	freshResponse, err := repo.SendMessage(ctx, recipient, fixture.conversationID, sendMessageInput{
+		Text: "pending before admin demotion", SendSessionID: fixture.sessionID,
+		ClientMessageID: fixture.suffix + "-before-demotion", ExpectedLeadID: fixture.leadID,
+	})
+	if err != nil || freshResponse.Message == nil {
+		t.Fatalf("enqueue under restored administrator grant: %+v, %v", freshResponse, err)
+	}
+	freshItem := pendingWhatsAppOutbox{
+		OrganizationID: fixture.organizationID, SessionID: fixture.sessionID,
+		ConversationID: fixture.conversationID, MessageRowID: freshResponse.Message.ID,
+	}
+	retainedGrantID := accesses[0].ID
+	if _, err := pool.Exec(ctx, `update public.organization_members set role = 'manager'
+		where organization_id = $1::uuid and user_id = $2::uuid`, fixture.organizationID, fixture.userID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
-		t.Fatalf("ordinary owner grant = %v, want denied", err)
+	var retainedAfterDowngrade bool
+	if err := pool.QueryRow(ctx, `select exists (
+		select 1 from public.whatsapp_session_access
+		where organization_id = $1::uuid and session_id = $2::uuid and user_id = $3::uuid
+	)`, fixture.organizationID, fixture.sessionID, recipientID).Scan(&retainedAfterDowngrade); err != nil {
+		t.Fatal(err)
+	}
+	if retainedAfterDowngrade {
+		t.Fatal("administrator downgrade to manager did not permanently revoke organization grant")
+	}
+	if _, err := pool.Exec(ctx, `update public.organization_members set role = 'admin'
+		where organization_id = $1::uuid and user_id = $2::uuid`, fixture.organizationID, fixture.userID); err != nil {
+		t.Fatal(err)
+	}
+	if sessions, err := repo.ListSessions(ctx, recipient); err != nil || len(sessions) != 0 {
+		t.Fatalf("administrator repromotion revived old shared access: %+v, %v", sessions, err)
+	}
+	checkTx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockWhatsAppOutboxGrantForStart(ctx, checkTx, freshItem); !errors.Is(err, ErrSessionAccessRevoked) {
+		_ = checkTx.Rollback(ctx)
+		t.Fatalf("old intent after administrator repromotion = %v, want revoked", err)
+	}
+	_ = checkTx.Rollback(ctx)
+	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
+		t.Fatalf("administrator explicitly sharing after repromotion: %v", err)
+	}
+	accesses, err = repo.ListSessionAccess(ctx, fixture.tenant, fixture.sessionID)
+	if err != nil || len(accesses) != 1 || accesses[0].ID == retainedGrantID {
+		t.Fatalf("repromotion regrant did not issue new identity: %+v, %v", accesses, err)
+	}
+	for _, ownerRole := range []string{"manager", "user"} {
+		if _, err := pool.Exec(ctx, `update public.organization_members set role = $3
+			where organization_id = $1::uuid and user_id = $2::uuid`,
+			fixture.organizationID, fixture.userID, ownerRole); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+			t.Fatalf("%s owner grant with stale admin tenant = %v, want denied", ownerRole, err)
+		}
+		// Even if an old grant survived maintenance or a trigger, current
+		// owner membership must invalidate it without a destructive cleanup.
+		if _, err := pool.Exec(ctx, `
+			insert into public.whatsapp_session_access (
+				id, organization_id, session_id, user_id, can_view, can_read,
+				can_send, only_leads_access, access_mode, granted_by,
+				grant_scope, grant_team_id
+			) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, true, true,
+				true, true, 'assigned_leads_only', $5::uuid, 'organization', null)
+			on conflict (session_id, user_id) do update
+			set id = excluded.id, grant_scope = 'organization', grant_team_id = null
+		`, retainedGrantID, fixture.organizationID, fixture.sessionID, recipientID, fixture.userID); err != nil {
+			t.Fatal(err)
+		}
+		if sessions, err := repo.ListSessions(ctx, recipient); err != nil || len(sessions) != 0 {
+			t.Fatalf("%s owner retained an effective shared session: %+v, %v", ownerRole, sessions, err)
+		}
+		if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, freshItem); err != nil || allowed {
+			t.Fatalf("shared queued send after %s demotion = %t, %v", ownerRole, allowed, err)
+		}
+		checkTx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lockWhatsAppOutboxGrantForStart(ctx, checkTx, freshItem); !errors.Is(err, ErrSessionAccessRevoked) {
+			_ = checkTx.Rollback(ctx)
+			t.Fatalf("provider start after %s demotion = %v, want revoked", ownerRole, err)
+		}
+		_ = checkTx.Rollback(ctx)
 	}
 	var teamID string
-	if err := pool.QueryRow(ctx, `insert into public.teams (organization_id, name, is_active) values ($1::uuid, $2, true) returning id::text`, fixture.organizationID, fixture.suffix+"-team").Scan(&teamID); err != nil {
+	if err := pool.QueryRow(ctx, `insert into public.teams (organization_id, name, is_active)
+		values ($1::uuid, $2, true) returning id::text`, fixture.organizationID, fixture.suffix+"-team").Scan(&teamID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -717,137 +808,33 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	`, teamID, fixture.organizationID, fixture.userID, recipientID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
-		t.Fatalf("leader granting team member: %v", err)
+	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("team leader owner grant = %v, want denied", err)
 	}
-	accesses, err = repo.ListSessionAccess(ctx, fixture.tenant, fixture.sessionID)
-	if err != nil || len(accesses) != 1 || pointerValue(accesses[0].GrantScope) != "team" || pointerValue(accesses[0].GrantTeamID) != teamID {
-		t.Fatalf("team grant scope = %+v, error = %v", accesses, err)
-	}
-	for _, testCase := range []struct {
-		name   string
-		key    string
-		update string
-		userID string
-	}{
-		{
-			name: "recipient exits team",
-			key:  "recipient-exit",
-			update: `update public.team_members set is_active = false
-				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
-			userID: recipientID,
-		},
-		{
-			name: "owner loses leader role",
-			key:  "owner-leader-loss",
-			update: `update public.team_members set is_leader = false
-				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
-			userID: fixture.userID,
-		},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			// The first membership change can invalidate the old grant. Give
-			// each race an independently authorized intent to test the lock,
-			// rather than an already-revoked historical message.
-			if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
-				t.Fatalf("leader granting fresh access: %v", err)
-			}
-			if _, err := repo.JoinConversationAttendance(ctx, recipient, fixture.conversationID, attendance); err != nil {
-				t.Fatalf("fresh team attendance: %v", err)
-			}
-			teamSend, err := repo.SendMessage(ctx, recipient, fixture.conversationID, sendMessageInput{
-				Text: "team membership fence", SendSessionID: fixture.sessionID,
-				ClientMessageID: fixture.suffix + "-team-fence-" + testCase.key,
-				ExpectedLeadID:  fixture.leadID,
-			})
-			if err != nil || teamSend.Message == nil {
-				t.Fatalf("team sender could not enqueue: %+v, %v", teamSend, err)
-			}
-			teamItem := pendingWhatsAppOutbox{
-				OrganizationID: fixture.organizationID, SessionID: fixture.sessionID,
-				ConversationID: fixture.conversationID, MessageRowID: teamSend.Message.ID,
-				LeaseToken: fixture.suffix + "-team-lease-" + testCase.key,
-			}
-			if err := pool.QueryRow(ctx, `
-				update public.whatsapp_outbox
-				set status = 'processing', locked_by = $2, locked_at = now()
-				where message_id = $1::uuid
-				returning id::text
-			`, teamItem.MessageRowID, teamItem.LeaseToken).Scan(&teamItem.ID); err != nil {
-				t.Fatal(err)
-			}
-			changeTx, err := pool.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = changeTx.Rollback(ctx) }()
-			if _, err := changeTx.Exec(ctx, testCase.update, teamID, fixture.organizationID, testCase.userID); err != nil {
-				t.Fatal(err)
-			}
-			type startResult struct {
-				attempts int
-				err      error
-			}
-			startDone := make(chan startResult, 1)
-			go func() {
-				attempts, startErr := repo.startWhatsAppOutboxProviderAttempt(ctx, teamItem)
-				startDone <- startResult{attempts: attempts, err: startErr}
-			}()
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				var waiting bool
-				if err := pool.QueryRow(ctx, `
-					select exists (
-					  select 1 from pg_catalog.pg_stat_activity activity
-					  where activity.pid <> pg_backend_pid()
-					    and activity.wait_event_type = 'Lock'
-					    and activity.query like '%from public.team_members%'
-					)
-				`).Scan(&waiting); err != nil {
-					t.Fatal(err)
-				}
-				if waiting {
-					break
-				}
-				select {
-				case result := <-startDone:
-					t.Fatalf("provider start escaped pending %s change: attempts=%d error=%v", testCase.name, result.attempts, result.err)
-				default:
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("provider start did not wait for membership change")
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-			if err := changeTx.Commit(ctx); err != nil {
-				t.Fatal(err)
-			}
-			select {
-			case result := <-startDone:
-				if !errors.Is(result.err, ErrSessionAccessRevoked) || result.attempts != 0 {
-					t.Fatalf("provider start after %s: attempts=%d error=%v, want revoked without attempt", testCase.name, result.attempts, result.err)
-				}
-			case <-ctx.Done():
-				t.Fatal("provider start stayed blocked after membership change")
-			}
-			var attempts int
-			if err := pool.QueryRow(ctx, `select attempts from public.whatsapp_outbox where id = $1::uuid`, teamItem.ID).Scan(&attempts); err != nil || attempts != 0 {
-				t.Fatalf("provider attempt after %s = %d, error %v", testCase.name, attempts, err)
-			}
-		})
-		if testCase.userID == recipientID {
-			if _, err := pool.Exec(ctx, `update public.team_members set is_active = true
-				where team_id = $1::uuid and organization_id = $2::uuid and user_id = $3::uuid`,
-				teamID, fixture.organizationID, recipientID); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if _, err := pool.Exec(ctx, `update public.team_members set is_active = false where team_id = $1::uuid and user_id = $2::uuid`, teamID, recipientID); err != nil {
+	// Legacy team grants remain inert even with active, matching memberships,
+	// and even if the grantor is later promoted to administrator.
+	if _, err := pool.Exec(ctx, `
+		update public.organization_members set role = 'admin'
+		where organization_id = $1::uuid and user_id = $2::uuid;
+		update public.whatsapp_session_access set grant_scope = 'team', grant_team_id = $3::uuid
+		where organization_id = $1::uuid and session_id = $4::uuid and user_id = $5::uuid
+	`, fixture.organizationID, fixture.userID, teamID, fixture.sessionID, recipientID); err != nil {
 		t.Fatal(err)
 	}
+	var legacyTeamGrantValid bool
+	if err := pool.QueryRow(ctx, `select `+sessionGrantExistsSQL("ws", "$3::uuid", true)+`
+		from public.whatsapp_sessions ws where ws.organization_id = $1::uuid and ws.id = $2::uuid`,
+		fixture.organizationID, fixture.sessionID, recipientID).Scan(&legacyTeamGrantValid); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTeamGrantValid {
+		t.Fatal("legacy team grant became effective after administrator promotion")
+	}
+	if err := repo.GrantSessionAccess(ctx, fixture.tenant, fixture.sessionID, grant); err != nil {
+		t.Fatalf("explicit administrator regrant: %v", err)
+	}
 	accesses, err = repo.ListSessionAccess(ctx, fixture.tenant, fixture.sessionID)
-	if err != nil || len(accesses) != 0 {
-		t.Fatalf("team exit did not remove grant = %+v, error = %v", accesses, err)
+	if err != nil || len(accesses) != 1 || pointerValue(accesses[0].GrantScope) != "organization" || accesses[0].GrantTeamID != nil || accesses[0].ID == retainedGrantID {
+		t.Fatalf("administrator regrant did not replace legacy team identity: %+v, %v", accesses, err)
 	}
 }

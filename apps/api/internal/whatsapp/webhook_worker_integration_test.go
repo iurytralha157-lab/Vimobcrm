@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -37,14 +38,10 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cleanup := func(cleanupCtx context.Context) {
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
-	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		cleanup(cleanupCtx)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -67,12 +64,17 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id=excluded.organization_id, name=excluded.name,
+		    email=excluded.email, role=excluded.role, is_active=excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role=excluded.role, is_active=excluded.is_active, deleted_at=null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -81,46 +83,58 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 			id, organization_id, owner_user_id, instance_name, instance_id,
 			provider, status, is_active, advanced_settings
 		) values
-			($1::uuid, $4::uuid, $5::uuid, $6 || '-a', $6 || '-a', 'evolution_go', 'connected', true, '{}'::jsonb),
-			($2::uuid, $4::uuid, $5::uuid, $6 || '-b', $6 || '-b', 'evolution_go', 'connected', true, '{}'::jsonb),
-			($3::uuid, $4::uuid, $5::uuid, $6 || '-c', $6 || '-c', 'evolution_go', 'connected', true, '{}'::jsonb)
+			($1::uuid, $4::uuid, $5::uuid, $6 || '-a', $6 || '-a', 'evolution_go', 'connected', true, '{"token":"synthetic-fair-instance","webhook_token":"synthetic-fair-webhook"}'::jsonb),
+			($2::uuid, $4::uuid, $5::uuid, $6 || '-b', $6 || '-b', 'evolution_go', 'connected', true, '{"token":"synthetic-fair-instance","webhook_token":"synthetic-fair-webhook"}'::jsonb),
+			($3::uuid, $4::uuid, $5::uuid, $6 || '-c', $6 || '-c', 'evolution_go', 'connected', true, '{"token":"synthetic-fair-instance","webhook_token":"synthetic-fair-webhook"}'::jsonb)
 	`, sessionA, sessionB, sessionC, organizationID, userID, suffix); err != nil {
 		t.Fatal(err)
 	}
 
-	var firstAID string
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.whatsapp_webhook_inbox (
-			organization_id, session_id, event_key, event_type, payload,
-			status, attempts, next_attempt_at, created_at
-		) values (
-			$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
-			'pending', 0, now() - interval '2 minutes', now() - interval '2 minutes'
-		)
-		returning id::text
-	`, organizationID, sessionA, suffix+"-a-1").Scan(&firstAID); err != nil {
-		t.Fatal(err)
+	repo := NewRepository(postgres, nil, StorageConfig{})
+	repo.functions.webhookProcessorMode = webhookProcessorNative
+	repo.functions.webhookRolloutSessionIDs = []string{sessionA, sessionB, sessionC}
+	instances := map[string]string{sessionA: suffix + "-a", sessionB: suffix + "-b", sessionC: suffix + "-c"}
+	for sessionID := range instances {
+		if _, err := postgres.Pool().Exec(ctx, `select private.activate_whatsapp_webhook_session_cutover($1::uuid,$2::uuid)`, organizationID, sessionID); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// Authenticate and freeze every row through the production admission path.
+	// Only claim scheduling fields below are altered to model the worker cases.
+	admit := func(sessionID, eventID, phone, lane, status string, attempts int, due, age time.Duration) string {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{"event": "messages.upsert", "data": map[string]any{"messages": []any{map[string]any{
+			"Info":    map[string]any{"ID": eventID, "Chat": phone + "@s.whatsapp.net", "SenderPN": phone + "@s.whatsapp.net", "IsFromMe": false, "Timestamp": time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)},
+			"Message": map[string]any{"conversation": "synthetic FIFO claim"},
+		}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := repo.AcceptEvolutionWebhook(ctx, evolutionWebhookEnvelope{
+			SessionID: sessionID, InstanceID: instances[sessionID], InstanceToken: "synthetic-fair-instance",
+			WebhookHeaderTokens: []string{"synthetic-fair-webhook"}, EventType: "messages.upsert", Payload: payload, ReceivedAt: time.Now().UTC(),
+		})
+		if err != nil || receipt.Duplicate || receipt.ID == "" {
+			t.Fatalf("canonical worker fixture admission = %+v: %v", receipt, err)
+		}
+		if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_webhook_inbox
+			set processing_lane=$2,status=$3,attempts=$4,next_attempt_at=$5,created_at=$6
+			where id=$1::uuid and organization_id=$7::uuid`, receipt.ID, lane, status, attempts, time.Now().Add(due), time.Now().Add(-age), organizationID); err != nil {
+			t.Fatal(err)
+		}
+		return receipt.ID
+	}
+	firstAID := admit(sessionA, suffix+"-a-1", "5511999990001", "backlog", "pending", 0, -2*time.Minute, 2*time.Minute)
 	for _, fixture := range []struct {
 		sessionID string
 		eventKey  string
-		delay     string
+		delay     time.Duration
 	}{
-		{sessionID: sessionA, eventKey: suffix + "-a-2", delay: "1 minute"},
-		{sessionID: sessionB, eventKey: suffix + "-b-1", delay: "1 minute"},
-		{sessionID: sessionC, eventKey: suffix + "-c-1", delay: "1 minute"},
+		{sessionID: sessionA, eventKey: suffix + "-a-2", delay: time.Minute},
+		{sessionID: sessionB, eventKey: suffix + "-b-1", delay: time.Minute},
+		{sessionID: sessionC, eventKey: suffix + "-c-1", delay: time.Minute},
 	} {
-		if _, err := postgres.Pool().Exec(ctx, `
-			insert into public.whatsapp_webhook_inbox (
-				organization_id, session_id, event_key, event_type, payload,
-				status, attempts, next_attempt_at, created_at
-			) values (
-				$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
-				'pending', 0, now() - $4::interval, now() - $4::interval
-			)
-		`, organizationID, fixture.sessionID, fixture.eventKey, fixture.delay); err != nil {
-			t.Fatal(err)
-		}
+		admit(fixture.sessionID, fixture.eventKey, "5511999990001", "backlog", "pending", 0, -fixture.delay, fixture.delay)
 	}
 
 	lockedHeadTx, err := postgres.Pool().Begin(ctx)
@@ -137,7 +151,6 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo := NewRepository(postgres, nil, StorageConfig{})
 	claimed, err := repo.claimEvolutionWebhooksWithBatchAfterSession(ctx, 3, cursorBefore)
 	if err != nil {
 		t.Fatalf("claim with locked exact head: %v", err)
@@ -251,19 +264,7 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	`, organizationID, sessionA, sessionB); err != nil {
 		t.Fatal(err)
 	}
-	var secondBID string
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.whatsapp_webhook_inbox (
-			organization_id, session_id, event_key, event_type, payload,
-			processing_lane, status, attempts, next_attempt_at, created_at
-		) values (
-			$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
-			'backlog', 'pending', 0, now() - interval '3 minutes', now() - interval '3 minutes'
-		)
-		returning id::text
-	`, organizationID, sessionB, suffix+"-b-backlog").Scan(&secondBID); err != nil {
-		t.Fatal(err)
-	}
+	secondBID := admit(sessionB, suffix+"-b-backlog", "5511999990001", "backlog", "pending", 0, -3*time.Minute, 3*time.Minute)
 
 	laneItems, _, err := repo.claimEvolutionWebhooksForWorker(ctx, 2, evolutionWebhookLaneCursors{
 		LiveSessionID:    cursorBefore,
@@ -298,51 +299,14 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.whatsapp_webhook_inbox
-		set status = 'processing', attempts = 1, locked_at = now(), locked_by = 'integration-backlog'
+		set status = 'processing', attempts = 1, locked_at = now(), locked_by = 'vimob-api-evolution-webhook-epoch1-integration-backlog'
 		where id = $1::uuid
 	`, secondBID); err != nil {
 		t.Fatal(err)
 	}
-	var retryHeadID, newerSameConversationID, newerOtherConversationID string
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.whatsapp_webhook_inbox (
-			organization_id, session_id, event_key, event_type, payload,
-			processing_lane, status, attempts, next_attempt_at, created_at
-		) values (
-			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999991111"}}'::jsonb,
-			'live', 'retry', 1, now() + interval '5 minutes', now() - interval '2 minutes'
-		)
-		returning id::text
-	`, organizationID, sessionA, suffix+"-live-retry-head").Scan(&retryHeadID); err != nil {
-		t.Fatal(err)
-	}
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.whatsapp_webhook_inbox (
-			organization_id, session_id, event_key, event_type, payload,
-			processing_lane, status, attempts, next_attempt_at, created_at
-		) values (
-			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999991111"}}'::jsonb,
-			'live', 'pending', 0, now() - interval '1 minute', now() - interval '1 minute'
-		)
-		returning id::text
-	`, organizationID, sessionA, suffix+"-live-newer-same").Scan(&newerSameConversationID); err != nil {
-		t.Fatal(err)
-	}
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.whatsapp_webhook_inbox (
-			organization_id, session_id, event_key, event_type, payload,
-			processing_lane, status, attempts, next_attempt_at, created_at
-		) values (
-			$1::uuid, $2::uuid, $3, 'message',
-			'{"__vimob_ingress":{"routing_key":"phone:5511999992222"}}'::jsonb,
-			'live', 'pending', 0, now() - interval '30 seconds', now() - interval '30 seconds'
-		)
-		returning id::text
-	`, organizationID, sessionA, suffix+"-live-newer-other").Scan(&newerOtherConversationID); err != nil {
-		t.Fatal(err)
-	}
+	retryHeadID := admit(sessionA, suffix+"-live-retry-head", "5511999991111", "live", "retry", 1, 5*time.Minute, 2*time.Minute)
+	newerSameConversationID := admit(sessionA, suffix+"-live-newer-same", "5511999991111", "live", "pending", 0, -time.Minute, time.Minute)
+	newerOtherConversationID := admit(sessionA, suffix+"-live-newer-other", "5511999992222", "live", "pending", 0, -30*time.Second, 30*time.Second)
 	// Starting after the largest fixture UUID also exercises the single explicit
 	// cursor wrap back to the beginning of the session index.
 	bypassedRetry, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, sessionC)

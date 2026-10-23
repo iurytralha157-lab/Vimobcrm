@@ -39,7 +39,7 @@ export type {
 };
 
 export function useGamificationEvents(filters: Omit<GamificationEventListQuery, 'cursor'>, enabled = true) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const query = useInfiniteQuery({
     queryKey: [
@@ -70,7 +70,7 @@ export function useGamificationEvents(filters: Omit<GamificationEventListQuery, 
 }
 
 export function useGamificationRanking(filters: GamificationRankingQuery, enabled = true) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   const query = useQuery({
@@ -94,7 +94,7 @@ export function useGamificationRanking(filters: GamificationRankingQuery, enable
 }
 
 export function useGamificationRealtime(enabled = true) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
@@ -153,7 +153,7 @@ export function useGamificationRealtime(enabled = true) {
 }
 
 export function useGamificationOverview(enabled = true) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   const query = useQuery({

@@ -43,12 +43,20 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 	if !canManageRoundRobinScope(tenantContext) {
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
+	prepared, err := prepareNewRuleMatcher(ruleInput{MatchType: input.MatchType, MatchValue: input.MatchValue, Match: input.Match})
+	if err != nil {
+		return Rule{}, err
+	}
+	input.Match = prepared.Match
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Rule{}, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Rule{}, err
 	}
@@ -57,6 +65,12 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID, input.ExpectedRevision); err != nil {
+		return Rule{}, err
+	}
+	if err := repo.validateRuleReferences(ctx, tx, tenantContext.OrganizationID, []ruleInput{{MatchType: input.MatchType, MatchValue: input.MatchValue, Match: input.Match}}); err != nil {
 		return Rule{}, err
 	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
@@ -72,6 +86,9 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 
+	if err := ensureQueueCollectionCanGrow(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID, false); err != nil {
+		return Rule{}, err
+	}
 	var ruleID string
 	err = tx.QueryRow(ctx, `
 		insert into public.round_robin_rules (
@@ -111,11 +128,14 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	item, err := getRuleWithQueryer(ctx, tx, tenantContext.OrganizationID, ruleID)
+	if err != nil {
+		return Rule{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Rule{}, err
 	}
-
-	return repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
+	return item, nil
 }
 
 func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Context, ruleID string, input updateRuleInput) (Rule, error) {
@@ -149,7 +169,7 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		matchType,
 		matchValue,
 		input.Match,
-		input.MatchType.Set || input.MatchValue.Set,
+		matchType != current.MatchType || matchValue != current.MatchValue,
 	)
 	isActive := current.IsActive
 	if input.IsActive.Set {
@@ -161,6 +181,9 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Rule{}, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Rule{}, err
 	}
@@ -169,6 +192,27 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID, input.ExpectedRevision); err != nil {
+		return Rule{}, err
+	}
+	matcherChanged := ruleSemanticKey(current.MatchType, current.MatchValue, current.Match) != ruleSemanticKey(matchType, matchValue, match)
+	candidate := ruleInput{MatchType: matchType, MatchValue: matchValue, Match: match, MatcherUnchanged: !matcherChanged}
+	if matcherChanged {
+		candidate, err = prepareNewRuleMatcher(candidate)
+		if err != nil {
+			return Rule{}, err
+		}
+		match = candidate.Match
+	}
+	if matcherChanged || (!current.IsActive && isActive) {
+		if err := repo.validateRuleReferences(ctx, tx, tenantContext.OrganizationID, []ruleInput{candidate}); err != nil {
+			return Rule{}, err
+		}
+	}
+	changed := matcherChanged || isActive != current.IsActive || (input.Priority != nil && *input.Priority != current.Priority)
+	if err := ensureQueueCollectionCanChange(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID, false, changed); err != nil {
 		return Rule{}, err
 	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
@@ -187,7 +231,7 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 	setClauses := []string{"updated_at = now()"}
 	args := []any{tenantContext.OrganizationID, ruleID}
 
-	if input.MatchType.Set || input.MatchValue.Set || input.Match.Set {
+	if matcherChanged {
 		args = append(args, jsonb(rulePayload(matchType, matchValue, match)))
 		setClauses = append(setClauses, fmt.Sprintf("conditions = $%d::jsonb", len(args)))
 		args = append(args, matchType)
@@ -230,14 +274,17 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	item, err := getRuleWithQueryer(ctx, tx, tenantContext.OrganizationID, ruleID)
+	if err != nil {
+		return Rule{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Rule{}, err
 	}
-
-	return repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
+	return item, nil
 }
 
-func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Context, ruleID string) error {
+func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Context, ruleID string, revisions ...*int64) error {
 	if !canManageRoundRobinScope(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
@@ -257,6 +304,9 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
@@ -265,6 +315,13 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 		return err
 	}
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return err
+	}
+	var expected *int64
+	if len(revisions) > 0 {
+		expected = revisions[0]
+	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID, expected); err != nil {
 		return err
 	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
@@ -309,11 +366,12 @@ func listRulesWithQueryer(ctx context.Context, q queryer, organizationID string,
 			r.round_robin_id::text,
 			coalesce(nullif(r.match_type, ''), r.conditions->>'match_type', r.name, ''),
 			coalesce(nullif(r.match_value, ''), r.conditions->>'match_value', ''),
-			coalesce(r.match, r.conditions->'match', '{}'::jsonb)::text,
+			(coalesce(r.conditions->'match', '{}'::jsonb) || coalesce(r.match, '{}'::jsonb))::text,
 			coalesce(r.priority, 0),
 			coalesce(r.is_active, true),
 			r.created_at,
-			r.updated_at
+			r.updated_at,
+			rr.revision
 		from public.round_robin_rules r
 		join public.round_robins rr
 		  on rr.organization_id = r.organization_id
@@ -339,17 +397,22 @@ func listRulesWithQueryer(ctx context.Context, q queryer, organizationID string,
 }
 
 func (repo Repository) getRule(ctx context.Context, organizationID string, ruleID string) (Rule, error) {
-	rule, err := scanRule(repo.db.Pool().QueryRow(ctx, `
+	return getRuleWithQueryer(ctx, repo.db.Pool(), organizationID, ruleID)
+}
+
+func getRuleWithQueryer(ctx context.Context, q queryer, organizationID string, ruleID string) (Rule, error) {
+	rule, err := scanRule(q.QueryRow(ctx, `
 		select
 			r.id::text,
 			r.round_robin_id::text,
 			coalesce(nullif(r.match_type, ''), r.conditions->>'match_type', r.name, ''),
 			coalesce(nullif(r.match_value, ''), r.conditions->>'match_value', ''),
-			coalesce(r.match, r.conditions->'match', '{}'::jsonb)::text,
+			(coalesce(r.conditions->'match', '{}'::jsonb) || coalesce(r.match, '{}'::jsonb))::text,
 			coalesce(r.priority, 0),
 			coalesce(r.is_active, true),
 			r.created_at,
-			r.updated_at
+			r.updated_at,
+			rr.revision
 		from public.round_robin_rules r
 		join public.round_robins rr
 		  on rr.organization_id = r.organization_id
@@ -368,7 +431,7 @@ func (repo Repository) getRule(ctx context.Context, organizationID string, ruleI
 func (repo Repository) insertRules(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, rules []ruleInput) error {
 	for index, rule := range rules {
 		priority := rule.Priority
-		if priority == 0 {
+		if priority == 0 && !rule.PrioritySet {
 			priority = len(rules) - index
 		}
 		if _, err := tx.Exec(ctx, `

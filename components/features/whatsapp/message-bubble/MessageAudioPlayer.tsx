@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -7,10 +8,11 @@ import {
   type SyntheticEvent,
 } from "react";
 import NextImage from "next/image";
-import { AlertCircle, Download, Link2, Loader2, Mic, Pause, Play, RefreshCw } from "lucide-react";
+import { AlertCircle, Download, Loader2, Mic, Pause, Play, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getWhatsAppAvatarCandidates } from "@/lib/whatsapp-avatar";
 
 import { createMessageMediaObjectUrl } from "../message-media";
 import {
@@ -19,6 +21,8 @@ import {
   generateMessageWaveform,
 } from "./model";
 import { MessageStatus } from "./MessageStatus";
+import { claimMessageAudio, releaseMessageAudio } from "./audio-playback-coordinator";
+import { useMessagePlaybackSource } from "@/hooks/whatsapp/use-message-playback-source";
 
 const AUDIO_PLAYBACK_RATES = [1, 1.5, 2] as const;
 type AudioPlaybackRate = typeof AUDIO_PLAYBACK_RATES[number];
@@ -65,6 +69,7 @@ const checkOggOpusSupport = (): boolean => {
 export interface MessageAudioPlayerProps {
   safeMediaUrl: string | null;
   mediaUrl: string | null;
+  playbackIdentity?: string;
   normalizedMediaMimeType?: string;
   messageId: string;
   sentAt: string;
@@ -73,17 +78,19 @@ export interface MessageAudioPlayerProps {
   audioAvatarName: string;
   audioAvatarInitial: string;
   safeAvatarUrl: string | null;
-  attachableMediaUrl: string | null;
+  contactAvatarFallbackUrl?: string | null;
+  audioAvatarFallbackUrl?: string | null;
   leadId: string;
-  onRequestAttach: () => void;
   onDownload: (event?: MouseEvent) => void | Promise<void>;
   isDownloading: boolean;
   onRetryMedia?: () => void | Promise<void>;
+  onRefreshMedia?: () => Promise<string | null>;
 }
 
 export function MessageAudioPlayer({
   safeMediaUrl,
   mediaUrl,
+  playbackIdentity,
   normalizedMediaMimeType,
   messageId,
   sentAt,
@@ -92,14 +99,27 @@ export function MessageAudioPlayer({
   audioAvatarName,
   audioAvatarInitial,
   safeAvatarUrl,
-  attachableMediaUrl,
+  contactAvatarFallbackUrl,
+  audioAvatarFallbackUrl,
   leadId,
-  onRequestAttach,
   onDownload,
   isDownloading,
   onRetryMedia,
+  onRefreshMedia,
 }: MessageAudioPlayerProps) {
-  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const avatarIntent = useMemo(() => ({ messageId, playbackIdentity,
+    candidates: getWhatsAppAvatarCandidates(safeAvatarUrl, fromMe ? audioAvatarFallbackUrl : contactAvatarFallbackUrl),
+  }), [messageId, playbackIdentity, safeAvatarUrl, fromMe, audioAvatarFallbackUrl, contactAvatarFallbackUrl]);
+  const [avatarAttempt, setAvatarAttempt] = useState({ intent: avatarIntent, index: 0, retry: 0, exhausted: false });
+  const currentAvatarAttempt = avatarAttempt.intent === avatarIntent ? avatarAttempt : { intent: avatarIntent, index: 0, retry: 0, exhausted: false };
+  if (avatarAttempt.intent !== avatarIntent) setAvatarAttempt(currentAvatarAttempt);
+  useEffect(() => {
+    if (!currentAvatarAttempt.exhausted || currentAvatarAttempt.retry > 0 || avatarIntent.candidates.length === 0) return;
+    const timer = window.setTimeout(() => setAvatarAttempt(previous => previous.intent === avatarIntent && previous.exhausted && previous.retry === 0
+      ? { intent: avatarIntent, index: 0, retry: 1, exhausted: false } : previous), 750);
+    return () => window.clearTimeout(timer);
+  }, [avatarIntent, currentAvatarAttempt.exhausted, currentAvatarAttempt.retry]);
+  const selectedAvatarUrl = currentAvatarAttempt.exhausted ? null : avatarIntent.candidates[currentAvatarAttempt.index];
   const [mediaReloadKey, setMediaReloadKey] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
@@ -116,18 +136,26 @@ export function MessageAudioPlayer({
   const [blobAttempted, setBlobAttempted] = useState(false);
   const [isRetryingMedia, setIsRetryingMedia] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playback = useMessagePlaybackSource(JSON.stringify([playbackIdentity, messageId, leadId]), safeMediaUrl, audioRef);
   const audioFallbackRequestRef = useRef(0);
+  const fallbackControllerRef = useRef<AbortController | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
-  const lastMediaUrlRef = useRef<string | null>(null);
-  const waveformBars = generateMessageWaveform(mediaUrl || sentAt, 28);
+  const waveformBars = generateMessageWaveform(messageId || sentAt, 28);
+  useEffect(() => {
+    const audio = audioRef.current;
+    return () => {
+      if (audio) { audio.pause(); releaseMessageAudio(audio); }
+    };
+  }, [playback.generation, playback.url, messageId, blobUrl, mediaReloadKey, audioError]);
 
   useEffect(() => {
-    const didUrlChange = mediaUrl !== lastMediaUrlRef.current || messageId !== lastMessageIdRef.current;
-    lastMediaUrlRef.current = mediaUrl || null;
-    lastMessageIdRef.current = messageId;
+    const sourceIdentity = JSON.stringify([messageId, playbackIdentity, playback.generation]);
+    const didUrlChange = sourceIdentity !== lastMessageIdRef.current;
+    lastMessageIdRef.current = sourceIdentity;
 
     if (didUrlChange) {
       audioFallbackRequestRef.current += 1;
+      fallbackControllerRef.current?.abort();
       const previousBlobUrl = blobUrl;
       let cancelled = false;
 
@@ -144,6 +172,7 @@ export function MessageAudioPlayer({
         setAudioProgress(0);
         setCurrentTime(0);
         setIsPlaying(false);
+        setIsRetryingMedia(false);
         setMediaReloadKey(0);
       });
 
@@ -151,10 +180,11 @@ export function MessageAudioPlayer({
         cancelled = true;
       };
     }
-  }, [mediaUrl, messageId, blobUrl, safeMediaUrl]);
+  }, [mediaUrl, messageId, playbackIdentity, playback.generation, blobUrl, safeMediaUrl]);
 
   useEffect(() => () => {
     audioFallbackRequestRef.current += 1;
+    fallbackControllerRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -197,10 +227,15 @@ export function MessageAudioPlayer({
       return;
     }
 
+    const generation = audioFallbackRequestRef.current;
     try {
+      claimMessageAudio(audio);
       audio.playbackRate = playbackRate;
       await audio.play();
+      if (generation !== audioFallbackRequestRef.current || audioRef.current !== audio) audio.pause();
     } catch {
+      releaseMessageAudio(audio);
+      if (audioRef.current !== audio || generation !== audioFallbackRequestRef.current) return;
       setIsPlaying(false);
       setAudioError("Erro ao reproduzir");
     }
@@ -227,16 +262,22 @@ export function MessageAudioPlayer({
 
   const handleAudioError = async (event: SyntheticEvent<HTMLAudioElement>) => {
     const audio = event.currentTarget;
+    if (audioRef.current !== audio) return;
+    if (playback.recoverRotatedSource(audio)) return;
     const errorCode = audio.error?.code ?? 0;
+    const requestId = ++audioFallbackRequestRef.current;
 
     if (!blobAttempted && safeMediaUrl) {
       setBlobAttempted(true);
-      const requestId = ++audioFallbackRequestRef.current;
+      fallbackControllerRef.current?.abort();
+      const controller = new AbortController();
+      fallbackControllerRef.current = controller;
       try {
         const blob = await createMessageMediaObjectUrl({
           url: safeMediaUrl,
           kind: "audio",
           mimeType: normalizedMediaMimeType,
+          signal: controller.signal,
         });
         if (requestId !== audioFallbackRequestRef.current) {
           URL.revokeObjectURL(blob);
@@ -246,10 +287,11 @@ export function MessageAudioPlayer({
         setAudioError(null);
         return;
       } catch {
-        // Se o fallback por blob falhar, exibimos o estado de erro no proprio bubble.
+        if (requestId !== audioFallbackRequestRef.current || controller.signal.aborted) return;
       }
     }
 
+    if (requestId !== audioFallbackRequestRef.current || audioRef.current !== audio) return;
     if (normalizedMediaMimeType?.includes("ogg") && !checkOggOpusSupport()) {
       setAudioError("Formato não suportado neste navegador");
     } else if (errorCode === 4) {
@@ -263,6 +305,7 @@ export function MessageAudioPlayer({
 
   const resetAudioPlayback = () => {
     audioFallbackRequestRef.current += 1;
+    fallbackControllerRef.current?.abort();
     audioRef.current?.pause();
     if (blobUrl) URL.revokeObjectURL(blobUrl);
     setBlobUrl(null);
@@ -276,17 +319,25 @@ export function MessageAudioPlayer({
   };
 
   const retryAudio = async () => {
-    if (!onRetryMedia) {
+    if (!onRefreshMedia && !onRetryMedia) {
       resetAudioPlayback();
       return;
     }
 
     setIsRetryingMedia(true);
+    const generation = audioFallbackRequestRef.current;
     try {
-      await onRetryMedia();
-    } finally {
-      setIsRetryingMedia(false);
-      resetAudioPlayback();
+      if (onRefreshMedia) await onRefreshMedia();
+      else if (onRetryMedia) await onRetryMedia();
+      if (generation === audioFallbackRequestRef.current) {
+        setIsRetryingMedia(false);
+        resetAudioPlayback();
+      }
+    } catch {
+      if (generation === audioFallbackRequestRef.current) {
+        setIsRetryingMedia(false);
+        setAudioError("Não foi possível recuperar o áudio.");
+      }
     }
   };
 
@@ -323,7 +374,10 @@ export function MessageAudioPlayer({
     const canChangePlaybackRate = isPlaying || currentTime > 0;
 
     return (
-      <div className="relative h-10 w-10 shrink-0 overflow-visible">
+      <div className={cn(
+        "relative row-start-1 h-10 w-10 shrink-0 translate-y-0.5 overflow-visible",
+        fromMe ? "col-start-1" : "col-start-3",
+      )}>
         <button
           type="button"
           onClick={canChangePlaybackRate ? cyclePlaybackRate : undefined}
@@ -340,14 +394,19 @@ export function MessageAudioPlayer({
         >
           {canChangePlaybackRate ? (
             <span>{playbackRate}x</span>
-          ) : safeAvatarUrl && safeAvatarUrl !== failedAvatarUrl && !fromMe ? (
+          ) : selectedAvatarUrl ? (
             <NextImage
-              src={safeAvatarUrl}
+              key={`${currentAvatarAttempt.index}:${currentAvatarAttempt.retry}`}
+              src={selectedAvatarUrl}
               alt={audioAvatarName}
               fill
               sizes="40px"
               className="object-cover"
-              onError={() => setFailedAvatarUrl(safeAvatarUrl)}
+              onError={() => setAvatarAttempt(previous => {
+                if (previous.intent !== avatarIntent || previous.index !== currentAvatarAttempt.index || previous.retry !== currentAvatarAttempt.retry) return previous;
+                return previous.index + 1 < avatarIntent.candidates.length ? { ...previous, index: previous.index + 1 }
+                  : { ...previous, exhausted: true };
+              })}
               unoptimized
             />
           ) : (
@@ -370,32 +429,18 @@ export function MessageAudioPlayer({
 
   const renderMessageTimestamp = () => (
     <span
-      data-message-timestamp-position={fromMe ? "bottom-left" : "bottom-right"}
+      data-message-timestamp-position={fromMe ? "bottom-right" : "bottom-left"}
       className={cn(
-        "flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none",
-        fromMe ? "text-primary-foreground/60" : "text-[var(--app-text-tertiary)]",
+        "flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[10px] leading-none",
+        fromMe ? "ml-auto text-primary-foreground/60" : "text-[var(--app-text-tertiary)]",
       )}
     >
-      {leadId && attachableMediaUrl && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRequestAttach();
-          }}
-          className="p-0.5 transition-colors hover:text-primary"
-          title="Anexar ao Lead"
-          aria-label="Anexar áudio à documentação do lead"
-        >
-          <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
-      )}
       <span>{formatMessageTime(sentAt)}</span>
-      <MessageStatus fromMe={fromMe} status={status} />
+      <MessageStatus compact fromMe={fromMe} status={status} />
     </span>
   );
 
-  if (safeMediaUrl) {
+  if (playback.url) {
     const progressPercent = audioProgress || 0;
     const playedBars = Math.floor((progressPercent / 100) * waveformBars.length);
     const audioTimeLabel = (isPlaying || currentTime > 0)
@@ -412,37 +457,37 @@ export function MessageAudioPlayer({
             )}>
               <AlertCircle className="w-5 h-5 opacity-70" />
             </div>
-            <div className="flex flex-col flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-xs opacity-80">{audioError}</span>
               <div className="mt-1 flex flex-wrap gap-1">
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 rounded-[6px] px-2 font-light shadow-none"
+                  className="h-auto min-h-7 max-w-full whitespace-normal rounded-[6px] px-2 text-left text-[12px] font-light shadow-none"
                   onClick={() => void retryAudio()}
                   disabled={isRetryingMedia}
                 >
                   {isRetryingMedia
-                    ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" />
+                    ? <Loader2 className="mr-1 h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                     : <RefreshCw className="mr-1 h-3 w-3" aria-hidden="true" />}
                   {isRetryingMedia ? "Recuperando..." : "Tentar novamente"}
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 rounded-[6px] px-2 font-light shadow-none"
+                  className="h-auto min-h-7 max-w-full whitespace-normal rounded-[6px] px-2 text-left text-[12px] font-light shadow-none"
                   onClick={onDownload}
                   disabled={isDownloading}
                 >
                   {isDownloading
-                    ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" />
+                    ? <Loader2 className="mr-1 h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                     : <Download className="mr-1 h-3 w-3" aria-hidden="true" />}
                   {isDownloading ? "Baixando..." : "Baixar áudio"}
                 </Button>
               </div>
             </div>
           </div>
-          <div className={cn("flex items-center", fromMe ? "justify-start" : "justify-end")}>
+          <div className={cn("flex items-center", fromMe ? "justify-end" : "justify-start")}>
             {renderMessageTimestamp()}
           </div>
         </div>
@@ -450,15 +495,23 @@ export function MessageAudioPlayer({
     }
 
     return (
-      <div className="flex min-w-[250px] max-w-[310px] items-center gap-2 py-1.5 px-1">
+      <div
+        data-message-audio-player
+        className={cn(
+          "grid w-[min(270px,65vw)] min-w-0 max-w-full grid-rows-[40px_auto] items-center gap-x-2 gap-y-0 px-1",
+          fromMe ? "grid-cols-[40px_36px_minmax(0,1fr)]" : "grid-cols-[36px_minmax(0,1fr)_40px]",
+        )}
+      >
+        {fromMe && renderAudioAvatar()}
         <button
           type="button"
           onClick={() => void handleAudioPlay()}
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+            "row-start-1 flex h-9 w-9 shrink-0 translate-y-0.5 items-center justify-center rounded-full transition-colors",
+            fromMe ? "col-start-2" : "col-start-1",
             fromMe
               ? "bg-primary-foreground/20 hover:bg-primary-foreground/30"
-              : "bg-primary/15 hover:bg-primary/25",
+              : "bg-primary/50 text-primary-foreground hover:bg-primary/70",
           )}
           aria-label={isPlaying ? "Pausar áudio" : "Reproduzir áudio"}
         >
@@ -469,83 +522,98 @@ export function MessageAudioPlayer({
           )}
         </button>
 
-        <div className="min-w-0 flex-1">
-          <div className="relative flex h-[30px] items-center">
-            <div
-              className="flex h-full w-full cursor-pointer items-center gap-[2px] rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-              onClick={handleWaveformClick}
-              onKeyDown={handleWaveformKeyDown}
-              role="slider"
-              tabIndex={0}
-              aria-label="Posição do áudio"
-              aria-valuemin={0}
-              aria-valuemax={Math.max(Math.round(audioDuration), 0)}
-              aria-valuenow={Math.max(Math.round(currentTime), 0)}
-              aria-valuetext={`${formatMessageAudioDuration(currentTime)} de ${formatMessageAudioDuration(audioDuration)}`}
-            >
-              {waveformBars.map((height, index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    "w-[3px] rounded-full transition-colors duration-100",
-                    index < playedBars
-                      ? fromMe
-                        ? "bg-primary-foreground"
-                        : "bg-primary"
-                      : fromMe
-                        ? "bg-primary-foreground/30"
-                        : "bg-primary/30",
-                  )}
-                  style={{ height: `${Math.max(height * 78, 18)}%` }}
-                />
-              ))}
-            </div>
-
-            <div
-              className={cn(
-                "pointer-events-none absolute h-3 w-3 rounded-full shadow-none transition-all duration-100",
-                fromMe ? "bg-primary-foreground" : "bg-primary",
-              )}
-              style={{
-                left: `calc(${progressPercent}% - 6px)`,
-                top: "50%",
-                transform: "translateY(-50%)",
-              }}
-            />
+        <div className={cn(
+          "relative row-start-1 flex h-[30px] min-w-0 translate-y-0.5 items-center",
+          fromMe ? "col-start-3" : "col-start-2",
+        )}>
+          <div
+            className="flex h-full w-full cursor-pointer items-center gap-[2px] rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            style={{ columnGap: `clamp(0.5px, calc(100% / ${waveformBars.length * 2}), 2px)` }}
+            onClick={handleWaveformClick}
+            onKeyDown={handleWaveformKeyDown}
+            role="slider"
+            tabIndex={0}
+            aria-label="Posição do áudio"
+            aria-valuemin={0}
+            aria-valuemax={Math.max(Math.round(audioDuration), 0)}
+            aria-valuenow={Math.max(Math.round(currentTime), 0)}
+            aria-valuetext={`${formatMessageAudioDuration(currentTime)} de ${formatMessageAudioDuration(audioDuration)}`}
+          >
+            {waveformBars.map((height, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "min-w-0 flex-1 rounded-full transition-colors duration-100",
+                  index < playedBars
+                    ? fromMe
+                      ? "bg-primary-foreground"
+                      : "bg-primary"
+                    : fromMe
+                      ? "bg-primary-foreground/30"
+                      : "bg-primary/30",
+                )}
+                style={{ height: `${Math.max(height * 78, 18)}%` }}
+              />
+            ))}
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            {fromMe && renderMessageTimestamp()}
-            <span className={cn(
-              "text-[11px] leading-none",
-              fromMe ? "text-primary-foreground/60" : "text-[var(--app-text-tertiary)]",
-            )}>
-              {audioTimeLabel}
-            </span>
-            {!fromMe && renderMessageTimestamp()}
-          </div>
+          <div
+            className={cn(
+              "pointer-events-none absolute h-3 w-3 rounded-full shadow-none transition-all duration-100",
+              fromMe ? "bg-primary-foreground" : "bg-primary",
+            )}
+            style={{
+              left: `calc(${progressPercent}% - 6px)`,
+              top: "50%",
+              transform: "translateY(-50%)",
+            }}
+          />
         </div>
 
-        {renderAudioAvatar()}
+        <div className={cn(
+          "row-start-2 flex w-full min-w-max items-center justify-between gap-x-2",
+          fromMe ? "col-start-3 justify-self-end" : "col-start-2 justify-self-start",
+        )}>
+          {!fromMe && renderMessageTimestamp()}
+          <span data-message-audio-duration className={cn(
+            "text-[10px] leading-none",
+            fromMe ? "text-primary-foreground/60" : "ml-auto text-[var(--app-text-tertiary)]",
+          )}>
+            {audioTimeLabel}
+          </span>
+          {fromMe && renderMessageTimestamp()}
+        </div>
+
+        {!fromMe && renderAudioAvatar()}
 
         <audio
-          key={`${blobUrl || safeMediaUrl}-${mediaReloadKey}`}
+          key={`${blobUrl || playback.url}-${playback.generation}-${mediaReloadKey}`}
           ref={audioRef}
           preload="metadata"
-          onEnded={() => {
+          onEnded={(event) => {
+            if (!playback.isCurrent(event.currentTarget)) return;
+            playback.onEnded(event.currentTarget);
             setIsPlaying(false);
             setAudioProgress(100);
             setCurrentTime(Number.isFinite(audioDuration) ? audioDuration : 0);
           }}
           onTimeUpdate={handleAudioTimeUpdate}
-          onLoadedMetadata={handleAudioLoadedMetadata}
+          onLoadedMetadata={(event) => {
+            const audio = event.currentTarget;
+            void playback.onLoadedMetadata(audio).then(result => {
+              if (!playback.isCurrent(audio)) return;
+              if (result === "resume_failed") setAudioError("Não foi possível retomar. Toque para tentar novamente.");
+              handleAudioLoadedMetadata();
+              handleAudioTimeUpdate();
+            });
+          }}
           onCanPlay={() => setAudioReady(true)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
+           onPlay={(event) => { if (!playback.isCurrent(event.currentTarget)) return; playback.onPlay(event.currentTarget); setIsPlaying(true); }}
+           onPause={(event) => { if (!playback.isCurrent(event.currentTarget)) return; playback.onPause(event.currentTarget); setIsPlaying(false); }}
           onError={handleAudioError}
           className="hidden"
         >
-          <source src={blobUrl || safeMediaUrl} type={normalizedMediaMimeType} />
+          <source src={blobUrl || playback.url} type={normalizedMediaMimeType} />
         </audio>
       </div>
     );

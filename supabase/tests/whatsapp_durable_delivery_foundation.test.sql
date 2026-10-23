@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(85);
+select plan(87);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -81,18 +81,37 @@ $$;
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, client_message_id, from_me, direction,
-  message_type, content, remote_jid, status
+  message_type, content, remote_jid, status, capture_state
 )
 values
-  ('c6000000-0000-4000-8000-000000000001', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a', 'canonical-client-a', true, 'outbound', 'text', 'Mensagem A', '5511999990001@s.whatsapp.net', 'pending'),
-  ('c6000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a-2', 'canonical-client-a-2', true, 'outbound', 'text', 'Mensagem A2', '5511999990001@s.whatsapp.net', 'pending'),
-  ('c6000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000001', null, 'provider-quarantine', 'provider-quarantine', null, false, 'inbound', 'text', 'Mensagem em quarentena', '5511999990099@s.whatsapp.net', 'received'),
-  ('c6000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000002', 'c5000000-0000-4000-8000-000000000003', 'c4000000-0000-4000-8000-000000000002', 'c3000000-0000-4000-8000-000000000002', 'provider-b', 'provider-b', null, false, 'inbound', 'text', 'Mensagem B', '5511999990002@s.whatsapp.net', 'received');
+  ('c6000000-0000-4000-8000-000000000001', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a', 'canonical-client-a', true, 'outbound', 'text', 'Mensagem A', '5511999990001@s.whatsapp.net', 'pending', 'captured'),
+  ('c6000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a-2', 'canonical-client-a-2', true, 'outbound', 'text', 'Mensagem A2', '5511999990001@s.whatsapp.net', 'pending', 'captured'),
+  ('c6000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000001', null, 'provider-quarantine', 'provider-quarantine', null, false, 'inbound', 'text', 'Mensagem em quarentena', '5511999990099@s.whatsapp.net', 'received', 'suppressed'),
+  ('c6000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000002', 'c5000000-0000-4000-8000-000000000003', 'c4000000-0000-4000-8000-000000000002', 'c3000000-0000-4000-8000-000000000002', 'provider-b', 'provider-b', null, false, 'inbound', 'text', 'Mensagem B', '5511999990002@s.whatsapp.net', 'received', 'captured');
 
 create temporary table whatsapp_durable_test_ids (
   key text primary key,
   id uuid not null
 );
+
+-- Use the current authoritative capture RPC even when testing only the queue
+-- primitives. Strict cutover rejects raw inbox payloads without a snapshot.
+create function pg_temp.whatsapp_durable_ingress_payload(provider_id text,event_key text,
+ org_id uuid default 'c2000000-0000-4000-8000-000000000001',
+ session_id uuid default 'c4000000-0000-4000-8000-000000000001',phone text default '5511999990001')
+returns jsonb language plpgsql as $$
+declare snapshot jsonb;
+begin
+ snapshot:=private.capture_whatsapp_webhook_routing_snapshot(
+  org_id,session_id,provider_id,event_key,'backlog','phone:'||phone,true,array[phone||'@s.whatsapp.net'],
+  phone,'organic',null,false,false,false,null,null,null);
+ return jsonb_build_object('message',jsonb_build_object('id',provider_id),
+  '__vimob_ingress',jsonb_build_object('routing_key','phone:'||phone,
+   'routing_snapshot',jsonb_build_object('version',1,'messages',jsonb_build_array(snapshot))));
+end $$;
+insert into auth.sessions(id,user_id,created_at,updated_at)
+select ('c1100000-0000-4000-8000-00000000000'||n)::uuid,
+ ('c1000000-0000-4000-8000-00000000000'||n)::uuid,now(),now() from generate_series(1,4) n;
 
 select has_table('public', 'whatsapp_webhook_inbox', 'durable webhook inbox exists');
 select has_table('public', 'whatsapp_outbox', 'durable WhatsApp outbox exists');
@@ -131,6 +150,7 @@ security definer
 set search_path = ''
 as $$
 begin
+  perform set_config('vimob.fixture_realtime_forced_failure', 'seen', true);
   begin
     raise exception 'forced WhatsApp Realtime failure';
   exception when others then
@@ -143,7 +163,7 @@ select lives_ok(
     insert into public.whatsapp_messages (
       id, organization_id, conversation_id, session_id, lead_id,
       provider_message_id, message_id, from_me, direction,
-      message_type, content, remote_jid, status
+      message_type, content, remote_jid, status, capture_state
     ) values (
       'c6000000-0000-4000-8000-000000000005',
       'c2000000-0000-4000-8000-000000000001',
@@ -152,7 +172,7 @@ select lives_ok(
       'c3000000-0000-4000-8000-000000000001',
       'provider-realtime-failure-test', 'provider-realtime-failure-test',
       false, 'inbound', 'text', 'Canonical survives Realtime failure',
-      '5511999990001@s.whatsapp.net', 'received'
+      '5511999990001@s.whatsapp.net', 'received', 'captured'
     )
   $$,
   'canonical message insert survives a forced Realtime broadcast failure'
@@ -165,6 +185,8 @@ select ok(
   ),
   'canonical message remains committed after the Realtime hint fails'
 );
+select is(current_setting('vimob.fixture_realtime_forced_failure', true), 'seen',
+  'forced Realtime failure path actually runs for a captured message');
 rollback to savepoint before_whatsapp_realtime_forced_failure;
 
 select is((select relrowsecurity from pg_class where oid = 'public.whatsapp_webhook_inbox'::regclass), true, 'inbox has RLS enabled');
@@ -260,9 +282,10 @@ select is(
     from pg_policies
     where schemaname = 'public'
       and tablename in ('whatsapp_sessions', 'whatsapp_conversations', 'whatsapp_messages')
+      and cmd in ('ALL','INSERT','UPDATE','DELETE')
   ),
   0::bigint,
-  'browser-facing WhatsApp tables expose no direct PostgREST policies'
+  'WhatsApp aggregates have no browser write policies; narrow Realtime SELECT policies do not grant Data API access'
 );
 
 insert into whatsapp_durable_test_ids (key, id)
@@ -270,7 +293,7 @@ select 'event', private.enqueue_whatsapp_webhook_event(
   'c2000000-0000-4000-8000-000000000001',
   'c4000000-0000-4000-8000-000000000001',
   'evolution_go', 'instance-a', 'evolution_go:c400:event-1', 'messages.upsert',
-  '{"message":{"id":"provider-inbound-a"}}'::jsonb, 12
+  pg_temp.whatsapp_durable_ingress_payload('provider-inbound-a','evolution_go:c400:event-1'), 12
 );
 
 select ok((select id is not null from whatsapp_durable_test_ids where key = 'event'), 'webhook event gets a durable id');
@@ -279,14 +302,15 @@ select is(
     'c2000000-0000-4000-8000-000000000001',
     'c4000000-0000-4000-8000-000000000001',
     'evolution_go', 'instance-a', 'evolution_go:c400:event-1', 'messages.upsert',
-    '{"message":{"id":"provider-inbound-a"}}'::jsonb, 12
+    pg_temp.whatsapp_durable_ingress_payload('provider-inbound-a','evolution_go:c400:event-1'), 12
   ),
   (select id from whatsapp_durable_test_ids where key = 'event'),
   'duplicate webhook delivery resolves to the canonical inbox row'
 );
 select is((select count(*)::bigint from public.whatsapp_webhook_inbox where event_key = 'evolution_go:c400:event-1'), 1::bigint, 'duplicate webhook is persisted exactly once');
 select throws_ok(
-  $$select private.enqueue_whatsapp_webhook_event('c2000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000002', 'evolution_go', 'instance-b', 'evolution_go:c400:event-1', 'messages.upsert', '{}'::jsonb, 12)$$,
+  $$select private.enqueue_whatsapp_webhook_event('c2000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000002', 'evolution_go', 'instance-b', 'evolution_go:c400:event-1', 'messages.upsert',
+    pg_temp.whatsapp_durable_ingress_payload('provider-inbound-b','evolution_go:c400:event-1','c2000000-0000-4000-8000-000000000002','c4000000-0000-4000-8000-000000000002','5511999990002'), 12)$$,
   '23505',
   'whatsapp webhook event_key collision across provider or tenant',
   'an event key cannot collide across tenants'
@@ -307,7 +331,7 @@ select 'outbox', private.enqueue_whatsapp_outbox(
   'c5000000-0000-4000-8000-000000000001',
   'c6000000-0000-4000-8000-000000000001',
   'outbox-client-a', '5511999990001@s.whatsapp.net', 'text',
-  '{"content":"Mensagem A"}'::jsonb, 12
+  '{"action":"send.text","body":{"number":"5511999990001","text":"Mensagem A"}}'::jsonb, 12
 );
 
 select ok((select id is not null from whatsapp_durable_test_ids where key = 'outbox'), 'outbound delivery gets a durable id');
@@ -318,7 +342,7 @@ select is(
     'c5000000-0000-4000-8000-000000000001',
     'c6000000-0000-4000-8000-000000000001',
     'outbox-client-a', '5511999990001@s.whatsapp.net', 'text',
-    '{"content":"Mensagem A"}'::jsonb, 12
+    '{"action":"send.text","body":{"number":"5511999990001","text":"Mensagem A"}}'::jsonb, 12
   ),
   (select id from whatsapp_durable_test_ids where key = 'outbox'),
   'outbound retry resolves to the same outbox row'
@@ -342,8 +366,9 @@ select results_eq(
   'worker atomically claims one due outbound delivery'
 );
 select ok((select status = 'processing' and attempts = 1 and locked_by = 'outbox-worker' from public.whatsapp_outbox where client_message_id = 'outbox-client-a'), 'outbox claim records processing lease and attempt');
-select ok(private.mark_whatsapp_outbox_sent((select id from whatsapp_durable_test_ids where key = 'outbox'), 'outbox-worker', 'provider-outbound-a', now()), 'lease owner records provider acknowledgement');
-select ok((select status = 'sent' and provider_message_id = 'provider-outbound-a' and sent_at is not null from public.whatsapp_outbox where client_message_id = 'outbox-client-a'), 'provider acknowledgement is durable');
+select ok(private.mark_whatsapp_outbox_sent((select id from whatsapp_durable_test_ids where key = 'outbox'), 'outbox-worker',
+ (select provider_message_id from public.whatsapp_outbox where client_message_id='outbox-client-a'), now()), 'lease owner records provider acknowledgement with the predetermined request id');
+select ok((select status = 'sent' and provider_message_id = payload#>>'{body,id}' and sent_at is not null from public.whatsapp_outbox where client_message_id = 'outbox-client-a'), 'provider acknowledgement is durable and matches the immutable request id');
 select lives_ok(
   $$update public.whatsapp_conversations set session_id = 'c4000000-0000-4000-8000-000000000003' where id = 'c5000000-0000-4000-8000-000000000001'$$,
   'historical outbox does not prevent a future conversation session rebind'
@@ -394,8 +419,8 @@ select throws_ok(
 
 select throws_ok(
   $$insert into public.whatsapp_webhook_inbox (organization_id, session_id, event_key, event_type, payload) values ('c2000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000002', 'cross-tenant-inbox', 'message', '{}'::jsonb)$$,
-  '23514',
-  'WhatsApp worker row crosses organization, session, conversation, or message boundaries',
+  '23503',
+  'whatsapp_ctwa_cohort_session_missing',
   'webhook inbox cannot bind a session from another tenant'
 );
 
@@ -404,7 +429,7 @@ select 'dead-event', private.enqueue_whatsapp_webhook_event(
   'c2000000-0000-4000-8000-000000000001',
   'c4000000-0000-4000-8000-000000000001',
   'evolution_go', 'instance-a', 'evolution_go:c400:dead-event', 'messages.upsert',
-  '{}'::jsonb, 1
+  pg_temp.whatsapp_durable_ingress_payload('provider-dead-a','evolution_go:c400:dead-event'), 1
 );
 select results_eq(
   $$select count(*)::bigint from private.claim_whatsapp_webhook_inbox('dead-worker', 10, interval '5 minutes')$$,
@@ -430,7 +455,7 @@ select ok(
     from realtime.messages
     where topic = 'whatsapp:c2000000-0000-4000-8000-000000000001:inbox'
       and event = 'whatsapp.inbox.changed'
-      and payload is distinct from '{"scope":"conversations"}'::jsonb
+      and payload - 'id' is distinct from '{"scope":"conversations"}'::jsonb
   ),
   'organization inbox broadcasts carry only the content-free conversations wake-up signal'
 );
@@ -438,40 +463,50 @@ select ok(
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000001', true);
+select set_config('request.jwt.claims','{"sub":"c1000000-0000-4000-8000-000000000001","role":"authenticated","session_id":"c1100000-0000-4000-8000-000000000001"}',true);
+select throws_ok($$select public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001')$$,
+ '42501',null,'browser cannot call the backend conversation authorization oracle');
 
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'assigned broker can subscribe to its organization inbox topic');
 set local role service_role;
 select ok(public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'assigned broker is authorized for its lead');
-set local role authenticated;
+set local role service_role;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'assigned broker is authorized for its linked lead conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000002'), 'session owner cannot authorize unlinked quarantine');
+set local role authenticated;
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'assigned broker cannot bypass the Go API for raw messages');
 
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000002', true);
+select set_config('request.jwt.claims','{"sub":"c1000000-0000-4000-8000-000000000002","role":"authenticated","session_id":"c1100000-0000-4000-8000-000000000002"}',true);
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'unassigned same-organization broker can receive the content-free inbox wake-up signal');
 set local role service_role;
 select ok(not public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'unassigned broker is denied the lead');
-set local role authenticated;
+set local role service_role;
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'unassigned broker is denied the conversation helper');
+set local role authenticated;
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'unassigned broker cannot query raw message history');
 
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000003', true);
+select set_config('request.jwt.claims','{"sub":"c1000000-0000-4000-8000-000000000003","role":"authenticated","session_id":"c1100000-0000-4000-8000-000000000003"}',true);
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'same-organization admin can subscribe to the organization inbox topic');
 set local role service_role;
 select ok(public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'same-organization admin can access the lead');
-set local role authenticated;
+set local role service_role;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'same-organization admin is authorized for the linked conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000002'), 'same-organization admin still cannot authorize quarantine');
+set local role authenticated;
 select throws_ok($$select count(*) from public.whatsapp_conversations$$, '42501', null, 'same-organization admin cannot query raw conversations outside the Go API');
 
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000004', true);
+select set_config('request.jwt.claims','{"sub":"c1000000-0000-4000-8000-000000000004","role":"authenticated","session_id":"c1100000-0000-4000-8000-000000000004"}',true);
 select ok(not private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'cross-organization user cannot subscribe to Org A inbox topic');
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000002:inbox'), 'cross-organization user can subscribe only to its own organization inbox topic');
 set local role service_role;
 select ok(not public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'cross-organization user is denied Org A lead');
-set local role authenticated;
+set local role service_role;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000003'), 'cross-organization user is authorized only for its own linked conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'cross-organization user cannot authorize an Org A conversation by id');
+set local role authenticated;
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'cross-organization user cannot query raw message history');
 
 reset role;

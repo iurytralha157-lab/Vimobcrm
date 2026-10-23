@@ -297,6 +297,7 @@ func (repo Repository) ListInvitations(ctx context.Context, tenantContext tenant
 			  and logs.provider = 'resend'
 			  and logs.template_key = 'invitation'
 			  and logs.metadata ->> 'invitation_id' = i.id::text
+			  and logs.idempotency_key = 'invitation/' || i.id::text || '/' || i.token_hash
 			order by logs.created_at desc, logs.id desc
 			limit 1
 		) delivery on true
@@ -356,6 +357,13 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		return nil, identityErr
 	}
 	if identity.UserID != "" {
+		inactive, inactiveErr := repo.invitationAccountInactive(ctx, identity)
+		if inactiveErr != nil {
+			return nil, inactiveErr
+		}
+		if inactive {
+			return nil, ErrInvitationAccountInactive
+		}
 		recipientUserID = &identity.UserID
 		existingAccount = identity.requiresLogin()
 		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, identity.UserID, resolvedOrganizationID)
@@ -389,8 +397,17 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		return nil, err
 	}
 	tokenHash := invitationTokenHash(plaintextToken)
+	legacyTokenColumn, err := repo.hasLegacyInvitationTokenColumn(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	item, err := repo.queryJSONObject(ctx, `
+	var item map[string]any
+	if legacyTokenColumn {
+		// Keep both values until every old API replica has drained. The later
+		// manual cutover removes the plaintext column; new replicas then use
+		// the hash-only branch below without a second API deployment.
+		item, err = repo.queryJSONObject(ctx, `
 		insert into public.invitations (
 			organization_id,
 			email,
@@ -413,6 +430,25 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		)
 		returning to_jsonb(invitations) - 'token' - 'token_hash'
 	`, resolvedOrganizationID, email, role, tenantContext.UserID, expiresAt, plaintextToken, tokenHash, invitationID)
+		if isUndefinedInvitationColumn(err) {
+			// A cutover can win the race after the catalog check but before this
+			// insert. No row was written, so retry once against the new schema.
+			legacyTokenColumn = false
+		}
+	}
+	if !legacyTokenColumn {
+		item, err = repo.queryJSONObject(ctx, `
+			insert into public.invitations (
+				organization_id, email, role, created_by, expires_at, token_hash, id
+			)
+			values (
+				$1::uuid, $2, $3, $4::uuid,
+				coalesce($5::timestamptz, now() + interval '7 days'),
+				$6, $7::uuid
+			)
+			returning to_jsonb(invitations) - 'token' - 'token_hash'
+		`, resolvedOrganizationID, email, role, tenantContext.UserID, expiresAt, tokenHash, invitationID)
+	}
 	if err != nil {
 		if isPendingInvitationUniqueViolation(err) {
 			return nil, ErrInvitationAlreadyPending
@@ -559,12 +595,13 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 
 	var organizationID string
 	var role string
-	var previousToken string
+	var previousToken pgtype.Text
 	var previousTokenHash string
 	var previousExpiresAt time.Time
 	err = repo.db.Pool().QueryRow(ctx, `
-		select organization_id::text, email, coalesce(nullif(role, ''), 'user'), token, token_hash, expires_at
-		from public.invitations
+		select organization_id::text, email, coalesce(nullif(role, ''), 'user'),
+		       to_jsonb(invitation) ->> 'token', token_hash, expires_at
+		from public.invitations invitation
 		where id = $1::uuid
 		  and used_at is null
 		  and ($2::uuid is null or organization_id = $2::uuid)
@@ -597,6 +634,13 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return nil, err
 	}
+	inactive, err := repo.invitationAccountInactive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if inactive {
+		return nil, ErrInvitationAccountInactive
+	}
 	existingAccount := identity.requiresLogin()
 	var recipientUserID *string
 	if identity.UserID != "" {
@@ -620,7 +664,9 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	}
 	newTokenHash := invitationTokenHash(newToken)
 
-	item, err := repo.queryJSONObject(ctx, `
+	var item map[string]any
+	if previousToken.Valid {
+		item, err = repo.queryJSONObject(ctx, `
 		update public.invitations
 		set token = $2,
 		    token_hash = $3,
@@ -631,7 +677,24 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 		  and token_hash = $5
 		  and ($6::boolean or coalesce(nullif(role, ''), 'user') not in ('admin', 'manager'))
 		returning to_jsonb(invitations) - 'token' - 'token_hash'
-	`, invitationID, newToken, newTokenHash, previousToken, previousTokenHash, canCreatePrivilegedInvitation(tenantContext))
+	`, invitationID, newToken, newTokenHash, previousToken.String, previousTokenHash, canCreatePrivilegedInvitation(tenantContext))
+		if isUndefinedInvitationColumn(err) {
+			// The manual cutover may have dropped the column after the read.
+			previousToken.Valid = false
+		}
+	}
+	if !previousToken.Valid {
+		item, err = repo.queryJSONObject(ctx, `
+			update public.invitations
+			set token_hash = $2,
+			    expires_at = now() + interval '7 days'
+			where id = $1::uuid
+			  and used_at is null
+			  and token_hash = $3
+			  and ($4::boolean or coalesce(nullif(role, ''), 'user') not in ('admin', 'manager'))
+			returning to_jsonb(invitations) - 'token' - 'token_hash'
+		`, invitationID, newTokenHash, previousTokenHash, canCreatePrivilegedInvitation(tenantContext))
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -673,15 +736,24 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 
 		restoreContext, cancelRestore := context.WithTimeout(context.WithoutCancel(ctx), invitationEmailLogTimeout)
 		defer cancelRestore()
-		restoreErr := repo.restoreInvitationTokenPair(
-			restoreContext,
-			invitationID,
-			previousToken,
-			previousTokenHash,
-			previousExpiresAt,
-			newToken,
-			newTokenHash,
-		)
+		var restoreErr error
+		if previousToken.Valid {
+			restoreErr = repo.restoreInvitationTokenPair(
+				restoreContext, invitationID, previousToken.String,
+				previousTokenHash, previousExpiresAt, newToken, newTokenHash,
+			)
+			if isUndefinedInvitationColumn(restoreErr) {
+				restoreErr = repo.restoreInvitationTokenHash(
+					restoreContext, invitationID, previousTokenHash,
+					previousExpiresAt, newTokenHash,
+				)
+			}
+		} else {
+			restoreErr = repo.restoreInvitationTokenHash(
+				restoreContext, invitationID, previousTokenHash,
+				previousExpiresAt, newTokenHash,
+			)
+		}
 		deliveryErr := fmt.Errorf("%w: %v", ErrInvitationEmailFailed, sendErr)
 		if restoreErr != nil {
 			return nil, errors.Join(deliveryErr, fmt.Errorf("restore invitation token pair: %w", restoreErr))
@@ -722,6 +794,71 @@ func (repo Repository) restoreInvitationTokenPair(
 		return fmt.Errorf("invitation token pair changed concurrently")
 	}
 	return nil
+}
+
+func (repo Repository) restoreInvitationTokenHash(
+	ctx context.Context,
+	invitationID string,
+	previousTokenHash string,
+	previousExpiresAt time.Time,
+	failedTokenHash string,
+) error {
+	tag, err := repo.db.Pool().Exec(ctx, `
+		update public.invitations
+		set token_hash = $2,
+		    expires_at = $3
+		where id = $1::uuid
+		  and used_at is null
+		  and token_hash = $4
+	`, invitationID, previousTokenHash, previousExpiresAt, failedTokenHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("invitation token hash changed concurrently")
+	}
+	return nil
+}
+
+const invitationLegacyTokenColumnQuery = `
+	select exists (
+		select 1
+		from pg_catalog.pg_attribute
+		where attrelid = 'public.invitations'::regclass
+		  and attname = 'token'
+		  and attnum > 0
+		  and not attisdropped
+	)
+`
+
+func (repo Repository) hasLegacyInvitationTokenColumn(ctx context.Context) (bool, error) {
+	var exists bool
+	err := repo.db.Pool().QueryRow(ctx, invitationLegacyTokenColumnQuery).Scan(&exists)
+	return exists, err
+}
+
+func isUndefinedInvitationColumn(err error) bool {
+	var pgError *pgconn.PgError
+	return errors.As(err, &pgError) && pgError.Code == "42703"
+}
+
+func (repo Repository) invitationAccountInactive(ctx context.Context, identity invitationIdentity) (bool, error) {
+	if identity.UserID == "" || identity.State == invitationIdentityResumableAdmin {
+		// The immutable admin-invitation provenance identifies an intentionally
+		// inactive provisional profile. Legacy provisional identities without
+		// that provenance still require a profile check.
+		return false, nil
+	}
+	var inactive bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.users profile
+			where profile.id = $1::uuid
+			  and profile.is_active is not true
+		)
+	`, identity.UserID).Scan(&inactive)
+	return inactive, err
 }
 
 func stripInvitationToken(item map[string]any) {
@@ -1110,7 +1247,7 @@ func (repo Repository) CreateTableRow(ctx context.Context, tenantContext tenant.
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
-	if !isAllowedAdminTable(table) || len(payload) == 0 {
+	if !isAllowedAdminWriteTable(table) || len(payload) == 0 {
 		return nil, ErrInvalidInput
 	}
 	if strings.TrimSpace(table) == "announcements" {
@@ -1133,7 +1270,7 @@ func (repo Repository) UpdateTableRow(ctx context.Context, tenantContext tenant.
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	id, ok := normalizeUUID(id)
-	if !ok || !isAllowedAdminTable(table) || len(payload) == 0 {
+	if !ok || !isAllowedAdminWriteTable(table) || len(payload) == 0 {
 		return nil, ErrInvalidInput
 	}
 	columns, placeholders, args, err := buildAdminPayload(payload, 1)
@@ -1163,7 +1300,7 @@ func (repo Repository) DeleteTableRow(ctx context.Context, tenantContext tenant.
 		return tenant.ErrOrganizationAccessDenied
 	}
 	id, ok := normalizeUUID(id)
-	if !ok || !isAllowedAdminTable(table) {
+	if !ok || !isAllowedAdminDeleteTable(table) {
 		return ErrInvalidInput
 	}
 	identifier := pgx.Identifier{"public", table}.Sanitize()
@@ -1481,8 +1618,8 @@ func (repo Repository) DashboardFeed(ctx context.Context, tenantContext tenant.C
 			'type', al.entity_type,
 			'severity', 'info',
 			'title', al.action,
-			'description', al.details::text,
-			'metadata', al.details,
+			'description', nullif(al.metadata, '{}'::jsonb)::text,
+			'metadata', al.metadata,
 			'created_at', al.created_at
 		)
 		from public.audit_logs al
@@ -1645,7 +1782,13 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 }
 
 func (repo Repository) UpdateOrganizationAccess(ctx context.Context, tenantContext tenant.Context, organizationID string, request OrganizationAccessRequest) error {
-	if err := repo.UpdateOrganization(ctx, tenantContext, organizationID, request.OrganizationUpdates); err != nil {
+	if !tenantContext.IsSuperAdmin {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if err := validateOrganizationAccessRequest(request); err != nil {
+		return err
+	}
+	if err := repo.UpdateOrganization(ctx, tenantContext, organizationID, *request.OrganizationUpdates); err != nil {
 		return err
 	}
 	modules := organizationModulesWithCore(request.Modules)
@@ -1665,6 +1808,15 @@ func (repo Repository) UpdateOrganizationAccess(ctx context.Context, tenantConte
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateOrganizationAccessRequest(request OrganizationAccessRequest) error {
+	// An explicit empty array resets optional modules to core. A missing or
+	// null array must never silently trigger the same destructive operation.
+	if request.OrganizationUpdates == nil || request.Modules == nil {
+		return ErrInvalidInput
 	}
 	return nil
 }
@@ -1729,8 +1881,8 @@ func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tena
 	var name, email string
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
-			coalesce(nullif(btrim(app_user.name), ''), split_part(auth_user.email, '@', 1)),
-			auth_user.email
+			coalesce(nullif(btrim(app_user.name), ''), split_part(coalesce(auth_user.email, ''), '@', 1)),
+			coalesce(auth_user.email, '')
 		from auth.users auth_user
 		left join public.users app_user on app_user.id = auth_user.id
 		where auth_user.id = $1::uuid
@@ -1747,37 +1899,19 @@ func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tena
 		return nil, ErrInvalidInput
 	}
 
-	if err := repo.sendAuthPasswordRecovery(ctx, email); err != nil {
+	if err := requestAdminPasswordRecovery(ctx, email, tenantContext.UserID, userID, repo.sendAuthPasswordRecovery, repo.recordPasswordRecoveryRequest, slog.Default()); err != nil {
 		return nil, err
 	}
 
-	_, err = repo.db.Pool().Exec(ctx, `
-		insert into public.password_change_events (user_id, source, metadata)
-		values (
-			$1::uuid,
-			'recovery',
-			jsonb_build_object('reset_by', $2::uuid, 'reset_source', 'superadmin')
-		)
-	`, userID, tenantContext.UserID)
-	if err != nil {
-		// The recovery email has already been accepted by Auth. Do not turn a
-		// successful security action into a false failure because only its audit
-		// trail could not be persisted.
-		slog.Error(
-			"password recovery email sent but audit event failed",
-			"user_id", userID,
-			"reset_by", tenantContext.UserID,
-			"error", err,
-		)
-	}
-
 	return map[string]any{
-		"user_id":      userID,
-		"name":         name,
-		"email":        email,
-		"delivery":     "email",
-		"email_sent":   true,
-		"requested_at": time.Now().UTC().Format(time.RFC3339),
+		"user_id":          userID,
+		"name":             name,
+		"email":            email,
+		"delivery":         "email",
+		"request_accepted": true,
+		"delivery_status":  "unverified",
+		"email_sent":       true, // Legacy field: Auth accepted the request; inbox delivery is unverified.
+		"requested_at":     time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -1997,9 +2131,10 @@ func isSafeColumnName(value string) bool {
 	return true
 }
 
-func isAllowedAdminTable(table string) bool {
+func isAllowedAdminReadTable(table string) bool {
 	switch strings.TrimSpace(table) {
-	case "organizations",
+	case "notifications",
+		"organizations",
 		"users",
 		"organization_members",
 		"admin_subscription_plans",
@@ -2017,8 +2152,24 @@ func isAllowedAdminTable(table string) bool {
 	}
 }
 
-func isAllowedAdminReadTable(table string) bool {
-	return strings.TrimSpace(table) == "notifications" || isAllowedAdminTable(table)
+// Generic mutations are limited to the content managed by the current admin UI.
+// Identity, tenant access, modules, and audit records use their domain routes.
+func isAllowedAdminWriteTable(table string) bool {
+	switch strings.TrimSpace(table) {
+	case "admin_subscription_plans", "announcements", "help_articles":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedAdminDeleteTable(table string) bool {
+	switch strings.TrimSpace(table) {
+	case "admin_subscription_plans", "help_articles":
+		return true
+	default:
+		return false
+	}
 }
 
 func isAllowedOnboardingField(field string) bool {

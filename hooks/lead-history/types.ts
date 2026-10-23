@@ -5,6 +5,7 @@ export type LeadHistoryFormatters = {
   formatCurrency: (value: number) => string;
   formatPropertyCurrency: (value: number) => string;
   formatResponseTime: (seconds: number) => string;
+  timeZone?: string;
 };
 
 export type HistoryActor = {
@@ -39,9 +40,15 @@ export type ActivityEventRow = {
 
 export type LeadEntryEventRow = {
   id: string;
+  lead_id?: string | null;
   entry_type?: string | null;
+  provider?: string | null;
   source?: string | null;
   campaign_name?: string | null;
+  pipeline_id?: string | null;
+  stage_id?: string | null;
+  property_id?: string | null;
+  metadata?: HistoryMetadata | null;
   created_at: string;
 };
 
@@ -58,6 +65,8 @@ export type DistributionLogRow = {
 
 export type AssignmentLogRow = {
   id: string;
+  round_robin_id?: string | null;
+  assigned_at?: string | null;
   old_user_id?: string | null;
   new_user_id?: string | null;
   reason?: string | null;
@@ -121,7 +130,13 @@ export type LeadHistoryLead = {
 };
 
 export type LeadHistoryRaw = {
+  historyCoverage?: {
+    complete: boolean;
+    // A bounded legacy response cannot establish presence outside its loaded window.
+    canonicalPresence?: { leadCreated: boolean; firstResponse: boolean; assignment: boolean };
+  };
   timelineEvents?: TimelineEventRow[];
+  queueRuntimeEvents?: QueueRuntimeEventRow[];
   activityEvents?: ActivityEventRow[];
   entryEvents?: LeadEntryEventRow[];
   lead?: LeadHistoryLead | null;
@@ -130,6 +145,15 @@ export type LeadHistoryRaw = {
   assignmentLogs?: AssignmentLogRow[];
   auditLogs?: AuditLogRow[];
   users?: HistoryActor[];
+};
+
+export type QueueRuntimeEventRow = {
+  id: string; event_type: string; created_at: string;
+  round_robin_id?: string | null; episode_id?: string | null; round_number?: number;
+  from_user_id?: string | null; to_user_id?: string | null; actor_id?: string | null;
+  queue?: { id: string; name?: string | null } | null;
+  from_user?: HistoryActor | null; to_user?: HistoryActor | null; actor?: HistoryActor | null;
+  metadata?: HistoryMetadata | null;
 };
 
 export interface UnifiedHistoryEvent {

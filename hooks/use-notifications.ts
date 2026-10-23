@@ -1,72 +1,13 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { notificationsAPI } from '@/lib/api/notifications';
+import type { NotificationCategory } from '@/lib/validation/notification-filters';
 
 export type { Notification } from '@/lib/api/notifications';
 
-let globalAudioContext: AudioContext | null = null;
-let audioInitialized = false;
 const NOTIFICATIONS_INITIAL_LOAD_DELAY_MS = 2500;
 const NOTIFICATIONS_PAGE_SIZE = 25;
-type WebkitAudioWindow = Window & typeof globalThis & {
-  webkitAudioContext?: typeof AudioContext;
-};
-
-async function initializeAudio(): Promise<void> {
-  if (audioInitialized) return;
-
-  try {
-    const AudioContextConstructor = window.AudioContext || (window as WebkitAudioWindow).webkitAudioContext;
-    if (!AudioContextConstructor) return;
-    globalAudioContext = new AudioContextConstructor();
-    audioInitialized = true;
-  } catch {
-    audioInitialized = false;
-  }
-}
-
-async function resumeAudioContext(): Promise<void> {
-  if (globalAudioContext?.state === 'suspended') {
-    try {
-      await globalAudioContext.resume();
-    } catch {
-      // Audio is optional.
-    }
-  }
-}
-
-function playSound(type: 'notification' | 'new-lead', volume: number = 0.7): void {
-  if (!globalAudioContext || !audioInitialized) return;
-
-  try {
-    if (globalAudioContext.state === 'suspended') {
-      void globalAudioContext.resume();
-    }
-
-    const now = globalAudioContext.currentTime;
-    const oscillator = globalAudioContext.createOscillator();
-    const gainNode = globalAudioContext.createGain();
-
-    oscillator.type = 'sine';
-    oscillator.frequency.value = type === 'new-lead' ? 880 : 660;
-
-    gainNode.gain.setValueAtTime(0.0001, now);
-    gainNode.gain.linearRampToValueAtTime(volume * 0.08, now + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-
-    oscillator.connect(gainNode);
-    gainNode.connect(globalAudioContext.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.2);
-  } catch {
-    // Sound should never break notification rendering.
-  }
-}
-
-async function requestNotificationPermission(): Promise<boolean> {
-  return false;
-}
 
 function useDelayedQueryEnabled(enabledKey: string | null, delayMs = NOTIFICATIONS_INITIAL_LOAD_DELAY_MS) {
   const [readyKey, setReadyKey] = useState<string | null>(null);
@@ -81,58 +22,21 @@ function useDelayedQueryEnabled(enabledKey: string | null, delayMs = NOTIFICATIO
   return enabledKey !== null && readyKey === enabledKey;
 }
 
-export function useNotifications() {
-  const { activeOrganization, profile, organization } = useAuth();
-  const audioSetupDone = useRef(false);
+export function useNotifications(filters: { unreadOnly?: boolean; categories?: NotificationCategory[] } = {}) {
+  const { activeOrganization, profile } = useAuth();
   const queryEnabled = useDelayedQueryEnabled(
     profile?.id && activeOrganization.organizationId ? `${profile.id}:${activeOrganization.organizationId}` : null,
   );
 
-  useEffect(() => {
-    if (audioSetupDone.current) return;
-
-    const handleInteraction = async () => {
-      if (audioSetupDone.current) return;
-      audioSetupDone.current = true;
-
-      document.removeEventListener('click', handleInteraction);
-      document.removeEventListener('keydown', handleInteraction);
-      document.removeEventListener('touchstart', handleInteraction);
-
-      await initializeAudio();
-      await requestNotificationPermission();
-    };
-
-    document.addEventListener('click', handleInteraction);
-    document.addEventListener('keydown', handleInteraction);
-    document.addEventListener('touchstart', handleInteraction);
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void resumeAudioContext();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('click', handleInteraction);
-      document.removeEventListener('keydown', handleInteraction);
-      document.removeEventListener('touchstart', handleInteraction);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
-
-  const playNotificationSound = useCallback((type: 'notification' | 'new-lead' = 'notification') => {
-    playSound(type, type === 'new-lead' ? 0.7 : 0.5);
-  }, []);
-
   const query = useInfiniteQuery({
-    queryKey: ['notifications', profile?.id, activeOrganization.organizationId, NOTIFICATIONS_PAGE_SIZE],
-    queryFn: ({ pageParam }) => notificationsAPI.list({
+    queryKey: ['notifications', profile?.id, activeOrganization.organizationId, NOTIFICATIONS_PAGE_SIZE, Boolean(filters.unreadOnly), [...(filters.categories ?? [])].sort()],
+    queryFn: ({ pageParam, signal }) => notificationsAPI.list({
       userId: profile!.id,
       limit: NOTIFICATIONS_PAGE_SIZE,
       cursor: pageParam,
-    }),
+      unreadOnly: filters.unreadOnly,
+      categories: filters.categories,
+    }, { signal, expectedUserId: profile!.id, organizationId: activeOrganization.organizationId! }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
     enabled: queryEnabled,
@@ -143,15 +47,13 @@ export function useNotifications() {
     refetchOnWindowFocus: false,
   });
 
-  return {
-    ...query,
-    data: query.data?.pages.flatMap((page) => page.notifications) ?? [],
-    playNotificationSound,
-  };
+  const notifications = useMemo(() => query.data?.pages.flatMap((page) => page.notifications) ?? [], [query.data]);
+
+  return { ...query, data: notifications };
 }
 
 export function useUnreadNotificationsCount() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryEnabled = useDelayedQueryEnabled(
     profile?.id && activeOrganization.organizationId ? `${profile.id}:${activeOrganization.organizationId}` : null,
   );

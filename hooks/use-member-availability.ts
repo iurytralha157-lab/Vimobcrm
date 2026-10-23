@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { useActiveOrganizationId } from "@/hooks/use-active-organization";
+import { VimobAPIError } from "@/lib/api/vimob-error";
+import { useEffect, useRef } from "react";
+import { availabilityClockForEditor } from "@/lib/teams/availability-clock";
 import {
   teamsAPI,
   type AvailabilityInput,
@@ -30,12 +33,10 @@ export function useMemberAvailability(teamMemberId?: string) {
 
   return useQuery({
     queryKey: ["member-availability", organizationId, teamMemberId],
-    queryFn: async () => {
-      if (!teamMemberId) return [];
-
-      return teamsAPI.listMemberAvailability({ teamMemberId, organizationId });
-    },
+    queryFn: ({ signal }) => teamsAPI.getMemberAvailabilitySnapshot(teamMemberId as string, organizationId, signal),
     enabled: Boolean(organizationId && teamMemberId),
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 
@@ -60,20 +61,27 @@ export function useTeamMembersAvailability(teamMemberIds: string[]) {
 export function useUpdateMemberAvailability() {
   const organizationId = useActiveOrganizationId();
   const queryClient = useQueryClient();
+  const currentScope = useRef(organizationId);
+  useEffect(() => { currentScope.current = organizationId; return () => { currentScope.current = null; }; }, [organizationId]);
 
   return useMutation({
-    mutationFn: async (input: AvailabilityInput) => {
-      return teamsAPI.updateMemberAvailability(input, organizationId);
+    mutationFn: async ({ organizationId: requestedOrganizationId, ...input }: AvailabilityInput & { organizationId: string }) => {
+      return teamsAPI.updateMemberAvailability(input, requestedOrganizationId);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
+      const organizationId = variables.organizationId;
       queryClient.invalidateQueries({
         queryKey: ["member-availability", organizationId],
       });
       queryClient.invalidateQueries({
         queryKey: ["team-members-availability", organizationId],
       });
+      queryClient.invalidateQueries({ queryKey: ["teams", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["team", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["team-history", organizationId] });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (currentScope.current !== variables.organizationId) return;
       console.error("Error updating availability:", error);
       toast.error("Erro ao atualizar disponibilidade");
     },
@@ -83,13 +91,19 @@ export function useUpdateMemberAvailability() {
 export function useBulkUpdateMemberAvailability() {
   const organizationId = useActiveOrganizationId();
   const queryClient = useQueryClient();
+  const currentScope = useRef(organizationId);
+  useEffect(() => { currentScope.current = organizationId; return () => { currentScope.current = null; }; }, [organizationId]);
 
   return useMutation({
     mutationFn: async ({
       teamMemberId,
+      expectedRevision,
+      organizationId: requestedOrganizationId,
       availability,
     }: {
       teamMemberId: string;
+      expectedRevision: number;
+      organizationId: string;
       availability: Array<{
         day_of_week: number;
         start_time?: string | null;
@@ -101,6 +115,7 @@ export function useBulkUpdateMemberAvailability() {
       return teamsAPI.replaceMemberAvailability(
         {
           teamMemberId,
+          expected_revision: expectedRevision,
           availability: availability.map((entry) => ({
             day_of_week: entry.day_of_week,
             start_time: entry.is_all_day ? null : entry.start_time,
@@ -109,19 +124,26 @@ export function useBulkUpdateMemberAvailability() {
             is_active: entry.is_active ?? false,
           })),
         },
-        organizationId,
+        requestedOrganizationId,
       );
     },
-    onSuccess: () => {
+    onSuccess: (snapshot, variables) => {
+      const organizationId = variables.organizationId;
+      if (currentScope.current === organizationId) queryClient.setQueryData(["member-availability", organizationId, variables.teamMemberId], snapshot);
       queryClient.invalidateQueries({
         queryKey: ["member-availability", organizationId],
       });
       queryClient.invalidateQueries({
         queryKey: ["team-members-availability", organizationId],
       });
-      toast.success("Disponibilidade salva com sucesso");
+      queryClient.invalidateQueries({ queryKey: ["teams", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["team", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["team-history", organizationId] });
+      if (currentScope.current === organizationId) toast.success("Disponibilidade salva com sucesso");
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (currentScope.current !== variables.organizationId) return;
+      if (error instanceof VimobAPIError && error.code === "team_revision_conflict") return;
       console.error("Error saving availability:", error);
       toast.error("Erro ao salvar disponibilidade");
     },
@@ -160,7 +182,10 @@ export function formatAvailabilitySummary(
   }
 
   if (allSameTime && activeDays[0]) {
-    const timeRange = `${activeDays[0].start_time?.slice(0, 5)} - ${activeDays[0].end_time?.slice(0, 5)}`;
+    const start = availabilityClockForEditor(activeDays[0].start_time);
+    const end = availabilityClockForEditor(activeDays[0].end_time);
+    if (!start || !end) return "Escala precisa de revisão";
+    const timeRange = `${start} - ${end}`;
     if (isEveryDay) return `Todos os dias ${timeRange}`;
     if (isWeekdays) return `Seg-Sex ${timeRange}`;
     return `${activeDays

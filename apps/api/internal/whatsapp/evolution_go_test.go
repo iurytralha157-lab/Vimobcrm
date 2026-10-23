@@ -395,9 +395,9 @@ func TestEvolutionQRCodeRecoversStaleDisconnectedClient(t *testing.T) {
 			if body["number"] != instanceKey {
 				t.Errorf("restart number = %#v, want %q", body["number"], instanceKey)
 			}
-			// Evolution Go can report this after it has already started an
-			// unpaired client. The following QR read is authoritative.
-			w.WriteHeader(http.StatusInternalServerError)
+			// A definitive stale-login rejection permits an authoritative QR
+			// read. Ambiguous 5xx responses are covered by the outcome tests.
+			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"failed to login"}`))
 		default:
 			t.Errorf("unexpected provider request to %s", r.URL.String())
@@ -608,7 +608,7 @@ func TestEvolutionQRCodeSerializesConcurrentRecovery(t *testing.T) {
 			stateMu.Lock()
 			qrReady = true
 			stateMu.Unlock()
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"failed to login"}`))
 		default:
 			http.NotFound(w, r)

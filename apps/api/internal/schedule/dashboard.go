@@ -16,7 +16,10 @@ const scheduleDashboardOverduePredicateSQL = `(
 	se.status = 'scheduled'
 	and case
 		when coalesce(se.is_all_day, false) then
-			(se.end_time at time zone bounds.report_timezone)::date
+			((se.end_time at time zone bounds.report_timezone)::date
+				- case when se.end_time > se.start_time
+					and (se.end_time at time zone bounds.report_timezone)::time = time '00:00:00'
+					then 1 else 0 end)
 				< (bounds.as_of at time zone bounds.report_timezone)::date
 		else se.end_time < bounds.as_of
 	end
@@ -125,9 +128,7 @@ func buildScheduleDashboardEventsQuery(tenantContext tenant.Context, filter Dash
 				filtered_events.is_overdue
 			from filtered_events
 			left join public.users owner on owner.id = filtered_events.user_id
-			left join public.leads lead
-			  on lead.organization_id = filtered_events.organization_id
-			 and lead.id = filtered_events.lead_id
+			` + scheduleLeadJoinSQL("filtered_events", "lead", "$4", "$5", "$6", tenantContext.HasPermission(permissions.LeadViewOwn)) + `
 			` + schedulePropertyJoinSQL(
 		"filtered_events",
 		"property",
@@ -168,7 +169,7 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 	}
 
 	query := `
-		with ` + scheduleDashboardFilteredEventsCTEs(scope) + `,
+		with ` + scheduleDashboardFilteredEventsCTEs(scope) + `, ` + scheduleDashboardQualityCTEs(scope) + `,
 		days as (
 			select (bounds.date_from + generated.day_offset)::date as report_date
 			from bounds
@@ -253,6 +254,7 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			  on membership.organization_id = $1::uuid
 			 and membership.user_id = users.id
 			 and coalesce(membership.is_active, false) = true
+			 and membership.deleted_at is null
 			where coalesce(users.is_active, false) = true
 			  and (
 				$3::boolean
@@ -265,6 +267,13 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					 and member.team_id = leader.team_id
 					 and member.user_id = users.id
 					 and coalesce(member.is_active, false) = true
+					 and member.membership_generation = membership.membership_generation
+					join public.organization_members leader_membership
+					  on leader_membership.organization_id = leader.organization_id
+					 and leader_membership.user_id = leader.user_id
+					 and leader_membership.membership_generation = leader.membership_generation
+					 and leader_membership.is_active = true
+					 and leader_membership.deleted_at is null
 					where leader.organization_id = $1::uuid
 					  and leader.user_id = $2::uuid
 					  and coalesce(leader.is_active, false) = true
@@ -281,6 +290,7 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					  and selected_team_member.team_id = $10::uuid
 					  and selected_team_member.user_id = users.id
 					  and coalesce(selected_team_member.is_active, false) = true
+					  and selected_team_member.membership_generation = membership.membership_generation
 				)
 			  )
 		),
@@ -309,6 +319,12 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					and exists (
 						select 1
 						from public.team_members responsibility_team_member
+						join public.organization_members responsibility_membership
+						  on responsibility_membership.organization_id = responsibility_team_member.organization_id
+						 and responsibility_membership.user_id = responsibility_team_member.user_id
+						 and responsibility_membership.membership_generation = responsibility_team_member.membership_generation
+						 and responsibility_membership.is_active = true
+						 and responsibility_membership.deleted_at is null
 						where responsibility_team_member.organization_id = $1::uuid
 						  and responsibility_team_member.team_id = $10::uuid
 						  and responsibility_team_member.user_id = event_responsibilities.user_id
@@ -379,6 +395,7 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 		)
 		select jsonb_build_object(
 			'report_timezone', bounds.report_timezone,
+			'data_quality', (select to_jsonb(period_quality) || to_jsonb(unknown_date_quality) from period_quality cross join unknown_date_quality),
 			'kpis', jsonb_build_object(
 				'total', totals.total,
 				'eligible', totals.eligible,
@@ -449,10 +466,16 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 }
 
 type scheduleDashboardQueryScope struct {
-	dateExpression string
-	args           []any
-	where          []string
+	dateExpression  string
+	args            []any
+	where           []string
+	canViewOwnLeads bool
 }
+
+// Historical source is linked-lead metadata, so filtering and aggregation must
+// use the same independently authorized projection as event details.
+const scheduleDashboardSourceKeySQL = `case when l.id is null then '__none__' else
+	coalesce(nullif(btrim(se.lead_source_snapshot), ''), left(nullif(btrim(l.source), ''), 160), '__none__') end`
 
 func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter DashboardFilter) (scheduleDashboardQueryScope, error) {
 	dateExpression, err := scheduleDashboardDateExpression(filter.DateBasis)
@@ -530,6 +553,12 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 			  and exists (
 				select 1
 				from public.team_members dashboard_team_member
+				join public.organization_members dashboard_team_membership
+				  on dashboard_team_membership.organization_id = dashboard_team_member.organization_id
+				 and dashboard_team_membership.user_id = dashboard_team_member.user_id
+				 and dashboard_team_membership.membership_generation = dashboard_team_member.membership_generation
+				 and dashboard_team_membership.is_active = true
+				 and dashboard_team_membership.deleted_at is null
 				where dashboard_team_member.organization_id = se.organization_id
 				  and dashboard_team_member.team_id = $%d::uuid
 				  and dashboard_team_member.is_active = true
@@ -548,9 +577,9 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 		)`, index, index))
 	}
 	if filter.Source == "__none__" {
-		where = append(where, "coalesce(nullif(btrim(se.lead_source_snapshot), ''), left(nullif(btrim(l.source), ''), 160), '__none__') = '__none__'")
+		where = append(where, "("+scheduleDashboardSourceKeySQL+") = '__none__'")
 	} else if filter.Source != "" {
-		addFilter("coalesce(nullif(btrim(se.lead_source_snapshot), ''), left(nullif(btrim(l.source), ''), 160), '__none__') = $%d", filter.Source)
+		addFilter("("+scheduleDashboardSourceKeySQL+") = $%d", filter.Source)
 	}
 	if filter.EventType != "" {
 		addFilter("lower(btrim(se.event_type)) = $%d", filter.EventType)
@@ -568,9 +597,10 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 	}
 
 	return scheduleDashboardQueryScope{
-		dateExpression: dateExpression,
-		args:           args,
-		where:          where,
+		dateExpression:  dateExpression,
+		args:            args,
+		where:           where,
+		canViewOwnLeads: tenantContext.HasPermission(permissions.LeadViewOwn),
 	}, nil
 }
 
@@ -606,7 +636,7 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				se.organization_id,
 				se.user_id,
 				se.team_id,
-				se.lead_id,
+				l.id as lead_id,
 				se.property_id,
 				left(coalesce(nullif(btrim(se.title), ''), 'Compromisso'), 255) as title,
 				case
@@ -622,11 +652,7 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 					when 'no_show' then 'no_show'
 					else '__unknown__'
 				end as status,
-				coalesce(
-					nullif(btrim(se.lead_source_snapshot), ''),
-					left(nullif(btrim(l.source), ''), 160),
-					'__none__'
-				) as source_key,
+				(` + scheduleDashboardSourceKeySQL + `) as source_key,
 				case
 					when lower(btrim(se.outcome)) in (
 						'contacted', 'activity_completed', 'qualified', 'proposal',
@@ -638,6 +664,10 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				se.start_time,
 				se.end_time,
 				coalesce(se.is_all_day, false) as is_all_day,
+				se.created_by is null as missing_creator,
+				(l.id is not null and nullif(btrim(se.lead_source_snapshot), '') is null) as missing_source_snapshot,
+				se.performed_by is null as missing_performer,
+				coalesce(se.outcome_recorded_at, se.completed_at) is null as missing_result_time,
 				` + scheduleDashboardOverduePredicateSQL + ` as is_overdue,
 				(
 					se.status = 'scheduled'
@@ -647,9 +677,7 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				extract(hour from (` + scope.dateExpression + ` at time zone bounds.report_timezone))::integer as report_hour
 			from public.schedule_events se
 			cross join bounds
-			left join public.leads l
-			  on l.organization_id = se.organization_id
-			 and l.id = se.lead_id
+			` + scheduleLeadJoinSQL("se", "l", "$4", "$5", "$6", scope.canViewOwnLeads) + `
 			where ` + strings.Join(scope.where, " and ") + `
 		)`
 }

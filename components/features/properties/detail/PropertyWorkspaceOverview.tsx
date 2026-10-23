@@ -263,6 +263,10 @@ export function AssetCatalog({
   assets: PropertyWorkspaceAsset[]
   renderActions?: (asset: PropertyWorkspaceAsset) => ReactNode
 }) {
+  const propertyId = assets[0]?.property_id ?? null
+  const [expanded, setExpanded] = useState({ propertyId, count: 12 })
+  const visibleCount = expanded.propertyId === propertyId ? expanded.count : 12
+  const visibleAssets = assets.slice(0, visibleCount)
   if (assets.length === 0) {
     return (
       <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-5 text-center text-[12px] font-light text-muted-foreground">
@@ -275,8 +279,9 @@ export function AssetCatalog({
   const photoPositionById = new Map(photos.map((asset, index) => [asset.id, index + 1]))
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {assets.map((asset) => {
+    <div className="@container space-y-3">
+    <div className="grid gap-3 @[480px]:grid-cols-2 @[760px]:grid-cols-3">
+      {visibleAssets.map((asset) => {
         const href = asset.access_url || asset.external_url
         const displayName = asset.title || asset.file_name || ASSET_TYPE_LABELS[asset.asset_type]
         const visibilityLabel = asset.external_url && asset.visibility !== 'public'
@@ -385,6 +390,12 @@ export function AssetCatalog({
           </article>
         )
       })}
+    </div>
+    {visibleAssets.length < assets.length && (
+      <button type="button" className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] hover:bg-[var(--app-surface-hover)]" onClick={() => setExpanded({ propertyId, count: visibleCount + 12 })}>
+        Carregar mais arquivos ({visibleAssets.length} de {assets.length})
+      </button>
+    )}
     </div>
   )
 }

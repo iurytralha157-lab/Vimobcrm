@@ -8,7 +8,7 @@ import { siteAPI } from '@/lib/api/site'
 import { getSitePublicUrl } from '@/lib/site/site-publication'
 
 export function useSiteDashboardUrl() {
-  const { activeOrganization, loading: authLoading, organization, profile } = useAuth()
+  const { activeOrganization, loading: authLoading } = useAuth()
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions()
   const organizationId = activeOrganization.organizationId || null
   const canReadSiteSettings = hasPermission('settings_site')

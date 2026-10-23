@@ -17,6 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const (
@@ -350,11 +352,10 @@ func (handler Handler) StartMediaWorker(ctx context.Context, logger *slog.Logger
 		logger = slog.Default()
 	}
 	if !whatsappMediaWorkerCanStart(handler.repo.functions) {
-		logger.Warn(
-			"whatsapp media worker remains disabled without a native rollout scope",
+		logger.Info(
+			"whatsapp media worker will discover native cutover sessions from the database",
 			"processor_mode", normalizeEvolutionWebhookProcessorMode(handler.repo.functions.webhookProcessorMode),
 		)
-		return
 	}
 	whatsappMediaWorkerCount.Store(int64(config.MediaWorkerConcurrency))
 	go func() {
@@ -379,12 +380,19 @@ func (handler Handler) runWhatsAppMediaWorker(ctx context.Context, logger *slog.
 	ticker := time.NewTicker(config.MediaWorkerInterval)
 	defer ticker.Stop()
 	for {
+		allowedSessionIDs, scopeErr := handler.repo.whatsappMediaWorkerSessionScope(ctx)
+		if scopeErr != nil && !errors.Is(scopeErr, context.Canceled) {
+			logger.Error("whatsapp media worker scope lookup failed", "error", scopeErr)
+		}
 		for {
+			if scopeErr != nil || len(allowedSessionIDs) == 0 {
+				break
+			}
 			processed, err := handler.repo.drainOneWhatsAppMediaJobForSessions(
 				ctx,
 				config.MediaWorkerLease,
 				config.MediaWorkerConcurrency,
-				handler.repo.functions.webhookRolloutSessionIDs,
+				allowedSessionIDs,
 			)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {
@@ -404,6 +412,54 @@ func (handler Handler) runWhatsAppMediaWorker(ctx context.Context, logger *slog.
 		case <-whatsappMediaWorkerWake:
 		}
 	}
+}
+
+// An epoch-one cutover is the durable native owner even when the legacy global
+// setting still says edge. Never turn that discovery into an epoch-zero wildcard.
+func (repo Repository) whatsappMediaWorkerSessionScope(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, whatsappQueueHeartbeatTimeout)
+	defer cancel()
+	rows, err := repo.db.Pool().Query(ctx, `
+		select cutover.session_id::text
+		from private.whatsapp_webhook_session_cutovers cutover
+		join public.whatsapp_sessions session on session.id = cutover.session_id
+		where cutover.active_epoch = 1 and session.provider = 'evolution_go'
+		  and coalesce(session.is_active, true) and session.status not in ('disabled', 'deleted')
+		order by cutover.session_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cutoverSessionIDs []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			return nil, err
+		}
+		cutoverSessionIDs = append(cutoverSessionIDs, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return whatsappMediaWorkerScope(repo.functions, cutoverSessionIDs), nil
+}
+
+func whatsappMediaWorkerScope(client functionsClient, cutoverSessionIDs []string) []string {
+	scope := append([]string(nil), cutoverSessionIDs...)
+	if normalizeEvolutionWebhookProcessorMode(client.webhookProcessorMode) != webhookProcessorEdge {
+		scope = append(scope, client.webhookRolloutSessionIDs...)
+	}
+	seen := make(map[string]bool, len(scope))
+	result := make([]string, 0, len(scope))
+	for _, sessionID := range scope {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID != "" && !seen[sessionID] {
+			seen[sessionID] = true
+			result = append(result, sessionID)
+		}
+	}
+	return result
 }
 
 func whatsappMediaWorkerCanStart(client functionsClient) bool {
@@ -466,9 +522,9 @@ func (repo Repository) drainOneWhatsAppMediaJobForSessions(
 	if leaseErr != nil {
 		return true, errors.Join(processErr, leaseErr)
 	}
-	if ctx.Err() != nil {
-		return true, ctx.Err()
-	}
+	parentErr := ctx.Err()
+	ctx, cancelCompletion := whatsappQueueCompletionContext(ctx)
+	defer cancelCompletion()
 	if deferDisconnected, providerStarted := whatsappMediaDisconnectedDeferral(processErr); deferDisconnected {
 		// The dependency disappeared either before provider recovery started or
 		// through a definitive disconnected response from that read-only call.
@@ -498,6 +554,11 @@ func (repo Repository) drainOneWhatsAppMediaJobForSessions(
 			return true, errors.Join(processErr, err)
 		}
 		return true, nil
+	}
+	if parentErr != nil {
+		// Unclassified interrupted provider work keeps its durable marker for
+		// stale-lease recovery; cancellation is never evidence of completion.
+		return true, parentErr
 	}
 	if err := repo.retryOrFailWhatsAppMediaJob(ctx, job, code, permanent, processErr); err != nil {
 		return true, errors.Join(processErr, err)
@@ -679,9 +740,10 @@ func superviseWhatsAppMediaLease(
 	renew func(context.Context) (bool, error),
 	process func(context.Context) error,
 ) (processErr error, leaseErr error) {
-	processCtx, cancelProcess := context.WithCancel(ctx)
+	processCtx, cancelProcess := context.WithTimeout(ctx, whatsappQueueItemTimeout)
 	defer cancelProcess()
 	leaseResult := make(chan error, 1)
+	processDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
@@ -691,7 +753,20 @@ func superviseWhatsAppMediaLease(
 				leaseResult <- nil
 				return
 			case <-ticker.C:
-				renewed, err := renew(processCtx)
+				heartbeatCtx, cancelHeartbeat := context.WithTimeout(processCtx, whatsappQueueHeartbeatTimeout)
+				renewed, err := renew(heartbeatCtx)
+				cancelHeartbeat()
+				if errors.Is(err, context.Canceled) {
+					select {
+					case <-processDone:
+						// The completed stage canceled its own in-flight heartbeat.
+						// Keep its result so the fenced local cleanup can run. An
+						// explicit lost lease or independent renewal error still wins.
+						leaseResult <- nil
+						return
+					default:
+					}
+				}
 				if err != nil {
 					cancelProcess()
 					leaseResult <- err
@@ -707,6 +782,7 @@ func superviseWhatsAppMediaLease(
 	}()
 
 	processErr = process(processCtx)
+	close(processDone)
 	cancelProcess()
 	leaseErr = <-leaseResult
 	return processErr, leaseErr
@@ -1247,6 +1323,14 @@ func (repo Repository) findCompletedWhatsAppMediaAsset(ctx context.Context, job 
 		  and storage_path is not null
 		  and id <> $3::uuid
 		  and storage_path like $4
+		  and not exists (
+		    select 1
+		    from private.whatsapp_unlinked_media_gc as gc
+		    where gc.organization_id = media_jobs.organization_id
+		      and gc.bucket_id = 'whatsapp-media'
+		      and gc.object_path = media_jobs.storage_path
+		      and gc.status in ('processing', 'completed')
+		  )
 		order by completed_at desc nulls last, id
 		limit 1
 	`, job.OrganizationID, job.AssetKey, job.ID,
@@ -1596,11 +1680,11 @@ func revalidateWhatsAppMediaCompletionCandidates(
 
 func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedWhatsAppMediaJob, asset completedWhatsAppMediaAsset) error {
 	repairStoragePath := strings.TrimSpace(firstString(job.MessageKey, whatsappMediaRepairPathKey))
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 
 	// The native webhook and manual retry paths already own the message row
 	// before they insert or update media_jobs. Completion must acquire the same
@@ -1753,11 +1837,11 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 }
 
 func (repo Repository) deferWhatsAppMediaJobDisconnected(ctx context.Context, job queuedWhatsAppMediaJob, providerStarted bool) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 
 	// Preserve the global message -> media job lock order used by completion,
 	// retries, stale recovery and manual retry.
@@ -1848,11 +1932,11 @@ func (repo Repository) deferWhatsAppMediaJobDisconnected(ctx context.Context, jo
 }
 
 func (repo Repository) deferWhatsAppMediaLocalFinalization(ctx context.Context, job queuedWhatsAppMediaJob) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 
 	// Completion, webhook enqueue and manual retry all lock message first. Keep
 	// that order while converting the owned lease into a provider-free retry.
@@ -1915,11 +1999,11 @@ func (repo Repository) deferWhatsAppMediaLocalFinalization(ctx context.Context, 
 }
 
 func (repo Repository) deferWhatsAppMediaLocalStage(ctx context.Context, job queuedWhatsAppMediaJob) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 
 	// Match the message -> job order used by every other media outcome path.
 	var lockedMessageID string
@@ -2017,11 +2101,11 @@ func (repo Repository) retryOrFailWhatsAppMediaJob(ctx context.Context, job queu
 	}
 	nextAttempt := time.Now().UTC().Add(retryDelay)
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, tx, release, err := repo.beginWhatsAppQueueWorkerTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer release()
 	status := "pending"
 	messageStatus := mediaErrorRetry
 	if terminal {
@@ -2109,7 +2193,7 @@ func whatsappMediaRetryDelay(attempt int) time.Duration {
 	}
 }
 
-func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, message retryMediaMessage) (string, bool, error) {
+func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, message retryMediaMessage, actors ...tenant.Context) (string, bool, error) {
 	if !whatsappMediaManualDownloadAllowed(message.MessageType, message.MediaSize) {
 		return "", false, fmt.Errorf("%w: media size must be unknown or no greater than 25MB", ErrInvalidInput)
 	}
@@ -2144,10 +2228,50 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 		return "", false, err
 	}
 	defer tx.Rollback(ctx)
+	if len(actors) > 0 {
+		if actors[0].OrganizationID != message.OrganizationID {
+			return "", false, tenant.ErrOrganizationAccessDenied
+		}
+		if err := lockOriginalWhatsAppActor(ctx, tx, actors[0]); err != nil {
+			return "", false, err
+		}
+		var id string
+		if err := tx.QueryRow(ctx, `select id::text from public.whatsapp_sessions where organization_id=$1::uuid and id=$2::uuid for share`, message.OrganizationID, message.SessionID).Scan(&id); err != nil {
+			return "", false, err
+		}
+		// Canonical deletion and native binding changes own the conversation
+		// before either their work rows or lead. Never wait on that route after
+		// acquiring WM/jobs, even for a retry of an already stored object.
+		if err := tx.QueryRow(ctx, `select id::text from public.whatsapp_conversations where organization_id=$1::uuid and id=$2::uuid and session_id=$3::uuid for no key update`, message.OrganizationID, message.ConversationID, message.SessionID).Scan(&id); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, ErrMessageNotFound
+			}
+			return "", false, err
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		select pg_advisory_xact_lock(hashtextextended($1, 0))
 	`, "whatsapp-media-manual:"+message.OrganizationID+":"+message.ID); err != nil {
 		return "", false, err
+	}
+	if len(actors) > 0 {
+		if message.ReadScope.ID == "" {
+			return "", false, ErrMessageNotFound
+		}
+		// The route lock above serializes deletion's work-before-lead phase;
+		// immutable lead precedes WM/jobs within this manual admission.
+		if message.ReadScope.LeadID != "" {
+			var leadID string
+			if err := tx.QueryRow(ctx, `select id::text from public.leads where organization_id=$1::uuid and id=$2::uuid for share`, message.OrganizationID, message.ReadScope.LeadID).Scan(&leadID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return "", false, ErrMessageNotFound
+				}
+				return "", false, err
+			}
+		}
+		if err := lockWhatsAppActorRoles(ctx, tx, actors[0]); err != nil {
+			return "", false, err
+		}
 	}
 	// Match the native webhook and worker finalization lock order. The advisory
 	// lock deduplicates only concurrent manual requests; the row lock prevents a
@@ -2164,6 +2288,19 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 			return "", false, ErrMessageNotFound
 		}
 		return "", false, err
+	}
+
+	if len(actors) > 0 {
+		if err := revalidateMessageMediaReadScope(ctx, tx, actors[0], message.ReadScope, false); err != nil {
+			return "", false, err
+		}
+		current, err := currentWhatsAppActor(ctx, tx, actors[0])
+		if err != nil {
+			return "", false, err
+		}
+		if !current.HasPermission(permissions.WhatsAppOperate) {
+			return "", false, tenant.ErrOrganizationAccessDenied
+		}
 	}
 
 	var jobID string

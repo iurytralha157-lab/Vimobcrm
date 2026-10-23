@@ -17,6 +17,23 @@ func NewHandler(repo Repository) Handler {
 	return Handler{repo: repo}
 }
 
+// ShowAccountStatus is limited to the authenticated identity. It remains
+// available when no tenant membership exists so the browser can distinguish
+// removal from a global account suspension without opening CRM data routes.
+func (handler Handler) ShowAccountStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := httpserver.UserFromContext(r.Context())
+	if !ok {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
+		return
+	}
+	status, err := handler.repo.CurrentAccountStatus(r.Context(), user.ID)
+	if err != nil {
+		writeMeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, status)
+}
+
 func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 	user, ok := httpserver.UserFromContext(r.Context())
 	if !ok {

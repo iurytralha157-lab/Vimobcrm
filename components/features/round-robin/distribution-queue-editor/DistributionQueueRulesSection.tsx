@@ -43,6 +43,7 @@ interface DistributionQueueRulesSectionProps {
   hasWhatsAppMessageCondition: boolean;
   hasValidCriteria: boolean;
   ignoreAvailability: boolean | undefined;
+  managedSchedule?: boolean;
   incomingWebhooks: WebhookIntegration[];
   whatsappSessions: RoundRobinWhatsAppSessionOption[];
   activeWhatsAppSessions: RoundRobinWhatsAppSessionOption[];
@@ -74,6 +75,7 @@ export function DistributionQueueRulesSection({
   hasWhatsAppMessageCondition,
   hasValidCriteria,
   ignoreAvailability,
+  managedSchedule = false,
   incomingWebhooks,
   whatsappSessions,
   activeWhatsAppSessions,
@@ -129,6 +131,7 @@ export function DistributionQueueRulesSection({
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-3 px-0.5 pt-3">
+        <p className="text-[11px] font-light text-[var(--app-text-secondary)]">O lead entra quando corresponde a qualquer regra desta fila. Se mais de uma fila corresponder, prevalecem a prioridade dos critérios e o desempate configurado pelo sistema.</p>
         {conditions.map((condition) => (
           <div
             key={condition.id}
@@ -139,7 +142,9 @@ export function DistributionQueueRulesSection({
                 : "sm:grid-cols-[minmax(170px,210px)_minmax(0,1fr)_32px]",
             )}
           >
-            <Select
+            {condition.legacyType ? (
+              <div className="text-[12px] font-light"><p>Regra legada: {condition.legacyType}</p><p className="mt-1 text-[11px] text-[var(--app-text-secondary)]">{condition.values.join(", ") || "Critério preservado"}. Esta regra será mantida sem alterações.</p></div>
+            ) : <Select
               value={condition.type}
               onValueChange={(value) => {
                 if (isDistributionQueueConditionType(value)) {
@@ -152,6 +157,7 @@ export function DistributionQueueRulesSection({
               }}
             >
               <SelectTrigger
+                aria-label="Tipo de critério de entrada"
                 className={cn(
                   "h-10 w-full min-w-0 border-0 bg-[var(--app-surface-solid)] text-[12px] shadow-none",
                   condition.type === "meta_form" && "max-w-[230px]",
@@ -159,7 +165,7 @@ export function DistributionQueueRulesSection({
               >
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-[min(24rem,var(--radix-select-content-available-height))] max-w-[var(--radix-select-content-available-width)]">
                 {availableConditionTypes.map((conditionType) => (
                   <SelectItem
                     key={conditionType.value}
@@ -169,14 +175,14 @@ export function DistributionQueueRulesSection({
                   </SelectItem>
                 ))}
               </SelectContent>
-            </Select>
+            </Select>}
             <div
               className={cn(
                 "min-w-0",
                 condition.type === "meta_form" && "col-span-2 row-start-2",
               )}
             >
-              <DistributionQueueConditionValueEditor
+              {!condition.legacyType && <DistributionQueueConditionValueEditor
                 condition={condition}
                 incomingWebhooks={incomingWebhooks}
                 whatsappSessions={whatsappSessions}
@@ -193,7 +199,7 @@ export function DistributionQueueRulesSection({
                 properties={properties}
                 hasPropertiesModule={hasPropertiesModule}
                 onUpdate={onUpdateCondition}
-              />
+              />}
             </div>
             <Button
               type="button"
@@ -211,7 +217,7 @@ export function DistributionQueueRulesSection({
             </Button>
           </div>
         ))}
-        {hasWhatsAppMessageCondition && (
+        {hasWhatsAppMessageCondition && !managedSchedule && (
           <div className="flex items-start justify-between gap-4 rounded-lg bg-[var(--app-surface-soft)] p-3">
             <div className="space-y-1">
               <Label htmlFor="distribution-ignore-availability">

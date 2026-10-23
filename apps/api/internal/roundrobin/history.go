@@ -109,8 +109,18 @@ const historyQuery = `
 		subject.email,
 		subject.avatar_url
 	from ordered_history history
-	left join public.users actor on actor.id = history.user_id
-	left join public.users subject on subject.id::text = history.subject_user_id
+	left join public.users actor on actor.id = history.user_id and (
+		actor.organization_id = $1::uuid or actor.role = 'super_admin' or exists (
+			select 1 from public.organization_members actor_membership
+			where actor_membership.organization_id = $1::uuid and actor_membership.user_id = actor.id
+		)
+	)
+	left join public.users subject on subject.id::text = history.subject_user_id and (
+		subject.organization_id = $1::uuid or subject.role = 'super_admin' or exists (
+			select 1 from public.organization_members subject_membership
+			where subject_membership.organization_id = $1::uuid and subject_membership.user_id = subject.id
+		)
+	)
 	order by
 		case
 			when history.is_initial_creation_event
@@ -132,6 +142,7 @@ const historyQuery = `
 		history.created_at desc,
 		history.id desc
 	limit $3
+	offset $4
 `
 
 func parseHistoryLimit(value string) (int, error) {
@@ -147,20 +158,37 @@ func parseHistoryLimit(value string) (int, error) {
 	return limit, nil
 }
 
+func parseHistoryOffset(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	offset, err := strconv.Atoi(value)
+	if err != nil || offset < 0 || offset > 1_000_000 {
+		return 0, ErrInvalidInput
+	}
+	return offset, nil
+}
+
 func (repo Repository) ListHistory(
 	ctx context.Context,
 	tenantContext tenant.Context,
 	roundRobinID string,
 	limit int,
+	offsets ...int,
 ) ([]HistoryEvent, error) {
 	if strings.TrimSpace(tenantContext.OrganizationID) == "" {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	roundRobinID, ok := normalizeUUID(roundRobinID)
-	if !ok || limit < 1 || limit > maxHistoryLimit {
+	offset := 0
+	if len(offsets) == 1 {
+		offset = offsets[0]
+	}
+	if !ok || limit < 1 || limit > maxHistoryLimit || len(offsets) > 1 || offset < 0 || offset > 1_000_000 {
 		return nil, ErrInvalidInput
 	}
-	if err := repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID); err != nil {
+	if err := repo.ensureRoundRobinHistoryVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID); err != nil {
 		return nil, err
 	}
 
@@ -170,6 +198,7 @@ func (repo Repository) ListHistory(
 		tenantContext.OrganizationID,
 		roundRobinID,
 		limit,
+		offset,
 	)
 	if err != nil {
 		return nil, err

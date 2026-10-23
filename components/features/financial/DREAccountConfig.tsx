@@ -43,7 +43,7 @@ const GROUP_TYPE_COLORS: Record<string, string> = {
 };
 
 export function DREAccountConfig() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const {

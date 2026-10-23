@@ -27,6 +27,46 @@ export const replayNotificationDeliveryInputSchema = z.object({
   ),
 }).strict()
 
+export const whatsAppNotificationResetScopeSchema = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('organization'), organizationId: uuidSchema }).strict(),
+  z.object({ scope: z.literal('all') }).strict(),
+])
+
+const notificationResetFields = {
+  cutoffAt: z.string().datetime({ offset: true }),
+  reason: replayNotificationDeliveryInputSchema.shape.reason,
+  confirmation: z.literal('RESETAR'),
+}
+
+export const whatsAppNotificationResetInputSchema = z.discriminatedUnion('scope', [
+  whatsAppNotificationResetScopeSchema.options[0].extend(notificationResetFields),
+  whatsAppNotificationResetScopeSchema.options[1].extend(notificationResetFields),
+])
+
+const notificationResetPreviewFields = {
+  cutoffAt: z.string().datetime({ offset: true }),
+  pendingCount: nonNegativeIntegerSchema,
+  inFlightCount: nonNegativeIntegerSchema,
+}
+
+export const whatsAppNotificationResetPreviewSchema = z.discriminatedUnion('scope', [
+  whatsAppNotificationResetScopeSchema.options[0].extend(notificationResetPreviewFields),
+  whatsAppNotificationResetScopeSchema.options[1].extend(notificationResetPreviewFields),
+])
+
+export const apiWhatsAppNotificationResetPreviewResponseSchema = apiEnvelopeSchema(
+  whatsAppNotificationResetPreviewSchema,
+)
+
+export const apiWhatsAppNotificationResetResponseSchema = apiEnvelopeSchema(z.object({
+  cancelledCount: nonNegativeIntegerSchema,
+  inFlightCount: nonNegativeIntegerSchema,
+}).strict())
+
+export type WhatsAppNotificationResetScope = z.infer<typeof whatsAppNotificationResetScopeSchema>
+export type WhatsAppNotificationResetInput = z.infer<typeof whatsAppNotificationResetInputSchema>
+export type WhatsAppNotificationResetPreview = z.infer<typeof whatsAppNotificationResetPreviewSchema>
+
 const nullableTimestampSchema = timestampSchema.nullable().optional()
 
 export const apiNotificationDeliveryMetricSchema = z.object({

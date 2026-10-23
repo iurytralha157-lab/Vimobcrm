@@ -21,6 +21,7 @@ import {
   type PropertyOwner,
 } from "@/hooks/use-property-owners";
 import { cn } from "@/lib/utils";
+import { FILTER_UI } from "@/config/filter-ui";
 
 type PropertyOwnerComboboxProps = {
   value?: string;
@@ -100,7 +101,7 @@ export function PropertyOwnerCombobox({
             className,
           )}
         >
-          <span className="truncate">
+          <span className="truncate" title={value ? displayLabel : allowManual ? "Digitar novo proprietário" : emptyLabel}>
             {value
               ? displayLabel
               : allowManual
@@ -112,15 +113,21 @@ export function PropertyOwnerCombobox({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-[min(360px,calc(100vw-2rem))] rounded-[8px] border-0 p-1"
+        collisionPadding={FILTER_UI.collisionPadding}
+        className={cn(
+          FILTER_UI.panelViewport,
+          "flex w-[min(360px,calc(100vw-2rem))] flex-col overflow-hidden rounded-[8px] border-0 p-1",
+        )}
       >
-        <Command shouldFilter={false}>
+        <Command shouldFilter={false} className="h-auto min-h-0 [&_[cmdk-input-wrapper]]:shrink-0">
           <CommandInput
             placeholder="Buscar proprietário por nome, telefone ou e-mail..."
+            maxLength={120}
+            aria-label="Buscar proprietário"
             value={search}
             onValueChange={setSearch}
           />
-          <CommandList>
+          <CommandList className="min-h-0 flex-1 overscroll-contain">
             <CommandGroup>
               <CommandItem
                 value="__empty__"
@@ -149,9 +156,9 @@ export function PropertyOwnerCombobox({
                   className="cursor-pointer"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate">{owner.name}</span>
+                    <span className="block truncate" title={owner.name}>{owner.name}</span>
                     {(owner.cellphone || owner.email) && (
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span className="block truncate text-xs text-muted-foreground" title={owner.cellphone || owner.email || undefined}>
                         {owner.cellphone || owner.email}
                       </span>
                     )}

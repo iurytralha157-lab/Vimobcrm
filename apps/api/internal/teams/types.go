@@ -1,6 +1,8 @@
 package teams
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -10,6 +12,8 @@ var (
 	ErrTeamNotFound         = errors.New("team not found")
 	ErrTeamInUse            = errors.New("team is in use")
 	ErrTeamMemberNotFound   = errors.New("team member not found")
+	ErrTeamRevisionConflict = errors.New("team revision conflict")
+	ErrTeamQueueSyncBlocked = errors.New("team queue synchronization exceeds participant or position limit")
 	ErrStorageNotConfigured = errors.New("team storage is not configured")
 	ErrStorageOperation     = errors.New("team storage operation failed")
 )
@@ -23,6 +27,7 @@ type Team struct {
 	Name           string       `json:"name"`
 	OrganizationID string       `json:"organization_id"`
 	CreatedAt      string       `json:"created_at"`
+	Revision       int64        `json:"revision"`
 	IsActive       bool         `json:"is_active"`
 	LogoURL        *string      `json:"logo_url"`
 	CreatedBy      *string      `json:"created_by"`
@@ -97,16 +102,29 @@ type MemberAvailability struct {
 }
 
 type AvailabilityRequest struct {
-	TeamMemberID string  `json:"team_member_id"`
-	DayOfWeek    int     `json:"day_of_week"`
-	StartTime    *string `json:"start_time"`
-	EndTime      *string `json:"end_time"`
-	IsAllDay     *bool   `json:"is_all_day"`
-	IsActive     *bool   `json:"is_active"`
+	ExpectedRevision *int64  `json:"expected_revision,omitempty"`
+	TeamMemberID     string  `json:"team_member_id"`
+	DayOfWeek        int     `json:"day_of_week"`
+	StartTime        *string `json:"start_time"`
+	EndTime          *string `json:"end_time"`
+	IsAllDay         *bool   `json:"is_all_day"`
+	IsActive         *bool   `json:"is_active"`
 }
 
 type BulkAvailabilityRequest struct {
-	Availability []AvailabilityRequest `json:"availability"`
+	ExpectedRevision *int64                `json:"expected_revision"`
+	Availability     []AvailabilityRequest `json:"availability"`
+}
+
+// AvailabilitySnapshot binds the observed week to the team aggregate revision.
+type AvailabilitySnapshot struct {
+	Data     []MemberAvailability `json:"data"`
+	Revision int64                `json:"revision"`
+}
+
+type AvailabilityMutationResponse struct {
+	Data     MemberAvailability `json:"data"`
+	Revision int64              `json:"revision"`
 }
 
 type TeamMemberInput struct {
@@ -116,20 +134,76 @@ type TeamMemberInput struct {
 }
 
 type CreateTeamRequest struct {
-	Name      string            `json:"name"`
-	MemberIDs []string          `json:"memberIds"`
-	Members   []TeamMemberInput `json:"members"`
-	LogoURL   *string           `json:"logo_url"`
-	IsActive  *bool             `json:"is_active"`
+	IdempotencyKey    string            `json:"-"`
+	Name              string            `json:"name"`
+	MemberIDs         []string          `json:"memberIds"`
+	Members           []TeamMemberInput `json:"members"`
+	LogoURL           *string           `json:"logo_url"`
+	IsActive          *bool             `json:"is_active"`
+	membersProvided   bool
+	memberIDsProvided bool
 }
 
 type UpdateTeamRequest struct {
+	ExpectedRevision   *int64            `json:"expected_revision"`
+	ExpectedMemberIDs  []string          `json:"expected_member_ids"`
 	Name               *string           `json:"name"`
 	MemberIDs          []string          `json:"memberIds"`
 	Members            []TeamMemberInput `json:"members"`
 	LogoURL            *string           `json:"logo_url"`
 	IsActive           *bool             `json:"is_active"`
 	PreserveLeadership bool              `json:"preserveLeadership"`
+	membersProvided    bool
+	memberIDsProvided  bool
+}
+
+func decodeTeamRequestMemberFields(data []byte, target any) (bool, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return false, false, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return false, false, err
+	}
+	_, membersProvided := fields["members"]
+	_, memberIDsProvided := fields["memberIds"]
+	return membersProvided, memberIDsProvided, nil
+}
+
+func (request *CreateTeamRequest) UnmarshalJSON(data []byte) error {
+	type decodedRequest CreateTeamRequest
+	var decoded decodedRequest
+	membersProvided, memberIDsProvided, err := decodeTeamRequestMemberFields(data, &decoded)
+	if err != nil {
+		return err
+	}
+	*request = CreateTeamRequest(decoded)
+	request.membersProvided = membersProvided
+	request.memberIDsProvided = memberIDsProvided
+	return nil
+}
+
+func (request *UpdateTeamRequest) UnmarshalJSON(data []byte) error {
+	type decodedRequest UpdateTeamRequest
+	var decoded decodedRequest
+	membersProvided, memberIDsProvided, err := decodeTeamRequestMemberFields(data, &decoded)
+	if err != nil {
+		return err
+	}
+	*request = UpdateTeamRequest(decoded)
+	request.membersProvided = membersProvided
+	request.memberIDsProvided = memberIDsProvided
+	return nil
+}
+
+func invalidTeamMemberFormats(membersProvided, memberIDsProvided bool, members []TeamMemberInput, memberIDs []string) bool {
+	hasMembers := membersProvided || members != nil
+	hasMemberIDs := memberIDsProvided || memberIDs != nil
+	return (hasMembers && hasMemberIDs) ||
+		(membersProvided && members == nil) ||
+		(memberIDsProvided && memberIDs == nil)
 }
 
 type UpdateTeamStatusRequest struct {

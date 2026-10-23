@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   MAX_ORGANIZATION_INVITATIONS_PER_BATCH,
-  apiCreateUserResponseSchema,
-  createUserInputSchema,
+  apiUserListResponseSchema,
   deleteUserInputSchema,
   organizationInvitationBatchSchema,
   organizationInvitationRoleInputSchema,
@@ -11,30 +10,19 @@ import {
 } from './users'
 
 const ID = '11111111-1111-4111-8111-111111111111'
-const ORG_ID = '22222222-2222-4222-8222-222222222222'
 
-test('aceita cadastro de corretor valido', () => {
-  assert.equal(createUserInputSchema.safeParse({
-    name: 'Lucas Almeida',
-    email: 'lucas@example.com',
-    role: 'user',
-  }).success, true)
+test('catalogue keeps membership and original organization distinct while older user responses remain compatible', () => {
+  const home = '22222222-2222-4222-8222-222222222222'
+  const user = { id: ID, organization_id: ID, name: 'Synthetic member', email: 'member@example.test', role: 'user', avatar_url: null, is_active: true, whatsapp: null, created_at: '2026-10-12T00:00:00Z', updated_at: '2026-10-12T00:00:00Z' }
+  const result = apiUserListResponseSchema.parse({ data: [{ ...user, home_organization_id: home }] })
+  assert.equal(result.data[0].organization_id, ID)
+  assert.equal(result.data[0].home_organization_id, home)
+  assert.equal(apiUserListResponseSchema.safeParse({ data: [user] }).success, true)
+  assert.equal(apiUserListResponseSchema.safeParse({ data: [{ ...user, home_organization_id: null }] }).success, true)
+  assert.equal(apiUserListResponseSchema.safeParse({ data: [{ ...user, home_organization_id: 'invalid' }] }).success, false)
 })
 
-test('rejeita email e papel invalidos', () => {
-  assert.equal(createUserInputSchema.safeParse({
-    name: 'Lucas Almeida',
-    email: 'invalido',
-    role: 'owner',
-  }).success, false)
-})
-
-test('preserva o papel de gestor no cadastro e na atualizacao', () => {
-  assert.equal(createUserInputSchema.safeParse({
-    name: 'Gestora Maria',
-    email: 'maria@example.com',
-    role: 'manager',
-  }).success, true)
+test('preserva o papel de gestor na atualizacao', () => {
   assert.equal(updateUserInputSchema.safeParse({ id: ID, role: 'manager' }).success, true)
 })
 
@@ -76,27 +64,4 @@ test('aceita somente papel editavel em convite pendente', () => {
     organizationInvitationRoleInputSchema.safeParse({ role: 'user', expires_at: new Date().toISOString() }).success,
     false,
   )
-})
-
-test('valida resposta de criacao de usuario', () => {
-  const result = apiCreateUserResponseSchema.safeParse({
-    success: true,
-    user: {
-      id: ID,
-      organization_id: ORG_ID,
-      name: 'Lucas Almeida',
-      email: 'lucas@example.com',
-      role: 'user',
-      avatar_url: null,
-      is_active: true,
-      whatsapp: null,
-      created_at: '2026-07-11T12:00:00Z',
-      updated_at: '2026-07-11T12:00:00Z',
-    },
-    whatsappSent: false,
-    wasMultiOrg: false,
-    wasOrphan: false,
-  })
-
-  assert.equal(result.success, true)
 })

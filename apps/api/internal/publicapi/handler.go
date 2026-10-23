@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/webhooks"
@@ -158,6 +159,8 @@ func writePublicAPIError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusTooManyRequests, "api_rate_limited", "Public API request rate limit exceeded.")
 	case errors.Is(err, ErrInvalidInput), errors.Is(err, webhooks.ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_api_input", "Public API input is invalid.")
+	case errors.Is(err, distribution.ErrIntakeDestinationUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_intake_destination_unavailable", "The contact destination is unavailable.")
 	case errors.Is(err, webhooks.ErrIdempotencyConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "Idempotency-Key was already used with a different payload.")
 	default:

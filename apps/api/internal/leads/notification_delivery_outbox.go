@@ -61,6 +61,14 @@ type normalizedNotificationPreflight struct {
 	Failure          *DispatchChannelResult
 	Send             func(context.Context) DispatchChannelResult
 	PushSubscription *pushSubscription
+	Release          func()
+	Finalized        bool
+	Start            func(context.Context) error
+}
+
+type notificationPushQueryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 type notificationDispatchCounters struct {
@@ -140,7 +148,11 @@ func normalizedNotificationWorkerID() string {
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		hostname = "unknown-host"
 	}
-	return trimMax(fmt.Sprintf("vimob-api:%s:%d", hostname, os.Getpid()), 255)
+	// The SQL claim withholds inbound-attendant jobs from older replicas that
+	// cannot authorize/reroute before token preflight. This is a code capability,
+	// not a rollout flag or user-controlled request parameter.
+	const pushProtocols = "|push_device_v3|wa_push_v2"
+	return trimMax(fmt.Sprintf("vimob-api:%s:%d", hostname, os.Getpid()), 255-len(pushProtocols)) + pushProtocols
 }
 
 func notificationPostgresInterval(value time.Duration) string {
@@ -162,6 +174,11 @@ func (repo Repository) sweepNormalizedNotificationDeliveries(ctx context.Context
 func (repo Repository) claimNormalizedNotificationDelivery(ctx context.Context) (normalizedNotificationDelivery, bool, error) {
 	var delivery normalizedNotificationDelivery
 	var rawMetadata string
+	// Expiry does not need a live message row. Commit cleanup before acquiring
+	// parent authorization locks, so orphan removal cannot invert lock order.
+	if _, err := repo.db.Pool().Exec(ctx, "select private.expire_whatsapp_inbound_push_waiting(100)"); err != nil {
+		return normalizedNotificationDelivery{}, false, err
+	}
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
 		  claimed.id::text,
@@ -419,6 +436,12 @@ func (repo Repository) processOneNormalizedNotificationDelivery(ctx context.Cont
 	}
 
 	preflight := repo.prepareNormalizedNotificationDelivery(ctx, delivery, notification)
+	if preflight.Release != nil {
+		defer preflight.Release()
+	}
+	if preflight.Finalized {
+		return true, nil
+	}
 	if preflight.DependencyKey != "" {
 		result := DispatchChannelResult{Enabled: true, Provider: preflight.Provider, Error: "notification_delivery_dependency_unavailable"}
 		if preflight.Failure != nil {
@@ -432,6 +455,23 @@ func (repo Repository) processOneNormalizedNotificationDelivery(ctx context.Cont
 	}
 	if preflight.Failure != nil {
 		result := *preflight.Failure
+		if delivery.Channel == "push" && delivery.AttemptCount == 0 && isWhatsAppInboundAttendantNotification(notification) {
+			// No provider was invoked. Keep untouched jobs redirectable on a
+			// later assignment, without consuming the durable HTTP-start marker.
+			// Authorization revocation is terminal; token/configuration problems
+			// remain bounded by the original delivery expiry.
+			decision := normalizedNotificationDeliveryDecision{
+				Status: notificationDeliveryStatusRetryWait, Provider: result.Provider,
+				ErrorCode: notificationDeliveryErrorCode(result), ErrorMessage: result.Error,
+				Metadata: map[string]any{"preflight_only": true},
+			}
+			if result.Error == "whatsapp_inbound_authorization_revoked" {
+				return true, repo.cancelUnstartedWhatsAppInboundPush(ctx, delivery, result.Error)
+			}
+			nextAttempt := time.Now().UTC().Add(time.Minute)
+			decision.NextAttemptAt = &nextAttempt
+			return true, repo.persistNormalizedNotificationDecision(ctx, delivery, decision, result)
+		}
 		if result.Permanent {
 			if err := repo.startNormalizedNotificationDelivery(ctx, delivery, firstNotificationText(result.Provider, preflight.Provider)); err != nil {
 				return true, err
@@ -448,11 +488,21 @@ func (repo Repository) processOneNormalizedNotificationDelivery(ctx context.Cont
 		return true, errors.New("normalized notification delivery preflight returned no sender")
 	}
 
-	// This is the only attempt-budget mutation and it sits immediately before
-	// the provider call. Every configuration, recipient and connection check has
-	// already completed while the row was merely leased.
-	if err := repo.startNormalizedNotificationDelivery(ctx, delivery, preflight.Provider); err != nil {
-		return true, err
+	// Start is the only attempt-budget mutation before the provider call. Queue
+	// authorization is repeated after recipient/delivery waits against the same
+	// notification snapshot used to prepare this sender.
+	if preflight.Start != nil {
+		if err := preflight.Start(ctx); err != nil {
+			return true, err
+		}
+	} else {
+		started, err := repo.startQueueAuthorizedNotificationForSend(ctx, delivery, notification, preflight.Provider)
+		if err != nil {
+			return true, err
+		}
+		if !started {
+			return true, nil
+		}
 	}
 	result := preflight.Send(ctx)
 	decision := decideNormalizedNotificationDelivery(delivery.Channel, delivery.ID,
@@ -499,6 +549,9 @@ func (repo Repository) prepareNormalizedNotificationDelivery(
 	delivery normalizedNotificationDelivery,
 	notification pendingNotification,
 ) normalizedNotificationPreflight {
+	if rejected := repo.preflightQueueNotification(ctx, notification); rejected != nil {
+		return normalizedNotificationPreflight{Provider: "vimob", Failure: rejected}
+	}
 	if isCadenceNotificationDeliverySuppressed(notification.Metadata) {
 		return normalizedNotificationPermanentPreflight("vimob", "cadence_notification_delivery_disabled")
 	}
@@ -519,6 +572,11 @@ func (repo Repository) prepareNormalizedNotificationDelivery(
 	case "whatsapp":
 		return repo.prepareNormalizedWhatsAppDelivery(ctx, delivery, notification)
 	case "push":
+		if isWhatsAppInboundAttendantNotification(notification) {
+			return repo.fenceNormalizedWhatsAppInboundPush(ctx, delivery, notification, func(tx pgx.Tx) normalizedNotificationPreflight {
+				return repo.prepareNormalizedPushDeliveryWithQueryer(ctx, tx, delivery, notification)
+			})
+		}
 		return repo.prepareNormalizedPushDelivery(ctx, delivery, notification)
 	case "email":
 		return repo.prepareNormalizedEmailDelivery(ctx, delivery, notification)
@@ -659,7 +717,7 @@ func (repo Repository) prepareNormalizedWhatsAppDelivery(
 	provider := "evolution_go_global_instance"
 	organizationFallbackDependency := ""
 	organizationFallbackStatus := ""
-	if !isPlatformTransactionalNotificationEvent(eventKey) {
+	if usesOrganizationNotificationWhatsAppSender(eventKey) {
 		candidate, status, found, err := repo.findAnyNotificationWhatsAppSession(ctx, notification.OrganizationID)
 		if err != nil {
 			return normalizedNotificationTransientPreflight("evolution_go_org_session", "notification_whatsapp_session_load_failed: "+trimMax(err.Error(), 900))
@@ -809,14 +867,29 @@ func (repo Repository) prepareNormalizedPushDelivery(
 	if repo.notificationPush == nil {
 		return normalizedNotificationBlockedPreflight("push", "push_configuration_missing", "push_sender_not_configured")
 	}
-	subscription, found, err := repo.findNormalizedPushSubscription(ctx, delivery)
+	return repo.prepareNormalizedPushDeliveryWithQueryer(ctx, repo.db.Pool(), delivery, notification)
+}
+
+func (repo Repository) prepareNormalizedPushDeliveryWithQueryer(
+	ctx context.Context,
+	queryer notificationPushQueryer,
+	delivery normalizedNotificationDelivery,
+	notification pendingNotification,
+) normalizedNotificationPreflight {
+	if repo.notificationPush == nil {
+		return normalizedNotificationBlockedPreflight("push", "push_configuration_missing", "push_sender_not_configured")
+	}
+	subscription, found, err := repo.findNormalizedPushSubscriptionWithQueryer(ctx, queryer, delivery)
 	if err != nil {
 		return normalizedNotificationTransientPreflight("push", "push_token_load_failed: "+trimMax(err.Error(), 900))
 	}
 	if !found {
 		return normalizedNotificationPermanentPreflight("push", "push_token_inactive_or_missing")
 	}
+	return repo.preparePushSubscriptionDelivery(notification, subscription)
+}
 
+func (repo Repository) preparePushSubscriptionDelivery(notification pendingNotification, subscription pushSubscription) normalizedNotificationPreflight {
 	provider := "web_push"
 	if isNativePushSubscription(subscription) {
 		provider = "fcm_legacy"
@@ -868,9 +941,17 @@ func (repo Repository) findNormalizedPushSubscription(
 	ctx context.Context,
 	delivery normalizedNotificationDelivery,
 ) (pushSubscription, bool, error) {
+	return repo.findNormalizedPushSubscriptionWithQueryer(ctx, repo.db.Pool(), delivery)
+}
+
+func (repo Repository) findNormalizedPushSubscriptionWithQueryer(
+	ctx context.Context,
+	queryer notificationPushQueryer,
+	delivery normalizedNotificationDelivery,
+) (pushSubscription, bool, error) {
 	var subscription pushSubscription
 	var rawDeviceInfo string
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select
 		  token.id::text,
 		  coalesce(token.endpoint, ''),
@@ -881,10 +962,17 @@ func (repo Repository) findNormalizedPushSubscription(
 		  coalesce(token.device_info, '{}'::jsonb)::text
 		from public.push_tokens as token
 		where token.id = $1::uuid
-		  and token.organization_id = $2::uuid
 		  and token.user_id = $3::uuid
 		  and token.is_active is true
+		  and exists (
+		    select 1 from public.users recipient
+		    join public.organization_members member on member.user_id=recipient.id
+		      and member.organization_id=$2::uuid
+		    where recipient.id=token.user_id and coalesce(recipient.is_active,false)
+		      and coalesce(member.is_active,false) and member.deleted_at is null
+		  )
 		limit 1
+		for share of token
 	`, delivery.PushTokenID, delivery.OrganizationID, delivery.UserID).Scan(
 		&subscription.ID,
 		&subscription.Endpoint,

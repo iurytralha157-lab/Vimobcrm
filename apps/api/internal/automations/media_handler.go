@@ -26,7 +26,7 @@ func (handler Handler) ListMedia(w http.ResponseWriter, r *http.Request) {
 		writeAutomationError(w, r, err)
 		return
 	}
-	page, err := handler.repo.ListMedia(r.Context(), tenantContext, getAutomationMediaType(r), limit, offset)
+	page, err := handler.repo.ListMedia(r.Context(), tenantContext, getAutomationMediaType(r), limit, offset, strings.TrimSpace(r.URL.Query().Get("search")))
 	if err != nil {
 		writeAutomationError(w, r, err)
 		return

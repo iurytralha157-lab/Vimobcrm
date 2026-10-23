@@ -15,7 +15,7 @@ func TestPaymentRefreshRouteKeepsBillingPermissionAndAccessRecovery(t *testing.T
 	}
 	text := string(source)
 	route := `"POST /v1/settings/subscription/payments/{id}/refresh"`
-	guardedRoute := route + `, withPermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.RefreshSubscriptionPayment))`
+	guardedRoute := route + `, withActivePermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.RefreshSubscriptionPayment))`
 	if !strings.Contains(text, guardedRoute) {
 		t.Fatalf("payment refresh route must be guarded by SettingsBilling")
 	}

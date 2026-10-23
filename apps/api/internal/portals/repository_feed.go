@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	propertiesdomain "github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 )
 
 func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]byte, error) {
@@ -20,19 +21,9 @@ func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]b
 		strings.TrimSpace(textFromSettings(integration.Settings, "contact_email")) == "" {
 		return nil, ErrFeedNotActivated
 	}
-	selection := feedSelection{
-		Listings:         []feedListing{},
-		Invalid:          map[string][]string{},
-		InvalidLegacy:    map[string][]string{},
-		InvalidCanonical: map[string]canonicalFeedValidationIssue{},
-		ValidCanonical:   map[string]canonicalFeedValidationIssue{},
-	}
-	feedActive := integration.IsActive && integration.Status != "paused" && integration.ModuleEnabled
-	if feedActive {
-		selection, err = repo.feedListings(ctx, integration)
-		if err != nil {
-			return nil, err
-		}
+	selection, feedActive, err := selectGrupoOLXFeed(ctx, integration, repo.feedListings)
+	if err != nil {
+		return nil, err
 	}
 	xmlBytes, err := buildVRSyncFeed(integration, selection.Listings)
 	if err != nil {
@@ -56,6 +47,9 @@ func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]b
 	lastError := ""
 	if !feedActive {
 		syncStatus = "feed_draining:integration_inactive"
+		if !integration.OrganizationActive {
+			syncStatus = "feed_draining:organization_inactive"
+		}
 	} else if len(selection.Listings) == 0 && len(selection.Invalid) > 0 {
 		lastError = "Todos os imoveis habilitados possuem erros de validacao."
 	}
@@ -118,6 +112,20 @@ func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]b
 		return nil, err
 	}
 	return xmlBytes, nil
+}
+
+func grupoOLXFeedActive(integration publicIntegration) bool {
+	return integration.OrganizationActive && integration.IsActive && integration.Status != "paused" && integration.ModuleEnabled
+}
+
+func selectGrupoOLXFeed(ctx context.Context, integration publicIntegration, load func(context.Context, publicIntegration) (feedSelection, error)) (feedSelection, bool, error) {
+	selection := feedSelection{Listings: []feedListing{}, Invalid: map[string][]string{}, InvalidLegacy: map[string][]string{},
+		InvalidCanonical: map[string]canonicalFeedValidationIssue{}, ValidCanonical: map[string]canonicalFeedValidationIssue{}}
+	if !grupoOLXFeedActive(integration) {
+		return selection, false, nil
+	}
+	selection, err := load(ctx, integration)
+	return selection, true, err
 }
 
 func clearCanonicalFeedValidationIssues(
@@ -368,12 +376,18 @@ func (repo Repository) feedListings(ctx context.Context, integration publicInteg
 		   and version.channel = publication.channel
 		   and version.channel_account_key = publication.channel_account_key
 		   and version.version = publication.published_version
+		  join public.properties current_property
+		    on current_property.organization_id = publication.organization_id
+		   and current_property.id = publication.property_id
 		  where publication.organization_id = $2::uuid
 		    and publication.channel = 'grupo_olx'
 		    and publication.channel_account_key = $1
 		    and publication.desired_state = 'published'
 		    and publication.observed_state in ('published', 'queued', 'publishing')
 		    and publication.published_version is not null
+		    and lower(trim(coalesce(current_property.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')
+		    and current_property.autorizado_comercializacao is distinct from false
+		    and `+propertiesdomain.PropertyInventoryOpenSQL("current_property")+`
 		    and jsonb_typeof(version.payload->'property') = 'object'
 		    and jsonb_typeof(version.payload->'channel_config') = 'object'
 
@@ -398,6 +412,9 @@ func (repo Repository) feedListings(ctx context.Context, integration publicInteg
 		    and legacy.organization_id = $2::uuid
 		    and legacy.portal = 'grupo_olx'
 		    and legacy.is_enabled = true
+		    and lower(trim(coalesce(property.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')
+		    and property.autorizado_comercializacao is distinct from false
+		    and `+propertiesdomain.PropertyInventoryOpenSQL("property")+`
 		    and not exists (
 		      select 1
 		      from canonical_scope canonical
@@ -418,6 +435,10 @@ func (repo Repository) feedListings(ctx context.Context, integration publicInteg
 		  'media', media
 		)
 		from feed_rows
+		where exists (
+		  select 1 from public.organizations current_organization
+		  where current_organization.id = $2::uuid and current_organization.is_active = true
+		)
 		order by sort_at desc, publication_id
 		limit 50001
 	`, integration.ID, integration.OrganizationID)

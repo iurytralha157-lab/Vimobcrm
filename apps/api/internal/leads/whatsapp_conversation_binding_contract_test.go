@@ -4,9 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 func TestLeadCreationAuthorizesWhatsAppConversationBeforeBinding(t *testing.T) {
@@ -28,45 +25,28 @@ func TestLeadCreationAuthorizesWhatsAppConversationBeforeBinding(t *testing.T) {
 	for _, required := range []string{
 		"tenantContext tenant.Context",
 		"expectedPreviousLeadID *string",
+		"confirmHistoryLink bool",
 		"repo.authorizeWhatsAppConversationLeadBinding",
 		"*expectedPreviousLeadID",
-		"'whatsapp-conversation-phone:'",
-		"select count(*)::integer, min(wc.id::text)",
-		"leadCandidateCount != 1",
-		"soleLeadID.String != leadID",
-		"conversationCandidateCount != 1",
-		"wc.lead_id is null",
-		"ws.provider = 'evolution_go'",
-		"coalesce(ws.is_active, true) = true",
-		"coalesce(ws.status, '') <> 'deleted'",
+		"confirmWhatsAppUnlinkedHistoryBinding",
+		`"manual_lead_create"`,
+		"if conversationID == nil",
 	} {
 		if !strings.Contains(linker, required) {
 			t.Fatalf("WhatsApp lead binding contract is missing %q", required)
 		}
 	}
-	explicitAuthorize := strings.Index(linker, "repo.authorizeWhatsAppConversationLeadBinding(ctx, tx, tenantContext, *conversationID, leadID, false)")
-	explicitActivate := -1
-	if explicitAuthorize >= 0 {
-		if offset := strings.Index(linker[explicitAuthorize:], "*expectedPreviousLeadID,"); offset >= 0 {
-			explicitActivate = explicitAuthorize + offset
-		}
-	}
-	if explicitAuthorize < 0 || explicitActivate < 0 || explicitAuthorize >= explicitActivate {
-		t.Fatal("explicit binding must authorize the conversation before invoking the activation RPC")
-	}
-	automaticAuthorize := strings.Index(linker, "repo.authorizeWhatsAppConversationLeadBinding(ctx, tx, tenantContext, soleConversationID.String, leadID, true)")
-	automaticActivate := strings.Index(linker, `"unlinked",`)
-	if automaticAuthorize < 0 || automaticActivate < 0 || automaticAuthorize >= automaticActivate {
-		t.Fatal("automatic binding must authorize the sole unlinked conversation before invoking the activation RPC")
+	if strings.Index(linker, "repo.authorizeWhatsAppConversationLeadBinding") >= strings.Index(linker, "confirmWhatsAppUnlinkedHistoryBinding") {
+		t.Fatal("manual binding must authorize the conversation before invoking the confirmation RPC")
 	}
 	for _, forbidden := range []string{
-		"order by",
-		"limit 1",
+		"whatsapp-conversation-phone:",
+		"soleconversationid",
 		"set lead_id =",
 		"set lead_id = null",
 	} {
 		if strings.Contains(strings.ToLower(linker), forbidden) {
-			t.Fatalf("WhatsApp lead binding must not use ambiguous direct reassignment %q", forbidden)
+			t.Fatalf("WhatsApp lead binding must not claim history by phone or direct reassignment %q", forbidden)
 		}
 	}
 }
@@ -96,7 +76,6 @@ func TestWhatsAppBindingAccessIsFailClosed(t *testing.T) {
 		"requireUnlinked",
 		"authorization.CanUseLeadForMutation",
 		"textValue(sessionOwnerID) != tenantContext.UserID",
-		"canManageWhatsAppLeadBinding",
 		"whatsAppConversationIdentityCandidates",
 		"to_jsonb(l)->>'whatsapp'",
 		"for share of l",
@@ -108,6 +87,9 @@ func TestWhatsAppBindingAccessIsFailClosed(t *testing.T) {
 	}
 	if strings.Contains(authorize, "activateWhatsAppConversationLeadBinding") {
 		t.Fatal("authorization helper must not activate a binding itself")
+	}
+	if strings.Contains(authorize, "canManageWhatsAppLeadBinding") {
+		t.Fatal("an administrator must not claim a private unlinked session without ownership")
 	}
 }
 
@@ -142,27 +124,6 @@ func TestWhatsAppConversationIdentityCandidates(t *testing.T) {
 			}
 			if len(got) != 1 || got[0] != test.want {
 				t.Fatalf("candidates = %#v, want [%q]", got, test.want)
-			}
-		})
-	}
-}
-
-func TestWhatsAppLeadBindingManagementAuthorization(t *testing.T) {
-	tests := []struct {
-		name string
-		ctx  tenant.Context
-		want bool
-	}{
-		{name: "super admin", ctx: tenant.Context{IsSuperAdmin: true}, want: true},
-		{name: "owner", ctx: tenant.Context{MemberRole: "owner"}, want: true},
-		{name: "admin", ctx: tenant.Context{MemberRole: "admin"}, want: true},
-		{name: "permission", ctx: tenant.Context{MemberRole: "user", Permissions: []string{permissions.WhatsAppManage}}, want: true},
-		{name: "ordinary member", ctx: tenant.Context{MemberRole: "user"}, want: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := canManageWhatsAppLeadBinding(test.ctx); got != test.want {
-				t.Fatalf("canManageWhatsAppLeadBinding() = %v, want %v", got, test.want)
 			}
 		})
 	}

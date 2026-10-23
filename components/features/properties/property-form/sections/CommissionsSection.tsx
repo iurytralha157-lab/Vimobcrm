@@ -10,11 +10,13 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function CommissionsSection() {
   const {
+    isSaving,
     formData, set, users
   } = usePropertyFormSections();
 
   return (
-  <TabsContent value="commissions">
+  <TabsContent value="commissions" id="property-panel-commissions" aria-labelledby="property-tab-commissions" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card
       data-tour="property-commissions-section"
       className="app-card"
@@ -25,7 +27,7 @@ export function CommissionsSection() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-commission-type">Tipo de Comissão</Label>
             <Select
@@ -60,24 +62,26 @@ export function CommissionsSection() {
             </Select>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="property-sale-commission">Comissão Venda (%)</Label>
+            <Label htmlFor="property-sale-commission">Comissão Venda ({formData.tipo_comissao === "valor_fixo" ? "R$" : "%"})</Label>
             <Input
               id="property-sale-commission"
               type="number"
-              step="0.1"
+              min="0"
+              step={formData.tipo_comissao === "valor_fixo" ? "0.01" : "0.1"}
               value={formData.comissao_venda}
               onChange={(e) => set("comissao_venda", e.target.value)}
               placeholder="5"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="property-rental-commission">Comissão Locação (%)</Label>
+            <Label htmlFor="property-rental-commission">Comissão Locação ({formData.tipo_comissao === "valor_fixo" ? "R$" : "%"})</Label>
             <Input
               id="property-rental-commission"
               type="number"
-              step="0.1"
+              min="0"
+              step={formData.tipo_comissao === "valor_fixo" ? "0.01" : "0.1"}
               value={formData.comissao_locacao}
               onChange={(e) =>
                 set("comissao_locacao", e.target.value)
@@ -111,6 +115,7 @@ export function CommissionsSection() {
         </div>
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

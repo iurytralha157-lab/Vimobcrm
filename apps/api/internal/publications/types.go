@@ -72,6 +72,7 @@ var (
 	ErrIdempotencyConflict   = errors.New("publication idempotency conflict")
 	ErrIdempotencyKeyMissing = errors.New("publication idempotency key is required")
 	ErrPublicationNotReady   = errors.New("property publication is not ready")
+	ErrWorkerUnavailable     = errors.New("property publication worker is unavailable")
 	ErrSiteUnavailable       = errors.New("property publication site is unavailable")
 	ErrGrupoOLXUnavailable   = errors.New("property publication Grupo OLX account is unavailable")
 	ErrMediaNotFound         = errors.New("published media not found")
@@ -220,6 +221,7 @@ type PublicationView struct {
 	Checks            []Check           `json:"checks"`
 	CurrentVersion    int64             `json:"current_version"`
 	PublishedVersion  *int64            `json:"published_version"`
+	LegacyVisible     bool              `json:"legacy_visible"`
 	IsOutdated        bool              `json:"is_outdated"`
 	PublicURL         *string           `json:"public_url"`
 	Preview           Preview           `json:"preview"`

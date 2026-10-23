@@ -213,18 +213,22 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 }
 
 func propertyOwnerSearchClause(alias string, searchPlaceholder string, canViewContactsPlaceholder string) string {
+	textSearch := normalizedTextSQL(searchPlaceholder + "::text")
+	contactText := "coalesce(" + alias + ".phone_residential, '') || ' ' || coalesce(" + alias + ".phone_commercial, '') || ' ' || coalesce(" + alias + ".cellphone, '') || ' ' || coalesce(" + alias + ".email, '') || ' ' || coalesce(" + alias + ".media_source, '')"
 	return `(
 		` + searchPlaceholder + `::text = ''
 		or lower(coalesce(` + alias + `.name, '')) like '%' || lower(` + searchPlaceholder + `::text) || '%'
+		or ` + normalizedTextSQL(alias+".name") + ` like '%' || ` + textSearch + ` || '%'
 		or (
 			` + canViewContactsPlaceholder + `::boolean
-			and lower(
-				coalesce(` + alias + `.phone_residential, '') || ' ' ||
-				coalesce(` + alias + `.phone_commercial, '') || ' ' ||
-				coalesce(` + alias + `.cellphone, '') || ' ' ||
-				coalesce(` + alias + `.email, '') || ' ' ||
-				coalesce(` + alias + `.media_source, '')
-			) like '%' || lower(` + searchPlaceholder + `::text) || '%'
+			and (
+				lower(` + contactText + `) like '%' || lower(` + searchPlaceholder + `::text) || '%'
+				or ` + normalizedTextSQL("("+contactText+")") + ` like '%' || ` + textSearch + ` || '%'
+				or (` + searchPlaceholder + `::text ~ '^[0-9 ()+.-]+$'
+					and regexp_replace(` + searchPlaceholder + `::text, '[^0-9]', '', 'g') <> ''
+					and exists (select 1 from unnest(array[` + alias + `.phone_residential, ` + alias + `.phone_commercial, ` + alias + `.cellphone]) as owner_phone(value)
+						where regexp_replace(owner_phone.value, '[^0-9]', '', 'g') like '%' || regexp_replace(` + searchPlaceholder + `::text, '[^0-9]', '', 'g') || '%'))
+			)
 		)
 	)`
 }

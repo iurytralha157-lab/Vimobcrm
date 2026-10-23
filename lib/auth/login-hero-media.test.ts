@@ -122,7 +122,7 @@ test("password recovery preserves the typed email and blocks concurrent requests
 test("AuthContext delegates login and recovery to the validated auth API", () => {
   const signInStart = authContextSource.indexOf("const signIn = async");
   const resetStart = authContextSource.indexOf("const resetPassword = async", signInStart);
-  const signOutStart = authContextSource.indexOf("const signOut = async", resetStart);
+  const signOutStart = authContextSource.indexOf("const signOut =", resetStart);
 
   assert.notEqual(signInStart, -1);
   assert.notEqual(resetStart, -1);

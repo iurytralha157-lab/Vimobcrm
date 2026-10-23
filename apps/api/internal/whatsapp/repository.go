@@ -108,8 +108,11 @@ type Repository struct {
 	storage              storageClient
 	functions            functionsClient
 	webhookSchemaGate    *evolutionWebhookSchemaGate
+	postFormGuardEnabled bool
 	gamificationRecorder GamificationRecorder
 	leadPublisher        realtime.Publisher
+	avatarURLs           *boundedWhatsAppMediaSignedURLCache
+	avatarSlots          chan struct{}
 }
 
 type scanner interface {
@@ -127,8 +130,11 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		storage:              newStorageClient(storageConfig),
 		functions:            newFunctionsClient(storageConfig, db),
 		webhookSchemaGate:    &evolutionWebhookSchemaGate{},
+		postFormGuardEnabled: storageConfig.WhatsAppPostFormFollowUpGuardEnabled,
 		gamificationRecorder: gamificationRecorder,
 		leadPublisher:        publisher,
+		avatarURLs:           newBoundedWhatsAppMediaSignedURLCache(whatsappMediaSignedURLCacheMaxEntries),
+		avatarSlots:          make(chan struct{}, conversationAvatarConcurrency),
 	}
 }
 
@@ -136,7 +142,7 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 	args := []any{tenantContext.OrganizationID, tenantContext.UserID}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+sessionSelectFields()+`,
-		       (ws.status = 'connected' and
+		       (ws.status = 'connected' and exists (select 1 from public.users actor where actor.id=$2::uuid and actor.organization_id=$1::uuid and coalesce(actor.is_active,false)) and
 		        (ws.owner_user_id = $2::uuid or `+sessionGrantExistsSQL("ws", "$2::uuid", true)+`)) as can_send
 		from public.whatsapp_sessions ws
 		left join public.users owner on owner.id = ws.owner_user_id
@@ -254,6 +260,9 @@ func (repo Repository) ListSessionAccess(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, input grantAccessInput) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return ErrSessionNotFound
@@ -261,14 +270,31 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 	if input.UserID == tenantContext.UserID || (!input.CanView && !input.CanSend) || (input.CanSend && !input.CanView) {
 		return ErrInvalidInput
 	}
+	var recipientEligible bool
+	if err := repo.db.Pool().QueryRow(ctx, `select exists(select 1 from public.users recipient
+	 join public.organization_members member on member.user_id=recipient.id and member.organization_id=$1::uuid
+	 where recipient.id=$2::uuid and recipient.organization_id=$1::uuid and coalesce(recipient.is_active,false)
+	 and coalesce(member.is_active,false) and member.deleted_at is null)`, tenantContext.OrganizationID, input.UserID).Scan(&recipientEligible); err != nil {
+		return err
+	}
+	if !recipientEligible {
+		return ErrInvalidReference
+	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// The session fence is held through the grant write. Revocation and a
-	// concurrent send use the same session-first lock order.
+	// Users deletion owns actors before sessions. Use the same order, including
+	// the recipient, before the resource fence and final eligibility queries.
+	if err := lockWhatsAppUserMembershipRows(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, input.UserID); err != nil {
+		return err
+	}
+	if err := requireOriginalWhatsAppOrganization(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+	// The session fence remains held through the grant write.
 	var lockedSessionID string
 	err = tx.QueryRow(ctx, `
 		select ws.id::text
@@ -298,6 +324,7 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 		join public.users actor on actor.id = member.user_id
 		where member.organization_id = $1::uuid
 		  and member.user_id = $2::uuid
+		  and actor.organization_id = member.organization_id
 		  and coalesce(member.is_active, false) = true
 		  and member.deleted_at is null
 		  and coalesce(actor.is_active, false) = true
@@ -309,6 +336,9 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 	if err != nil {
 		return err
 	}
+	if ownerRole != "owner" && ownerRole != "admin" {
+		return tenant.ErrOrganizationAccessDenied
+	}
 	var recipientID string
 	err = tx.QueryRow(ctx, `
 		select recipient.id::text
@@ -317,6 +347,7 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 		  on member.user_id = recipient.id
 		where member.organization_id = $1::uuid
 		  and recipient.id = $2::uuid
+		  and recipient.organization_id = member.organization_id
 		  and coalesce(recipient.is_active, false) = true
 		  and coalesce(member.is_active, false) = true
 		  and member.deleted_at is null
@@ -329,41 +360,8 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 		return err
 	}
 
-	grantScope := ""
+	grantScope := "organization"
 	var grantTeamID *string
-	if ownerRole == "owner" || ownerRole == "admin" || ownerRole == "manager" {
-		grantScope = "organization"
-	} else {
-		var teamID string
-		err = tx.QueryRow(ctx, `
-			select team.id::text
-			from public.teams team
-			join public.team_members leader
-			  on leader.organization_id = team.organization_id
-			 and leader.team_id = team.id
-			 and leader.user_id = $2::uuid
-			 and coalesce(leader.is_active, true) = true
-			 and coalesce(leader.is_leader, false) = true
-			join public.team_members member
-			  on member.organization_id = team.organization_id
-			 and member.team_id = team.id
-			 and member.user_id = $3::uuid
-			 and coalesce(member.is_active, true) = true
-			where team.organization_id = $1::uuid
-			  and coalesce(team.is_active, true) = true
-			order by team.id
-			limit 1
-			for share of team, leader, member
-		`, tenantContext.OrganizationID, tenantContext.UserID, input.UserID).Scan(&teamID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return tenant.ErrOrganizationAccessDenied
-		}
-		if err != nil {
-			return err
-		}
-		grantScope = "team"
-		grantTeamID = &teamID
-	}
 
 	// A repeated, identical grant must not rotate its identity and invalidate
 	// already queued messages. Any change to its effective authority does.
@@ -419,6 +417,9 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 }
 
 func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, userID string) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return ErrSessionNotFound
@@ -549,6 +550,7 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 		nextCursor = &cursor
 	}
 
+	repo.hydrateConversationAvatars(ctx, tenantContext.OrganizationID, conversationAvatarPointers(conversations))
 	return conversations, nextCursor, nil
 }
 
@@ -580,7 +582,7 @@ func (repo Repository) CountUnreadMessages(ctx context.Context, tenantContext te
 // ListConversationFilterOptions exposes only values represented by leads on
 // conversations the caller can currently view. Session, archive and date
 // scope are preserved; selected lead filters do not hide other choices.
-func (repo Repository) ListConversationFilterOptions(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) (ConversationFilterOptions, error) {
+func (repo Repository) listLegacyConversationFilterOptions(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) (ConversationFilterOptions, error) {
 	options := ConversationFilterOptions{
 		Pipelines: []ConversationFilterOption{}, Teams: []ConversationFilterOption{},
 		Users: []ConversationFilterOption{}, Sources: []string{},
@@ -647,9 +649,11 @@ func (repo Repository) ListConversationFilterOptions(ctx context.Context, tenant
 				and tm.user_id = l.assigned_user_id and coalesce(tm.is_active, true) = true
 			 join public.teams team on team.id = tm.team_id and team.organization_id = tm.organization_id
 				and team.is_active = true
+			 join public.users member on member.id = tm.user_id and coalesce(member.is_active, false) = true
 			 join public.organization_members membership on membership.organization_id = tm.organization_id
 				and membership.user_id = tm.user_id and coalesce(membership.is_active, false) = true
 				and membership.deleted_at is null
+				and membership.membership_generation = tm.membership_generation
 			 order by 3, 2 limit 300)
 			union all
 			(select distinct 'team'::text, team.id::text, team.name::text
@@ -661,7 +665,10 @@ func (repo Repository) ListConversationFilterOptions(ctx context.Context, tenant
 			union all
 			(select distinct 'user'::text, member.id::text, member.name::text
 			 from visible_leads l join public.users member on member.id = l.assigned_user_id
-				and member.organization_id = l.organization_id and coalesce(member.is_active, false) = true
+				and coalesce(member.is_active, false) = true
+			 join public.organization_members membership on membership.organization_id = l.organization_id
+				and membership.user_id = member.id and coalesce(membership.is_active, false) = true
+				and membership.deleted_at is null
 			 order by 3, 2 limit 300)
 			union all
 			(select distinct 'source'::text, btrim(l.source), btrim(l.source)
@@ -719,6 +726,9 @@ func (repo Repository) ListConversationFilterOptions(ctx context.Context, tenant
 // count visibility. The explicit empty session scope is fail-closed so a
 // client that has not resolved an allowed session never falls back to "all".
 func conversationFilterSQL(tenantContext tenant.Context, filter ConversationListFilter) ([]any, []string, bool, error) {
+	if !validConversationFilterText(filter.Search, 180) || !validConversationFilterText(filter.LeadSource, maxLeadSourceFilterLength) {
+		return nil, nil, false, ErrInvalidInput
+	}
 	if filter.AccessibleProvided && len(filter.SessionIDs) == 0 {
 		return nil, nil, true, nil
 	}
@@ -727,21 +737,12 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 	}
 
 	args := baseConversationArgs(tenantContext)
-	// Organization admins retain their existing lead-wide read access in the
-	// inbox. A shared-number recipient still sees only assigned leads, and an
-	// unlinked conversation remains private to its session owner.
-	adminLeadInboxScope := "false"
-	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
-		adminLeadInboxScope = "true"
-	}
 	where := []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
-		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
-		// The operational inbox follows owned numbers or a current explicit
-		// grant for an assigned lead. Admins may also read other numbers' lead
-		// conversations; this does not grant access to send from those numbers.
-		"(ws.owner_user_id = $2::uuid or (wc.lead_id is not null and " + adminLeadInboxScope + ") or (l.assigned_user_id = $2::uuid and " + sessionGrantExistsSQL("ws", "$2::uuid", false) + "))",
+		// Linked conversations follow the current lead scope on any number;
+		// unlinked conversations remain visible only to their session owner.
+		operationalConversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 	}
 
 	addFilter := func(clause string, value any) {
@@ -785,6 +786,12 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 	if filter.LastMessageTo != nil {
 		addFilter("wc.last_message_at <= $%d::timestamptz", *filter.LastMessageTo)
 	}
+	if filter.LeadCreatedFrom != nil {
+		addFilter("l.created_at >= $%d::timestamptz", *filter.LeadCreatedFrom)
+	}
+	if filter.LeadCreatedTo != nil {
+		addFilter("l.created_at <= $%d::timestamptz", *filter.LeadCreatedTo)
+	}
 	if source := strings.TrimSpace(filter.LeadSource); source != "" {
 		addFilter("(l.organization_id = wc.organization_id and l.source = $%d)", source)
 	}
@@ -812,10 +819,11 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 				addFilter(`exists (
 					select 1 from public.team_members tm
 					join public.teams team on team.id = tm.team_id and team.organization_id = tm.organization_id and team.is_active = true
-					join public.users member on member.id = tm.user_id and member.organization_id = tm.organization_id and coalesce(member.is_active, false) = true
+					join public.users member on member.id = tm.user_id and coalesce(member.is_active, false) = true
 					join public.organization_members membership on membership.organization_id = tm.organization_id
 						and membership.user_id = tm.user_id and coalesce(membership.is_active, false) = true
 						and membership.deleted_at is null
+						and membership.membership_generation = tm.membership_generation
 					where tm.organization_id = wc.organization_id and tm.team_id = $%d::uuid
 						and tm.user_id = l.assigned_user_id and coalesce(tm.is_active, true) = true
 				)`, value)
@@ -865,18 +873,7 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 		where = append(where, "wc.lead_id is null")
 	}
 	if filter.PendingReply {
-		// Reading an inbound message does not answer it. Use the indexed
-		// conversation timeline, excluding suppressed and reaction events.
-		where = append(where, `coalesce((
-			select not wm.from_me
-			from public.whatsapp_messages wm
-			where wm.organization_id = wc.organization_id
-			  and wm.conversation_id = wc.id
-			  and wm.capture_state is distinct from 'suppressed'
-			  and wm.reaction_to_message_id is null
-			order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
-			limit 1
-		), false)`)
+		where = append(where, conversationPendingReplySQL())
 	}
 	search := strings.TrimSpace(filter.Search)
 	if search == "" && filter.ShowArchived {
@@ -888,10 +885,10 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 		args = append(args, searchtext.Pattern(search))
 		textArg := len(args)
 		searchClauses := []string{searchtext.AnySQL(
-			[]string{"wc.contact_name", "l.name", "wc.last_message"},
+			[]string{"wc.contact_name", "l.name", "(" + conversationListPreviewSQL() + ")::jsonb->>'preview'"},
 			fmt.Sprintf("$%d", textArg),
 		)}
-		if digits := onlyDigits(search); digits != "" {
+		if digits := searchtext.PhoneDigits(search); digits != "" {
 			args = append(args, "%"+digits+"%")
 			phoneArg := len(args)
 			searchClauses = append(searchClauses, fmt.Sprintf(`(
@@ -929,7 +926,7 @@ func normalizedConversationUUIDs(values []string, maxItems int, field string) ([
 // lead_meta row. Never satisfy them from separate arrivals on the same lead.
 func appendConversationAttributionFilter(args *[]any, where *[]string, filter ConversationListFilter) error {
 	page := strings.TrimSpace(filter.PageID)
-	if len(page) > 255 {
+	if !validConversationFilterText(page, 255) {
 		return fmt.Errorf("%w: pageId is invalid", ErrInvalidInput)
 	}
 	campaigns := make([]string, 0, len(filter.CampaignIDs))
@@ -938,7 +935,7 @@ func appendConversationAttributionFilter(args *[]any, where *[]string, filter Co
 		if value == "" {
 			continue
 		}
-		if len(value) > 255 {
+		if !validConversationFilterText(value, 255) {
 			return fmt.Errorf("%w: campaignIds contains oversized value", ErrInvalidInput)
 		}
 		campaigns = append(campaigns, value)
@@ -947,7 +944,7 @@ func appendConversationAttributionFilter(args *[]any, where *[]string, filter Co
 	if len(campaigns) > 50 {
 		return fmt.Errorf("%w: campaignIds contains too many values", ErrInvalidInput)
 	}
-	if page == "" && len(campaigns) == 0 {
+	if page == "" && len(campaigns) == 0 && filter.AdSetID == "" && filter.AdID == "" {
 		return nil
 	}
 	pageClause := ""
@@ -963,6 +960,7 @@ func appendConversationAttributionFilter(args *[]any, where *[]string, filter Co
 	}
 	eventCondition := "entry.organization_id = wc.organization_id and entry.lead_id = l.id and entry.is_countable = true"
 	legacyCondition := "lm.organization_id = wc.organization_id and lm.lead_id = l.id"
+	leadConditions := []string{}
 	if pageClause != "" {
 		eventCondition += fmt.Sprintf(pageClause, "entry")
 		legacyCondition += fmt.Sprintf(pageClause, "lm")
@@ -971,11 +969,28 @@ func appendConversationAttributionFilter(args *[]any, where *[]string, filter Co
 		index := len(*args)
 		eventCondition += fmt.Sprintf(campaignClause, "entry", "entry", fmt.Sprintf(" or btrim(entry.utm_campaign) = any($%d::text[])", index))
 		legacyCondition += fmt.Sprintf(campaignClause, "lm", "lm", "")
+		leadConditions = append(leadConditions, fmt.Sprintf("(btrim(l.meta_campaign_id) = any($%d::text[]) or btrim(l.utm_campaign) = any($%d::text[]))", index, index))
+	}
+	for _, field := range []struct{ value, idColumn, nameColumn string }{
+		{filter.AdSetID, "adset_id", "adset_name"}, {filter.AdID, "ad_id", "ad_name"},
+	} {
+		value := strings.TrimSpace(field.value)
+		if value == "" {
+			continue
+		}
+		if !validConversationFilterText(value, 255) {
+			return fmt.Errorf("%w: attribution value is invalid", ErrInvalidInput)
+		}
+		*args = append(*args, value)
+		index := len(*args)
+		eventCondition += fmt.Sprintf(" and (btrim(entry.%s) = $%d or btrim(entry.%s) = $%d)", field.idColumn, index, field.nameColumn, index)
+		legacyCondition += fmt.Sprintf(" and (btrim(lm.%s) = $%d or btrim(lm.%s) = $%d)", field.idColumn, index, field.nameColumn, index)
+		leadConditions = append(leadConditions, fmt.Sprintf("btrim(l.meta_%s) = $%d", field.idColumn, index))
 	}
 	legacy := fmt.Sprintf("exists (select 1 from public.lead_meta lm where %s)", legacyCondition)
-	if page == "" && len(campaigns) > 0 {
-		index := len(*args)
-		legacy = fmt.Sprintf("(btrim(l.meta_campaign_id) = any($%d::text[]) or btrim(l.utm_campaign) = any($%d::text[]) or %s)", index, index, legacy)
+	if page == "" && len(leadConditions) > 0 {
+		// Every selected dimension must match this one first-touch projection.
+		legacy = fmt.Sprintf("((%s) or %s)", strings.Join(leadConditions, " and "), legacy)
 	}
 	*where = append(*where, fmt.Sprintf(`(l.organization_id = wc.organization_id and (
 		exists (select 1 from public.lead_entry_events entry where %s)
@@ -1008,17 +1023,12 @@ func onlyDigits(value string) string {
 }
 
 func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) (Conversation, error) {
-	conversation, err := repo.GetConversationSnapshot(ctx, tenantContext, conversationID)
-	if err != nil {
-		return Conversation{}, err
-	}
-
-	return repo.resolveConversationLead(ctx, tenantContext, conversation)
+	return repo.GetConversationSnapshot(ctx, tenantContext, conversationID)
 }
 
-// GetConversationSnapshot returns the current persisted card binding without
-// running the legacy auto-link fallback. Browser deep links use this read only
-// to pin the subsequent detail request to the same lead (or to "unlinked").
+// GetConversationSnapshot returns the current persisted card binding. Browser
+// deep links use this read only to pin the subsequent detail request to the
+// same lead (or to "unlinked").
 func (repo Repository) GetConversationSnapshot(ctx context.Context, tenantContext tenant.Context, conversationID string) (Conversation, error) {
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
@@ -1048,9 +1058,8 @@ func (repo Repository) GetConversationSnapshot(ctx context.Context, tenantContex
 	return conversation, nil
 }
 
-// GetConversationForExpectedLead is the web-safe conversation read. Unlike
-// GetConversation, it never auto-links an unbound conversation and returns no
-// row when a browser still carries an older card snapshot.
+// GetConversationForExpectedLead returns no row when a browser still carries
+// an older card snapshot. Neither this nor GetConversation mutates a binding.
 func (repo Repository) GetConversationForExpectedLead(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) (Conversation, error) {
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
@@ -1106,11 +1115,13 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 		return MessagePage{}, err
 	}
 
-	args := []any{tenantContext.OrganizationID, conversationID, filter.Limit}
+	args := append(baseConversationArgs(tenantContext), conversationID, filter.Limit)
 	where := []string{
 		"wm.organization_id = $1::uuid",
-		"wm.conversation_id = $2::uuid",
+		"wm.conversation_id = $5::uuid",
 		"wm.capture_state is distinct from 'suppressed'",
+		"wc.deleted_at is null",
+		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 		conversationMessageLeadMatchSQL(),
 	}
 	if filter.ExpectedLeadID != "" {
@@ -1124,7 +1135,26 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 			where = append(where, fmt.Sprintf("wc.lead_id = $%d::uuid", len(args)))
 		}
 	}
-	if filter.CursorAt != nil {
+	fromSQL := `
+		from public.whatsapp_messages wm
+		join public.whatsapp_conversations wc
+		  on wc.id = wm.conversation_id
+		 and wc.organization_id = wm.organization_id
+		left join public.whatsapp_sessions ws
+		  on ws.id = wc.session_id
+		 and ws.organization_id = wc.organization_id
+		left join public.leads l
+		  on l.id = wc.lead_id
+		 and l.organization_id = wc.organization_id`
+	orderSequenceSQL := "0::bigint"
+	if filter.OrderingVersion == 2 {
+		orderSequenceSQL = messageIngressOrderSQL()
+	}
+	if filter.OrderingVersion == 2 {
+		if err := repo.appendCanonicalMessageCursor(ctx, &args, &where, fromSQL, filter); err != nil {
+			return MessagePage{}, err
+		}
+	} else if filter.CursorAt != nil {
 		args = append(args, *filter.CursorAt)
 		cursorAtArg := len(args)
 		if filter.CursorID != "" {
@@ -1142,14 +1172,10 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
-		select `+messageSelectFieldsWithSession("wc.session_id")+`
-		from public.whatsapp_messages wm
-		join public.whatsapp_conversations wc
-		  on wc.id = wm.conversation_id
-		 and wc.organization_id = wm.organization_id
+		select `+messageSelectFieldsWithCapabilities("wc.session_id", orderSequenceSQL, operationalMessageTargetSQL(tenantContext))+fromSQL+`
 		where `+strings.Join(where, " and ")+`
-		order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
-		limit $3::integer
+		order by `+messageOrderSQL(filter)+`
+		limit $6::integer
 	`, args...)
 	if err != nil {
 		return MessagePage{}, err
@@ -1171,7 +1197,7 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	var nextCursor *string
 	if len(descMessages) == filter.Limit {
 		oldest := descMessages[len(descMessages)-1]
-		value := oldest.SentAt.UTC().Format(time.RFC3339Nano) + "|" + oldest.ID
+		value := messageCursor(oldest, filter)
 		nextCursor = &value
 	}
 
@@ -1180,7 +1206,7 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 		messages = append(messages, descMessages[index])
 	}
 	if filter.IncludeMediaURLs {
-		if err := repo.hydrateMessageMediaURLs(ctx, tenantContext.OrganizationID, messages); err != nil {
+		if err := repo.hydrateMessageMediaURLs(ctx, tenantContext.OrganizationID, messages, tenantContext); err != nil {
 			return MessagePage{}, err
 		}
 	}
@@ -1189,119 +1215,16 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) MarkConversationAsRead(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) error {
-	conversationID, ok := normalizeUUID(conversationID)
-	if !ok {
-		return ErrConversationNotFound
-	}
-	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
-	if err != nil {
-		return err
-	}
-	if err := repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, expectedLeadID); err != nil {
-		return err
-	}
-
-	args := []any{tenantContext.OrganizationID, conversationID}
-	expectedLeadPredicate := "lead_id is null"
-	if expectedLeadID != unlinkedConversationLeadSnapshot {
-		args = append(args, expectedLeadID)
-		expectedLeadPredicate = fmt.Sprintf("lead_id = $%d::uuid", len(args))
-	}
-	tag, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations
-		set unread_count = 0,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and `+expectedLeadPredicate+`
-	`, args...)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConversationNotFound
-	}
-	return nil
+	return repo.mutateConversationInbox(ctx, tenantContext, conversationID, expectedLeadID, true, false)
 }
 
 func (repo Repository) ArchiveConversation(ctx context.Context, tenantContext tenant.Context, conversationID string, archive bool, expectedLeadID string) error {
-	conversationID, ok := normalizeUUID(conversationID)
-	if !ok {
-		return ErrConversationNotFound
-	}
-	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
-	if err != nil {
-		return err
-	}
-	if err := repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, expectedLeadID); err != nil {
-		return err
-	}
-
-	args := []any{tenantContext.OrganizationID, conversationID, archive}
-	expectedLeadPredicate := "lead_id is null"
-	if expectedLeadID != unlinkedConversationLeadSnapshot {
-		args = append(args, expectedLeadID)
-		expectedLeadPredicate = fmt.Sprintf("lead_id = $%d::uuid", len(args))
-	}
-	tag, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations
-		set archived_at = case when $3::boolean then now() else null end,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and `+expectedLeadPredicate+`
-	`, args...)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConversationNotFound
-	}
-	return nil
+	return repo.mutateConversationInbox(ctx, tenantContext, conversationID, expectedLeadID, false, archive)
 }
 
 func (repo Repository) DeleteConversation(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) error {
-	conversationID, ok := normalizeUUID(conversationID)
-	if !ok {
-		return ErrConversationNotFound
-	}
-	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
-	if err != nil {
-		return err
-	}
-
-	// Deleting a conversation removes it from the operational inbox. It is a
-	// privileged action: lead visibility alone is deliberately insufficient.
-	// Historical messages remain available through the lead history endpoint.
-	args := []any{tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext)}
-	expectedLeadPredicate := "wc.lead_id is null"
-	if expectedLeadID != unlinkedConversationLeadSnapshot {
-		args = append(args, expectedLeadID)
-		expectedLeadPredicate = fmt.Sprintf("wc.lead_id = $%d::uuid", len(args))
-	}
-	tag, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations wc
-		set deleted_at = now(),
-		    updated_at = now()
-		from public.whatsapp_sessions ws
-		where wc.organization_id = $1::uuid
-		  and wc.id = $2::uuid
-		  and `+expectedLeadPredicate+`
-		  and wc.deleted_at is null
-		  and ws.id = wc.session_id
-		  and ws.organization_id = wc.organization_id
-		  and ws.provider = 'evolution_go'
-		  and coalesce(ws.is_active, true) = true
-		  and coalesce(ws.status, '') <> 'deleted'
-		  and (ws.owner_user_id = $3::uuid or $4::boolean)
-	`, args...)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConversationNotFound
-	}
-	return nil
+	// Hide only an operational inbox route. Canonical lead history is retained.
+	return repo.mutateConversationInbox(ctx, tenantContext, conversationID, expectedLeadID, false, false, true)
 }
 
 func (repo Repository) LinkConversationToLead(
@@ -1310,7 +1233,25 @@ func (repo Repository) LinkConversationToLead(
 	conversationID string,
 	leadID string,
 	expectedPreviousLeadID string,
+	resultOut ...*ConversationLeadLinkResult,
 ) error {
+	return repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversationID, leadID, expectedPreviousLeadID, "", resultOut...)
+}
+
+// Public linking keeps its existing scope. A personal start also pins the
+// selected session's owner before acquiring its conversation and lead locks.
+func (repo Repository) linkConversationToLeadWithOwnSession(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	conversationID string,
+	leadID string,
+	expectedPreviousLeadID string,
+	ownSessionID string,
+	resultOut ...*ConversationLeadLinkResult,
+) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return ErrConversationNotFound
@@ -1328,34 +1269,56 @@ func (repo Repository) LinkConversationToLead(
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if ownSessionID != "" {
+		if err := lockConversationSendSession(ctx, tx, tenantContext, ownSessionID); err != nil {
+			return err
+		}
+		if err := revalidateOwnStartSession(ctx, tx, tenantContext, ownSessionID, true); err != nil {
+			return err
+		}
+	}
 
-	canManageBinding := canManageWhatsApp(tenantContext)
-	// This query only establishes the organization-scoped conversation lock.
-	// Supplying the four visibility arguments would leave $2-$4 unused and pgx
-	// rejects that parameter set before the binding CAS can execute.
+	// General linking keeps the organization-scoped conversation lock. The
+	// optional third argument also pins a personal start to its selected session.
 	lockArgs := []any{tenantContext.OrganizationID, conversationID}
+	lockArgs = append(lockArgs, ownSessionID)
 	var remoteJID, contactPhone string
 	var isGroup bool
 	var currentLeadID, sessionOwnerID pgtype.Text
+	var unlinkedRetentionV1 bool
+	var retiredAt pgtype.Timestamptz
 	err = tx.QueryRow(ctx, `
 		select
 		  wc.remote_jid,
 		  coalesce(wc.contact_phone, ''),
 		  wc.is_group,
 		  wc.lead_id::text,
-		  ws.owner_user_id::text
+		  ws.owner_user_id::text,
+		  wc.unlinked_retention_v1,
+		  wc.retired_at
 		from public.whatsapp_conversations wc
 		join public.whatsapp_sessions ws
 		  on ws.id = wc.session_id
 		 and ws.organization_id = wc.organization_id
 		where wc.organization_id = $1::uuid
 		  and wc.id = $2::uuid
+		  and (nullif($3, '')::uuid is null or wc.session_id = nullif($3, '')::uuid)
 		  and wc.deleted_at is null
+		  and (
+		    `+conversationRetentionVisibilitySQL()+`
+		    or (
+		      wc.unlinked_retention_v1
+		      and wc.lead_id is null
+		      and wc.retired_at is not null
+		      and wc.unlinked_retention_scrubbed_at is null
+		      and wc.created_at > now() - interval '7 days'
+		    )
+		  )
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		for update of wc
-	`, lockArgs...).Scan(&remoteJID, &contactPhone, &isGroup, &currentLeadID, &sessionOwnerID)
+	`, lockArgs...).Scan(&remoteJID, &contactPhone, &isGroup, &currentLeadID, &sessionOwnerID, &unlinkedRetentionV1, &retiredAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConversationNotFound
 	}
@@ -1363,30 +1326,42 @@ func (repo Repository) LinkConversationToLead(
 		return err
 	}
 
-	if !canManageBinding {
-		if currentLeadID.Valid {
-			visibilityArgs := append(baseConversationArgs(tenantContext), currentLeadID.String)
-			var currentLeadVisible bool
-			err = tx.QueryRow(ctx, `
+	if currentLeadID.Valid {
+		visibilityArgs := append(baseConversationArgs(tenantContext), currentLeadID.String)
+		var currentLeadVisible bool
+		err = tx.QueryRow(ctx, `
 				select true
 				from public.leads as l
 				where l.organization_id = $1::uuid
 				  and l.id = $5::uuid
 				  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 				for share of l
-			`, visibilityArgs...).Scan(&currentLeadVisible)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrConversationNotFound
-			}
-			if err != nil {
-				return err
-			}
-			if !currentLeadVisible {
-				return ErrConversationNotFound
-			}
-		} else if !sessionOwnerID.Valid || sessionOwnerID.String != tenantContext.UserID {
+		`, visibilityArgs...).Scan(&currentLeadVisible)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConversationNotFound
 		}
+		if err != nil {
+			return err
+		}
+		if !currentLeadVisible {
+			return ErrConversationNotFound
+		}
+	} else if !sessionOwnerID.Valid || sessionOwnerID.String != tenantContext.UserID {
+		// A null lead has no assignment/team grant to inherit. Even an admin
+		// must own the physical session before attaching its private history.
+		return ErrConversationNotFound
+	}
+	if isGroup {
+		return ErrInvalidReference
+	}
+	if !currentLeadID.Valid && !unlinkedRetentionV1 {
+		// A legacy null lead can be a deleted or previously linked card. Only
+		// the prospective capture marker proves that its history is unowned.
+		return ErrInvalidReference
+	}
+	if (currentLeadID.Valid && currentLeadID.String != expectedPreviousLeadID) ||
+		(!currentLeadID.Valid && expectedPreviousLeadID != unlinkedConversationLeadSnapshot) {
+		return ErrConversationBindingChanged
 	}
 
 	identity := newWhatsAppContactIdentity(contactPhone, remoteJID, isGroup)
@@ -1394,18 +1369,34 @@ func (repo Repository) LinkConversationToLead(
 		return fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
 	}
 
-	if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
-		ctx,
-		tx,
-		tenantContext.OrganizationID,
-		conversationID,
-		leadID,
-		expectedPreviousLeadID,
-	); err != nil {
+	result := ConversationLeadLinkResult{BindingMode: "active"}
+	if unlinkedRetentionV1 && !currentLeadID.Valid {
+		result, err = confirmUnlinkedHistoryBinding(ctx, tx, tenantContext.OrganizationID, conversationID, leadID, tenantContext.UserID, "manual_link")
+		if err != nil {
+			return err
+		}
+	} else {
+		if retiredAt.Valid {
+			return ErrConversationBindingChanged
+		}
+		if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			conversationID,
+			leadID,
+			expectedPreviousLeadID,
+		); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-
-	return tx.Commit(ctx)
+	if len(resultOut) > 0 && resultOut[0] != nil {
+		*resultOut[0] = result
+	}
+	return nil
 }
 
 func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext tenant.Context, messageID string) (MessageMediaURL, error) {
@@ -1413,60 +1404,26 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 	if !ok {
 		return MessageMediaURL{}, ErrMessageNotFound
 	}
-
-	args := append(baseConversationArgs(tenantContext), messageID)
-	var storagePath, messageType, mediaStatus string
-	err := repo.db.Pool().QueryRow(ctx, `
-		select
-			coalesce(wm.media_storage_path, ''),
-			coalesce(wm.message_type, ''),
-			coalesce(wm.media_status, '')
-		from public.whatsapp_messages wm
-		join public.whatsapp_conversations wc
-		  on wc.id = wm.conversation_id
-		 and wc.organization_id = wm.organization_id
-		left join public.whatsapp_sessions ws
-		  on ws.id = wm.session_id
-		 and ws.organization_id = wm.organization_id
-		left join public.leads l
-		  on l.id = wm.lead_id
-		 and l.organization_id = wm.organization_id
-		where wm.organization_id = $1::uuid
-		  and wc.organization_id = $1::uuid
-		  and wm.id = $5::uuid
-		  and wm.capture_state is distinct from 'suppressed'
-		  and `+messageMediaVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-		limit 1
-	`, args...).Scan(
-		&storagePath,
-		&messageType,
-		&mediaStatus,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return MessageMediaURL{}, ErrMessageNotFound
-	}
+	scope, err := loadMessageMediaReadScope(ctx, repo.db.Pool(), tenantContext, messageID, true)
 	if err != nil {
 		return MessageMediaURL{}, err
 	}
-	if strings.EqualFold(strings.TrimSpace(messageType), "text") ||
-		strings.EqualFold(strings.TrimSpace(messageType), "reaction") ||
-		!strings.EqualFold(strings.TrimSpace(mediaStatus), "ready") ||
-		strings.TrimSpace(storagePath) == "" {
+	if scope.Path == "" {
 		return MessageMediaURL{}, ErrMessageNotFound
 	}
-
-	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, tenantContext.OrganizationID, storagePath)
+	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, tenantContext.OrganizationID, scope.Path)
 	if err != nil {
 		return MessageMediaURL{}, err
 	}
 	if signedURL == "" {
 		return MessageMediaURL{}, ErrMessageNotFound
 	}
-	return MessageMediaURL{
-		MessageID: messageID,
-		URL:       signedURL,
-		ExpiresIn: expiresIn,
-	}, nil
+	// Storage I/O and cache hits never keep DB locks. The current immutable
+	// attribution/path is checked again before returning any capability.
+	if err := revalidateMessageMediaReadScope(ctx, repo.db.Pool(), tenantContext, scope, true); err != nil {
+		return MessageMediaURL{}, err
+	}
+	return MessageMediaURL{MessageID: messageID, URL: signedURL, ExpiresIn: expiresIn}, nil
 }
 
 func (repo Repository) signedWhatsAppMessageMediaURL(ctx context.Context, organizationID string, objectPath string) (string, error) {
@@ -1480,67 +1437,85 @@ func (repo Repository) signedWhatsAppMessageMediaURLWithTTL(ctx context.Context,
 		return "", 0, ErrMessageNotFound
 	}
 
-	if entry, ok := whatsappMediaSignedURLCache.Load(objectPath); ok {
-		if entry.url != "" {
-			remaining := int(time.Until(entry.expiresAt) / time.Second)
-			if remaining < 1 {
-				remaining = 1
+	entry, ok := whatsappMediaSignedURLCache.Load(objectPath)
+	if !ok || entry.url == "" {
+		key := whatsAppMediaSigningKey{
+			organizationID: organizationID, objectPath: objectPath, bucket: whatsappMediaBucket,
+			origin: repo.storage.projectURL, client: repo.storage.httpClient,
+		}
+		var err error
+		entry, err = whatsappMediaSigningFlights.Do(ctx, key, func(signCtx context.Context) (cachedWhatsAppMediaSignedURL, error) {
+			// A previous flight may have populated the cache between the initial
+			// miss and registering this flight. Preserve the original cache key.
+			if cached, exists := whatsappMediaSignedURLCache.Load(objectPath); exists && cached.url != "" {
+				return cached, nil
 			}
-			return entry.url, remaining, nil
+			signedURL, err := repo.storage.signedURL(signCtx, whatsappMediaBucket, objectPath, whatsappMediaSignedURLTTLSeconds)
+			if err != nil || signedURL == "" {
+				return cachedWhatsAppMediaSignedURL{}, err
+			}
+			cacheTTL := time.Duration(whatsappMediaSignedURLTTLSeconds)*time.Second - whatsappMediaSignedURLCacheSkew
+			if cacheTTL <= 0 {
+				cacheTTL = time.Duration(whatsappMediaSignedURLTTLSeconds) * time.Second
+			}
+			return cachedWhatsAppMediaSignedURL{url: signedURL, expiresAt: time.Now().Add(cacheTTL)}, nil
+		}, func(signed cachedWhatsAppMediaSignedURL) {
+			whatsappMediaSignedURLCache.Store(objectPath, signed)
+		})
+		if err != nil {
+			return "", 0, err
 		}
 	}
-
-	signedURL, err := repo.storage.signedURL(ctx, whatsappMediaBucket, objectPath, whatsappMediaSignedURLTTLSeconds)
-	if err != nil {
-		return "", 0, err
-	}
-	if signedURL == "" {
+	if entry.url == "" {
 		return "", 0, nil
 	}
-	cacheTTL := time.Duration(whatsappMediaSignedURLTTLSeconds)*time.Second - whatsappMediaSignedURLCacheSkew
-	if cacheTTL <= 0 {
-		cacheTTL = time.Duration(whatsappMediaSignedURLTTLSeconds) * time.Second
+	remaining := int(time.Until(entry.expiresAt) / time.Second)
+	if remaining < 1 {
+		remaining = 1
 	}
-	whatsappMediaSignedURLCache.Store(objectPath, cachedWhatsAppMediaSignedURL{
-		url:       signedURL,
-		expiresAt: time.Now().Add(cacheTTL),
-	})
-	return signedURL, int(cacheTTL / time.Second), nil
+	return entry.url, remaining, nil
 }
 
-func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organizationID string, messages []Message) error {
+func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organizationID string, messages []Message, actors ...tenant.Context) error {
 	type pendingMediaURL struct {
 		index int
-		path  string
+		scope messageMediaReadScope
+		url   string
 	}
-
-	pending := make([]pendingMediaURL, 0)
+	ids := []string{}
 	for index := range messages {
-		if messages[index].MediaStoragePath == nil || *messages[index].MediaStoragePath == "" {
-			continue
-		}
-		if messages[index].MessageType == "text" || messages[index].MessageType == "reaction" {
-			continue
-		}
-
-		objectPath := *messages[index].MediaStoragePath
-		if !whatsappMediaPathBelongsToOrganization(objectPath, organizationID) {
-			// Never ask the service-role Storage client to sign an object outside
-			// the tenant represented by the authorized repository query.
+		if pointerValue(messages[index].MediaStoragePath) != "" {
 			messages[index].MediaURL = nil
+			if _, valid := normalizeUUID(messages[index].ID); valid {
+				ids = append(ids, messages[index].ID)
+			}
+		}
+	}
+	// Internal callers without an actor never mint a browser capability.
+	if len(ids) == 0 || len(actors) == 0 || actors[0].OrganizationID != organizationID {
+		return nil
+	}
+	before, err := loadMessageMediaReadScopes(ctx, repo.db.Pool(), actors[0], ids)
+	if err != nil {
+		return err
+	}
+	pending := []pendingMediaURL{}
+	for index, message := range messages {
+		scope, ok := before[message.ID]
+		if !ok || scope.Path == "" || !whatsappMediaPathBelongsToOrganization(scope.Path, organizationID) ||
+			scope.Path != pointerValue(message.MediaStoragePath) || scope.ConversationID != message.ConversationID ||
+			scope.SessionID != pointerValue(message.SessionID) || scope.Kind != message.MessageType {
 			continue
 		}
-		pending = append(pending, pendingMediaURL{index: index, path: objectPath})
+		pending = append(pending, pendingMediaURL{index: index, scope: scope})
 	}
-
 	if len(pending) == 0 {
 		return nil
 	}
-
 	var wg sync.WaitGroup
 	limit := make(chan struct{}, 6)
-	for _, item := range pending {
-		item := item
+	for index := range pending {
+		item := &pending[index]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1550,20 +1525,30 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 			case <-ctx.Done():
 				return
 			}
-
-			signedURL, err := repo.signedWhatsAppMessageMediaURL(ctx, organizationID, item.path)
-			if err != nil || signedURL == "" {
-				return
+			signed, err := repo.signedWhatsAppMessageMediaURL(ctx, organizationID, item.scope.Path)
+			if err == nil {
+				item.url = signed
 			}
-			messages[item.index].MediaURL = &signedURL
 		}()
 	}
-
 	wg.Wait()
+	after, err := loadMessageMediaReadScopes(ctx, repo.db.Pool(), actors[0], ids)
+	if err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if current, ok := after[item.scope.ID]; ok && current == item.scope && item.url != "" {
+			signed := item.url
+			messages[item.index].MediaURL = &signed
+		}
+	}
 	return nil
 }
 
 func (repo Repository) ensureCanManageSession(ctx context.Context, tenantContext tenant.Context, sessionID string) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	var ok bool
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
@@ -1692,6 +1677,7 @@ func (repo Repository) validateUser(ctx context.Context, organizationID string, 
 			  on om.user_id = u.id
 			 and om.organization_id = $1::uuid
 			where u.id = $2::uuid
+			  and u.organization_id = $1::uuid
 			  and coalesce(u.is_active, false) = true
 			  and coalesce(om.is_active, false) = true
 		)
@@ -1820,7 +1806,9 @@ func conversationSelectFields() string {
 			from public.lead_tags lt
 			join public.tags t on t.id = lt.tag_id
 			where lt.lead_id = l.id
-		), '[]'::jsonb)::text`
+		), '[]'::jsonb)::text,
+		` + conversationListPreviewSQL() + `,
+		` + conversationAvatarReferenceSQL(false)
 }
 
 // Lead-history conversation summaries must describe the lead being requested,
@@ -1894,7 +1882,11 @@ func leadHistoryConversationSelectFields() string {
 			from public.lead_tags lt
 			join public.tags t on t.id = lt.tag_id
 			where lt.lead_id = l.id
-		), '[]'::jsonb)::text`
+		), '[]'::jsonb)::text,
+		case when history.preview is not null then jsonb_build_object(
+		  'preview', history.preview, 'from_me', history.from_me, 'status', history.status
+		)::text end,
+		` + conversationAvatarReferenceSQL(true)
 }
 
 func messageSelectFields() string {
@@ -1902,6 +1894,14 @@ func messageSelectFields() string {
 }
 
 func messageSelectFieldsWithSession(sessionExpression string) string {
+	return messageSelectFieldsWithOrder(sessionExpression, "0::bigint")
+}
+
+func messageSelectFieldsWithOrder(sessionExpression, orderSequenceSQL string) string {
+	return messageSelectFieldsWithCapabilities(sessionExpression, orderSequenceSQL, "false")
+}
+
+func messageSelectFieldsWithCapabilities(sessionExpression, orderSequenceSQL, capabilitiesSQL string) string {
 	return `
 		wm.id::text,
 		wm.conversation_id::text,
@@ -1935,6 +1935,7 @@ func messageSelectFieldsWithSession(sessionExpression string) string {
 			  and outbound.message_id = wm.id
 			limit 1), '{}'::jsonb) || jsonb_build_object(
 			  'persisted_code', wm.metadata->>'delivery_error_code',
+			  'persisted_reason', wm.metadata->>'delivery_error_reason',
 			  'persisted_at', wm.metadata->>'delivery_failed_at'
 			)
 		)::text else null end,
@@ -1942,7 +1943,12 @@ func messageSelectFieldsWithSession(sessionExpression string) string {
 		wm.delivered_at,
 		wm.read_at,
 		wm.sender_jid,
-		wm.sender_name`
+		wm.sender_name,
+		wm.sender_user_id::text,
+		wm.created_at,
+		` + orderSequenceSQL + `,
+		(` + messagePresentationSQL() + `)::text,
+		` + capabilitiesSQL + `, ` + capabilitiesSQL
 }
 
 func scanSession(row scanner) (Session, error) {
@@ -2045,6 +2051,8 @@ func scanConversation(row scanner) (Conversation, error) {
 	var leadAssigneeID, leadAssigneeName, leadAssigneeAvatar pgtype.Text
 	var pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
 	var tagsJSON string
+	var listPreviewJSON pgtype.Text
+	var avatarReferenceJSON pgtype.Text
 
 	if err := row.Scan(
 		&conversation.ID,
@@ -2085,6 +2093,8 @@ func scanConversation(row scanner) (Conversation, error) {
 		&stageName,
 		&stageColor,
 		&tagsJSON,
+		&listPreviewJSON,
+		&avatarReferenceJSON,
 	); err != nil {
 		return Conversation{}, err
 	}
@@ -2098,8 +2108,18 @@ func scanConversation(row scanner) (Conversation, error) {
 	conversation.PresenceUpdatedAt = timePtr(presenceUpdatedAt)
 	conversation.LastMessage = textPtr(lastMessage)
 	conversation.LastMessageAt = timePtr(lastMessageAt)
+	if err := applyConversationListPreview(&conversation, textValue(listPreviewJSON)); err != nil {
+		return Conversation{}, err
+	}
 	conversation.ArchivedAt = timePtr(archivedAt)
 	conversation.DeletedAt = timePtr(deletedAt)
+	if avatarReferenceJSON.Valid {
+		var reference conversationAvatarReference
+		if err := json.Unmarshal([]byte(avatarReferenceJSON.String), &reference); err != nil {
+			return Conversation{}, errors.New("invalid conversation avatar reference")
+		}
+		conversation.avatarReference = &reference
+	}
 
 	if sessionID.Valid {
 		conversation.Session = &SessionLite{
@@ -2144,8 +2164,9 @@ func scanMessage(row scanner) (Message, error) {
 	var remoteJID, reactionToMessageID, reactionEmoji, reactionSenderJID, reactionSenderName pgtype.Text
 	var mediaSize pgtype.Int8
 	var deliveredAt, readAt pgtype.Timestamptz
-	var senderJID, senderName pgtype.Text
+	var senderJID, senderName, senderUserID pgtype.Text
 	var metadataJSON string
+	var presentationJSON string
 
 	if err := row.Scan(
 		&message.ID,
@@ -2175,6 +2196,11 @@ func scanMessage(row scanner) (Message, error) {
 		&readAt,
 		&senderJID,
 		&senderName,
+		&senderUserID,
+		&message.OrderCreatedAt,
+		&message.OrderIngressSequence,
+		&presentationJSON,
+		&message.CanQuote, &message.CanReact,
 	); err != nil {
 		return Message{}, err
 	}
@@ -2194,20 +2220,26 @@ func scanMessage(row scanner) (Message, error) {
 	message.ReactionSenderJID = textPtr(reactionSenderJID)
 	message.ReactionSenderName = textPtr(reactionSenderName)
 	message.Metadata = decodeObjectJSON(metadataJSON)
+	applyMessagePresentation(&message, presentationJSON)
 	if message.FromMe && message.Status == "failed" {
 		code := deliveryErrorSendFailed
 		if deliveryFailureJSON.Valid {
 			var failure struct {
-				LastError     string     `json:"last_error"`
-				Status        string     `json:"status"`
-				FailedAt      *time.Time `json:"failed_at"`
-				PersistedCode string     `json:"persisted_code"`
-				PersistedAt   string     `json:"persisted_at"`
+				LastError       string     `json:"last_error"`
+				Status          string     `json:"status"`
+				FailedAt        *time.Time `json:"failed_at"`
+				PersistedCode   string     `json:"persisted_code"`
+				PersistedReason string     `json:"persisted_reason"`
+				PersistedAt     string     `json:"persisted_at"`
 			}
 			if err := json.Unmarshal([]byte(deliveryFailureJSON.String), &failure); err != nil {
 				return Message{}, fmt.Errorf("decode WhatsApp delivery failure: %w", err)
 			}
 			code = messageDeliveryErrorCode(failure.LastError)
+			reason := mediaDeliveryFailureReason(failure.LastError)
+			if failure.PersistedReason == "media_integrity_unverified" {
+				reason = failure.PersistedReason
+			}
 			if failure.Status == "dead" && code == deliveryErrorSendFailed {
 				// Exhausted retries do not prove the provider never received the
 				// stanza. Report uncertainty rather than a definitive rejection.
@@ -2216,6 +2248,9 @@ func scanMessage(row scanner) (Message, error) {
 			switch failure.PersistedCode {
 			case deliveryErrorRecipientNotRegistered, deliveryErrorOutcomeUnknown, deliveryErrorSendFailed:
 				code = failure.PersistedCode
+			}
+			if code == deliveryErrorSendFailed && reason != "" {
+				message.DeliveryErrorReason = &reason
 			}
 			message.DeliveryFailedAt = failure.FailedAt
 			if message.DeliveryFailedAt == nil && failure.PersistedAt != "" {
@@ -2230,6 +2265,7 @@ func scanMessage(row scanner) (Message, error) {
 	message.ReadAt = timePtr(readAt)
 	message.SenderJID = textPtr(senderJID)
 	message.SenderName = textPtr(senderName)
+	message.SenderUserID = textPtr(senderUserID)
 
 	return message, nil
 }
@@ -2248,8 +2284,7 @@ func conversationVisibilitySQL(canViewOwn bool) string {
 		ws.id is not null
 		and ws.organization_id = wc.organization_id
 		and ws.provider = 'evolution_go'
-		and coalesce(ws.is_active, true) = true
-		and coalesce(ws.status, '') <> 'deleted'
+		and ` + conversationRetentionVisibilitySQL() + `
 		and (
 			(
 				wc.lead_id is not null
@@ -2259,10 +2294,79 @@ func conversationVisibilitySQL(canViewOwn bool) string {
 			)
 			or (
 				wc.lead_id is null
+				and coalesce(ws.is_active, true) = true
+				and coalesce(ws.status, '') <> 'deleted'
 				and ws.owner_user_id = $2::uuid
 			)
 		)
 	)`
+}
+
+// The operational inbox contains the owner's authorized conversations and
+// shared conversations assigned to this recipient. Broader CRM lead history
+// stays readable through snapshot/history endpoints, without sharing a number.
+func operationalConversationVisibilitySQL(canViewOwn bool) string {
+	return conversationVisibilitySQL(canViewOwn) + ` and (
+		ws.owner_user_id = $2::uuid
+		or (
+			wc.lead_id is not null
+			and l.assigned_user_id = $2::uuid
+			and ` + sessionGrantExistsSQL("ws", "$2::uuid", false) + `
+		)
+	)`
+}
+
+// A direct conversation without a current lead leaves the operational inbox
+// seven days after creation. A retired epoch remains owner-readable until its
+// deadline, but retirement still excludes it from physical routing and sends.
+func conversationRetentionVisibilitySQL() string {
+	return `(
+	  (wc.retired_at is null and (wc.lead_id is not null or coalesce(wc.is_group, false) = true or wc.created_at > now() - interval '7 days'))
+	  or (
+	    wc.retired_at is not null
+	    and wc.unlinked_retention_v1
+	    and wc.lead_id is null
+	    and wc.unlinked_retention_scrubbed_at is null
+	    and wc.created_at > now() - interval '7 days'
+	  )
+	)`
+}
+
+// The database compares the frozen physical route before retirement. A
+// rejected result (including a database awaiting its partial-index cutover)
+// cannot fall through to a new conversation INSERT.
+func retireWhatsAppUnlinkedConversationEpoch(
+	ctx context.Context,
+	queryer whatsappQueryRower,
+	organizationID string,
+	sessionID string,
+	expectedConversationID string,
+	remoteJID string,
+) error {
+	var rawResult string
+	err := queryer.QueryRow(ctx, `
+		select public.retire_whatsapp_unlinked_conversation_epoch(
+			p_organization_id => $1::uuid,
+			p_session_id => $2::uuid,
+			p_expected_conversation_id => $3::uuid,
+			p_remote_jid => $4
+		)::text
+	`, organizationID, sessionID, expectedConversationID, remoteJID).Scan(&rawResult)
+	if err != nil {
+		return err
+	}
+	var outcome struct {
+		Retired        bool   `json:"retired"`
+		ConversationID string `json:"conversation_id"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(rawResult), &outcome); err != nil {
+		return fmt.Errorf("decode WhatsApp unlinked epoch retirement: %w", err)
+	}
+	if !outcome.Retired || outcome.ConversationID != expectedConversationID {
+		return fmt.Errorf("%w: unlinked epoch retirement %s", ErrConversationBindingChanged, outcome.Reason)
+	}
+	return nil
 }
 
 // Lead history is immutable CRM evidence. A disconnected/deleted WhatsApp
@@ -2292,6 +2396,7 @@ func messageMediaVisibilitySQL(canViewOwn bool) string {
 			wm.lead_id is null
 			and wc.lead_id is null
 			and wc.deleted_at is null
+			and ` + conversationRetentionVisibilitySQL() + `
 			and ws.id is not null
 			and ws.provider = 'evolution_go'
 			and coalesce(ws.is_active, true) = true

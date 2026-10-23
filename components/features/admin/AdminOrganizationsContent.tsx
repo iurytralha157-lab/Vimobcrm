@@ -41,7 +41,6 @@ import {
   MiniInfo,
   normalizeText,
   StatusBadge,
-  type AdminRecord,
 } from "@/components/features/admin/admin-display";
 import { useAdminRows } from "@/components/features/admin/admin-queries";
 

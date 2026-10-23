@@ -15,6 +15,8 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { formatLeadCadenceDate } from '@/lib/lead-cadence-presentation'
+import { useCadenceOverdueCount } from '@/hooks/leads/use-cadence-overdue-count'
 import type {
   LeadCadenceState,
   LeadCadenceTaskState,
@@ -30,9 +32,11 @@ type LeadCadencePanelProps = {
   isCompleting?: boolean
   canOperate: boolean
   variant?: LeadCadencePanelVariant
+  appearance?: 'default' | 'pipeline'
   className?: string
   onRetry?: () => void
   onTaskClick: (task: LeadCadenceTaskState) => void
+  onTaskInspect?: (task: LeadCadenceTaskState) => void
 }
 
 const taskIcons: Record<LeadCadenceTaskType, typeof Phone> = {
@@ -47,23 +51,6 @@ const taskLabels: Record<LeadCadenceTaskType, string> = {
   message: 'Mensagem',
   email: 'E-mail',
   note: 'Tarefa',
-}
-
-const dueDateFormatter = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'America/Sao_Paulo',
-  day: '2-digit',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-})
-
-function formatDueAt(value?: string | null) {
-  if (!value) return 'Sem prazo'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Prazo indisponível'
-
-  return `Até ${dueDateFormatter.format(date).replace(',', ' às')}`
 }
 
 function getTaskStatusLabel(task: LeadCadenceTaskState) {
@@ -86,12 +73,19 @@ export function LeadCadencePanel({
   isCompleting = false,
   canOperate,
   variant = 'compact',
+  appearance = 'default',
   className,
   onRetry,
   onTaskClick,
+  onTaskInspect,
 }: LeadCadencePanelProps) {
+  const overdueCount = useCadenceOverdueCount(state)
+  const formatDueAt = (value?: string | null) => value
+    ? `Até ${formatLeadCadenceDate(value, state?.time_zone)}`
+    : 'Sem prazo'
   const isFull = variant === 'full'
   const isMobile = variant === 'mobile'
+  const isPipeline = appearance === 'pipeline'
   const isClosed = Boolean(state && state.deal_status !== 'open')
   const title = state?.stage_name
     ? `Cadência / ${state.stage_name}`
@@ -114,7 +108,8 @@ export function LeadCadencePanel({
           {(isFull || isMobile) && (
             <span
               className={cn(
-                'flex shrink-0 items-center justify-center bg-primary text-primary-foreground',
+                'flex shrink-0 items-center justify-center',
+                isPipeline ? 'bg-primary/50 text-white' : 'bg-primary text-primary-foreground',
                 isFull ? 'h-8 w-8 rounded-[7px]' : 'h-7 w-7 rounded-[6px]',
               )}
             >
@@ -200,12 +195,12 @@ export function LeadCadencePanel({
                 O ciclo permanece disponível somente para consulta.
               </p>
             </div>
-          ) : state.summary.overdue > 0 && (
-            <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-primary/10 px-2.5 py-1.5 text-[10px] font-light text-primary">
+          ) : overdueCount > 0 && (
+            <div className={cn('mb-2 flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-[10px] font-light', isPipeline ? 'bg-primary/50 text-white' : 'bg-primary/10 text-primary')}>
               <CalendarClock className="h-3 w-3" />
-              {state.summary.overdue === 1
+              {overdueCount === 1
                 ? '1 tarefa está fora do prazo'
-                : `${state.summary.overdue} tarefas estão fora do prazo`}
+                : `${overdueCount} tarefas estão fora do prazo`}
             </div>
           )}
 
@@ -223,14 +218,16 @@ export function LeadCadencePanel({
               const isNext = state.summary.next_task_id === task.id
               const isInactive = !isPending
               const statusLabel = getTaskStatusLabel(task)
-              const disabled = isClosed || !canOperate || !isPending || isCompleting
+              const inspectOnly = isClosed || !canOperate || !isPending
+              const disabled = isCompleting || (inspectOnly && !onTaskInspect)
 
               return (
                 <button
                   key={task.id}
                   type="button"
                   disabled={disabled}
-                  onClick={() => onTaskClick(task)}
+                  aria-label={`${inspectOnly ? 'Consultar' : 'Abrir'} ${task.title}`}
+                  onClick={() => inspectOnly ? onTaskInspect?.(task) : onTaskClick(task)}
                   className={cn(
                     'group flex w-full items-center gap-2.5 rounded-[6px] bg-[var(--app-surface-solid)] text-left transition-colors',
                     isFull ? 'px-3 py-3' : 'px-2.5 py-2',
@@ -246,7 +243,7 @@ export function LeadCadencePanel({
                       isDone
                         ? 'bg-emerald-500 text-white'
                         : isPending
-                          ? 'bg-primary/20 text-primary group-hover:bg-primary group-hover:text-primary-foreground'
+                          ? (isPipeline ? 'bg-primary/50 text-white' : 'bg-primary/20 text-primary group-hover:bg-primary group-hover:text-primary-foreground')
                           : 'bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]',
                     )}
                   >

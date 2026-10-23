@@ -54,11 +54,11 @@ test('cartoes e acoes de usuario preservam a hierarquia visual solicitada', () =
   assert.match(teamSource, /variant="destructive"[\s\S]*aria-label=\{`Excluir/)
 })
 
-test('convites validos usam o mesmo card sem resumo ou controle de acesso', () => {
+test('convites pendentes, expirados e aceitos recentes usam o mesmo card com acoes por estado', () => {
   const teamSource = readSource('components/features/settings/TeamTab.tsx')
   const invitationHookSource = readSource('hooks/use-invitations.ts')
   const invitationCards = teamSource.match(
-    /\{pendingInvitations\.map\(\(invitation\) => \{([\s\S]*?)\{visibleUsers\.map/,
+    /\{visibleInvitations\.map\(\(invitation\) => \{([\s\S]*?)\{visibleUsers\.map/,
   )?.[1]
   const invitationCardClass = invitationCards?.match(
     /<article\s+key=\{`invitation-\$\{invitation\.id\}`\}\s+className="([^"]+)"/,
@@ -66,31 +66,54 @@ test('convites validos usam o mesmo card sem resumo ou controle de acesso', () =
 
   assert.match(
     teamSource,
-    /const pendingInvitations = canManageUsers[\s\S]*invitation\.used_at \|\| invitation\.is_expired === true/,
+    /const visibleInvitations = canManageUsers[\s\S]*invitations\.filter\(\(invitation\) => \{[\s\S]*invitation\.used_at && Date\.parse\(invitation\.used_at\) < recentAcceptedCutoff/,
   )
+  assert.match(teamSource, /const recentAcceptedCutoff = invitationsUpdatedAt - 30 \* 24 \* 60 \* 60 \* 1000/)
   assert.match(teamSource, /useInvitations\(\{ enabled: canManageUsers \}\)/)
   assert.match(
     invitationHookSource,
     /enabled:\s*!!organizationId && enabled/,
   )
-  assert.doesNotMatch(teamSource, /recentAcceptedInvitations|visibleInvitations/)
-  assert.doesNotMatch(teamSource, /organization-invitations-title|aceitos recentemente/)
   assert.ok(invitationCardClass)
   assert.match(invitationCardClass, /min-h-\[180px\]/)
   assert.match(invitationCardClass, /bg-\[var\(--app-surface-soft\)\]/)
   assert.doesNotMatch(invitationCardClass, /\bborder(?:-|\b)/)
   assert.ok(invitationCards)
-  assert.match(invitationCards, />\s*Pendente\s*</)
-  assert.match(invitationCards, />Aguardando aceite</)
-  assert.match(invitationCards, /Reenviar convite para/)
+  assert.match(invitationCards, /const isAccepted = Boolean\(invitation\.used_at\)/)
+  assert.match(invitationCards, /const isExpired = !isAccepted && invitation\.is_expired === true/)
+  assert.match(invitationCards, /isAccepted \? 'Aceito' : isExpired \? 'Expirado' : 'Pendente'/)
+  assert.match(invitationCards, /isExpired \? 'Prazo expirado' : 'Aguardando aceite'/)
+  assert.match(invitationCards, /canManageAdminRole && !isAccepted && !isExpired/)
+  assert.match(invitationCards, /canManageInvitation && !isAccepted/)
+  assert.match(invitationCards, /isExpired \? 'Renovar' : 'Reenviar'/)
   assert.match(invitationCards, /Cancelar convite para/)
   assert.doesNotMatch(invitationCards, /<Switch/)
   assert.match(invitationCards, /Perfil do convite para/)
   assert.match(invitationCards, /updateInvitation\.mutate\(\{[\s\S]*id: invitation\.id,[\s\S]*role:/)
-  assert.match(
-    invitationHookSource,
-    /invitation\.email_sent === false[\s\S]*Validade renovada por 7 dias; o envio por e-mail não foi confirmado/,
-  )
+  assert.match(invitationHookSource, /getInvitationEmailLabel\(invitation\)/)
+  assert.match(invitationHookSource, /Novo link válido por 7 dias\. O link anterior foi invalidado\./)
+})
+
+test('controles administrativos sao condicionados e a rota de permissoes tem gate', () => {
+  const teamSource = readSource('components/features/settings/TeamTab.tsx')
+  const settingsSource = readSource('components/features/settings/SettingsScreen.tsx')
+  const permissionsPageSource = readSource('app/(protected)/settings/users/[id]/page.tsx')
+
+  for (const source of [teamSource, settingsSource]) {
+    assert.match(source, /isTenantContextForOrganization\(activeOrganizationId, tenantContext\)\s*\? tenantContext\?\.memberRole\s*:\s*undefined/)
+    assert.doesNotMatch(source, /userOrganizations/)
+  }
+  assert.match(settingsSource, /const canAccessUsers =\s*canManageOrganization \|\|\s*hasPermission\("users_manage"\) \|\|\s*hasPermission\("permissions_manage"\)/)
+  assert.match(settingsSource, /\{canManageRoles && activeOrganizationId && \(\s*<RolesTab/)
+  assert.match(teamSource, /const canManageUsers = isAdmin \|\| hasPermission\('users_manage'\)/)
+  assert.match(teamSource, /const canManagePermissions = isAdmin \|\| hasPermission\('permissions_manage'\)/)
+  assert.match(teamSource, /const canManageAdminRole = isAdmin && canManagePermissions/)
+  assert.match(teamSource, /useInvitations\(\{ enabled: canManageUsers \}\)/)
+  assert.match(teamSource, /scope: canManageUsers \? 'management' : 'active'/)
+  assert.match(teamSource, /canManageInvitation && !isAccepted/)
+  assert.match(teamSource, /const canManageUserAccess =\s*canManageUsers &&/)
+  assert.match(teamSource, /\{canManagePermissions && \(\s*<Button/)
+  assert.match(permissionsPageSource, /<PermissionBoundary title="Permissoes do usuario" permission="permissions_manage">/)
 })
 
 test('busca de usuarios acompanha as abas e permissoes usam a largura padrao', () => {
@@ -177,8 +200,8 @@ test('usuario sem organizacao ativa permanece autenticado na tela de selecao', (
   const layoutSource = readSource('components/shared/layout/AppLayout.tsx')
   const appSource = readSource('apps/api/internal/app/routes.go')
 
-  assert.match(appSource, /GET \/v1\/user-organizations", withAuth\(/)
-  assert.doesNotMatch(appSource, /GET \/v1\/user-organizations", withAuthTenant\(/)
+  assert.match(appSource, /GET \/v1\/user-organizations", withActiveAuth\(/)
+  assert.doesNotMatch(appSource, /GET \/v1\/user-organizations", withActiveAuthTenant\(/)
   assert.match(authSource, /if \(count === 0\)[\s\S]*setOrganization\(null\)[\s\S]*setTenantContext\(null\)/)
   assert.match(layoutSource, /if \(!hasSelectableOrganization\)[\s\S]*router\.replace\('\/select-organization'\)/)
 })
@@ -189,14 +212,30 @@ test('membership removida nao reabre acesso por tenant, troca de organizacao ou 
   const migrationSource = readSource(
     'supabase/migrations/20260827000000_distinguish_disabled_and_deleted_organization_members.sql',
   )
-  const ledUsersScope = tenantSource.match(/led_users as \(([\s\S]*?)\),\s*led_pipelines as \(/)?.[1]
+  const ledUsersScopes = [...tenantSource.matchAll(/led_users as \(([\s\S]*?)\),\s*led_pipelines as \(/g)]
+    .map((match) => match[1])
 
-  assert.ok(ledUsersScope)
-  assert.match(
-    ledUsersScope,
-    /join public\.organization_members om[\s\S]*?om\.organization_id = member\.organization_id[\s\S]*?om\.user_id = member\.user_id[\s\S]*?om\.is_active = true[\s\S]*?om\.deleted_at is null/,
-  )
-  assert.equal((tenantSource.replace(ledUsersScope, '').match(/om\.deleted_at is null/g) ?? []).length, 3)
+  assert.ok(ledUsersScopes.length >= 2)
+  for (const ledUsersScope of ledUsersScopes) {
+    assert.match(
+      ledUsersScope,
+      /join public\.organization_members om[\s\S]*?om\.organization_id = member\.organization_id[\s\S]*?om\.user_id = member\.user_id[\s\S]*?om\.is_active = true[\s\S]*?om\.deleted_at is null/,
+    )
+  }
+  for (const [start, end] of [
+    ['refreshCachedContext', 'storeCachedContext'],
+    ['getActiveMembership', 'defaultActiveOrganizationID'],
+    ['defaultActiveOrganizationID', 'getPermissions'],
+  ]) {
+    const startIndex = tenantSource.indexOf(`func (repo Repository) ${start}`)
+    const endIndex = tenantSource.indexOf(`func (repo Repository) ${end}`)
+    assert.ok(startIndex >= 0 && endIndex > startIndex)
+    const section = tenantSource.slice(
+      startIndex,
+      endIndex,
+    )
+    assert.match(section, /om\.deleted_at is null/)
+  }
   assert.equal((meSource.match(/deleted_at is null/g) ?? []).length, 2)
   assert.match(migrationSource, /private\.is_org_member\(session\.organization_id\)/)
   assert.match(

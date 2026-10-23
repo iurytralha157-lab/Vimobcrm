@@ -27,6 +27,7 @@ func TestResolveConversationFindScopesLeadLookupToSelectedSession(t *testing.T) 
 	wanted := &Conversation{
 		ID:        "conversation-for-lead",
 		SessionID: "selected-session",
+		RemoteJID: "5511999999999@s.whatsapp.net",
 	}
 	phoneCalled := false
 
@@ -62,9 +63,12 @@ func TestResolveConversationFindScopesLeadLookupToSelectedSession(t *testing.T) 
 }
 
 func TestResolveConversationFindFallsBackToPhoneInsideSelectedSession(t *testing.T) {
+	leadID := "lead-id"
 	wanted := &Conversation{
 		ID:        "conversation-for-phone",
 		SessionID: "selected-session",
+		LeadID:    &leadID,
+		RemoteJID: "5511999999999@s.whatsapp.net",
 	}
 	calls := []string{}
 
@@ -95,6 +99,26 @@ func TestResolveConversationFindFallsBackToPhoneInsideSelectedSession(t *testing
 	wantCalls := []string{"lead:lead-id:selected-session", "phone:+5511999999999:selected-session"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("lookup order = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestResolveConversationFindRejectsChangedPhoneAndOtherLeadFallback(t *testing.T) {
+	for _, scenario := range []string{"changed-phone", "other-lead-fallback"} {
+		t.Run(scenario, func(t *testing.T) {
+			otherLead := "other-lead"
+			got, err := resolveConversationFind(FindConversationFilter{LeadID: "lead-id", Phone: "5511999999999", SessionID: "selected-session"},
+				func(string, string) (*Conversation, error) {
+					if scenario == "other-lead-fallback" {
+						return nil, nil
+					}
+					return &Conversation{ID: "old-number", RemoteJID: "5511888888888@s.whatsapp.net"}, nil
+				}, func(string, string) (*Conversation, error) {
+					return &Conversation{ID: "other-lead-number", LeadID: &otherLead}, nil
+				})
+			if err != nil || got != nil {
+				t.Fatalf("explicit phone/lead mismatch returned conversation: %+v %v", got, err)
+			}
+		})
 	}
 }
 

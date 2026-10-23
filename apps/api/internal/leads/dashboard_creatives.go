@@ -2,10 +2,10 @@ package leads
 
 import (
 	"context"
-	"net/url"
-	"strings"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/meta"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -75,15 +75,7 @@ func dashboardSafeCreativeURL(raw *string) *string {
 	if raw == nil {
 		return nil
 	}
-	value := strings.TrimSpace(*raw)
-	if len(value) == 0 || len(value) > 4096 {
-		return nil
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
-		return nil
-	}
-	return &value
+	return meta.SafeDashboardCreativeURL(*raw)
 }
 
 func dashboardSafeThumbnailURL(raw *string) *string {
@@ -97,6 +89,24 @@ func dashboardBestThumbnailURL(values ...*string) *string {
 		}
 	}
 	return nil
+}
+
+// Snapshot preference must not let a newer rejected URL hide an older usable
+// preview. This conservative SQL predicate excludes encoded query keys because
+// PostgreSQL does not decode them; Go still validates every selected response.
+// Columns are internal query expressions, never caller-provided values.
+func dashboardSafeCreativePreviewSQL(column string) string {
+	return fmt.Sprintf(`(
+		%[1]s is not null
+		and octet_length(btrim(%[1]s)) <= 4096
+		and strpos(btrim(%[1]s), '#') = 0
+		and btrim(%[1]s) ~ '^https://[a-zA-Z0-9][a-zA-Z0-9.-]*([/?#]|$)'
+		and btrim(%[1]s) !~ '[[:cntrl:]]'
+		and btrim(%[1]s) !~* '%%([^0-9a-f]|[0-9a-f]([^0-9a-f]|$)|$)'
+		and btrim(%[1]s) !~ '[?][^#]*;'
+		and btrim(%[1]s) !~* '[?&][^=&#]*(token|secret|proof)[^=&#]*(=|[&#]|$)'
+		and btrim(%[1]s) !~ '[?&][^=&#]*%%'
+	)`, column)
 }
 
 func (repo Repository) buildDashboardCreativesQuery(tenantContext tenant.Context, filter DashboardFilter) (string, []any, error) {
@@ -118,9 +128,9 @@ func (repo Repository) buildDashboardCreativesQuery(tenantContext tenant.Context
 				entry.creative_thumbnail_url, entry.creative_url, entry.creative_video_url,
 				entry.creative_instagram_url, entry.creative_permalink_url,
 				case
-					when entry.creative_thumbnail_url ~* '^https://[a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?([/?#]|$)'
+					when ` + dashboardSafeCreativePreviewSQL("entry.creative_thumbnail_url") + `
 						then entry.creative_thumbnail_url
-					when entry.creative_url ~* '^https://[a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?([/?#]|$)'
+					when ` + dashboardSafeCreativePreviewSQL("entry.creative_url") + `
 						then entry.creative_url
 				end as preview_url,
 				entry.ad_id, entry.ad_name,
@@ -165,7 +175,9 @@ func (repo Repository) buildDashboardCreativesQuery(tenantContext tenant.Context
 			from creative_entries candidate
 			where candidate.creative_key = ranked.creative_key
 			order by (candidate.preview_url is not null) desc,
-				(candidate.creative_video_url is not null or candidate.creative_permalink_url is not null or candidate.creative_instagram_url is not null) desc,
+				(` + dashboardSafeCreativePreviewSQL("candidate.creative_video_url") + `
+				 or ` + dashboardSafeCreativePreviewSQL("candidate.creative_permalink_url") + `
+				 or ` + dashboardSafeCreativePreviewSQL("candidate.creative_instagram_url") + `) desc,
 				candidate.occurred_at desc, candidate.entry_id desc
 			limit 1
 		) snapshot on true

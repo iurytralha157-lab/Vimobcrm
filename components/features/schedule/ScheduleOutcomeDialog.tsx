@@ -38,10 +38,10 @@ import {
 import {
   formatScheduleZonedTime,
   getScheduleCivilDateKey,
-  getScheduleCivilDayRange,
   scheduleCivilDateTimeToDate,
   scheduleFutureCivilDateTimeToDate,
 } from "@/lib/schedule-time-zone";
+import { buildScheduleAllDayInterval, getScheduleAllDaySpan } from "@/lib/schedule-event-draft";
 import { cn } from "@/lib/utils";
 
 export {
@@ -153,6 +153,8 @@ export function ScheduleOutcomeDialog({
   eventIsAllDay,
   eventReminderMinutes,
   disableReschedule = false,
+  rescheduleTimeZoneReady = true,
+  onRetryTimeZone,
   timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
   isLoading,
   onConfirm,
@@ -167,6 +169,8 @@ export function ScheduleOutcomeDialog({
   eventIsAllDay?: boolean | null;
   eventReminderMinutes?: number | null;
   disableReschedule?: boolean;
+  rescheduleTimeZoneReady?: boolean;
+  onRetryTimeZone?: () => void;
   timeZone?: string;
   isLoading: boolean;
   onConfirm: (input: ScheduleOutcomeConfirmation) => void | Promise<void>;
@@ -176,6 +180,7 @@ export function ScheduleOutcomeDialog({
   const [performedBy, setPerformedBy] = useState(defaultPerformerId || "");
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleTime, setRescheduleTime] = useState(() => {
+    if (!rescheduleTimeZoneReady) return "";
     const start = eventStartTime ? new Date(eventStartTime) : null;
     return start && Number.isFinite(start.getTime())
       ? formatScheduleZonedTime(start, timeZone)
@@ -201,18 +206,22 @@ export function ScheduleOutcomeDialog({
       format(new Date(currentTime), "yyyy-MM-dd"),
     [currentTime, timeZone],
   );
-  const originalDurationMinutes = useMemo(() => {
+  const originalDurationMilliseconds = useMemo(() => {
     const start = eventStartTime ? Date.parse(eventStartTime) : Number.NaN;
     const end = eventEndTime ? Date.parse(eventEndTime) : Number.NaN;
-    const duration = Math.round((end - start) / 60_000);
-    return Number.isFinite(duration) && duration > 0 ? duration : 60;
+    const duration = end - start;
+    return Number.isFinite(duration) && duration > 0 ? duration : 60 * 60_000;
   }, [eventEndTime, eventStartTime]);
+  const allDaySpan = useMemo(
+    () => getScheduleAllDaySpan(eventStartTime, eventEndTime, timeZone),
+    [eventStartTime, eventEndTime, timeZone],
+  );
   const rescheduleInterval = useMemo(() => {
-    if (outcome !== "rescheduled" || !rescheduleDate) return null;
+    if (outcome !== "rescheduled" || !rescheduleDate || !rescheduleTimeZoneReady || disableReschedule) return null;
     let start: Date;
     let end: Date;
     if (eventIsAllDay) {
-      const range = getScheduleCivilDayRange(rescheduleDate, timeZone);
+      const range = buildScheduleAllDayInterval(rescheduleDate, timeZone, allDaySpan);
       if (!range) return null;
       start = new Date(range.startTime);
       end = new Date(range.endTime);
@@ -232,7 +241,7 @@ export function ScheduleOutcomeDialog({
             );
       if (!zonedStart) return null;
       start = zonedStart;
-      end = new Date(start.getTime() + originalDurationMinutes * 60_000);
+      end = new Date(start.getTime() + originalDurationMilliseconds);
     }
 
     if (!Number.isFinite(start.getTime()) || start.getTime() <= currentTime) {
@@ -242,7 +251,10 @@ export function ScheduleOutcomeDialog({
   }, [
     eventIsAllDay,
     currentTime,
-    originalDurationMinutes,
+    originalDurationMilliseconds,
+    allDaySpan,
+    rescheduleTimeZoneReady,
+    disableReschedule,
     outcome,
     rescheduleDate,
     rescheduleTime,
@@ -257,6 +269,7 @@ export function ScheduleOutcomeDialog({
 
   const confirm = async () => {
     if (
+      isLoading ||
       !outcome ||
       (status === "completed" && !performedBy) ||
       rescheduleInvalid
@@ -308,7 +321,16 @@ export function ScheduleOutcomeDialog({
 
         <RadioGroup
           value={outcome}
-          onValueChange={(value) => setOutcome(value as ScheduleOutcome)}
+          disabled={isLoading}
+          onValueChange={(value) => {
+            if (value === "rescheduled") {
+              if (!rescheduleTimeZoneReady || disableReschedule) return;
+              if (!rescheduleTime) {
+                setRescheduleTime(eventStartTime ? formatScheduleZonedTime(eventStartTime, timeZone) : "09:00");
+              }
+            }
+            setOutcome(value as ScheduleOutcome);
+          }}
           className="grid grid-cols-1 gap-2 sm:grid-cols-2"
         >
           {options.map((option) => {
@@ -325,6 +347,7 @@ export function ScheduleOutcomeDialog({
               >
                 <RadioGroupItem
                   value={option.value}
+                  disabled={option.value === "rescheduled" && !rescheduleTimeZoneReady}
                   className="mt-0.5 shrink-0"
                 />
                 <OptionIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -340,6 +363,13 @@ export function ScheduleOutcomeDialog({
             );
           })}
         </RadioGroup>
+
+        {!rescheduleTimeZoneReady && !disableReschedule && (eventType === "visit" || eventType === "meeting") && (
+          <div role="status" className="rounded-[7px] bg-amber-500/10 p-3 text-[12px]">
+            <p>Carregue as configurações da agenda para remarcar no fuso da organização.</p>
+            {onRetryTimeZone && <Button variant="ghost" size="sm" className="mt-1 h-8" disabled={isLoading} onClick={onRetryTimeZone}>Tentar novamente</Button>}
+          </div>
+        )}
 
         {outcome === "rescheduled" && (
           <div className="space-y-2 rounded-[7px] bg-amber-500/10 p-3">
@@ -358,6 +388,7 @@ export function ScheduleOutcomeDialog({
                 type="date"
                 min={today}
                 value={rescheduleDate}
+                disabled={isLoading || !rescheduleTimeZoneReady}
                 onChange={(event) => setRescheduleDate(event.target.value)}
                 aria-label="Nova data"
                 className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none"
@@ -366,7 +397,7 @@ export function ScheduleOutcomeDialog({
                 type="time"
                 value={rescheduleTime}
                 onChange={(event) => setRescheduleTime(event.target.value)}
-                disabled={Boolean(eventIsAllDay)}
+                disabled={Boolean(eventIsAllDay) || isLoading || !rescheduleTimeZoneReady}
                 aria-label="Novo horário"
                 className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none"
               />
@@ -384,7 +415,7 @@ export function ScheduleOutcomeDialog({
             <label className="flex items-center gap-1.5 text-[11px] font-light text-[var(--app-text-secondary)]">
               <UserRound className="h-3.5 w-3.5" /> Realizado por
             </label>
-            <Select value={performedBy} onValueChange={setPerformedBy}>
+            <Select value={performedBy} onValueChange={setPerformedBy} disabled={isLoading}>
               <SelectTrigger className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
                 <SelectValue placeholder="Selecione o responsável" />
               </SelectTrigger>
@@ -404,6 +435,8 @@ export function ScheduleOutcomeDialog({
         )}
 
         <Textarea
+          disabled={isLoading}
+          aria-label="Observações ou motivo do resultado"
           value={notes}
           onChange={(event) => setNotes(event.target.value)}
           maxLength={2000}

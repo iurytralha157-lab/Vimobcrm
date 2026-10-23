@@ -1,4 +1,5 @@
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 import { apiPropertyCatalogListResponseSchema, apiPropertyCatalogResponseSchema, organizationIdSchema, parseDomainInput, propertyCatalogCreateInputSchema, propertyCatalogSeedInputSchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyCatalogItem = {
@@ -34,11 +35,12 @@ async function listCatalog(key: CatalogKey, organizationId: string) {
   return response
 }
 
-async function createCatalogItem(key: CatalogKey, organizationId: string, input: { name: string; icon?: string | null }) {
+async function createCatalogItem(key: CatalogKey, organizationId: string, input: { name: string; icon?: string | null }, intent?: VimobAPIRequestIntent) {
   const orgId = parseDomainInput(organizationIdSchema, organizationId, `property-catalog.${key}.create.organization`)
   const body = parseDomainInput(propertyCatalogCreateInputSchema, input, `property-catalog.${key}.create`)
   const response = await vimobAPIRequest<CatalogItemResponse>(endpoints[key], {
     method: 'POST',
+    ...capturePropertyMutationIntent(intent),
     organizationId: orgId,
     body,
   })
@@ -46,11 +48,12 @@ async function createCatalogItem(key: CatalogKey, organizationId: string, input:
   return response
 }
 
-async function seedCatalog(key: Exclude<CatalogKey, 'types'>, organizationId: string, names: string[]) {
+async function seedCatalog(key: Exclude<CatalogKey, 'types'>, organizationId: string, names: string[], intent?: VimobAPIRequestIntent) {
   const orgId = parseDomainInput(organizationIdSchema, organizationId, `property-catalog.${key}.seed.organization`)
   const body = parseDomainInput(propertyCatalogSeedInputSchema, { names }, `property-catalog.${key}.seed`)
   const response = await vimobAPIRequest<CatalogResponse>(`${endpoints[key]}/seed-defaults`, {
     method: 'POST',
+    ...capturePropertyMutationIntent(intent),
     organizationId: orgId,
     body,
   })
@@ -63,31 +66,31 @@ export const propertyCatalogAPI = {
     return listCatalog('types', organizationId)
   },
 
-  async createType(organizationId: string, name: string) {
-    return createCatalogItem('types', organizationId, { name })
+  async createType(organizationId: string, name: string, intent?: VimobAPIRequestIntent) {
+    return createCatalogItem('types', organizationId, { name }, intent)
   },
 
   async getFeatures(organizationId: string) {
     return listCatalog('features', organizationId)
   },
 
-  async createFeature(organizationId: string, name: string) {
-    return createCatalogItem('features', organizationId, { name })
+  async createFeature(organizationId: string, name: string, intent?: VimobAPIRequestIntent) {
+    return createCatalogItem('features', organizationId, { name }, intent)
   },
 
-  async seedFeatures(organizationId: string, names: string[]) {
-    return seedCatalog('features', organizationId, names)
+  async seedFeatures(organizationId: string, names: string[], intent?: VimobAPIRequestIntent) {
+    return seedCatalog('features', organizationId, names, intent)
   },
 
   async getProximities(organizationId: string) {
     return listCatalog('proximities', organizationId)
   },
 
-  async createProximity(organizationId: string, name: string) {
-    return createCatalogItem('proximities', organizationId, { name })
+  async createProximity(organizationId: string, name: string, intent?: VimobAPIRequestIntent) {
+    return createCatalogItem('proximities', organizationId, { name }, intent)
   },
 
-  async seedProximities(organizationId: string, names: string[]) {
-    return seedCatalog('proximities', organizationId, names)
+  async seedProximities(organizationId: string, names: string[], intent?: VimobAPIRequestIntent) {
+    return seedCatalog('proximities', organizationId, names, intent)
   },
 }

@@ -17,6 +17,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import {
   DropdownMenu,
@@ -61,6 +62,10 @@ interface UnitsTabProps {
   canManage: boolean
   buildingFilter: string
   setBuildingFilter: Dispatch<SetStateAction<string>>
+  unitSearch: string
+  setUnitSearch: Dispatch<SetStateAction<string>>
+  floorPlanFilter: string
+  setFloorPlanFilter: Dispatch<SetStateAction<string>>
   unitStatusFilter: 'all' | PropertyDevelopmentUnitStatus
   setUnitStatusFilter: Dispatch<SetStateAction<'all' | PropertyDevelopmentUnitStatus>>
   unitOffset: number
@@ -86,6 +91,10 @@ export function UnitsTab({
   canManage,
   buildingFilter,
   setBuildingFilter,
+  unitSearch,
+  setUnitSearch,
+  floorPlanFilter,
+  setFloorPlanFilter,
   unitStatusFilter,
   setUnitStatusFilter,
   unitOffset,
@@ -108,7 +117,12 @@ export function UnitsTab({
                     individual.
                   </p>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="flex flex-col flex-wrap gap-2 sm:flex-row">
+                  <Input aria-label="Buscar unidades" placeholder="Número ou código da unidade..." value={unitSearch} onChange={event => { setUnitSearch(event.target.value); setUnitOffset(0); }} className="h-9 w-full sm:w-52" />
+                  <Select value={floorPlanFilter} onValueChange={value => { setFloorPlanFilter(value); setUnitOffset(0); }}>
+                    <SelectTrigger className="h-9 w-full sm:w-44" aria-label="Filtrar por planta"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">Todas as plantas</SelectItem>{workspace.floor_plans.map(plan => <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>)}</SelectContent>
+                  </Select>
                   <Select
                     value={buildingFilter}
                     onValueChange={(value) => {

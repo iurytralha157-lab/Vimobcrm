@@ -62,7 +62,7 @@ func TestDashboardCreativesUseSameScopedArrivalsAndRankBeforeLimit(t *testing.T)
 		"coalesce(max(campaign_name), max(utm_campaign)) as campaign_name", "limit 10",
 		"max(creative_name) as creative_name, max(ad_name) as ad_name",
 		"'Anúncio sem título'", "'Criativo sem título'",
-		"when entry.creative_thumbnail_url ~* '^https://", "when entry.creative_url ~* '^https://",
+		"btrim(entry.creative_thumbnail_url) ~ '^https://", "btrim(entry.creative_url) ~ '^https://",
 		"order by (candidate.preview_url is not null) desc,",
 		"snapshot.creative_video_url as video_url", "snapshot.creative_instagram_url as instagram_url",
 		"snapshot.creative_permalink_url as permalink_url",
@@ -87,9 +87,18 @@ func TestDashboardCreativesUseSameScopedArrivalsAndRankBeforeLimit(t *testing.T)
 }
 
 func TestDashboardCreativesRejectUnsafePreviewURLs(t *testing.T) {
-	for _, value := range []string{"javascript:alert(1)", "file:///etc/passwd", "http://example.test/a.jpg", "https://user:pass@example.test/a.jpg", "/relative.jpg", "https://"} {
+	for _, value := range []string{
+		"javascript:alert(1)", "file:///etc/passwd", "http://example.test/a.jpg",
+		"https://user:pass@example.test/a.jpg", "/relative.jpg", "https://",
+		"https://example.test:443/a.jpg", "https://example.test/a.jpg?access_token=private",
+		"https://example.test/a.jpg?APPSECRET_PROOF=private", "https://example.test/a.jpg?Secret=private",
+		"https://example.test/a.jpg?access%5Ftoken=private", "https://example.test/a.jpg?bad=%zz",
+	} {
 		if dashboardSafeThumbnailURL(&value) != nil {
 			t.Errorf("unsafe thumbnail URL was accepted: %q", value)
+		}
+		if dashboardSafeCreativeURL(&value) != nil || dashboardSafeHistoricalMediaURL(&value) != nil {
+			t.Errorf("main and historical media sanitizers disagree for %q", value)
 		}
 	}
 	valid := " https://example.test/a.jpg "

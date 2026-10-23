@@ -9,7 +9,7 @@ const HOME_NOTICES_STALE_TIME_MS = 60_000;
 const HOME_NOTICES_GC_TIME_MS = 10 * 60_000;
 
 export function useHomeNotices() {
-  const { activeOrganization, organization, profile, user } = useAuth();
+  const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({

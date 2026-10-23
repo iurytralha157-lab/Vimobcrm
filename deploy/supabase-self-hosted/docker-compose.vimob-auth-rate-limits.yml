@@ -1,0 +1,9 @@
+# Optional Auth hardening overlay. Include only after the gateway replaces the
+# chosen header with the verified client IP; never trust a client-supplied value.
+services:
+  auth:
+    environment:
+      GOTRUE_RATE_LIMIT_HEADER: ${AUTH_RATE_LIMIT_TRUSTED_HEADER:?configure a trusted gateway-owned client IP header}
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: ${AUTH_RATE_LIMIT_TOKEN_REFRESH:?configure the token endpoint limit}
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: ${AUTH_RATE_LIMIT_EMAIL_SENT:?configure the recovery email limit}
+      GOTRUE_RATE_LIMIT_VERIFY: ${AUTH_RATE_LIMIT_VERIFY:?configure the verification limit}

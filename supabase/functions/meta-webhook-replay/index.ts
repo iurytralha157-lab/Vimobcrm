@@ -11,6 +11,16 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
+type WebhookEventPatch = {
+  status: string;
+  processed_at: string;
+  attempts: number;
+  organization_id: string | null;
+  error_message: string | null;
+  last_error: string | null;
+  next_retry_at?: string;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -37,9 +47,9 @@ serve(async (req) => {
       const firstEntry = payload?.entry?.[0] || {};
       const change = firstEntry?.changes?.[0]?.value || {};
       
-      const result = await processLeadgenEvent(supabase, event.page_id, change, event.id);
+      const result = await processLeadgenEvent(supabase, event.page_id, change);
       
-      const patch: any = {
+      const patch: WebhookEventPatch = {
         status: result.status,
         processed_at: new Date().toISOString(),
         attempts: (event.attempts || 0) + 1,

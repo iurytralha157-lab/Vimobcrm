@@ -33,6 +33,10 @@ import { Badge } from '@/components/ui/badge';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useAuth } from '@/contexts/AuthContext';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLeadRequestScope } from '@/hooks/leads/use-lead-request-scope';
+import { useLeadDetailOperationScope } from '@/hooks/leads/use-lead-detail-operation-scope';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
 
 type DistributionLead = Pick<Lead, 'id'> & Partial<Pick<Lead, 'pipeline_id' | 'assigned_user_id'>>;
 type LeadDistributionUpdate = Pick<
@@ -64,7 +68,16 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
   const { data: teams = [] } = useTeams({ enabled: canUseTeamDistribution });
   const { data: stages = [] } = useStages(selectedPipelineId || undefined);
   const updateLead = useUpdateLead();
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, user, session } = useAuth();
+  const queryClient = useQueryClient();
+  const requestScope = useLeadRequestScope();
+  const captureLeadOperation = useLeadDetailOperationScope(lead.id, activeOrganization.organizationId, user?.id ?? null, queryClient,
+    canUseTeamDistribution && hasPermission('lead_operate'), getGlobalSignOutSessionId(session));
+  const captureDistribution = () => {
+    const operation = requestScope.capture();
+    const resource = captureLeadOperation();
+    return { ...operation, isCurrent: () => operation.isCurrent() && resource.isCurrent() };
+  };
 
   const allowedTeamIds = accessScope.isAdmin ? null : new Set(accessScope.ledTeamIds);
   const allowedPipelineIds = accessScope.isAdmin ? null : new Set(accessScope.ledPipelineIds);
@@ -108,6 +121,8 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
       toast.error('Você só pode distribuir para membros da sua equipe');
       return;
     }
+    let operation: ReturnType<typeof captureDistribution>;
+    try { operation = captureDistribution(); } catch { return; }
     setIsProcessing(true);
 
     try {
@@ -127,20 +142,24 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
       };
 
       await updateLead.mutateAsync(leadUpdate);
+      if (!operation.isCurrent()) return;
 
       toast.success(`Lead distribuído com sucesso para ${availableUsers.find(u => u?.id === userId)?.name}`);
       setOpen(false);
       if (refetchStages) refetchStages();
     } catch (error: unknown) {
+      if (!operation.isCurrent()) return;
       toast.error('Erro ao distribuir lead: ' + getErrorMessage(error));
     } finally {
-      setIsProcessing(false);
+      if (operation.isCurrent()) setIsProcessing(false);
     }
   };
 
   const handleAutomaticDistribute = async () => {
     if (!selectedPipelineId || isProcessing) return;
     if (!accessScope.isAdmin && !allowedPipelineIds?.has(selectedPipelineId)) return;
+    let operation: ReturnType<typeof captureDistribution>;
+    try { operation = captureDistribution(); } catch { return; }
     setIsProcessing(true);
 
     try {
@@ -161,11 +180,15 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
       };
 
       await updateLead.mutateAsync(leadUpdate);
+      if (!operation.isCurrent()) return;
 
       const distribution = await leadsAPI.redistributeLeadRoundRobin(
         lead.id,
-        activeOrganization.organizationId || undefined,
+        operation.organizationId,
+        undefined,
+        operation.intent,
       );
+      if (!operation.isCurrent()) return;
       if (distribution.error || !distribution.success) {
         throw new Error(distribution.error || 'Distribuição automática não encontrou uma fila disponível.');
       }
@@ -174,9 +197,10 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
       setOpen(false);
       if (refetchStages) refetchStages();
     } catch (error: unknown) {
+      if (!operation.isCurrent()) return;
       toast.error('Erro na distribuição automática: ' + getErrorMessage(error));
     } finally {
-      setIsProcessing(false);
+      if (operation.isCurrent()) setIsProcessing(false);
     }
   };
 

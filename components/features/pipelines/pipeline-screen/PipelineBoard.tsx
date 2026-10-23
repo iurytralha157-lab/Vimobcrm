@@ -1,11 +1,10 @@
-import type { DropResult } from '@hello-pangea/dnd';
-import { DragDropContext, Droppable } from '@hello-pangea/dnd';
+import type { DragStart, DropResult } from '@hello-pangea/dnd';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Target,
@@ -23,14 +22,15 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
+import { getPipelineBoardLayout, PIPELINE_LAYOUT } from '@/config/pipeline-layout';
 import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
 import { cn } from '@/lib/utils';
 
-import {
-  formatCompactCurrency,
-  PIPELINE_AUTO_SCROLLER_OPTIONS,
-  type StageCountMeta,
-} from './model';
+import { type StageCountMeta } from './model';
+import { PipelineDragBoard, PipelineDropColumn, PipelineSortableLeadCard } from './PipelineDragBoard';
+import styles from './PipelineBoard.module.css';
+import { StageColumnMenu } from './StageColumnMenu';
+import type { StageSettingsTab } from '@/components/features/pipelines/StageSettingsDialog';
 
 type PipelineBoardProps = {
   stages: StageWithLeads[];
@@ -57,13 +57,14 @@ type PipelineBoardProps = {
   canOperateWhatsApp: boolean;
   canShowColumnActions: boolean;
   isDragDisabled: boolean;
+  pendingMoveLeadIds?: ReadonlySet<string>;
   nowMs: number;
   editingStageId: string | null;
   editingStageName: string;
   savingStageNameId: string | null;
   loadMoreIsPending: boolean;
   loadingMoreStageId?: string;
-  onDragStart: () => void;
+  onDragStart: (start: DragStart) => void;
   onDragEnd: (result: DropResult) => void;
   onCriticalLoadRetry: () => void;
   onBoardRefresh: () => void;
@@ -72,7 +73,7 @@ type PipelineBoardProps = {
   onStartEditingStage: (stage: StageWithLeads) => void;
   onCommitStageName: (stageId: string) => void;
   onCancelEditingStage: () => void;
-  onOpenStageSettings: (stage: StageWithLeads) => void;
+  onOpenStageSettings: (stage: StageWithLeads, tab: StageSettingsTab, returnFocusElement: HTMLButtonElement | null) => void;
   onOpenLead: (lead: PipelineLead | { id: string }) => void;
   onAssignLeadNow: (leadId: string) => void;
   onLoadMore: (stageId: string) => void;
@@ -84,7 +85,6 @@ export function PipelineBoard({
   stages,
   filteredStages,
   visibleStages,
-  stageValueMap,
   stageCountMetaMap,
   selectedPipelineId,
   isMobile,
@@ -105,6 +105,7 @@ export function PipelineBoard({
   canOperateWhatsApp,
   canShowColumnActions,
   isDragDisabled,
+  pendingMoveLeadIds,
   nowMs,
   editingStageId,
   editingStageName,
@@ -127,6 +128,47 @@ export function PipelineBoard({
   onCreateStage,
   onCreatePipeline,
 }: PipelineBoardProps) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const pendingSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    // CSS containment would change the fixed-position coordinate system used
+    // by Draggable. Measure the board directly, including sidebar/height changes.
+    const element = boardRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const next = {
+        width: Math.floor(entry.contentRect.width),
+        height: Math.floor(entry.contentRect.height),
+      };
+      if (draggingRef.current) {
+        // DnD has already captured its dimensions; apply this resize after drop.
+        pendingSizeRef.current = next;
+        return;
+      }
+      setBoardSize((current) => current.width === next.width && current.height === next.height ? current : next);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const layout = getPipelineBoardLayout(boardSize.width, boardSize.height, isMobile, visibleStages.length);
+  const layoutStyle = {
+    '--pipeline-column-width': `${layout.columnWidth}px`,
+    '--pipeline-column-gap': `${layout.columnGap}px`,
+    '--pipeline-card-padding': `${layout.cardPadding}px`,
+    '--pipeline-card-gap': `${layout.cardGap}px`,
+    '--pipeline-list-padding': `${layout.listPadding}px`,
+    '--pipeline-header-padding': `${layout.headerPadding}px`,
+    '--pipeline-mobile-navigation-touch-size': `${PIPELINE_LAYOUT.mobileNavigationTouchSizePx}px`,
+    '--pipeline-mobile-navigation-surface-size': `${PIPELINE_LAYOUT.mobileNavigationSurfaceSizePx}px`,
+    '--pipeline-mobile-navigation-edge-inset': `${PIPELINE_LAYOUT.mobileNavigationEdgeInsetPx}px`,
+    '--pipeline-mobile-navigation-stack-level': PIPELINE_LAYOUT.mobileNavigationStackLevel,
+  } as CSSProperties;
+
   return (
     <>
       {!hasCriticalLoadError && stages.length === 0 && (
@@ -165,7 +207,7 @@ export function PipelineBoard({
         </Card>
       )}
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={boardRef} className={cn('relative flex min-h-0 flex-1 flex-col', styles.board)} style={layoutStyle}>
         {hasCriticalLoadError && (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-[var(--app-bg)] px-4">
             <div
@@ -213,35 +255,30 @@ export function PipelineBoard({
           </div>
         )}
 
-        {hasPipelineBoardError && (
-          <div
-            role="alert"
-            className="absolute right-3 top-2 z-30 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-[8px] bg-amber-500/12 px-3 py-2 text-[11px] font-light text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-200"
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Os dados podem estar desatualizados.</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-[11px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
-              onClick={onBoardRefresh}
-              disabled={isRefreshing}
-            >
-              {isRefreshing ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              Tentar novamente
-            </Button>
-          </div>
-        )}
-
-        <DragDropContext
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          autoScrollerOptions={PIPELINE_AUTO_SCROLLER_OPTIONS}
+        <PipelineDragBoard
+          stages={visibleStages}
+          disabled={isDragDisabled || isMobile}
+          onDragStart={(start) => {
+            draggingRef.current = true;
+            onDragStart(start);
+          }}
+          onDragEnd={(result) => {
+            draggingRef.current = false;
+            onDragEnd(result);
+            if (pendingSizeRef.current) {
+              setBoardSize(pendingSizeRef.current);
+              pendingSizeRef.current = null;
+            }
+          }}
+          renderOverlay={(leadId) => {
+            const lead = visibleStages.flatMap(stage => stage.leads).find(item => item.id === leadId);
+            // The body portal preserves the card's shell typography without inheriting shell layout.
+            return lead ? <div style={{ ...layoutStyle, fontWeight: 'var(--app-font-weight-body)' }}
+              className="[&_.font-light]:[font-weight:var(--app-font-weight-body)] [&_.font-normal]:[font-weight:var(--app-font-weight-body)] [&_.font-medium]:[font-weight:var(--app-font-weight-emphasis)] [&_h4]:[line-height:var(--app-line-height-title)]"><LeadCard lead={lead} index={0} onClick={onOpenLead} onAssignNow={onAssignLeadNow}
+              isDragDisabled hasWhatsAppModule={hasWhatsAppModule} canViewWhatsApp={canViewWhatsApp}
+              canOperateWhatsApp={canOperateWhatsApp} nowMs={nowMs} className={styles.leadCard}
+              dragPresentation={{ innerRef: () => {}, isDragging: true }} /></div> : null;
+          }}
         >
           <div
             className={cn(
@@ -251,18 +288,18 @@ export function PipelineBoard({
                 : 'overflow-x-auto overflow-y-auto px-2 pb-2',
             )}
           >
-            <div className={cn('flex h-full gap-3', isMobile ? 'min-w-0' : 'min-w-max')}>
+            <div className={cn('flex h-full', styles.columns, isMobile ? 'min-w-0' : 'min-w-max')}>
               {visibleStages.map((stage, stageIndex) => (
                 <div
                   key={stage.id}
                   data-tour={stageIndex === 0 ? 'pipeline-column' : undefined}
                   className={cn(
                     'flex h-full flex-shrink-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none',
-                    isMobile ? 'w-full min-w-0' : 'w-[280px] sm:w-72',
+                    isMobile ? styles.mobileColumn : styles.column,
                   )}
                 >
-                  <div className="flex shrink-0 items-center justify-between border-b border-[var(--app-border)] px-3 py-2">
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                  <div data-pipeline-part="column-header" className={cn('flex shrink-0 items-center justify-between gap-1 border-b border-[var(--app-border)] px-2.5', styles.header)}>
+                    <div className={cn('min-w-0 flex-1', styles.heading)}>
                       <div
                         className="h-2.5 w-2.5 shrink-0 rounded-full"
                         style={{
@@ -290,145 +327,73 @@ export function PipelineBoard({
                           }}
                           disabled={savingStageNameId === stage.id}
                           aria-busy={savingStageNameId === stage.id}
-                          className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 !text-[13px] font-normal text-foreground shadow-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                          aria-label={`Nome da coluna ${stage.name}`}
+                          className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 !text-[12px] font-normal text-foreground shadow-none focus-visible:ring-1 focus-visible:ring-primary/40"
                           autoFocus
                         />
                       ) : canEditPipeline ? (
                         <button
                           type="button"
-                          className="min-w-0 flex-1 truncate text-left !text-[13px] font-normal text-foreground outline-none transition-colors hover:text-primary focus-visible:text-primary focus-visible:underline disabled:cursor-wait disabled:opacity-60"
+                          className="min-w-0 flex-1 truncate text-left !text-[12px] font-normal text-foreground outline-none transition-colors hover:text-primary focus-visible:text-primary focus-visible:underline disabled:cursor-wait disabled:opacity-60"
                           onClick={() => onStartEditingStage(stage)}
                           disabled={Boolean(savingStageNameId)}
                           aria-label={`Renomear coluna ${stage.name}`}
+                          title={stage.name}
                         >
                           {stage.name}
                         </button>
                       ) : (
-                        <h3 className="min-w-0 flex-1 truncate !text-[13px] font-normal text-foreground">
+                        <h3 title={stage.name} className="min-w-0 flex-1 truncate !text-[12px] font-normal text-foreground">
                           {stage.name}
                         </h3>
                       )}
-                      <Badge
-                        variant="secondary"
-                        className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0 !text-[11px] font-light text-muted-foreground shadow-none"
-                      >
-                        {stageCountMetaMap.get(stage.id)?.total ??
-                          stage.total_lead_count ??
-                          stage.leads.length ??
-                          0}
-                      </Badge>
                       {stage.is_qualified ? (
-                        <div className="order-last basis-full pl-4">
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Badge
                                   variant="secondary"
                                   aria-label="Etapa de lead qualificado"
-                                  className="flex h-[19px] w-fit items-center gap-1 rounded-[4px] border-0 bg-[var(--app-surface-hover)] px-1.5 py-0 !text-[10px] font-normal text-[var(--app-text-primary)] shadow-none"
+                                  tabIndex={0}
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border-0 bg-[var(--app-surface-hover)] p-0 text-[var(--app-text-primary)] shadow-none"
                                 >
                                   <Target
-                                    className="h-2.5 w-2.5 text-primary"
+                                    className="h-3 w-3 text-primary"
                                     aria-hidden="true"
                                   />
-                                  Qualificado
                                 </Badge>
                               </TooltipTrigger>
                               <TooltipContent className="app-header-popover rounded-[8px] text-foreground">
-                                <p className="text-[11px] font-light">
+                                <p className="text-[12px] font-light">
                                   Etapa qualificada desta pipeline
                                 </p>
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                        </div>
                       ) : null}
-                      {(stageValueMap.get(stage.id)?.totalValue || 0) > 0 ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge
-                                variant="secondary"
-                                className="flex h-[18px] shrink-0 items-center rounded-[4px] border-0 bg-primary/50 px-1.5 py-0 !text-[11px] font-light text-white shadow-none"
-                              >
-                                {formatCompactCurrency(
-                                  stageValueMap.get(stage.id)?.totalValue || 0,
-                                )}
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent className="app-header-popover rounded-[8px] text-foreground">
-                              <p className="text-[11px] font-light">
-                                Valor total dos leads neste estágio
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : null}
+                      <Badge
+                        data-pipeline-part="stage-count"
+                        variant="secondary"
+                        className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0 !text-[12px] font-light text-muted-foreground shadow-none"
+                      >
+                        {stageCountMetaMap.get(stage.id)?.total ??
+                          stage.total_lead_count ??
+                          stage.leads.length ??
+                          0}
+                        {stageCountMetaMap.get(stage.id)?.isCountEstimate ? '+' : ''}
+                      </Badge>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        data-tour={
-                          stageIndex === 0 ? 'pipeline-column-settings' : undefined
-                        }
-                        aria-label={`Configurar coluna ${stage.name}`}
-                        variant="ghost"
-                        size="icon"
-                        className={cn(
-                          'shrink-0 rounded-[6px] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground',
-                          isMobile ? 'h-10 w-10' : 'h-6 w-6',
-                        )}
-                        onClick={() => onOpenStageSettings(stage)}
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                      {isMobile && filteredStages.length > 1 && (
-                        <>
-                          <button
-                            type="button"
-                            aria-label="Ver coluna anterior"
-                            className="flex h-14 w-14 shrink-0 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                              event.preventDefault()
-                              event.stopPropagation()
-                              onMobileStageNavigation('previous')
-                            }}
-                            disabled={!hasPreviousMobileStage}
-                          >
-                            <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="Ver próxima coluna"
-                            className="flex h-14 w-14 shrink-0 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                              event.preventDefault()
-                              event.stopPropagation()
-                              onMobileStageNavigation('next')
-                            }}
-                            disabled={!hasNextMobileStage}
-                          >
-                            <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                          </button>
-                        </>
-                      )}
+                      <StageColumnMenu
+                        stageName={stage.name}
+                        isMobile={isMobile}
+                        tourTarget={stageIndex === 0 ? 'pipeline-column-settings' : undefined}
+                        onSelect={(tab, returnFocusElement) => onOpenStageSettings(stage, tab, returnFocusElement)}
+                      />
                     </div>
                   </div>
 
-                  <Droppable droppableId={stage.id}>
-                    {(provided, snapshot) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className="flex min-h-0 flex-1 flex-col overflow-hidden"
-                      >
-                        <div
-                          className={cn(
-                            'flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-                            snapshot.isDraggingOver && 'bg-[var(--app-surface-soft)]',
-                          )}
-                        >
+                  <PipelineDropColumn stage={stage} className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto', styles.leadList)}>
                           {isInitialLeadsLoading
                             ? Array.from({ length: 3 }).map((_, index) => (
                                 <div
@@ -437,29 +402,28 @@ export function PipelineBoard({
                                 />
                               ))
                             : stage.leads.map((lead, index) => (
-                                <LeadCard
+                                <PipelineSortableLeadCard
                                   key={lead.id}
+                                  stageId={stage.id}
                                   tourTarget={
                                     stageIndex === 0 && index === 0
                                       ? 'pipeline-lead-card'
                                       : undefined
                                   }
                                   lead={lead}
+                                  className={styles.leadCard}
                                   index={index}
                                   onClick={onOpenLead}
                                   onAssignNow={onAssignLeadNow}
                                   isDragDisabled={isDragDisabled || isMobile || lead.can_operate !== true}
+                                  isMovePending={pendingMoveLeadIds?.has(lead.id) ?? false}
                                   hasWhatsAppModule={hasWhatsAppModule}
                                   canViewWhatsApp={canViewWhatsApp}
                                   canOperateWhatsApp={canOperateWhatsApp}
                                   nowMs={nowMs}
                                 />
                               ))}
-                          {provided.placeholder}
-                        </div>
-                      </div>
-                    )}
-                  </Droppable>
+                  </PipelineDropColumn>
                   {stageCountMetaMap.get(stage.id)?.canLoadMore && (
                     <div className="px-2 pb-2">
                       <Button
@@ -474,8 +438,9 @@ export function PipelineBoard({
                         ) : (
                           <ChevronDown className="mr-1 h-3 w-3" />
                         )}
-                        Carregar mais ({stageCountMetaMap.get(stage.id)?.remaining ?? 0}{' '}
-                        restantes)
+                        Carregar mais{!stageCountMetaMap.get(stage.id)?.isCountEstimate
+                          && (stageCountMetaMap.get(stage.id)?.remaining ?? 0) > 0
+                          ? ` (${stageCountMetaMap.get(stage.id)!.remaining} restantes)` : ''}
                       </Button>
                     </div>
                   )}
@@ -486,7 +451,7 @@ export function PipelineBoard({
                 <button
                   type="button"
                   onClick={onCreateStage}
-                  className="group flex h-full min-h-[360px] w-[280px] flex-shrink-0 items-center justify-center rounded-[8px] border border-dashed border-[var(--app-border)] bg-transparent text-muted-foreground opacity-60 outline-none transition-colors duration-200 hover:border-primary/40 hover:bg-[var(--app-surface-soft)] hover:text-primary hover:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/30 sm:w-72"
+                  className={cn('group flex h-full flex-shrink-0 items-center justify-center rounded-[8px] border border-dashed border-[var(--app-border)] bg-transparent text-muted-foreground opacity-60 outline-none transition-colors duration-200 hover:border-primary/40 hover:bg-[var(--app-surface-soft)] hover:text-primary hover:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/30', styles.column, styles.createColumn)}
                   aria-label="Criar nova coluna"
                 >
                   <span className="inline-flex items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-4 py-2 text-[12px] font-light transition-colors group-hover:bg-primary/10">
@@ -497,7 +462,69 @@ export function PipelineBoard({
               )}
             </div>
           </div>
-        </DragDropContext>
+        </PipelineDragBoard>
+        {hasPipelineBoardError && (
+          <div
+            role="alert"
+            className="mx-1 mt-2 flex min-w-0 shrink-0 flex-wrap items-center gap-2 rounded-[8px] bg-amber-500/12 px-16 py-2 text-[11px] font-light text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-200 md:mx-2"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0">Os dados podem estar desatualizados.</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-[11px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+              onClick={onBoardRefresh}
+              disabled={isRefreshing}
+            >
+              {isRefreshing ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Tentar novamente
+            </Button>
+          </div>
+        )}
+        {isMobile && filteredStages.length > 1 && !hasCriticalLoadError && !isPipelineBoardTransitioning && (
+          <nav className={styles.mobileNavigation} aria-label="Navegar entre as etapas da Pipeline">
+            <button
+              type="button"
+              aria-label="Ver coluna anterior"
+              className={styles.mobileNavigationButton}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onMobileStageNavigation('previous');
+              }}
+              disabled={!hasPreviousMobileStage}
+            >
+              <span className={styles.mobileNavigationSurface} aria-hidden="true">
+                <ChevronLeft className="h-[18px] w-[18px]" />
+              </span>
+            </button>
+            <button
+              type="button"
+              aria-label="Ver próxima coluna"
+              className={styles.mobileNavigationButton}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onMobileStageNavigation('next');
+              }}
+              disabled={!hasNextMobileStage}
+            >
+              <span className={styles.mobileNavigationSurface} aria-hidden="true">
+                <ChevronRight className="h-[18px] w-[18px]" />
+              </span>
+            </button>
+          </nav>
+        )}
       </div>
     </>
   );

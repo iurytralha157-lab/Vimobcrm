@@ -26,9 +26,10 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
 	}
 	target, err := url.Parse(databaseURL)
+	exactVerifiedClone := err == nil && target.Path == "/vimob_whatsapp_clone" && databaseURL == localVerifiedOutboundCloneURL()
 	if err != nil ||
 		(target.Hostname() != "127.0.0.1" && target.Hostname() != "localhost") ||
-		!strings.Contains(strings.ToLower(target.Path), "test") {
+		(!strings.Contains(strings.ToLower(target.Path), "test") && !exactVerifiedClone) {
 		t.Fatal("WHATSAPP_TEST_DATABASE_URL must point to an isolated loopback test database")
 	}
 
@@ -105,6 +106,30 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 			if r.Header.Get("x-webhook-token") != "webhook-secret" {
 				t.Error("edge forwarding did not use the scoped webhook token header")
 			}
+			// This receiver only verifies the worker forwarding contract. Like
+			// real Edge, it must activate and close the reserved execution token
+			// before acknowledging; HTTP success alone is no longer completion.
+			inboxID := r.Header.Get("x-vimob-inbox-id")
+			executionID := r.Header.Get("x-vimob-edge-execution-id")
+			routeSessionID := r.URL.Query().Get("session_id")
+			var routeOrganizationID string
+			if err := postgres.Pool().QueryRow(r.Context(), `
+				select organization_id::text from public.whatsapp_webhook_inbox
+				where id = $1::uuid and session_id = $2::uuid
+			`, inboxID, routeSessionID).Scan(&routeOrganizationID); err != nil {
+				t.Errorf("fake Edge exact inbox route: %v", err)
+				http.Error(w, "invalid worker route", http.StatusConflict)
+				return
+			}
+			for _, functionName := range []string{"start_whatsapp_webhook_edge_execution", "finish_whatsapp_webhook_edge_execution"} {
+				var accepted bool
+				if err := postgres.Pool().QueryRow(r.Context(), `select public.`+functionName+`($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
+					routeOrganizationID, routeSessionID, inboxID, executionID).Scan(&accepted); err != nil || !accepted {
+					t.Errorf("fake Edge %s = %v, %v", functionName, accepted, err)
+					http.Error(w, "worker execution denied", http.StatusConflict)
+					return
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		default:
@@ -136,8 +161,32 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = any($1::uuid[])`, []string{organizationID, foreignHistoryOrganizationID})
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = any($1::uuid[])`, []string{userID, otherUserID, foreignUserID})
+		organizationIDs := []string{organizationID, foreignHistoryOrganizationID}
+		for _, statement := range []string{
+			`delete from private.whatsapp_unlinked_history_links where organization_id = any($1::uuid[])`,
+			`delete from public.whatsapp_attendance_marker_confirmations where organization_id = any($1::uuid[])`,
+			`delete from public.whatsapp_inbound_logs where organization_id = any($1::uuid[])`,
+			`update public.users set organization_id = null where organization_id = any($1::uuid[])`,
+			`delete from public.organizations where id = any($1::uuid[])`,
+		} {
+			if _, err := postgres.Pool().Exec(cleanupCtx, statement, organizationIDs); err != nil {
+				t.Errorf("durable synthetic organization cleanup: %v", err)
+			}
+		}
+		userIDs := []string{}
+		for _, id := range []string{userID, otherUserID, foreignUserID} {
+			if id != "" {
+				userIDs = append(userIDs, id)
+			}
+		}
+		for _, statement := range []string{
+			`delete from public.users where id = any($1::uuid[])`,
+			`delete from auth.users where id = any($1::uuid[])`,
+		} {
+			if _, err := postgres.Pool().Exec(cleanupCtx, statement, userIDs); err != nil {
+				t.Errorf("durable synthetic user cleanup: %v", err)
+			}
+		}
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -307,21 +356,42 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, foreignHistoryOrganizationID, suffix+"-foreign-history-session", foreignUserID).Scan(&foreignHistorySessionID); err != nil {
 		t.Fatal(err)
 	}
+	// Current fixtures enter through an unlinked row and the canonical RPC;
+	// B1 rejects a conversation inserted with a lead but no binding ledger.
+	activateFixtureBinding := func(conversationID, leadID string) {
+		t.Helper()
+		if _, err := postgres.Pool().Exec(ctx, `select public.activate_whatsapp_conversation_lead_binding($1::uuid,$2::uuid,$3::uuid,null)`, organizationID, conversationID, leadID); err != nil {
+			t.Fatalf("canonical durable fixture binding: %v", err)
+		}
+	}
+	// Only malformed pre-cutover evidence uses this isolated legacy seed. It
+	// never fabricates a capture receipt or weakens admission for current rows.
+	insertLegacyHistory := func(query string, arguments ...any) {
+		t.Helper()
+		legacyTx, err := postgres.Pool().Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer legacyTx.Rollback(ctx)
+		if _, err := legacyTx.Exec(ctx, `set local session_replication_role=replica`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacyTx.Exec(ctx, query, arguments...); err != nil {
+			t.Fatal(err)
+		}
+		if err := legacyTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
 			organization_id, session_id, lead_id, assigned_user_id, remote_jid, contact_name
-		) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '5511999991111@s.whatsapp.net', $5)
+		) values ($1::uuid, $2::uuid, null, $3::uuid, '5511999991111@s.whatsapp.net', $4)
 		returning id::text
-	`, organizationID, sessionID, leadID, userID, suffix).Scan(&conversationID); err != nil {
+	`, organizationID, sessionID, userID, suffix).Scan(&conversationID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := postgres.Pool().Exec(ctx, `
-		select public.activate_whatsapp_conversation_lead_binding(
-			$1::uuid, $2::uuid, $3::uuid, null
-		)
-	`, organizationID, conversationID, leadID); err != nil {
-		t.Fatal(err)
-	}
+	activateFixtureBinding(conversationID, leadID)
 
 	repo := NewRepository(postgres, nil, StorageConfig{
 		ProjectURL: provider.URL,
@@ -459,25 +529,29 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 			organization_id, session_id, lead_id, assigned_user_id,
 			remote_jid, contact_phone, contact_name, last_message_at
 		) values (
-			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			'5522999922093@s.whatsapp.net', '5522999922093', $5, now() - interval '1 day'
+			$1::uuid, $2::uuid, null, $3::uuid,
+			'5522999922093@s.whatsapp.net', '5522999922093', $4, now() - interval '1 day'
 		)
 		returning id::text
-	`, organizationID, deletedSessionID, canaryLeadID, userID, suffix+" historical").Scan(&historicalConversationID); err != nil {
+	`, organizationID, deletedSessionID, userID, suffix+" historical").Scan(&historicalConversationID); err != nil {
 		t.Fatal(err)
 	}
-	if err := postgres.Pool().QueryRow(ctx, `
+	activateFixtureBinding(historicalConversationID, canaryLeadID)
+	// Sessionless data predates context enrichment: a current INSERT without
+	// a session has no tenant context. Preserve its original tenant explicitly
+	// in the isolated legacy fixture, with no binding or new capture receipt.
+	if err := postgres.Pool().QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&legacyConversationID); err != nil {
+		t.Fatal(err)
+	}
+	insertLegacyHistory(`
 		insert into public.whatsapp_conversations (
-			organization_id, session_id, lead_id, assigned_user_id,
-			remote_jid, contact_phone, contact_name, last_message_at
+			id, organization_id, session_id, lead_id, assigned_user_id,
+			remote_jid, contact_phone, contact_name, last_message_at, created_at
 		) values (
-			$1::uuid, null, null, null,
-			'5522999922093@s.whatsapp.net', '5522999922093', $2, now() - interval '2 days'
+			$1::uuid, $2::uuid, null, null, null,
+			'5522999922093@s.whatsapp.net', '5522999922093', $3, now() - interval '2 days', '2026-09-18T00:00:00Z'::timestamptz
 		)
-		returning id::text
-	`, organizationID, suffix+" legacy sessionless").Scan(&legacyConversationID); err != nil {
-		t.Fatal(err)
-	}
+	`, legacyConversationID, organizationID, suffix+" legacy sessionless")
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
 			organization_id, session_id, lead_id, assigned_user_id,
@@ -493,41 +567,39 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at, remote_jid
+			from_me, direction, content, message_type, status, sent_at, remote_jid, capture_state
 		)
 		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
 		       $5 || '-historical-' || item::text,
 		       (item % 2 = 0), case when item % 2 = 0 then 'outbound' else 'inbound' end,
 		       'historical ' || item::text, 'text', 'sent', now() - interval '1 day',
-		       '5522999922093@s.whatsapp.net'
+		       '5522999922093@s.whatsapp.net', 'observed_unattended'
 		from generate_series(1, 11) item
 	`, organizationID, deletedSessionID, historicalConversationID, canaryLeadID, suffix); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := postgres.Pool().Exec(ctx, `
+	insertLegacyHistory(`
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at, remote_jid
+			from_me, direction, content, message_type, status, sent_at, remote_jid, capture_state, created_at
 		)
 		select $1::uuid, null, $2::uuid, $3::uuid,
 		       $4 || '-legacy-sessionless-' || item::text,
 		       false, 'inbound', 'legacy sessionless ' || item::text,
 		       'text', 'received', now() - interval '2 days',
-		       '5522999922093@s.whatsapp.net'
+		       '5522999922093@s.whatsapp.net', 'legacy', '2026-09-18T00:00:00Z'::timestamptz
 		from generate_series(1, 3) item
-	`, organizationID, legacyConversationID, canaryLeadID, suffix); err != nil {
-		t.Fatal(err)
-	}
+	`, organizationID, legacyConversationID, canaryLeadID, suffix)
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at, remote_jid
+			from_me, direction, content, message_type, status, sent_at, remote_jid, capture_state
 		)
 		select $1::uuid, $2::uuid, $3::uuid, null,
 		       $4 || '-quarantine-' || item::text,
 		       (item % 3 = 0), case when item % 3 = 0 then 'outbound' else 'inbound' end,
 		       'quarantine ' || item::text, 'text', 'received', now(),
-		       '5522999922093@s.whatsapp.net'
+		       '5522999922093@s.whatsapp.net', 'unlinked_ephemeral'
 		from generate_series(1, 30) item
 	`, organizationID, sessionID, quarantineConversationID, suffix); err != nil {
 		t.Fatal(err)
@@ -556,6 +628,16 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.StartConversation(ctx, bolaContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
 		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
+	}); !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("inaccessible lead start BOLA = %v, want ErrInvalidReference", err)
+	}
+	// Lead visibility is checked before session access. A CRM reader with broad
+	// lead visibility still cannot claim another user's private WhatsApp history.
+	sessionBolaContext := bolaContext
+	sessionBolaContext.Permissions = []string{"lead_view_all"}
+	if _, err := repo.StartConversation(ctx, sessionBolaContext, StartConversationRequest{
+		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
+		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
 	}); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("quarantine claim BOLA error = %v, want ErrSessionNotFound", err)
 	}
@@ -566,12 +648,36 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Fatalf("quarantine claim mismatched phone error = %v, want ErrInvalidReference", err)
 	}
 
-	claimedConversation, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
+	if _, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
 		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
+	}); !errors.Is(err, ErrConversationHistoryLinkRequired) {
+		t.Fatalf("StartConversation() imported quarantine without consent: %v", err)
+	}
+	var beforeConsentAttributed int
+	if err := postgres.Pool().QueryRow(ctx, `select count(*)::integer from public.whatsapp_messages where conversation_id=$1::uuid and lead_id is not null`, quarantineConversationID).Scan(&beforeConsentAttributed); err != nil {
+		t.Fatal(err)
+	}
+	if beforeConsentAttributed != 0 {
+		t.Fatalf("quarantine attributed %d messages before consent", beforeConsentAttributed)
+	}
+	preview, err := repo.GetConversationLeadLinkPreview(ctx, tenantContext, quarantineConversationID, canaryLeadID, unlinkedConversationLeadSnapshot)
+	if err != nil || preview.EligibleMessageCount != 30 || preview.BindingMode != "active" || preview.SessionID != sessionID {
+		t.Fatalf("quarantine preview = %#v / %v, want exact 30 retained messages", preview, err)
+	}
+	var linked ConversationLeadLinkResult
+	if err := repo.LinkConversationToLead(ctx, tenantContext, quarantineConversationID, canaryLeadID, unlinkedConversationLeadSnapshot, &linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked.BindingMode != "active" || linked.AttachedMessageCount != 30 {
+		t.Fatalf("explicit quarantine confirmation = %#v", linked)
+	}
+	claimedConversation, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
+		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
+		ExpectedPreviousLeadID: canaryLeadID,
 	})
 	if err != nil {
-		t.Fatalf("StartConversation() quarantine claim error = %v", err)
+		t.Fatalf("StartConversation() after explicit quarantine confirmation: %v", err)
 	}
 	if claimedConversation.ID != quarantineConversationID || pointerValue(claimedConversation.LeadID) != canaryLeadID ||
 		claimedConversation.RemoteJID != "5522999922093@s.whatsapp.net" {
@@ -627,15 +733,31 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, inboundLogID).Scan(&logLeadID, &logAssigneeID); err != nil {
 		t.Fatal(err)
 	}
+	// The canonical binding updates exact aliases; the historical inbound log
+	// keeps its original null attribution instead of inventing prior lead access.
 	if currentLeadID != canaryLeadID || currentAssigneeID != userID ||
 		historicalSessionAfter != deletedSessionID || historicalLeadAfter != canaryLeadID ||
 		quarantineMessageCount != 30 || quarantineBackfilledCount != 30 || historicalMessageCount != 11 ||
 		exactConversationCount != 3 || wrongDestinationCount != 0 || aliasLeadID != canaryLeadID ||
-		logLeadID != canaryLeadID || logAssigneeID != userID {
+		logLeadID != "" || logAssigneeID != "" {
 		t.Fatalf("quarantine claim state current:%s/%s historical:%s/%s messages:%d/%d/%d conversations:%d wrong:%d alias:%s log:%s/%s",
 			currentLeadID, currentAssigneeID, historicalSessionAfter, historicalLeadAfter,
 			quarantineMessageCount, quarantineBackfilledCount, historicalMessageCount,
 			exactConversationCount, wrongDestinationCount, aliasLeadID, logLeadID, logAssigneeID)
+	}
+	var sessionlessLeadID *string
+	var promotedMessages, legacySessionlessMessages int
+	if err := postgres.Pool().QueryRow(ctx, `select lead_id::text from public.whatsapp_conversations where id=$1::uuid`, legacyConversationID).Scan(&sessionlessLeadID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `select count(*)::integer from public.whatsapp_messages where conversation_id=$1::uuid and capture_state='promoted_unlinked' and lead_id=$2::uuid`, quarantineConversationID, canaryLeadID).Scan(&promotedMessages); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `select count(*)::integer from public.whatsapp_messages where conversation_id=$1::uuid and capture_state='legacy' and lead_id=$2::uuid and session_id is null`, legacyConversationID, canaryLeadID).Scan(&legacySessionlessMessages); err != nil {
+		t.Fatal(err)
+	}
+	if sessionlessLeadID != nil || promotedMessages != 30 || legacySessionlessMessages != 3 {
+		t.Fatalf("explicit consent mutated legacy scope: sessionless lead=%v promoted=%d legacy=%d", sessionlessLeadID, promotedMessages, legacySessionlessMessages)
 	}
 
 	claimedAgain, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
@@ -688,13 +810,39 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.GetHistoryAccess(ctx, crossOrganizationContext, HistoryAccessFilter{LeadID: canaryLeadID, MessageFilter: MessageFilter{Limit: 100}}); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("cross-organization lead history BOLA error = %v, want ErrInvalidReference", err)
 	}
-	if _, err := repo.SendMessage(ctx, tenantContext, quarantineConversationID, sendMessageInput{
-		Text:            "must not send through deleted history session",
-		SendSessionID:   deletedSessionID,
-		ClientMessageID: "deleted-history-session-send",
-		ExpectedLeadID:  canaryLeadID,
-	}); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("deleted historical session SendMessage() error = %v, want ErrSessionNotFound", err)
+	// A selected connection cannot replace the conversation's physical route.
+	// The historical route remains readable but its deleted connection is not
+	// an operational send destination, even when selected explicitly.
+	providerCallsBeforeHistoricalSend := sendCalls.Load()
+	for _, blocked := range []struct {
+		conversationID string
+		clientID       string
+		want           error
+	}{
+		{quarantineConversationID, "mismatched-history-session-send", ErrInvalidInput},
+		{historicalConversationID, "deleted-history-session-send", ErrConversationNotFound},
+	} {
+		if _, err := repo.SendMessage(ctx, tenantContext, blocked.conversationID, sendMessageInput{
+			Text:            "must not send through deleted history session",
+			SendSessionID:   deletedSessionID,
+			ClientMessageID: blocked.clientID,
+			ExpectedLeadID:  canaryLeadID,
+		}); !errors.Is(err, blocked.want) {
+			t.Fatalf("blocked history SendMessage(%s) error = %v, want %v", blocked.clientID, err, blocked.want)
+		}
+	}
+	var blockedHistoryMessageCount, blockedHistoryOutboxCount int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select
+		  (select count(*)::integer from public.whatsapp_messages
+		   where organization_id = $1::uuid and client_message_id = any($2::text[])),
+		  (select count(*)::integer from public.whatsapp_outbox
+		   where organization_id = $1::uuid and client_message_id = any($2::text[]))
+	`, organizationID, []string{"mismatched-history-session-send", "deleted-history-session-send"}).Scan(&blockedHistoryMessageCount, &blockedHistoryOutboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if blockedHistoryMessageCount != 0 || blockedHistoryOutboxCount != 0 || sendCalls.Load() != providerCallsBeforeHistoricalSend {
+		t.Fatalf("blocked history send effects = messages:%d outbox:%d provider:%d->%d", blockedHistoryMessageCount, blockedHistoryOutboxCount, providerCallsBeforeHistoricalSend, sendCalls.Load())
 	}
 
 	clientMessageID := "client-durable-1"
@@ -871,18 +1019,19 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
 			organization_id, session_id, lead_id, assigned_user_id, remote_jid, contact_name
-		) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '5511888882222@s.whatsapp.net', $5)
+		) values ($1::uuid, $2::uuid, null, $3::uuid, '5511888882222@s.whatsapp.net', $4)
 		returning id::text
-	`, organizationID, sessionID, otherLeadID, userID, suffix+" other").Scan(&otherConversationID); err != nil {
+	`, organizationID, sessionID, userID, suffix+" other").Scan(&otherConversationID); err != nil {
 		t.Fatal(err)
 	}
+	activateFixtureBinding(otherConversationID, otherLeadID)
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at, remote_jid
+			from_me, direction, content, message_type, status, sent_at, remote_jid, capture_state
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'other-conversation-target',
-			false, 'inbound', 'other target', 'text', 'received', now(), '5511888882222@s.whatsapp.net'
+			false, 'inbound', 'other target', 'text', 'received', now(), '5511888882222@s.whatsapp.net', 'captured'
 		)
 		returning id::text
 	`, organizationID, sessionID, otherConversationID, otherLeadID).Scan(&otherMessageID); err != nil {
@@ -1019,11 +1168,21 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 			  status, request, response, completed_at
 			) values (
 			  $1::uuid, $2::uuid, $3, $4, 'send_whatsapp', 'succeeded',
-			  '{"delivery_contract":"canonical_whatsapp_outbox_v1"}'::jsonb,
+			  jsonb_build_object('delivery_contract', 'canonical_whatsapp_outbox_v1', 'session_id', $7::uuid),
 			  jsonb_build_object('delivery', 'outbox', 'status', 'queued', 'outbox_id', $5::uuid, 'message_id', $6::uuid),
 			  now()
 			) returning id::text
-		`, organizationID, executionID, nodeKey, clientID, fixture.outboxID, fixture.messageID).Scan(&fixture.dispatchID); err != nil {
+		`, organizationID, executionID, nodeKey, clientID, fixture.outboxID, fixture.messageID, sessionID).Scan(&fixture.dispatchID); err != nil {
+			t.Fatal(err)
+		}
+		// Production automation sends capture their effect identity in the
+		// message as well as the dispatch. Retry requires that exact pair.
+		if _, err := postgres.Pool().Exec(ctx, `
+			update public.whatsapp_messages
+			set metadata = coalesce(metadata, '{}'::jsonb)
+			  || jsonb_build_object('automation_effect_key', $3::text)
+			where organization_id = $1::uuid and id = $2::uuid
+		`, organizationID, fixture.messageID, clientID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := postgres.Pool().Exec(ctx, `
@@ -1373,6 +1532,9 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_sessions set is_active = false where id = $1::uuid`, sessionID); err != nil {
 		t.Fatal(err)
 	}
+	if err := repo.RecoverStaleWhatsAppOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1448,30 +1610,26 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Fatalf("known failure retry acknowledgement = %s/%s/%s", knownOutboxStatus, knownMessageStatus, knownEffectStatus)
 	}
 
-	if _, err := postgres.Pool().Exec(ctx, `
+	insertLegacyHistory(`
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at
+			from_me, direction, content, message_type, status, sent_at, capture_state, created_at
 		) values (
 			$1::uuid, null, $2::uuid, $3::uuid, 'legacy-null-session',
 			false, 'inbound', 'legacy history fixture', 'text', 'received',
-			'2100-01-01T00:00:00Z'::timestamptz
+			'2100-01-01T00:00:00Z'::timestamptz, 'legacy', '2026-09-18T00:00:00Z'::timestamptz
 		)
-	`, organizationID, conversationID, leadID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := postgres.Pool().Exec(ctx, `
+	`, organizationID, conversationID, leadID)
+	insertLegacyHistory(`
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at
+			from_me, direction, content, message_type, status, sent_at, capture_state, created_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'legacy-mismatched-session',
 			false, 'inbound', 'legacy mismatched history fixture', 'text', 'received',
-			'2080-01-01T00:00:00Z'::timestamptz
+			'2080-01-01T00:00:00Z'::timestamptz, 'legacy', '2026-09-18T00:00:00Z'::timestamptz
 		)
-	`, organizationID, legacySessionID, conversationID, leadID); err != nil {
-		t.Fatal(err)
-	}
+	`, organizationID, legacySessionID, conversationID, leadID)
 	legacyCrossOrgTx, err := postgres.Pool().Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1483,11 +1641,11 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := legacyCrossOrgTx.Exec(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at
+			from_me, direction, content, message_type, status, sent_at, capture_state, created_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'legacy-cross-org-session',
 			false, 'inbound', 'legacy cross-organization session fixture', 'text', 'received',
-			'2070-01-01T00:00:00Z'::timestamptz
+			'2070-01-01T00:00:00Z'::timestamptz, 'legacy', '2026-09-18T00:00:00Z'::timestamptz
 		)
 	`, organizationID, foreignHistorySessionID, conversationID, leadID); err != nil {
 		_ = legacyCrossOrgTx.Rollback(ctx)
@@ -1533,12 +1691,12 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			client_message_id, from_me, direction, content, message_type, status, sent_at
+			client_message_id, from_me, direction, content, message_type, status, sent_at, capture_state
 		)
 		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
 		       'pagination-' || fixture::text, 'pagination-client-' || fixture::text,
 		       false, 'inbound', 'pagination fixture ' || fixture::text,
-		       'text', 'received', '2099-01-01T00:00:00Z'::timestamptz
+		       'text', 'received', '2099-01-01T00:00:00Z'::timestamptz, 'observed_unattended'
 		from generate_series(1, 3) as fixture
 	`, organizationID, sessionID, conversationID, leadID); err != nil {
 		t.Fatal(err)
@@ -1585,13 +1743,13 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.whatsapp_messages (
 			organization_id, session_id, conversation_id, lead_id, message_id,
-			from_me, direction, content, message_type, status, sent_at
+			from_me, direction, content, message_type, status, sent_at, capture_state
 		)
 		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
 		       'lead-history-page-' || fixture::text,
 		       false, 'inbound', 'lead history page ' || fixture::text,
 		       'text', 'received',
-		       '2098-01-01T00:00:00Z'::timestamptz + fixture * interval '1 second'
+		       '2098-01-01T00:00:00Z'::timestamptz + fixture * interval '1 second', 'observed_unattended'
 		from generate_series(1, 520) as fixture
 	`, organizationID, sessionID, conversationID, leadID); err != nil {
 		t.Fatal(err)
@@ -1768,12 +1926,12 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if edgeCalls.Load() != 1 {
 		t.Fatalf("edge forward calls = %d, want 1", edgeCalls.Load())
 	}
-	var inboxStatus string
-	if err := postgres.Pool().QueryRow(ctx, `select status from public.whatsapp_webhook_inbox where id = $1::uuid`, firstReceipt.ID).Scan(&inboxStatus); err != nil {
+	var inboxStatus, inboxLastError string
+	if err := postgres.Pool().QueryRow(ctx, `select status, coalesce(last_error, '') from public.whatsapp_webhook_inbox where id = $1::uuid`, firstReceipt.ID).Scan(&inboxStatus, &inboxLastError); err != nil {
 		t.Fatal(err)
 	}
 	if inboxStatus != "processed" {
-		t.Fatalf("inbox status = %q, want processed", inboxStatus)
+		t.Fatalf("inbox status = %q, want processed; error=%q", inboxStatus, inboxLastError)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.whatsapp_webhook_inbox
@@ -1888,10 +2046,10 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		with cleanup_messages as (
 			insert into public.whatsapp_messages (
 				organization_id, session_id, conversation_id, lead_id, message_id,
-				from_me, direction, content, message_type, status, sent_at, remote_jid
+				from_me, direction, content, message_type, status, sent_at, remote_jid, capture_state
 			) values
-				($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, true, 'outbound', 'old success', 'text', 'sent', now() - interval '91 days', '5511999991111@s.whatsapp.net'),
-				($1::uuid, $2::uuid, $3::uuid, $4::uuid, $6, true, 'outbound', 'old failure', 'text', 'failed', now() - interval '181 days', '5511999991111@s.whatsapp.net')
+				($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, true, 'outbound', 'old success', 'text', 'sent', now() - interval '91 days', '5511999991111@s.whatsapp.net', 'captured'),
+				($1::uuid, $2::uuid, $3::uuid, $4::uuid, $6, true, 'outbound', 'old failure', 'text', 'failed', now() - interval '181 days', '5511999991111@s.whatsapp.net', 'captured')
 			returning id, message_id
 		)
 		insert into public.whatsapp_outbox (

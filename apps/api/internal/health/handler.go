@@ -10,9 +10,11 @@ import (
 )
 
 type Handler struct {
-	db           databasePinger
-	timeout      time.Duration
-	runtimeStats func() map[string]any
+	db               databasePinger
+	timeout          time.Duration
+	runtimeStats     func() map[string]any
+	readinessCheck   func() error
+	databaseReadOnly bool
 }
 
 type databasePinger interface {
@@ -35,6 +37,16 @@ func (handler Handler) WithRuntimeStats(provider func() map[string]any) Handler 
 	return handler
 }
 
+func (handler Handler) WithReadinessCheck(check func() error) Handler {
+	handler.readinessCheck = check
+	return handler
+}
+
+func (handler Handler) WithDatabaseReadOnly(readOnly bool) Handler {
+	handler.databaseReadOnly = readOnly
+	return handler
+}
+
 func (handler Handler) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(releaseHeader, currentRelease())
@@ -51,11 +63,20 @@ func (handler Handler) Health(w http.ResponseWriter, _ *http.Request) {
 func (handler Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(releaseHeader, currentRelease())
+	if handler.databaseReadOnly {
+		w.Header().Set("X-Vimob-Database-Read-Only", "true")
+	} else {
+		w.Header().Set("X-Vimob-Database-Read-Only", "false")
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), handler.timeout)
 	defer cancel()
 
 	if err := handler.db.Ping(ctx); err != nil {
 		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "database_unavailable", "Database is not ready.")
+		return
+	}
+	if handler.readinessCheck != nil && handler.readinessCheck() != nil {
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "worker_unavailable", "Background processing is not ready.")
 		return
 	}
 

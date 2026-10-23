@@ -84,7 +84,6 @@ export function buildCampaignTrackingDetails(
 
   const source = metaText(lead?.source);
   const inferredPlatform = isTrackedLeadSource(source) ? normalizeTrackingKey(source) : null;
-  const leadRecord = trackingRecord(lead);
   const boardMetaRecord = trackingRecord(boardMeta);
   const rawPayload = trackingRecord(leadMeta?.raw_payload);
   const rawDetails = trackingRecord(rawPayload?.lead_details);
@@ -123,7 +122,6 @@ export function buildCampaignTrackingDetails(
       boardMetaRecord?.form_name,
       rawDetails?.form_name,
       rawPayload?.form_name,
-      leadRecord?.utm_term,
     ),
     form_id: firstTrackingText(
       leadMeta?.form_id,

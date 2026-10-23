@@ -56,7 +56,8 @@ const RoundRobinAvailabilityPredicateSQL = `(
 				)
 			)
 			or (
-				availability.start_time is not null
+				coalesce(availability.is_all_day, false) = false
+				and availability.start_time is not null
 				and availability.end_time is not null
 				and availability.start_time > availability.end_time
 				and (

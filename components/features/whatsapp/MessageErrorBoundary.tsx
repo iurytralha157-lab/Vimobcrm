@@ -17,6 +17,10 @@ export class MessageErrorBoundary extends Component<MessageErrorBoundaryProps, M
     return { hasError: true };
   }
 
+  componentDidUpdate(previous: MessageErrorBoundaryProps) {
+    if (previous.messageId !== this.props.messageId && this.state.hasError) this.setState({ hasError: false });
+  }
+
   componentDidCatch(error: Error, info: { componentStack?: string }) {
     console.error("[WhatsApp Message Render Error]", {
       messageId: this.props.messageId,
@@ -29,10 +33,11 @@ export class MessageErrorBoundary extends Component<MessageErrorBoundaryProps, M
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex justify-center py-1">
+        <div className="flex justify-center py-1" role="alert">
           <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-muted-foreground">
             <AlertCircle className="h-3.5 w-3.5 text-destructive" />
             Mensagem indisponível
+            <button type="button" className="underline" onClick={() => this.setState({ hasError: false })}>Tentar exibir novamente</button>
           </div>
         </div>
       );

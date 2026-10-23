@@ -49,12 +49,14 @@ import {
   apiRoundRobinHistoryListResponseSchema,
   apiRoundRobinMetaFormOptionListResponseSchema,
   apiTeamDistributionStatsResponseSchema,
+  apiTeamResponseSchema,
   availabilityInputSchema,
   bulkAvailabilityInputSchema,
   contactListQuerySchema,
   createRoundRobinInputSchema,
   createTagInputSchema,
   createTeamInputSchema,
+  updateTeamBodySchema,
   dispatchNotificationInputSchema,
   updateTagInputSchema,
   apiNotificationListResponseSchema,
@@ -85,7 +87,7 @@ import {
   safePathSegmentSchema,
 } from "./final-domains";
 import {
-  auditLogCreateInputSchema,
+  auditFeedEventPayloadSchema,
   checkoutBillingDraftSessionSchema,
   checkoutBillingProfileSessionSchema,
   paymentCheckoutQuerySchema,
@@ -151,6 +153,34 @@ test("histórico de distribuição aceita somente entidades da fila", () => {
     }).success,
     false,
   );
+});
+
+test("criação de equipe rejeita formatos de membros simultâneos, inclusive vazios", () => {
+  assert.equal(createTeamInputSchema.safeParse({ name: "Equipe QA", members: [] }).success, true);
+  assert.equal(createTeamInputSchema.safeParse({ name: "Equipe QA", members: [], memberIds: [] }).success, false);
+  assert.equal(createTeamInputSchema.safeParse({ name: "Equipe QA", memberIds: [ID] }).success, false);
+});
+
+test("edição de equipe exige revisão válida e uma alteração real", () => {
+  const team = {
+    id: ID,
+    organization_id: ID,
+    name: "Equipe QA",
+    created_at: "2026-10-09T12:00:00Z",
+    revision: 1,
+  };
+  assert.equal(apiTeamResponseSchema.safeParse({ data: team }).success, true);
+  assert.equal(apiTeamResponseSchema.safeParse({ data: { ...team, revision: undefined } }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ name: "Equipe Nova" }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1 }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, name: "Equipe Nova" }).success, true);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, members: [] }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, expected_member_ids: [], members: [] }).success, true);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, expected_member_ids: [], memberIds: [] }).success, true);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, expected_member_ids: [], members: [], memberIds: [] }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 1, expected_member_ids: [], members: [{ userId: ID }], memberIds: [] }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: 0, name: "Equipe Nova" }).success, false);
+  assert.equal(updateTeamBodySchema.safeParse({ expected_revision: Number.MAX_SAFE_INTEGER + 1, name: "Equipe Nova" }).success, false);
 });
 
 test("opções de formulário Meta da distribuição aceitam somente o contrato mínimo", () => {
@@ -1174,16 +1204,18 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
   assert.equal(
     availabilityInputSchema.safeParse({
       team_member_id: ID,
+      expected_revision: 1,
+      is_all_day: true,
       day_of_week: 7,
     }).success,
     false,
   );
   assert.equal(
-    addRoundRobinMemberInputSchema.safeParse({ weight: 1 }).success,
+    addRoundRobinMemberInputSchema.safeParse({ expectedRevision: 1, weight: 1 }).success,
     false,
   );
   assert.equal(
-    addRoundRobinMemberInputSchema.safeParse({ userId: ID, weight: 0 }).success,
+    addRoundRobinMemberInputSchema.safeParse({ expectedRevision: 1, userId: ID, weight: 0 }).success,
     false,
   );
   const teamId = "22222222-2222-4222-8222-222222222222";
@@ -1239,12 +1271,13 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
     false,
   );
   assert.equal(
-    bulkAvailabilityInputSchema.safeParse({ availability: completeWeek })
+    bulkAvailabilityInputSchema.safeParse({ availability: completeWeek, expected_revision: 1 })
       .success,
     true,
   );
   assert.equal(
     bulkAvailabilityInputSchema.safeParse({
+      expected_revision: 1,
       availability: completeWeek.map((entry, index) => ({
         ...entry,
         day_of_week: index === 6 ? 5 : entry.day_of_week,
@@ -1381,7 +1414,8 @@ test("tags exigem contrato completo e cor hexadecimal canonica", () => {
   const valid = { name: "Investidor", color: "#3b82F6" };
 
   assert.equal(createTagInputSchema.safeParse(valid).success, true);
-  assert.equal(updateTagInputSchema.safeParse(valid).success, true);
+  assert.equal(updateTagInputSchema.safeParse({ ...valid, expected_updated_at: "2026-10-12T10:00:00.123456Z" }).success, true);
+  assert.equal(updateTagInputSchema.safeParse(valid).success, false);
 
   for (const color of ["#", "#fff", "#11223344", "red", "112233"]) {
     assert.equal(
@@ -2301,28 +2335,13 @@ test("analytics aceita somente valores escalares na query", () => {
   );
 });
 
-test("auditoria exige acao e entidade consistentes", () => {
+test("feed de auditoria aceita sinal minimo e payload legado durante a troca", () => {
+  assert.equal(auditFeedEventPayloadSchema.safeParse({ organizationId: ID }).success, true);
   assert.equal(
-    auditLogCreateInputSchema.safeParse({ action: "", entity_type: "lead" })
-      .success,
-    false,
-  );
-  assert.equal(
-    auditLogCreateInputSchema.safeParse({
-      action: "lead.updated",
-      entity_type: "lead",
-      entity_id: ID,
-    }).success,
+    auditFeedEventPayloadSchema.safeParse({ organizationId: ID, auditId: ID, action: "create" }).success,
     true,
   );
-  assert.equal(
-    auditLogCreateInputSchema.safeParse({
-      action: "webhook.received",
-      entity_type: "external",
-      entity_id: "meta-lead-123",
-    }).success,
-    true,
-  );
+  assert.equal(auditFeedEventPayloadSchema.safeParse({ organizationId: "invalid" }).success, false);
 });
 
 test("checkout publico exige token ou organizacao", () => {

@@ -112,7 +112,7 @@ func TestScheduleGoogleRecurrenceEnqueuesEveryOccurrenceBeforeCommit(t *testing.
 		"event.user_id = $4::uuid",
 		"from recurring_events event",
 		"jsonb_build_object('event_id', event.id::text, 'owner_user_id', $4::text)",
-		"when exists (select 1 from active_owner_connection) then 'pending'",
+		"when exists (select 1 from upsert_jobs job where job.schedule_event_id = event.id) then 'pending'",
 	} {
 		if !strings.Contains(enqueueScheduleGoogleRecurringCreatesSQL, fragment) {
 			t.Fatalf("recurring Google enqueue missing %q", fragment)
@@ -121,6 +121,17 @@ func TestScheduleGoogleRecurrenceEnqueuesEveryOccurrenceBeforeCommit(t *testing.
 	create := scheduleFunctionBody(t, mustReadScheduleContractFile(t, "repository.go"), "Create")
 	if enqueue, commit := strings.Index(create, "repo.enqueueScheduleGoogleRecurringCreates("), strings.Index(create, "tx.Commit(ctx)"); enqueue < 0 || commit < 0 || enqueue > commit {
 		t.Fatal("recurring Google jobs must be committed with their Vimob occurrences")
+	}
+}
+
+func TestGoogleEnqueueDoesNotMarkPendingWhenADisconnectTriggerRejectsTheJob(t *testing.T) {
+	for name, query := range map[string]string{"recurrence": enqueueScheduleGoogleRecurringCreatesSQL, "reschedule": enqueueRescheduleGoogleSyncSQL} {
+		if !strings.Contains(query, "returning schedule_event_id") || strings.Contains(query, "when exists (select 1 from active_owner_connection) then 'pending'") {
+			t.Fatalf("%s must derive pending from actual inserted jobs", name)
+		}
+		if !strings.Contains(query, "job.schedule_event_id = event.id") || !strings.Contains(query, "else 'not_connected'") {
+			t.Fatalf("%s lost per-event pending evidence", name)
+		}
 	}
 }
 

@@ -13,10 +13,11 @@ func TestLeadCreateRouteDefersCreateVersusImportPermissionToValidatedInput(t *te
 	}
 	source := string(raw)
 
-	if !strings.Contains(source, `mux.Handle("POST /v1/leads", withOrganization(http.HandlerFunc(leadsHandler.Create)))`) {
+	if !strings.Contains(source, `mux.Handle("POST /v1/leads", withActiveOrganization(http.HandlerFunc(leadsHandler.Create)))`) {
 		t.Fatal("lead create route must let the repository distinguish lead_create from lead_import after validating importMode")
 	}
-	if strings.Contains(source, `mux.Handle("POST /v1/leads", withPermission(permissions.LeadCreate`) {
+	if strings.Contains(source, `mux.Handle("POST /v1/leads", withPermission(permissions.LeadCreate`) ||
+		strings.Contains(source, `mux.Handle("POST /v1/leads", withActivePermission(permissions.LeadCreate`) {
 		t.Fatal("lead_create middleware blocks authorized lead_import requests before importMode can be validated")
 	}
 }

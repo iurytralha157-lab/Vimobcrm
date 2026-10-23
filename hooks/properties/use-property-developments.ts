@@ -1,7 +1,9 @@
 'use client'
 
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
+
 import { useRef } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/contexts/AuthContext'
@@ -341,10 +343,11 @@ export function useCreatePropertyDevelopment() {
   const { organizationId, accessSignature } = useDevelopmentQueryScope()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
-    mutationFn: async (input: PropertyDevelopmentCreateInput) => {
+  return usePropertyMutation({
+    resourceId: 'development-create',
+    mutationFn: async (input: PropertyDevelopmentCreateInput, scope) => {
       if (!organizationId) throw new Error('Organizacao nao identificada')
-      const response = await propertyDevelopmentsAPI.create(organizationId, input)
+      const response = await propertyDevelopmentsAPI.create(organizationId, input, scope.requestIntent)
       queryClient.setQueryData(
         propertyDevelopmentKeys.workspace(
           organizationId,
@@ -355,11 +358,11 @@ export function useCreatePropertyDevelopment() {
       )
       return response.data.development
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate()
-      toast.success('Empreendimento criado com sucesso')
+      if (scope.isCurrent()) toast.success('Empreendimento criado com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -367,16 +370,17 @@ export function useCreatePropertyDevelopmentPhase(developmentId: string | null) 
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
-    mutationFn: async (input: PropertyDevelopmentPhaseCreateInput) => {
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
+    mutationFn: async (input: PropertyDevelopmentPhaseCreateInput, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-      return propertyDevelopmentsAPI.createPhase(organizationId, developmentId, input)
+      return propertyDevelopmentsAPI.createPhase(organizationId, developmentId, input, scope.requestIntent)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Fase criada com sucesso')
+      if (scope.isCurrent()) toast.success('Fase criada com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -384,16 +388,17 @@ export function useCreatePropertyDevelopmentBuilding(developmentId: string | nul
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
-    mutationFn: async (input: PropertyDevelopmentBuildingCreateInput) => {
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
+    mutationFn: async (input: PropertyDevelopmentBuildingCreateInput, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-      return propertyDevelopmentsAPI.createBuilding(organizationId, developmentId, input)
+      return propertyDevelopmentsAPI.createBuilding(organizationId, developmentId, input, scope.requestIntent)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Bloco ou torre criado com sucesso')
+      if (scope.isCurrent()) toast.success('Bloco ou torre criado com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -401,16 +406,17 @@ export function useCreatePropertyDevelopmentFloorPlan(developmentId: string | nu
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
-    mutationFn: async (input: PropertyDevelopmentFloorPlanCreateInput) => {
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
+    mutationFn: async (input: PropertyDevelopmentFloorPlanCreateInput, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-      return propertyDevelopmentsAPI.createFloorPlan(organizationId, developmentId, input)
+      return propertyDevelopmentsAPI.createFloorPlan(organizationId, developmentId, input, scope.requestIntent)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Planta criada com sucesso')
+      if (scope.isCurrent()) toast.success('Planta criada com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -418,16 +424,17 @@ export function useBulkCreatePropertyDevelopmentUnits(developmentId: string | nu
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
-    mutationFn: async (input: PropertyDevelopmentBulkUnitsInput) => {
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
+    mutationFn: async (input: PropertyDevelopmentBulkUnitsInput, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-      return propertyDevelopmentsAPI.bulkCreateUnits(organizationId, developmentId, input)
+      return propertyDevelopmentsAPI.bulkCreateUnits(organizationId, developmentId, input, scope.requestIntent)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Unidades geradas com sucesso')
+      if (scope.isCurrent()) toast.success('Unidades geradas com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -435,22 +442,23 @@ export function useUpdatePropertyDevelopmentUnit(developmentId: string | null) {
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
     mutationFn: async ({
       unitId,
       input,
     }: {
       unitId: string
       input: PropertyDevelopmentUnitPatchInput
-    }) => {
+    }, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-      return propertyDevelopmentsAPI.updateUnit(organizationId, developmentId, unitId, input)
+      return propertyDevelopmentsAPI.updateUnit(organizationId, developmentId, unitId, input, scope.requestIntent)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Unidade atualizada com sucesso')
+      if (scope.isCurrent()) toast.success('Unidade atualizada com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -459,7 +467,8 @@ export function useLinkPropertyDevelopmentUnit(developmentId: string | null) {
 	const invalidate = useInvalidateUnitPropertyLink()
 	const idempotencyKeys = useIdempotencyAttemptKeys()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			unitId,
 			input,
@@ -468,7 +477,7 @@ export function useLinkPropertyDevelopmentUnit(developmentId: string | null) {
 			unitId: string
 			input: PropertyDevelopmentUnitLinkInput
 			idempotencyKey?: string
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
 			const fingerprint = unitPropertyAttemptFingerprint('link', unitId, input)
 			return propertyDevelopmentsAPI.linkUnitProperty(
@@ -476,17 +485,17 @@ export function useLinkPropertyDevelopmentUnit(developmentId: string | null) {
 				developmentId,
 				unitId,
 				input,
-				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+				idempotencyKeys.resolve(fingerprint, idempotencyKey), scope.requestIntent,
 			)
 		},
-		onSuccess: async (result, variables) => {
+		onSuccess: async (result, variables, scope) => {
 			idempotencyKeys.release(unitPropertyAttemptFingerprint('link', variables.unitId, variables.input))
 			await invalidate(developmentId, [variables.input.property_id, result.property?.id])
-			toast.success(result.replayed ? 'Vínculo confirmado novamente' : 'Imóvel vinculado à unidade')
+			if (scope.isCurrent()) toast.success(result.replayed ? 'Vínculo confirmado novamente' : 'Imóvel vinculado à unidade')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId, [])
-			toast.error(getUnitPropertyErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getUnitPropertyErrorMessage(error))
 		},
 	})
 }
@@ -496,7 +505,8 @@ export function usePromotePropertyDevelopmentUnit(developmentId: string | null) 
 	const invalidate = useInvalidateUnitPropertyLink()
 	const idempotencyKeys = useIdempotencyAttemptKeys()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			unitId,
 			input,
@@ -505,7 +515,7 @@ export function usePromotePropertyDevelopmentUnit(developmentId: string | null) 
 			unitId: string
 			input: PropertyDevelopmentUnitPromoteInput
 			idempotencyKey?: string
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
 			const fingerprint = unitPropertyAttemptFingerprint('promote', unitId, input)
 			return propertyDevelopmentsAPI.promoteUnitProperty(
@@ -513,17 +523,17 @@ export function usePromotePropertyDevelopmentUnit(developmentId: string | null) 
 				developmentId,
 				unitId,
 				input,
-				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+				idempotencyKeys.resolve(fingerprint, idempotencyKey), scope.requestIntent,
 			)
 		},
-		onSuccess: async (result, variables) => {
+		onSuccess: async (result, variables, scope) => {
 			idempotencyKeys.release(unitPropertyAttemptFingerprint('promote', variables.unitId, variables.input))
 			await invalidate(developmentId, [result.property?.id])
-			toast.success(result.replayed ? 'Ficha confirmada novamente' : 'Ficha do imóvel criada e vinculada')
+			if (scope.isCurrent()) toast.success(result.replayed ? 'Ficha confirmada novamente' : 'Ficha do imóvel criada e vinculada')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId, [])
-			toast.error(getUnitPropertyErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getUnitPropertyErrorMessage(error))
 		},
 	})
 }
@@ -533,7 +543,8 @@ export function useUnlinkPropertyDevelopmentUnit(developmentId: string | null) {
 	const invalidate = useInvalidateUnitPropertyLink()
 	const idempotencyKeys = useIdempotencyAttemptKeys()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			unitId,
 			input,
@@ -543,7 +554,7 @@ export function useUnlinkPropertyDevelopmentUnit(developmentId: string | null) {
 			propertyId: string
 			input: PropertyDevelopmentUnitUnlinkInput
 			idempotencyKey?: string
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
 			const fingerprint = unitPropertyAttemptFingerprint('unlink', unitId, input)
 			return propertyDevelopmentsAPI.unlinkUnitProperty(
@@ -551,17 +562,17 @@ export function useUnlinkPropertyDevelopmentUnit(developmentId: string | null) {
 				developmentId,
 				unitId,
 				input,
-				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+				idempotencyKeys.resolve(fingerprint, idempotencyKey), scope.requestIntent,
 			)
 		},
-		onSuccess: async (result, variables) => {
+		onSuccess: async (result, variables, scope) => {
 			idempotencyKeys.release(unitPropertyAttemptFingerprint('unlink', variables.unitId, variables.input))
 			await invalidate(developmentId, [variables.propertyId, result.property?.id])
-			toast.success(result.replayed ? 'Desvínculo confirmado novamente' : 'Ficha desvinculada da unidade')
+			if (scope.isCurrent()) toast.success(result.replayed ? 'Desvínculo confirmado novamente' : 'Ficha desvinculada da unidade')
 		},
-		onError: async (error, variables) => {
+		onError: async (error, variables, scope) => {
 			await invalidate(developmentId, [variables.propertyId])
-			toast.error(getUnitPropertyErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getUnitPropertyErrorMessage(error))
 		},
 	})
 }
@@ -570,26 +581,27 @@ export function useActivatePropertyDevelopmentPriceTable(developmentId: string |
   const organizationId = useDevelopmentOrganizationId()
   const invalidate = useInvalidatePropertyDevelopments()
 
-  return useMutation({
+  return usePropertyMutation({
+    resourceId: developmentId ?? '',
     mutationFn: async ({
       priceTableId,
       ...input
     }: {
       priceTableId: string
-    } & PropertyDevelopmentPriceTableActivateInput) => {
+    } & PropertyDevelopmentPriceTableActivateInput, scope) => {
       if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
       return propertyDevelopmentsAPI.activatePriceTable(
         organizationId,
         developmentId,
         priceTableId,
-        input,
+        input, scope.requestIntent,
       )
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate(developmentId)
-      toast.success('Tabela de precos ativada com sucesso')
+      if (scope.isCurrent()) toast.success('Tabela de precos ativada com sucesso')
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)); },
   })
 }
 
@@ -598,12 +610,13 @@ export function useCreatePropertyDevelopmentReservation(developmentId: string | 
 	const invalidate = useInvalidatePropertyDevelopments()
 	const idempotencyKeys = useRef(new Map<string, string>())
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async (variables: {
 			unitId: string
 			input: PropertyDevelopmentReservationCreateInput
 			idempotencyKey?: string
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
 			const fingerprint = reservationAttemptFingerprint(variables)
 			let idempotencyKey = variables.idempotencyKey || idempotencyKeys.current.get(fingerprint)
@@ -620,17 +633,17 @@ export function useCreatePropertyDevelopmentReservation(developmentId: string | 
 				developmentId,
 				variables.unitId,
 				variables.input,
-				idempotencyKey,
+				idempotencyKey, scope.requestIntent,
 			)
 		},
-		onSuccess: async (_reservation, variables) => {
+		onSuccess: async (_reservation, variables, scope) => {
 			idempotencyKeys.current.delete(reservationAttemptFingerprint(variables))
 			await invalidate(developmentId)
-			toast.success('Reserva criada com sucesso')
+			if (scope.isCurrent()) toast.success('Reserva criada com sucesso')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId)
-			toast.error(getErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getErrorMessage(error))
 		},
 	})
 }
@@ -639,24 +652,25 @@ export function useCancelPropertyDevelopmentReservation(developmentId: string | 
 	const organizationId = useDevelopmentOrganizationId()
 	const invalidate = useInvalidatePropertyDevelopments()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			reservationId,
 			input,
 		}: {
 			reservationId: string
 			input: PropertyDevelopmentReservationCancelInput
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-			return propertyDevelopmentsAPI.cancelReservation(organizationId, developmentId, reservationId, input)
+			return propertyDevelopmentsAPI.cancelReservation(organizationId, developmentId, reservationId, input, scope.requestIntent)
 		},
-		onSuccess: async () => {
+		onSuccess: async (_data, _input, scope) => {
 			await invalidate(developmentId)
-			toast.success('Reserva cancelada')
+			if (scope.isCurrent()) toast.success('Reserva cancelada')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId)
-			toast.error(getErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getErrorMessage(error))
 		},
 	})
 }
@@ -665,24 +679,25 @@ export function useConvertPropertyDevelopmentReservation(developmentId: string |
 	const organizationId = useDevelopmentOrganizationId()
 	const invalidate = useInvalidatePropertyDevelopments()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			reservationId,
 			input,
 		}: {
 			reservationId: string
 			input: PropertyDevelopmentReservationConvertInput
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-			return propertyDevelopmentsAPI.convertReservation(organizationId, developmentId, reservationId, input)
+			return propertyDevelopmentsAPI.convertReservation(organizationId, developmentId, reservationId, input, scope.requestIntent)
 		},
-		onSuccess: async () => {
+		onSuccess: async (_data, _input, scope) => {
 			await invalidate(developmentId)
-			toast.success('Reserva convertida em venda')
+			if (scope.isCurrent()) toast.success('Reserva convertida em venda')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId)
-			toast.error(getErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getErrorMessage(error))
 		},
 	})
 }
@@ -691,24 +706,25 @@ export function useExtendPropertyDevelopmentReservation(developmentId: string | 
 	const organizationId = useDevelopmentOrganizationId()
 	const invalidate = useInvalidatePropertyDevelopments()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			reservationId,
 			input,
 		}: {
 			reservationId: string
 			input: PropertyDevelopmentReservationExtendInput
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-			return propertyDevelopmentsAPI.extendReservation(organizationId, developmentId, reservationId, input)
+			return propertyDevelopmentsAPI.extendReservation(organizationId, developmentId, reservationId, input, scope.requestIntent)
 		},
-		onSuccess: async () => {
+		onSuccess: async (_data, _input, scope) => {
 			await invalidate(developmentId)
-			toast.success('Prazo da reserva atualizado')
+			if (scope.isCurrent()) toast.success('Prazo da reserva atualizado')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId)
-			toast.error(getErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getErrorMessage(error))
 		},
 	})
 }
@@ -717,24 +733,25 @@ export function useUpdatePropertyDevelopmentUnitPrice(developmentId: string | nu
 	const organizationId = useDevelopmentOrganizationId()
 	const invalidate = useInvalidatePropertyDevelopments()
 
-	return useMutation({
+	return usePropertyMutation({
+    resourceId: developmentId ?? '',
 		mutationFn: async ({
 			unitId,
 			input,
 		}: {
 			unitId: string
 			input: PropertyDevelopmentUnitPriceInput
-		}) => {
+		}, scope) => {
 			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
-			return propertyDevelopmentsAPI.updateUnitPrice(organizationId, developmentId, unitId, input)
+			return propertyDevelopmentsAPI.updateUnitPrice(organizationId, developmentId, unitId, input, scope.requestIntent)
 		},
-		onSuccess: async () => {
+		onSuccess: async (_data, _input, scope) => {
 			await invalidate(developmentId)
-			toast.success('Preço da unidade salvo em rascunho')
+			if (scope.isCurrent()) toast.success('Preço da unidade salvo em rascunho')
 		},
-		onError: async (error) => {
+		onError: async (error, _input, scope) => {
 			await invalidate(developmentId)
-			toast.error(getErrorMessage(error))
+			if (scope.isCurrent()) toast.error(getErrorMessage(error))
 		},
 	})
 }

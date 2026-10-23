@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
+export { automationMediaTypeSchema, automationMediaListQuerySchema, automationExecutionListQuerySchema } from './automation-filters'
 import {
   AUTOMATION_CUSTOM_VARIABLES,
   unknownAutomationTemplateVariables,
@@ -15,7 +16,6 @@ export const automationTriggerTypeSchema = z.enum([
   'manual',
 ])
 export const automationNodeTypeSchema = z.enum(['trigger', 'action', 'condition', 'delay'])
-export const automationMediaTypeSchema = z.enum(['image', 'audio', 'video'])
 export const automationActionTypeSchema = z.enum([
   'send_whatsapp',
   'send_image',

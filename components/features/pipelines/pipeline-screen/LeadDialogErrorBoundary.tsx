@@ -65,18 +65,23 @@ export class LeadDialogErrorBoundary extends Component<
     console.error('[LeadDialogErrorBoundary] Erro ao abrir lead', error, errorInfo);
     if (!isChunkLoadError(error) || typeof window === 'undefined') return;
 
-    const previousAttempt = Number(
-      window.sessionStorage.getItem(LEAD_DIALOG_CHUNK_RELOAD_KEY) || 0,
-    );
-    if (
-      !previousAttempt ||
-      Date.now() - previousAttempt > LEAD_DIALOG_CHUNK_RELOAD_WINDOW_MS
-    ) {
-      window.sessionStorage.setItem(
-        LEAD_DIALOG_CHUNK_RELOAD_KEY,
-        String(Date.now()),
+    try {
+      const previousAttempt = Number(
+        window.sessionStorage.getItem(LEAD_DIALOG_CHUNK_RELOAD_KEY) || 0,
       );
-      window.location.reload();
+      if (
+        !previousAttempt ||
+        Date.now() - previousAttempt > LEAD_DIALOG_CHUNK_RELOAD_WINDOW_MS
+      ) {
+        window.sessionStorage.setItem(
+          LEAD_DIALOG_CHUNK_RELOAD_KEY,
+          String(Date.now()),
+        );
+        window.location.reload();
+      }
+    } catch {
+      // Keep the dialog's explicit reload action if the automatic attempt
+      // cannot be recorded safely; reloading without that guard could loop.
     }
   }
 

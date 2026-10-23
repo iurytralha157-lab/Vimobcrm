@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from '@/hooks/dashboard/use-dashboard-query';
 
 import { useDashboardQueryScope } from "@/hooks/use-dashboard-stats";
 import {
@@ -9,7 +9,7 @@ import {
   type DashboardAPIFilters,
 } from "@/lib/api/dashboard";
 
-const DASHBOARD_CREATIVES_STALE_TIME_MS = 1000 * 60 * 10;
+const DASHBOARD_CREATIVES_STALE_TIME_MS = 1000 * 60;
 
 export function useDashboardCreatives(
   filters: DashboardAPIFilters,
@@ -19,7 +19,7 @@ export function useDashboardCreatives(
     useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
 
-  return useQuery({
+  return useDashboardQuery({
     queryKey: [
       "dashboard-creatives",
       organizationId,
@@ -31,5 +31,7 @@ export function useDashboardCreatives(
     queryFn: ({ signal }) =>
       getDashboardCreatives({ organizationId, filters, signal }),
     staleTime: DASHBOARD_CREATIVES_STALE_TIME_MS,
-  });
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+  }, { accessSignature, isReady });
 }

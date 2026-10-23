@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -130,52 +129,6 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}, nil
 }
 
-func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) error {
-	organizationID := input.OrganizationID
-	if organizationID == "" {
-		organizationID = tenantContext.OrganizationID
-	}
-	if organizationID != "" && !tenantContext.IsSuperAdmin && organizationID != tenantContext.OrganizationID {
-		return tenant.ErrOrganizationAccessDenied
-	}
-
-	_, err := repo.db.Pool().Exec(ctx, `
-		insert into public.audit_logs (
-			user_id,
-			organization_id,
-			action,
-			entity_type,
-			entity_id,
-			old_data,
-			new_data,
-			ip_address,
-			user_agent
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3,
-			$4,
-			nullif($5, ''),
-			$6::jsonb,
-			$7::jsonb,
-			$8::inet,
-			$9
-		)
-	`,
-		nullableString(tenantContext.UserID),
-		nullableString(organizationID),
-		input.Action,
-		input.EntityType,
-		input.EntityID,
-		jsonb(input.OldData),
-		jsonb(input.NewData),
-		nullableString(input.IPAddress),
-		nullableString(input.UserAgent),
-	)
-	return err
-}
-
 func scanAuditLogWithTotal(row scanner) (AuditLog, int64, error) {
 	var total int64
 	log, err := scanAuditLogFields(row, &total)
@@ -259,19 +212,4 @@ func jsonMap(value string) map[string]any {
 		return nil
 	}
 	return out
-}
-
-func jsonb(value map[string]any) string {
-	if value == nil {
-		return "null"
-	}
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return "null"
-	}
-	return string(payload)
-}
-
-func nullableString(value string) any {
-	return pgvalue.NullableString(value)
 }

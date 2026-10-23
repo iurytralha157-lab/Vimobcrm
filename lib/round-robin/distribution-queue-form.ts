@@ -1,4 +1,6 @@
 import type { RoundRobinMetaFormOption } from "@/lib/api/round-robins";
+import type { QueueOperatingSchedule } from "@/lib/validation/queue-runtime";
+import { createQueueOperatingSchedule, queueWarningMinutes } from "@/lib/round-robin/operating-schedule";
 import {
   hydrateQueueMembers,
   type QueueMemberDraft,
@@ -7,6 +9,8 @@ import {
 } from "@/lib/round-robin/member-context";
 
 export interface DistributionQueueSettings {
+  operating_schedule?: QueueOperatingSchedule;
+  pool_notifications?: { enabled: boolean };
   ignore_availability?: boolean;
   auto_tag_ids?: string[];
   enable_redistribution?: boolean;
@@ -34,6 +38,9 @@ export interface DistributionQueueCondition {
     | "tag"
     | "city"
     | "interest_property";
+  originalRule?: ExistingDistributionQueueRule;
+  originalFingerprint?: string;
+  legacyType?: string;
   values: string[];
   sessionId?: string;
 }
@@ -42,6 +49,11 @@ export type DistributionQueueConditionType = DistributionQueueCondition["type"];
 export type DistributionQueueStrategy = DistributionQueueFormData["strategy"];
 
 export interface DistributionQueueFormData {
+  // Editor-only flags, derived from the loaded queue at save time.
+  preserveRuleSnapshot?: boolean;
+  preserveMemberSnapshot?: boolean;
+  creationAttemptId?: string;
+  expectedRevision?: number;
   name: string;
   strategy: "simple" | "weighted";
   target_pipeline_id: string;
@@ -57,11 +69,16 @@ export interface ExistingDistributionQueueRule {
   match_type?: string | null;
   match_value?: string | null;
   match?: unknown;
+  priority?: number | null;
+  is_active?: boolean | null;
 }
 
 export type ExistingDistributionQueueMember = QueueMemberSource;
 
 export interface ExistingDistributionQueue {
+  eligible_user_count?: number;
+  hasUnsupportedReentryBehavior?: boolean;
+  revision?: number;
   id?: string;
   name?: string | null;
   strategy?: string | null;
@@ -72,6 +89,23 @@ export interface ExistingDistributionQueue {
   reentry_behavior?: "redistribute" | "keep_assignee" | null;
   rules?: ExistingDistributionQueueRule[] | null;
   members?: ExistingDistributionQueueMember[] | null;
+}
+
+export function normalizeExistingDistributionQueue(
+  queue: Omit<ExistingDistributionQueue, "settings" | "reentry_behavior"> & { settings?: unknown; reentry_behavior?: unknown },
+): ExistingDistributionQueue {
+  const settings = queue.settings && typeof queue.settings === "object" && !Array.isArray(queue.settings)
+    ? queue.settings as Partial<DistributionQueueSettings>
+    : null;
+  const behavior = queue.reentry_behavior ?? settings?.reentry_behavior;
+  const validBehavior = behavior === "redistribute" || behavior === "keep_assignee";
+  return {
+    ...queue,
+    // API settings retain legacy keys. Only an object can be spread into the form.
+    settings,
+    reentry_behavior: validBehavior ? behavior : null,
+    hasUnsupportedReentryBehavior: Boolean(behavior != null && !validBehavior),
+  };
 }
 
 export const MAX_DISTRIBUTION_QUEUE_AUTO_TAGS = 50;
@@ -159,6 +193,7 @@ export function normalizeDistributionQueueConditionType(
   value: unknown,
 ): DistributionQueueConditionType {
   if (value === "form") return "meta_form";
+  if (value === "property") return "interest_property";
   return isDistributionQueueConditionType(value) ? value : "source";
 }
 
@@ -176,6 +211,8 @@ export function createEmptyDistributionQueueFormData(): DistributionQueueFormDat
     target_stage_id: "",
     is_active: true,
     settings: {
+      operating_schedule: createQueueOperatingSchedule(),
+      pool_notifications: { enabled: false },
       auto_tag_ids: [],
       enable_redistribution: false,
       redistribution_timeout_minutes: 20,
@@ -216,11 +253,24 @@ export function hydrateDistributionQueueFormData(
               .filter(Boolean)
         : [];
 
-      return { id: rule.id, type, values, sessionId };
+      const literalValues = type === "campaign_contains" && rule.match && typeof rule.match === "object" && !Array.isArray(rule.match)
+        ? (rule.match as Record<string, unknown>).campaign_name_contains_literals
+        : undefined;
+      const hasLiteralValues = literalValues !== undefined;
+      const campaignValues = hasLiteralValues ? Array.isArray(literalValues) ? literalValues.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [] : values;
+
+      const condition = { id: rule.id, type, values: type === "campaign_contains" ? campaignValues : values, sessionId };
+      return {
+        ...condition,
+        originalRule: rule,
+        originalFingerprint: distributionQueueConditionFingerprint(condition),
+        legacyType: !isDistributionQueueConditionType(rule.match_type) && !["form", "property"].includes(rule.match_type || "") ? rule.match_type || "Desconhecido" : undefined,
+      };
     },
   );
 
   return {
+    expectedRevision: queue.revision,
     name: queue.name || "",
     strategy: isDistributionQueueStrategy(queue.strategy)
       ? queue.strategy
@@ -231,6 +281,10 @@ export function hydrateDistributionQueueFormData(
     settings: {
       ...createEmptyDistributionQueueFormData().settings,
       ...(queue.settings || {}),
+      operating_schedule: queue.settings?.operating_schedule,
+      pool_notifications: queue.settings?.pool_notifications,
+      ignore_availability: queue.settings?.operating_schedule ? false : queue.settings?.ignore_availability,
+      redistribution_warning_minutes: queueWarningMinutes(queue.settings?.redistribution_timeout_minutes ?? 20, queue.settings?.redistribution_warning_minutes),
       auto_tag_ids: normalizeDistributionQueueAutoTagIds(
         queue.settings?.auto_tag_ids,
       ),
@@ -254,7 +308,7 @@ export function hasValidDistributionQueueCriteria(
 ): boolean {
   return conditions.some(
     (condition) =>
-      condition.values.some((value) => value.trim()) &&
+      (condition.values.some((value) => value.trim()) || Boolean(condition.legacyType && condition.originalRule)) &&
       (condition.type !== "whatsapp_message_contains" ||
         Boolean(condition.sessionId?.trim())),
   );
@@ -276,6 +330,7 @@ export function getDistributionQueueEligibleUserIds(
   const eligibleUsers = new Set<string>();
 
   for (const member of members) {
+    if (member.isActive === false) continue;
     if (member.type === "user") {
       const userId = member.entityId.trim();
       if (activeUsers.has(userId)) eligibleUsers.add(userId);
@@ -290,6 +345,25 @@ export function getDistributionQueueEligibleUserIds(
   }
 
   return Array.from(eligibleUsers);
+}
+
+export function distributionQueueConditionFingerprint(condition: Pick<DistributionQueueCondition, "type" | "values" | "sessionId">) {
+  return JSON.stringify([condition.type, condition.values, condition.sessionId || ""]);
+}
+
+export function distributionQueueRuleInputs(conditions: DistributionQueueCondition[]) {
+  const unchanged = conditions.filter((condition) => condition.originalRule && (condition.legacyType || condition.originalFingerprint === distributionQueueConditionFingerprint(condition)));
+  return {
+    conditions: conditions.flatMap((condition, index) => unchanged.includes(condition) ? [] : [{ id: condition.id, type: condition.type, values: condition.values, sessionId: condition.sessionId, ...(!condition.originalRule ? { priority: 1000-index } : {}) }]),
+    rules: unchanged.map((condition) => ({
+      id: condition.originalRule!.id,
+      match_type: condition.originalRule!.match_type || "",
+      match_value: condition.originalRule!.match_value || "",
+      match: condition.originalRule!.match && typeof condition.originalRule!.match === "object" && !Array.isArray(condition.originalRule!.match) ? condition.originalRule!.match as Record<string, unknown> : undefined,
+      priority: condition.originalRule!.priority ?? undefined,
+      is_active: condition.originalRule!.is_active ?? undefined,
+    })),
+  };
 }
 
 export function sanitizeDistributionQueueConditions(
@@ -323,7 +397,7 @@ export function sanitizeDistributionQueueConditions(
             : undefined,
       };
     })
-    .filter((condition) => condition.values.length > 0);
+    .filter((condition) => condition.values.length > 0 || Boolean(condition.originalRule));
 }
 
 export function findConflictingDistributionQueueMetaForm(

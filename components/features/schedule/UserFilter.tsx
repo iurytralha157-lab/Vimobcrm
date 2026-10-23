@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Command,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -15,8 +14,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useState } from "react";
-import { commandSearchFilter } from "@/lib/search-text";
+import { useMemo, useRef, useState } from "react";
+import { searchTextIncludes } from "@/lib/search-text";
+import { FILTER_UI } from "@/config/filter-ui";
 
 interface User {
   id: string;
@@ -38,20 +38,26 @@ export function UserFilter({
   showAllOption = true,
 }: UserFilterProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const selectedUser = users.find((u) => u.id === selectedUserId);
+  const matchingUsers = useMemo(() => users.filter((user) => searchTextIncludes(user.name, search)), [search, users]);
+  const selectedLabel = selectedUser?.name ?? (selectedUserId ? "Usuário indisponível" : "Todos os usuários");
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setSearch(""); }}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="h-8 w-full justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+          aria-label={`Filtrar por usuário: ${selectedLabel}`}
+          title={selectedLabel}
+          className={cn(FILTER_UI.control, "justify-between")}
         >
           {selectedUser ? (
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <Avatar className="h-5 w-5">
                 <AvatarImage src={selectedUser.avatar_url || undefined} />
                 <AvatarFallback className="bg-primary/50 text-[10px] font-light text-white">
@@ -67,26 +73,32 @@ export function UserFilter({
           ) : (
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              <span>Todos os usuários</span>
+              <span className="truncate">{selectedLabel}</span>
             </div>
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="app-header-popover z-50 w-[220px] rounded-[8px] border-0 p-1">
+      <PopoverContent className={cn("app-header-popover z-[140] w-[260px] rounded-[8px] border-0 p-1", FILTER_UI.panelViewport)} collisionPadding={FILTER_UI.collisionPadding}
+        onOpenAutoFocus={(event) => { event.preventDefault(); searchRef.current?.focus(); }}>
         <Command
           className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0"
-          filter={commandSearchFilter}
+          shouldFilter={false}
+          label="Buscar usuário por nome"
         >
           <CommandInput
             placeholder="Buscar usuário..."
-            className="h-8 text-[12px] font-light"
+            ref={searchRef}
+            aria-label="Buscar usuário por nome"
+            value={search}
+            onValueChange={setSearch}
+            className="h-9 py-0 text-[12px] font-light"
           />
           <CommandList>
-            <CommandEmpty>Nenhum usuário encontrado.</CommandEmpty>
+            {matchingUsers.length === 0 && <p role="status" className="py-3 text-center text-[12px] text-muted-foreground">Nenhum usuário encontrado.</p>}
             <CommandGroup>
               {showAllOption && (
                 <CommandItem
-                  value="all"
+                  value="user:all"
                   onSelect={() => {
                     onUserSelect(null);
                     setOpen(false);
@@ -103,10 +115,11 @@ export function UserFilter({
                   />
                 </CommandItem>
               )}
-              {users.map((user) => (
+              {matchingUsers.map((user) => (
                 <CommandItem
                   key={user.id}
-                  value={user.name}
+                  value={`user:${user.id}`}
+                  title={user.name}
                   onSelect={() => {
                     onUserSelect(user.id);
                     setOpen(false);

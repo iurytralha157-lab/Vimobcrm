@@ -195,7 +195,8 @@ func TestPublicPropertyActiveSQLIsStrictForPublicIngress(t *testing.T) {
 	for _, required := range []string{
 		"lower(",
 		"coalesce(p.status, '')",
-		"in ('active', 'ativo', 'available', 'disponivel')",
+		"in ('active', 'ativo', 'available', 'disponivel', 'disponível')",
+		"p.autorizado_comercializacao is distinct from false",
 	} {
 		if !strings.Contains(activeSQL, required) {
 			t.Fatalf("active-property SQL is missing strict allowlist fragment %q: %s", required, activeSQL)
@@ -260,6 +261,26 @@ func TestPublicContactCreateAndReentryPersistOnlyResolvedPropertyCode(t *testing
 	}
 	if strings.Count(createContact, "phone, propertyCode, message, sessionValue") != 2 {
 		t.Fatal("both lead creation and reentry must persist the resolved property code")
+	}
+}
+
+func TestStandalonePublicPropertyEligibilitySharesStrictLiveStatusGuard(t *testing.T) {
+	t.Parallel()
+
+	eligibility := publicPropertyStandaloneEligibilitySQL("p")
+	statusGuard := strings.SplitN(publicPropertyActiveSQL(), " and ", 2)[0]
+	for _, required := range []string{
+		statusGuard,
+		"p.autorizado_comercializacao is distinct from false",
+		"publication_state.desired_state is distinct from 'published'",
+		"publication_state.published_version is not null",
+	} {
+		if !strings.Contains(eligibility, required) {
+			t.Fatalf("standalone public eligibility is missing %q: %s", required, eligibility)
+		}
+	}
+	if strings.Contains(eligibility, "coalesce(p.status, 'active')") {
+		t.Fatal("unknown legacy statuses must not default to public availability")
 	}
 }
 

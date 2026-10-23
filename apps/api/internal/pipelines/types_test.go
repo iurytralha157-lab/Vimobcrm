@@ -22,6 +22,8 @@ func TestUpdateStageRequestPreservesQualifiedPatchPresence(t *testing.T) {
 			if err := json.Unmarshal([]byte(testCase.body), &request); err != nil {
 				t.Fatalf("decode update stage request: %v", err)
 			}
+			revision := time.Date(2026, 10, 16, 12, 0, 0, 123456000, time.UTC)
+			request.ExpectedUpdatedAt = &revision
 
 			input, err := request.Validate()
 			if err != nil {
@@ -95,6 +97,8 @@ func TestUpdateStageRequestAllowsQualifiedWhenTerminalFlagsAreCleared(t *testing
 	), &request); err != nil {
 		t.Fatalf("decode update stage request: %v", err)
 	}
+	revision := time.Date(2026, 10, 16, 12, 0, 0, 123456000, time.UTC)
+	request.ExpectedUpdatedAt = &revision
 	if _, err := request.Validate(); err != nil {
 		t.Fatalf("Validate() rejected eligible qualified stage: %v", err)
 	}
@@ -150,7 +154,8 @@ func TestStageMutationsRequireCanonicalHexColor(t *testing.T) {
 }
 
 func TestUpdateStageRequestPreservesNullableColor(t *testing.T) {
-	request := UpdateStageRequest{Color: patchString{Set: true, Value: nil}}
+	revision := time.Date(2026, 10, 16, 12, 0, 0, 123456000, time.UTC)
+	request := UpdateStageRequest{Color: patchString{Set: true, Value: nil}, ExpectedUpdatedAt: &revision}
 	input, err := request.Validate()
 	if err != nil {
 		t.Fatalf("nullable legacy color was rejected: %v", err)

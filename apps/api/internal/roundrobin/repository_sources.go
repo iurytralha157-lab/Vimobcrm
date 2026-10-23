@@ -219,7 +219,7 @@ func mergeMissingMetaFormLinkRules(rules []Rule, linkedRules []Rule) []Rule {
 	}
 
 	existing := map[string]map[string]struct{}{}
-	merged := append([]Rule(nil), rules...)
+	merged := append([]Rule{}, rules...)
 	for index, rule := range merged {
 		if rule.MatchType != "meta_form" && rule.MatchType != "form" {
 			continue

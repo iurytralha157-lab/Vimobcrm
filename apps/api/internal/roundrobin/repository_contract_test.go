@@ -28,7 +28,7 @@ func TestQueueReadContractsUseCanonicalLogCounters(t *testing.T) {
 }
 
 func TestMemberReadContractsPreferCanonicalMemberID(t *testing.T) {
-	for _, functionName := range []string{"listMembersWithQueryer", "getMember"} {
+	for _, functionName := range []string{"listMembersWithQueryer", "getMemberWithQueryer"} {
 		t.Run(functionName, func(t *testing.T) {
 			source := repositoryFunctionSource(t, functionName)
 
@@ -98,12 +98,13 @@ func TestUserFacingQueueRepositoryExcludesIdentityTombstones(t *testing.T) {
 		"ensureRoundRobinVisible",
 		"visibleRoundRobinIDSet",
 		"listRulesWithQueryer",
-		"getRule",
+		"getRuleWithQueryer",
 		"listMembersWithQueryer",
-		"getMember",
+		"getMemberWithQueryer",
 	} {
 		t.Run(functionName, func(t *testing.T) {
 			source := repositoryFunctionSource(t, functionName)
+
 			requireRepositoryFragments(t, source, "deleted_at is null")
 		})
 	}
@@ -113,6 +114,16 @@ func TestQueueMutationsReadBackBeforeCommit(t *testing.T) {
 	for _, functionName := range []string{"Create", "Update"} {
 		t.Run(functionName, func(t *testing.T) {
 			source := repositoryFunctionSource(t, functionName)
+			if functionName == "Create" {
+				requireRepositoryOrder(t, source, "managementintent.Lookup", "insert into public.round_robins")
+				requireRepositoryOrder(t, source, "repo.getWithQueryer(ctx, tx, tenantContext, reservation.EntityID)", "tx.Commit(ctx)")
+				// Check the new-entity branch separately from an already-committed replay.
+				index := strings.LastIndex(source, "item, err := repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)")
+				if index < 0 {
+					t.Fatal("new queue readback missing")
+				}
+				source = source[index:]
+			}
 			requireRepositoryFragments(t, source,
 				"repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)",
 				"tx.Commit(ctx)",
@@ -137,6 +148,7 @@ func repositoryFunctionSource(t *testing.T, functionName string) string {
 		"repository_queue_write.go",
 		"repository_queue_validation.go",
 		"repository_rules.go",
+		"repository_reconcile.go",
 		"repository_meta_forms.go",
 		"repository_whatsapp_rules.go",
 		"repository_members.go",

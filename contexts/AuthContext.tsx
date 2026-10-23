@@ -1,9 +1,8 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
-import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES } from '@/config/constants';
@@ -11,8 +10,6 @@ import { authAPI } from '@/lib/api/auth';
 import { meAPI } from '@/lib/api/me';
 import { usersAPI } from '@/lib/api/users';
 import {
-  cachedAuthSnapshotSchema,
-  type CachedAuthSnapshot,
   type Organization,
   type TenantContext,
   type UserProfile,
@@ -27,14 +24,18 @@ import {
 } from '@/lib/auth/password-recovery';
 import {
   initializeSignedInUserContext,
+  resolveNoMembershipAccountEntry,
   shouldForceOrganizationSelectionForAuthEvent,
+  shouldRevalidateMembership,
 } from '@/lib/auth/frontend-auth-reliability';
+import { captureGlobalSignOutGuard, signOutLocallyWithSessionGuard, signOutWithGlobalRevocation, trackGlobalSignOutSession, type GlobalSignOutLifecycle } from '@/lib/auth/global-sign-out';
 import {
   resolveActiveOrganization,
   type ActiveOrganizationResolution,
 } from '@/lib/auth/active-organization';
 import { shouldPersistOrganizationSelectionRemotely } from '@/lib/local-read-only';
 import { deactivateCurrentPushEndpoint } from '@/lib/pwa/push-session';
+import { usePushDeviceIntent } from '@/hooks/use-push-device-intent';
 
 const isAuthDebugEnabled =
   process.env.NODE_ENV !== 'production' ||
@@ -85,56 +86,11 @@ interface ImpersonateSession {
   orgName: string;
 }
 
-const AUTH_SNAPSHOT_VERSION = 3;
-const AUTH_SNAPSHOT_TTL_MS = 1000 * 60 * 60 * 8;
-
 function authSnapshotKey(userId: string) {
   return `vimob_auth_snapshot_${userId}`;
 }
 
-function readAuthSnapshot(userId: string): CachedAuthSnapshot | null {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    const raw = localStorage.getItem(authSnapshotKey(userId));
-    if (!raw) return null;
-
-    const parsedSnapshot = cachedAuthSnapshotSchema.safeParse(JSON.parse(raw));
-    if (!parsedSnapshot.success) {
-      localStorage.removeItem(authSnapshotKey(userId));
-      return null;
-    }
-
-    const snapshot = parsedSnapshot.data;
-    if (
-      snapshot.version !== AUTH_SNAPSHOT_VERSION ||
-      !snapshot.cachedAt ||
-      Date.now() - snapshot.cachedAt > AUTH_SNAPSHOT_TTL_MS ||
-      !snapshot.profile?.id
-    ) {
-      localStorage.removeItem(authSnapshotKey(userId));
-      return null;
-    }
-
-    return snapshot;
-  } catch {
-    localStorage.removeItem(authSnapshotKey(userId));
-    return null;
-  }
-}
-
-function writeAuthSnapshot(userId: string, snapshot: Omit<CachedAuthSnapshot, 'version' | 'cachedAt'>) {
-  if (typeof window === 'undefined') return;
-
-  localStorage.setItem(
-    authSnapshotKey(userId),
-    JSON.stringify({
-      version: AUTH_SNAPSHOT_VERSION,
-      cachedAt: Date.now(),
-      ...snapshot,
-    }),
-  );
-}
+const MEMBERSHIP_FOCUS_REVALIDATION_INTERVAL_MS = 30_000;
 
 interface AuthContextType {
   user: User | null;
@@ -167,15 +123,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const isLoggingOutRef = useRef(false);
+  const signOutInFlightRef = useRef<Promise<void> | null>(null);
+  const signOutInFlightIdentityRef = useRef<{ generation: number; key: string | null } | null>(null);
+  const automaticLogoutSequenceRef = useRef(0);
   const recoveryActionScheduledRef = useRef(false);
   const credentialSignInInFlightRef = useRef(false);
 
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSessionState] = useState<Session | null>(null);
+  const logoutLifecycleRef = useRef<GlobalSignOutLifecycle>({ generation: 0, sessionKey: null, userId: null, mounted: false, pendingPush: new Set() });
+  const setSession = useCallback((nextSession: Session | null) => {
+    trackGlobalSignOutSession(logoutLifecycleRef.current, nextSession);
+    setSessionState(nextSession);
+  }, []);
+  useLayoutEffect(() => {
+    const lifecycle = logoutLifecycleRef.current;
+    lifecycle.mounted = true;
+    return () => {
+      lifecycle.mounted = false;
+      lifecycle.generation += 1;
+      lifecycle.pendingPush?.forEach(controller => controller.abort());
+      lifecycle.pendingPush?.clear();
+    };
+  }, []);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const profileRef = useRef<UserProfile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const captureLogoutPushIntent = usePushDeviceIntent(user?.id, organization?.id || profile?.organization_id);
   const organizationRef = useRef<Organization | null>(null);
   const fetchProfileRequestRef = useRef(0);
+  const organizationListRequestRef = useRef(0);
   const organizationSwitchGenerationRef = useRef(0);
   const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,14 +164,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const authStateRef = useRef({
     authInitialized: false,
     organizationsLoaded: false,
+    isInitializingOrg: false,
   });
 
   useEffect(() => {
     authStateRef.current = {
       authInitialized,
       organizationsLoaded,
+      isInitializingOrg,
     };
-  }, [authInitialized, organizationsLoaded]);
+  }, [authInitialized, organizationsLoaded, isInitializingOrg]);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -213,6 +191,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   });
 
+  const clearOrganizationContext = useCallback(() => {
+    organizationRef.current = null;
+    setOrganization(null);
+    setTenantContext(null);
+    setProfile((currentProfile) => {
+      const nextProfile = currentProfile
+        ? { ...currentProfile, organization_id: null }
+        : currentProfile;
+      profileRef.current = nextProfile;
+      return nextProfile;
+    });
+  }, []);
+
+  const failOrganizationValidation = useCallback((message: string) => {
+    clearOrganizationContext();
+    setUserOrganizations([]);
+    setOrganizationsError(message);
+  }, [clearOrganizationContext]);
+
   const fetchProfile = async (
     userId: string,
     requestedOrganizationId?: string | null,
@@ -220,15 +217,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const requestId = ++fetchProfileRequestRef.current;
     return performanceTracker.trackTimed('fetchProfile', async () => {
       try {
+        // This route is authenticated without tenant resolution. A member who
+        // lost the last organization must still reach the organization picker,
+        // while a globally suspended account must remain blocked.
+        const memberships = await usersAPI.listUserOrganizations();
+        if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
+        if (memberships.length === 0) {
+          const accountStatus = await meAPI.getAccountStatus();
+          if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
+          const accountEntry = resolveNoMembershipAccountEntry(accountStatus);
+          if (accountEntry === 'missing_profile') {
+            failOrganizationValidation('Seu perfil não foi encontrado. Entre em contato com o suporte.');
+            return false;
+          }
+          if (accountEntry === 'globally_suspended') {
+            const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+            if (!guard.isCurrent()) return false;
+            failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
+            await signOutWithGlobalRevocation({
+              getSession: () => supabase.auth.getSession(),
+              revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
+              clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+            }, guard);
+            return false;
+          }
+          if (accountEntry === 'no_organization') {
+            setIsSuperAdmin(false);
+            setUserOrganizations([]);
+            setOrganizationsError(null);
+            localStorage.removeItem(`vimob_active_organization_${userId}`);
+            localStorage.removeItem(authSnapshotKey(userId));
+            clearOrganizationContext();
+            return true;
+          }
+        }
+
         const storedImpersonating = localStorage.getItem('impersonating');
         const activeImpersonation: ImpersonateSession | null = storedImpersonating
           ? JSON.parse(storedImpersonating)
           : null;
-        const preferredOrganizationId = activeImpersonation?.orgId
+        const preferredOrganizationIdCandidate = activeImpersonation?.orgId
           || requestedOrganizationId
           || localStorage.getItem(`vimob_active_organization_${userId}`);
+        const preferredOrganizationId = preferredOrganizationIdCandidate
+          && (activeImpersonation?.orgId || requestedOrganizationId
+            || memberships.some((membership) => membership.organization_id === preferredOrganizationIdCandidate))
+          ? preferredOrganizationIdCandidate
+          : memberships[0]?.organization_id;
         const response = await meAPI.getProfile(preferredOrganizationId);
-        if (requestId !== fetchProfileRequestRef.current) return true;
+        if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
         const superAdmin = response.context.isSuperAdmin;
         const profileData: UserProfile = {
           ...response.profile,
@@ -238,8 +275,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setIsSuperAdmin(superAdmin);
         if (!profileData.is_active && !superAdmin) {
+          const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+          if (!guard.isCurrent()) return false;
           authDebugWarn('User is deactivated, signing out');
-          await supabase.auth.signOut();
+          failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
+          await signOutWithGlobalRevocation({
+            getSession: () => supabase.auth.getSession(),
+            revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
+            clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+          }, guard);
           return false;
         }
 
@@ -266,13 +310,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setOrganization(organizationData);
         setTenantContext(response.context);
 
-        writeAuthSnapshot(userId, {
-          profile: profileData,
-          organization: organizationData,
-          tenantContext: response.context,
-          isSuperAdmin: superAdmin,
-        });
-
         if (response.context.organizationId) {
           localStorage.setItem(
             `vimob_active_organization_${userId}`,
@@ -282,13 +319,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         return true;
       } catch (error) {
-        if (requestId !== fetchProfileRequestRef.current) return true;
+        if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
         console.error('Error fetching profile:', error);
+        failOrganizationValidation('Não foi possível validar seu acesso. Tente novamente.');
         if (isExpiredAPISessionError(error)) {
+          const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+          if (!guard.isCurrent()) return false;
+          const logoutSequence = ++automaticLogoutSequenceRef.current;
           isLoggingOutRef.current = true;
           localStorage.removeItem(authSnapshotKey(userId));
           setUser(null);
           setSession(null);
+          userRef.current = null;
           profileRef.current = null;
           organizationRef.current = null;
           setProfile(null);
@@ -298,15 +340,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setOrganizationsLoaded(true);
 
           try {
-            await supabase.auth.signOut({ scope: 'global' });
+            const outcome = await signOutWithGlobalRevocation({
+              getSession: () => supabase.auth.getSession(),
+              revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
+              clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+            }, guard);
+            if (outcome === 'cancelled' || !guard.isCurrent()) return false;
+            await performFullCacheClear({
+              clearAuth: true,
+              redirectTo: outcome === 'verified-global' ? '/login' : '/login?logout=unverified',
+              isCurrent: guard.isCurrent,
+            });
           } catch (signOutError) {
             authDebug('Logout server-side falhou apos token invalido:', signOutError);
+          } finally {
+            if (automaticLogoutSequenceRef.current === logoutSequence && !signOutInFlightRef.current) {
+              isLoggingOutRef.current = false;
+            }
           }
-
-          await performFullCacheClear({
-            clearAuth: true,
-            redirectTo: '/login',
-          });
         }
         return false;
       }
@@ -318,12 +369,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const switchGeneration = ++organizationSwitchGenerationRef.current;
     setIsInitializingOrg(true);
-
-    // Log auditoria (sem alterar o banco)
-    logAuditAction('impersonate_start', 'organization', orgId, undefined, {
-      org_name: orgName,
-      started_at: new Date().toISOString()
-    }).catch(console.error);
 
     const impersonateSession: ImpersonateSession = { orgId, orgName };
 
@@ -348,14 +393,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const stopImpersonate = async () => {
     const switchGeneration = ++organizationSwitchGenerationRef.current;
     setIsInitializingOrg(true);
-
-    // Log auditoria antes de limpar o estado
-    if (user && impersonating) {
-      logAuditAction('impersonate_stop', 'organization', impersonating.orgId, undefined, {
-        org_name: impersonating.orgName,
-        stopped_at: new Date().toISOString()
-      }).catch(console.error);
-    }
 
     setImpersonating(null);
     localStorage.removeItem('impersonating');
@@ -420,6 +457,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     userId: string,
     options?: { forceSelectorForMultiOrg?: boolean }
   ) => {
+    const requestId = ++organizationListRequestRef.current;
     return performanceTracker.trackTimed('checkMultiOrg', async () => {
       setOrganizationsError(null);
 
@@ -427,24 +465,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authDebug('[AuthContext] checking organizations for userId:', userId);
 
         const uniqueOrgs = await usersAPI.listUserOrganizations();
+        if (requestId !== organizationListRequestRef.current || userRef.current?.id !== userId) return;
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
-        const currentOrganizationId =
+        let currentOrganizationId =
           organizationRef.current?.id || profileRef.current?.organization_id || null;
         authDebug('[AuthContext] found', count, 'active organizations');
+
+        if (currentOrganizationId && !uniqueOrgs.some((org) => org.organization_id === currentOrganizationId)) {
+          clearOrganizationContext();
+          localStorage.removeItem(`vimob_active_organization_${userId}`);
+          currentOrganizationId = null;
+        }
 
         if (count === 0) {
           authDebugWarn('[AuthContext] no active organization remains for this user');
           localStorage.removeItem(`vimob_active_organization_${userId}`);
           localStorage.removeItem(authSnapshotKey(userId));
-          organizationRef.current = null;
-          setOrganization(null);
-          setTenantContext(null);
-          setProfile((currentProfile) => {
-            const nextProfile = currentProfile ? { ...currentProfile, organization_id: null } : currentProfile;
-            profileRef.current = nextProfile;
-            return nextProfile;
-          });
+          clearOrganizationContext();
         } else if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
           
@@ -460,13 +498,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (count > 1) {
           if (options?.forceSelectorForMultiOrg) {
             authDebug('[AuthContext] multiple organizations found; forcing organization selector');
-            organizationRef.current = null;
-            setOrganization(null);
-            setProfile(prev => {
-              const next = prev ? { ...prev, organization_id: null } : prev;
-              profileRef.current = next;
-              return next;
-            });
+            clearOrganizationContext();
             return;
           }
 
@@ -492,40 +524,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } catch (err) {
+        if (requestId !== organizationListRequestRef.current || userRef.current?.id !== userId) return;
         console.error('[AuthContext] Error in checkMultiOrg:', err);
-        setOrganizationsError('Não foi possível carregar suas organizações. Tente novamente.');
+        failOrganizationValidation('Não foi possível carregar suas organizações. Tente novamente.');
       } finally {
-        setOrganizationsLoaded(true);
+        if (requestId === organizationListRequestRef.current && userRef.current?.id === userId) {
+          setOrganizationsLoaded(true);
+        }
       }
     });
   };
 
   const fetchProfileRef = useRef(fetchProfile);
   const checkMultiOrgRef = useRef(checkMultiOrg);
-
-  const hydrateAuthSnapshot = (userId: string) => {
-    if (typeof window === 'undefined') return false;
-    if (localStorage.getItem('impersonating')) return false;
-
-    const snapshot = readAuthSnapshot(userId);
-    if (!snapshot) return false;
-
-    profileRef.current = snapshot.profile;
-    organizationRef.current = snapshot.organization;
-    setProfile(snapshot.profile);
-    setOrganization(snapshot.organization);
-    setTenantContext(snapshot.tenantContext);
-    setIsSuperAdmin(snapshot.isSuperAdmin);
-
-    if (snapshot.tenantContext?.organizationId) {
-      localStorage.setItem(
-        `vimob_active_organization_${userId}`,
-        snapshot.tenantContext.organizationId,
-      );
-    }
-
-    return true;
-  };
 
   useEffect(() => {
     fetchProfileRef.current = fetchProfile;
@@ -535,11 +546,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let isMounted = true;
     let apiTokenAuthEventGeneration = 0;
+    let membershipRefreshInFlight = false;
+    let lastMembershipRefreshAt = 0;
     authDebug('AuthProvider mounted');
 
     const clearAllStates = () => {
       authDebug('Cleaning auth states');
       credentialSignInInFlightRef.current = false;
+      organizationListRequestRef.current += 1;
       setVimobAPIAccessToken(null, null);
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
@@ -567,6 +581,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isolatePasswordRecoverySession = (recoverySession: Session) => {
       if (!isPasswordRecoveryAccessToken(recoverySession.access_token)) return false;
 
+      // This SDK event precedes the regular session setter. Record its visit
+      // synchronously before isolating it from the CRM's authenticated state.
+      trackGlobalSignOutSession(logoutLifecycleRef.current, recoverySession);
+      const guard = captureGlobalSignOutGuard(recoverySession, recoverySession.user.id, logoutLifecycleRef.current);
       clearAllStates();
       setLoading(false);
       setAuthInitialized(true);
@@ -584,7 +602,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
 
       setTimeout(() => {
-        if (!isMounted) return;
+        if (!isMounted || !guard.isCurrent()) return;
 
         if (!shouldCancelRecovery) {
           window.location.replace(ROUTES.RESET_PASSWORD);
@@ -596,13 +614,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : ROUTES.LOGIN;
 
         clearPasswordRecoveryEvidence(window.sessionStorage);
-        void supabase.auth.signOut({ scope: 'local' }).finally(() => {
+        void signOutLocallyWithSessionGuard({
+          getSession: () => supabase.auth.getSession(),
+          clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+        }, guard).then(outcome => {
+          if (outcome === 'cancelled' || !guard.isCurrent()) return;
           setVimobAPIAccessToken(null, null);
           window.location.replace(destination);
+        }).catch(error => {
+          if (guard.isCurrent()) authDebugWarn('Não foi possível encerrar a sessão de recuperação:', error);
         });
       }, 0);
 
       return true;
+    };
+
+    const revalidateCurrentMembership = (fromFocus = false) => {
+      const currentUserId = userRef.current?.id;
+      const now = Date.now();
+      if (!shouldRevalidateMembership({
+        active: isMounted,
+        hasUser: Boolean(currentUserId),
+        authInitialized: authStateRef.current.authInitialized,
+        organizationsLoaded: authStateRef.current.organizationsLoaded,
+        isInitializingOrganization: authStateRef.current.isInitializingOrg,
+        isLoggingOut: isLoggingOutRef.current,
+        inFlight: membershipRefreshInFlight,
+        onRecoveryRoute: window.location.pathname.startsWith(ROUTES.RESET_PASSWORD),
+        fromFocus,
+        now,
+        lastRefreshAt: lastMembershipRefreshAt,
+        focusIntervalMs: MEMBERSHIP_FOCUS_REVALIDATION_INTERVAL_MS,
+      })) return;
+      if (!currentUserId) return;
+      lastMembershipRefreshAt = now;
+      membershipRefreshInFlight = true;
+      const switchGeneration = organizationSwitchGenerationRef.current;
+
+      void (async () => {
+        const profileLoaded = await fetchProfileRef.current(currentUserId);
+        if (
+          !isMounted || userRef.current?.id !== currentUserId || !profileLoaded
+          || organizationSwitchGenerationRef.current !== switchGeneration
+        ) return;
+        await checkMultiOrgRef.current(currentUserId);
+      })()
+        .catch((error) => {
+          if (!isMounted || userRef.current?.id !== currentUserId) return;
+          console.error('[AuthContext] Falha ao revalidar o acesso:', error);
+          failOrganizationValidation('Não foi possível validar seu acesso. Tente novamente.');
+        })
+        .finally(() => {
+          membershipRefreshInFlight = false;
+        });
     };
 
     // Safety timeout: stop loading only if the auth flow is truly still stuck.
@@ -647,14 +711,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(session.user);
       userRef.current = session.user;
       authDebug('[AuthContext] login user loaded:', session.user.id);
-      if (hydrateAuthSnapshot(session.user.id)) {
-        authDebug('[AuthContext] hydrated cached auth snapshot');
-      }
+      // Cached tenant claims must never unlock the CRM before fresh validation.
+      localStorage.removeItem(authSnapshotKey(session.user.id));
 
       try {
         // Sequencial to ensure organizations are loaded before setting initialized
-        await fetchProfileRef.current(session.user.id);
-        await checkMultiOrgRef.current(session.user.id);
+        const profileLoaded = await fetchProfileRef.current(session.user.id);
+        if (profileLoaded && userRef.current?.id === session.user.id) {
+          await checkMultiOrgRef.current(session.user.id);
+        } else if (userRef.current?.id === session.user.id) {
+          setOrganizationsLoaded(true);
+        }
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
       } finally {
@@ -722,8 +789,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
 
+          const guard = captureGlobalSignOutGuard(null, null, logoutLifecycleRef.current);
           setTimeout(() => {
-            performFullCacheClear({ clearAuth: true, redirectTo: '/login' });
+            if (!isMounted || !guard.isCurrent()) return;
+            void performFullCacheClear({ clearAuth: true, redirectTo: '/login', isCurrent: guard.isCurrent });
           }, 0);
           return;
         }
@@ -736,7 +805,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
             const isSameInitializedUser =
               authStateRef.current.authInitialized &&
-              authStateRef.current.organizationsLoaded &&
               userRef.current?.id === session.user.id;
 
             if (isSameInitializedUser) {
@@ -746,7 +814,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               setTimeout(() => {
                 if (!isMounted) return;
-                fetchProfileRef.current(session.user.id).catch(console.error);
+                revalidateCurrentMembership(true);
               }, 0);
               return;
             }
@@ -786,11 +854,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (authEvent === 'TOKEN_REFRESHED') {
-          // Just update session/user, never refetch profile here
           if (session) {
             setSession(session);
             setUser(session.user);
             userRef.current = session.user;
+            // Run outside the Auth callback to avoid holding the Supabase auth lock.
+            setTimeout(() => revalidateCurrentMembership(), 0);
           }
           return;
         }
@@ -823,29 +892,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     window.addEventListener('pageshow', handlePageShow);
 
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') revalidateCurrentMembership(true);
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
       window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [failOrganizationValidation, setSession]);
 
   const signIn = async (email: string, password: string) => {
     credentialSignInInFlightRef.current = true;
 
     try {
-      const { error, data } = await authAPI.login(email, password);
-
-      // Log successful login (async to avoid blocking)
-      if (!error && data.user) {
-        setTimeout(() => {
-          logAuditAction('login', 'session', data.user.id, undefined, {
-            email,
-            login_at: new Date().toISOString()
-          }).catch(console.error);
-        }, 0);
-      }
+      const { error } = await authAPI.login(email, password);
 
       return { error };
     } finally {
@@ -858,53 +925,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { error } = await authAPI.resetPassword(email);
 
       if (error) {
-        console.error('[AuthContext] Reset password error:', error);
         return { error };
       }
 
-      logAuditAction('password_reset_request', 'session', undefined, undefined, {
-        email,
-        requested_at: new Date().toISOString()
-      }).catch(console.error);
-
       return { error: null };
     } catch (err) {
-      console.error('[AuthContext] Reset password exception:', err);
       return { error: err as Error };
     }
   };
 
-  const signOut = async () => {
-    isLoggingOutRef.current = true;
-    
-    // Log logout before clearing states (capture user ID while we still have it)
-    const currentUserId = user?.id;
-    if (currentUserId) {
-      logAuditAction('logout', 'session', currentUserId).catch(console.error);
-    }
+  const signOut = (): Promise<void> => {
+    const guard = captureGlobalSignOutGuard(session, user?.id ?? null, logoutLifecycleRef.current);
+    if (!guard.isCurrent()) return Promise.resolve();
+    if (signOutInFlightRef.current && signOutInFlightIdentityRef.current?.generation === guard.generation
+      && signOutInFlightIdentityRef.current.key === guard.key) return signOutInFlightRef.current;
 
-    // Deactivate only this device while the API bearer token is still valid.
-    // Other devices belonging to the same user remain subscribed.
-    try {
-      await deactivateCurrentPushEndpoint(
-        organization?.id || profile?.organization_id,
-      );
-    } catch (error) {
-      authDebug('Falha ao desativar push deste dispositivo no logout:', error);
-    }
+    const operation = (async () => {
+      isLoggingOutRef.current = true;
 
-    // Tentar signOut global (invalida refresh token no servidor)
-    try {
-      await supabase.auth.signOut({ scope: 'global' });
-    } catch (error) {
-      authDebug('Logout server-side falhou (sessão provavelmente já expirada):', error);
-    }
+      // Deactivate only this device while the API bearer token is still valid.
+      try {
+        const intent = captureLogoutPushIntent();
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        if (intent.signal.aborted) controller.abort();
+        else intent.signal.addEventListener('abort', abort, { once: true });
+        logoutLifecycleRef.current.pendingPush?.add(controller);
+        try {
+          await deactivateCurrentPushEndpoint(intent.organizationId, {
+            expectedUserId: intent.userId, signal: controller.signal,
+            isCurrent: () => guard.isCurrent() && intent.isCurrent(),
+          });
+        } finally {
+          intent.signal.removeEventListener('abort', abort);
+          logoutLifecycleRef.current.pendingPush?.delete(controller);
+          intent.finish();
+        }
+      } catch (error) {
+        authDebug('Falha ao desativar push deste dispositivo no logout:', error);
+      }
+      if (!guard.isCurrent()) return;
 
-    // Executar limpeza profunda e redirecionar para login com cache bust
-    await performFullCacheClear({
-      clearAuth: true,
-      redirectTo: '/login'
-    });
+      const outcome = await signOutWithGlobalRevocation({
+        getSession: () => supabase.auth.getSession(),
+        revokeGlobal: (accessToken) => supabase.auth.admin.signOut(accessToken, 'global'),
+        clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+      }, guard);
+      if (outcome === 'cancelled' || !guard.isCurrent()) return;
+
+      await performFullCacheClear({
+        clearAuth: true,
+        redirectTo: outcome === 'verified-global' ? '/login' : '/login?logout=unverified',
+        isCurrent: guard.isCurrent,
+      });
+    })();
+
+    signOutInFlightRef.current = operation;
+    signOutInFlightIdentityRef.current = { generation: guard.generation, key: guard.key };
+    void operation.then(
+      () => { if (signOutInFlightRef.current === operation) {
+        signOutInFlightRef.current = null; signOutInFlightIdentityRef.current = null; isLoggingOutRef.current = false;
+      } },
+      () => {
+        if (signOutInFlightRef.current !== operation) return;
+        signOutInFlightRef.current = null;
+        signOutInFlightIdentityRef.current = null;
+        isLoggingOutRef.current = false;
+      },
+    );
+    return operation;
   };
 
   const refreshProfile = async () => {
@@ -918,7 +1007,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setOrganizationsLoaded(false);
     setOrganizationsError(null);
-    await checkMultiOrg(activeUser.id);
+    const profileLoaded = await fetchProfile(activeUser.id);
+    if (profileLoaded && userRef.current?.id === activeUser.id) {
+      await checkMultiOrg(activeUser.id);
+    } else if (userRef.current?.id === activeUser.id) {
+      setOrganizationsLoaded(true);
+    }
   };
 
   const activeOrganization = resolveActiveOrganization({

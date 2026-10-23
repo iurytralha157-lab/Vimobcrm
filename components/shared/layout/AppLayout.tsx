@@ -24,6 +24,7 @@ import { VimobLoader } from '@/components/shared/loading';
 import { Wrench } from 'lucide-react';
 import { canManageOrganization } from '@/lib/access/organization';
 import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
+import { hasValidatedProtectedAppAccess } from '@/lib/auth/active-organization';
 
 const INITIAL_SIDEBAR_BOOT_FALLBACK_MS = 1400;
 let hasCompletedInitialAppShellBoot = false;
@@ -38,7 +39,7 @@ interface AppLayoutProps {
 
 function MaintenanceBanner() {
   const { data: settings } = useSystemSettings();
-  const { activeOrganization, profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
+  const { activeOrganization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
 
   const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
@@ -129,6 +130,7 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     loading,
     authInitialized,
     organizationsLoaded,
+    organizationsError,
     isInitializingOrg,
     profile,
     tenantContext,
@@ -148,14 +150,20 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
       && organizationsLoaded
       && activeOrganizationId !== linkedOrganizationId,
   );
-  const allowInitialShell = Boolean(
-    user &&
-      authInitialized &&
-      !loading &&
-      (!organizationsLoaded || isInitializingOrg) &&
-      (pathname?.startsWith('/dashboard') || pathname === DEFAULT_AUTHENTICATED_ROUTE),
-  );
-  const allowRender = !!organization || isSuperAdmin || !!impersonating || allowInitialShell;
+  const allowRender = hasValidatedProtectedAppAccess({
+    userId: user?.id ?? null,
+    authInitialized,
+    authLoading: loading,
+    organizationsLoaded,
+    organizationsError,
+    isInitializingOrganization: isInitializingOrg,
+    activeOrganization,
+    organizationId: organization?.id ?? null,
+    tenantOrganizationId: tenantContext?.organizationId ?? null,
+    isSuperAdmin,
+    isImpersonating: Boolean(impersonating),
+    hasProfile: Boolean(profile),
+  });
   const hasSidebarTenantContext = Boolean(
     isSuperAdmin ||
       impersonating ||

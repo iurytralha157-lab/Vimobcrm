@@ -1,11 +1,14 @@
 'use client'
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/contexts/AuthContext'
+import { usePropertyAssetMutation } from '@/hooks/properties/use-property-asset-mutation'
+import { usePropertyMutation, type PropertyMutationScope } from '@/hooks/properties/use-property-mutation'
 import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cache'
 import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
+import { createPropertyAssetWithRecovery } from '@/lib/properties/property-asset-create-recovery'
 import {
   propertyWorkspaceAPI,
   type PropertyWorkspace,
@@ -55,6 +58,10 @@ function useWorkspaceQueryScope() {
 
   return {
     organizationId,
+    actorId: user?.id,
+    tenantUserId: tenantContext?.userId,
+    tenantOrganizationId: tenantContext?.organizationId,
+    ready: activeOrganization.status === 'ready',
     accessSignature: createTenantQueryAccessSignature({
       userId: user?.id ?? profile?.id,
       organizationId,
@@ -71,10 +78,6 @@ function useWorkspaceQueryScope() {
       propertyOwnerContactVisibility: organization?.property_owner_contact_visibility,
     }),
   }
-}
-
-function useWorkspaceOrganizationId() {
-  return useWorkspaceQueryScope().organizationId
 }
 
 function useInvalidatePropertyWorkspace(propertyId: string | null) {
@@ -115,130 +118,65 @@ export function usePropertyWorkspace(propertyId: string | null) {
 }
 
 export function useUpsertPropertyOffer(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({
-      offerType,
-      input,
-    }: {
-      offerType: PropertyOfferType
-      input: PropertyOfferUpsertInput
-    }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.upsertOffer(organizationId, propertyId, offerType, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Oferta atualizada com sucesso')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return useWorkspaceMutation(propertyId,
+    ({ offerType, input }: { offerType: PropertyOfferType; input: PropertyOfferUpsertInput }, scope) =>
+      propertyWorkspaceAPI.upsertOffer(scope.organizationId, propertyId!, offerType, input, scope.requestIntent),
+    'Oferta atualizada com sucesso')
 }
 
 export function useCreatePropertyKey(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async (input: PropertyKeyCreateInput) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.createKey(organizationId, propertyId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Chave cadastrada com sucesso')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return useWorkspaceMutation(propertyId,
+    (input: PropertyKeyCreateInput, scope) => propertyWorkspaceAPI.createKey(scope.organizationId, propertyId!, input, scope.requestIntent),
+    'Chave cadastrada com sucesso')
 }
 
 export function useMovePropertyKey(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({ keyId, input }: { keyId: string; input: PropertyKeyMovementInput }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.moveKey(organizationId, propertyId, keyId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Movimentacao de chave registrada')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return useWorkspaceMutation(propertyId,
+    ({ keyId, input }: { keyId: string; input: PropertyKeyMovementInput }, scope) =>
+      propertyWorkspaceAPI.moveKey(scope.organizationId, propertyId!, keyId, input, undefined, scope.requestIntent),
+    'Movimentacao de chave registrada')
 }
 
 export function useCreatePropertyOwnership(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async (input: PropertyOwnershipCreateInput) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.createOwnership(organizationId, propertyId, input)
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        invalidate(),
-        queryClient.invalidateQueries({ queryKey: ['property-owners'] }),
-      ])
-      toast.success('Proprietario vinculado com sucesso')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return useWorkspaceMutation(propertyId,
+    (input: PropertyOwnershipCreateInput, scope) => propertyWorkspaceAPI.createOwnership(scope.organizationId, propertyId!, input, scope.requestIntent),
+    'Proprietario vinculado com sucesso', true)
 }
 
 export function useUpdatePropertyOwnership(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async ({
-      ownershipId,
-      input,
-    }: {
-      ownershipId: string
-      input: PropertyOwnershipUpdateInput
-    }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.updateOwnership(organizationId, propertyId, ownershipId, input)
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        invalidate(),
-        queryClient.invalidateQueries({ queryKey: ['property-owners'] }),
-      ])
-      toast.success('Proprietario e participacao atualizados')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return useWorkspaceMutation(propertyId,
+    ({ ownershipId, input }: { ownershipId: string; input: PropertyOwnershipUpdateInput }, scope) =>
+      propertyWorkspaceAPI.updateOwnership(scope.organizationId, propertyId!, ownershipId, input, scope.requestIntent),
+    'Proprietario e participacao atualizados', true)
 }
 
 export function useEndPropertyOwnership(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
+  return useWorkspaceMutation(propertyId,
+    ({ ownershipId, input }: { ownershipId: string; input: PropertyOwnershipEndInput }, scope) =>
+      propertyWorkspaceAPI.endOwnership(scope.organizationId, propertyId!, ownershipId, input, scope.requestIntent),
+    'Vinculo de propriedade encerrado')
+}
 
-  return useMutation({
-    mutationFn: async ({
-      ownershipId,
-      input,
-    }: {
-      ownershipId: string
-      input: PropertyOwnershipEndInput
-    }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.endOwnership(organizationId, propertyId, ownershipId, input)
+function useWorkspaceMutation<TData, TVariables>(
+  propertyId: string | null,
+  mutationFn: (input: TVariables, scope: PropertyMutationScope) => Promise<TData>,
+  successMessage: string,
+  invalidateOwners = false,
+) {
+  const invalidate = useInvalidatePropertyWorkspace(propertyId)
+  const queryClient = useQueryClient()
+  return usePropertyMutation({
+    resourceId: propertyId ?? '',
+    mutationFn: (input: TVariables, scope) => {
+      if (!propertyId) throw new Error('Imovel nao identificado')
+      return mutationFn(input, scope)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, _input, scope) => {
       await invalidate()
-      toast.success('Vinculo de propriedade encerrado')
+      if (invalidateOwners) await queryClient.invalidateQueries({ queryKey: ['property-owners'] })
+      if (scope.isCurrent()) toast.success(successMessage)
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) toast.error(getErrorMessage(error)) },
   })
 }
 
@@ -248,121 +186,40 @@ export type PropertyAssetCreateCommand = {
 }
 
 export function useCreatePropertyAsset(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({ input, file }: PropertyAssetCreateCommand) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-
-      let createInput: PropertyAssetCreateInput = { ...input, storage_path: null }
-      let uploadedStoragePath: string | null = null
-      if (file) {
-        if (!['photo', 'floor_plan', 'document'].includes(input.asset_type)) {
-          throw new Error('Videos e tours virtuais devem usar uma URL externa')
-        }
-        const uploaded = await propertyWorkspaceAPI.uploadAssetFile(
-          organizationId,
-          propertyId,
-          input.asset_type as 'photo' | 'floor_plan' | 'document',
-          file,
-        )
-        uploadedStoragePath = uploaded.storage_path
-        createInput = {
-          ...createInput,
-          storage_path: uploaded.storage_path,
-          external_url: null,
-          file_name: file.name,
-          mime_type: file.type || 'application/octet-stream',
-          file_size_bytes: file.size,
-        }
-      }
-
-      try {
-        return await propertyWorkspaceAPI.createAsset(organizationId, propertyId, createInput)
-      } catch (error) {
-        if (uploadedStoragePath) {
-          await propertyWorkspaceAPI.discardAssetUpload(organizationId, propertyId, {
-            storage_path: uploadedStoragePath,
-          }).catch(() => undefined)
-        }
-        throw error
-      }
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Midia ou documento cadastrado')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return usePropertyAssetMutation(
+    { ...useWorkspaceQueryScope(), propertyId },
+    ({ input, file }: PropertyAssetCreateCommand, organizationId, originalPropertyId, execution) =>
+      createPropertyAssetWithRecovery({ client: propertyWorkspaceAPI, organizationId, propertyId: originalPropertyId, input, file, execution }),
+    'Midia ou documento cadastrado',
+  )
 }
 
 export function useUpdatePropertyAsset(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({ assetId, input }: { assetId: string; input: PropertyAssetUpdateInput }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.updateAsset(organizationId, propertyId, assetId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Ativo atualizado com sucesso')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return usePropertyAssetMutation({ ...useWorkspaceQueryScope(), propertyId },
+    ({ assetId, input }: { assetId: string; input: PropertyAssetUpdateInput }, organizationId, originalPropertyId, execution) =>
+      propertyWorkspaceAPI.updateAsset(organizationId, originalPropertyId, assetId, input, execution),
+    'Ativo atualizado com sucesso')
 }
 
 export function useDeletePropertyAsset(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({ assetId, input }: { assetId: string; input: PropertyAssetDeleteInput }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.deleteAsset(organizationId, propertyId, assetId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Ativo removido')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return usePropertyAssetMutation({ ...useWorkspaceQueryScope(), propertyId },
+    ({ assetId, input }: { assetId: string; input: PropertyAssetDeleteInput }, organizationId, originalPropertyId, execution) =>
+      propertyWorkspaceAPI.deleteAsset(organizationId, originalPropertyId, assetId, input, execution),
+    'Ativo removido')
 }
 
 export function useReorderPropertyAssets(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async (input: PropertyAssetOrderInput) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.reorderAssets(organizationId, propertyId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Ordem dos ativos atualizada')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return usePropertyAssetMutation({ ...useWorkspaceQueryScope(), propertyId },
+    (input: PropertyAssetOrderInput, organizationId, originalPropertyId, execution) =>
+      propertyWorkspaceAPI.reorderAssets(organizationId, originalPropertyId, input, execution),
+    'Ordem dos ativos atualizada')
 }
 
 export function useSetPrimaryPropertyAsset(propertyId: string | null) {
-  const organizationId = useWorkspaceOrganizationId()
-  const invalidate = useInvalidatePropertyWorkspace(propertyId)
-
-  return useMutation({
-    mutationFn: async ({ assetId, input }: { assetId: string; input: PropertyAssetPrimaryInput }) => {
-      if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
-      return propertyWorkspaceAPI.setPrimaryAsset(organizationId, propertyId, assetId, input)
-    },
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Foto principal atualizada')
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
+  return usePropertyAssetMutation({ ...useWorkspaceQueryScope(), propertyId },
+    ({ assetId, input }: { assetId: string; input: PropertyAssetPrimaryInput }, organizationId, originalPropertyId, execution) =>
+      propertyWorkspaceAPI.setPrimaryAsset(organizationId, originalPropertyId, assetId, input, execution),
+    'Foto principal atualizada')
 }
 
 export type { PropertyWorkspace }

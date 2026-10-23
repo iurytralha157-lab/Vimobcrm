@@ -73,6 +73,18 @@ func (repo Repository) attentionRecipients(ctx context.Context, tx pgx.Tx, insta
 			join public.team_members leader
 			  on leader.organization_id = member.organization_id
 			 and leader.team_id = member.team_id
+			join public.organization_members member_membership
+			  on member_membership.organization_id = member.organization_id
+			 and member_membership.user_id = member.user_id
+			 and member_membership.membership_generation = member.membership_generation
+			 and member_membership.is_active = true
+			 and member_membership.deleted_at is null
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = leader.organization_id
+			 and leader_membership.user_id = leader.user_id
+			 and leader_membership.membership_generation = leader.membership_generation
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
 			where member.organization_id = $1::uuid
 			  and member.user_id = $2::uuid
 			  and coalesce(member.is_active, true) = true
@@ -105,6 +117,12 @@ func (repo Repository) attentionRecipients(ctx context.Context, tx pgx.Tx, insta
 			join public.team_members leader
 			  on leader.organization_id = tp.organization_id
 			 and leader.team_id = tp.team_id
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = leader.organization_id
+			 and leader_membership.user_id = leader.user_id
+			 and leader_membership.membership_generation = leader.membership_generation
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
 			where tp.organization_id = $1::uuid
 			  and tp.pipeline_id = $2::uuid
 			  and coalesce(leader.is_active, true) = true

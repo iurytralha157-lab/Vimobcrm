@@ -8,6 +8,7 @@ import {
   buildPipelineStageRestorePlans,
   createPipelinePaginationStorageKey,
   getPipelineLeadPageCursor,
+  getPipelineStagePaginationAfterPage,
   hasMorePipelineStageLeadsAfterPage,
   mergePipelineStageLoadedCounts,
   parsePipelineStageLoadedCounts,
@@ -24,6 +25,43 @@ test('uma pagina vazia ou sem progresso encerra paginacao apesar de total antigo
   assert.equal(hasMorePipelineStageLeadsAfterPage({
     ...baseline, receivedCount: 12, addedCount: 12,
   }), true);
+});
+
+test('continuacao da pagina prevalece sobre o total inicial e sobre uma pagina cheia', () => {
+  const progress = { totalCount: 24, loadedCount: 24, receivedCount: 12, addedCount: 12, requestedCount: 12 };
+  assert.equal(hasMorePipelineStageLeadsAfterPage({ ...progress, hasMore: true }), true);
+  assert.equal(hasMorePipelineStageLeadsAfterPage({ ...progress, hasMore: false }), false);
+  assert.equal(hasMorePipelineStageLeadsAfterPage(progress), true, 'API antiga cheia requer uma pagina de confirmacao');
+  assert.equal(hasMorePipelineStageLeadsAfterPage({ ...progress, receivedCount: 1 }), false);
+});
+
+test('projecao mantem piso conhecido enquanto continua e reconcilia prefixo terminal', () => {
+  const progress = { totalCount: 24, loadedCount: 24, receivedCount: 12, addedCount: 12, requestedCount: 12 };
+  assert.deepEqual(getPipelineStagePaginationAfterPage({ ...progress, hasMore: true }), {
+    has_more: true, total_lead_count: 25, pagination_count_is_estimate: true,
+  });
+  assert.deepEqual(getPipelineStagePaginationAfterPage(progress), {
+    has_more: true, total_lead_count: 25, pagination_count_is_estimate: true,
+  });
+  assert.deepEqual(getPipelineStagePaginationAfterPage({ ...progress, totalCount: 100, hasMore: false }), {
+    has_more: false, total_lead_count: 24, pagination_count_is_estimate: false,
+  });
+  assert.deepEqual(getPipelineStagePaginationAfterPage({ ...progress, totalCount: 25, loadedCount: 25,
+    receivedCount: 1, addedCount: 1, hasMore: false }), {
+    has_more: false, total_lead_count: 25, pagination_count_is_estimate: false,
+  });
+});
+
+test('restauracao com continuacao nao e truncada pela contagem antiga', () => {
+  const leads = Array.from({ length: 12 }, (_, index) => ({ id: `lead-${index}`,
+    board_sort_at: `2026-10-20T10:00:00.${String(999999 - index).padStart(6, '0')}Z` }));
+  assert.deepEqual(buildPipelineStageRestorePlans([
+    { id: 'stage-grown', total_lead_count: 12, has_more: true, leads },
+  ], { 'stage-grown': 9999 }), [{ stageId: 'stage-grown', offset: 12, limit: 48,
+    cursorBefore: '2026-10-20T10:00:00.999988Z', cursorBeforeId: 'lead-11' }]);
+  assert.deepEqual(buildPipelineStageRestorePlans([
+    { id: 'stage-complete', total_lead_count: 100, has_more: false, leads },
+  ], { 'stage-complete': 60 }), []);
 });
 
 test('cursor da coluna usa board_sort_at antes dos campos legados', () => {

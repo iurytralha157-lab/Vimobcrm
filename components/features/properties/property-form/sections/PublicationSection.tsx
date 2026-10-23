@@ -12,12 +12,14 @@ import { getPropertyPublicationValidationIssues } from "../property-form-model";
 
 export function PublicationSection() {
   const {
+    isSaving,
     formData, set, isEditing, propertyId, router, canManagePropertyCatalogs
   } = usePropertyFormSections();
   const publicationIssues = getPropertyPublicationValidationIssues(formData, { isEditing });
 
   return (
-  <TabsContent value="publication">
+  <TabsContent value="publication" id="property-panel-publication" aria-labelledby="property-tab-publication" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card
       data-tour="property-publication-section"
       className="app-card"
@@ -28,10 +30,10 @@ export function PublicationSection() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 @[760px]:grid-cols-4">
           <div
             data-testid="property-publication-guidance"
-            className="flex flex-col gap-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-4 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between lg:col-span-4"
+            className="flex flex-col gap-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-4 @[480px]:col-span-2 sm:flex-row sm:items-center sm:justify-between @[760px]:col-span-4"
           >
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
@@ -104,6 +106,7 @@ export function PublicationSection() {
         </div>
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

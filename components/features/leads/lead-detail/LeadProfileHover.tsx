@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ptBR } from 'date-fns/locale';
 import { Eye, EyeOff, Info } from 'lucide-react';
@@ -12,19 +12,34 @@ import type { LeadDetailLead } from './types';
 import { metaText, trackingRecord } from './tracking';
 import { formatDateSafely } from './utils';
 import { InfoLine } from './InfoLine';
+import { cn } from '@/lib/utils';
+import { normalizeDisplayName } from '@/lib/display-name';
 
 export function LeadProfileHover({
   lead,
   canRevealSensitive,
+  variant = 'default',
 }: {
   lead: LeadDetailLead;
   canRevealSensitive: boolean;
+  variant?: 'default' | 'pipeline';
 }) {
   const [open, setOpen] = useState(false);
-  const [revealSensitive, setRevealSensitive] = useState(false);
+  const displayName = normalizeDisplayName(lead.name, 'Lead');
+  const [revealState, setRevealState] = useState({ scope: '', value: false });
   const queryClient = useQueryClient();
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || undefined;
+  const sensitiveScope = JSON.stringify([organizationId, lead.id, canRevealSensitive]);
+  if (revealState.scope !== sensitiveScope) setRevealState({ scope: sensitiveScope, value: false });
+  const revealSensitive = canRevealSensitive && revealState.scope === sensitiveScope && revealState.value;
+  const setRevealSensitive = (value: boolean) => setRevealState({ scope: sensitiveScope, value });
+  useEffect(() => {
+    if (canRevealSensitive || !organizationId) return;
+    const queryKey = ['lead-sensitive-profile', organizationId, lead.id];
+    void queryClient.cancelQueries({ queryKey, exact: true });
+    queryClient.setQueryData(queryKey, {});
+  }, [canRevealSensitive, lead.id, organizationId, queryClient]);
   const sensitiveProfile = useLeadSensitiveProfile(lead.id, {
     enabled: canRevealSensitive && revealSensitive,
   });
@@ -48,7 +63,7 @@ export function LeadProfileHover({
   const propertyLabel =
     [interestProperty?.code, interestProperty?.title].filter(Boolean).join(' - ') || null;
   const rows = [
-    ['Nome', lead.name],
+    ['Nome', normalizeDisplayName(lead.name)],
     ['Nome social', text('socialName')],
     ['Telefone', formatPhoneForDisplay(lead.phone || '')],
     ['E-mail', lead.email],
@@ -85,12 +100,7 @@ export function LeadProfileHover({
 
   const clearSensitiveData = () => {
     setRevealSensitive(false);
-    if (organizationId) {
-      queryClient.removeQueries({
-        queryKey: ['lead-sensitive-profile', organizationId, lead.id],
-        exact: true,
-      });
-    }
+    // Hiding this hover must not cancel or erase the editor's shared query.
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -99,7 +109,8 @@ export function LeadProfileHover({
   };
 
   const sensitiveValue = (kind: 'cpf' | 'rg') => {
-    if (!revealSensitive) return '••••••••••••';
+    if (!canRevealSensitive || !revealSensitive) return '••••••••••••';
+    if (sensitiveProfile.isError) return 'Indisponível';
     if (sensitiveProfile.isLoading || sensitiveProfile.isFetching) return 'Carregando...';
     const value = sensitiveProfile.data?.[kind];
     if (!value) return 'Não informado';
@@ -112,11 +123,11 @@ export function LeadProfileHover({
         <button
           type="button"
           aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => handleOpenChange(!open)}
           className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-normal text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
         >
           <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary">
-            {lead.name || 'Lead'}
+            {displayName}
           </span>
           <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] group-hover:text-primary" />
         </button>
@@ -126,12 +137,12 @@ export function LeadProfileHover({
         align="start"
         sideOffset={4}
         collisionPadding={12}
-        className="vimob-popover-content z-[110] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
+        className={cn('vimob-popover-content z-[110] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none', variant === 'pipeline' && '[&_div]:text-xs [&_p]:text-xs [&_button]:text-xs')}
       >
         <div className="border-b border-[var(--app-border)] px-3 py-2">
           <p className="text-[11px] font-normal text-primary">Ficha do lead</p>
         </div>
-        <div className="max-h-[430px] space-y-3 overflow-y-auto p-3">
+        <div className={cn('space-y-3 overflow-y-auto p-3', variant === 'pipeline' ? 'max-h-[min(430px,calc(100dvh-72px))]' : 'max-h-[430px]')}>
           <div className="space-y-1.5">
             {rows.map(([label, value]) => (
               <div

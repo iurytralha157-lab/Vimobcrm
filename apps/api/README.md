@@ -27,8 +27,9 @@ Backend principal do Vimob CRM.
 - `POST /v1/leads` - cria lead ou registra reentrada com validacao de organizacao, destino, tags, notificacoes, auditoria e vinculo WhatsApp.
 - `PATCH /v1/leads/{id}` - atualiza lead com validacao de escopo, referencias e auditoria.
 - `DELETE /v1/leads/{id}` - exclui lead com permissao de delete e auditoria.
-- `POST /v1/leads/{id}/move-stage` - move lead no funil com permissao compatível com o RPC legado, auditoria e atividade de mudanca de etapa.
-- `POST /v1/leads/{id}/assign` - transfere ou limpa responsavel do lead, registrando `assignments_log`.
+- `POST /v1/leads/{id}/move-stage` - move lead no funil com permissao, auditoria e atividade de mudanca de etapa. `expectedStageId` e `expectedUpdatedAt` comparam o snapshot original sob o lock, antes dos efeitos; conflito retorna `409 lead_stage_changed` ou `409 lead_changed`, sem repeticao automatica. A revisao preserva microssegundos e e obrigatoria para mover um lead ganho/perdido entre etapas; clientes antigos ainda podem mover leads abertos ou reordenar na mesma etapa sem revisao.
+- `POST /v1/leads/{id}/assign` - transfere ou limpa responsavel do lead, registrando `assignments_log`. Exige `expectedUpdatedAt` exato do gesto original; ausencia ou mudanca retorna `409 lead_changed`, sem efeitos/retry automatico. O alvo precisa pertencer a geracao ativa da equipe vinculada, conforme o PATCH. `conversation-detail` inclui `updated_at` exato para esse consumidor.
+- `POST /v1/internal/automations/stage-command` - executa `move_lead` visual pelo mesmo kernel comercial do movimento manual, com lease, versao imutavel, permissao vigente do autor e ledger atomico. Exige segredo dedicado `AUTOMATION_COMMAND_TOKEN`. Configuracao, rollout coordenado e reversao em [pipeline-stage-command](../../docs/runbooks/pipeline-stage-command.md); preparado localmente, sem ativacao remota.
 - `POST /v1/leads/{id}/redistribute` - atribui lead via round-robin ativo, registrando `assignments_log` e `round_robin_logs`.
 - `POST /v1/leads/{id}/tags` - adiciona tag ao lead com validacao de escopo e atividade.
 - `DELETE /v1/leads/{id}/tags/{tagId}` - remove tag do lead com validacao de escopo e atividade.
@@ -76,12 +77,57 @@ Backend principal do Vimob CRM.
 - `GET /v1/stages` - lista colunas, opcionalmente por `pipelineId`.
 - `POST /v1/pipelines/{id}/stages` - cria coluna na pipeline.
 - `POST /v1/pipelines/{id}/stages/reorder` - reordena/renomeia colunas em transacao.
-- `PATCH /v1/stages/{id}` / `DELETE /v1/stages/{id}` - edita ou remove coluna sem leads vinculados.
+- `PATCH /v1/stages/{id}` / `DELETE /v1/stages/{id}` - edita ou remove coluna sem leads vinculados. PATCH exige a revisao exata `expectedUpdatedAt`; ausencia/obsolescencia retorna `409 pipeline_stages_changed` antes de efeitos de qualificacao/arquivo. Arquivar/excluir etapa ou excluir funil referenciado por fluxo efetivo/execucao pendente retorna `409 stage_has_automation_dependencies`, com nomes limitados depois da permissao. Publicar/ativar fluxo com destino inativo ou indisponivel retorna `400 automation_stage_unavailable` sem revelar tenant de referencia inexistente.
 - `GET /v1/round-robins` / `POST /v1/round-robins` - lista e cria filas de distribuicao com regras e membros.
 - `PATCH /v1/round-robins/{id}` / `DELETE /v1/round-robins/{id}` - edita ou remove fila de distribuicao.
 - `GET|POST /v1/round-robins/{id}/rules` e `PATCH|DELETE /v1/round-robin-rules/{id}` - gerencia regras da fila.
 - `POST /v1/round-robins/{id}/members` e `PATCH|DELETE /v1/round-robin-members/{id}` - gerencia membros da fila.
 - `POST /v1/pipelines/{id}/round-robin` - vincula uma fila ativa como round-robin padrao da pipeline.
+
+### Sessao ativa nas configuracoes da Pipeline
+
+As escritas de pipelines/colunas (incluindo reordenacao e round-robin padrao),
+as leituras/escritas de automacoes de coluna e os contratos legados de
+`stage-operational-configs` e `pipeline-sla-settings` exigem uma sessao ativa.
+O JWT precisa conter `session_id` ainda vinculado ao seu usuario em
+`auth.sessions`; assinatura e prazo do token sozinhos nao bastam. As leituras
+de pipelines/colunas, regras operacionais e inatividade ja usam essa fronteira.
+
+A verificacao ocorre antes de resolver tenant ou processar o pedido. SID ausente
+ou sessao revogada retorna `401`; falha/indisponibilidade da checagem retorna
+`503 session_check_unavailable`, sem aceitar a operacao. Permanecem as permissoes
+de pipeline ou automacoes, o modulo quando exigido, billing, escopo de organizacao
+e revisoes de concorrencia. Tokens de recovery continuam restritos; integracoes
+nao devem chamar essas rotas de usuario com token sem SID ou service role.
+
+Escopo, regressao e reversao estao no
+[runbook P2 das colunas](../../docs/runbooks/pipeline-columns-session-p2-fix-2026-10-20.md).
+
+### Sessao ativa no catalogo de equipes
+
+`GET /v1/teams`, usado pelo catalogo de filtros e pela lista de equipes,
+tambem exige sessao ativa antes de tenant/billing, organizacao e `team_view`.
+A mesma protecao vale para HEAD e para os parametros `includeInactive`.
+SID ausente/revogado retorna401; checker indisponivel retorna503. As permissoes,
+o escopo organizacional/de lideranca e o payload permanecem iguais.
+Somente o registro desse GET foi alterado; as rotas adjacentes de equipes
+nao fazem parte desta correcao. Regressao e limites:
+[Pipeline filtros P3](../../docs/runbooks/pipeline-filters-session-p3-fix-2026-10-20.md).
+
+### Continuacao da pagina da Pipeline
+
+`GET /v1/pipeline-stage-leads` emite `hasMore` booleano, inclusive `false`.
+A consulta le no maximo `limit + 1` linhas visiveis sob os mesmos filtros;
+retorna ate `limit` e usa a linha adicional apenas para confirmar continuacao.
+O proximo cursor continua sendo o ultimo card retornado, sem pular a sentinela.
+Nao ha contagem integral extra, migration ou alteracao do snapshot inicial.
+
+O frontend novo tolera a ausencia desse campo em APIs anteriores: pagina cheia
+com progresso mantem a continuacao ate uma pagina final de confirmacao. O total
+do primeiro quadro nao pode encerrar paginas posteriores. Um piso de contagem
+local recebe `+` no contador, sem quantidade restante exata, ate novo snapshot.
+Regressao, compatibilidade e reversao estao no
+[runbook P5 da paginacao](../../docs/runbooks/pipeline-pagination-p5-fix-2026-10-20.md).
 
 ## Variaveis obrigatorias
 
@@ -93,6 +139,7 @@ Backend principal do Vimob CRM.
 
 - `NOTIFICATION_DISPATCH_WORKER_ENABLED` - inicia o consumidor da fila duravel de notificacoes e os lembretes de agenda. Padrao seguro: `false`; habilite explicitamente apenas depois de validar o backlog e os provedores do ambiente.
 - `AUTOMATION_RUNTIME_WORKER_ENABLED` - liga/desliga o coordenador backend de automacoes. Padrao: `true`.
+- `STAGE_INACTIVITY_WORKER_ENABLED` - executor dos alertas simples de inatividade das etapas. Padrao: `false`; exige tambem o gate global, schema/indice preparados e ativacao explicita da regra. Usa ultima interacao humana e comeca na ativacao, sem backlog automatico; nao habilita regras legadas. Ciclo a cada 30s, limitado a 45s. `App.Close` cancela e aguarda esse executor antes de fechar o pool.
 - `AUTOMATION_RUNTIME_WORKER_INTERVAL` - intervalo do runner de eventos/execucoes. Padrao: `30s`.
 - `AUTOMATION_INACTIVITY_WORKER_INTERVAL` - intervalo do scanner de inatividade. Padrao: `5m`.
 - `AUTOMATION_WORKER_RUN_TIMEOUT` - timeout maximo de cada ciclo. Padrao: `25s`.
@@ -132,3 +179,78 @@ O projeto usa `go.work` na raiz para resolver os pacotes compartilhados em `pack
 ## Contratos
 
 O contrato HTTP versionado fica em `packages/contracts/openapi/v1.yaml`.
+
+### Revisao concorrente de equipes
+
+`GET /v1/teams` e `GET /v1/teams/{id}` devolvem `revision` em cada equipe.
+`POST /v1/teams` comeca em `revision: 1`. Para editar nome, logo, status,
+membros ou escala pelo `PATCH /v1/teams/{id}`, envie `expected_revision` com o
+numero recebido na ultima leitura ou gravacao bem-sucedida. O backend compara a
+revisao enquanto mantem a equipe travada na transacao. Uma alteracao efetiva
+avanca a revisao; repetir um payload identico com a revisao atual nao a avanca.
+Quando o pedido substitui `members` ou `memberIds`, envie tambem
+`expected_member_ids` com os IDs de `Team.members[].id` visiveis na mesma
+leitura. Para uma equipe sem membros visiveis, envie `[]` explicitamente.
+Essa segunda precondicao cobre a remocao e o reconvite de um usuario na
+organizacao: o vinculo antigo pode deixar de ser visivel sem alterar a revisao
+da equipe. A API compara os IDs antes de aplicar qualquer mudanca.
+Ao substituir a lista, o `PATCH` substitui apenas os membros visiveis:
+vinculos, escalas e entradas de fila de membros temporariamente suspensos
+permanecem guardados e voltam a aparecer quando a organizacao os reativa
+na mesma geracao. Um membro removido e depois reconvidado inicia outra
+geracao e exige selecao explicita no editor para voltar a equipe e a fila.
+Em `POST` e `PATCH`, envie somente um formato de lista: `members` ou o legado
+`memberIds`. Mesmo uma lista vazia conta como presente; usar ambos retorna `400`.
+
+Se outro escritor alterou a equipe, o `PATCH` responde `409` com
+`error.code = team_revision_conflict` e nao grava nenhuma parte do pedido.
+O cliente deve manter o rascunho visivel e pedir que a pessoa recarregue a
+versao atual antes de tentar novamente. Uma chamada sem `expected_revision`
+ou sem `expected_member_ids` ao substituir membros recebe
+`400 invalid_team_input` sem gravar. Rotas auxiliares de status, lideranca e
+disponibilidade continuam com seus payloads atuais, mas atualizam a revisao
+da equipe quando mudam dados, invalidando um editor que ficou aberto com uma
+versao antiga.
+
+### Publicacao das correcoes de equipes
+
+Na base de destino, confira o historico de migracoes e aplique as pendentes na
+ordem dos arquivos. Para estas correcoes, a sequencia relevante e:
+
+1. `20261009030225_membership_access_generation.sql` cria a geracao do vinculo
+   organizacional e dos participantes de equipes e filas.
+2. `20261009060500` ate `20261009061000` limitam as leituras e os efeitos
+   legados a vinculos vigentes e bloqueiam escritas de grants e RPCs antigos.
+3. `20261009061902_lock_team_pipeline_writes_to_backend_gateway.sql` revoga a
+   escrita direta de `authenticated` em `team_pipelines`; o cliente passa pelo
+   gateway Go, que confere `pipeline_manage` e o escopo da equipe.
+4. `20261009114207_team_revision_optimistic_concurrency.sql` cria
+   `teams.revision` e atualiza a limpeza de membros orfaos para avancar a
+   revisao das equipes alteradas. A API tambem avanca a revisao quando a
+   exclusao de um usuario remove seus vinculos de equipe.
+5. `20261009140731_fence_membership_grants_after_reinvite.sql` e a correcao
+   forward da `20261009030225`: impede trocar a identidade do vinculo e limpa
+   grants de roles e overrides em remocao, reconvite ou exclusao fisica.
+   A migracao original pode ja estar aplicada e deve permanecer intacta.
+
+Coordene banco, API e cliente em uma janela de corte. Depois das migracoes,
+atualize todas as replicas da API Go e publique o cliente que usa o gateway e
+envia as precondicoes de revisao e membros. Suspenda escritas de equipes e
+pipelines durante a mistura de versoes: o cliente antigo perde a escrita direta
+em `team_pipelines` assim que a `20261009061902` entra, e uma replica antiga da
+API pode aceitar um `PATCH` sem comparar `expected_revision`. Reabra as escritas
+somente apos confirmar que todas as replicas usam a nova versao e que os
+usuarios carregaram o cliente novo, inclusive em abas que estavam abertas.
+
+Antes do corte, exercite em homologacao, com contas de teste e papeis
+distintos: escrita autorizada e negada de equipe/pipeline, suspensao e reconvite
+de membro, escala de distribuicao, `GET` com `revision`, `PATCH` sem precondicao
+rejeitado sem gravacao e `PATCH` concorrente com `409` sem alteracao parcial.
+Depois do corte, repita canarios autenticados e confira erros e saude das
+replicas. Testes locais e contrato HTTP nao substituem essa verificacao.
+
+Nao trate rollback de binario como rollback completo: a `20261009061902`
+mantem a escrita direta bloqueada, e uma API antiga pode aceitar alteracoes sem
+precondicao. Preserve as migracoes aplicadas e planeje uma correcao forward;
+nao remova `teams.revision` nem restaure grants antigos sem plano de dados e
+seguranca.

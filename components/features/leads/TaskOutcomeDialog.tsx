@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,11 @@ export type TaskOutcome =
   // Email outcomes
   | 'not_replied'
   | 'bounced';
+
+export type TaskOutcomeDraft = {
+  outcome: TaskOutcome | '';
+  notes: string;
+};
 
 interface OutcomeOption {
   value: TaskOutcome;
@@ -78,40 +83,81 @@ interface TaskOutcomeDialogProps {
   onOpenChange: (open: boolean) => void;
   taskType: 'call' | 'message' | 'email' | 'note';
   taskTitle: string;
-  onConfirm: (outcome: TaskOutcome, notes: string) => void | Promise<void>;
+  onConfirm: (outcome: TaskOutcome, notes: string) => boolean | Promise<boolean>;
   isLoading?: boolean;
+  confirmationBlockedReason?: string;
+  confirmationRetry?: () => void;
+  confirmationRetrying?: boolean;
+  notesLimit?: number;
+  draft?: TaskOutcomeDraft;
+  onDraftChange?: (draft: TaskOutcomeDraft) => void;
 }
 
-export function TaskOutcomeDialog({
+export function TaskOutcomeDialog(props: TaskOutcomeDialogProps) {
+  // Each opening/type owns its draft and pending callback. An older response
+  // cannot clear a later opening, even when the controlled dialog stays mounted.
+  return <TaskOutcomeDialogSession key={`${props.open}:${props.taskType}`} {...props} />;
+}
+
+function TaskOutcomeDialogSession({
   open,
   onOpenChange,
   taskType,
   onConfirm,
   isLoading = false,
+  confirmationBlockedReason,
+  confirmationRetry,
+  confirmationRetrying = false,
+  notesLimit,
+  draft,
+  onDraftChange,
 }: TaskOutcomeDialogProps) {
-  const [selectedOutcome, setSelectedOutcome] = useState<TaskOutcome | ''>('');
-  const [notes, setNotes] = useState('');
+  const [localDraft, setLocalDraft] = useState<TaskOutcomeDraft>({ outcome: '', notes: '' });
+  const { outcome: selectedOutcome, notes } = draft ?? localDraft;
+  const latestDraft = useRef(draft ?? localDraft);
+  useLayoutEffect(() => { latestDraft.current = draft ?? localDraft; }, [draft, localDraft]);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const busy = isLoading || submitting;
+  const notesTooLong = notesLimit !== undefined && Array.from(notes.trim()).length > notesLimit;
+  const updateDraft = (next: TaskOutcomeDraft) => {
+    // A controlled Query cache may notify after the next input event. Compose
+    // that event with the latest edit, rather than an older rendered sibling.
+    latestDraft.current = next;
+    if (draft === undefined) setLocalDraft(next);
+    onDraftChange?.(next);
+  };
 
   const outcomes = outcomesByType[taskType] || [];
   const typeLabel = typeLabels[taskType] || 'tarefa';
   const TypeIcon = typeIcons[taskType] || Phone;
 
   const handleConfirm = async () => {
-    if (!selectedOutcome) return;
+    if (!selectedOutcome || isLoading || submittingRef.current ||
+      confirmationBlockedReason || confirmationRetrying || notesTooLong) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
-      await onConfirm(selectedOutcome, notes);
-      setSelectedOutcome('');
-      setNotes('');
+      if (await onConfirm(selectedOutcome, notes) === true && mountedRef.current) {
+        updateDraft({ outcome: '', notes: '' });
+      }
     } catch {
       // The owning mutation reports the error; keep the selection so the user can retry.
+    } finally {
+      submittingRef.current = false;
+      if (mountedRef.current) setSubmitting(false);
     }
   };
 
   const handleClose = () => {
-    if (isLoading) return;
+    if (busy || submittingRef.current) return;
+    updateDraft({ outcome: '', notes: '' });
     onOpenChange(false);
-    setSelectedOutcome('');
-    setNotes('');
   };
 
   // For note type, we don't need outcomes - just complete it
@@ -124,11 +170,11 @@ export function TaskOutcomeDialog({
       <DialogContent
         className="max-h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:max-w-xl"
         onEscapeKeyDown={(event) => {
-          if (isLoading) event.preventDefault();
+          if (busy) event.preventDefault();
         }}
         onInteractOutside={(event) => {
           const target = event.target as HTMLElement | null;
-          if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
+          if (busy || target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
             event.preventDefault();
           }
         }}
@@ -144,8 +190,9 @@ export function TaskOutcomeDialog({
 
         <div className="py-1">
           <RadioGroup
+            disabled={busy}
             value={selectedOutcome}
-            onValueChange={(value) => setSelectedOutcome(value as TaskOutcome)}
+            onValueChange={(value) => updateDraft({ outcome: value as TaskOutcome, notes: latestDraft.current.notes })}
             className="grid grid-cols-1 gap-2 sm:grid-cols-2"
           >
             {outcomes.map((option) => (
@@ -170,7 +217,7 @@ export function TaskOutcomeDialog({
                 <div className="flex-1">
                   <p className="font-light text-xs leading-tight">{option.label}</p>
                   {option.description && (
-                      <p className="mt-0.5 text-[10px] font-light leading-normal text-muted-foreground/75">
+                      <p className="mt-0.5 text-xs font-light leading-normal text-muted-foreground/75">
                       {option.description}
                     </p>
                   )}
@@ -183,24 +230,47 @@ export function TaskOutcomeDialog({
             <Textarea
               id="notes"
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              disabled={busy}
+              aria-invalid={notesTooLong}
+              onChange={(e) => updateDraft({ outcome: latestDraft.current.outcome, notes: e.target.value })}
               placeholder="Adicione detalhes sobre essa tentativa..."
               className="resize-none text-xs font-light"
               rows={2}
             />
+            {notesTooLong && (
+              <p role="alert" className="mt-1.5 text-xs font-light text-destructive">
+                Use até {notesLimit} caracteres nas anotações. Seu texto foi mantido.
+              </p>
+            )}
           </div>
         </div>
 
+        {confirmationBlockedReason && (
+          <div className="space-y-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2.5 text-xs font-light">
+            <p role="status" className="text-muted-foreground">{confirmationBlockedReason}</p>
+            {confirmationRetry && (
+              <Button
+                variant="ghost"
+                className="h-8 rounded-[6px] px-2 text-xs font-light"
+                disabled={busy || confirmationRetrying}
+                onClick={confirmationRetry}
+              >
+                {confirmationRetrying ? 'Verificando...' : 'Tentar novamente'}
+              </Button>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-2 pt-0.5">
-          <Button variant="outline" className="h-8 w-[40%] rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]" onClick={handleClose} disabled={isLoading}>
+          <Button variant="outline" className="h-9 w-[40%] rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]" onClick={handleClose} disabled={busy}>
             Cancelar
           </Button>
           <Button
-            className="h-8 w-[60%] rounded-[6px] text-xs font-light shadow-none"
+            className="h-9 w-[60%] rounded-[6px] text-xs font-light shadow-none"
             onClick={() => void handleConfirm()}
-            disabled={!selectedOutcome || isLoading}
+            disabled={!selectedOutcome || busy || Boolean(confirmationBlockedReason) || confirmationRetrying || notesTooLong}
           >
-            {isLoading ? (
+            {busy ? (
               <>
                 <Loader2 className="h-3 w-3 mr-2 animate-spin" />
                 Salvando...

@@ -20,6 +20,8 @@ var (
 	ErrHasLeads         = errors.New("pipeline or stage has leads")
 	ErrHasDependencies  = errors.New("pipeline or stage has linked history or configuration")
 	ErrStagesChanged    = errors.New("pipeline stages changed since they were loaded")
+	ErrPipelineChanged  = errors.New("pipeline changed since it was loaded")
+	ErrRoundRobinBusy   = errors.New("pipeline default queue is being changed")
 	ErrNoChanges        = errors.New("no pipeline changes provided")
 )
 
@@ -35,6 +37,7 @@ type Pipeline struct {
 	DefaultRoundRobinID string    `json:"defaultRoundRobinId,omitempty"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`
+	Revision            string    `json:"revision"`
 }
 
 type Stage struct {
@@ -108,8 +111,9 @@ func qualifiedPatchForStageUpdate(input updateStageInput) (patchBool, error) {
 }
 
 type UpdatePipelineRequest struct {
-	Name      patchString `json:"name,omitempty"`
-	IsDefault patchBool   `json:"isDefault,omitempty"`
+	ExpectedRevision string      `json:"expectedRevision"`
+	Name             patchString `json:"name,omitempty"`
+	IsDefault        patchBool   `json:"isDefault,omitempty"`
 }
 
 type updatePipelineInput UpdatePipelineRequest
@@ -125,19 +129,21 @@ type createStageInput struct {
 }
 
 type UpdateStageRequest struct {
-	Name        patchString `json:"name,omitempty"`
-	Color       patchString `json:"color,omitempty"`
-	StageKey    patchString `json:"stageKey,omitempty"`
-	IsWon       patchBool   `json:"isWon,omitempty"`
-	IsLost      patchBool   `json:"isLost,omitempty"`
-	IsQualified patchBool   `json:"isQualified,omitempty"`
-	IsActive    patchBool   `json:"isActive,omitempty"`
+	ExpectedUpdatedAt *time.Time  `json:"expectedUpdatedAt"`
+	Name              patchString `json:"name,omitempty"`
+	Color             patchString `json:"color,omitempty"`
+	StageKey          patchString `json:"stageKey,omitempty"`
+	IsWon             patchBool   `json:"isWon,omitempty"`
+	IsLost            patchBool   `json:"isLost,omitempty"`
+	IsQualified       patchBool   `json:"isQualified,omitempty"`
+	IsActive          patchBool   `json:"isActive,omitempty"`
 }
 
 type updateStageInput UpdateStageRequest
 
 type ReorderStagesRequest struct {
-	Stages []StageOrderItem `json:"stages"`
+	Stages            []StageOrderItem `json:"stages"`
+	PreserveStageKeys bool             `json:"preserveStageKeys,omitempty"`
 }
 
 type StageOrderItem struct {
@@ -150,7 +156,8 @@ type StageOrderItem struct {
 }
 
 type reorderStagesInput struct {
-	Stages []stageOrderItem
+	Stages            []stageOrderItem
+	PreserveStageKeys bool
 }
 
 type stageOrderItem struct {
@@ -164,11 +171,13 @@ type stageOrderItem struct {
 }
 
 type SetPipelineRoundRobinRequest struct {
-	RoundRobinID *string `json:"roundRobinId"`
+	ExpectedRevision string          `json:"expectedRevision"`
+	RoundRobinID     json.RawMessage `json:"roundRobinId"`
 }
 
 type setPipelineRoundRobinInput struct {
-	RoundRobinID *string
+	ExpectedRevision string
+	RoundRobinID     *string
 }
 
 func (field *patchString) UnmarshalJSON(data []byte) error {
@@ -211,9 +220,13 @@ func (request CreatePipelineRequest) Validate() (createPipelineInput, error) {
 }
 
 func (request UpdatePipelineRequest) Validate() (updatePipelineInput, error) {
+	if err := validatePipelineRevision(request.ExpectedRevision); err != nil {
+		return updatePipelineInput{}, err
+	}
 	input := updatePipelineInput{
-		Name:      validatePatchString(request.Name, 120),
-		IsDefault: request.IsDefault,
+		ExpectedRevision: request.ExpectedRevision,
+		Name:             validatePatchString(request.Name, 120),
+		IsDefault:        request.IsDefault,
 	}
 	if !input.Name.Set && !input.IsDefault.Set {
 		return updatePipelineInput{}, ErrNoChanges
@@ -247,13 +260,14 @@ func (request CreateStageRequest) Validate() (createStageInput, error) {
 
 func (request UpdateStageRequest) Validate() (updateStageInput, error) {
 	input := updateStageInput{
-		Name:        validatePatchString(request.Name, 120),
-		Color:       request.Color,
-		StageKey:    validatePatchString(request.StageKey, 80),
-		IsWon:       request.IsWon,
-		IsLost:      request.IsLost,
-		IsQualified: request.IsQualified,
-		IsActive:    request.IsActive,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+		Name:              validatePatchString(request.Name, 120),
+		Color:             request.Color,
+		StageKey:          validatePatchString(request.StageKey, 80),
+		IsWon:             request.IsWon,
+		IsLost:            request.IsLost,
+		IsQualified:       request.IsQualified,
+		IsActive:          request.IsActive,
 	}
 	if !input.Name.Set && !input.Color.Set && !input.StageKey.Set && !input.IsWon.Set && !input.IsLost.Set && !input.IsQualified.Set && !input.IsActive.Set {
 		return updateStageInput{}, ErrNoChanges
@@ -274,6 +288,9 @@ func (request UpdateStageRequest) Validate() (updateStageInput, error) {
 	if _, err := qualifiedPatchForStageUpdate(input); err != nil {
 		return updateStageInput{}, err
 	}
+	if input.ExpectedUpdatedAt == nil || input.ExpectedUpdatedAt.IsZero() {
+		return updateStageInput{}, ErrStagesChanged
+	}
 
 	return input, nil
 }
@@ -286,7 +303,7 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 		return reorderStagesInput{}, fmt.Errorf("%w: at most 100 stages can be reordered", ErrInvalidInput)
 	}
 
-	input := reorderStagesInput{Stages: make([]stageOrderItem, 0, len(request.Stages))}
+	input := reorderStagesInput{Stages: make([]stageOrderItem, 0, len(request.Stages)), PreserveStageKeys: request.PreserveStageKeys}
 	seen := map[string]struct{}{}
 	for index, item := range request.Stages {
 		id, ok := normalizeUUID(item.ID)
@@ -312,8 +329,11 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 				return reorderStagesInput{}, err
 			}
 		}
-		stageKey := trimMax(item.StageKey, 80)
-		if stageKey == "" {
+		stageKey := strings.TrimSpace(item.StageKey)
+		if len([]rune(stageKey)) > maxStageKeyLength {
+			return reorderStagesInput{}, fmt.Errorf("%w: stage key must have at most %d characters", ErrInvalidInput, maxStageKeyLength)
+		}
+		if stageKey == "" && item.IsNew {
 			stageKey = buildStageKey(name)
 		}
 		if item.IsNew {
@@ -339,16 +359,26 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 }
 
 func (request SetPipelineRoundRobinRequest) Validate() (setPipelineRoundRobinInput, error) {
-	if request.RoundRobinID == nil || strings.TrimSpace(*request.RoundRobinID) == "" {
-		return setPipelineRoundRobinInput{}, nil
+	if len(bytes.TrimSpace(request.RoundRobinID)) == 0 {
+		return setPipelineRoundRobinInput{}, fmt.Errorf("%w: roundRobinId is required; use null to clear the fallback", ErrInvalidInput)
+	}
+	if err := validatePipelineRevision(request.ExpectedRevision); err != nil {
+		return setPipelineRoundRobinInput{}, err
+	}
+	var roundRobinID *string
+	if err := json.Unmarshal(request.RoundRobinID, &roundRobinID); err != nil {
+		return setPipelineRoundRobinInput{}, fmt.Errorf("%w: roundRobinId must be a UUID or null", ErrInvalidInput)
+	}
+	if roundRobinID == nil {
+		return setPipelineRoundRobinInput{ExpectedRevision: request.ExpectedRevision}, nil
 	}
 
-	value, ok := normalizeUUID(*request.RoundRobinID)
+	value, ok := normalizeUUID(*roundRobinID)
 	if !ok {
 		return setPipelineRoundRobinInput{}, fmt.Errorf("%w: roundRobinId is invalid", ErrInvalidInput)
 	}
 
-	return setPipelineRoundRobinInput{RoundRobinID: &value}, nil
+	return setPipelineRoundRobinInput{ExpectedRevision: request.ExpectedRevision, RoundRobinID: &value}, nil
 }
 
 func validatePatchString(field patchString, maxLength int) patchString {
@@ -400,7 +430,7 @@ func buildStageKey(name string) string {
 	if out == "" {
 		return "coluna"
 	}
-	return out
+	return boundStageKey(out, maxStageKeyLength)
 }
 
 func normalizeUUID(value string) (string, bool) {

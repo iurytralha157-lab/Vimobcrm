@@ -4,7 +4,8 @@ import test from 'node:test'
 import type { PropertyPublicationOverview } from '../validation/property-publications'
 
 const autoPublicationPath = './property-auto-publication.ts'
-const { planAutomaticSitePublication, requestAutomaticSitePublication } = await import(autoPublicationPath) as typeof import('./property-auto-publication')
+const { planAutomaticSitePublication, requestAutomaticSitePublication, captureAutomaticSitePublicationAction,
+  INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION } = await import(autoPublicationPath) as typeof import('./property-auto-publication')
 
 function overview(overrides: Record<string, unknown> = {}, canManage = true): PropertyPublicationOverview {
   return {
@@ -137,6 +138,7 @@ test('retries only revision conflict with a fresh publication revision and new k
       reads += 1
       return overview({
         id: '22222222-2222-4222-8222-222222222222',
+        desired_state: 'published',
         updated_at: reads === 1 ? '2026-09-28T11:00:00Z' : '2026-09-28T11:00:01Z',
       })
     },
@@ -200,4 +202,127 @@ test('revision conflict accepts worker completion but blocks a new property revi
   }, 'stable-key')
   assert.equal(newRevision.kind, 'blocked')
   assert.equal(reads, 2)
+})
+
+test('automatic publication stops when the form scope changes while loading the overview', async () => {
+  let current = true
+  let publishes = 0
+  await assert.rejects(requestAutomaticSitePublication('org', 'property', {
+    getPublications: async (_org, _id, _signal, intent) => {
+      assert.equal(intent?.expectedUserId, 'original-user')
+      current = false
+      return overview()
+    },
+    publishSite: async () => { publishes++; return overview() },
+  }, 'scope-key', { expectedUserId: 'original-user', canContinue: () => current }), /publication_scope_changed/)
+  assert.equal(publishes, 0)
+})
+
+test('automatic publication carries the identity guard to the actual request boundary', async () => {
+  let current = true
+  let sent = 0
+  await assert.rejects(requestAutomaticSitePublication('org', 'property', {
+    getPublications: async () => overview(),
+    publishSite: async (_org, _id, _input, _key, intent) => {
+      assert.equal(intent?.expectedUserId, 'original-user')
+      current = false
+      intent?.onRequestStart?.()
+      sent++
+      return overview()
+    },
+  }, 'scope-key', { expectedUserId: 'original-user', canContinue: () => current }), /publication_scope_changed/)
+  assert.equal(sent, 0)
+})
+
+test('an older save cannot override a completed withdrawal or pause', async () => {
+  for (const desired_state of ['unpublished', 'paused']) {
+    let sent = 0
+    const result = await requestAutomaticSitePublication('org', 'property', {
+      getPublications: async () => overview({ id: 'canonical', desired_state, updated_at: 'new-intent' }),
+      publishSite: async () => { sent++; return overview() },
+    }, 'old-save', { action: { publicationId: 'canonical', publicationUpdatedAt: 'save-start' } })
+    assert.equal(result.kind, 'blocked')
+    assert.equal(sent, 0)
+  }
+})
+
+test('a conflict caused by withdrawal never retries with the newer private revision', async () => {
+  let reads = 0
+  let sent = 0
+  const result = await requestAutomaticSitePublication('org', 'property', {
+    getPublications: async () => overview({
+      id: 'canonical', updated_at: ++reads === 1 ? 'save-start' : 'withdrawn',
+      desired_state: reads === 1 ? 'published' : 'unpublished',
+    }),
+    publishSite: async () => { sent++; throw { status: 409, code: 'publication_revision_conflict' } },
+  }, 'old-save', { action: { publicationId: 'canonical', publicationUpdatedAt: 'save-start' } })
+  assert.equal(result.kind, 'blocked')
+  assert.equal(reads, 2)
+  assert.equal(sent, 1)
+})
+
+test('a new explicit save may resume only the private revision captured before saving', async () => {
+  const current = overview({ id: 'canonical', updated_at: 'private-revision' })
+  let sent = 0
+  const api = {
+    getPublications: async () => current,
+    publishSite: async () => { sent++; return overview({ desired_state: 'published', observed_state: 'queued' }) },
+  }
+  const action = await captureAutomaticSitePublicationAction('org', 'property', api)
+  assert.deepEqual(action, { publicationId: 'canonical', publicationUpdatedAt: 'private-revision' })
+  assert.equal((await requestAutomaticSitePublication('org', 'property', api, 'new-save', { action })).kind, 'requested')
+  assert.equal(sent, 1)
+  assert.equal((await requestAutomaticSitePublication('org', 'property', api, 'no-baseline')).kind, 'blocked')
+  assert.equal(sent, 1)
+})
+
+test('creation recovery retains its initial absent intent when another session withdrew', async () => {
+  let sent = 0
+  const result = await requestAutomaticSitePublication('org', 'property', {
+    getPublications: async () => overview({ id: 'canonical', updated_at: 'withdrawn-after-create' }),
+    publishSite: async () => { sent++; return overview() },
+  }, 'recovered-create', { action: INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION })
+  assert.equal(result.kind, 'blocked')
+  assert.equal(sent, 0)
+})
+
+test('capturing intent keeps the actor and form guard across the overview request', async () => {
+  let current = true
+  await assert.rejects(captureAutomaticSitePublicationAction('org', 'property', {
+    getPublications: async (_org, _id, _signal, intent) => {
+      assert.equal(intent?.expectedUserId, 'original-user')
+      current = false
+      intent?.onRequestStart?.()
+      return overview()
+    },
+    publishSite: async () => overview(),
+  }, { expectedUserId: 'original-user', canContinue: () => current }), /publication_scope_changed/)
+  await assert.rejects(captureAutomaticSitePublicationAction('org', 'property', {
+    getPublications: async () => overview({ id: 'canonical', updated_at: null }),
+    publishSite: async () => overview(),
+  }), /publication_revision_unavailable/)
+})
+
+test('fresh consent denial blocks equal published versions and processing snapshots', async () => {
+  for (const observed_state of ['published', 'queued']) {
+    const result = planAutomaticSitePublication(overview({
+      id: 'canonical', desired_state: 'published', observed_state,
+      published_version: 2, current_version: 2, is_outdated: false,
+      readiness_state: 'blocked',
+      checks: [{ code: 'commercialization', label: 'Comercialização', severity: 'error', resolved: false, message: 'Autorize a comercialização.' }],
+    }))
+    assert.deepEqual(result, { kind: 'blocked', reasons: ['Autorize a comercialização.'], fixableInForm: true })
+  }
+})
+
+test('a command response must pass fresh eligibility before reporting already published', async () => {
+  const result = await requestAutomaticSitePublication('org', 'property', {
+    getPublications: async () => overview(),
+    publishSite: async () => overview({
+      desired_state: 'published', observed_state: 'published', published_version: 1, current_version: 1,
+      readiness_state: 'blocked',
+      checks: [{ code: 'commercialization', label: 'Comercialização', severity: 'error', resolved: false, message: 'Autorize a comercialização.' }],
+    }),
+  }, 'save-key')
+  assert.equal(result.kind, 'blocked')
 })

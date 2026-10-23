@@ -24,6 +24,7 @@ export function useLeadCadenceState(
     enabled: Boolean(leadId),
     staleTime: 15_000,
     gcTime: 5 * 60_000,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
   })
 }

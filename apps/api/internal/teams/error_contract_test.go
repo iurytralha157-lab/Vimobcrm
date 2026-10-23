@@ -44,6 +44,27 @@ func TestTeamInUseForeignKeyViolationUsesStableConflictContract(t *testing.T) {
 	}
 }
 
+func TestTeamRevisionConflictUsesStableHTTPContract(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPatch, "/v1/teams/11111111-1111-4111-8111-111111111111", nil)
+	response := httptest.NewRecorder()
+	writeTeamError(response, request, ErrTeamRevisionConflict)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error.Code != "team_revision_conflict" {
+		t.Fatalf("error code = %q, want team_revision_conflict", payload.Error.Code)
+	}
+}
+
 func TestTeamInUseForeignKeyViolationRejectsUnrelatedDatabaseErrors(t *testing.T) {
 	tests := []struct {
 		name string

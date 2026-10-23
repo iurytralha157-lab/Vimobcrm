@@ -40,12 +40,13 @@ type persistedMemberState struct {
 }
 
 type memberReconcileMutation struct {
-	ID       string
-	UserID   *string
-	TeamID   *string
-	Weight   int
-	Position int
-	IsActive bool
+	ActiveSet bool
+	ID        string
+	UserID    *string
+	TeamID    *string
+	Weight    int
+	Position  int
+	IsActive  bool
 }
 
 type memberReconcilePlan struct {
@@ -71,6 +72,17 @@ func (repo Repository) reconcileRules(
 	}
 	plan, err := planRuleReconciliation(existing, rules)
 	if err != nil {
+		return false, err
+	}
+	if err := validateRuleCollectionPlan(existing, plan); err != nil {
+		return false, err
+	}
+	plan, err = prepareRulePlanMatchers(existing, plan)
+	if err != nil {
+		return false, err
+	}
+	changedRules := rulesRequiringReferenceValidation(existing, plan)
+	if err := repo.validateRuleReferences(ctx, tx, organizationID, changedRules); err != nil {
 		return false, err
 	}
 	if err := repo.checkConditionConflicts(ctx, tx, organizationID, &roundRobinID, plan.Effective); err != nil {
@@ -99,6 +111,21 @@ func (repo Repository) reconcileRules(
 
 	for _, mutation := range plan.Updates {
 		rule := mutation.Rule
+		matcherUnchanged := false
+		for _, state := range existing {
+			if state.ID == mutation.ID {
+				matcherUnchanged = sameRuleMatcher(state, rule)
+				break
+			}
+		}
+		if matcherUnchanged {
+			metadataChanged, err := updateReconciledRuleMetadata(ctx, tx, organizationID, roundRobinID, mutation)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || metadataChanged
+			continue
+		}
 		matchJSON := jsonb(normalizeObject(rule.Match))
 		conditionsJSON := jsonb(rulePayload(rule.MatchType, rule.MatchValue, rule.Match))
 		commandTag, err := tx.Exec(ctx, `
@@ -117,7 +144,7 @@ func (repo Repository) reconcileRules(
 			  and (
 			    coalesce(nullif(match_type, ''), conditions->>'match_type', name, '') is distinct from $4
 			    or coalesce(nullif(match_value, ''), conditions->>'match_value', '') is distinct from $5
-			    or coalesce(match, conditions->'match', '{}'::jsonb) is distinct from $6::jsonb
+			    or (coalesce(conditions->'match', '{}'::jsonb) || coalesce(match, '{}'::jsonb)) is distinct from $6::jsonb
 			    or coalesce(is_active, true) is distinct from $8
 			    or coalesce(priority, 0) is distinct from $9
 			  )
@@ -172,7 +199,7 @@ func loadPersistedRuleStates(
 			id::text,
 			coalesce(nullif(match_type, ''), conditions->>'match_type', name, ''),
 			coalesce(nullif(match_value, ''), conditions->>'match_value', ''),
-			coalesce(match, conditions->'match', '{}'::jsonb)::text,
+			(coalesce(conditions->'match', '{}'::jsonb) || coalesce(match, '{}'::jsonb))::text,
 			coalesce(priority, 0),
 			coalesce(is_active, true)
 		from public.round_robin_rules
@@ -358,11 +385,34 @@ func planRuleReconciliation(existing []persistedRuleState, rules []ruleInput) (r
 }
 
 func sameRuleSemantics(state persistedRuleState, candidate ruleInput) bool {
-	return state.MatchType == candidate.MatchType &&
-		state.MatchValue == candidate.MatchValue &&
-		jsonb(normalizeObject(state.Match)) == jsonb(normalizeObject(candidate.Match)) &&
+	return sameRuleMatcher(state, candidate) &&
 		state.Priority == candidate.Priority &&
 		state.IsActive == candidate.IsActive
+}
+
+func sameRuleMatcher(state persistedRuleState, candidate ruleInput) bool {
+	return state.MatchType == candidate.MatchType &&
+		state.MatchValue == candidate.MatchValue &&
+		jsonb(normalizeObject(state.Match)) == jsonb(normalizeObject(candidate.Match))
+}
+
+func rulesRequiringReferenceValidation(existing []persistedRuleState, plan ruleReconcilePlan) []ruleInput {
+	existingByID := make(map[string]persistedRuleState, len(existing))
+	for _, state := range existing {
+		existingByID[state.ID] = state
+	}
+	rules := append([]ruleInput(nil), plan.Inserts...)
+	for _, mutation := range plan.Updates {
+		state, exists := existingByID[mutation.ID]
+		// Reordering or deactivating a legacy rule must retain its raw matcher.
+		// A changed matcher or an explicit activation must validate its references.
+		if !exists || !sameRuleMatcher(state, mutation.Rule) || (!state.IsActive && mutation.Rule.IsActive) {
+			rule := mutation.Rule
+			rule.MatcherUnchanged = exists && sameRuleMatcher(state, mutation.Rule)
+			rules = append(rules, rule)
+		}
+	}
+	return rules
 }
 
 func ruleSemanticKey(matchType string, matchValue string, match map[string]any) string {
@@ -400,11 +450,13 @@ func (repo Repository) reconcileMembers(
 			if !sameOptionalString(member.UserID, state.UserID) || !sameOptionalString(member.TeamID, state.TeamID) {
 				return false, fmt.Errorf("%w: member id does not match its saved user/team context", ErrInvalidReference)
 			}
-			if err := ensureResolvedMemberInScope(tenantContext, state.UserID, state.TeamID); err != nil {
-				return false, err
-			}
 			member.UserID = cloneStringPointer(state.UserID)
 			member.TeamID = cloneStringPointer(state.TeamID)
+			if member.IsActive != nil && *member.IsActive {
+				if _, _, _, err := repo.resolveMemberEntry(ctx, tx, tenantContext.OrganizationID, member, ignoreAvailability); err != nil {
+					return false, err
+				}
+			}
 			resolved = append(resolved, member)
 			continue
 		}
@@ -427,7 +479,11 @@ func (repo Repository) reconcileMembers(
 		resolved = append(resolved, member)
 	}
 
-	plan, err := planMemberReconciliation(existing, resolved)
+	plan, err := planMemberReconciliationInScope(tenantContext, existing, resolved)
+	if err != nil {
+		return false, err
+	}
+	plan, err = constrainLegacyMemberCollectionPlan(existing, resolved, plan)
 	if err != nil {
 		return false, err
 	}
@@ -450,19 +506,7 @@ func (repo Repository) reconcileMembers(
 	}
 
 	for _, mutation := range plan.Updates {
-		commandTag, err := tx.Exec(ctx, `
-			update public.round_robin_members
-			set weight = $4,
-			    position = $5,
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and round_robin_id = $2::uuid
-			  and id = $3::uuid
-			  and (
-			    coalesce(weight, 1) is distinct from $4
-			    or coalesce(position, 0) is distinct from $5
-			  )
-		`, tenantContext.OrganizationID, roundRobinID, mutation.ID, mutation.Weight, mutation.Position)
+		commandTag, err := updateReconciledMember(ctx, tx, tenantContext.OrganizationID, roundRobinID, mutation)
 		if err != nil {
 			return false, err
 		}
@@ -487,9 +531,9 @@ func (repo Repository) reconcileMembers(
 				$4::uuid,
 				$5,
 				$6,
-				true
+				$7
 			)
-		`, tenantContext.OrganizationID, roundRobinID, nullable(mutation.TeamID), nullable(mutation.UserID), mutation.Weight, mutation.Position); err != nil {
+		`, tenantContext.OrganizationID, roundRobinID, nullable(mutation.TeamID), nullable(mutation.UserID), mutation.Weight, mutation.Position, mutation.IsActive); err != nil {
 			return false, err
 		}
 		changed = true
@@ -569,12 +613,16 @@ func planMemberReconciliation(existing []persistedMemberState, members []memberI
 		seenMembers[memberKey] = struct{}{}
 
 		if candidate.ID == "" {
+			active := true
+			if candidate.IsActive != nil {
+				active = *candidate.IsActive
+			}
 			plan.Inserts = append(plan.Inserts, memberReconcileMutation{
 				UserID:   cloneStringPointer(candidate.UserID),
 				TeamID:   cloneStringPointer(candidate.TeamID),
 				Weight:   candidate.Weight,
 				Position: index,
-				IsActive: true,
+				IsActive: active,
 			})
 			continue
 		}
@@ -585,14 +633,19 @@ func planMemberReconciliation(existing []persistedMemberState, members []memberI
 		if candidate.WeightSet {
 			desiredWeight = candidate.Weight
 		}
-		if desiredWeight != state.Weight || index != state.Position {
+		desiredActive := state.IsActive
+		if candidate.IsActive != nil {
+			desiredActive = *candidate.IsActive
+		}
+		if desiredWeight != state.Weight || index != state.Position || candidate.IsActive != nil {
 			plan.Updates = append(plan.Updates, memberReconcileMutation{
-				ID:       state.ID,
-				UserID:   cloneStringPointer(state.UserID),
-				TeamID:   cloneStringPointer(state.TeamID),
-				Weight:   desiredWeight,
-				Position: index,
-				IsActive: state.IsActive,
+				ID:        state.ID,
+				UserID:    cloneStringPointer(state.UserID),
+				TeamID:    cloneStringPointer(state.TeamID),
+				Weight:    desiredWeight,
+				Position:  index,
+				IsActive:  desiredActive,
+				ActiveSet: candidate.IsActive != nil,
 			})
 		}
 	}

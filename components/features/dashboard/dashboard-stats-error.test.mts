@@ -33,10 +33,13 @@ test("dados anteriores só podem continuar visíveis quando o acesso segue váli
   assert.equal(shouldDisplayCachedDashboardStats({ status: 401 }), false);
   assert.equal(shouldDisplayCachedDashboardStats({ status: 403 }), false);
   assert.equal(shouldDisplayCachedDashboardStats({ code: "organization_required" }), false);
+  assert.equal(shouldDisplayCachedDashboardStats({ code: "session_check_unavailable", status: 503 }), false);
   assert.equal(getDashboardStatsFailureState(false, false, null), "none");
   assert.equal(getDashboardStatsFailureState(false, true, { status: 502 }), "unavailable");
   assert.equal(getDashboardStatsFailureState(true, true, { status: 502 }), "stale");
   assert.equal(getDashboardStatsFailureState(true, true, { status: 403 }), "unavailable");
+  assert.equal(getDashboardStatsFailureState(true, true, { code: "session_check_unavailable", status: 503 }), "unavailable");
+  assert.match(getDashboardStatsErrorDescription({ code: "session_check_unavailable", status: 503 }), /validar sua sessão/);
 });
 
 test("desktop e mobile usam cards da coorte para taxas de status", () => {

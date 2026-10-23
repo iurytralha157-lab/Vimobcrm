@@ -1,7 +1,5 @@
-import { supabase } from "@/lib/supabase/client";
-import { auditAPI } from "@/lib/api/audit";
 /**
- * Hook para logging de eventos de segurança
+ * Hook para eventos de segurança locais no navegador.
  * Registra:
  * - Tentativas de login falhadas
  * - Tentativas bem-sucedidas
@@ -55,35 +53,6 @@ export function useSecurityLogger() {
     if (process.env.NODE_ENV === 'development') {
       console.log('[Security]', event.type, securityEvent);
     }
-
-    // Em produção ou se quisermos persistência, enviar para tabela audit_logs
-    const syncWithServer = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
-
-        // Skip server sync if no authenticated user or on public pages
-        const isAuthPage = window.location.pathname === '/login' || window.location.pathname === '/cadastro';
-        if (!session || !user?.id || isAuthPage) {
-          return;
-        }
-
-        await auditAPI.create({
-          action: event.type,
-          entity_type: 'security_event',
-          new_data: {
-            email: event.email,
-            details: event.details,
-            ipHint: event.ipHint
-          },
-          user_agent: navigator.userAgent,
-        });
-      } catch (err) {
-        console.error('[Security] Failed to sync log with server:', err);
-      }
-    };
-
-    syncWithServer();
   };
 
   // Funções de conveniência

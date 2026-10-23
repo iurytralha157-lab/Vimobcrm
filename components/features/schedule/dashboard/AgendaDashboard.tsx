@@ -35,6 +35,7 @@ import {
 import { AgendaAdaptiveChart } from "./AgendaAdaptiveChart";
 import { AgendaResponsibleResultsPanel } from "./AgendaResponsibleResultsPanel";
 import { AgendaEventsPanel } from "./AgendaEventsPanel";
+import { AgendaDataQualityNotice } from "./AgendaDataQualityNotice";
 import {
   AGENDA_DASHBOARD_FALLBACK_TIME_ZONE,
   getAgendaDashboardPresetRange,
@@ -288,7 +289,7 @@ export function AgendaDashboard({
   const dashboardQuery = useScheduleDashboard(effectiveFilters, {
     enabled: urlReady,
   });
-  const teamsQuery = useTeams({ enabled: urlReady && canViewTeams });
+  const teamsQuery = useTeams({ catalog: true, enabled: urlReady && canViewTeams });
   const usersQuery = useScheduleUsers({ enabled: urlReady });
   const data = dashboardQuery.data;
 
@@ -420,7 +421,7 @@ export function AgendaDashboard({
     <section
       aria-label="Dashboard da agenda"
       aria-busy={dashboardQuery.isFetching}
-      className={cn("min-w-0 space-y-3 p-2 sm:space-y-4 sm:p-4", className)}
+      className={cn("@container/agenda-dashboard min-w-0 space-y-3 p-2 sm:space-y-4 sm:p-4", className)}
     >
       <div className="flex min-w-0 justify-end">
         <AgendaDashboardFilters
@@ -459,6 +460,8 @@ export function AgendaDashboard({
             <AgendaDashboardTransitionNotice />
           ) : null}
 
+          <AgendaDataQualityNotice quality={data.data_quality} />
+
           <AgendaDashboardKpis
             kpis={data.kpis}
             byType={data.by_type}
@@ -471,8 +474,8 @@ export function AgendaDashboard({
             <AgendaDashboardEmpty />
           ) : (
             <>
-              <div className="grid min-w-0 grid-cols-1 items-stretch gap-3 xl:grid-cols-12">
-                <div className="min-w-0 xl:col-span-8">
+              <div className="grid min-w-0 grid-cols-1 items-stretch gap-3 @[960px]/agenda-dashboard:grid-cols-12">
+                <div className="min-w-0 @[960px]/agenda-dashboard:col-span-8">
                   <AgendaAdaptiveChart
                     hourly={data.hourly}
                     daily={data.daily}
@@ -481,7 +484,7 @@ export function AgendaDashboard({
                     dateBasis={data.period.date_basis}
                   />
                 </div>
-                <div className="min-w-0 xl:col-span-4">
+                <div className="min-w-0 @[960px]/agenda-dashboard:col-span-4">
                   <AgendaOverduePanel
                     owners={data.overdue_by_owner}
                     totalOverdue={data.kpis.overdue}
@@ -490,7 +493,7 @@ export function AgendaDashboard({
                 </div>
               </div>
 
-              <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
+              <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3">
                 <AgendaEventsPanel
                   filters={effectiveFilters}
                   period={data.period}

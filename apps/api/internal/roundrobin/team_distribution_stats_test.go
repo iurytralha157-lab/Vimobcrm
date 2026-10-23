@@ -274,7 +274,7 @@ func TestCurrentSuccessfulLogWritersPersistLeadAssignmentFirst(t *testing.T) {
 		{
 			name:   "automatic redistribution",
 			path:   filepath.Join("..", "leads", "redistribution_worker.go"),
-			anchor: "func (repo Repository) processDueRedistributions",
+			anchor: "func (repo Repository) processDueRedistribution(",
 			first:  "repo.transferLeadAssignee",
 			second: "repo.insertAutoRedistributionLog",
 		},

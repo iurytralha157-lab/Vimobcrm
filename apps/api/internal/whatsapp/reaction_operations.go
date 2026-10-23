@@ -19,6 +19,7 @@ type reactionTarget struct {
 	RemoteJID         string
 	SessionPhone      string
 	TargetFromMe      bool
+	TargetStatus      string
 }
 
 func reactionTargetAuthorizationSQL(canViewOwn bool) string {
@@ -31,7 +32,8 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 			coalesce(nullif(wm.provider_message_id, ''), nullif(wm.message_id, ''), ''),
 			coalesce(nullif(wm.remote_jid, ''), wc.remote_jid),
 			coalesce(ws.phone_number, ''),
-			wm.from_me
+		wm.from_me,
+		wm.status
 		from public.whatsapp_messages wm
 		join public.whatsapp_conversations wc
 		  on wc.id = wm.conversation_id
@@ -47,7 +49,8 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 		  and wc.id = $5::uuid
 		  and wm.id = $6::uuid
 		  and wc.lead_id = $7::uuid
-		  and wm.capture_state is distinct from 'suppressed'
+		  and wm.capture_state = 'captured'
+		  and ` + messageTargetIdentitySQL("wm") + `
 		  and wc.deleted_at is null
 		  and ` + conversationMessageLeadMatchSQL() + `
 		  and wm.message_type <> 'reaction'
@@ -73,6 +76,9 @@ func (repo Repository) ReactToMessage(
 	targetMessageID string,
 	input reactToMessageInput,
 ) (ReactToMessageResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return ReactToMessageResponse{}, err
+	}
 	expectedLeadID, err := validateExpectedLeadID(input.ExpectedLeadID)
 	if err != nil {
 		return ReactToMessageResponse{}, err
@@ -108,6 +114,14 @@ func (repo Repository) ReactToMessage(
 	if err != nil {
 		return ReactToMessageResponse{}, err
 	}
+	if _, err := lockWhatsAppSessionActors(ctx, tx, tenantContext, sessionID); err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	current, _, err := currentLockedWhatsAppOperator(ctx, tx, tenantContext)
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	tenantContext = current
 	if err := lockConversationSendSession(ctx, tx, tenantContext, sessionID); err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			if accessErr := repo.revokedConversationErrorIfAssigned(ctx, tenantContext,
@@ -153,12 +167,19 @@ func (repo Repository) ReactToMessage(
 		&target.RemoteJID,
 		&target.SessionPhone,
 		&target.TargetFromMe,
+		&target.TargetStatus,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReactToMessageResponse{}, ErrMessageNotFound
 	}
 	if err != nil {
 		return ReactToMessageResponse{}, err
+	}
+	if err := requireWhatsAppQueuePoolClaim(ctx, tx, tenantContext.OrganizationID, target.LeadID, tenantContext.UserID); err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	if target.TargetFromMe && !confirmedWhatsAppOutboundStatus(target.TargetStatus) {
+		return ReactToMessageResponse{}, ErrReactionTargetUnconfirmed
 	}
 
 	bindingID, err := attendanceBindingID(ctx, tx, tenantContext.OrganizationID,
@@ -335,6 +356,7 @@ func (repo Repository) ReactToMessage(
 		tenantContext.OrganizationID,
 		target.SessionID,
 		input.ClientReactionID,
+		tenantContext,
 	)
 	if err != nil {
 		return ReactToMessageResponse{}, err

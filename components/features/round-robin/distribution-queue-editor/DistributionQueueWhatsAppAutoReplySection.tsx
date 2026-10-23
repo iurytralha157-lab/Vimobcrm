@@ -18,6 +18,7 @@ import {
   isValidWhatsAppDistributionAutoReplyDelay,
   type DistributionQueueSettings,
 } from "@/lib/round-robin/distribution-queue-form";
+import { countDistributionQueueInputCharacters } from "@/lib/round-robin/input-text";
 import { cn } from "@/lib/utils";
 
 interface DistributionQueueWhatsAppAutoReplySectionProps {
@@ -40,6 +41,8 @@ export function DistributionQueueWhatsAppAutoReplySection({
   const delay =
     settings.whatsapp_distribution_auto_reply_delay_seconds ??
     DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
+  const messageLength = countDistributionQueueInputCharacters(message);
+  const messageInvalid = messageLength < 1 || messageLength > MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH;
 
   return (
     <Collapsible
@@ -106,9 +109,10 @@ export function DistributionQueueWhatsAppAutoReplySection({
                 </Label>
                 <Textarea
                   id="distribution-whatsapp-auto-reply-message"
-                  maxLength={MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
                   rows={4}
                   value={message}
+                  aria-invalid={messageInvalid || undefined}
+                  aria-describedby={messageInvalid ? "distribution-whatsapp-auto-reply-message-error" : undefined}
                   onChange={(event) =>
                     onSettingsChange({
                       whatsapp_distribution_auto_reply_message:
@@ -123,10 +127,15 @@ export function DistributionQueueWhatsAppAutoReplySection({
                     atendimento.
                   </span>
                   <span className="shrink-0">
-                    {Array.from(message).length}/
+                    {messageLength}/
                     {MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
                   </span>
                 </div>
+                {messageInvalid && (
+                  <p id="distribution-whatsapp-auto-reply-message-error" role="alert" className="text-xs text-destructive">
+                    A mensagem deve conter entre 1 e {MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2 sm:max-w-xs">

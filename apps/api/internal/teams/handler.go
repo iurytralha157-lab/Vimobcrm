@@ -10,17 +10,24 @@ import (
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/managementintent"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo      Repository
+	publisher realtime.Publisher
 }
 
 const maxTeamLogoBytes = 5 << 20
 
-func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+	return Handler{repo: repo, publisher: publisher}
 }
 
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +67,12 @@ func (handler Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 		writeTeamError(w, r, err)
 		return
 	}
-	items, err := handler.repo.ListHistory(r.Context(), tenantContext, r.PathValue("id"), limit)
+	offset, err := parseTeamHistoryOffset(r.URL.Query().Get("offset"))
+	if err != nil {
+		writeTeamError(w, r, err)
+		return
+	}
+	items, err := handler.repo.ListHistory(r.Context(), tenantContext, r.PathValue("id"), limit, offset)
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
@@ -77,6 +89,7 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
+	request.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	team, err := handler.repo.Create(r.Context(), tenantContext, request)
 	if err != nil {
 		writeTeamError(w, r, err)
@@ -178,10 +191,13 @@ func (handler Handler) AssignPipelineToTeam(w http.ResponseWriter, r *http.Reque
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
-	item, err := handler.repo.AssignPipelineToTeam(r.Context(), tenantContext, request)
+	item, changed, err := handler.repo.assignPipelineToTeam(r.Context(), tenantContext, request)
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
+	}
+	if changed {
+		handler.publishPipelineChange("team.pipeline.linked", tenantContext, item.TeamID, item.PipelineID)
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[TeamPipelineRelation]{Data: item})
 }
@@ -195,11 +211,25 @@ func (handler Handler) RemovePipelineFromTeam(w http.ResponseWriter, r *http.Req
 		TeamID:     r.URL.Query().Get("teamId"),
 		PipelineID: r.URL.Query().Get("pipelineId"),
 	}
-	if err := handler.repo.RemovePipelineFromTeam(r.Context(), tenantContext, request); err != nil {
+	changed, err := handler.repo.removePipelineFromTeam(r.Context(), tenantContext, request)
+	if err != nil {
 		writeTeamError(w, r, err)
 		return
 	}
+	if changed {
+		teamID, pipelineID, _ := normalizeTeamPipelineRequest(request)
+		handler.publishPipelineChange("team.pipeline.unlinked", tenantContext, teamID, pipelineID)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (handler Handler) publishPipelineChange(eventType string, actor tenant.Context, teamID, pipelineID string) {
+	if handler.publisher == nil {
+		return
+	}
+	handler.publisher.Publish(realtime.NewEvent(eventType, actor.OrganizationID, actor.UserID, map[string]any{
+		"teamId": teamID, "pipelineId": pipelineID,
+	}))
 }
 
 func (handler Handler) SetTeamLeader(w http.ResponseWriter, r *http.Request) {
@@ -237,12 +267,12 @@ func (handler Handler) ListTeamMemberAvailability(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	items, err := handler.repo.ListAvailability(r.Context(), tenantContext, []string{r.PathValue("id")})
+	snapshot, err := handler.repo.GetAvailabilitySnapshot(r.Context(), tenantContext, r.PathValue("id"))
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]MemberAvailability]{Data: items})
+	httpserver.WriteJSON(w, http.StatusOK, snapshot)
 }
 
 func (handler Handler) UpsertAvailability(w http.ResponseWriter, r *http.Request) {
@@ -254,12 +284,12 @@ func (handler Handler) UpsertAvailability(w http.ResponseWriter, r *http.Request
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
-	item, err := handler.repo.UpsertAvailability(r.Context(), tenantContext, request)
+	result, err := handler.repo.UpsertAvailability(r.Context(), tenantContext, request)
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[MemberAvailability]{Data: item})
+	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
 func (handler Handler) ReplaceAvailability(w http.ResponseWriter, r *http.Request) {
@@ -271,12 +301,12 @@ func (handler Handler) ReplaceAvailability(w http.ResponseWriter, r *http.Reques
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
-	items, err := handler.repo.ReplaceAvailability(r.Context(), tenantContext, r.PathValue("id"), request.Availability)
+	snapshot, err := handler.repo.ReplaceAvailability(r.Context(), tenantContext, r.PathValue("id"), request.Availability, request.ExpectedRevision)
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]MemberAvailability]{Data: items})
+	httpserver.WriteJSON(w, http.StatusOK, snapshot)
 }
 
 func availabilityIDsFromQuery(r *http.Request) []string {
@@ -357,10 +387,20 @@ func isAllowedLogoContentType(value string) bool {
 
 func writeTeamError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, managementintent.ErrInvalidKey):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_creation_key", "A valid Idempotency-Key is required.")
+	case errors.Is(err, managementintent.ErrConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "creation_key_conflict", "This creation key is already bound to another request.")
+	case errors.Is(err, managementintent.ErrResultUnavailable):
+		httpserver.WriteError(w, r, http.StatusConflict, "create_result_unavailable", "The original creation result is no longer available.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_team_input", "Team input is invalid.")
 	case errors.Is(err, ErrTeamInUse):
 		httpserver.WriteError(w, r, http.StatusConflict, "team_in_use", "Team is used by a distribution queue.")
+	case errors.Is(err, ErrTeamRevisionConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "team_revision_conflict", "Team changed since it was loaded. Reload before saving.")
+	case errors.Is(err, ErrTeamQueueSyncBlocked):
+		httpserver.WriteError(w, r, http.StatusConflict, "team_queue_sync_blocked", "A fila de distribuição vinculada atingiu o limite de participantes ou de posições. Reduza os participantes ou revise o vínculo da equipe antes de salvar.")
 	case errors.Is(err, ErrTeamNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "team_not_found", "Team was not found.")
 	case errors.Is(err, ErrTeamMemberNotFound):

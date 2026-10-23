@@ -21,6 +21,8 @@ type retryMediaMessage struct {
 	OrganizationID   string
 	ConversationID   string
 	SessionID        string
+	LeadID           string
+	CaptureState     string
 	MessageID        string
 	MessageType      string
 	MediaURL         string
@@ -28,6 +30,7 @@ type retryMediaMessage struct {
 	MediaStoragePath string
 	MediaSize        int64
 	Metadata         map[string]any
+	ReadScope        messageMediaReadScope
 }
 
 type recoveredWhatsAppMedia struct {
@@ -49,6 +52,13 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 	if err != nil {
 		return nil, err
 	}
+	message.ReadScope, err = loadMessageMediaReadScope(ctx, repo.db.Pool(), tenantContext, messageID, false)
+	if err != nil {
+		return nil, err
+	}
+	if message.ReadScope.Path != message.MediaStoragePath || message.ReadScope.SessionID != message.SessionID || message.ReadScope.ConversationID != message.ConversationID || message.ReadScope.LeadID != message.LeadID || message.ReadScope.Capture != message.CaptureState || message.ReadScope.Kind != message.MessageType {
+		return nil, ErrMessageNotFound
+	}
 
 	if strings.TrimSpace(message.MediaStoragePath) != "" {
 		if !whatsappMediaPathBelongsToOrganization(message.MediaStoragePath, tenantContext.OrganizationID) {
@@ -61,6 +71,12 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 				validationJob := whatsappMediaValidationJob(message)
 				_, _, validationErr := validateRecoveredWhatsAppMedia(validationJob, storedMedia)
 				if validationErr == nil {
+					if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+						return nil, err
+					}
+					if err := revalidateMessageMediaReadScope(ctx, repo.db.Pool(), tenantContext, message.ReadScope, false, true); err != nil {
+						return nil, err
+					}
 					return map[string]any{
 						"ok":                 true,
 						"message_id":         message.ID,
@@ -74,7 +90,7 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 		}
 	}
 
-	jobID, deduplicated, err := repo.enqueueManualWhatsAppMediaJob(ctx, message)
+	jobID, deduplicated, err := repo.enqueueManualWhatsAppMediaJob(ctx, message, tenantContext)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +144,8 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 			wm.organization_id::text,
 			wm.conversation_id::text,
 			coalesce(wm.session_id::text, ''),
+			coalesce(wm.lead_id::text, ''),
+			coalesce(wm.capture_state, ''),
 			coalesce(wm.message_id, wm.provider_message_id, wm.id::text),
 			coalesce(wm.message_type, ''),
 			coalesce(wm.media_url, ''),
@@ -152,6 +170,8 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 		&message.OrganizationID,
 		&message.ConversationID,
 		&message.SessionID,
+		&message.LeadID,
+		&message.CaptureState,
 		&message.MessageID,
 		&message.MessageType,
 		&message.MediaURL,

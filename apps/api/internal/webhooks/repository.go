@@ -390,7 +390,10 @@ func (repo Repository) receiveLeadWithIdentityMode(
 	}
 
 	email := mappedPayloadString(webhook, payload, "email", "email")
-	phone := mappedPayloadString(webhook, payload, "phone", "phone", "telefone", "whatsapp")
+	phone, err := mappedPayloadPhone(webhook, payload)
+	if err != nil {
+		return IncomingLeadResult{}, err
+	}
 	if options.RequirePhone && phone == nil {
 		return IncomingLeadResult{}, ErrInvalidInput
 	}
@@ -729,6 +732,9 @@ func (repo Repository) receiveLeadWithIdentityMode(
 		if err := repo.incrementWebhookStats(ctx, tx, webhook.ID); err != nil {
 			return IncomingLeadResult{}, err
 		}
+	}
+	if err := distribution.ValidatePersistedIntakeDestination(ctx, tx, webhook.OrganizationID, leadID); err != nil {
+		return IncomingLeadResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IncomingLeadResult{}, err

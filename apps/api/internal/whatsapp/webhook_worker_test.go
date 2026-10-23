@@ -39,7 +39,7 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid",
 		"coalesce(ws.is_active, true) = true",
 		"coalesce(ws.status, '') <> 'deleted'",
-		"limit $1 for no key update of ws skip locked",
+		"limit $1 for share of ws skip locked",
 		"cross join lateral",
 		"head.id as event_id",
 		"wi.session_id = ws.id",
@@ -60,7 +60,7 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"from public.whatsapp_webhook_routing_outcomes predecessor_outcome",
 		"predecessor_outcome.provider_message_id = routing_message.snapshot->>'predecessor_provider_message_id'",
 		"or head.routing_key = '__session__'",
-		"and head.next_attempt_at <= now()",
+		"where head.next_attempt_at <= now()",
 		"join public.whatsapp_webhook_inbox wi on wi.id = selected.event_id",
 		"for update of wi skip locked",
 		"active.session_id = ws.id",
@@ -75,8 +75,8 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 			t.Errorf("claim query is missing fair session guard %q", fragment)
 		}
 	}
-	if strings.Contains(normalized, "limit 1 for update of wi skip locked") {
-		t.Fatal("claim query may not skip a locked head and claim a newer row from the same session")
+	if !strings.Contains(normalized, "limit 1 for update of claim_head skip locked") {
+		t.Fatal("claim query must skip a locked eligible route head while retaining its same-route older-row barrier")
 	}
 	if strings.Contains(normalized, "routing_snapshot,messages,0") {
 		t.Fatal("claim readiness may not inspect only the first message snapshot")
@@ -137,13 +137,13 @@ func TestWebhookWorkerKeepsEveryClaimGateWithinActiveProcessingEpoch(t *testing.
 	if got := strings.Count(normalized, "active.processing_epoch ="); got != 3 {
 		t.Errorf("active claim barriers have %d epoch checks, want 3", got)
 	}
-	if got := strings.Count(normalized, "predecessor.processing_epoch ="); got != 4 {
-		t.Errorf("predecessor checks have %d epoch checks, want 4", got)
+	if got := strings.Count(normalized, "predecessor.processing_epoch ="); got != 5 {
+		t.Errorf("predecessor checks have %d epoch checks, want 5 including the transitive walk", got)
 	}
 
 	recovery := strings.ToLower(strings.Join(strings.Fields(readWhatsAppSourceFunction(t, "webhook_worker.go", "func resetStaleEvolutionWebhookClaims")), " "))
-	if got := strings.Count(recovery, "inbox.processing_epoch = coalesce(( select cutover.active_epoch"); got != 2 {
-		t.Errorf("stale recovery has %d active epoch guards, want 2", got)
+	if got := strings.Count(recovery, "inbox.processing_epoch = coalesce(( select cutover.active_epoch"); got != 3 {
+		t.Errorf("stale recovery has %d active epoch guards, want 3", got)
 	}
 	for _, name := range []string{
 		"func (repo Repository) renewEvolutionWebhookLease",
@@ -170,8 +170,9 @@ func TestWebhookWorkerKeepsCurrentEpochDependentRootException(t *testing.T) {
 		"live_dependent.processing_epoch = head.processing_epoch",
 		"live_dependent.processing_lane = 'live'",
 		"live_dependent.next_attempt_at <= now()",
-		"dependent_route.snapshot->>'predecessor_inbox_event_key' = head.event_key",
-		"root_route.snapshot->>'provider_message_id' = dependent_route.snapshot->>'predecessor_provider_message_id'",
+		"dependency_predecessor.event_key = nullif(descendant.snapshot->>'predecessor_inbox_event_key', '')",
+		"nullif(predecessor_route.snapshot->>'provider_message_id', '') = nullif(descendant.snapshot->>'predecessor_provider_message_id', '')",
+		"ancestor.id = head.id and ancestor.depth > 0",
 		"older_live.processing_epoch = live_dependent.processing_epoch",
 	} {
 		if !strings.Contains(normalized, required) {
@@ -214,13 +215,13 @@ func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t 
 
 func TestClaimedEvolutionWebhookPublishesOutcomeOnlyAfterDispatchCompletes(t *testing.T) {
 	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) processClaimedEvolutionWebhook`)
-	dispatch := strings.Index(source, "repo.dispatchEvolutionWebhook(ctx, item)")
-	failed := strings.Index(source, "repo.markEvolutionWebhookFailed(ctx, item, err)")
-	processed := strings.Index(source, "repo.markEvolutionWebhookProcessed(ctx, item)")
+	dispatch := strings.Index(source, "repo.dispatchEvolutionWebhook(itemCtx, item)")
+	failed := strings.Index(source, "repo.markEvolutionWebhookFailed(completionCtx, item, processingErr)")
+	processed := strings.Index(source, "repo.markEvolutionWebhookProcessed(completionCtx, item)")
 	if dispatch < 0 || failed < dispatch || processed < failed {
 		t.Fatalf("dispatch, failure handling, and atomic completion are not ordered fail-closed\n%s", source)
 	}
-	if strings.Count(source, "repo.markEvolutionWebhookProcessed(ctx, item)") != 1 {
+	if strings.Count(source, "repo.markEvolutionWebhookProcessed(completionCtx, item)") != 1 {
 		t.Fatalf("routing outcome must be published through one completion path only\n%s", source)
 	}
 }
@@ -399,11 +400,12 @@ func TestForwardEvolutionWebhookBoundsTargetResponseBody(t *testing.T) {
 		httpClient:          target.Client(),
 	}}
 	err := repo.forwardEvolutionWebhook(context.Background(), pendingEvolutionWebhook{
+		ID:           "e491a198-8992-44a1-8674-17987c37e3e4",
 		SessionID:    "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9",
 		InstanceID:   "instance-1",
 		WebhookToken: "session-secret",
 		Payload:      []byte(`{"event":"MESSAGES_UPSERT"}`),
-	})
+	}, "cfd9040a-6c42-4b0a-a82d-818853074d61")
 	if err == nil || !strings.Contains(err.Error(), "exceeded the allowed size") {
 		t.Fatalf("forwardEvolutionWebhook() error = %v, want bounded response failure", err)
 	}
@@ -411,8 +413,11 @@ func TestForwardEvolutionWebhookBoundsTargetResponseBody(t *testing.T) {
 
 func TestForwardEvolutionWebhookPreservesAuthenticatedRoutingSnapshot(t *testing.T) {
 	var forwarded []byte
+	var inboxHeader, executionHeader string
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		forwarded, _ = io.ReadAll(request.Body)
+		inboxHeader = request.Header.Get("x-vimob-inbox-id")
+		executionHeader = request.Header.Get("x-vimob-edge-execution-id")
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(`{"ok":true}`))
 	}))
@@ -424,6 +429,7 @@ func TestForwardEvolutionWebhookPreservesAuthenticatedRoutingSnapshot(t *testing
 		httpClient:          target.Client(),
 	}}
 	err := repo.forwardEvolutionWebhook(context.Background(), pendingEvolutionWebhook{
+		ID:           "e491a198-8992-44a1-8674-17987c37e3e4",
 		SessionID:    "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9",
 		InstanceID:   "instance-1",
 		WebhookToken: "session-secret",
@@ -432,12 +438,16 @@ func TestForwardEvolutionWebhookPreservesAuthenticatedRoutingSnapshot(t *testing
 			"data":{"message":{"conversation":"oi"}},
 			"__vimob_ingress":{"routing_key":"phone:5511999991111","routing_snapshot":{"version":1,"messages":[]}}
 		}`),
-	})
+	}, "cfd9040a-6c42-4b0a-a82d-818853074d61")
 	if err != nil {
 		t.Fatalf("forwardEvolutionWebhook() returned error: %v", err)
 	}
 	if !strings.Contains(string(forwarded), `"routing_snapshot"`) || !strings.Contains(string(forwarded), `"conversation":"oi"`) {
 		t.Fatalf("forwarded provider payload = %s", forwarded)
+	}
+	if inboxHeader != "e491a198-8992-44a1-8674-17987c37e3e4" ||
+		executionHeader != "cfd9040a-6c42-4b0a-a82d-818853074d61" {
+		t.Fatalf("fenced headers: inbox=%q execution=%q", inboxHeader, executionHeader)
 	}
 }
 

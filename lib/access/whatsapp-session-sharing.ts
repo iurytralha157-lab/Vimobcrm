@@ -6,31 +6,30 @@ type SessionSharingActor = {
   isTeamLeader?: boolean;
 };
 
-export function isWhatsAppOrganizationManager(input: {
+export function isWhatsAppOrganizationAdmin(input: {
   memberRole?: string | null;
 }) {
-  return ["admin", "owner", "manager"].includes(input.memberRole?.trim().toLowerCase() || "");
+  return ["admin", "owner"].includes(input.memberRole?.trim().toLowerCase() || "");
 }
 
 export function canShareOwnWhatsAppSession(actor: SessionSharingActor) {
   if (!actor.currentUserId || actor.ownerUserId !== actor.currentUserId) return false;
-  return isWhatsAppOrganizationManager(actor) || actor.isTeamLeader === true;
+  return isWhatsAppOrganizationAdmin(actor);
 }
 
-export function eligibleWhatsAppAccessRecipients<T extends { id: string; is_active: boolean }>(
+export function eligibleWhatsAppAccessRecipients<T extends { id: string; is_active: boolean; home_organization_id?: string | null }>(
   users: readonly T[],
   input: {
     currentUserId: string;
+    organizationId: string | null | undefined;
     memberRole?: string | null;
     isSuperAdmin?: boolean;
     isTeamLeader?: boolean;
     ledUserIds?: readonly string[] | null;
   },
 ): T[] {
-  const canGrantOrganizationWide = isWhatsAppOrganizationManager(input);
-  if (!canGrantOrganizationWide && !input.isTeamLeader) return [];
-  const ledUserIds = new Set(input.ledUserIds || []);
+  if (!isWhatsAppOrganizationAdmin(input) || !input.organizationId) return [];
   return users.filter((user) => user.is_active
-    && user.id !== input.currentUserId
-    && (canGrantOrganizationWide || ledUserIds.has(user.id)));
+    && user.home_organization_id === input.organizationId
+    && user.id !== input.currentUserId);
 }

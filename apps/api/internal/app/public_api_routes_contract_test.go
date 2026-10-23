@@ -14,8 +14,8 @@ func TestPublicAPIManagementRoutesRequireTheAPIModule(t *testing.T) {
 	source := string(sourceBytes)
 	for _, route := range []string{
 		`"GET /v1/settings/api-keys", withModulePermission("api", permissions.SettingsIntegrations`,
-		`"POST /v1/settings/api-keys", withModulePermission("api", permissions.SettingsIntegrations`,
-		`"DELETE /v1/settings/api-keys/{id}", withModulePermission("api", permissions.SettingsIntegrations`,
+		`"POST /v1/settings/api-keys", withActiveModulePermission("api", permissions.SettingsIntegrations`,
+		`"DELETE /v1/settings/api-keys/{id}", withActiveModulePermission("api", permissions.SettingsIntegrations`,
 	} {
 		if !strings.Contains(source, route) {
 			t.Fatalf("API key management route is not module-gated: %s", route)

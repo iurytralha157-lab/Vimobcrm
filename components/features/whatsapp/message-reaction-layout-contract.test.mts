@@ -11,6 +11,7 @@ test("conversation surfaces keep the reaction trigger outside the message bubble
   const leadThread = readSource("../leads/LeadUnifiedThread.tsx");
   const bubble = readSource("./MessageBubble.tsx");
   const picker = readSource("./message-bubble/MessageReactions.tsx");
+  const actions = readSource("./message-bubble/MessageBubbleActions.tsx");
 
   assert.equal(countMatches(conversations, /<MessageBubble\b/g), 1);
   assert.equal(countMatches(leadThread, /<WhatsAppMessageBubble\b/g), 1);
@@ -18,10 +19,14 @@ test("conversation surfaces keep the reaction trigger outside the message bubble
   assert.match(leadThread, /<WhatsAppMessageBubble[\s\S]*?reactionPickerPosition="outside"[\s\S]*?\/>/);
 
   assert.match(bubble, /const showOutsideReactionPicker = reactionPickerPosition === "outside" && Boolean\(onReact\) && !isDeletedMessage/);
-  assert.match(bubble, /data-message-reaction-outside[\s\S]*?shrink-0 self-center/);
-  assert.match(bubble, /"flex w-full items-center gap-1 mb-1 animate-fade-in"/);
-  assert.match(bubble, /\{fromMe && outsideReactionPicker\}\s*<div className=\{cn\(/);
-  assert.match(bubble, /<\/div>\s*\{!fromMe && outsideReactionPicker\}/);
+  assert.match(actions, /data-message-reaction-outside[\s\S]*?shrink-0 self-center/);
+  assert.match(bubble, /group\/message flex w-full items-center gap-1 animate-fade-in/);
+  assert.match(bubble, /\{fromMe && outsideActions\}\s*<div className=\{cn\(/);
+  assert.match(bubble, /<\/div>\s*\{!fromMe && outsideActions\}/);
+  assert.match(actions, /fromMe \? <>\{reply\}\{reaction\}<\/> : <>\{reaction\}\{reply\}<\/>/);
+  assert.match(actions, /aria-label="Responder citando esta mensagem"/);
+  assert.match(bubble, /onReact=\{showOutsideReactionPicker \? onReact : undefined\}/);
+  assert.match(actions, /group-focus-within\/message:opacity-100/);
 
   assert.match(picker, /side=\{fromMe \? "left" : "right"\}/);
   assert.match(picker, /collisionPadding=\{12\}/);

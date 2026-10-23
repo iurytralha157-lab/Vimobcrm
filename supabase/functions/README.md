@@ -44,7 +44,19 @@ ainda configurada como executável.
 
 ## Envio legado de WhatsApp
 
-`message-sender` é uma worker privada para a tabela legada
+O proxy canônico `evolution-go-proxy` é agora `ACTIVE/TOMBSTONE` no manifesto:
+o handler responde `410 Gone` sem ler ambiente, autenticar via banco, consultar
+sessões ou chamar o provedor. O gateway exige JWT. Payloads de browser ou de
+worker privado, inclusive overrides de token/instância, não reativam o proxy.
+
+`message-sender` e `whatsapp-notifier` estão `RETIRED/NOT_ROUTABLE`. A fonte
+legada de `message-sender` abaixo permanece somente como arquivo histórico;
+seu antigo caller do proxy não pertence ao conjunto implantável. A API Go
+chama Evolution Go diretamente, com autorização, atendimento e outbox durável.
+Essa alteração é candidata local: publicação e verificação de consumidores
+remotos exigem o rollout explícito. Não restaure o proxy LIVE como rollback.
+
+Historicamente, `message-sender` era uma worker privada para a tabela legada
 `outbox_messages`. Tanto a chamada interna para `evolution-go-proxy` quanto a
 chamada direta ao Evolution legado usam `AbortController` com limite de 25
 segundos, incluindo a leitura do corpo da resposta. Configuração ou URL local

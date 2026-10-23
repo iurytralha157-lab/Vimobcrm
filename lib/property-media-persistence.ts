@@ -11,6 +11,7 @@ import type {
   PropertyAssetUploadDiscardInput,
   PropertyWorkspaceAsset,
 } from './validation/property-workspace'
+import { assertPropertyMediaExecution, type PropertyMediaExecutionOptions } from './property-media-execution'
 
 export type PropertyPhotoSelection = {
   mainImage: string
@@ -24,22 +25,26 @@ export type PropertyMediaPersistenceClient = {
     propertyId: string,
     assetType: 'photo',
     file: File,
+    execution?: PropertyMediaExecutionOptions,
   ) => Promise<{ storage_path: string }>
   createAsset: (
     organizationId: string,
     propertyId: string,
     input: PropertyAssetCreateInput,
+    execution?: PropertyMediaExecutionOptions,
   ) => Promise<PropertyWorkspaceAsset>
   deleteAsset: (
     organizationId: string,
     propertyId: string,
     assetId: string,
     input: PropertyAssetDeleteInput,
+    execution?: PropertyMediaExecutionOptions,
   ) => Promise<unknown>
   discardAssetUpload: (
     organizationId: string,
     propertyId: string,
     input: PropertyAssetUploadDiscardInput,
+    execution?: PropertyMediaExecutionOptions,
   ) => Promise<unknown>
 }
 
@@ -92,12 +97,16 @@ async function rollbackCreatedAssets(
   organizationId: string,
   propertyId: string,
   assets: PropertyWorkspaceAsset[],
+  execution?: PropertyMediaExecutionOptions,
 ) {
   const rollbackBatch = async (batch: PropertyWorkspaceAsset[]) => {
     const results = await Promise.allSettled(
-      batch.map((asset) => client.deleteAsset(organizationId, propertyId, asset.id, {
-        expected_updated_at: asset.updated_at,
-      })),
+      batch.map(async (asset) => {
+        assertPropertyMediaExecution(execution)
+        return client.deleteAsset(organizationId, propertyId, asset.id, {
+          expected_updated_at: asset.updated_at,
+        }, execution)
+      }),
     )
     return results.flatMap((result, index) =>
       result.status === 'rejected' ? [batch[index].id] : [],
@@ -120,6 +129,7 @@ export async function persistStagedPropertyPhotosWithClient(
   propertyId: string,
   selection: PropertyPhotoSelection,
   client: PropertyMediaPersistenceClient,
+  execution?: PropertyMediaExecutionOptions,
 ) {
   const { mainImage, ordered } = uniquePhotoSelection(selection)
   const hidden = new Set(selection.hiddenSiteImages ?? [])
@@ -130,6 +140,7 @@ export async function persistStagedPropertyPhotosWithClient(
   let firstError: unknown = null
 
   const uploadOne = async (previewURL: string, sortOrder: number) => {
+    assertPropertyMediaExecution(execution)
     const staged = getStagedPropertyPhoto(previewURL)
     const isPrimary = previewURL === mainImage
     const visibility = isPrimary ? 'public' : hidden.has(previewURL) ? 'internal' : 'public'
@@ -143,9 +154,11 @@ export async function persistStagedPropertyPhotosWithClient(
       propertyId,
       'photo',
       staged.file,
+      execution,
     )
 
     try {
+      assertPropertyMediaExecution(execution)
       const asset = await client.createAsset(organizationId, propertyId, {
         asset_type: 'photo',
         visibility,
@@ -161,14 +174,15 @@ export async function persistStagedPropertyPhotosWithClient(
         document_category: null,
         expires_at: null,
         metadata: { source: 'property_form' },
-      })
+      }, execution)
       createdAssets.push(asset)
       completedPreviewURLs.push(previewURL)
     } catch (error) {
       try {
+        assertPropertyMediaExecution(execution)
         await client.discardAssetUpload(organizationId, propertyId, {
           storage_path: intent.storage_path,
-        })
+        }, execution)
       } catch {
         rollbackFailedUploadPaths.push(intent.storage_path)
       }
@@ -209,6 +223,7 @@ export async function persistStagedPropertyPhotosWithClient(
       organizationId,
       propertyId,
       createdAssets,
+      execution,
     )
     throw new PropertyMediaPersistenceError(
       firstError,

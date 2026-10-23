@@ -55,6 +55,12 @@ test('aceita somente o estado materializado do ciclo atual', () => {
   assert.equal(apiLeadCadenceStateResponseSchema.safeParse({ data: currentCycleState }).success, true)
 })
 
+test('mantem compatibilidade sem fuso e aceita o fuso retornado pela organizacao', () => {
+  assert.equal(leadCadenceStateSchema.parse(currentCycleState).time_zone, undefined)
+  assert.equal(leadCadenceStateSchema.parse({ ...currentCycleState, time_zone: 'America/Manaus' }).time_zone, 'America/Manaus')
+  assert.equal(leadCadenceStateSchema.safeParse({ ...currentCycleState, time_zone: '' }).success, false)
+})
+
 test('aceita etapa sem obrigacao materializada', () => {
   assert.equal(leadCadenceStateSchema.safeParse({
     ...currentCycleState,

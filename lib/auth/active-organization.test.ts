@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { requireActiveOrganizationId, resolveActiveOrganization } from './active-organization'
+import {
+  hasValidatedProtectedAppAccess,
+  requireActiveOrganizationId,
+  resolveActiveOrganization,
+} from './active-organization'
 
 const readyInput = {
   userId: 'user-a',
@@ -86,6 +90,10 @@ test('distinguishes unauthenticated, failed, and absent organization states', ()
     { status: 'missing', organizationId: null, reason: 'unauthenticated' },
   )
   assert.deepEqual(
+    resolveActiveOrganization({ ...readyInput, organizationsError: 'failed' }),
+    { status: 'missing', organizationId: null, reason: 'organization-load-failed' },
+  )
+  assert.deepEqual(
     resolveActiveOrganization({
       ...readyInput,
       organizationId: null,
@@ -104,4 +112,30 @@ test('distinguishes unauthenticated, failed, and absent organization states', ()
     }),
     { status: 'missing', organizationId: null, reason: 'no-active-organization' },
   )
+})
+
+test('protected app stays closed until a fresh tenant matches the validated membership', () => {
+  const activeOrganization = resolveActiveOrganization(readyInput)
+  const validated = {
+    userId: 'user-a',
+    authInitialized: true,
+    authLoading: false,
+    organizationsLoaded: true,
+    organizationsError: null,
+    isInitializingOrganization: false,
+    activeOrganization,
+    organizationId: 'organization-a',
+    tenantOrganizationId: 'organization-a',
+    isSuperAdmin: false,
+    isImpersonating: false,
+    hasProfile: true,
+  }
+
+  assert.equal(hasValidatedProtectedAppAccess(validated), true)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, authLoading: true }), false)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, organizationsLoaded: false }), false)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, organizationsError: 'failed' }), false)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, tenantOrganizationId: 'organization-b' }), false)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, organizationId: 'organization-b' }), false)
+  assert.equal(hasValidatedProtectedAppAccess({ ...validated, isSuperAdmin: true, isImpersonating: true, tenantOrganizationId: 'organization-b' }), false)
 })

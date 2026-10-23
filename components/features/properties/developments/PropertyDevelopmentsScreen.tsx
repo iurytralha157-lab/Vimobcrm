@@ -136,7 +136,7 @@ export function PropertyDevelopmentsScreen() {
         </section>
 
         <section className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-3 shadow-none" aria-label="Filtros de empreendimentos">
-          <div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_190px_190px_190px_auto]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(200px,1fr)_minmax(0,160px)_minmax(0,160px)_minmax(0,160px)_auto]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
 			  <Input value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0) }} placeholder="Buscar por nome, código ou cidade…" className="pl-9" aria-label="Buscar empreendimentos" />

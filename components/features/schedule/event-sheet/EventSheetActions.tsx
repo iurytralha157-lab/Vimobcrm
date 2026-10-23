@@ -22,6 +22,7 @@ export function EventSheetActions({
   canDelete,
   requiresAttendanceOutcome,
   isLoading,
+  draftReady,
   locked,
   isEditing,
   canSubmit,
@@ -41,6 +42,7 @@ export function EventSheetActions({
   canDelete: boolean;
   requiresAttendanceOutcome: boolean;
   isLoading: boolean;
+  draftReady: boolean;
   locked: boolean;
   isEditing: boolean;
   canSubmit: boolean;
@@ -62,6 +64,7 @@ export function EventSheetActions({
               size="sm"
               className="h-10 w-10 rounded-[6px] border-0 bg-destructive/10 p-0 text-destructive shadow-none hover:bg-destructive/15 hover:text-destructive sm:h-9 sm:w-9"
               aria-label="Excluir atividade"
+              disabled={isLoading}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -76,11 +79,12 @@ export function EventSheetActions({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              <AlertDialogCancel disabled={isLoading} className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
                 Cancelar
               </AlertDialogCancel>
               <AlertDialogAction
                 onClick={onDelete}
+                disabled={isLoading}
                 className="h-9 rounded-[6px] border-0 bg-destructive/15 text-[12px] font-light text-destructive shadow-none hover:bg-destructive hover:text-destructive-foreground"
               >
                 Excluir
@@ -142,7 +146,7 @@ export function EventSheetActions({
             }
             onClose();
           }}
-          disabled={isLoading}
+          disabled={isLoading || (!isEditing && canManageSchedule && isExisting && !isMasked && !isCompleted && !draftReady)}
           className={cn(
             "h-10 min-w-0 rounded-[6px] border-0 text-[12px] font-light shadow-none sm:h-9",
             !locked

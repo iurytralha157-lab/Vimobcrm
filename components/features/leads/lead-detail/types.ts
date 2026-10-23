@@ -1,8 +1,10 @@
 import type { Lead } from '@/hooks/use-leads';
+import type { VerifiedLeadRead } from '@/lib/lead-read-snapshot';
 import type { LeadMeta } from '@/hooks/use-lead-meta';
 import type { PipelineLead } from '@/hooks/use-stages';
 import type { Tag } from '@/hooks/use-tags';
 import type { User as AppUser } from '@/hooks/use-users';
+import type { LeadStatusConfirmationIntent } from '@/hooks/leads/use-lead-status-confirmation';
 
 export type LeadDetailStage = {
   id: string;
@@ -84,6 +86,7 @@ export type ReopenStatusConfirmation = {
   leadId: string;
   leadName: string;
   fromStatus: 'won' | 'lost' | string;
+  intent: LeadStatusConfirmationIntent;
 };
 
 export type AssigneeScheduleConfirmation = {
@@ -93,6 +96,13 @@ export type AssigneeScheduleConfirmation = {
   description: string;
 };
 
+export type LeadAssigneeCatalogState = {
+  loading: boolean;
+  error: boolean;
+  retrying: boolean;
+  retry: () => void;
+};
+
 export type LeadDetailDialogProps = {
   lead: LeadDetailLead | null;
   stages: LeadDetailStage[];
@@ -100,4 +110,10 @@ export type LeadDetailDialogProps = {
   onEdit?: (lead: LeadDetailLead) => void;
   allTags: Tag[];
   allUsers: AppUser[];
+  allUsersState?: LeadAssigneeCatalogState;
+  variant?: 'default' | 'pipeline' | 'contacts';
+  hideWhatsAppAction?: boolean;
+  verifiedRead?: VerifiedLeadRead<Lead>;
+  readAccessPending?: boolean;
+  readAccessBlocked?: boolean;
 };

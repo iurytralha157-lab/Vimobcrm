@@ -1,13 +1,78 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestRequestAdminPasswordRecoveryRecordsRequestOnlyAfterAuthAcceptance(t *testing.T) {
+	callOrder := make([]string, 0, 2)
+	err := requestAdminPasswordRecovery(
+		context.Background(), "user@example.com", "admin-id", "target-id",
+		func(_ context.Context, email string) error {
+			callOrder = append(callOrder, "auth")
+			if email != "user@example.com" {
+				t.Fatalf("recovery email = %q", email)
+			}
+			return nil
+		},
+		func(_ context.Context, requestedBy, targetUserID string) error {
+			callOrder = append(callOrder, "audit")
+			if requestedBy != "admin-id" || targetUserID != "target-id" {
+				t.Fatalf("audit actor = %q, target = %q", requestedBy, targetUserID)
+			}
+			return nil
+		},
+		nil,
+	)
+	if err != nil || strings.Join(callOrder, ",") != "auth,audit" {
+		t.Fatalf("error = %v, calls = %v", err, callOrder)
+	}
+}
+
+func TestRequestAdminPasswordRecoveryDoesNotAuditRejectedAuthRequest(t *testing.T) {
+	authErr := errors.New("Auth unavailable")
+	auditCalled := false
+	err := requestAdminPasswordRecovery(
+		context.Background(), "user@example.com", "admin-id", "target-id",
+		func(context.Context, string) error { return authErr },
+		func(context.Context, string, string) error {
+			auditCalled = true
+			return nil
+		},
+		nil,
+	)
+	if !errors.Is(err, authErr) || auditCalled {
+		t.Fatalf("error = %v, audit called = %t", err, auditCalled)
+	}
+}
+
+func TestRequestAdminPasswordRecoveryKeepsAcceptedResultWhenAuditFails(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	err := requestAdminPasswordRecovery(
+		context.Background(), "user@example.com", "admin-id", "target-id",
+		func(context.Context, string) error { return nil },
+		func(context.Context, string, string) error { return errors.New("audit unavailable") },
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("accepted Auth request became a false failure: %v", err)
+	}
+	if !strings.Contains(output.String(), "audit persistence failed") ||
+		strings.Contains(output.String(), "user@example.com") ||
+		strings.Contains(output.String(), "admin-id") ||
+		strings.Contains(output.String(), "target-id") {
+		t.Fatalf("audit failure log has unexpected content: %s", output.String())
+	}
+}
 
 func TestSendAuthPasswordRecoveryUsesEmailFlowWithoutPassword(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

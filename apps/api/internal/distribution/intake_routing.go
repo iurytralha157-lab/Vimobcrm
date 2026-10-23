@@ -54,7 +54,7 @@ const resolveIntakeQueueIDSQL = `
 		select
 		  $1::uuid as organization_id,
 		  nullif(btrim($2), '')::uuid as pipeline_id,
-		  lower(coalesce($3, '')) as source,
+		  private.management_distribution_source($3) as source,
 		  nullif(btrim($4), '')::uuid as property_id,
 		  nullif(btrim($5), '')::uuid as interest_property_id,
 		  coalesce($6::uuid[], array[]::uuid[]) as requested_tag_ids,
@@ -122,11 +122,15 @@ const resolveIntakeQueueIDSQL = `
 				  coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '') as match_value
 			) as normalized
 			cross join lateral (
-				select array(
-					select lower(btrim(value))
-					from unnest(string_to_array(coalesce(normalized.match_value, ''), ',')) as value
-					where btrim(value) <> ''
-				) as values
+				select case when normalized.match_type = 'campaign_contains'
+					then private.management_campaign_match_values(
+					  coalesce(rule.conditions->'match', '{}'::jsonb) || coalesce(rule.match, '{}'::jsonb),
+					  normalized.match_value)
+					else array(
+						select lower(btrim(value))
+						from unnest(string_to_array(coalesce(normalized.match_value, ''), ',')) as value
+						where btrim(value) <> ''
+					) end as values
 			) as match_values
 			where rule.organization_id = queue.organization_id
 			  and rule.round_robin_id = queue.id
@@ -135,7 +139,7 @@ const resolveIntakeQueueIDSQL = `
 				normalized.match_type in ('all', 'any')
 				or (
 				  normalized.match_type = 'source'
-				  and lead.source = any(match_values.values)
+				  and lead.source = any(array(select private.management_distribution_source(value) from unnest(match_values.values) value))
 				)
 				or (
 				  normalized.match_type in ('property', 'interest_property')
@@ -182,7 +186,7 @@ const resolveIntakeQueueIDSQL = `
 				  and exists (
 					select 1
 					from unnest(match_values.values) as value
-					where coalesce(lead.utm_campaign, lead.lead_meta_campaign_name, lead.meta_campaign_id, '') like '%' || value || '%'
+					where strpos(coalesce(lead.utm_campaign, lead.lead_meta_campaign_name, lead.meta_campaign_id, ''), value) > 0
 				  )
 				)
 			  )

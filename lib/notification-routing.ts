@@ -30,6 +30,18 @@ function pushDataString(data: PushNotificationData, ...keys: string[]) {
   return null;
 }
 
+function whatsAppConversationTarget(explicitTarget: string | null, data: PushNotificationData) {
+  if (explicitTarget && /^\/crm\/conversas(?:[/?#]|$)/.test(explicitTarget)) return explicitTarget;
+  const validID = (value: string | null) => value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
+  const conversationID = validID(pushDataString(data, 'whatsapp_conversation_id', 'conversation_id', 'conversationId'));
+  const legacyLeadID = explicitTarget ? new URL(explicitTarget, 'https://vimob.internal').searchParams.get('leadId') : null;
+  const leadID = validID(pushDataString(data, 'lead_id', 'leadId') || legacyLeadID);
+  const params = new URLSearchParams();
+  if (conversationID) params.set('conversation', conversationID);
+  if (leadID) params.set('lead', leadID);
+  return `/crm/conversas${params.size ? `?${params.toString()}` : ''}`;
+}
+
 /**
  * Resolves an OS push click to a protected in-app route. Payload URLs are
  * untrusted input: external/public/auth routes always fall back to the
@@ -54,7 +66,7 @@ export function getPushNotificationRoute(
 
   if (isWhatsAppNotification) {
     if (!access.canViewWhatsApp) return "/notifications";
-    return isWhatsAppTarget && explicitTarget ? explicitTarget : "/crm/conversas";
+    return whatsAppConversationTarget(explicitTarget, { ...data, ...(data.metadata && typeof data.metadata === 'object' ? data.metadata : {}) });
   }
 
   if (explicitTarget) return explicitTarget;
@@ -113,9 +125,7 @@ export function getNotificationRoute(
 
   if (isWhatsAppNotification) {
     if (!access.canViewWhatsApp) return null;
-    return explicitTarget?.startsWith("/crm/conversas")
-      ? explicitTarget
-      : "/crm/conversas";
+    return whatsAppConversationTarget(explicitTarget, { ...notification.metadata, lead_id: notification.lead_id });
   }
 
   if (explicitTarget) return explicitTarget;

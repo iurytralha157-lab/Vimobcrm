@@ -689,7 +689,7 @@ export default function PropertyLocations({
             sourceCount={neighborhoods.length}
             catalogCities={catalogCities}
             selectedCityId={selectedCityId}
-            onSelectedCityChange={setSelectedCityId}
+            onSelectedCityChange={(cityId) => { setSelectedCityId(cityId); setSelectedNeighborhoodId(""); }}
             query={{
               loading: loadingNeighborhoods,
               isError: neighborhoodsQuery.isError,
@@ -716,7 +716,7 @@ export default function PropertyLocations({
             catalogNeighborhoods={catalogNeighborhoods}
             selectedNeighborhoodId={selectedNeighborhoodId}
             onSelectedNeighborhoodChange={setSelectedNeighborhoodId}
-            onSelectedCityChange={setSelectedCityId}
+            onSelectedCityChange={(cityId) => { setSelectedCityId(cityId); setSelectedNeighborhoodId(""); }}
             query={{
               loading: loadingCondominiums,
               isError: condominiumsQuery.isError,

@@ -126,10 +126,11 @@ func (repo Repository) ListLeadTimeline(ctx context.Context, tenantContext tenan
 	if !ok {
 		return nil, ErrInvalidInput
 	}
+	historyScope := leadHistoryScheduleScope{actor: tenantContext, userPlaceholder: "$3"}
 
 	return repo.queryJSONArray(ctx, `
 		select coalesce(jsonb_agg(
-			jsonb_strip_nulls(
+			`+leadHistoryScheduleTimelineSQL("e", `jsonb_strip_nulls(
 				to_jsonb(e)
 				|| jsonb_build_object(
 					'id', e.id::text,
@@ -148,13 +149,14 @@ func (repo Repository) ListLeadTimeline(ctx context.Context, tenantContext tenan
 							'avatar_url', u.avatar_url
 						) end
 				)
-			)
-			order by e.occurred_at asc, e.created_at asc, e.id asc
+			)`, historyScope)+`
+			order by `+leadHistoryScheduleOccurrenceSQL("e", "event_type", "coalesce(e.event_at,e.created_at)")+` asc, e.created_at asc, e.id asc
 		), '[]'::jsonb)
 		from public.lead_timeline_events e
 		join public.leads l on l.id = e.lead_id
 		left join public.users u on u.id = coalesce(e.actor_user_id, e.user_id)
 		where l.organization_id = $1::uuid
+		  and e.organization_id = $1::uuid
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and e.lead_id = $5::uuid
 	`, tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID)
@@ -206,14 +208,18 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 	if !ok {
 		return nil, ErrInvalidInput
 	}
-	if err := repo.ensureLeadVisible(ctx, tenantContext, leadID); err != nil {
-		return nil, err
-	}
+	return readLeadHistorySnapshot(ctx, repo.db.Pool(), tenantContext, leadID, func(tx pgx.Tx) (map[string]any, error) {
+		return repo.leadHistoryRawInSnapshot(ctx, tx, tenantContext, leadID)
+	})
+}
+
+func (repo Repository) leadHistoryRawInSnapshot(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, leadID string) (map[string]any, error) {
 	batch := &pgx.Batch{}
+	historyScope, historyArgs := leadHistoryScheduleQueryScope(tenantContext, []any{tenantContext.OrganizationID, leadID})
 
 	timelineEvents, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
-			jsonb_strip_nulls(
+			`+leadHistoryScheduleTimelineSQL("e", `jsonb_strip_nulls(
 				to_jsonb(e)
 				|| jsonb_build_object(
 					'id', e.id::text,
@@ -228,7 +234,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 						'new_stage_name', coalesce(e.metadata->>'new_stage_name', e.metadata->>'to_stage', new_stage.name)
 					))
 				)
-			)
+			)`, historyScope)+`
 			order by e.created_at asc, e.id asc
 		), '[]'::jsonb)
 		from public.lead_timeline_events e
@@ -240,14 +246,14 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		 and new_stage.id::text = coalesce(e.metadata->>'new_stage_id', e.metadata->>'to_stage_id')
 		where e.organization_id = $1::uuid
 		  and e.lead_id = $2::uuid
-	`, tenantContext.OrganizationID, leadID)
+	`, historyArgs...)
 	if err != nil {
 		return nil, err
 	}
 
 	activityEvents, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
-			jsonb_strip_nulls(
+			`+leadHistoryScheduleActivitySQL("a", `jsonb_strip_nulls(
 				to_jsonb(a)
 				|| jsonb_build_object(
 					'id', a.id::text,
@@ -267,11 +273,12 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 						'new_stage_name', coalesce(a.metadata->>'new_stage_name', a.metadata->>'to_stage', new_stage.name)
 					))
 				)
-			)
+			)`, historyScope)+`
 			order by a.created_at asc, a.id asc
 		), '[]'::jsonb)
 		from public.activities a
 		left join public.users u on u.id = a.user_id
+		 and `+leadHistoryParticipantSQL("u", "a.organization_id")+`
 		left join public.stages old_stage
 		  on old_stage.organization_id = a.organization_id
 		 and old_stage.id::text = coalesce(a.metadata->>'old_stage_id', a.metadata->>'from_stage_id')
@@ -280,7 +287,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		 and new_stage.id::text = coalesce(a.metadata->>'new_stage_id', a.metadata->>'to_stage_id')
 		where a.organization_id = $1::uuid
 		  and a.lead_id = $2::uuid
-	`, tenantContext.OrganizationID, leadID)
+	`, historyArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -338,13 +345,10 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		))
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
+		 and `+leadHistoryParticipantSQL("u", "l.organization_id")+`
 		left join public.users first_response_actor
 		  on first_response_actor.id = l.first_response_actor_user_id
-		 and exists (
-		   select 1 from public.organization_members first_response_membership
-		   where first_response_membership.organization_id = l.organization_id
-		     and first_response_membership.user_id = first_response_actor.id
-		 )
+		 and `+leadHistoryParticipantSQL("first_response_actor", "l.organization_id")+`
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
@@ -414,6 +418,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		from public.round_robin_logs rrl
 		left join public.round_robins rr on rr.id = rrl.round_robin_id
 		left join public.users u on u.id = rrl.assigned_user_id
+		 and `+leadHistoryParticipantSQL("u", "rrl.organization_id")+`
 		where rrl.organization_id = $1::uuid
 		  and rrl.lead_id = $2::uuid
 	`, tenantContext.OrganizationID, leadID)
@@ -455,8 +460,11 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		), '[]'::jsonb)
 		from public.assignments_log al
 		left join public.users old_user on old_user.id = al.old_user_id
+		 and `+leadHistoryParticipantSQL("old_user", "al.organization_id")+`
 		left join public.users new_user on new_user.id = al.new_user_id
+		 and `+leadHistoryParticipantSQL("new_user", "al.organization_id")+`
 		left join public.users actor on actor.id = al.created_by
+		 and `+leadHistoryParticipantSQL("actor", "al.organization_id")+`
 		where al.organization_id = $1::uuid
 		  and al.lead_id = $2::uuid
 	`, tenantContext.OrganizationID, leadID)
@@ -491,6 +499,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		), '[]'::jsonb)
 		from public.audit_logs al
 		left join public.users u on u.id = al.user_id
+		 and `+leadHistoryParticipantSQL("u", "al.organization_id")+`
 		where al.organization_id = $1::uuid
 		  and al.entity_type = 'lead'
 		  and al.entity_id::text = $2
@@ -506,18 +515,21 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 			where e.organization_id = $1::uuid
 			  and e.lead_id = $2::uuid
 			  and e.user_id is not null
+			  and `+leadHistoryScheduleActorSQL("e", "event_type", historyScope)+`
 			union
 			select e.actor_user_id as id
 			from public.lead_timeline_events e
 			where e.organization_id = $1::uuid
 			  and e.lead_id = $2::uuid
 			  and e.actor_user_id is not null
+			  and `+leadHistoryScheduleActorSQL("e", "event_type", historyScope)+`
 			union
 			select a.user_id as id
 			from public.activities a
 			where a.organization_id = $1::uuid
 			  and a.lead_id = $2::uuid
 			  and a.user_id is not null
+			  and `+leadHistoryScheduleActorSQL("a", "type", historyScope)+`
 			union
 			select rrl.assigned_user_id as id
 			from public.round_robin_logs rrl
@@ -547,7 +559,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 			from public.audit_logs audit
 			where audit.organization_id = $1::uuid
 			  and audit.entity_type = 'lead'
-			  and audit.entity_id::text = $2
+			  and audit.entity_id::text = $2::text
 			  and audit.user_id is not null
 			union
 			select l.assigned_user_id as id
@@ -563,12 +575,18 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		) order by u.name asc), '[]'::jsonb)
 		from public.users u
 		join user_ids on user_ids.id = u.id
-	`, tenantContext.OrganizationID, leadID)
+		where `+leadHistoryParticipantSQL("u", "$1::uuid")+`
+	`, historyArgs...)
 	if err != nil {
 		return nil, err
 	}
 
-	results := repo.db.Pool().SendBatch(ctx, batch)
+	queueRuntimeEvents, err := queueHistoryJSONArray(batch, `select coalesce(jsonb_agg(data order by (data->>'created_at')::timestamptz,data->>'id'),'[]'::jsonb) from (`+queueHistoryHydrationSQL+`
+		where qe.organization_id=$1::uuid and qe.lead_id=$2::uuid) history_queue`, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+	results := tx.SendBatch(ctx, batch)
 	defer results.Close()
 
 	if timelineEvents, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
@@ -599,20 +617,24 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 	if users, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
 		return nil, err
 	}
+	if queueRuntimeEvents, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
 	if err := results.Close(); err != nil {
 		return nil, err
 	}
 
 	return map[string]any{
-		"timelineEvents":   timelineEvents,
-		"activityEvents":   activityEvents,
-		"entryEvents":      entryEvents,
-		"lead":             lead,
-		"leadMeta":         leadMeta,
-		"distributionLogs": distributionLogs,
-		"assignmentLogs":   assignmentLogs,
-		"auditLogs":        auditLogs,
-		"users":            users,
+		"timelineEvents":     timelineEvents,
+		"activityEvents":     activityEvents,
+		"entryEvents":        entryEvents,
+		"lead":               lead,
+		"leadMeta":           leadMeta,
+		"distributionLogs":   distributionLogs,
+		"queueRuntimeEvents": queueRuntimeEvents,
+		"assignmentLogs":     assignmentLogs,
+		"auditLogs":          auditLogs,
+		"users":              users,
 	}, nil
 }
 
@@ -707,6 +729,9 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 	)
 	if err != nil {
 		return nil, err
+	}
+	if isQueuePoolSnapshot(current) {
+		return nil, ErrQueuePoolConflict
 	}
 	if !canOperateLeadSnapshot(tenantContext, current) {
 		return nil, tenant.ErrOrganizationAccessDenied
@@ -839,6 +864,11 @@ func (repo Repository) getFirstResponseLeadForUpdate(
 	current.ID = leadID
 	current.AssignedUserID = textValue(assignedUserID)
 	current.TeamID = textValue(teamID)
+	poolAccess, err := queuePoolAccessAfterLeadLock(ctx, tx, organizationID, leadID, nil)
+	if err != nil {
+		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, false, err
+	}
+	current.Data = map[string]any{"__queue_pool_private": poolAccess != nil}
 	return current, responseBaselineAt, firstResponseAt, firstResponseIsAutomation, nil
 }
 
@@ -991,6 +1021,7 @@ func scanHistoryJSONArray(row pgx.Row) ([]map[string]any, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, err
 	}
+	redactLeadHistoryAttachmentURLs(out)
 	return out, nil
 }
 
@@ -1007,6 +1038,7 @@ func scanHistoryJSONObject(row pgx.Row) (map[string]any, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, err
 	}
+	redactLeadHistoryAttachmentURLs(out)
 	return out, nil
 }
 

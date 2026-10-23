@@ -69,6 +69,36 @@ function isNearbyHistoryTimestamp(left: string, right: string, toleranceMs = 15_
   return Number.isFinite(leftTime) && Number.isFinite(rightTime) && Math.abs(leftTime - rightTime) <= toleranceMs;
 }
 
+function representsAuditStatusChange(audit: AuditLogRow, activity: ActivityEventRow) {
+  if (activity.type !== 'status_change') return false;
+  if (audit.user_id && activity.user_id && audit.user_id !== activity.user_id) return false;
+  const oldData = asMetadata(audit.old_data);
+  const newData = asMetadata(audit.new_data);
+  const metadata = asMetadata(activity.metadata);
+  let sharesOccurrence = false;
+  for (const key of ['operation_id', 'request_id']) {
+    const values = [newData[key], metadata[key]];
+    if (values.some(value => value !== undefined && value !== null
+      && (typeof value !== 'string' || !value || value !== value.trim() || value === '[valor protegido]'))) return false;
+    const auditId = typeof newData[key] === 'string' ? newData[key] : null;
+    const activityId = typeof metadata[key] === 'string' ? metadata[key] : null;
+    if (auditId && activityId) {
+      if (auditId !== activityId) return false;
+      sharesOccurrence = true;
+    }
+  }
+  if (!sharesOccurrence) return false;
+  const from = typeof oldData.deal_status === 'string' ? oldData.deal_status : null;
+  const to = typeof newData.deal_status === 'string' ? newData.deal_status : null;
+  if (!from || !to || from === to || !['open', 'won', 'lost'].includes(from) || !['open', 'won', 'lost'].includes(to)) return false;
+  const matchesAliases = (keys: string[], expected: string) => {
+    const present = keys.filter(key => Object.hasOwn(metadata, key));
+    return present.length > 0 && present.every(key => metadata[key] === expected);
+  };
+  return matchesAliases(['from_status', 'previous_status', 'old_status'], from)
+    && matchesAliases(['to_status', 'new_status'], to);
+}
+
 export function auditVisibleKeys(audit: AuditLogRow, activityEvents: ActivityEventRow[]) {
   const visibleKeys = new Set(auditChangedKeys(audit));
   const nearbyActivities = activityEvents.filter((activity) => {
@@ -79,13 +109,15 @@ export function auditVisibleKeys(audit: AuditLogRow, activityEvents: ActivityEve
   const hasActivity = (types: string[], predicate?: (activity: ActivityEventRow) => boolean) =>
     nearbyActivities.some((activity) => types.includes(activity.type) && (!predicate || predicate(activity)));
 
-  if (hasActivity(['status_change'])) {
+  if (activityEvents.some(activity => representsAuditStatusChange(audit, activity))) {
     visibleKeys.delete('deal_status');
-    visibleKeys.delete('lost_reason');
   }
+  // Status activities lack the old loss reason; redacted values cannot prove a duplicate.
 
   if (hasActivity(['property_selected', 'property_linked'])) {
-    ['property_id', 'interest_property_id', 'property_code', 'valor_interesse', 'commission_percentage']
+    // Property metadata describes the catalog, not the lead's financial
+    // before/after values. Keep those audits even for the same selection.
+    ['property_id', 'interest_property_id', 'property_code']
       .forEach((key) => visibleKeys.delete(key));
   }
 

@@ -63,6 +63,532 @@ func nativeRoutingSnapshotTestPayload(t *testing.T, rows ...map[string]any) []by
 	return payload
 }
 
+func TestNativeUnlinkedEphemeralCaptureRequiresOrganicUnboundEvent(t *testing.T) {
+	session := nativeEvolutionSession{
+		ID:             "22222222-2222-4222-8222-222222222222",
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-unlinked", Content: "Olá"}
+	row := nativeRoutingSnapshotTestRow(message.ProviderMessageID, 41)
+	row["state"] = "unlinked"
+	row["event_lead_id"] = nil
+	row["current_lead_id"] = nil
+	row["active_binding_id"] = nil
+	row["unlinked_capture_policy"] = "v1"
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, row), session, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation := nativeEvolutionConversation{ID: snapshot.ConversationID}
+	if got := nativeEvolutionCaptureState("", conversation, message, snapshot, false); got != "unlinked_ephemeral" {
+		t.Fatalf("organic unlinked capture = %q", got)
+	}
+	if got := nativeEvolutionCaptureState("attendance-id", conversation, message, snapshot, false); got != "captured" {
+		t.Fatalf("attendance capture = %q", got)
+	}
+	if !nativeEvolutionMessageHasVisibleCapture("unlinked_ephemeral") ||
+		!nativeEvolutionMessageHasVisibleCapture("promoted_unlinked") ||
+		!nativeEvolutionMessageHasVisibleCapture("observed_unattended") ||
+		!nativeEvolutionMessageHasVisibleCapture("captured") ||
+		nativeEvolutionMessageHasVisibleCapture("suppressed") {
+		t.Fatal("only visible capture states may update preview or queue media")
+	}
+	outbound := message
+	outbound.FromMe = true
+	if got := nativeEvolutionCaptureState("", conversation, outbound, snapshot, false); got != "unlinked_ephemeral" {
+		t.Fatalf("external outbound without lead capture = %q", got)
+	}
+	if got := nativeEvolutionCaptureState("", conversation, outbound, snapshot, true); got != "suppressed" {
+		t.Fatalf("managed outbound echo without lead capture = %q", got)
+	}
+	bound := *snapshot
+	bound.State = "bound"
+	bound.EventLeadID = "44444444-4444-4444-8444-444444444444"
+	bound.CurrentLeadID = bound.EventLeadID
+	bound.ActiveBindingID = "55555555-5555-4555-8555-555555555555"
+	boundConversation := nativeEvolutionConversation{
+		ID: snapshot.ConversationID, LeadID: bound.EventLeadID, MessageLeadID: bound.EventLeadID,
+	}
+	if got := nativeEvolutionCaptureState("", boundConversation, message, &bound, false); got != "observed_unattended" {
+		t.Fatalf("bound lead without attendance capture = %q", got)
+	}
+	if got := nativeEvolutionCaptureState("", boundConversation, outbound, &bound, false); got != "observed_unattended" {
+		t.Fatalf("external outbound for bound lead capture = %q", got)
+	}
+	if got := nativeEvolutionCaptureState("", boundConversation, outbound, &bound, true); got != "suppressed" {
+		t.Fatalf("managed outbound echo without attendance capture = %q", got)
+	}
+	for name, mutate := range map[string]func(*nativeEvolutionConversation, *nativeIngressRoutingSnapshot){
+		"stale binding": func(c *nativeEvolutionConversation, _ *nativeIngressRoutingSnapshot) {
+			c.HistoricalBindingReplay = true
+		},
+		"different card": func(c *nativeEvolutionConversation, _ *nativeIngressRoutingSnapshot) {
+			c.MessageLeadID = "66666666-6666-4666-8666-666666666666"
+		},
+		"different provider": func(_ *nativeEvolutionConversation, s *nativeIngressRoutingSnapshot) {
+			s.ProviderMessageID = "other"
+		},
+		"contextual intake": func(_ *nativeEvolutionConversation, s *nativeIngressRoutingSnapshot) {
+			s.ContextKind = "contextual_intake"
+		},
+		"managed distribution": func(_ *nativeEvolutionConversation, s *nativeIngressRoutingSnapshot) {
+			s.ManagedMessageDistribution = true
+		},
+	} {
+		t.Run("bound "+name, func(t *testing.T) {
+			c, s := boundConversation, bound
+			mutate(&c, &s)
+			if got := nativeEvolutionCaptureState("", c, message, &s, false); got != "suppressed" {
+				t.Fatalf("unproven bound observation = %q", got)
+			}
+		})
+	}
+
+	predecessor := *snapshot
+	predecessor.State = "predecessor_inherit"
+	predecessor.TargetMode = "inherit_predecessor"
+	if got := nativeEvolutionCaptureState("", conversation, message, &predecessor, false); got != "suppressed" {
+		t.Fatalf("inherited routing without exact event lead capture = %q", got)
+	}
+
+	for name, mutate := range map[string]func(*nativeEvolutionConversation, *nativeEvolutionMessage, *nativeIngressRoutingSnapshot){
+		"unrecognized routing state": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.State = ""
+		},
+		"older routing contract": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.UnlinkedCapturePolicy = ""
+		},
+		"expired physical epoch": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.RetentionClosed = true
+		},
+		"lead without attendance": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.LeadID = "lead-id"
+		},
+		"event lead": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.EventLeadID = "lead-id"
+		},
+		"immutable message lead": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.MessageLeadID = "lead-id"
+		},
+		"current lead": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.CurrentLeadID = "lead-id"
+		},
+		"active binding": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ActiveBindingID = "binding-id"
+		},
+		"quarantine": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.LeadResolutionQuarantineReason = "ambiguous_alias"
+		},
+		"snapshot quarantine": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.QuarantineReason = "ambiguous_alias"
+		},
+		"stale binding": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.HistoricalBindingReplay = true
+		},
+		"contextual intake": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ContextKind = "contextual_intake"
+		},
+		"managed event": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ManagedProviderEventPending = true
+		},
+		"CTWA": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.IsCTWAAd = true
+		},
+		"group": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.IsGroup = true
+		},
+		"wrong provider identity": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ProviderMessageID = "other"
+		},
+		"wrong conversation": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ConversationID = "other"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, m, s := conversation, message, *snapshot
+			mutate(&c, &m, &s)
+			if got := nativeEvolutionCaptureState("", c, m, &s, false); got != "suppressed" {
+				t.Fatalf("unsafe event capture = %q", got)
+			}
+		})
+	}
+	if got := nativeEvolutionCaptureState("", conversation, message, nil, false); got != "suppressed" {
+		t.Fatalf("missing ingress snapshot capture = %q", got)
+	}
+	manualRule := *snapshot
+	manualRule.RuleID = "rule-id"
+	if got := nativeEvolutionCaptureState("", conversation, message, &manualRule, false); got != "unlinked_ephemeral" {
+		t.Fatalf("organic non-managed rule without lead capture = %q", got)
+	}
+}
+
+func TestNativeFirstLeadMatchObservationRequiresCurrentBindingProof(t *testing.T) {
+	message := nativeEvolutionMessage{ProviderMessageID: "first-lead-match", Content: "Olá"}
+	leadID := "44444444-4444-4444-8444-444444444444"
+	snapshot := nativeIngressRoutingSnapshot{
+		State:                 "lead_match",
+		ProviderMessageID:     message.ProviderMessageID,
+		InboxEventKey:         "inbox-first-lead-match",
+		TargetMode:            "snapshot",
+		UnlinkedCapturePolicy: "v1",
+		CapturedAt:            time.Now().UTC(),
+		ContextKind:           "organic",
+		EventLeadID:           leadID,
+	}
+	conversation := nativeEvolutionConversation{
+		ID:              "33333333-3333-4333-8333-333333333333",
+		LeadID:          leadID,
+		MessageLeadID:   leadID,
+		ActiveBindingID: "55555555-5555-4555-8555-555555555555",
+	}
+	if got := nativeEvolutionCaptureState("", conversation, message, &snapshot, false); got != "observed_unattended" {
+		t.Fatalf("first organic lead match = %q, want observed_unattended", got)
+	}
+	for name, mutate := range map[string]func(*nativeEvolutionConversation, *nativeEvolutionMessage, *nativeIngressRoutingSnapshot){
+		"no active binding proof": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.ActiveBindingID = ""
+		},
+		"wrong card": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.MessageLeadID = "66666666-6666-4666-8666-666666666666"
+		},
+		"stale binding": func(c *nativeEvolutionConversation, _ *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			c.HistoricalBindingReplay = true
+		},
+		"no immutable capture time": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.CapturedAt = time.Time{}
+		},
+		"old conversation selected": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ConversationID = "77777777-7777-4777-8777-777777777777"
+		},
+		"managed intake": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ManagedMessageDistribution = true
+		},
+		"contextual intake": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ContextKind = "contextual_intake"
+			s.ContextProof = "managed_rule"
+		},
+		"outbound first match": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.FromMe = true
+		},
+		"synthetic provider identity": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.ProviderMessageIDSynthetic = true
+		},
+		"reaction event": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.IsReaction = true
+		},
+		"deletion event": func(_ *nativeEvolutionConversation, m *nativeEvolutionMessage, _ *nativeIngressRoutingSnapshot) {
+			m.IsDeletion = true
+		},
+		"wrong provider message": func(_ *nativeEvolutionConversation, _ *nativeEvolutionMessage, s *nativeIngressRoutingSnapshot) {
+			s.ProviderMessageID = "other"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, m, s := conversation, message, snapshot
+			mutate(&c, &m, &s)
+			if got := nativeEvolutionCaptureState("", c, m, &s, false); got != "suppressed" {
+				t.Fatalf("unproven first lead match = %q", got)
+			}
+		})
+	}
+}
+
+func TestNativeInheritedOrganicLeadObservationRequiresResolvedCurrentPredecessor(t *testing.T) {
+	session := nativeEvolutionSession{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		ID:             "22222222-2222-4222-8222-222222222222",
+	}
+	leadID := "44444444-4444-4444-8444-444444444444"
+	conversationID := "33333333-3333-4333-8333-333333333333"
+	bindingID := "55555555-5555-4555-8555-555555555555"
+	predecessorID := "provider-first"
+	messageID := "provider-second"
+	acceptedAt := time.Now().UTC()
+	first := nativeRoutingSnapshotTestRow(predecessorID, 41)
+	first["processing_epoch"] = 1
+	first["unlinked_capture_policy"] = "v1"
+	first["captured_at"] = acceptedAt.Format(time.RFC3339Nano)
+	second := nativeRoutingSnapshotTestRow(messageID, 42)
+	second["processing_epoch"] = 1
+	second["unlinked_capture_policy"] = "v1"
+	second["captured_at"] = acceptedAt.Format(time.RFC3339Nano)
+	second["state"] = "predecessor_inherit"
+	second["target_mode"] = "inherit_predecessor"
+	second["event_lead_id"] = nil
+	second["predecessor_provider_message_id"] = predecessorID
+	second["predecessor_inbox_event_key"] = "inbox-" + predecessorID
+	second["predecessor_processing_lane"] = "live"
+	firstMessage := nativeEvolutionMessage{ProviderMessageID: predecessorID, SentAt: acceptedAt.Add(-time.Second)}
+	firstSnapshot, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, first), session, firstMessage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: messageID, SentAt: acceptedAt.Add(-time.Second)}
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, second), session, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation := nativeEvolutionConversation{
+		ID: conversationID, LeadID: leadID, MessageLeadID: leadID, ActiveBindingID: bindingID,
+	}
+	if got := nativeEvolutionCaptureState("", conversation, firstMessage, firstSnapshot, false); got != "observed_unattended" {
+		t.Fatalf("first lead event = %q, want observed_unattended", got)
+	}
+	if got := nativeEvolutionCaptureState("", conversation, message, snapshot, false); got != "suppressed" {
+		t.Fatalf("unresolved inherited event = %q, want suppressed", got)
+	}
+	type fixture struct {
+		session      nativeEvolutionSession
+		item         pendingEvolutionWebhook
+		conversation nativeEvolutionConversation
+		message      nativeEvolutionMessage
+		snapshot     nativeIngressRoutingSnapshot
+		proof        nativeInheritedRoutingCaptureProof
+		bindingID    string
+		attendanceID string
+		managed      bool
+		stored       bool
+	}
+	base := fixture{
+		session: session,
+		item: pendingEvolutionWebhook{
+			ID: "66666666-6666-4666-8666-666666666666", OrganizationID: session.OrganizationID,
+			SessionID: session.ID, ProcessingEpoch: 1, CreatedAt: acceptedAt,
+		},
+		conversation: conversation,
+		message:      message,
+		snapshot:     *snapshot,
+		bindingID:    bindingID,
+		proof: nativeInheritedRoutingCaptureProof{
+			OrganizationID: session.OrganizationID, SessionID: session.ID,
+			InboxEventKey: snapshot.InboxEventKey, ProviderMessageID: messageID,
+			PredecessorProviderMessageID: predecessorID,
+			PredecessorInboxEventKey:     firstSnapshot.InboxEventKey,
+			PredecessorIngressSequence:   firstSnapshot.IngressSequence,
+			BindingIsCurrent:             true,
+			Target: nativeInheritedRoutingTarget{
+				Ready: true, ConversationID: conversationID, LeadID: leadID,
+				ActiveBindingID: bindingID, PredecessorProviderMessageID: predecessorID,
+				PredecessorIngressSequence: firstSnapshot.IngressSequence,
+			},
+		},
+	}
+	allowed := func(value fixture) bool {
+		return nativeInheritedRoutingObservationAllowed(value.session, value.item, value.conversation,
+			value.message, &value.snapshot, value.proof, value.bindingID, value.attendanceID,
+			value.managed, value.stored)
+	}
+	if !allowed(base) {
+		t.Fatal("verified current predecessor must make the second organic lead message visible")
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*fixture)
+	}{
+		{"predecessor not ready", func(v *fixture) { v.proof.Target.Ready = false }},
+		{"predecessor mismatch", func(v *fixture) { v.proof.Target.PredecessorProviderMessageID = "other" }},
+		{"CAS not current", func(v *fixture) { v.proof.BindingIsCurrent = false }},
+		{"manual relink", func(v *fixture) { v.conversation.HistoricalBindingReplay = true }},
+		{"active binding changed", func(v *fixture) { v.conversation.ActiveBindingID = "77777777-7777-4777-8777-777777777777" }},
+		{"different lead", func(v *fixture) { v.proof.Target.LeadID = "77777777-7777-4777-8777-777777777777" }},
+		{"quarantine", func(v *fixture) { v.conversation.LeadResolutionQuarantineReason = "ambiguous" }},
+		{"managed rule", func(v *fixture) { v.snapshot.ManagedMessageDistribution = true }},
+		{"managed echo", func(v *fixture) { v.managed = true }},
+		{"wrong organization", func(v *fixture) { v.item.OrganizationID = "77777777-7777-4777-8777-777777777777" }},
+		{"wrong session", func(v *fixture) { v.item.SessionID = "77777777-7777-4777-8777-777777777777" }},
+		{"wrong epoch", func(v *fixture) { v.item.ProcessingEpoch = 0 }},
+		{"wrong event ID", func(v *fixture) { v.message.ProviderMessageID = "other" }},
+		{"future provider time", func(v *fixture) { v.message.SentAt = acceptedAt.Add(time.Second) }},
+		{"group", func(v *fixture) { v.message.IsGroup = true }},
+		{"CTWA", func(v *fixture) { v.message.IsCTWAAd = true }},
+		{"reaction", func(v *fixture) { v.message.IsReaction = true }},
+		{"deletion", func(v *fixture) { v.message.IsDeletion = true }},
+		{"already stored", func(v *fixture) { v.stored = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := base
+			tc.mutate(&value)
+			if allowed(value) {
+				t.Fatal("inherited event without current organic lead proof became visible")
+			}
+		})
+	}
+}
+
+func TestNativeRoutingSnapshotPinsExpiredEpochAndCaptureTime(t *testing.T) {
+	session := nativeEvolutionSession{
+		ID:             "22222222-2222-4222-8222-222222222222",
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-next-epoch"}
+	row := nativeRoutingSnapshotTestRow(message.ProviderMessageID, 42)
+	row["state"] = "lead_match"
+	row["conversation_id"] = nil
+	row["current_lead_id"] = nil
+	row["active_binding_id"] = nil
+	row["unlinked_capture_policy"] = "v1"
+	row["expired_unlinked_conversation_id"] = "66666666-6666-4666-8666-666666666666"
+	row["expired_unlinked_remote_jid"] = "5511999991111@s.whatsapp.net"
+	row["captured_at"] = "2026-10-08T12:30:00Z"
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, row), session, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ExpiredUnlinkedConversationID != row["expired_unlinked_conversation_id"] ||
+		snapshot.ExpiredUnlinkedRemoteJID != row["expired_unlinked_remote_jid"] ||
+		!snapshot.CapturedAt.Equal(time.Date(2026, time.October, 8, 12, 30, 0, 0, time.UTC)) {
+		t.Fatalf("frozen rollover identity = %#v", snapshot)
+	}
+	for _, state := range []string{"unlinked", "contextual_intake"} {
+		stateRow := map[string]any{}
+		for key, value := range row {
+			stateRow[key] = value
+		}
+		stateRow["state"] = state
+		if state == "unlinked" {
+			stateRow["event_lead_id"] = nil
+		} else {
+			stateRow["context_kind"] = "contextual_intake"
+			stateRow["context_proof"] = "ctwa"
+		}
+		if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, stateRow), session, message); err != nil {
+			t.Fatalf("%s rollover snapshot rejected: %v", state, err)
+		}
+	}
+	boundRow := map[string]any{}
+	for key, value := range row {
+		boundRow[key] = value
+	}
+	boundRow["state"] = "bound"
+	if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, boundRow), session, message); err == nil {
+		t.Fatal("a bound snapshot cannot retire an unlinked physical epoch")
+	}
+	delete(row, "expired_unlinked_remote_jid")
+	if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, row), session, message); err == nil {
+		t.Fatal("rollover snapshot without canonical JID must fail closed")
+	}
+	row["expired_unlinked_remote_jid"] = "5511999991111@s.whatsapp.net"
+	row["captured_at"] = "invalid"
+	if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, row), session, message); err == nil {
+		t.Fatal("rollover snapshot with invalid captured_at must fail closed")
+	}
+}
+
+func TestNativeRoutingSnapshotPinsLeadIntakeSplitWithoutPromotingEarlierHistory(t *testing.T) {
+	session := nativeEvolutionSession{
+		ID: "22222222-2222-4222-8222-222222222222", OrganizationID: "11111111-1111-4111-8111-111111111111",
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-intake-split"}
+	base := nativeRoutingSnapshotTestRow(message.ProviderMessageID, 43)
+	base["state"] = "lead_match"
+	base["conversation_id"] = nil
+	base["current_lead_id"] = nil
+	base["active_binding_id"] = nil
+	base["unlinked_capture_policy"] = "v1"
+	base["intake_unlinked_conversation_id"] = "66666666-6666-4666-8666-666666666666"
+	base["intake_unlinked_remote_jid"] = "5511999991111@s.whatsapp.net"
+	base["captured_at"] = "2026-10-08T12:30:00Z"
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, base), session, message)
+	if err != nil || snapshot.IntakeUnlinkedConversationID != base["intake_unlinked_conversation_id"] ||
+		snapshot.IntakeUnlinkedRemoteJID != base["intake_unlinked_remote_jid"] || snapshot.ConversationID != "" {
+		t.Fatalf("lead_match split provenance = %#v, error = %v", snapshot, err)
+	}
+	contextual := map[string]any{}
+	for key, value := range base {
+		contextual[key] = value
+	}
+	contextual["state"] = "contextual_intake"
+	contextual["context_kind"] = "contextual_intake"
+	contextual["context_proof"] = "canonical_intake_v1:provider"
+	contextual["event_lead_id"] = nil // The worker may create this lead after split.
+	if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, contextual), session, message); err != nil {
+		t.Fatalf("new-card contextual intake split rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"missing exact route": func(row map[string]any) { delete(row, "intake_unlinked_remote_jid") },
+		"bound current card":  func(row map[string]any) { row["current_lead_id"] = "44444444-4444-4444-8444-444444444444" },
+		"mixed expiry and intake cutover": func(row map[string]any) {
+			row["expired_unlinked_conversation_id"] = "77777777-7777-4777-8777-777777777777"
+			row["expired_unlinked_remote_jid"] = "5511999991111@s.whatsapp.net"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := map[string]any{}
+			for key, value := range base {
+				row[key] = value
+			}
+			mutate(row)
+			if _, err := nativeIngressRoutingSnapshotForMessage(nativeRoutingSnapshotTestPayload(t, row), session, message); err == nil {
+				t.Fatal("invalid intake split snapshot accepted")
+			}
+		})
+	}
+}
+
+func TestNativeUnlinkedEphemeralFlowKeepsLeadEffectsClosed(t *testing.T) {
+	processor := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func (repo Repository) processNativeEvolutionMessages")
+	for _, required := range []string{
+		"captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, routingSnapshot, managedOutbound)",
+		"managedOutbound, err = nativeOutboundManagedByCRM(ctx, tx, session, conversation.ID, message.ProviderMessageID)",
+		"captureState, historyLeadID, err = resolveNativeUnlinkedHistoryCapture(",
+		"!item.CreatedAt.IsZero() && !message.SentAt.After(item.CreatedAt)",
+		"if nativeEvolutionMessageHasVisibleCapture(captureState) &&",
+		"(captureState != \"unlinked_ephemeral\" || inserted) &&",
+		"if nativeEvolutionMessageHasVisibleCapture(captureState) && captureState != \"promoted_unlinked\" &&",
+		"if captureState == \"observed_unattended\" && inserted && eventBindingIsCurrent {",
+		"captureState != \"unlinked_ephemeral\" && captureState != \"promoted_unlinked\" &&",
+		"captureState != \"observed_unattended\"",
+		"if captureState == \"captured\" && allowAutomatedReply",
+		"if captureState == \"suppressed\" {",
+	} {
+		if !strings.Contains(processor, required) {
+			t.Fatalf("native message flow lost capture boundary %q", required)
+		}
+	}
+	managedOrigin := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func nativeOutboundManagedByCRM")
+	if !strings.Contains(managedOrigin, "from public.outbox_messages outbox") ||
+		!strings.Contains(managedOrigin, "outbox.conversation_id = $4::uuid") ||
+		!strings.Contains(managedOrigin, "outbox.sent_message_id = $3 or outbox.client_message_id = $3") {
+		t.Fatal("legacy outbox echoes must stay out of external observations")
+	}
+	insert := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func insertNativeEvolutionMessage")
+	if !strings.Contains(insert, "if captureState == \"suppressed\" {") ||
+		!strings.Contains(insert, "if existingCaptureState == \"unlinked_ephemeral\" || existingCaptureState == \"promoted_unlinked\" ||") ||
+		!strings.Contains(insert, "return false, existingConversationID, existingID, nil") ||
+		!strings.Contains(insert, "if nativeEvolutionMessageHasVisibleCapture(captureState) && conversation.LeadResolutionQuarantineReason == \"\" && nativeIsMediaType(message.MessageType)") {
+		t.Fatal("native message insertion must preserve ephemeral retries, suppressed redaction and visible media")
+	}
+}
+
+func TestNativeLeadIntakeSplitsActiveUnlinkedEpochBeforeBinding(t *testing.T) {
+	ensure := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func ensureNativeEvolutionConversation")
+	split := strings.Index(ensure, "retireNativeUnlinkedForLeadIntake(ctx, tx, session,")
+	create := strings.Index(ensure, "if conversationMissing {")
+	bind := strings.Index(ensure, "activateNativeWhatsAppConversationLeadBinding(")
+	if split < 0 || create < 0 || bind < 0 || !(split < create && create < bind) {
+		t.Fatal("verified intake must retire no-lead epoch before creating and binding the new conversation")
+	}
+	for _, required := range []string{
+		"routingSnapshot.IntakeUnlinkedConversationID",
+		"oldConversationID = routingSnapshot.ConversationID",
+		"message.RemoteJID = oldRemoteJID",
+		"[]string{providerRemoteJID}, message.RemoteAliases...",
+		"routingSnapshot.ConversationID = \"\"",
+		"storedIdentity.ID == \"\"",
+		"!message.FromMe && !message.IsGroup",
+	} {
+		if !strings.Contains(ensure, required) {
+			t.Fatalf("intake split boundary missing %q", required)
+		}
+	}
+	rpc := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func retireNativeUnlinkedForLeadIntake")
+	if !strings.Contains(rpc, "retire_whatsapp_unlinked_conversation_for_lead_intake") ||
+		!strings.Contains(rpc, "p_provider_message_id") && !strings.Contains(rpc, "providerMessageID, inboxEventKey, leadID") ||
+		!strings.Contains(rpc, "!outcome.Retired || outcome.ConversationID != conversationID") {
+		t.Fatal("intake split requires exact SQL snapshot proof and fail-closed CAS result")
+	}
+}
+
 func TestNativeIngressRoutingSnapshotRequiresCompleteImmutableManagedContext(t *testing.T) {
 	session := nativeEvolutionSession{
 		ID:             "22222222-2222-4222-8222-222222222222",
@@ -1315,8 +1841,10 @@ func TestNativeNotificationReceiptUsesExactServiceRPC(t *testing.T) {
 	}
 	source := string(raw)
 	for _, required := range []string{
-		"private.reconcile_notification_whatsapp_delivery(",
+		"public.evolution_go_reconcile_notification_receipt(",
 		"session.OrganizationID",
+		"session.ID,",
+		"organizationID, sessionID, messageID, status, receipt.OccurredAt",
 		"receipt.OccurredAt",
 		"if !matched[id]",
 		"nativeNotificationReceiptOutcomeMatched(result.Outcome)",
@@ -1443,6 +1971,22 @@ func TestEvolutionWebhookProcessorModeIsSessionGated(t *testing.T) {
 	}
 	if mode := evolutionWebhookProcessorModeForSession(webhookProcessorNative, []string{"*"}, otherSession); mode != webhookProcessorNative {
 		t.Fatalf("wildcard mode = %q, want native", mode)
+	}
+}
+
+func TestEpochOneWebhookDeliveryCannotRouteToEdge(t *testing.T) {
+	item := pendingEvolutionWebhook{
+		SessionID:       "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9",
+		ProcessingEpoch: 1,
+	}
+	for _, configured := range []string{webhookProcessorEdge, webhookProcessorNativeFallback, webhookProcessorNative} {
+		if got := evolutionWebhookProcessorModeForDelivery(configured, nil, item); got != webhookProcessorNative {
+			t.Fatalf("epoch-one mode with %q = %q, want native", configured, got)
+		}
+	}
+	item.ProcessingEpoch = 0
+	if got := evolutionWebhookProcessorModeForDelivery(webhookProcessorEdge, nil, item); got != webhookProcessorEdge {
+		t.Fatalf("epoch-zero mode = %q, want edge", got)
 	}
 }
 
@@ -1670,8 +2214,18 @@ func TestGroupOnlyWebhookIsAcknowledgedWithoutEdgeOrLeadData(t *testing.T) {
 	if len(messages) != 1 || messages[0].ProviderMessageID != "mixed-direct" {
 		t.Fatalf("mixed group filtering = %#v, want only mixed-direct", messages)
 	}
-	if err := repo.dispatchEvolutionWebhook(context.Background(), mixed); err != nil {
-		t.Fatalf("mixed dispatch error = %v", err)
+	if err := repo.dispatchEvolutionWebhook(context.Background(), mixed); err == nil ||
+		!strings.Contains(err.Error(), "owned epoch-zero inbox delivery") {
+		t.Fatalf("mixed dispatch without an inbox lease = %v, want fenced rejection", err)
+	}
+	if got := edgeCalls.Load(); got != 0 {
+		t.Fatalf("unfenced mixed direct webhook reached Edge %d times", got)
+	}
+	filteredItem.ID = "e491a198-8992-44a1-8674-17987c37e3e4"
+	filteredItem.WebhookToken = "session-secret"
+	if err := repo.forwardEvolutionWebhook(context.Background(), filteredItem,
+		"cfd9040a-6c42-4b0a-a82d-818853074d61"); err != nil {
+		t.Fatalf("fenced HTTP payload error = %v", err)
 	}
 	if got := edgeCalls.Load(); got != 1 {
 		t.Fatalf("mixed direct webhook reached Edge %d times, want 1", got)
@@ -1764,15 +2318,24 @@ func TestNativeFallbackStillForwardsNonMessageLifecycleEvent(t *testing.T) {
 		webhookRolloutSessionIDs: []string{sessionID},
 		httpClient:               edge.Client(),
 	}}
-	err := repo.dispatchEvolutionWebhook(context.Background(), pendingEvolutionWebhook{
+	item := pendingEvolutionWebhook{
+		ID:             "e491a198-8992-44a1-8674-17987c37e3e4",
 		OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
 		SessionID:      sessionID,
 		EventType:      "presence.update",
 		WebhookToken:   "legacy-secret",
 		Payload:        []byte(`{"event":"presence.update","data":{"presence":"available"}}`),
-	})
-	if err != nil {
-		t.Fatalf("non-message fallback failed: %v", err)
+	}
+	if err := repo.dispatchEvolutionWebhook(context.Background(), item); err == nil ||
+		!strings.Contains(err.Error(), "owned epoch-zero inbox delivery") {
+		t.Fatalf("non-message fallback without inbox lease = %v, want fenced rejection", err)
+	}
+	if got := edgeCalls.Load(); got != 0 {
+		t.Fatalf("unfenced non-message lifecycle reached Edge %d times", got)
+	}
+	if err := repo.forwardEvolutionWebhook(context.Background(), item,
+		"cfd9040a-6c42-4b0a-a82d-818853074d61"); err != nil {
+		t.Fatalf("fenced lifecycle HTTP delivery failed: %v", err)
 	}
 	if got := edgeCalls.Load(); got != 1 {
 		t.Fatalf("non-message lifecycle event reached Edge %d times, want 1", got)
@@ -1825,7 +2388,6 @@ func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
 	}
 	for _, functionName := range []string{
 		"func processNativeEvolutionDeletion(",
-		"func processNativeEvolutionReaction(",
 	} {
 		functionStart := strings.Index(source, functionName)
 		if functionStart < 0 {
@@ -1839,6 +2401,28 @@ func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
 		if !strings.Contains(functionBody, "lockNativeEvolutionMessageTarget(") {
 			t.Fatalf("%s must use the canonical conversation-first target lock", functionName)
 		}
+	}
+
+	reactionStart := strings.Index(source, "func processNativeEvolutionReaction(")
+	if reactionStart < 0 {
+		t.Fatal("reaction RPC source boundary not found")
+	}
+	reactionEnd := strings.Index(source[reactionStart:], "\nfunc ")
+	if reactionEnd < 0 {
+		t.Fatal("reaction RPC source boundary not found")
+	}
+	if !strings.Contains(source[reactionStart:reactionStart+reactionEnd], "public.apply_whatsapp_provider_reaction(") {
+		t.Fatal("native reactions must use the transactional RPC shared with Edge")
+	}
+	reactionSQL, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "supabase", "migrations", "20261011180339_whatsapp_provider_reaction_target_capture.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rpcSource := string(reactionSQL)
+	conversationLock = strings.Index(rpcSource, "id=v_target.conversation_id for update")
+	messageTargetLock = strings.Index(rpcSource, "id=v_targets[1] for update")
+	if conversationLock < 0 || messageTargetLock < 0 || conversationLock >= messageTargetLock {
+		t.Fatal("shared reaction RPC must lock the conversation before its immutable message target")
 	}
 
 	statusLockStart := strings.Index(source, "func lockNativeStatusTransportRows(")

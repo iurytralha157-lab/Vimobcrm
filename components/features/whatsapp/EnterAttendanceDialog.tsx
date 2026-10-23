@@ -49,13 +49,13 @@ export function EnterAttendanceDialog({
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <div className="space-y-2 text-xs leading-relaxed text-[var(--app-text-secondary)]">
               <p>
-                Ao confirmar, as mensagens enviadas e recebidas pelo WhatsApp selecionado,
-                a partir da sua entrada, serão registradas neste card e ficarão visíveis
-                para quem tem acesso ao lead.
+                Ao confirmar, você poderá enviar pelo CRM usando o WhatsApp selecionado.
+                As mensagens desta conversa continuam visíveis para quem tem acesso ao lead.
               </p>
               <p className="font-medium text-[var(--app-text-primary)]">
-                Mensagens anteriores a esta entrada não serão acrescentadas ao histórico;
-                registros antigos do card permanecem.
+                A entrada no atendimento não anexa histórico antigo. O histórico ainda
+                preservado é anexado automaticamente quando você confirma o vínculo da
+                conversa com o lead.
               </p>
             </div>
           </div>
@@ -75,7 +75,7 @@ export function EnterAttendanceDialog({
             disabled={isJoining}
             onClick={() => void onConfirm()}
           >
-            {isJoining && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+            {isJoining && <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
             Entrar no atendimento
           </Button>
         </AlertDialogFooter>

@@ -5,7 +5,7 @@ import {
   pipelineStageLeadsResponseSchema,
   validateDomainResponse,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 import type { PipelineDateMode } from '@/lib/pipeline-date-mode'
 import {
   buildPipelineBoardQuery,
@@ -14,11 +14,16 @@ import {
 } from '@/lib/pipeline-board-query'
 import { PIPELINE_READ_TIMEOUT_MS } from '@/lib/pipeline-reliability'
 import { sanitizeLeadMetaFiltersEnvelope } from './pipeline-board-meta-filters'
+import { toQueuePool } from '@/lib/queue-pool'
+import type { APIQueuePool } from '@/lib/validation/queue-runtime'
 
 export type PipelineBoardLead = {
+  queuePool?: APIQueuePool | null
+  queue_pool?: import('@/lib/validation/queue-runtime').QueuePool | null
   id: string
   team_id: string | null
   can_operate?: boolean
+  updated_at?: string | null
   [key: string]: unknown
 }
 
@@ -41,6 +46,7 @@ type BoardResponse = {
 type StageLeadsResponse = {
   stageId: string
   leads: PipelineBoardLead[]
+  hasMore?: boolean
 }
 
 type StageCountsResponse = {
@@ -76,7 +82,7 @@ export async function getPipelineBoard(params: {
   })
   validateDomainResponse(pipelineBoardResponseSchema, response, 'pipeline-board.list')
 
-  return response.data
+  return response.data.map((stage) => ({ ...stage, leads: stage.leads.map(normalizeQueuePoolLead) }))
 }
 export async function getPipelineStageLeads(params: {
   organizationId?: string | null
@@ -89,16 +95,22 @@ export async function getPipelineStageLeads(params: {
   filters?: PipelineBoardFilters
   limit?: number
   signal?: AbortSignal
+  intent?: VimobAPIRequestIntent
 }) {
   const response = await vimobAPIRequest<StageLeadsResponse>('/v1/pipeline-stage-leads', {
     organizationId: params.organizationId,
     query: buildPipelineBoardQuery(params),
-    signal: params.signal,
+    ...params.intent,
+    signal: params.signal ?? params.intent?.signal,
     timeoutMs: PIPELINE_READ_TIMEOUT_MS,
     retry: false,
   })
   validateDomainResponse(pipelineStageLeadsResponseSchema, response, 'pipeline-board.stage-leads')
-  return response
+  return { ...response, leads: response.leads.map(normalizeQueuePoolLead) }
+}
+
+function normalizeQueuePoolLead(lead: PipelineBoardLead): PipelineBoardLead {
+  return { ...lead, queue_pool: lead.queuePool !== undefined ? toQueuePool(lead.queuePool) : lead.queue_pool ?? null }
 }
 
 export async function getPipelineStageCounts(params: {

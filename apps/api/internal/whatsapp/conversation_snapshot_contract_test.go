@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestConversationReadDoesNotAttachLeadByPhone(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository.go: %v", err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) GetConversation(")
+	end := strings.Index(source, "func (repo Repository) GetConversationSnapshot(")
+	if start < 0 || end <= start {
+		t.Fatal("conversation read boundary is missing")
+	}
+	method := source[start:end]
+	if !strings.Contains(method, "return repo.GetConversationSnapshot(ctx, tenantContext, conversationID)") {
+		t.Fatal("conversation read must use the tenant-scoped non-mutating snapshot")
+	}
+	for _, forbidden := range []string{"resolveConversationLead(", "attachConversationToLead(", "activateRepositoryWhatsAppConversationLeadBinding"} {
+		if strings.Contains(method, forbidden) {
+			t.Fatalf("conversation read mutates a lead binding via %q", forbidden)
+		}
+	}
+}
+
 func TestConversationSnapshotReadIsTenantScopedAndNonMutating(t *testing.T) {
 	raw, err := os.ReadFile("repository.go")
 	if err != nil {

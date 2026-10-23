@@ -14,7 +14,6 @@ export function useUserAccessScope() {
   const {
     activeOrganization,
     profile,
-    organization,
     tenantContext,
     isSuperAdmin,
     userOrganizations,
@@ -36,11 +35,12 @@ export function useUserAccessScope() {
     activeMemberRole === "admin" ||
     activeMemberRole === "owner";
   const shouldLoadTeams = !isAdminProfile && hasPermission("team_view");
-  const teamsQuery = useTeams({ enabled: shouldLoadTeams });
+  const teamsQuery = useTeams({ catalog: true, enabled: shouldLoadTeams });
   const teams = useMemo(() => teamsQuery.data || [], [teamsQuery.data]);
   const teamsError = teamsQuery.error;
   const teamsLoading = teamsQuery.isLoading;
   const refetchTeams = teamsQuery.refetch;
+  const hasLoadedTeamRoster = shouldLoadTeams && teamsQuery.isSuccess;
   const shouldLoadTeamPipelines =
     shouldLoadTeams &&
     teams.some(
@@ -74,26 +74,24 @@ export function useUserAccessScope() {
     const tenantLedTeamIds = hasCurrentTenantContext
       ? tenantContext?.ledTeamIds || []
       : [];
-    const ledTeamIds = Array.from(
-      new Set([...tenantLedTeamIds, ...ledTeams.map((team) => team.id)]),
-    );
+    // A successful fresh roster can remove leadership. Never union revoked
+    // memberships back in from an older authentication snapshot.
+    const ledTeamIds = Array.from(new Set(
+      hasLoadedTeamRoster ? ledTeams.map((team) => team.id) : tenantLedTeamIds,
+    ));
     const ledTeamIdSet = new Set(ledTeamIds);
-    const isTeamLeader = Boolean(
-      (hasCurrentTenantContext && tenantContext?.isTeamLeader) ||
-      ledTeamIds.length > 0,
-    );
+    const isTeamLeader = ledTeamIds.length > 0;
     const ledUserIds = Array.from(
       new Set([
-        ...(hasCurrentTenantContext ? tenantContext?.ledUserIds || [] : []),
-        ...ledTeams.flatMap(
-          (team) => team.members?.map((member) => member.user_id) || [],
-        ),
+        ...(hasLoadedTeamRoster
+          ? ledTeams.flatMap((team) => team.members?.map((member) => member.user_id) || [])
+          : hasCurrentTenantContext ? tenantContext?.ledUserIds || [] : []),
         ...(isTeamLeader && profileId ? [profileId] : []),
       ]),
     );
     const ledPipelineIds = Array.from(
       new Set([
-        ...(hasCurrentTenantContext ? tenantContext?.ledPipelineIds || [] : []),
+        ...(!hasLoadedTeamRoster && hasCurrentTenantContext ? tenantContext?.ledPipelineIds || [] : []),
         ...teamPipelineRows
           .filter((item) => ledTeamIdSet.has(item.team_id))
           .map((item) => item.pipeline_id)
@@ -134,6 +132,7 @@ export function useUserAccessScope() {
   }, [
     activeMemberRole,
     hasCurrentTenantContext,
+    hasLoadedTeamRoster,
     hasPermission,
     isAdminProfile,
     permissionsLoading,

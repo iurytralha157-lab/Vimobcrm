@@ -33,4 +33,10 @@ func TestLeadershipScopeRequiresActiveBrokerMembershipInSelectedOrganization(t *
 	if strings.Contains(brokerScope, "u.organization_id = member.organization_id") {
 		t.Fatal("multi-organization brokers must be scoped by active membership, not primary profile organization")
 	}
+	if strings.Count(query, "leader_membership.membership_generation = tm.membership_generation") != 2 {
+		t.Fatal("both fresh and cached tenant contexts must reject a leader from an earlier membership generation")
+	}
+	if strings.Count(query, "om.membership_generation = member.membership_generation") != 2 {
+		t.Fatal("both fresh and cached tenant contexts must reject an assignee team row from an earlier membership generation")
+	}
 }

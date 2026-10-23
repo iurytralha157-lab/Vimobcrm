@@ -15,6 +15,7 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function OwnerSection() {
   const {
+    isSaving,
     formData,
     set,
     user,
@@ -31,7 +32,8 @@ export function OwnerSection() {
   const canEditInlineOwnerDetails = canEditOwnerDetails && !hasRegisteredOwner;
 
   return (
-  <TabsContent value="owner">
+  <TabsContent value="owner" id="property-panel-owner" aria-labelledby="property-tab-owner" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card data-tour="property-owner-section" className="app-card">
       <CardHeader>
         <CardTitle className="text-[14px] font-normal">
@@ -63,7 +65,7 @@ export function OwnerSection() {
           </p>
         )}
         <div className="app-card-soft border-0 p-4">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_184px] lg:items-end">
+          <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_184px] @[760px]:items-end">
             <div className="space-y-2">
               <Label htmlFor="property-captor">
                 Responsável pela captação <RequiredMark />
@@ -117,7 +119,7 @@ export function OwnerSection() {
                   !formData.owner_name.trim() ||
                   !canEditInlineOwnerDetails
                 }
-                className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface)] px-5 shadow-none hover:bg-primary hover:text-primary-foreground disabled:hover:bg-[var(--app-surface)] disabled:hover:text-muted-foreground lg:mb-2"
+                className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface)] px-5 shadow-none hover:bg-primary hover:text-primary-foreground disabled:hover:bg-[var(--app-surface)] disabled:hover:text-muted-foreground @[760px]:mb-2"
               >
                 {createPropertyOwner.isPending && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -128,11 +130,10 @@ export function OwnerSection() {
             )}
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Apenas administradores e o responsável pela captação
-            poderão editar o imóvel depois.
+            A edição segue as permissões e a política da organização.
           </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-owner-name">
               Nome do Proprietário {canEditInlineOwnerDetails && <RequiredMark />}
@@ -174,7 +175,7 @@ export function OwnerSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 @[480px]:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="property-owner-phone-residential">Tel. Residencial</Label>
             <Input
@@ -237,7 +238,7 @@ export function OwnerSection() {
             celular, telefone ou e-mail.
           </p>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1.25fr] gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-[1fr_1.25fr] gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-owner-media-source">Mídia de Origem</Label>
             <Select
@@ -283,6 +284,7 @@ export function OwnerSection() {
         </div>
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

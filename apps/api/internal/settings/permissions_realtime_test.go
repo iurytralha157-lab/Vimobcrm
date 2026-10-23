@@ -38,3 +38,21 @@ func TestPublishUserPermissionsChangedTargetsAffectedUser(t *testing.T) {
 		t.Fatalf("target user was not preserved in event data: %#v", event.Data)
 	}
 }
+
+func TestPublishRoleAccessChangedReachesOrganizationMembers(t *testing.T) {
+	publisher := &recordingPermissionPublisher{}
+	handler := Handler{publisher: publisher}
+	handler.publishRoleAccessChanged(tenant.Context{
+		OrganizationID: "organization-a",
+		UserID:         "admin-a",
+	}, "role-a")
+
+	if len(publisher.events) != 1 {
+		t.Fatalf("expected one event, got %d", len(publisher.events))
+	}
+	event := publisher.events[0]
+	if event.Type != "access.roles.changed" || event.OrganizationID != "organization-a" ||
+		event.AudienceUserID != "" || event.Data["roleId"] != "role-a" {
+		t.Fatalf("role event must reach the selected organization: %#v", event)
+	}
+}

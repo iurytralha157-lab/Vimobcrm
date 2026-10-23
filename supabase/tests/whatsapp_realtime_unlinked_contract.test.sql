@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(26);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -70,6 +70,18 @@ values (
   'a8100000-0000-4000-8000-000000000001',
   'WhatsApp Realtime Lead',
   '5511999991111',
+  'whatsapp'
+);
+
+insert into public.leads (
+  id, organization_id, assigned_user_id, name, phone, source
+)
+values (
+  'a8300000-0000-4000-8000-000000000002',
+  'a8200000-0000-4000-8000-000000000001',
+  'a8100000-0000-4000-8000-000000000001',
+  'Unrelated Lead',
+  '5511999993333',
   'whatsapp'
 );
 
@@ -171,7 +183,7 @@ select ok(
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, from_me, direction,
-  message_type, content, remote_jid, status
+  message_type, content, remote_jid, status, capture_state
 )
 values (
   'a8600000-0000-4000-8000-000000000001',
@@ -186,7 +198,8 @@ values (
   'text',
   'Sensitive message body',
   '5511999991111@s.whatsapp.net',
-  'received'
+  'received',
+  'unlinked_ephemeral'
 );
 
 select is(
@@ -230,19 +243,56 @@ select is(
 
 do $$
 begin
-  perform public.activate_whatsapp_conversation_lead_binding(
+  perform public.confirm_whatsapp_unlinked_history_binding(
     'a8200000-0000-4000-8000-000000000001',
     'a8500000-0000-4000-8000-000000000001',
     'a8300000-0000-4000-8000-000000000001',
-    'provider-linked-realtime'
+    null,
+    'a8100000-0000-4000-8000-000000000001',
+    'manual_link'
   );
 end;
 $$;
 
+select is(
+  (select lead_id from public.whatsapp_messages
+   where id = 'a8600000-0000-4000-8000-000000000001'),
+  'a8300000-0000-4000-8000-000000000001'::uuid,
+  'canonical binding transaction assigns retained unlinked history to its lead'
+);
+
+select is(
+  (select capture_state from public.whatsapp_messages
+   where id = 'a8600000-0000-4000-8000-000000000001'),
+  'promoted_unlinked'::text,
+  'promoted history keeps its origin state and remains readable as lead history'
+);
+
+select ok(
+  (select content = 'Sensitive message body'
+   from public.whatsapp_messages
+   where id = 'a8600000-0000-4000-8000-000000000001')
+  and (select not unlinked_retention_v1
+       from public.whatsapp_conversations
+       where id = 'a8500000-0000-4000-8000-000000000001'),
+  'promotion preserves message content and removes the seven-day deletion flag'
+);
+
+select ok(
+  exists (
+    select 1 from realtime.messages
+    where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000001'
+      and event = 'whatsapp.message.changed'
+      and payload->>'operation' = 'UPDATE'
+      and payload->>'messageId' = 'a8600000-0000-4000-8000-000000000001'
+  ),
+  'promotion wakes the authorized lead topic for the retained message'
+);
+
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, from_me, direction,
-  message_type, content, remote_jid, status
+  message_type, content, remote_jid, status, capture_state
 )
 values (
   'a8600000-0000-4000-8000-000000000002',
@@ -257,7 +307,8 @@ values (
   'text',
   'New linked message body',
   '5511999991111@s.whatsapp.net',
-  'received'
+  'received',
+  'captured'
 );
 
 select is(
@@ -277,8 +328,8 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:inbox'
       and event = 'whatsapp.inbox.changed'
   ),
-  2::bigint,
-  'the new linked INSERT emits a second organization wake-up'
+  3::bigint,
+  'promotion and the new linked INSERT each wake the organization inbox'
 );
 
 select ok(
@@ -299,8 +350,8 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000001'
       and event = 'whatsapp.message.changed'
   ),
-  1::bigint,
-  'the linked INSERT emits one detailed hint to the authorized lead topic'
+  2::bigint,
+  'promotion UPDATE and linked INSERT emit separate authorized lead hints'
 );
 
 select ok(
@@ -324,12 +375,12 @@ select ok(
 select throws_ok(
   $$
     update public.whatsapp_messages
-    set lead_id = 'a8300000-0000-4000-8000-000000000001'
+    set lead_id = 'a8300000-0000-4000-8000-000000000002'
     where id = 'a8600000-0000-4000-8000-000000000001'
   $$,
   '23514',
-  'whatsapp_message_context_immutable',
-  'a persisted unlinked provider message cannot be retroactively moved to a lead'
+  null,
+  'a promoted provider message cannot be reassigned directly to another lead'
 );
 
 select is(
@@ -338,8 +389,19 @@ select is(
     from public.whatsapp_messages
     where id = 'a8600000-0000-4000-8000-000000000001'
   ),
-  null::uuid,
-  'the original quarantine message remains unlinked'
+  'a8300000-0000-4000-8000-000000000001'::uuid,
+  'the promoted message remains assigned to the canonical lead'
+);
+
+select throws_ok(
+  $$
+    update public.whatsapp_messages
+    set capture_state = 'captured'
+    where id = 'a8600000-0000-4000-8000-000000000001'
+  $$,
+  '23514',
+  'whatsapp_promoted_unlinked_attribution_immutable',
+  'a promoted message cannot be relabeled as newly captured lead activity'
 );
 
 select is(
@@ -349,7 +411,7 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:inbox'
       and event = 'whatsapp.inbox.changed'
   ),
-  2::bigint,
+  3::bigint,
   'the rejected context rewrite emits no extra organization wake-up'
 );
 
@@ -360,8 +422,16 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000001'
       and event = 'whatsapp.message.changed'
   ),
-  1::bigint,
+  2::bigint,
   'the rejected context rewrite emits no extra lead-scoped hint'
+);
+
+select is(
+  (select count(*)::bigint from realtime.messages
+   where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000002'
+     and event = 'whatsapp.message.changed'),
+  0::bigint,
+  'rejected reassignment emits no hint to the unrelated lead'
 );
 
 select ok(
@@ -375,6 +445,53 @@ select ok(
       ]
   ),
   'neither inbox nor lead hints expose message or contact content'
+);
+
+insert into public.whatsapp_conversations (
+  id, organization_id, session_id, lead_id, assigned_user_id,
+  remote_jid, contact_phone, contact_name, is_group
+) values (
+  'a8500000-0000-4000-8000-000000000002',
+  'a8200000-0000-4000-8000-000000000001',
+  'a8400000-0000-4000-8000-000000000001',
+  null, null,
+  '5511999993333@s.whatsapp.net', '5511999993333',
+  'Second Unlinked Contact', false
+);
+insert into public.whatsapp_messages (
+  id, organization_id, conversation_id, session_id, lead_id,
+  provider_message_id, message_id, from_me, direction,
+  message_type, content, remote_jid, status, capture_state
+) values (
+  'a8600000-0000-4000-8000-000000000003',
+  'a8200000-0000-4000-8000-000000000001',
+  'a8500000-0000-4000-8000-000000000002',
+  'a8400000-0000-4000-8000-000000000001',
+  null, 'provider-second-unlinked', 'provider-second-unlinked',
+  false, 'inbound', 'text', 'Second synthetic message',
+  '5511999993333@s.whatsapp.net', 'received', 'unlinked_ephemeral'
+);
+
+select throws_ok(
+  $$
+    update public.whatsapp_conversations
+    set lead_id = 'a8300000-0000-4000-8000-000000000002'
+    where id = 'a8500000-0000-4000-8000-000000000002'
+  $$,
+  '23514', null,
+  'direct conversation UPDATE cannot mint the private promotion proof'
+);
+select is(
+  (select lead_id from public.whatsapp_conversations
+   where id = 'a8500000-0000-4000-8000-000000000002'),
+  null::uuid,
+  'failed direct binding leaves the second conversation unlinked'
+);
+select is(
+  (select lead_id from public.whatsapp_messages
+   where id = 'a8600000-0000-4000-8000-000000000003'),
+  null::uuid,
+  'failed direct binding leaves its message unlinked'
 );
 
 select * from finish();

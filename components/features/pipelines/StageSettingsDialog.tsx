@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -21,6 +21,7 @@ import {
   canViewStageAutomations,
 } from '@/lib/access/pipeline-settings-access';
 import { useUpdateStage } from '@/hooks/use-stages';
+import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
 import { toast } from 'sonner';
 import { AutomationForm } from '@/components/features/automations/AutomationForm';
 import { AutomationsList } from '@/components/features/automations/AutomationsList';
@@ -28,10 +29,16 @@ import { StageOperationalRules } from '@/components/features/cadences';
 import { StageAutomation } from '@/hooks/use-stage-automations';
 import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { StageColorPicker } from './StageColorPicker';
+import { stageGeneralChanges, stageSettingsRevision } from './stage-settings-draft';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+
+export type StageSettingsTab = 'general' | 'cadence' | 'automations';
 
 interface StageSettingsDialogProps {
   open: boolean;
+  initialTab?: StageSettingsTab;
+  returnFocusElement?: HTMLButtonElement | null;
   onOpenChange: (open: boolean) => void;
   stage: {
     id: string;
@@ -43,6 +50,7 @@ interface StageSettingsDialogProps {
     is_won?: boolean;
     is_lost?: boolean;
     is_active?: boolean;
+    updated_at?: string | null;
   } | null;
   onStageUpdate: () => void;
 }
@@ -51,13 +59,21 @@ export function StageSettingsDialog({
   open,
   onOpenChange,
   stage,
-  onStageUpdate
+  onStageUpdate,
+  initialTab = 'general',
+  returnFocusElement,
 }: StageSettingsDialogProps) {
+  const updateStage = useUpdateStage();
+  const editorVisit = usePipelineEditorVisit(updateStage.scopeKey, JSON.stringify([open, stage?.id]), updateStage.captureScopeGuard);
   const [name, setName] = useState(stage?.name || '');
   const [color, setColor] = useState(stage?.color || PIPELINE_STAGE_COLOR_FALLBACK);
   const [isQualified, setIsQualified] = useState(stage?.is_qualified || false);
-  const [isSaving, setIsSaving] = useState(false);
-  const saveInFlightRef = useRef(false);
+  const [generalBase, setGeneralBase] = useState(stage);
+  const openedStageRef = useRef<string | null>(null);
+  const [savingOperation, setSavingOperation] = useState<PipelineEditorOperation | null>(null);
+  const isSaving = savingOperation?.visit === editorVisit.key;
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const saveInFlightRef = useRef<PipelineEditorOperation | null>(null);
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const canEditPipeline = canManagePipeline(hasPermission);
@@ -69,8 +85,29 @@ export function StageSettingsDialog({
   // Automation state
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
   const [editingAutomation, setEditingAutomation] = useState<StageAutomation | null>(null);
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
+  const [rulesState, setRulesState] = useState({ isDirty: false, isSaving: false });
+  const [automationState, setAutomationState] = useState({ isDirty: false, isSaving: false });
+  const [listSaving, setListSaving] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
+  const handleRulesState = useCallback((state: { isDirty: boolean; isSaving: boolean }) => setRulesState(state), []);
+  const handleAutomationState = useCallback((state: { isDirty: boolean; isSaving: boolean }) => setAutomationState(state), []);
+  const isBusy = isSaving || rulesState.isSaving || automationState.isSaving || listSaving;
+  const generalDirty = Boolean(generalBase && Object.keys(stageGeneralChanges(generalBase, { name, color, isQualified })).length);
+  const hasUnsavedChanges = generalDirty || rulesState.isDirty || automationState.isDirty;
+  const requestAction = (action: () => void) => {
+    if (isBusy) return;
+    if (hasUnsavedChanges) { setPendingDiscardAction(() => action); return; }
+    action();
+  };
+  const closeAutomationForm = () => {
+    setAutomationFormOpen(false);
+    setEditingAutomation(null);
+    setAutomationState({ isDirty: false, isSaving: false });
+  };
 
-  const updateStage = useUpdateStage();
   const qualificationRestriction = stage?.is_won
     ? 'Colunas de Ganho já representam a conversão final do lead.'
     : stage?.is_lost
@@ -80,39 +117,53 @@ export function StageSettingsDialog({
         : null;
   const canToggleQualification = canEditPipeline && (!qualificationRestriction || isQualified);
 
-  // Update local state when stage changes
-  /* eslint-disable react-hooks/set-state-in-effect -- Keeps editable draft fields in sync with the selected stage. */
+  // Initialize once per opening/selected stage. A refetch never replaces the draft.
+  /* eslint-disable react-hooks/set-state-in-effect -- Initializes a new editor session, preserving its base revision until explicitly closed. */
   useEffect(() => {
-    if (stage) {
+    const nextId = open && stage ? stage.id : null;
+    if (openedStageRef.current === nextId) return;
+    openedStageRef.current = nextId;
+    if (stage && nextId) {
+      setGeneralBase({ ...stage });
       setName(stage.name);
       setColor(stage.color || PIPELINE_STAGE_COLOR_FALLBACK);
       setIsQualified(stage.is_qualified || false);
+      setGeneralError(null);
     }
-  }, [stage]);
+  }, [open, stage]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSaveGeneral = async () => {
-    if (!stage || !canEditPipeline || isSaving || saveInFlightRef.current) return;
+    const operation = editorVisit.capture();
+    if (!open || !operation.isCurrent() || !stage || generalBase?.id !== stage.id || !canEditPipeline || isSaving || saveInFlightRef.current?.visit === operation.visit) return;
     const normalizedName = name.trim();
     if (normalizedName.length < 2) {
       toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
       return;
     }
-    saveInFlightRef.current = true;
-    setIsSaving(true);
+    saveInFlightRef.current = operation;
+    setSavingOperation(operation);
+    setGeneralError(null);
 
     try {
-      await updateStage.mutateAsync({ id: stage.id, name: normalizedName, color, isQualified });
+      const changes = stageGeneralChanges(generalBase, { name: normalizedName, color, isQualified });
+      if (!Object.keys(changes).length) return;
+      const saved = await updateStage.mutateAsync({ id: stage.id, expectedUpdatedAt: stageSettingsRevision(generalBase), ...changes });
+      if (!operation.isCurrent()) return;
+      setGeneralBase({ ...generalBase, ...saved, color: saved.color || PIPELINE_STAGE_COLOR_FALLBACK });
       toast.success('Configurações salvas!');
       onStageUpdate();
     } catch (error: unknown) {
-      toast.error('Erro ao salvar: ' + getStructuredErrorMessage(error, {
+      if (!operation.isCurrent()) return;
+      const message = 'Erro ao salvar: ' + getStructuredErrorMessage(error, {
         fields: ['message', 'details', 'hint', 'code'],
         includeArrays: true,
-      }));
+      }) + ' Seu rascunho foi mantido.';
+      setGeneralError(message);
+      toast.error(message);
     } finally {
-      saveInFlightRef.current = false;
-      setIsSaving(false);
+      if (saveInFlightRef.current === operation) saveInFlightRef.current = null;
+      if (operation.isCurrent()) setSavingOperation(current => current === operation ? null : current);
     }
   };
 
@@ -121,21 +172,49 @@ export function StageSettingsDialog({
     setIsQualified(checked);
   };
 
+  const handleArchive = async () => {
+    const operation = editorVisit.capture();
+    if (!open || !operation.isCurrent() || !stage || generalBase?.id !== stage.id || !canEditPipeline || isBusy || saveInFlightRef.current?.visit === operation.visit) return;
+    saveInFlightRef.current = operation;
+    setSavingOperation(operation);
+    setArchiveError(null);
+    try {
+      await updateStage.mutateAsync({ id: stage.id, expectedUpdatedAt: stageSettingsRevision(generalBase), isActive: false });
+      if (!operation.isCurrent()) return;
+      toast.success('Coluna arquivada. O histórico foi preservado.');
+      setArchiveOpen(false);
+      onStageUpdate();
+    } catch (error) {
+      if (!operation.isCurrent()) return;
+      setArchiveError(getStructuredErrorMessage(error) || 'Não foi possível arquivar esta coluna. Nenhum histórico foi removido.');
+    } finally {
+      if (saveInFlightRef.current === operation) saveInFlightRef.current = null;
+      if (operation.isCurrent()) setSavingOperation(current => current === operation ? null : current);
+    }
+  };
+
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && isSaving) return;
-    onOpenChange(nextOpen);
+    if (nextOpen) onOpenChange(true);
+    else requestAction(() => onOpenChange(false));
   };
 
   if (!stage) return null;
 
   return (
+    <>
     <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] border-0 bg-[var(--app-surface-solid)] p-6 text-[var(--app-text-primary)] shadow-none flex flex-col overflow-y-auto">
+      <SheetContent side="right" className="w-[calc(100vw-16px)] sm:w-[650px] sm:max-w-[650px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-6 text-[var(--app-text-primary)] shadow-none flex flex-col overflow-y-auto"
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusElement?.isConnected) return;
+          event.preventDefault();
+          returnFocusElement.focus();
+        }}
+      >
         <SheetHeader>
           <SheetTitle>Configurações da Coluna</SheetTitle>
         </SheetHeader>
 
-        <Tabs defaultValue="general" className="mt-4">
+        <Tabs value={activeTab} onValueChange={(value) => requestAction(() => setActiveTab(value))} className="mt-4">
           <TabsList className="mb-4 grid w-full grid-cols-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-1">
             <TabsTrigger value="general" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Gerais</span><span className="hidden sm:inline">Configurações Gerais</span></TabsTrigger>
             <TabsTrigger value="cadence" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Regras</span><span className="hidden sm:inline">Regras da etapa</span></TabsTrigger>
@@ -157,7 +236,7 @@ export function StageSettingsDialog({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Nome do estágio"
-                disabled={!canEditPipeline}
+                disabled={!canEditPipeline || isBusy}
                 className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
               />
             </div>
@@ -165,7 +244,7 @@ export function StageSettingsDialog({
             <div className="space-y-2">
               <Label>Cor da coluna</Label>
               {canEditPipeline ? (
-                <StageColorPicker value={color} onChange={setColor} />
+                <fieldset disabled={isBusy}><StageColorPicker value={color} onChange={setColor} /></fieldset>
               ) : (
                 <div className="flex items-center gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-2">
                   <div
@@ -192,12 +271,12 @@ export function StageSettingsDialog({
                     </h3>
                     <Badge
                       variant="secondary"
-                      className="h-5 rounded-[4px] border-0 bg-[var(--app-surface-hover)] px-2 text-[9px] font-light text-[var(--app-text-secondary)] shadow-none"
+                      className="h-5 rounded-[4px] border-0 bg-[var(--app-surface-hover)] px-2 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none"
                     >
                       Por pipeline
                     </Badge>
                   </div>
-                  <p className="mt-1 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                  <p className="mt-1 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]">
                     Defina como o avanço do lead será interpretado nos relatórios e nas integrações de Marketing.
                   </p>
                 </div>
@@ -215,7 +294,7 @@ export function StageSettingsDialog({
                     id="stage-is-qualified"
                     checked={isQualified}
                     onCheckedChange={handleQualifiedChange}
-                    disabled={!canToggleQualification}
+                    disabled={!canToggleQualification || isBusy}
                     aria-describedby={
                       qualificationRestriction
                         ? 'stage-is-qualified-description stage-is-qualified-restriction'
@@ -226,7 +305,7 @@ export function StageSettingsDialog({
                 </div>
                 <p
                   id="stage-is-qualified-description"
-                  className="mt-1.5 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]"
+                  className="mt-1.5 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]"
                 >
                   Ao ativar, esta coluna substitui a outra etapa qualificada desta pipeline. O lead passa a contar como qualificado quando entrar aqui.
                 </p>
@@ -234,7 +313,7 @@ export function StageSettingsDialog({
                 {qualificationRestriction ? (
                   <div
                     id="stage-is-qualified-restriction"
-                    className="mt-3 flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-hover)] px-3 py-2.5 text-[11px] font-light leading-4 text-[var(--app-text-secondary)]"
+                    className="mt-3 flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-hover)] px-3 py-2.5 text-[12px] font-light leading-4 text-[var(--app-text-secondary)]"
                   >
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
                     <span>{qualificationRestriction}</span>
@@ -248,7 +327,7 @@ export function StageSettingsDialog({
                 </span>
                 <div className="min-w-0">
                   <p className="text-[12px] font-medium text-[var(--app-text-primary)]">Convertido</p>
-                  <p className="mt-0.5 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                  <p className="mt-0.5 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]">
                     Automático ao marcar o lead como Ganho.
                   </p>
                 </div>
@@ -256,28 +335,37 @@ export function StageSettingsDialog({
             </section>
 
             {canEditPipeline && (
+              <>
+              {generalError && <p role="alert" className="text-xs text-destructive">{generalError}</p>}
               <div className="flex gap-2 pt-4">
-                <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isSaving}>
+                <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isBusy}>
                   Cancelar
                 </Button>
-                <Button className="w-[60%] rounded-[6px]" onClick={handleSaveGeneral} disabled={isSaving}>
+                <Button className="w-[60%] rounded-[6px]" onClick={handleSaveGeneral} disabled={isBusy || !generalDirty}>
                   {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   Salvar
                 </Button>
               </div>
+              </>
+            )}
+            {canEditPipeline && stage.is_active !== false && (
+              <section className="space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <p className="text-xs text-muted-foreground">Arquive uma coluna vazia para ocultá-la no board e preservar seu histórico. Colunas com leads vinculados, mesmo fora dos filtros atuais, não podem ser arquivadas.</p>
+                <Button type="button" variant="outline" disabled={isBusy} onClick={() => requestAction(() => { setArchiveError(null); setArchiveOpen(true); })}>Arquivar coluna</Button>
+              </section>
             )}
           </TabsContent>
 
           {/* Cadence Tab */}
           <TabsContent
             value="cadence"
-            forceMount
-            className="space-y-4 data-[state=inactive]:hidden"
+            className="space-y-4"
           >
             <StageOperationalRules
               stageId={stage.id}
               stageName={stage.name}
               canEdit={canEditRules}
+              onEditorStateChange={handleRulesState}
             />
           </TabsContent>
 
@@ -294,16 +382,17 @@ export function StageSettingsDialog({
                   {editingAutomation ? 'Editar Automação' : 'Nova Automação'}
                 </h4>
                 <AutomationForm
+                  key={`${stage.id}:${editingAutomation?.id || 'new'}`}
                   stageId={stage.id}
                   pipelineId={stage.pipeline_id || ''}
                   automation={editingAutomation}
+                  terminalStatus={stage.is_won ? 'won' : stage.is_lost ? 'lost' : null}
+                  onEditorStateChange={handleAutomationState}
                   onSuccess={() => {
-                    setAutomationFormOpen(false);
-                    setEditingAutomation(null);
+                    closeAutomationForm();
                   }}
                   onCancel={() => {
-                    setAutomationFormOpen(false);
-                    setEditingAutomation(null);
+                    requestAction(closeAutomationForm);
                   }}
                 />
               </div>
@@ -326,6 +415,7 @@ export function StageSettingsDialog({
                   stageId={stage.id}
                   pipelineId={stage.pipeline_id || ''}
                   canEdit={canEditAutomations}
+                  onSavingChange={setListSaving}
                   onEdit={canEditAutomations ? (automation) => setEditingAutomation(automation) : undefined}
                 />
               </>
@@ -334,5 +424,41 @@ export function StageSettingsDialog({
         </Tabs>
       </SheetContent>
     </Sheet>
+    <AlertDialog open={archiveOpen} onOpenChange={(nextOpen) => { if (!isBusy) setArchiveOpen(nextOpen); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Arquivar a coluna {stage.name}?</AlertDialogTitle>
+          <AlertDialogDescription>A coluna ficará oculta no board. Nenhum lead ou histórico será excluído. O servidor verifica se ela está vazia e se há entradas ativas vinculadas; redirecione ou desative essas entradas antes de arquivar. Você poderá reativá-la em Gerenciar colunas.</AlertDialogDescription>
+          {archiveError && <p role="alert" className="text-xs text-destructive">{archiveError}</p>}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isBusy}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction disabled={isBusy} onClick={(event) => { event.preventDefault(); void handleArchive(); }}>{isSaving ? 'Arquivando...' : 'Arquivar coluna'}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={pendingDiscardAction !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setPendingDiscardAction(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Descartar alterações não salvas?</AlertDialogTitle>
+          <AlertDialogDescription>As alterações desta coluna ainda não foram salvas. Você pode continuar editando ou descartá-las para sair desta tela.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Continuar editando</AlertDialogCancel>
+          <AlertDialogAction disabled={isBusy} onClick={() => {
+            const action = pendingDiscardAction;
+            setPendingDiscardAction(null);
+            setGeneralBase({ ...stage });
+            setName(stage.name);
+            setColor(stage.color || PIPELINE_STAGE_COLOR_FALLBACK);
+            setIsQualified(Boolean(stage.is_qualified));
+            setRulesState({ isDirty: false, isSaving: false });
+            closeAutomationForm();
+            action?.();
+          }}>Descartar alterações</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

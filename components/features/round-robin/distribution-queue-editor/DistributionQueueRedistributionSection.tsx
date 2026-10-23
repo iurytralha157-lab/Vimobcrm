@@ -22,7 +22,8 @@ import { cn } from "@/lib/utils";
 interface DistributionQueueRedistributionSectionProps {
   open: boolean;
   settings: DistributionQueueSettings;
-  eligibleUserCount: number;
+  eligibleUserCount: number | null;
+  managedSchedule?: boolean;
   onToggle: () => void;
   onEnabledChange: (checked: boolean) => void;
   onTimeoutChange: (minutes: number) => void;
@@ -35,6 +36,7 @@ export function DistributionQueueRedistributionSection({
   open,
   settings,
   eligibleUserCount,
+  managedSchedule = false,
   onToggle,
   onEnabledChange,
   onTimeoutChange,
@@ -42,6 +44,7 @@ export function DistributionQueueRedistributionSection({
   onMaxAttemptsChange,
   onReentryBehaviorChange,
 }: DistributionQueueRedistributionSectionProps) {
+  const warningBlocked = (settings.redistribution_timeout_minutes ?? 20) <= 5;
   return (
     <Collapsible
       data-tour="distribution-queue-redistribution"
@@ -111,7 +114,7 @@ export function DistributionQueueRedistributionSection({
               </Label>
               <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
                 Se ninguém atender ou movimentar o lead no prazo, ele segue
-                para o próximo participante.
+                para outro corretor elegível, seguindo a ordem da fila entre os corretores elegíveis.
               </p>
             </div>
             <Switch
@@ -125,15 +128,21 @@ export function DistributionQueueRedistributionSection({
           {settings.enable_redistribution && (
             <div className="mt-3 space-y-3 border-t border-[var(--app-border)] pt-3">
               <p
-                role={eligibleUserCount < 2 ? "alert" : "status"}
+                role={!managedSchedule && eligibleUserCount !== null && eligibleUserCount < 2 ? "alert" : "status"}
                 className={cn(
                   "rounded-[6px] px-3 py-2 text-[11px] leading-4",
-                  eligibleUserCount < 2
+                  !managedSchedule && eligibleUserCount !== null && eligibleUserCount < 2
                     ? "bg-destructive/10 text-destructive"
                     : "bg-[var(--app-surface-solid)] text-muted-foreground",
                 )}
               >
-                {eligibleUserCount < 2
+                {eligibleUserCount === null
+                  ? "Validado ao salvar. Os participantes preservados serão considerados pelo servidor."
+                  : managedSchedule && eligibleUserCount === 0
+                  ? "Sem corretores elegíveis, os leads aguardam no bolsão desta fila."
+                  : managedSchedule && eligibleUserCount === 1
+                  ? "Há um corretor elegível. A fila aguarda uma alternativa, sem repetir a atribuição na mesma janela."
+                  : eligibleUserCount < 2
                   ? `Adicione pelo menos dois corretores ativos. Esta fila possui ${eligibleUserCount}.`
                   : `${eligibleUserCount} corretores ativos podem receber a redistribuição.`}{" "}
                 Equipes inativas e usuários sem acesso são ignorados.
@@ -147,11 +156,11 @@ export function DistributionQueueRedistributionSection({
                     id="distribution-timeout"
                     aria-label="Prazo sem atendimento em minutos"
                     type="number"
-                    min={1}
+                    min={1} max={10080} step={1}
                     value={settings.redistribution_timeout_minutes ?? 20}
                     onChange={(event) =>
                       onTimeoutChange(
-                        Math.max(1, Number(event.target.value) || 20),
+                        Math.min(10080, Math.max(1, Math.trunc(Number(event.target.value)) || 1)),
                       )
                     }
                     className="h-9 border-0 bg-[var(--app-surface-solid)] shadow-none"
@@ -165,16 +174,17 @@ export function DistributionQueueRedistributionSection({
                     id="distribution-warning"
                     aria-label="Antecedência do aviso em minutos"
                     type="number"
-                    min={0}
-                    value={settings.redistribution_warning_minutes ?? 5}
+                    min={0} max={Math.max(0, (settings.redistribution_timeout_minutes ?? 20) - 1)} step={1}
+                    disabled={warningBlocked}
+                    value={warningBlocked ? 0 : settings.redistribution_warning_minutes ?? 5}
                     onChange={(event) =>
                       onWarningChange(
-                        Math.max(0, Number(event.target.value) || 0),
+                        Math.min(10079, Math.max(0, Math.trunc(Number(event.target.value)) || 0)),
                       )
                     }
                     className="h-9 border-0 bg-[var(--app-surface-solid)] shadow-none"
                   />
-                  <p className="text-[10px] text-muted-foreground">Minutos</p>
+                  <p className="text-[10px] text-muted-foreground">{warningBlocked ? 'Prazos de até 5 minutos não enviam aviso prévio.' : 'Minutos; use 0 para desativar o aviso.'}</p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -185,11 +195,11 @@ export function DistributionQueueRedistributionSection({
                     id="distribution-attempts"
                     aria-label="Máximo de tentativas de redistribuição"
                     type="number"
-                    min={0}
+                    min={0} max={1000} step={1}
                     value={settings.redistribution_max_attempts ?? 10}
                     onChange={(event) =>
                       onMaxAttemptsChange(
-                        Math.max(0, Number(event.target.value) || 0),
+                        Math.min(1000, Math.max(0, Math.trunc(Number(event.target.value)) || 0)),
                       )
                     }
                     className="h-9 border-0 bg-[var(--app-surface-solid)] shadow-none"

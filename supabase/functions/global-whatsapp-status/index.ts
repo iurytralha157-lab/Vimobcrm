@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { withWhatsAppLegacyHttpDeadline } from "../_shared/whatsapp-legacy-http.ts";
+import { observedWhatsAppConnection } from "../_shared/whatsapp-connection-state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,12 +33,12 @@ Deno.serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    const { data: userData } = await supabase
+    const { data: userData, error: profileError } = await supabase
       .from("users")
-      .select("role")
+      .select("role, is_active")
       .eq("id", user.id)
       .single();
-    if (userData?.role !== "super_admin") {
+    if (profileError || userData?.role !== "super_admin" || userData?.is_active !== true) {
       return new Response(
         JSON.stringify({ success: false, error: "Forbidden" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -62,24 +64,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    const response = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instance_name}`, {
+    const { response, data } = await withWhatsAppLegacyHttpDeadline(`${EVOLUTION_API_URL}/instance/connectionState/${instance_name}`, {
       method: "GET",
       headers: {
         "apikey": EVOLUTION_API_KEY,
       },
-    });
+    }, async response => ({ response, data: await response.json() }));
+    console.log("Global WhatsApp status check completed", { status: response.status });
 
-    const data = await response.json();
-    console.log("Global WhatsApp status check:", { instance_name, status: response.status, data });
-
-    const isConnected = data?.instance?.state === "open" || data?.state === "open";
+    if (!response.ok) throw new Error(`whatsapp_status_unavailable:${response.status}`);
+    const isConnected = observedWhatsAppConnection(data, false);
+    if (isConnected === null) throw new Error("whatsapp_status_unknown");
 
     return new Response(
       JSON.stringify({ success: true, connected: isConnected, data }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Global WhatsApp status error:", error);
+    console.error("Global WhatsApp status check failed");
     return new Response(
       JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

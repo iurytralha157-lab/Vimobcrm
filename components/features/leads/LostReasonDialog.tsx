@@ -6,6 +6,7 @@ import { XCircle, Loader2 } from 'lucide-react';
 import { DEFAULT_LOSS_REASON_OPTIONS, LOSS_REASON_OTHER_VALUE } from '@/config/constants';
 import { cn } from '@/lib/utils';
 import { lostReasonSchema } from '@/lib/validation';
+import type { LeadLostReasonDraft } from '@/hooks/leads/use-lead-status-confirmation';
 
 interface LostReasonDialogProps {
   open: boolean;
@@ -13,6 +14,8 @@ interface LostReasonDialogProps {
   onConfirm: (reason: string) => void | Promise<void>;
   leadName?: string;
   loading?: boolean;
+  draft?: LeadLostReasonDraft;
+  onDraftChange?: (draft: LeadLostReasonDraft) => void;
 }
 
 export function LostReasonDialog({
@@ -21,26 +24,35 @@ export function LostReasonDialog({
   onConfirm,
   leadName,
   loading = false,
+  draft,
+  onDraftChange,
 }: LostReasonDialogProps) {
-  const [selectedReason, setSelectedReason] = useState('');
-  const [details, setDetails] = useState('');
+  const [localReason, setLocalReason] = useState('');
+  const [localDetails, setLocalDetails] = useState('');
+  const controlled = draft !== undefined && onDraftChange !== undefined;
+  const selectedReason = controlled ? draft.selectedReason : localReason;
+  const details = controlled ? draft.details : localDetails;
+  const setSelectedReason = (value: string) => controlled
+    ? onDraftChange({ ...draft, selectedReason: value }) : setLocalReason(value);
+  const setDetails = (value: string) => controlled
+    ? onDraftChange({ ...draft, details: value }) : setLocalDetails(value);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || controlled) return;
 
     let cancelled = false;
 
     queueMicrotask(() => {
       if (!cancelled) {
-        setSelectedReason('');
-        setDetails('');
+        setLocalReason('');
+        setLocalDetails('');
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, controlled]);
 
   const finalReason = buildLostReasonValue(selectedReason, details);
   const reasonValidation = lostReasonSchema.safeParse(finalReason);
@@ -157,6 +169,7 @@ export function LostReasonDialog({
             <Textarea
               id="lost-reason-details"
               value={details}
+              disabled={loading}
               onChange={(e) => setDetails(e.target.value)}
               placeholder={
                 isOtherSelected

@@ -17,6 +17,7 @@ with billing_recipients as (
 	join public.users account
 	  on account.id = membership.user_id
 	where membership.is_active = true
+	  and membership.deleted_at is null
 	  and coalesce(account.is_active, true) = true
 	  and (
 		lower(coalesce(membership.role, 'user')) in ('owner', 'admin')
@@ -39,6 +40,10 @@ with billing_recipients as (
 			and exists (
 				select 1
 				from public.user_organization_roles user_role
+				join public.organization_roles role
+				  on role.id = user_role.role_id
+				 and role.organization_id = user_role.organization_id
+				 and role.is_active = true
 				join public.organization_role_permissions role_permission
 				  on role_permission.organization_id = user_role.organization_id
 				 and role_permission.role_id = user_role.role_id

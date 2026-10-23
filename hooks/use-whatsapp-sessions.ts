@@ -1,15 +1,17 @@
-import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Json } from "@/lib/supabase/types";
 import { whatsappAPI, type AIAutoReplySessionInput, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { useWhatsAppIntentMutation, useWhatsAppMutationIntent, type CapturedWhatsAppMutationIntent } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
 import {
   resolveWhatsAppSessionStatus,
   whatsappQueryKeys,
   type WhatsAppQueryScope,
-  type WhatsAppResolvedSessionStatus,
 } from "@/lib/whatsapp-query-cache";
+
+import { cacheSessionStatus, normalizeSession, refreshAuthorizedSessionCaches } from "@/hooks/integrations/whatsapp/session-status-cache";
 
 export const EVOLUTION_GO_CREATION_ENABLED = true;
 export const WHATSAPP_LEGACY_EVOLUTION_ENABLED = false;
@@ -72,46 +74,9 @@ export interface WhatsAppSessionAccess {
 
 export type WhatsAppAccessMode = "assigned_leads_only";
 
-function normalizeSession(session: WhatsAppSession): WhatsAppSession {
-  return {
-    ...session,
-    display_name: session.display_name || null,
-    last_connected_at: session.last_connected_at || null,
-    is_notification_session: session.is_notification_session || false,
-  };
-}
-
 function removeSessionFromCache(old: WhatsAppSession[] | undefined, sessionId: string) {
   if (!Array.isArray(old)) return old;
   return old.filter((session) => session.id !== sessionId);
-}
-
-function replaceSessionStatus(
-  sessions: WhatsAppSession[] | undefined,
-  sessionId: string,
-  status: WhatsAppResolvedSessionStatus,
-) {
-  if (!Array.isArray(sessions)) return sessions;
-  const current = sessions.find((session) => session.id === sessionId);
-  if (!current || current.status === status) return sessions;
-  return sessions.map((session) => session.id === sessionId ? { ...session, status } : session);
-}
-
-function cacheSessionStatus(
-  queryClient: QueryClient,
-  scope: WhatsAppQueryScope,
-  sessionId: string,
-  status: WhatsAppResolvedSessionStatus,
-) {
-  queryClient.setQueryData<WhatsAppSessionList>(whatsappQueryKeys.sessions(scope), (current) => {
-    const next = replaceSessionStatus(current, sessionId, status) as WhatsAppSessionList | undefined;
-    if (!next || next === current) return current;
-    next.meta = current?.meta;
-    return next;
-  });
-  queryClient.setQueryData<WhatsAppSession[]>(whatsappQueryKeys.accessibleSessions(scope), (current) =>
-    replaceSessionStatus(current, sessionId, status),
-  );
 }
 
 export function useWhatsAppSessions(options: UseWhatsAppSessionsOptions = {}) {
@@ -120,9 +85,9 @@ export function useWhatsAppSessions(options: UseWhatsAppSessionsOptions = {}) {
 
   return useQuery({
     queryKey: whatsappQueryKeys.sessions(scope),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!scope.userId || !scope.organizationId) return [] as WhatsAppSessionList;
-      const response = await whatsappAPI.getSessions(scope.organizationId, options.timeoutMs);
+      const response = await whatsappAPI.getSessions(scope.organizationId, options.timeoutMs, { expectedUserId: scope.userId, signal });
       const sessions = (response.data || []).map((session) => normalizeSession(session as WhatsAppSession)) as WhatsAppSessionList;
       sessions.meta = response.meta;
       return sessions;
@@ -146,9 +111,9 @@ export function useWhatsAppSession(sessionId: string | null) {
 
   return useQuery({
     queryKey: whatsappQueryKeys.session(scope, sessionId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!sessionId) return null;
-      const data = await whatsappAPI.getSession(sessionId, scope.organizationId);
+      const data = await whatsappAPI.getSession(sessionId, scope.organizationId, { expectedUserId: scope.userId, signal });
       return normalizeSession(data as WhatsAppSession);
     },
     enabled: !!sessionId && !!scope.organizationId && !!scope.userId,
@@ -161,9 +126,9 @@ export function useSessionAccess(sessionId: string | null) {
 
   return useQuery({
     queryKey: whatsappQueryKeys.sessionAccess(scope, sessionId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!sessionId) return [];
-      return whatsappAPI.getSessionAccess(sessionId, scope.organizationId) as Promise<WhatsAppSessionAccess[]>;
+      return whatsappAPI.getSessionAccess(sessionId, scope.organizationId, { expectedUserId: scope.userId, signal }) as Promise<WhatsAppSessionAccess[]>;
     },
     enabled: !!sessionId && !!scope.organizationId && !!scope.userId,
     refetchOnReconnect: true,
@@ -174,8 +139,8 @@ export function useCreateWhatsAppSession() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async (input: string | { displayName: string; provider?: WhatsAppProvider }) => {
+  return useWhatsAppIntentMutation({
+    mutationFn: async (input: string | { displayName: string; provider?: WhatsAppProvider }, intent) => {
       if (!scope.organizationId || !scope.userId) {
         throw new Error("Usuário não autenticado.");
       }
@@ -190,7 +155,8 @@ export function useCreateWhatsAppSession() {
 
       const result = await whatsappAPI.createSession(
         { displayName, provider: "evolution_go" },
-        scope.organizationId,
+        intent.scope.organizationId,
+        intent,
       );
 
       return {
@@ -215,17 +181,17 @@ export function useCreateWhatsAppSession() {
 
 export function useDeleteWhatsAppSession() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async (session: WhatsAppSession) => {
-      await whatsappAPI.deleteSession(session.id, scope.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async (session: WhatsAppSession, intent) => {
+      await whatsappAPI.deleteSession(session.id, intent.scope.organizationId, intent);
     },
-    onMutate: async (session) => {
+    onMutate: async (session, intent) => {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: ["whatsapp-sessions"] }),
         queryClient.cancelQueries({ queryKey: ["accessible-sessions"] }),
       ]);
+      intent.assertCurrent();
 
       const previousSessions = queryClient.getQueriesData<WhatsAppSession[]>({ queryKey: ["whatsapp-sessions"] });
       const previousAccessibleSessions = queryClient.getQueriesData<WhatsAppSession[]>({ queryKey: ["accessible-sessions"] });
@@ -280,40 +246,40 @@ export function useDeleteWhatsAppSession() {
 }
 
 export function useGetQRCode() {
-  const scope = useWhatsAppQueryScope();
-
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async (
       arg: string | { provider: WhatsAppProvider; instanceName: string; sessionId?: string; instanceId?: string | null },
+      intent,
     ) => {
       if (typeof arg === "string" || arg.provider !== "evolution_go" || !arg.sessionId) {
         throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
 
-      return whatsappAPI.getQRCode(arg.sessionId, scope.organizationId);
+      return whatsappAPI.getQRCode(arg.sessionId, intent.scope.organizationId, intent);
     },
   });
 }
 
 export function useGetConnectionStatus() {
-  const scope = useWhatsAppQueryScope();
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async (
       arg: string | { provider: WhatsAppProvider; instanceName: string; sessionId?: string; instanceId?: string | null },
+      intent,
     ) => {
       if (typeof arg === "string" || arg.provider !== "evolution_go" || !arg.sessionId) {
         throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
 
-      return whatsappAPI.getConnectionStatus(arg.sessionId, scope.organizationId);
+      return whatsappAPI.getConnectionStatus(arg.sessionId, intent.scope.organizationId, intent);
     },
-    onSuccess: (response, arg) => {
+    onSuccess: async (response, arg, _context, intent) => {
       if (typeof arg === "string" || !arg.sessionId) return;
       const status = resolveWhatsAppSessionStatus(response);
       if (!status) return;
-      cacheSessionStatus(queryClient, scope, arg.sessionId, status);
+      cacheSessionStatus(queryClient, intent.scope, arg.sessionId, status);
+      await refreshAuthorizedSessionCaches(queryClient, intent);
     },
   });
 }
@@ -323,19 +289,24 @@ const WHATSAPP_LIVE_STATUS_RETENTION_MS = 10 * 60_000;
 type WhatsAppConnectionStatusResponse = Awaited<ReturnType<typeof whatsappAPI.getConnectionStatus>>;
 
 const whatsappLiveStatusLastChecks = new Map<string, number>();
-const whatsappLiveStatusProbes = new Map<string, Promise<WhatsAppConnectionStatusResponse>>();
+const whatsappLiveStatusProbes = new Map<string, { promise: Promise<WhatsAppConnectionStatusResponse>; intent: CapturedWhatsAppMutationIntent }>();
 
-function getWhatsAppLiveStatusProbe(sessionId: string, organizationId: string) {
-  const probeKey = `${organizationId}:${sessionId}`;
+function liveStatusProbeKey(sessionId: string, scope: WhatsAppQueryScope) {
+  return JSON.stringify([scope.organizationId, scope.userId, scope.accessScope, sessionId]);
+}
+
+function getWhatsAppLiveStatusProbe(sessionId: string, intent: CapturedWhatsAppMutationIntent) {
+  intent.assertCurrent();
+  const probeKey = liveStatusProbeKey(sessionId, intent.scope);
   const existingProbe = whatsappLiveStatusProbes.get(probeKey);
-  if (existingProbe) return existingProbe;
+  if (existingProbe?.intent.isCurrent()) return existingProbe.promise;
 
-  const probe = whatsappAPI.getConnectionStatus(sessionId, organizationId).finally(() => {
-    if (whatsappLiveStatusProbes.get(probeKey) === probe) {
+  const probe = intent.run((transport) => whatsappAPI.getConnectionStatus(sessionId, intent.scope.organizationId, transport)).finally(() => {
+    if (whatsappLiveStatusProbes.get(probeKey)?.promise === probe) {
       whatsappLiveStatusProbes.delete(probeKey);
     }
   });
-  whatsappLiveStatusProbes.set(probeKey, probe);
+  whatsappLiveStatusProbes.set(probeKey, { promise: probe, intent });
   return probe;
 }
 
@@ -349,9 +320,10 @@ export function useWhatsAppLiveStatusSync(
   options: { enabled?: boolean } = {},
 ) {
   const scope = useWhatsAppQueryScope();
+  const { capture } = useWhatsAppMutationIntent();
   const queryClient = useQueryClient();
   const sessionsRef = useRef<WhatsAppSession[]>(sessions || []);
-  const isCheckingRef = useRef(false);
+  const checkingIntentRef = useRef<CapturedWhatsAppMutationIntent | null>(null);
   const isMountedRef = useRef(true);
   const enabled = options.enabled !== false;
   const sessionKey = (sessions || [])
@@ -372,7 +344,7 @@ export function useWhatsAppLiveStatusSync(
   }, []);
 
   const refreshProviderStatuses = useCallback(async () => {
-    if (!enabled || !scope.organizationId || isCheckingRef.current || !isMountedRef.current) return;
+    if (!enabled || !scope.organizationId || checkingIntentRef.current?.isCurrent() || !isMountedRef.current) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const now = Date.now();
@@ -383,41 +355,43 @@ export function useWhatsAppLiveStatusSync(
     }
     const dueSessions = sessionsRef.current.filter((session) => {
       if (session.provider !== "evolution_go" || !session.is_active) return false;
-      const probeKey = `${scope.organizationId}:${session.id}`;
+      const probeKey = liveStatusProbeKey(session.id, scope);
       const lastCheck = whatsappLiveStatusLastChecks.get(probeKey) || 0;
       return now - lastCheck >= WHATSAPP_LIVE_STATUS_COOLDOWN_MS;
     });
     if (dueSessions.length === 0) return;
 
-    isCheckingRef.current = true;
+    const intent = capture();
+    if (!intent.isCurrent()) { intent.release(); return; }
+    checkingIntentRef.current = intent;
     try {
       // The API serializes lifecycle probes, so keep this client-side sequence
       // bounded as well instead of flooding the global provider lock.
       for (const session of dueSessions) {
-        if (!isMountedRef.current) break;
-        const probeKey = `${scope.organizationId}:${session.id}`;
+        if (!isMountedRef.current || !intent.isCurrent()) break;
+        const probeKey = liveStatusProbeKey(session.id, intent.scope);
         whatsappLiveStatusLastChecks.set(probeKey, Date.now());
         try {
-          const response = await getWhatsAppLiveStatusProbe(session.id, scope.organizationId);
+          const response = await getWhatsAppLiveStatusProbe(session.id, intent);
+          if (!intent.isCurrent()) break;
           const status = resolveWhatsAppSessionStatus(response);
-          if (status) cacheSessionStatus(queryClient, scope, session.id, status);
+          if (status) cacheSessionStatus(queryClient, intent.scope, session.id, status);
         } catch (error) {
+          if (!intent.isCurrent()) { whatsappLiveStatusLastChecks.delete(probeKey); break; }
           // Unknown/transient provider outcomes must preserve the last known
           // state. A failed probe is not proof that WhatsApp disconnected.
           console.warn("WhatsApp live status refresh failed:", error);
         }
       }
 
-      if (isMountedRef.current) {
-        await queryClient.invalidateQueries({
-          queryKey: whatsappQueryKeys.sessions(scope),
-          refetchType: "active",
-        });
+      if (isMountedRef.current && intent.isCurrent()) {
+        await refreshAuthorizedSessionCaches(queryClient, intent);
       }
     } finally {
-      isCheckingRef.current = false;
+      intent.release();
+      if (checkingIntentRef.current === intent) checkingIntentRef.current = null;
     }
-  }, [enabled, queryClient, scope]);
+  }, [capture, enabled, queryClient, scope]);
 
   useEffect(() => {
     if (!enabled || !scope.organizationId || !sessionKey) return;
@@ -453,9 +427,8 @@ export function useSetWebhook() {
 
 export function useGrantSessionAccess() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async ({
       sessionId,
       userId,
@@ -468,11 +441,12 @@ export function useGrantSessionAccess() {
       canView?: boolean;
       canSend?: boolean;
       accessMode?: WhatsAppAccessMode;
-    }) => {
+    }, intent) => {
       await whatsappAPI.grantSessionAccess(
         sessionId,
         { userId, canView, canSend, accessMode },
-        scope.organizationId,
+        intent.scope.organizationId,
+        intent,
       );
     },
     onSuccess: () => {
@@ -489,11 +463,10 @@ export function useGrantSessionAccess() {
 
 export function useRevokeSessionAccess() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async ({ sessionId, userId }: { sessionId: string; userId: string }) => {
-      await whatsappAPI.revokeSessionAccess(sessionId, userId, scope.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async ({ sessionId, userId }: { sessionId: string; userId: string }, intent) => {
+      await whatsappAPI.revokeSessionAccess(sessionId, userId, intent.scope.organizationId, intent);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access"] });
@@ -509,15 +482,14 @@ export function useRevokeSessionAccess() {
 
 export function useRecreateWhatsAppInstance() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async (session: WhatsAppSession) => {
+  return useWhatsAppIntentMutation({
+    mutationFn: async (session: WhatsAppSession, intent) => {
       if (session.provider !== "evolution_go") {
         throw new Error("Evolution legada esta desativada. Exclua esta sessao e crie uma nova Evolution Go.");
       }
 
-      return whatsappAPI.recreateSession(session.id, scope.organizationId);
+      return whatsappAPI.recreateSession(session.id, intent.scope.organizationId, intent);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
@@ -541,16 +513,18 @@ export function useLogoutSession() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async (session: WhatsAppSession) => {
+  return useWhatsAppIntentMutation({
+    mutationFn: async (session: WhatsAppSession, intent) => {
       if (session.provider !== "evolution_go") {
         throw new Error("Evolution legada esta desativada. Exclua esta sessao e crie uma nova Evolution Go.");
       }
 
-      const result = await whatsappAPI.logoutSession(session.id, scope.organizationId);
+      const result = await whatsappAPI.logoutSession(session.id, intent.scope.organizationId, intent);
 
+      intent.assertCurrent();
       try {
         const { notificationService } = await import("@/services/NotificationService");
+        intent.assertCurrent();
         await notificationService.send({
           eventKey: "whatsapp_disconnected",
           organizationId: session.organization_id,
@@ -561,20 +535,21 @@ export function useLogoutSession() {
             display_name: session.display_name || session.instance_name,
           },
           dedupeKey: `whatsapp_disconnected:${session.id}:${session.owner_user_id}:${session.updated_at}`,
-        });
+        }, intent);
       } catch (err) {
         console.warn("Disconnection notification failed:", err);
       }
 
       return result;
     },
-    onMutate: async (session) => {
+    onMutate: async (session, intent) => {
       const sessionsKey = whatsappQueryKeys.sessions(scope);
       const accessibleSessionsKey = whatsappQueryKeys.accessibleSessions(scope);
       await Promise.all([
         queryClient.cancelQueries({ queryKey: sessionsKey }),
         queryClient.cancelQueries({ queryKey: accessibleSessionsKey }),
       ]);
+      intent.assertCurrent();
       const previousSessions = queryClient.getQueryData<WhatsAppSessionList>(sessionsKey);
       const previousAccessibleSessions = queryClient.getQueryData<WhatsAppSession[]>(accessibleSessionsKey);
       cacheSessionStatus(queryClient, scope, session.id, "disconnected");
@@ -711,11 +686,10 @@ export function useQRCodePolling(session: WhatsAppSession | null) {
 
 export function useToggleNotificationSession() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async ({ sessionId, enabled }: { sessionId: string; enabled: boolean }) => {
-      await whatsappAPI.toggleNotificationSession(sessionId, enabled, scope.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async ({ sessionId, enabled }: { sessionId: string; enabled: boolean }, intent) => {
+      await whatsappAPI.toggleNotificationSession(sessionId, enabled, intent.scope.organizationId, intent);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
@@ -736,11 +710,10 @@ export function useToggleNotificationSession() {
 
 export function useToggleAIAutoReplySession() {
   const queryClient = useQueryClient();
-  const scope = useWhatsAppQueryScope();
 
-  return useMutation({
-    mutationFn: async ({ sessionId, ...input }: { sessionId: string } & AIAutoReplySessionInput) => {
-      await whatsappAPI.toggleAIAutoReplySession(sessionId, input, scope.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async ({ sessionId, ...input }: { sessionId: string } & AIAutoReplySessionInput, intent) => {
+      await whatsappAPI.toggleAIAutoReplySession(sessionId, input, intent.scope.organizationId, intent);
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });

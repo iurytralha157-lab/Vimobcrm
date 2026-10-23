@@ -9,7 +9,7 @@ export const dashboardLeadEntrySchema = z.object({
   leadId: uuidSchema,
   name: z.string().trim().min(1).max(500),
   occurredAt: z.string().datetime({ offset: true }),
-  source: z.string().trim().max(180).nullable(),
+  source: z.string().trim().nullable(),
   campaignName: z.string().trim().max(500).nullable(),
   pipelineId: uuidSchema.nullable(),
   pipelineName: z.string().trim().max(300).nullable(),

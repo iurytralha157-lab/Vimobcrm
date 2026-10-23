@@ -76,6 +76,14 @@ func safeRequestPath(r *http.Request) string {
 	// Preserve the safety property for requests that do not pass through a
 	// ServeMux (including 404s and isolated handlers).
 	segments := strings.Split(r.URL.Path, "/")
+	if len(segments) > 4 && segments[1] == "v1" && segments[2] == "public" &&
+		segments[3] == "invitations" && segments[4] != "" {
+		segments[4] = "{token}"
+	}
+	if len(segments) > 4 && segments[1] == "v1" && segments[2] == "invitations" &&
+		segments[3] != "" && segments[4] == "accept" {
+		segments[3] = "{token}"
+	}
 	grupoOLX := false
 	for index, segment := range segments {
 		if segment == "grupo-olx" {
@@ -124,7 +132,7 @@ func CORS(allowedOrigins []string) Middleware {
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key,Last-Event-ID,X-Organization-ID,X-Request-ID,X-Webhook-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key,If-Match,Last-Event-ID,X-Organization-ID,X-Request-ID,X-Webhook-Token")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 			w.Header().Set("Access-Control-Max-Age", "600")
 

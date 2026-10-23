@@ -21,7 +21,7 @@ interface AutoCreateContractParams {
  */
 export function useAutoCreateContract() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, user, organization } = useAuth();
+  const { activeOrganization, user } = useAuth();
 
   return useMutation({
     mutationFn: async (params: AutoCreateContractParams) => {

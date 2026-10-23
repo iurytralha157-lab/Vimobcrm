@@ -2,10 +2,13 @@ package roundrobin
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/managementintent"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -22,14 +25,53 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if !canManageRoundRobinScope(tenantContext) {
 		return RoundRobin{}, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validateNewQueueCollectionSizes(input.Members, input.Rules); err != nil {
+		return RoundRobin{}, err
+	}
+	for index, rule := range input.Rules {
+		prepared, err := prepareNewRuleMatcher(rule)
+		if err != nil {
+			return RoundRobin{}, err
+		}
+		if err := validateNewRuleValueBounds(prepared); err != nil {
+			return RoundRobin{}, err
+		}
+		input.Rules[index] = prepared
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return RoundRobin{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return RoundRobin{}, err
+	}
+	canonical := input
+	canonical.IdempotencyKey = ""
+	payload, err := json.Marshal(canonical)
+	if err != nil {
+		return RoundRobin{}, err
+	}
+	reservation, err := managementintent.Lookup(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, "round_robin", input.IdempotencyKey, payload)
+	if err != nil {
+		return RoundRobin{}, err
+	}
+	if reservation.EntityID != "" {
+		item, err := repo.getWithQueryer(ctx, tx, tenantContext, reservation.EntityID)
+		if errors.Is(err, ErrRoundRobinNotFound) {
+			return RoundRobin{}, managementintent.ErrResultUnavailable
+		}
+		if err != nil {
+			return RoundRobin{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return RoundRobin{}, err
+		}
+		return item, nil
 	}
 
 	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, input.TargetPipelineID, input.TargetStageID); err != nil {
@@ -39,6 +81,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	if err := ensureRoundRobinInputInScope(tenantContext, input.TargetPipelineID, input.Members, true, true); err != nil {
+		return RoundRobin{}, err
+	}
+	if err := repo.validateRuleReferences(ctx, tx, tenantContext.OrganizationID, input.Rules); err != nil {
 		return RoundRobin{}, err
 	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, nil, input.Rules); err != nil {
@@ -96,6 +141,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	); err != nil {
 		return RoundRobin{}, err
 	}
+	if err := repo.validateQueueParticipants(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
@@ -111,6 +159,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 
 	item, err := repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)
 	if err != nil {
+		return RoundRobin{}, err
+	}
+	if err := managementintent.Record(ctx, tx, reservation, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -135,6 +186,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return RoundRobin{}, err
 	}
@@ -147,11 +201,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return RoundRobin{}, err
 	}
+	if err := checkExpectedRevision(input.ExpectedRevision, current.Revision); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
 	if input.Settings.Set {
 		currentSettings := objectFromObject(current.Metadata, "settings")
+		if err := validateOperatingScheduleTransition(currentSettings, input.Settings.Value); err != nil {
+			return RoundRobin{}, err
+		}
 		// Revalidate only additions so a deleted or legacy tag can always be removed
 		// from an existing queue without making the whole update impossible.
 		newTagIDs := addedQueueAutoTagIDs(currentSettings, input.Settings.Value)
@@ -196,10 +256,12 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	targetStageID := stringPointerFromMetadata(metadata, "target_stage_id")
-	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, pipelineID, targetStageID); err != nil {
+	if err := repo.validateUpdatedDestination(ctx, tx, tenantContext.OrganizationID, current, pipelineID, targetStageID); err != nil {
 		return RoundRobin{}, err
 	}
-	if err := ensureRoundRobinInputInScope(tenantContext, pipelineID, input.Members, input.MembersSet, true); err != nil {
+	// Retained participants may be outside this leader's scope. Reconciliation
+	// authorizes the actual roster mutations after loading the persisted rows.
+	if err := ensureRoundRobinInputInScope(tenantContext, pipelineID, nil, false, true); err != nil {
 		return RoundRobin{}, err
 	}
 	setClauses := []string{"updated_at = now()"}
@@ -270,6 +332,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return RoundRobin{}, err
 		}
 	}
+	if err := repo.validateQueueParticipants(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
@@ -296,7 +361,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	return item, nil
 }
 
-func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, roundRobinID string) error {
+func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, roundRobinID string, revisions ...*int64) error {
 	if !canManageRoundRobins(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
@@ -311,11 +376,24 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockConditionDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return err
+	}
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
 
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
+	}
+	var expected *int64
+	if len(revisions) > 0 {
+		expected = revisions[0]
+	}
+	if err := requireQueueRevision(ctx, tx, tenantContext.OrganizationID, roundRobinID, expected); err != nil {
+		return err
+	}
+	if err := ensureQueueHasNoDistributionPending(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
 	}
 	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {

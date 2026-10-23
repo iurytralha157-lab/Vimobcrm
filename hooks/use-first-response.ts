@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { leadsAPI } from '@/lib/api/leads';
+import { useLeadRequestScope } from '@/hooks/leads/use-lead-request-scope';
 
 interface RecordFirstResponseParams {
   leadId: string;
@@ -15,14 +16,18 @@ interface RecordFirstResponseParams {
  */
 export function useRecordFirstResponse() {
   const queryClient = useQueryClient();
+  const requestScope = useLeadRequestScope();
   return useMutation({
+    onMutate: params => requestScope.bind(params),
     mutationFn: async (params: RecordFirstResponseParams) => {
+      const operation = requestScope.require(params);
+      if (params.organizationId !== operation.organizationId) throw new Error('Seu acesso mudou. Abra o contato novamente.');
       return leadsAPI.recordFirstResponse(params.leadId, {
         organizationId: params.organizationId,
         channel: params.channel,
-        actorUserId: params.actorUserId,
+        actorUserId: operation.userId,
         isAutomation: params.isAutomation,
-      });
+      }, operation.intent);
     },
     onSuccess: (result, params) => {
       if (result.recorded !== true) return;
@@ -31,6 +36,7 @@ export function useRecordFirstResponse() {
       void queryClient.invalidateQueries({ queryKey: ['dashboard-first-contact'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard-first-contact-leads'] });
     },
+    onSettled: (_data, _error, variables) => requestScope.release(variables),
   });
 }
 

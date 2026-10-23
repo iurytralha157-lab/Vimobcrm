@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import ts from "typescript";
 
 import { getSafeAbsoluteHttpUrl } from "../safe-http-url";
 
@@ -146,7 +147,7 @@ test("disponibilidade e logo de equipe usam a organizacao ativa", () => {
   );
   assert.match(
     availabilityHook,
-    /listMemberAvailability\(\{ teamMemberId, organizationId \}\)/,
+    /getMemberAvailabilitySnapshot\(teamMemberId as string, organizationId, signal\)/,
   );
   assert.match(
     availabilityHook,
@@ -154,13 +155,13 @@ test("disponibilidade e logo de equipe usam a organizacao ativa", () => {
   );
   assert.match(
     availabilityHook,
-    /updateMemberAvailability\(input, organizationId\)/,
+    /updateMemberAvailability\(input, requestedOrganizationId\)/,
   );
   assert.match(
     availabilityHook,
-    /replaceMemberAvailability\([\s\S]*?organizationId,\s*\)/,
+    /replaceMemberAvailability\([\s\S]*?expected_revision: expectedRevision,[\s\S]*?requestedOrganizationId,\s*\)/,
   );
-  assert.match(teamEditor, /uploadLogo\(logoFile, organizationId\)/);
+  assert.match(teamEditor, /teamsAPI\.uploadLogo\(logoFile, organizationId, intent\)/);
   assert.match(
     teamEditor,
     /accept=["']image\/jpeg,image\/png,image\/webp,image\/gif["']/,
@@ -268,18 +269,16 @@ test("gestao abre a criacao e a edicao de equipes e filas em paginas dedicadas",
   assert.match(teamsTab, /router\.push\(NEW_TEAM_URL\)/);
   assert.doesNotMatch(teamsTab, /TeamDialog|setTeamDialogOpen/);
   assert.match(newTeamPage, /<TeamEditorScreen mode=["']create["'] \/>/);
+  assert.equal([...teamEditor.matchAll(/await createTeam\.mutateAsync\(\{\s*\.\.\.attempt,\s*intent\s*\}\);?\s*assertCurrentIntent\(\)/g)].length, 2,
+    "fresh creation and idempotent replay must retain their payload and revalidate the request intent");
+  assert.match(teamEditor, /router\.push\(MANAGEMENT_TEAMS_URL\)/);
   assert.match(
     teamEditor,
-    /router\.replace\(`\/crm\/management\/teams\/\$\{createdTeam\.id\}\/edit`\)/,
-  );
-  assert.doesNotMatch(teamEditor, /router\.push\(MANAGEMENT_TEAMS_URL\)/);
-  assert.match(
-    teamEditor,
-    /\{isEditing && team && \(\s*<TeamOperationalOverview/,
+    /\{isEditing && team && \([\s\S]*?<details[\s\S]*?<TeamOperationalOverview/,
   );
   assert.match(
     teamEditor,
-    /\{isEditing && team && \([\s\S]*?<TeamChangeHistory teamId=\{team\.id\} \/>/,
+    /aside=\{isEditing && team \? <TeamChangeHistory teamId=\{team\.id\} \/> : draftPreview\}/,
   );
   assert.match(queuePage, /params:\s*Promise<\{ id: string \}>/);
   assert.match(
@@ -290,12 +289,13 @@ test("gestao abre a criacao e a edicao de equipes e filas em paginas dedicadas",
     newQueuePage,
     /<DistributionQueueEditorScreen mode=["']create["'] \/>/,
   );
-  assert.match(queueScreen, /presentation="page"/);
+  assert.match(queueScreen, /presentation="dialog"/);
+  assert.match(queueScreen, /closeOnSave=\{!isEditing\}/);
   assert.match(queueScreen, /useRoundRobin\(queueId,/);
   assert.doesNotMatch(queueScreen, /useRoundRobins|\.data\?\.find/);
   assert.match(
     queueScreen,
-    /router\.replace\(\s*`\/crm\/management\/distribution\/\$\{createdQueue\.id\}\/edit`/,
+    /onOpenChange=\{\(open\) => \{ if \(!open\) router\.push\(MANAGEMENT_DISTRIBUTION_URL\)/,
   );
   assert.match(
     distributionTab,
@@ -312,11 +312,8 @@ test("gestao abre a criacao e a edicao de equipes e filas em paginas dedicadas",
   assert.match(queueScreen, /Criada por \{creator\} em \{createdAt\}/);
   assert.doesNotMatch(queueScreen, /queue\.name/);
   assert.doesNotMatch(queueScreen, /Fila ativa|Fila inativa/);
-  assert.match(
-    queueScreen,
-    /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(260px,320px\)\]/,
-  );
-  assert.match(queueScreen, /DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS/);
+  assert.match(queueScreen, /aside=\{isEditing && queue \? <DistributionQueueChangeHistory/);
+  assert.match(queueScreen, /Indicadores da distribuição/);
   assert.match(queueLoading, /disableMainScroll/);
 });
 
@@ -350,31 +347,20 @@ test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado"
   assert.match(editor, /!blockingReferenceDataError/);
   assert.match(editor, /\(!!formData\.target_pipeline_id && stagesLoading\)/);
   assert.match(editor, /const hasUnsavedChanges =/);
-  assert.match(editor, /const saveInFlightRef = useRef\(false\)/);
-  assert.match(editor, /if \(saveInFlightRef\.current\) return/);
-  assert.match(editor, /saveInFlightRef\.current = true/);
-  assert.match(editor, /finally \{[\s\S]*?saveInFlightRef\.current = false/);
-  assert.match(
-    editor,
-    /const DEFAULT_PAGE_SECTION_IDS = \["basic", "rules", "members"\]/,
-  );
-  assert.match(
-    editor,
-    /2xl:grid-cols-\[minmax\(0,1\.08fr\)_minmax\(0,0\.92fr\)\]/,
-  );
-  assert.match(
-    editor,
-    /min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain/,
-  );
-  assert.match(
-    editor,
-    /presentation === "page"[\s\S]*?sticky bottom-0 z-20/,
-  );
-  assert.match(editor, /border-t border-\[var\(--app-border\)\]/);
-  assert.match(editor, /max-w-\[680px\]/);
-  assert.match(editor, /shadow-\[0_-10px_30px/);
-  assert.match(editor, /disabled:cursor-not-allowed disabled:opacity-50/);
-  assert.doesNotMatch(editor, /disabled:bg-primary\/50/);
+  assert.match(editor, /useDistributionEditorVisit\(visitKey, open\)/);
+  assert.match(editor, /const handleSave = async \(\) => \{\s*if \(isBusy\(\)\) return/);
+  const submit = editor.slice(editor.indexOf("  const submitQueueForm = async "), editor.indexOf("  const handleSave = async "));
+  assert.match(submit, /const operation = beginOperation\(\);\s*if \(!operation\) return/);
+  assert.match(submit, /const saved = await onSave\(payload\);\s*if \(!operation\.isCurrent\(\)\) return/);
+  assert.match(submit, /catch \(error\) \{\s*if \(!operation\.isCurrent\(\)\) return/);
+  assert.match(submit, /finally \{\s*operation\.finish\(\)/);
+  assert.match(editor, /<FormWizardLayout/);
+  assert.match(editor, /<FormWizardDiscardDialog/);
+  assert.match(editor, /hasValidCriteria &&[\s\S]*?hasRequiredMembers &&[\s\S]*?hasRedistributionCapacity &&/);
+  assert.match(editor, /disabled=\{!canSave\}/);
+  assert.match(editor, /<DialogHeader className="[^"\n]*border-b border-\[var\(--app-border\)\]/);
+  assert.match(editor, /className=\{FORM_WIZARD_DIALOG_CLASS_NAME\}/);
+  assert.match(editor, /className=\{FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME\}/);
   assert.match(editor, /addMember\("user", userId, user\.name\)/);
   assert.match(history, /useRoundRobinHistory\(queueId\)/);
   assert.match(history, /data-distribution-history-scroll/);
@@ -390,7 +376,10 @@ test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado"
   assert.match(hook, /refetchInterval: 30_000/);
   assert.match(api, /async getRoundRobin\(roundRobinId:/);
   assert.match(api, /'round-robin\.get'/);
-  assert.match(api, /`\/v1\/round-robins\/\$\{roundRobinId\}\/history`/);
+  assert.match(api, /`\/v1\/round-robins\/\$\{roundRobinId\}\/history\?\$\{query\.toString\(\)\}`/);
+  assert.match(api, /limit: String\(options\.limit \?\? 50\), offset: String\(options\.offset \?\? 0\)/);
+  assert.match(hook, /initialPageParam: 0/);
+  assert.match(history, /fetchNextPage/);
 });
 
 test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
@@ -535,28 +524,26 @@ test("editor de equipe prioriza KPIs, selecao de escala e historico auditado", (
   assert.match(editor, /finally \{[\s\S]*?submitInFlightRef\.current = false/);
   assert.match(
     editor,
-    /onClick=\{\(\) => setActiveScheduleUserId\(user\.id\)\}/,
+    /onClick=\{\(\) => \{\s*setActiveScheduleUserId\(user\.id\);\s*setActiveStep\("schedule"\);/,
   );
   assert.match(editor, /<TeamChangeHistory teamId=\{team\.id\} \/>/);
-  assert.match(
-    editor,
-    /TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-\[600px\] 2xl:h-full 2xl:min-h-0"/,
-  );
+  assert.match(editor, /TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-\[min\(600px,62dvh\)\] min-h-\[360px\]"/);
   assert.match(editor, /<AppLayout title=\{title\} disableMainScroll>/);
-  assert.match(editor, /flex h-full min-h-0 w-full flex-col/);
-  assert.match(editor, /overflow-y-auto pb-8/);
-  assert.match(editor, /2xl:min-h-\[360px\] 2xl:max-h-\[600px\] 2xl:flex-1/);
+  assert.match(editor, /<FormWizardLayout/);
+  assert.match(editor, /<FormWizardDiscardDialog/);
+  assert.match(editor, /className=\{FORM_WIZARD_DIALOG_CLASS_NAME\}/);
+  assert.match(editor, /disabled=\{!canSubmit\}/);
+  assert.match(editor, /expected_revision: baseRevision/);
   assert.match(editor, /data-team-panel="members"/);
   assert.match(editor, /data-team-panel="schedule"/);
-  assert.match(editor, /max-w-\[680px\]/);
-  assert.match(editor, /sticky bottom-0/);
-  assert.match(editor, /shadow-\[0_-10px_30px/);
+  assert.match(editor, /allWeeksValid &&[\s\S]*?!hasRevisionConflict &&/);
   assert.doesNotMatch(editor, /Sem escala configurada: recebe leads 24h/);
   assert.doesNotMatch(editor, /overscroll-contain/);
-  assert.match(editor, /2xl:grid-cols-/);
   assert.doesNotMatch(editor, /Clique em outro membro para trocar/);
   assert.match(history, /useTeamHistory\(teamId\)/);
-  assert.match(history, /groupHistoryEvents\(historyQuery\.data \|\| \[\]\)/);
+  assert.match(history, /historyQuery\.data\?\.pages\.flat\(\)/);
+  assert.match(history, /historyQuery\.fetchNextPage\(\)/);
+  assert.match(history, /getTeamHistoryDetails/);
   assert.match(history, /data-team-history-scroll/);
   assert.doesNotMatch(history, /overscroll-contain/);
   assert.match(history, /displayHistory\.map/);
@@ -603,7 +590,8 @@ test("escopo de lideranca usa o contexto do tenant e expoe falhas de descoberta"
   assert.match(accessScope, /tenantContext\?\.ledTeamIds \|\| \[\]/);
   assert.match(accessScope, /tenantContext\?\.ledUserIds \|\| \[\]/);
   assert.match(accessScope, /tenantContext\?\.ledPipelineIds \|\| \[\]/);
-  assert.match(accessScope, /tenantContext\?\.isTeamLeader/);
+  assert.match(accessScope, /hasLoadedTeamRoster \? ledTeams\.map\(\(team\) => team\.id\) : tenantLedTeamIds/);
+  assert.doesNotMatch(accessScope, /new Set\(\[\.\.\.tenantLedTeamIds/);
   assert.match(accessScope, /ledTeamIds\.length > 0/);
   assert.match(accessScope, /hasTenantTeamScope:/);
   assert.match(
@@ -840,7 +828,19 @@ test("ajustes visuais do fluxo WhatsApp preservam os dados e escondem codigos in
   assert.match(searchableTagPickerSource, /hasPermission\("tag_manage"\)/);
   assert.match(searchableTagPickerSource, /searchTextIncludes\(tag\.name, search\)/);
   assert.match(searchableTagPickerSource, /const handleCreate = async \(\) => \{/);
-  assert.match(membersSource, /<Command filter=\{commandSearchFilter\}>/);
+  const membersTree = ts.createSourceFile("DistributionQueueMembersSection.tsx", membersSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const commands: (ts.JsxOpeningElement | ts.JsxSelfClosingElement)[] = [];
+  function readCommands(node: ts.Node) {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(membersTree) === "Command") commands.push(node);
+    ts.forEachChild(node, readCommands);
+  }
+  readCommands(membersTree);
+  assert.equal(commands.length, 2, "both team and user pickers retain their command filter");
+  for (const command of commands) {
+    const filter = command.attributes.properties.find(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(membersTree) === "filter");
+    assert.ok(filter && ts.isJsxAttribute(filter) && filter.initializer && ts.isJsxExpression(filter.initializer));
+    assert.equal(filter.initializer.expression?.getText(membersTree), "commandSearchFilter");
+  }
   assert.match(membersSource, /Buscar usuário por nome ou e-mail/);
   assert.doesNotMatch(tagSelectorSource, /allowCreate\?: boolean/);
   assert.match(
@@ -904,7 +904,7 @@ test("resposta automática da fila WhatsApp permanece opt-in e limitada", () => 
   );
   assert.match(
     editorSource,
-    /\{hasWhatsAppMessageCondition && \([\s\S]*?<DistributionQueueWhatsAppAutoReplySection/,
+    /\{(?:displayedStep === "whatsapp-auto-reply" && )?hasWhatsAppMessageCondition && \([\s\S]*?<DistributionQueueWhatsAppAutoReplySection/,
   );
   assert.match(
     autoReplySectionSource,

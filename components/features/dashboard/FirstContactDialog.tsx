@@ -14,12 +14,14 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardFirstContactLeads, type DashboardFirstContact } from "@/hooks/use-dashboard-stats";
-import { sourceLabels } from "@/hooks/use-dashboard-filters";
+import { getDashboardSourceLabel } from "@/lib/analytics/dashboard-source-label";
 import type { DashboardAPIFilters } from "@/lib/api/dashboard";
+import { getDashboardStatsFailureState } from "@/components/features/dashboard/dashboard-stats-error";
 
 type FirstContactDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   data?: DashboardFirstContact;
   isLoading: boolean;
   isError: boolean;
@@ -93,6 +95,7 @@ function BrokerLeadDetails({
 }) {
   const responseLeads = query.data?.pages.flatMap((page) => page.items) ?? [];
   const responseLeadTotal = query.data?.pages[0]?.total ?? 0;
+  const failureState = query.isAccessBlocked ? "unavailable" : getDashboardStatsFailureState(responseLeads.length > 0, query.isError, query.error);
 
   return (
     <section
@@ -103,19 +106,19 @@ function BrokerLeadDetails({
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h4 id={`first-contact-leads-title-${broker.id}`} className="text-[14px] font-medium text-[var(--app-text-primary)]">
-            Primeiras respostas de {broker.name}
+            {failureState === "unavailable" ? "Primeiras respostas" : `Primeiras respostas de ${broker.name}`}
           </h4>
           <p className="mt-1 text-[12px] leading-4 text-[var(--app-text-secondary)]">
             Primeira resposta humana registrada no recorte · mais demorados primeiro
           </p>
         </div>
-        {query.data ? (
+        {query.data && failureState !== "unavailable" ? (
           <span className="shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] tabular-nums text-[var(--app-text-secondary)]">
             {responseLeads.length} de {responseLeadTotal}
           </span>
         ) : null}
       </div>
-      {query.isError ? (
+      {query.isError || query.isAccessBlocked ? (
         <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-[12px] text-[var(--app-text-secondary)]">
           Não foi possível carregar os leads deste corretor.
           <Button type="button" variant="ghost" size="sm" className="ml-2 text-primary" onClick={() => void query.refetch()}>Tentar novamente</Button>
@@ -131,7 +134,7 @@ function BrokerLeadDetails({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-medium text-[var(--app-text-primary)]" title={lead.name}>{lead.name}</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--app-text-secondary)]">{sourceLabels[lead.source] || lead.source}</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--app-text-secondary)]">{getDashboardSourceLabel(lead.source, "")}</p>
                 </div>
                 <strong className="shrink-0 text-[13px] font-medium tabular-nums text-[var(--app-text-primary)]">{formatSeconds(lead.responseSeconds)}</strong>
               </div>
@@ -157,6 +160,7 @@ function BrokerLeadDetails({
 export function FirstContactDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   data,
   isLoading,
   isError,
@@ -186,6 +190,7 @@ export function FirstContactDialog({
       onOpenChange(nextOpen);
     }}>
       <DialogContent
+        onCloseAutoFocus={onCloseAutoFocus}
         data-tour="dashboard-first-contact-dialog"
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
@@ -296,7 +301,7 @@ export function FirstContactDialog({
                   ) : (
                     <div className="space-y-2">
                       {sources.map((source) => {
-                        const label = sourceLabels[source.source] || source.source || "Sem origem";
+                        const label = getDashboardSourceLabel(source.source, "Sem origem");
                         return (
                           <div key={source.source} className="rounded-[8px] bg-[var(--app-surface-solid)] p-3">
                             <div className="flex items-center justify-between gap-3 text-[13px] font-medium">

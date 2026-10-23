@@ -30,44 +30,11 @@ function isSameStageTransition(left: ActivityEventRow, right: ActivityEventRow):
 }
 
 export function getActivityFingerprint(activity: ActivityEventRow): string {
-  const metadata = asMetadata(activity.metadata);
-  const timestampWindow = Math.floor(new Date(activity.created_at).getTime() / 2000);
-
-  if (activity.type === 'stage_change' || activity.type === 'stage_changed') {
-    const from =
-      metadataString(metadata.from_stage_id) ||
-      metadataString(metadata.old_stage_id) ||
-      metadataString(metadata.from_stage) ||
-      metadataString(metadata.old_stage_name) ||
-      '';
-    const to =
-      metadataString(metadata.to_stage_id) ||
-      metadataString(metadata.new_stage_id) ||
-      metadataString(metadata.to_stage) ||
-      metadataString(metadata.new_stage_name) ||
-      '';
-    return `${activity.type}-${from}->${to}-${timestampWindow}`;
-  }
-
-  const detail = [
-    metadataString(metadata.to_stage),
-    metadataString(metadata.to_user_id),
-    metadataString(metadata.new_stage_name),
-    metadataString(metadata.tag_name),
-    metadataString(metadata.property_id),
-    metadataString(metadata.property_code),
-    metadataString(metadata.file_name) ||
-      metadataString(metadata.fileName) ||
-      metadataString(metadata.filename) ||
-      metadataString(metadata.attachment_name),
-    metadataString(metadata.outcome),
-    metadataString(metadata.kind),
-    metadataString(metadata.question),
-    metadataString(metadata.answer),
-    activity.content,
-  ].filter(Boolean).join('|');
-
-  return `${activity.type}-${detail}-${timestampWindow}`;
+  // Equal text and a nearby timestamp do not identify a database write: two
+  // brokers can record the same feedback, or one broker can retry an action.
+  if (activity.id) return `activity:${activity.id}`;
+  return JSON.stringify([activity.type, activity.user_id || activity.user?.id || null,
+    activity.created_at, activity.content, activity.metadata]);
 }
 
 export function getActivityDetailScore(activity: ActivityEventRow): number {
@@ -102,8 +69,8 @@ export function dedupeActivityEvents(activityEvents: ActivityEventRow[]): Activi
     (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
   );
 
-  // The two writes can fall on opposite sides of the fingerprint's two-second
-  // window. Suppress the trigger only when IDs and timing prove the same move.
+  // Keep the explicit API/trigger pair exception; it identifies the transition
+  // and preserves every distinct API move instead of collapsing nearby writes.
   return deduped.filter((activity) => !isStageChangeTriggerActivity(activity)
     || !deduped.some((candidate) => isApiStageChangeWithActor(candidate)
       && candidate.type === activity.type

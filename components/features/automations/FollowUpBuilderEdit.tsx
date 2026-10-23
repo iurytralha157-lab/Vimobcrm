@@ -317,7 +317,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         } else if (node.node_type === 'action' && (node.action_type === 'add_tag' || node.action_type === 'remove_tag')) {
           flowNodes.push({ id: node.id, type: 'tag', position: pos, data: { tag_id: nodeConfig.tag_id || '', tag_action: node.action_type === 'remove_tag' ? 'remove' : 'add', tag_name: nodeConfig.tag_name || '' } });
         } else if (node.node_type === 'action' && node.action_type === 'move_lead') {
-          flowNodes.push({ id: node.id, type: 'move_stage', position: pos, data: { move_pipeline_id: nodeConfig.pipeline_id || '', move_stage_id: nodeConfig.stage_id || '', stage_name: nodeConfig.stage_name || '' } });
+          flowNodes.push({ id: node.id, type: 'move_stage', position: pos, data: { move_pipeline_id: nodeConfig.pipeline_id || '', move_stage_id: nodeConfig.stage_id || '', stage_name: nodeConfig.stage_name || '', move_lost_reason: nodeConfig.lost_reason || '' } });
         } else if (node.node_type === 'action' && node.action_type === 'assign_user') {
           flowNodes.push({ id: node.id, type: 'assign_user', position: pos, data: { assign_user_id: nodeConfig.user_id || '', user_name: nodeConfig.user_name || '' } });
         } else if (node.node_type === 'action' && nodeConfig.actionType === 'property_interest') {
@@ -769,7 +769,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           const selectedStage = stages?.find(s => s.id === node.data.move_stage_id);
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'move_lead',
-            config: { pipeline_id: node.data.move_pipeline_id, stage_id: node.data.move_stage_id, stage_name: selectedStage?.name || '', actionType: 'move_stage' },
+            config: { pipeline_id: node.data.move_pipeline_id, stage_id: node.data.move_stage_id, stage_name: selectedStage?.name || '', lost_reason: node.data.move_lost_reason || undefined, actionType: 'move_stage' },
             ...pos,
           });
         } else if (node.type === 'assign_user') {

@@ -44,7 +44,7 @@ export function getMarketingDashboardErrorState(
       kind: "filters",
       title: "Revise os filtros de Marketing",
       description:
-        "O período ou um filtro salvo não é mais válido. Limpe os filtros e selecione o período novamente.",
+        "O período ou um critério de filtro não é mais válido. Limpe os filtros e selecione o período novamente.",
       canRetry: true,
       shouldClearFilters: true,
     };

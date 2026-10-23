@@ -80,6 +80,7 @@ func TestGetNotFoundErrorResponseDoesNotLeakQueueScope(t *testing.T) {
 
 func TestRoundRobinDetailEnvelopeJSONContract(t *testing.T) {
 	payload := map[string]RoundRobin{"data": {
+		Revision:          3,
 		ID:                "22222222-2222-4222-8222-222222222222",
 		OrganizationID:    "11111111-1111-4111-8111-111111111111",
 		Name:              "Fila comercial",
@@ -133,6 +134,7 @@ func TestRoundRobinDetailEnvelopeJSONContract(t *testing.T) {
 		t.Fatalf("decode detail item: %v", err)
 	}
 	for _, key := range []string{
+		"revision",
 		"id", "organizationId", "name", "isActive", "lastAssignedIndex",
 		"createdBy", "createdByUser", "strategy", "leadsDistributed",
 		"targetPipelineId", "targetStageId", "settings", "reentryBehavior",

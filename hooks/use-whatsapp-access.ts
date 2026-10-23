@@ -3,15 +3,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
 export function useHasWhatsAppAccess(options?: { enabled?: boolean }) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const shouldFetch = options?.enabled ?? true;
 
   return useQuery({
     queryKey: ["whatsapp-access-check", profile?.id, organizationId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!profile?.id || !organizationId) return false;
-      const response = await whatsappAPI.getSessions(organizationId);
+      const response = await whatsappAPI.getSessions(organizationId, undefined, { expectedUserId: profile.id, signal });
       return response.data.length > 0;
     },
     enabled: shouldFetch && !!profile?.id && !!organizationId,

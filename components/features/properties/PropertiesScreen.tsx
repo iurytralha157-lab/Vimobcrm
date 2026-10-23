@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableFilterSelect } from "@/components/shared/SearchableFilterSelect";
 import {
   Select,
   SelectContent,
@@ -67,6 +68,7 @@ import { cn } from "@/lib/utils";
 import { getPropertySiteInfo } from "@/lib/api/property-support";
 import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { getUserFilterLabel } from "@/lib/user-display";
+import { getPropertyNumericFilterErrors, getPropertyCatalogLocationId } from "@/lib/validation/property-filter-input";
 import {
   formatFixedBRLCurrency,
   formatPtBRNumber,
@@ -169,7 +171,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const { data: users = [] } = useUsers({ scope: "filters" });
   const { data: propertyTypes = [] } = usePropertyTypes();
   const { data: cities = [] } = usePropertyCities();
-  const selectedCity = cities.find((city) => city.name === filters.cidade);
+  const selectedCity = cities.find((city) => filters.city_id
+    ? city.id === filters.city_id
+    : city.name === filters.cidade && (!filters.uf || city.uf === filters.uf));
   // Keep the full read-only location set in cache. Legacy cities are discovered
   // from property text and do not have a writable catalog id, so filtering the
   // API by their synthetic id would incorrectly make their neighborhoods look
@@ -179,7 +183,8 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     ? allNeighborhoods.filter(
         (neighborhood) =>
           neighborhood.city?.name?.trim().toLocaleLowerCase("pt-BR") ===
-          selectedCity.name.trim().toLocaleLowerCase("pt-BR"),
+          selectedCity.name.trim().toLocaleLowerCase("pt-BR") &&
+          (!selectedCity.uf || neighborhood.city?.uf === selectedCity.uf),
       )
     : allNeighborhoods;
   const { data: condominiums = [] } = usePropertyCondominiums();
@@ -192,6 +197,8 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
 
   const debouncedSearch = useDebouncedValue(search.trim(), 350);
   const debouncedFilters = useDebouncedValue(filters, 120);
+  const numericFilterErrors = getPropertyNumericFilterErrors(filters);
+  const hasInvalidNumericFilters = Object.keys(numericFilterErrors).length > 0;
 
   const {
     data,
@@ -202,7 +209,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useInfiniteProperties(debouncedSearch, 24, debouncedFilters);
+  } = useInfiniteProperties(debouncedSearch, 24, debouncedFilters, {
+    enabled: !hasInvalidNumericFilters,
+  });
 
   const properties = data?.pages.flatMap((page) => page.properties) || [];
   const totalCount = data?.pages[0]?.totalCount || 0;
@@ -281,7 +290,10 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     setFilters((current) => ({
       ...current,
       cidade: city ? city.name : undefined,
+      city_id: getPropertyCatalogLocationId(city),
+      uf: city?.uf || undefined,
       bairro: undefined,
+      neighborhood_id: undefined,
     }));
   };
 
@@ -291,6 +303,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     setFilters((current) => ({
       ...current,
       bairro: neighborhood ? neighborhood.name : undefined,
+      neighborhood_id: getPropertyCatalogLocationId(neighborhood),
     }));
   };
 
@@ -327,23 +340,14 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const activeFilterCount =
     Object.entries(filters).filter(([key, value]) => {
       if (!value) return false;
+      if (key === "city_id" || key === "neighborhood_id" || key === "uf") return false;
       return getPresetFilters(preset)[key as keyof PropertyFilters] !== value;
     }).length + (search.trim() ? 1 : 0);
   const statusFilterValue = getStatusFilterValue(filters);
   const siteVisibilityValue = getSiteVisibilityValue(filters);
-  const selectedResponsible = users.find(
-    (user) => user.id === filters.responsavel_id,
-  );
   const selectedNeighborhood = neighborhoods.find(
-    (neighborhood) => neighborhood.name === filters.bairro,
+    (neighborhood) => filters.neighborhood_id ? neighborhood.id === filters.neighborhood_id : neighborhood.name === filters.bairro,
   );
-  const selectedCondominium = condominiums.find(
-    (condominium) => condominium.id === filters.condominium_id,
-  );
-  const cityLabel = selectedCity
-    ? `${selectedCity.name}${selectedCity.uf ? ` (${selectedCity.uf})` : ""}`
-    : "Cidade";
-  const neighborhoodLabel = selectedNeighborhood?.name || "Bairro";
   const modalidadeLabel =
     filters.tipo_de_negocio === "rental_catalog"
       ? "Locação e temporada"
@@ -389,9 +393,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       : siteVisibilityValue === "unpublished"
         ? "Fora do site"
         : "Publicação no site";
-  const responsibleLabel = selectedResponsible
-    ? getUserFilterLabel(selectedResponsible)
-    : "Responsável";
   const permutaLabel =
     filters.aceita_permuta === "true"
       ? "Aceita permuta"
@@ -404,7 +405,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       : filters.aceita_financiamento === "false"
         ? "Não aceita financiamento"
         : "Financiamento";
-  const condominiumLabel = selectedCondominium?.name || "Condomínio";
   const furnitureLabel = filters.mobilia || "Mobília";
   const exclusiveLabel =
     filters.exclusividade === "true"
@@ -459,6 +459,12 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
       </div>
 
       <div className="app-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {Object.keys(numericFilterErrors).length > 0 && (
+          <div id="property-filter-errors" role="alert" className="rounded-[6px] bg-destructive/10 p-2 text-[12px] text-destructive">
+            {Object.values(numericFilterErrors).map((message) => <p key={message}>{message}</p>)}
+            <p>Corrija os valores para atualizar os resultados.</p>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3">
           <div data-tour="properties-filter-modality">
             <Select
@@ -554,108 +560,19 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
           </div>
 
           <div data-tour="properties-filter-type">
-            <Select
-              value={filters.tipo_de_imovel || ALL_FILTER_VALUE}
-              onValueChange={(value) => updateFilter("tipo_de_imovel", value)}
-            >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    !filters.tipo_de_imovel && "text-muted-foreground",
-                  )}
-                >
-                  {filters.tipo_de_imovel || "Tipo"}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                {propertyTypes.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableFilterSelect value={filters.tipo_de_imovel || null} onChange={value => updateFilter("tipo_de_imovel", value || ALL_FILTER_VALUE)} options={propertyTypes.map(type => ({ value: type, label: type }))} allLabel="Todos os tipos" ariaLabel="Tipo de imóvel" />
           </div>
 
           <div
             data-tour="properties-filter-location"
             className="grid grid-cols-2 gap-2"
           >
-            <Select
-              value={selectedCity?.id || ALL_FILTER_VALUE}
-              onValueChange={updateCityFilter}
-            >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    !filters.cidade && "text-muted-foreground",
-                  )}
-                >
-                  {cityLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
-                {cities.map((city) => (
-                  <SelectItem key={city.id} value={city.id}>
-                    {city.name}
-                    {city.uf ? ` (${city.uf})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={selectedNeighborhood?.id || ALL_FILTER_VALUE}
-              onValueChange={updateNeighborhoodFilter}
-            >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    !filters.bairro && "text-muted-foreground",
-                  )}
-                >
-                  {neighborhoodLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                {neighborhoods.map((neighborhood) => (
-                  <SelectItem key={neighborhood.id} value={neighborhood.id}>
-                    {neighborhood.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableFilterSelect value={selectedCity?.id || null} onChange={value => updateCityFilter(value || ALL_FILTER_VALUE)} options={cities.map(city => ({ value: city.id, label: `${city.name}${city.uf ? ` (${city.uf})` : ""}` }))} allLabel="Todas as cidades" ariaLabel="Cidade" />
+            <SearchableFilterSelect value={selectedNeighborhood?.id || null} onChange={value => updateNeighborhoodFilter(value || ALL_FILTER_VALUE)} options={neighborhoods.map(item => ({ value: item.id, label: selectedCity ? item.name : [item.name, item.city?.name, item.city?.uf].filter(Boolean).join(", ") }))} allLabel="Todos os bairros" ariaLabel="Bairro" />
           </div>
 
           <div data-tour="properties-filter-responsible">
-            <Select
-              value={filters.responsavel_id || ALL_FILTER_VALUE}
-              onValueChange={(value) => updateFilter("responsavel_id", value)}
-            >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    !filters.responsavel_id && "text-muted-foreground",
-                  )}
-                >
-                  {responsibleLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                {users.map((user) => (
-                  <SelectItem key={user.id} value={user.id}>
-                    {getUserFilterLabel(user)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableFilterSelect value={filters.responsavel_id || null} onChange={value => updateFilter("responsavel_id", value || ALL_FILTER_VALUE)} options={users.map(user => ({ value: user.id, label: getUserFilterLabel(user) }))} allLabel="Todos os responsáveis" ariaLabel="Responsável" />
           </div>
 
           <div
@@ -665,6 +582,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             <div>
               <Input
                 value={filters.valor_min || ""}
+                aria-label="Valor mínimo"
+                aria-invalid={Boolean(numericFilterErrors.valor_min)}
+                aria-describedby={numericFilterErrors.valor_min ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("valor_min", event.target.value)
                 }
@@ -676,6 +596,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             <div>
               <Input
                 value={filters.valor_max || ""}
+                aria-label="Valor máximo"
+                aria-invalid={Boolean(numericFilterErrors.valor_max)}
+                aria-describedby={numericFilterErrors.valor_max ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("valor_max", event.target.value)
                 }
@@ -717,29 +640,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             </div>
 
             <div>
-              <Select
-                value={filters.condominium_id || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("condominium_id", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.condominium_id && "text-muted-foreground",
-                    )}
-                  >
-                    {condominiumLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                  {condominiums.map((condominium) => (
-                    <SelectItem key={condominium.id} value={condominium.id}>
-                      {condominium.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableFilterSelect value={filters.condominium_id || null} onChange={value => updateFilter("condominium_id", value || ALL_FILTER_VALUE)} options={condominiums.map(item => ({ value: item.id, label: item.name }))} allLabel="Todos os condomínios" ariaLabel="Condomínio" />
             </div>
 
             <div>
@@ -878,6 +779,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             <div className="grid grid-cols-2 gap-2">
               <Input
                 value={filters.area_util_min || ""}
+                aria-label="Área útil mínima"
+                aria-invalid={Boolean(numericFilterErrors.area_util_min)}
+                aria-describedby={numericFilterErrors.area_util_min ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("area_util_min", event.target.value)
                 }
@@ -887,6 +791,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               />
               <Input
                 value={filters.area_util_max || ""}
+                aria-label="Área útil máxima"
+                aria-invalid={Boolean(numericFilterErrors.area_util_max)}
+                aria-describedby={numericFilterErrors.area_util_max ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("area_util_max", event.target.value)
                 }
@@ -899,6 +806,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             <div className="grid grid-cols-2 gap-2">
               <Input
                 value={filters.area_total_min || ""}
+                aria-label="Área total mínima"
+                aria-invalid={Boolean(numericFilterErrors.area_total_min)}
+                aria-describedby={numericFilterErrors.area_total_min ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("area_total_min", event.target.value)
                 }
@@ -908,6 +818,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               />
               <Input
                 value={filters.area_total_max || ""}
+                aria-label="Área total máxima"
+                aria-invalid={Boolean(numericFilterErrors.area_total_max)}
+                aria-describedby={numericFilterErrors.area_total_max ? "property-filter-errors" : undefined}
                 onChange={(event) =>
                   updateFilter("area_total_max", event.target.value)
                 }
@@ -1094,6 +1007,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
                 <Input
                   value={search}
+                  maxLength={120}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={searchPlaceholder}
                   className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-9 pr-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0"
@@ -1105,7 +1019,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
 
               <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
                 <span className="min-w-0 truncate text-[12px] font-light text-[var(--app-text-secondary)] sm:mr-auto sm:pl-1">
-                  {isFilterUpdating
+                  {hasInvalidNumericFilters ? "Revise os filtros numéricos" : isFilterUpdating
                     ? "Atualizando carteira..."
                     : `${formatPtBRNumber(totalCount)} ${isRentalCatalog ? "imóveis para locação ou temporada" : isLaunchCatalog ? "imóveis em lançamento" : "imóveis"}`}
                 </span>
@@ -1138,6 +1052,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               data-tour="properties-list"
               className="relative min-h-[360px] min-w-0 space-y-3"
             >
+              {hasInvalidNumericFilters && <p role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-[12px] text-destructive">Os resultados ainda não foram atualizados. Corrija os valores no painel de filtros.</p>}
               {isListUpdating && (
                 <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[8px] bg-background/55">
                   <VimobLoader size="lg" label="Atualizando imóveis..." />

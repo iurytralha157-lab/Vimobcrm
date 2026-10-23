@@ -97,8 +97,31 @@ test("mantém íntegro o contrato de textos, seletores e ações do tour", () =>
 
   assert.equal(
     fingerprint,
-    "368cd2609e81b13c588a1798bbc02722e49c61cead2f18e3f56f734e85df4bde",
+    "17dbedd519ddf0d9f6a2772d223fa2a689c5ccb7f5e9e524e5a8f2b210caf8c2",
   );
+});
+
+test("tour da distribuição abre cada etapa antes de buscar campos e não aciona o salvamento", () => {
+  const targets = [
+    ["basic", "basic"],
+    ["rules", "rules"],
+    ["members", "members"],
+    ["redistribution", "redistribution"],
+    ["review", "save"],
+  ];
+  for (const [step, target] of targets) {
+    const targetSelector = `[data-tour="distribution-queue-${target}"]`;
+    const plan = TOUR_PLANS.distribution;
+    assert.ok(plan, "distribution tour must exist");
+    const item = plan.items.find((entry) => entry.selector === targetSelector);
+    assert.ok(item, `tour target ${target} must exist`);
+    assert.deepEqual(item.action, {
+      type: "click",
+      selector: `[data-tour="distribution-queue-step-${step}"]`,
+      waitFor: targetSelector,
+    });
+    assert.notEqual(item.action.selector, '[data-tour="distribution-queue-save"]');
+  }
 });
 
 test("todos os alvos e ações mantêm seletores utilizáveis", () => {

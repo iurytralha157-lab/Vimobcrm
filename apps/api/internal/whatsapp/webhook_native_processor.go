@@ -38,7 +38,9 @@ type nativeEvolutionConversation struct {
 	ID                             string
 	LeadID                         string
 	MessageLeadID                  string
+	ActiveBindingID                string
 	RemoteJID                      string
+	RetentionClosed                bool
 	LeadIsNew                      bool
 	LeadResolutionQuarantineReason string
 	LeadScopeCompatibilityFallback bool
@@ -63,29 +65,36 @@ type nativeEvolutionStoredMessageIdentity struct {
 }
 
 type nativeIngressRoutingSnapshot struct {
-	State                        string
-	ProviderMessageID            string
-	InboxEventKey                string
-	ProcessingLane               string
-	ConversationID               string
-	EventLeadID                  string
-	CurrentLeadID                string
-	ActiveBindingID              string
-	QuarantineReason             string
-	ContextKind                  string
-	ContextProof                 string
-	RuleID                       string
-	OriginRoundRobinID           string
-	ManagedMessageDistribution   bool
-	ManagedProviderEventPending  bool
-	ManagedProviderEventHandled  bool
-	RoutingKey                   string
-	BindingEligible              bool
-	TargetMode                   string
-	IngressSequence              int64
-	PredecessorProviderMessageID string
-	PredecessorInboxEventKey     string
-	PredecessorProcessingLane    string
+	State                         string
+	ProviderMessageID             string
+	InboxEventKey                 string
+	ProcessingLane                string
+	ConversationID                string
+	EventLeadID                   string
+	CurrentLeadID                 string
+	ActiveBindingID               string
+	QuarantineReason              string
+	ContextKind                   string
+	ContextProof                  string
+	UnlinkedCapturePolicy         string
+	CapturedAt                    time.Time
+	ExpiredUnlinkedConversationID string
+	ExpiredUnlinkedRemoteJID      string
+	IntakeUnlinkedConversationID  string
+	IntakeUnlinkedRemoteJID       string
+	RuleID                        string
+	OriginRoundRobinID            string
+	ManagedMessageDistribution    bool
+	ManagedProviderEventPending   bool
+	ManagedProviderEventHandled   bool
+	RoutingKey                    string
+	BindingEligible               bool
+	TargetMode                    string
+	IngressSequence               int64
+	ProcessingEpoch               int
+	PredecessorProviderMessageID  string
+	PredecessorInboxEventKey      string
+	PredecessorProcessingLane     string
 }
 
 func nativeIngressRoutingSnapshotForMessage(
@@ -145,6 +154,9 @@ func nativeIngressRoutingSnapshotForMessage(
 		QuarantineReason:             strings.TrimSpace(stringFromAny(row["quarantine_reason"])),
 		ContextKind:                  strings.TrimSpace(stringFromAny(row["context_kind"])),
 		ContextProof:                 strings.TrimSpace(stringFromAny(row["context_proof"])),
+		UnlinkedCapturePolicy:        strings.TrimSpace(stringFromAny(row["unlinked_capture_policy"])),
+		ExpiredUnlinkedRemoteJID:     strings.TrimSpace(stringFromAny(row["expired_unlinked_remote_jid"])),
+		IntakeUnlinkedRemoteJID:      strings.TrimSpace(stringFromAny(row["intake_unlinked_remote_jid"])),
 		ManagedMessageDistribution:   managedMessageDistribution,
 		ManagedProviderEventPending:  managedProviderEventPending,
 		ManagedProviderEventHandled:  managedProviderEventHandled,
@@ -152,12 +164,25 @@ func nativeIngressRoutingSnapshotForMessage(
 		BindingEligible:              bindingEligible,
 		TargetMode:                   strings.TrimSpace(stringFromAny(row["target_mode"])),
 		IngressSequence:              nativeInt64(row["ingress_sequence"]),
+		ProcessingEpoch:              int(nativeInt64(row["processing_epoch"])),
 		PredecessorProviderMessageID: strings.TrimSpace(stringFromAny(row["predecessor_provider_message_id"])),
 		PredecessorInboxEventKey:     strings.TrimSpace(stringFromAny(row["predecessor_inbox_event_key"])),
 		PredecessorProcessingLane:    strings.TrimSpace(stringFromAny(row["predecessor_processing_lane"])),
 	}
 	if snapshot.ConversationID, err = normalizeOptionalUUID(row["conversation_id"]); err != nil {
 		return nil, err
+	}
+	if snapshot.ExpiredUnlinkedConversationID, err = normalizeOptionalUUID(row["expired_unlinked_conversation_id"]); err != nil {
+		return nil, err
+	}
+	if snapshot.IntakeUnlinkedConversationID, err = normalizeOptionalUUID(row["intake_unlinked_conversation_id"]); err != nil {
+		return nil, err
+	}
+	if capturedAt := strings.TrimSpace(stringFromAny(row["captured_at"])); capturedAt != "" {
+		snapshot.CapturedAt, err = time.Parse(time.RFC3339Nano, capturedAt)
+		if err != nil {
+			return nil, errors.New("WhatsApp ingress routing snapshot captured_at is invalid")
+		}
 	}
 	if snapshot.EventLeadID, err = normalizeOptionalUUID(row["event_lead_id"]); err != nil {
 		return nil, err
@@ -180,6 +205,7 @@ func nativeIngressRoutingSnapshotForMessage(
 		"predecessor_inherit": true,
 	}[snapshot.State]
 	if !validState ||
+		!nativePostFormRoutingProofValid(snapshot, message) ||
 		snapshot.ProviderMessageID != strings.TrimSpace(message.ProviderMessageID) ||
 		snapshot.InboxEventKey == "" ||
 		(snapshot.ProcessingLane != "live" && snapshot.ProcessingLane != "backlog") ||
@@ -191,6 +217,21 @@ func nativeIngressRoutingSnapshotForMessage(
 		!managedProviderEventPendingOK ||
 		!managedProviderEventHandledOK ||
 		(snapshot.ContextKind != "organic" && snapshot.ContextKind != "contextual_intake") ||
+		(snapshot.UnlinkedCapturePolicy != "" && snapshot.UnlinkedCapturePolicy != "v1") ||
+		((snapshot.ExpiredUnlinkedConversationID == "") != (snapshot.ExpiredUnlinkedRemoteJID == "")) ||
+		((snapshot.IntakeUnlinkedConversationID == "") != (snapshot.IntakeUnlinkedRemoteJID == "")) ||
+		(snapshot.IntakeUnlinkedConversationID != "" &&
+			(snapshot.ExpiredUnlinkedConversationID != "" || snapshot.UnlinkedCapturePolicy != "v1" || snapshot.CapturedAt.IsZero() ||
+				(snapshot.State != "lead_match" && snapshot.State != "contextual_intake") ||
+				snapshot.TargetMode != "snapshot" || snapshot.ConversationID != "" ||
+				snapshot.CurrentLeadID != "" || snapshot.ActiveBindingID != "" ||
+				(snapshot.State == "lead_match" && snapshot.EventLeadID == "") ||
+				(snapshot.State == "contextual_intake" && snapshot.ContextProof == ""))) ||
+		(snapshot.ExpiredUnlinkedConversationID != "" &&
+			(snapshot.UnlinkedCapturePolicy != "v1" || snapshot.CapturedAt.IsZero() ||
+				(snapshot.State != "unlinked" && snapshot.State != "lead_match" && snapshot.State != "contextual_intake") ||
+				snapshot.TargetMode != "snapshot" || snapshot.ConversationID != "" ||
+				snapshot.CurrentLeadID != "" || snapshot.ActiveBindingID != "")) ||
 		(snapshot.ActiveBindingID != "" && (snapshot.ConversationID == "" || snapshot.CurrentLeadID == "")) ||
 		(snapshot.State == "quarantine" && (snapshot.QuarantineReason == "" || snapshot.EventLeadID != "")) ||
 		(snapshot.State != "quarantine" && snapshot.QuarantineReason != "") ||
@@ -379,13 +420,13 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 	}
 	item = filteredItem
 
-	mode := evolutionWebhookProcessorModeForSession(
+	mode := evolutionWebhookProcessorModeForDelivery(
 		repo.functions.webhookProcessorMode,
 		repo.functions.webhookRolloutSessionIDs,
-		item.SessionID,
+		item,
 	)
 	if mode == webhookProcessorEdge {
-		return repo.forwardEvolutionWebhook(ctx, item)
+		return repo.forwardEvolutionWebhookFenced(ctx, item)
 	}
 
 	handled, err := repo.processEvolutionWebhookNative(ctx, item)
@@ -404,9 +445,19 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 		if nativeFallbackRequiresNativeHandling(item) {
 			return errNativeWebhookMessageLikeUnsupported
 		}
-		return repo.forwardEvolutionWebhook(ctx, item)
+		return repo.forwardEvolutionWebhookFenced(ctx, item)
 	}
 	return errors.New("native WhatsApp processor does not support this event")
+}
+
+func evolutionWebhookProcessorModeForDelivery(configuredMode string, allowlist []string, item pendingEvolutionWebhook) string {
+	// A cut-over session is always handled by the native processor, even when
+	// one replica still has an Edge/default mode or a narrower rollout list.
+	// The database epoch guard is the authority for this per-session boundary.
+	if item.ProcessingEpoch == 1 {
+		return webhookProcessorNative
+	}
+	return evolutionWebhookProcessorModeForSession(configuredMode, allowlist, item.SessionID)
 }
 
 func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
@@ -440,6 +491,17 @@ func nativeEvolutionTechnicalIgnoreReason(item pendingEvolutionWebhook) string {
 	}
 	event := compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType))
 	switch event {
+	case "message", "messagesupsert", "messagesupdate":
+		messages := extractNativeEvolutionMessages(payload)
+		if len(messages) == 0 {
+			return ""
+		}
+		for _, message := range messages {
+			if !nativeEvolutionMessageIsEncryptedEditControl(message) || nativeEncryptedEditHasFrozenCaptureRoute(payload, message) {
+				return ""
+			}
+		}
+		return "encrypted_message_edit_undecrypted"
 	case "readself", "receipt":
 		if event == "receipt" && !nativeEvolutionReceiptIsReadSelf(payload) {
 			return ""
@@ -492,8 +554,13 @@ func nativeEvolutionReceiptIsReadSelf(payload map[string]any) bool {
 }
 
 func nativePayloadHasPotentialCustomerContent(value any, depth int) bool {
-	if depth > 12 || value == nil {
+	if value == nil {
 		return false
+	}
+	if depth > 12 {
+		// Unknown deeper content is retained, never treated as proof that a
+		// technical control or receipt contains no customer response.
+		return true
 	}
 	switch typed := value.(type) {
 	case map[string]any:
@@ -722,6 +789,8 @@ func evolutionWebhookProcessorModeForSession(configuredMode string, allowlist []
 }
 
 func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item pendingEvolutionWebhook) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, nativeWebhookItemTimeout)
+	defer cancel()
 	if strings.TrimSpace(item.OrganizationID) == "" || strings.TrimSpace(item.SessionID) == "" {
 		return false, fmt.Errorf("native webhook requires organization and session scope")
 	}
@@ -730,9 +799,16 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		return false, err
 	}
 	event := nativeEvolutionEventName(payload, item.EventType)
+	if err := evolutionWebhookMixedReceiptError(item); err != nil {
+		return true, err
+	}
 
-	if nativeIsStatusEvent(event) {
-		statuses := extractNativeEvolutionStatuses(payload)
+	isStatusEvent := nativeIsStatusEvent(event)
+	var statuses []nativeEvolutionStatus
+	if isStatusEvent || compactEvolutionWebhookControlName(event) == "messagesupdate" {
+		statuses = extractNativeEvolutionStatuses(payload)
+	}
+	if isStatusEvent || nativeEvolutionMessageUpdateIsReceipt(event, payload, statuses) {
 		if len(statuses) == 0 {
 			return false, nil
 		}
@@ -741,8 +817,16 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 
 	messages := extractNativeEvolutionMessages(payload)
 	if len(messages) > 0 {
+		for _, message := range messages {
+			if nativeEvolutionMessageIsEncryptedEditControl(message) && nativeEncryptedEditHasFrozenCaptureRoute(payload, message) {
+				return false, nil
+			}
+		}
+		messages = withoutNativeEvolutionEncryptedEditControls(messages)
 		messages = withoutNativeEvolutionHistorySyncControls(messages)
 		messages = withoutNativeEvolutionGroupMessages(messages)
+		messages = withoutNativeEvolutionPNConflicts(messages)
+		messages = withoutNativeWebhookQuarantinedMessages(payload, messages)
 		if len(messages) == 0 {
 			return true, nil
 		}
@@ -768,100 +852,15 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		}
 		return true, nil
 	}
-
-	qrCode := ""
-	if strings.Contains(event, "qr") {
-		qrCode = nativeEvolutionQRCode(payload)
+	if labels, groups := nativeEvolutionAuxiliaryKinds(payload, event); labels || groups {
+		return repo.processNativeEvolutionAuxiliary(ctx, item, payload, labels, groups)
 	}
-	connectionStatus, connectionRecognized, connectionError := nativeEvolutionConnectionStatus(payload, event)
-	if qrCode == "" && !connectionRecognized {
+
+	state, recognized := deferredEvolutionWebhookSessionState(item, payload)
+	if !recognized {
 		return false, nil
 	}
-	if qrCode == "" && connectionStatus == "disconnected" {
-		if state, loggedOut := nativeDeferredLoggedOutState(item, payload); loggedOut {
-			return true, repo.applyEvolutionWebhookSessionState(ctx, evolutionWebhookSession{
-				ID: item.SessionID, OrganizationID: item.OrganizationID,
-			}, state)
-		}
-	}
-
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return true, err
-	}
-	defer tx.Rollback(ctx)
-	// Connection events mutate the session itself and never touch a
-	// conversation. Acquire the exclusive row lock up front so this path cannot
-	// upgrade a shared lock after another worker has queued.
-	session, err := loadNativeEvolutionSessionWithLock(ctx, tx, item, true)
-	if err != nil {
-		return true, err
-	}
-	lifecycleUpdatesAllowed := sessionAutoReconnectEnabled(session.AdvancedSettings)
-	if qrCode != "" && lifecycleUpdatesAllowed {
-		if _, err := tx.Exec(ctx, `
-			update public.whatsapp_sessions
-			set status = 'qr_ready',
-			    qr_code = $3,
-			    advanced_settings = coalesce(advanced_settings, '{}'::jsonb) || jsonb_build_object(
-			      'qr_code', $3,
-			      'qr_updated_at', now()
-			    ),
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			  and provider = 'evolution_go'
-			  and coalesce(is_active, true) = true
-			  and coalesce(status, '') not in ('deleted', 'disabled')
-			  and lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
-		`, session.OrganizationID, session.ID, qrCode); err != nil {
-			return true, err
-		}
-	}
-	if connectionRecognized && lifecycleUpdatesAllowed {
-		data := nativeFirstMap(payload, "data", "Data")
-		jid := firstNonEmpty(
-			firstString(data, "jid", "JID", "phone", "Phone", "user.id"),
-			firstString(payload, "jid", "JID", "phone", "Phone", "user.id"),
-		)
-		phoneNumber := ""
-		if phone, ok := phoneFromIdentityValue(jid); ok {
-			phoneNumber = phone
-		}
-		profileName := firstNonEmpty(
-			firstString(data, "pushName", "name", "profileName"),
-			firstString(payload, "pushName", "name", "profileName"),
-			session.ProfileName,
-		)
-		if _, err := tx.Exec(ctx, `
-			update public.whatsapp_sessions
-			set status = coalesce(nullif($3, ''), status),
-			    phone_number = case when $3 = 'connected' then coalesce(nullif($4, ''), phone_number) else phone_number end,
-			    profile_name = case when $3 = 'connected' then coalesce(nullif($5, ''), profile_name) else profile_name end,
-			    last_connected_at = case when $3 = 'connected' then now() else last_connected_at end,
-			    last_error = nullif($6, ''),
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			  and provider = 'evolution_go'
-			  and coalesce(is_active, true) = true
-			  and coalesce(status, '') not in ('deleted', 'disabled')
-			  and lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
-		`, session.OrganizationID, session.ID, connectionStatus, phoneNumber, profileName, connectionError); err != nil {
-			return true, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return true, err
-	}
-	if connectionRecognized && connectionStatus == "connected" {
-		// Offline outbox/media rows are deliberately skipped by their hot claims.
-		// Wake both workers immediately when the signed provider event makes the
-		// session eligible again instead of waiting for a polling interval.
-		wakeWhatsAppOutboxWorker()
-		wakeWhatsAppMediaWorker()
-	}
-	return true, nil
+	return true, repo.applyDeferredEvolutionWebhookSessionState(ctx, item, state)
 }
 
 func nativeEvolutionMessagesContainMedia(messages []nativeEvolutionMessage) bool {
@@ -1101,11 +1100,13 @@ func nativeDataURLMimeType(value string) string {
 }
 
 func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item pendingEvolutionWebhook, messages []nativeEvolutionMessage) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, cancel := context.WithTimeout(ctx, nativeWebhookItemTimeout)
+	defer cancel()
+	tx, err := repo.beginNativeWebhookTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackWebhookTx(tx)
 	// A signed outbound event may repair the stored account phone. Take the
 	// exclusive session lock before any conversation only for batches that can
 	// perform that write; ordinary inbound batches retain a shared fence and can
@@ -1133,6 +1134,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
+		message = nativeMessageWithAcceptedIntakePolicy(message, routingSnapshot, nativeInboundRule{})
 		if message.FromMe {
 			// Some provider status endpoints expose the profile name in the field
 			// historically treated as a phone. A signed outbound webhook is a
@@ -1195,7 +1197,8 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			if err != nil {
 				return err
 			}
-			if message.IsCTWAAd && !rule.ManagedMessageDistribution &&
+			message = nativeMessageWithAcceptedIntakePolicy(message, routingSnapshot, rule)
+			if nativeCTWAIntakeEligible(message) && !rule.ManagedMessageDistribution &&
 				strings.TrimSpace(rule.ManagedProviderEventLeadID) == "" {
 				if nativeCTWAAdConfirmationMethod(message) == "" {
 					return errors.New("click-to-WhatsApp intake is missing canonical provider proof")
@@ -1233,7 +1236,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				if err := recoverNativeLegacyNonManagedRetry(ctx, tx, session, message, rule); err != nil {
 					return err
 				}
-			} else if message.IsCTWAAd {
+			} else if nativeCTWAIntakeEligible(message) {
 				// Edge may have committed the managed ledger before a transient
 				// attribution failure. A native retry repairs that metadata, while
 				// tolerating older handled rows that predate attribution support.
@@ -1272,15 +1275,63 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
-		conversation, err := ensureNativeEvolutionConversation(ctx, tx, session, message, rule, storedIdentity, routingSnapshot)
+		if storedIdentity.ID == "" && routingSnapshot != nil &&
+			routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+			routingSnapshot.State == "unlinked" && routingSnapshot.ConversationID == "" {
+			// The persisted ingress snapshot is the event-time authority. A first
+			// message accepted over seven days ago must not create a new physical
+			// conversation merely because its worker was delayed. The inbox row is
+			// completed without recording content or a contact route.
+			var acceptedWithinRetention bool
+			if !routingSnapshot.CapturedAt.IsZero() {
+				err = tx.QueryRow(ctx, `
+					select $1::timestamptz > clock_timestamp() - interval '7 days'
+				`, routingSnapshot.CapturedAt).Scan(&acceptedWithinRetention)
+				if err != nil {
+					return err
+				}
+			}
+			if !acceptedWithinRetention {
+				continue
+			}
+		}
+		inheritedProof := nativeInheritedRoutingCaptureProof{}
+		identityTx, err := tx.Begin(ctx)
 		if err != nil {
+			return err
+		}
+		conversation, err := ensureNativeEvolutionConversation(ctx, identityTx, session, message, rule, storedIdentity, routingSnapshot, &inheritedProof)
+		if err != nil {
+			if rollbackErr := identityTx.Rollback(ctx); rollbackErr != nil {
+				return errors.Join(err, rollbackErr)
+			}
+			if isWhatsAppContactPNConflictError(err) {
+				if err := recordNativeStoredContactPNQuarantine(ctx, tx, item, message.ProviderMessageID); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		if err := identityTx.Commit(ctx); err != nil {
 			return err
 		}
 		// The routing snapshot names the card that owned this provider event.
 		// Never infer consent from a later phone match or a newer card binding.
 		messageLeadID := nativeEvolutionMessageLeadID(conversation)
 		bindingID := ""
-		if routingSnapshot != nil && routingSnapshot.ActiveBindingID != "" &&
+		if inheritedProof.Target.Ready && inheritedProof.BindingIsCurrent {
+			if inheritedProof.Target.ConversationID != conversation.ID || inheritedProof.Target.LeadID != messageLeadID {
+				return errors.New("WhatsApp inherited routing capture target changed after binding CAS")
+			}
+			bindingID, err = attendanceBindingID(ctx, tx, session.OrganizationID, conversation.ID, session.ID, messageLeadID)
+			if err != nil {
+				return err
+			}
+			if bindingID != inheritedProof.Target.ActiveBindingID {
+				return errors.New("WhatsApp inherited routing capture binding changed after binding CAS")
+			}
+		} else if routingSnapshot != nil && routingSnapshot.ActiveBindingID != "" &&
 			!nativeCTWANewCardOwnsCurrentBinding(conversation, message, routingSnapshot) {
 			bindingID = routingSnapshot.ActiveBindingID
 		} else if !conversation.HistoricalBindingReplay && messageLeadID != "" {
@@ -1289,6 +1340,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				return err
 			}
 		}
+		// A first lead-match snapshot has no binding ID at ingress. The binding
+		// created under this conversation lock is the proof for visible capture.
+		conversation.ActiveBindingID = bindingID
 		ingressSequence := int64(0)
 		if routingSnapshot != nil {
 			ingressSequence = routingSnapshot.IngressSequence
@@ -1311,18 +1365,60 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
-		captureState := "suppressed"
-		if attendanceEntryID != "" {
-			captureState = "captured"
-		}
+		managedOutbound := false
 		if message.FromMe {
 			// The outbox finalizer always locks outbox before messages. Preserve that
 			// order before insertNativeEvolutionMessage can lock a duplicate row.
 			if err := lockNativeOutboundOutbox(ctx, tx, session, message.ProviderMessageID); err != nil {
 				return err
 			}
+			managedOutbound, err = nativeOutboundManagedByCRM(ctx, tx, session, conversation.ID, message.ProviderMessageID)
+			if err != nil {
+				return err
+			}
 		}
-		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message, captureState, attendanceEntryID)
+		captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, routingSnapshot, managedOutbound)
+		if captureState == "suppressed" && nativeInheritedRoutingObservationAllowed(
+			session, item, conversation, message, routingSnapshot, inheritedProof,
+			bindingID, attendanceEntryID, managedOutbound, storedIdentity.ID != "",
+		) {
+			captureState = "observed_unattended"
+		}
+		if routingSnapshot != nil && routingSnapshot.State == "unlinked" &&
+			routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+			!message.IsGroup && !nativeCTWAIntakeEligible(message) && !managedOutbound &&
+			!message.ProviderTimestampMissing && !message.SentAt.IsZero() &&
+			!item.CreatedAt.IsZero() && !message.SentAt.After(item.CreatedAt) {
+			// The database compares the immutable inbox snapshot to any later
+			// manual history link or intake retirement under the epoch lock.
+			// It is the authority for delayed deliveries, not the current card.
+			var historyLeadID string
+			captureState, historyLeadID, err = resolveNativeUnlinkedHistoryCapture(
+				ctx, tx, session, conversation.ID, message.ProviderMessageID,
+				routingSnapshot.InboxEventKey,
+			)
+			if err != nil {
+				return err
+			}
+			if captureState == "unlinked_ephemeral" && conversation.LeadID != "" {
+				return errors.New("WhatsApp unlinked history resolver returned active lead conversation")
+			}
+			if captureState == "unlinked_ephemeral" || captureState == "promoted_unlinked" {
+				conversation.MessageLeadID = historyLeadID
+				conversation.RetentionClosed = false
+				conversation.LeadResolutionQuarantineReason = ""
+				conversation.HistoricalBindingReplay = historyLeadID != conversation.LeadID
+			}
+		} else if routingSnapshot != nil && routingSnapshot.State == "unlinked" {
+			captureState = "suppressed"
+		}
+		if captureState == "observed_unattended" &&
+			(message.ProviderTimestampMissing || message.SentAt.IsZero() ||
+				item.CreatedAt.IsZero() || message.SentAt.After(item.CreatedAt)) {
+			captureState = "suppressed"
+		}
+		externalOutbound := message.FromMe && !managedOutbound && captureState != "suppressed"
+		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message, captureState, attendanceEntryID, externalOutbound)
 		if err != nil {
 			return err
 		}
@@ -1354,7 +1450,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				return err
 			}
 		}
-		if captureState == "captured" && conversation.LeadResolutionQuarantineReason == "" {
+		if nativeEvolutionMessageHasVisibleCapture(captureState) &&
+			(captureState != "unlinked_ephemeral" || inserted) &&
+			conversation.LeadResolutionQuarantineReason == "" {
 			queued, queueErr := enqueueNativeEvolutionMediaJob(ctx, tx, session, effectiveConversationID, message, messageRowID)
 			if queueErr != nil {
 				return queueErr
@@ -1363,7 +1461,8 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		}
 		eventBindingIsCurrent := !conversation.HistoricalBindingReplay &&
 			nativeEvolutionMessageLeadID(conversation) == strings.TrimSpace(conversation.LeadID)
-		if captureState == "captured" && inserted && effectiveConversationID == conversation.ID && eventBindingIsCurrent {
+		if nativeEvolutionMessageHasVisibleCapture(captureState) && captureState != "promoted_unlinked" &&
+			inserted && effectiveConversationID == conversation.ID && eventBindingIsCurrent {
 			var updated bool
 			updated, err = updateNativeEvolutionConversation(ctx, tx, session, conversation, message)
 			if err != nil {
@@ -1371,13 +1470,20 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			}
 			eventBindingIsCurrent = updated
 		}
+		if captureState == "observed_unattended" && inserted && eventBindingIsCurrent {
+			if leadID := nativeEvolutionMessageLeadID(conversation); leadID != "" {
+				leadIDsToPublish[leadID] = struct{}{}
+			}
+		}
 		if !message.FromMe && !message.IsGroup {
 			applyInboundEffects := inserted || rule.ManagedProviderEventPending
 			// A historical/CAS-losing provider event may persist its immutable
 			// message under the original card, but it must never repeat lead-entry,
 			// distribution, unread/preview, automation or other current-binding
 			// effects after a newer accepted intent (or a manual relink) won.
-			if applyInboundEffects && eventBindingIsCurrent && conversation.LeadResolutionQuarantineReason == "" {
+			if applyInboundEffects && eventBindingIsCurrent && conversation.LeadResolutionQuarantineReason == "" &&
+				captureState != "unlinked_ephemeral" && captureState != "promoted_unlinked" &&
+				captureState != "observed_unattended" {
 				// The managed intake RPC still receives the text for keyword
 				// matching/fingerprint. Its attendance wrapper prevents the text
 				// from entering lead.message and downstream webhook snapshots.
@@ -1425,6 +1531,171 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	return nil
 }
 
+func nativeEvolutionCaptureState(
+	attendanceEntryID string,
+	conversation nativeEvolutionConversation,
+	message nativeEvolutionMessage,
+	routingSnapshot *nativeIngressRoutingSnapshot,
+	managedOutbound bool,
+) string {
+	if conversation.RetentionClosed {
+		return "suppressed"
+	}
+	if attendanceEntryID != "" {
+		return "captured"
+	}
+	if routingSnapshot != nil && routingSnapshot.State == "bound" &&
+		routingSnapshot.TargetMode == "snapshot" &&
+		nativeOrganicRoutingProofMatchesMessage(routingSnapshot, message) &&
+		routingSnapshot.EventLeadID != "" &&
+		routingSnapshot.EventLeadID == routingSnapshot.CurrentLeadID &&
+		routingSnapshot.ActiveBindingID != "" &&
+		routingSnapshot.ConversationID == conversation.ID &&
+		routingSnapshot.ProviderMessageID == message.ProviderMessageID &&
+		routingSnapshot.QuarantineReason == "" &&
+		conversation.LeadID == routingSnapshot.EventLeadID &&
+		nativeEvolutionMessageLeadID(conversation) == routingSnapshot.EventLeadID &&
+		conversation.LeadResolutionQuarantineReason == "" &&
+		!conversation.HistoricalBindingReplay &&
+		!conversation.LeadScopeCompatibilityFallback &&
+		!routingSnapshot.ManagedMessageDistribution &&
+		!routingSnapshot.ManagedProviderEventPending &&
+		!routingSnapshot.ManagedProviderEventHandled &&
+		!message.IsGroup && !nativeCTWAIntakeEligible(message) && !managedOutbound {
+		return "observed_unattended"
+	}
+	if routingSnapshot != nil && routingSnapshot.State == "lead_match" &&
+		routingSnapshot.TargetMode == "snapshot" &&
+		routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+		!routingSnapshot.CapturedAt.IsZero() && routingSnapshot.InboxEventKey != "" &&
+		nativeOrganicRoutingProofMatchesMessage(routingSnapshot, message) &&
+		routingSnapshot.EventLeadID != "" && routingSnapshot.CurrentLeadID == "" &&
+		routingSnapshot.ActiveBindingID == "" && routingSnapshot.ConversationID == "" &&
+		routingSnapshot.ProviderMessageID == message.ProviderMessageID &&
+		routingSnapshot.QuarantineReason == "" &&
+		conversation.ID != "" && conversation.ActiveBindingID != "" &&
+		conversation.LeadID == routingSnapshot.EventLeadID &&
+		nativeEvolutionMessageLeadID(conversation) == routingSnapshot.EventLeadID &&
+		conversation.LeadResolutionQuarantineReason == "" &&
+		!conversation.HistoricalBindingReplay &&
+		!conversation.LeadScopeCompatibilityFallback &&
+		!routingSnapshot.ManagedMessageDistribution &&
+		!routingSnapshot.ManagedProviderEventPending &&
+		!routingSnapshot.ManagedProviderEventHandled &&
+		!message.FromMe && !message.IsGroup && !nativeCTWAIntakeEligible(message) &&
+		!message.ProviderMessageIDSynthetic && !message.IsReaction && !message.IsDeletion &&
+		!managedOutbound {
+		return "observed_unattended"
+	}
+	// Only a validated organic ingress route and the conversation locked by
+	// ensureNativeEvolutionConversation can establish that this event has no card.
+	// A lead without attendance, an ambiguous identity or a stale binding keeps
+	// the existing suppressed decision.
+	if routingSnapshot == nil ||
+		routingSnapshot.UnlinkedCapturePolicy != "v1" ||
+		routingSnapshot.State != "unlinked" || routingSnapshot.TargetMode != "snapshot" ||
+		!nativeOrganicRoutingProofMatchesMessage(routingSnapshot, message) ||
+		routingSnapshot.EventLeadID != "" || routingSnapshot.CurrentLeadID != "" ||
+		routingSnapshot.ActiveBindingID != "" || routingSnapshot.QuarantineReason != "" ||
+		routingSnapshot.ManagedMessageDistribution || routingSnapshot.ManagedProviderEventPending ||
+		routingSnapshot.ManagedProviderEventHandled ||
+		routingSnapshot.ProviderMessageID != message.ProviderMessageID ||
+		(routingSnapshot.ConversationID != "" && routingSnapshot.ConversationID != conversation.ID) ||
+		conversation.ID == "" || conversation.LeadID != "" || conversation.MessageLeadID != "" ||
+		conversation.LeadResolutionQuarantineReason != "" || conversation.HistoricalBindingReplay ||
+		conversation.LeadScopeCompatibilityFallback || managedOutbound || message.IsGroup || nativeCTWAIntakeEligible(message) {
+		return "suppressed"
+	}
+	return "unlinked_ephemeral"
+}
+
+// An inherited route has no event lead in its immutable ingress snapshot. The
+// predecessor result and the row-locked binding CAS must both prove the exact
+// current destination before a new message can become a lead observation.
+func nativeInheritedRoutingObservationAllowed(
+	session nativeEvolutionSession,
+	item pendingEvolutionWebhook,
+	conversation nativeEvolutionConversation,
+	message nativeEvolutionMessage,
+	snapshot *nativeIngressRoutingSnapshot,
+	proof nativeInheritedRoutingCaptureProof,
+	bindingID, attendanceEntryID string,
+	managedOutbound, storedBefore bool,
+) bool {
+	target := proof.Target
+	return !storedBefore && attendanceEntryID == "" && !managedOutbound &&
+		snapshot != nil && snapshot.State == "predecessor_inherit" &&
+		snapshot.TargetMode == "inherit_predecessor" && snapshot.BindingEligible &&
+		snapshot.UnlinkedCapturePolicy == "v1" && !snapshot.CapturedAt.IsZero() &&
+		nativeOrganicRoutingProofMatchesMessage(snapshot, message) &&
+		snapshot.QuarantineReason == "" && snapshot.RoutingKey != "" &&
+		snapshot.RoutingKey != evolutionWebhookSessionRoute &&
+		!snapshot.ManagedMessageDistribution && !snapshot.ManagedProviderEventPending &&
+		!snapshot.ManagedProviderEventHandled &&
+		session.OrganizationID != "" && session.ID != "" && item.ID != "" &&
+		item.OrganizationID == session.OrganizationID && item.SessionID == session.ID &&
+		snapshot.ProcessingEpoch == item.ProcessingEpoch &&
+		proof.OrganizationID == session.OrganizationID && proof.SessionID == session.ID &&
+		proof.InboxEventKey != "" && proof.InboxEventKey == snapshot.InboxEventKey &&
+		proof.ProviderMessageID != "" && proof.ProviderMessageID == message.ProviderMessageID &&
+		proof.ProviderMessageID == snapshot.ProviderMessageID &&
+		proof.PredecessorProviderMessageID != "" &&
+		proof.PredecessorProviderMessageID == snapshot.PredecessorProviderMessageID &&
+		proof.PredecessorInboxEventKey != "" &&
+		proof.PredecessorInboxEventKey == snapshot.PredecessorInboxEventKey &&
+		proof.PredecessorIngressSequence > 0 &&
+		proof.PredecessorIngressSequence < snapshot.IngressSequence &&
+		proof.BindingIsCurrent && target.Ready && !target.Terminal && target.Reason == "" &&
+		target.PredecessorProviderMessageID == proof.PredecessorProviderMessageID &&
+		target.PredecessorIngressSequence == proof.PredecessorIngressSequence &&
+		target.ConversationID != "" && target.LeadID != "" && target.ActiveBindingID != "" &&
+		(snapshot.ConversationID == "" || snapshot.ConversationID == target.ConversationID) &&
+		conversation.ID == target.ConversationID && conversation.LeadID == target.LeadID &&
+		conversation.MessageLeadID == target.LeadID &&
+		conversation.ActiveBindingID == target.ActiveBindingID && bindingID == target.ActiveBindingID &&
+		!conversation.RetentionClosed && conversation.LeadResolutionQuarantineReason == "" &&
+		!conversation.HistoricalBindingReplay && !conversation.LeadScopeCompatibilityFallback &&
+		!message.IsGroup && !nativeCTWAIntakeEligible(message) && !message.IsReaction && !message.IsDeletion &&
+		!message.ProviderMessageIDSynthetic && !message.ProviderTimestampMissing &&
+		!message.SentAt.IsZero() && !item.CreatedAt.IsZero() && !message.SentAt.After(item.CreatedAt)
+}
+
+func nativeEvolutionMessageHasVisibleCapture(captureState string) bool {
+	return captureState == "captured" || captureState == "unlinked_ephemeral" ||
+		captureState == "promoted_unlinked" || captureState == "observed_unattended"
+}
+
+func resolveNativeUnlinkedHistoryCapture(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	conversationID, providerMessageID, inboxEventKey string,
+) (string, string, error) {
+	var captureState, leadID string
+	err := tx.QueryRow(ctx, `
+		select decision->>'capture_state', coalesce(decision->>'lead_id', '')
+		from public.resolve_whatsapp_unlinked_history_capture(
+		  $1::uuid, $2::uuid, $3::uuid, $4, $5
+		) as decision
+	`, session.OrganizationID, session.ID, conversationID, providerMessageID, inboxEventKey).Scan(&captureState, &leadID)
+	if err != nil {
+		return "", "", err
+	}
+	leadID = strings.TrimSpace(leadID)
+	if leadID != "" {
+		normalizedLeadID, valid := normalizeUUID(leadID)
+		if !valid {
+			return "", "", errors.New("WhatsApp unlinked history capture lead is invalid")
+		}
+		leadID = normalizedLeadID
+	}
+	if (captureState != "suppressed" && captureState != "unlinked_ephemeral" && captureState != "promoted_unlinked") ||
+		(captureState == "promoted_unlinked") != (leadID != "") {
+		return "", "", errors.New("WhatsApp unlinked history capture decision is invalid")
+	}
+	return captureState, leadID, nil
+}
+
 // A confirmed CTWA provider event can create a new card on an existing
 // physical conversation. In that one case the pre-ACK snapshot's binding
 // belongs to the previous card; the CAS activation above has established the
@@ -1444,7 +1715,7 @@ func nativeCTWANewCardOwnsCurrentBinding(
 		conversation.LeadResolutionQuarantineReason == "" &&
 		conversation.LeadID != "" &&
 		conversation.MessageLeadID == conversation.LeadID &&
-		message.IsCTWAAd &&
+		nativeCTWAIntakeEligible(message) &&
 		nativeCTWAAdConfirmationMethod(message) != ""
 }
 
@@ -1920,6 +2191,9 @@ func reconcileNativeOutboundOutbox(
 			update public.whatsapp_messages as canonical
 			set client_message_id = $5,
 			    sender_user_id = coalesce(canonical.sender_user_id, pending.sender_user_id),
+			    sender_name = case when pending.sender_user_id is not null
+			      and (canonical.sender_user_id is null or canonical.sender_user_id = pending.sender_user_id)
+			      then pending.sender_name else canonical.sender_name end,
 			    content = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.content, pending.content) end,
 			    media_url = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_url, pending.media_url) end,
 			    media_mime_type = case when pending.capture_state = 'suppressed' then null else coalesce(canonical.media_mime_type, pending.media_mime_type) end,
@@ -2201,6 +2475,42 @@ func lockNativeOutboundOutbox(
 	return rows.Err()
 }
 
+// A provider echo is an external observation only when no exact CRM/outbox
+// identity exists. The caller locks matching outbox rows before this lookup.
+func nativeOutboundManagedByCRM(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	conversationID string,
+	providerMessageID string,
+) (bool, error) {
+	if strings.TrimSpace(providerMessageID) == "" {
+		return false, nil
+	}
+	var managed bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+		  select 1 from public.whatsapp_outbox outbox
+		  where outbox.organization_id = $1::uuid
+		    and outbox.session_id = $2::uuid
+		    and (outbox.provider_message_id = $3 or outbox.client_message_id = $3)
+		) or exists (
+		  select 1 from public.outbox_messages outbox
+		  where outbox.organization_id = $1::uuid
+		    and outbox.session_id = $2::uuid
+		    and outbox.conversation_id = $4::uuid
+		    and (outbox.sent_message_id = $3 or outbox.client_message_id = $3)
+		) or exists (
+		  select 1 from public.whatsapp_messages message
+		  where message.organization_id = $1::uuid
+		    and message.session_id = $2::uuid
+		    and message.client_message_id is not null
+		    and (message.provider_message_id = $3 or message.message_id = $3)
+		)
+	`, session.OrganizationID, session.ID, providerMessageID, conversationID).Scan(&managed)
+	return managed, err
+}
+
 func lockNativeStatusTransportRows(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -2398,12 +2708,26 @@ func findNativeEvolutionStoredMessageIdentity(
 }
 
 type nativeInheritedRoutingTarget struct {
-	Ready           bool   `json:"ready"`
-	Terminal        bool   `json:"terminal"`
-	Reason          string `json:"reason"`
-	ConversationID  string `json:"conversation_id"`
-	LeadID          string `json:"lead_id"`
-	ActiveBindingID string `json:"active_binding_id"`
+	Ready                        bool   `json:"ready"`
+	Terminal                     bool   `json:"terminal"`
+	Reason                       string `json:"reason"`
+	ConversationID               string `json:"conversation_id"`
+	LeadID                       string `json:"lead_id"`
+	ActiveBindingID              string `json:"active_binding_id"`
+	PredecessorProviderMessageID string `json:"predecessor_provider_message_id"`
+	PredecessorIngressSequence   int64  `json:"predecessor_ingress_sequence"`
+}
+
+type nativeInheritedRoutingCaptureProof struct {
+	OrganizationID               string
+	SessionID                    string
+	InboxEventKey                string
+	ProviderMessageID            string
+	PredecessorProviderMessageID string
+	PredecessorInboxEventKey     string
+	PredecessorIngressSequence   int64
+	Target                       nativeInheritedRoutingTarget
+	BindingIsCurrent             bool
 }
 
 func resolveNativeInheritedRoutingTarget(
@@ -2438,7 +2762,10 @@ func resolveNativeInheritedRoutingTarget(
 	if target.Terminal || strings.TrimSpace(target.Reason) != "" ||
 		strings.TrimSpace(target.ConversationID) == "" ||
 		strings.TrimSpace(target.LeadID) == "" ||
-		strings.TrimSpace(target.ActiveBindingID) == "" {
+		strings.TrimSpace(target.ActiveBindingID) == "" ||
+		target.PredecessorProviderMessageID != snapshot.PredecessorProviderMessageID ||
+		target.PredecessorIngressSequence <= 0 ||
+		target.PredecessorIngressSequence >= snapshot.IngressSequence {
 		return nativeInheritedRoutingTarget{}, errors.New("WhatsApp inherited routing target is incomplete")
 	}
 	return target, nil
@@ -2452,7 +2779,11 @@ func ensureNativeEvolutionConversation(
 	rule nativeInboundRule,
 	storedIdentity nativeEvolutionStoredMessageIdentity,
 	routingSnapshot *nativeIngressRoutingSnapshot,
+	inheritedProof *nativeInheritedRoutingCaptureProof,
 ) (nativeEvolutionConversation, error) {
+	if message.IdentityPNConflict {
+		return nativeEvolutionConversation{}, errNativeStoredContactPNConflict
+	}
 	if routingSnapshot != nil && routingSnapshot.TargetMode == "inherit_predecessor" && storedIdentity.ID == "" {
 		target, err := resolveNativeInheritedRoutingTarget(ctx, tx, session, *routingSnapshot)
 		if err != nil {
@@ -2460,6 +2791,15 @@ func ensureNativeEvolutionConversation(
 		}
 		effectiveSnapshot := *routingSnapshot
 		if target.Ready {
+			*inheritedProof = nativeInheritedRoutingCaptureProof{
+				OrganizationID: session.OrganizationID, SessionID: session.ID,
+				InboxEventKey:                routingSnapshot.InboxEventKey,
+				ProviderMessageID:            message.ProviderMessageID,
+				PredecessorProviderMessageID: routingSnapshot.PredecessorProviderMessageID,
+				PredecessorInboxEventKey:     routingSnapshot.PredecessorInboxEventKey,
+				PredecessorIngressSequence:   target.PredecessorIngressSequence,
+				Target:                       target,
+			}
 			if effectiveSnapshot.ConversationID != "" && effectiveSnapshot.ConversationID != target.ConversationID {
 				return nativeEvolutionConversation{}, errors.New("WhatsApp inherited routing target conversation conflict")
 			}
@@ -2470,12 +2810,68 @@ func ensureNativeEvolutionConversation(
 		}
 		routingSnapshot = &effectiveSnapshot
 	}
+	if storedIdentity.ID == "" && routingSnapshot != nil &&
+		routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+		!routingSnapshot.CapturedAt.IsZero() &&
+		routingSnapshot.TargetMode == "snapshot" &&
+		routingSnapshot.CurrentLeadID == "" && routingSnapshot.ActiveBindingID == "" &&
+		routingSnapshot.QuarantineReason == "" && !message.FromMe && !message.IsGroup &&
+		(routingSnapshot.State == "lead_match" || routingSnapshot.State == "contextual_intake") {
+		oldConversationID := routingSnapshot.IntakeUnlinkedConversationID
+		oldRemoteJID := routingSnapshot.IntakeUnlinkedRemoteJID
+		if oldConversationID == "" && routingSnapshot.ConversationID != "" {
+			// Snapshots accepted before the intake split cutover froze the old
+			// conversation ID. Read only that exact row; never discover by phone.
+			oldConversationID = routingSnapshot.ConversationID
+			err := tx.QueryRow(ctx, `
+				select remote_jid
+				from public.whatsapp_conversations
+				where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
+				for update
+			`, session.OrganizationID, session.ID, oldConversationID).Scan(&oldRemoteJID)
+			if err != nil {
+				return nativeEvolutionConversation{}, err
+			}
+		}
+		if oldConversationID != "" {
+			if err := retireNativeUnlinkedForLeadIntake(ctx, tx, session,
+				oldConversationID, oldRemoteJID, message.ProviderMessageID,
+				routingSnapshot.InboxEventKey, routingSnapshot.EventLeadID); err != nil {
+				return nativeEvolutionConversation{}, err
+			}
+			// Reuse the retired epoch's exact canonical route. A provider may
+			// present the same contact through a different PN/LID alias on this
+			// callback; that alias must not create a parallel physical epoch.
+			providerRemoteJID := message.RemoteJID
+			message.RemoteJID = oldRemoteJID
+			message.RemoteAliases = uniqueStrings(append(
+				[]string{providerRemoteJID}, message.RemoteAliases...,
+			)...)
+			// The persisted snapshot remains immutable. This event now targets a
+			// new physical epoch, while the retired row keeps its owner-only past.
+			routingSnapshot.ConversationID = ""
+		}
+	}
+	if storedIdentity.ID == "" && routingSnapshot != nil && routingSnapshot.ExpiredUnlinkedConversationID != "" {
+		// Only the immutable ingress snapshot may request a new physical epoch.
+		// The RPC compares its frozen conversation ID and canonical JID while
+		// holding the active route; a partial-index cutover is required to retire.
+		if err := retireWhatsAppUnlinkedConversationEpoch(
+			ctx, tx, session.OrganizationID, session.ID,
+			routingSnapshot.ExpiredUnlinkedConversationID,
+			routingSnapshot.ExpiredUnlinkedRemoteJID,
+		); err != nil {
+			return nativeEvolutionConversation{}, err
+		}
+	}
 	aliases := uniqueStrings(append([]string{message.RemoteJID}, message.RemoteAliases...)...)
 	var conversation nativeEvolutionConversation
 	var err error
 	if storedIdentity.ID != "" {
 		err = tx.QueryRow(ctx, `
-			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid
+			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
+			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
 			  and wc.session_id = $2::uuid
@@ -2486,10 +2882,13 @@ func ensureNativeEvolutionConversation(
 			&conversation.ID,
 			&conversation.LeadID,
 			&conversation.RemoteJID,
+			&conversation.RetentionClosed,
 		)
 	} else if routingSnapshot != nil && routingSnapshot.ConversationID != "" {
 		err = tx.QueryRow(ctx, `
-			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid
+			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
+			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
 			  and wc.session_id = $2::uuid
@@ -2500,6 +2899,7 @@ func ensureNativeEvolutionConversation(
 			&conversation.ID,
 			&conversation.LeadID,
 			&conversation.RemoteJID,
+			&conversation.RetentionClosed,
 		)
 	} else if routingSnapshot != nil {
 		// No physical conversation existed when ingress accepted this event.
@@ -2507,10 +2907,13 @@ func ensureNativeEvolutionConversation(
 		err = pgx.ErrNoRows
 	} else {
 		err = tx.QueryRow(ctx, `
-			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid
+			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
+			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
 			  and wc.session_id = $2::uuid
+			  and wc.retired_at is null
 			  and (
 			    wc.remote_jid = any($3::text[])
 			    or exists (
@@ -2528,11 +2931,24 @@ func ensureNativeEvolutionConversation(
 			&conversation.ID,
 			&conversation.LeadID,
 			&conversation.RemoteJID,
+			&conversation.RetentionClosed,
 		)
 	}
 	conversationMissing := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !conversationMissing {
 		return nativeEvolutionConversation{}, err
+	}
+	if !conversationMissing && whatsAppContactPNConflict(message.RemoteJID, "+"+message.ContactPhone, conversation.RemoteJID) {
+		return nativeEvolutionConversation{}, errNativeStoredContactPNConflict
+	}
+	if !conversationMissing {
+		conflict, err := nativeStoredContactPNConflict(ctx, tx, session, message, conversation.ID)
+		if err != nil {
+			return nativeEvolutionConversation{}, err
+		}
+		if conflict {
+			return nativeEvolutionConversation{}, errNativeStoredContactPNConflict
+		}
 	}
 	if storedIdentity.ID != "" && conversationMissing {
 		return nativeEvolutionConversation{}, errors.New("stored WhatsApp message conversation is missing")
@@ -2605,7 +3021,7 @@ func ensureNativeEvolutionConversation(
 			if err != nil {
 				return nativeEvolutionConversation{}, err
 			}
-		} else if !message.FromMe && message.IsCTWAAd {
+		} else if !message.FromMe && nativeCTWAIntakeEligible(message) {
 			contextualBinding = true
 			originRoundRobinID := ""
 			if rule.ManagedMessageDistribution || rule.CanonicalIntakeResolved {
@@ -2689,7 +3105,7 @@ func ensureNativeEvolutionConversation(
 			return nativeEvolutionConversation{}, err
 		}
 	}
-	if storedIdentity.ID == "" && routingSnapshot == nil {
+	if storedIdentity.ID == "" && routingSnapshot == nil && !conversation.RetentionClosed {
 		conversation, conversationMissing, err = reconcileNativeEvolutionConversationIdentity(
 			ctx, tx, session, message, conversation, conversationMissing, identityLead,
 		)
@@ -2705,7 +3121,9 @@ func ensureNativeEvolutionConversation(
 		// any message or binding mutation can inherit a stale snapshot.
 		var locked nativeEvolutionConversation
 		err = tx.QueryRow(ctx, `
-			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid
+			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
+			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
 			  and wc.session_id = $2::uuid
@@ -2716,6 +3134,7 @@ func ensureNativeEvolutionConversation(
 			&locked.ID,
 			&locked.LeadID,
 			&locked.RemoteJID,
+			&locked.RetentionClosed,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nativeEvolutionConversation{}, errors.New("WhatsApp conversation changed during identity reconciliation")
@@ -2729,6 +3148,7 @@ func ensureNativeEvolutionConversation(
 		conversation.ID = locked.ID
 		conversation.LeadID = locked.LeadID
 		conversation.RemoteJID = locked.RemoteJID
+		conversation.RetentionClosed = locked.RetentionClosed
 	}
 
 	if conversationMissing {
@@ -2741,13 +3161,16 @@ func ensureNativeEvolutionConversation(
 				$1::uuid, $2::uuid, null, nullif($3, '')::uuid, $4,
 				nullif($5, ''), nullif($6, ''), $7, 0, '{"source":"evolution_go_native"}'::jsonb
 			)
-			on conflict (session_id, remote_jid)
+			on conflict (session_id, remote_jid) where retired_at is null
 			do update set
 				deleted_at = null,
 				assigned_user_id = coalesce(whatsapp_conversations.assigned_user_id, excluded.assigned_user_id),
 				contact_phone = coalesce(whatsapp_conversations.contact_phone, excluded.contact_phone),
 				contact_name = coalesce(whatsapp_conversations.contact_name, excluded.contact_name),
 				updated_at = now()
+			where whatsapp_conversations.lead_id is not null
+			   or coalesce(whatsapp_conversations.is_group, false) = true
+			   or whatsapp_conversations.created_at > clock_timestamp() - interval '7 days'
 			returning id::text, coalesce(lead_id::text, ''), remote_jid
 		`, session.OrganizationID, session.ID, lead.AssignedUserID, message.RemoteJID, message.ContactPhone, contactName, message.IsGroup).Scan(
 			&conversation.ID, &conversation.LeadID, &conversation.RemoteJID,
@@ -2757,6 +3180,14 @@ func ensureNativeEvolutionConversation(
 		}
 	}
 	bindingApplied := false
+	if conversation.RetentionClosed {
+		// Historical/replayed traffic may still target the old physical ID,
+		// but an expired unlinked route must never become a lead or regain
+		// content, unread counts, media or another active binding.
+		quarantineReason = "whatsapp_unlinked_epoch_expired"
+		lead = nativeEvolutionLead{}
+		contextualBinding = false
+	}
 	if lead.ID != "" && quarantineReason == "" && (contextualBinding || conversation.LeadID == "") {
 		activeLeadID, historicalReplay, err := activateNativeWhatsAppConversationLeadBinding(
 			ctx,
@@ -2774,6 +3205,11 @@ func ensureNativeEvolutionConversation(
 		conversation.MessageLeadID = lead.ID
 		conversation.HistoricalBindingReplay = historicalReplay
 		bindingApplied = true
+		if inheritedProof.Target.Ready && !historicalReplay &&
+			conversation.ID == inheritedProof.Target.ConversationID &&
+			conversation.MessageLeadID == inheritedProof.Target.LeadID {
+			inheritedProof.BindingIsCurrent = true
+		}
 	} else if routingSnapshot != nil && routingSnapshot.EventLeadID == "" && quarantineReason == "" {
 		conversation.MessageLeadID = ""
 		conversation.HistoricalBindingReplay = strings.TrimSpace(conversation.LeadID) != strings.TrimSpace(routingSnapshot.CurrentLeadID)
@@ -2809,6 +3245,13 @@ func ensureNativeEvolutionConversation(
 	if rule.ManagedProviderEventPending && conversation.MessageLeadID != lead.ID {
 		return nativeEvolutionConversation{}, errors.New("pending managed WhatsApp provider event lead mismatch")
 	}
+	if routingSnapshot != nil && routingSnapshot.State == "unlinked" &&
+		routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+		(conversation.RetentionClosed || conversation.LeadID != "") {
+		// The historical ingress route is pinned to its old epoch. It may be
+		// attached by the history resolver, but cannot rewrite a newer alias.
+		return conversation, nil
+	}
 
 	// Identity discovery is not a binding operation. In particular, a delayed
 	// event must not overwrite an alias that the row-locked binding RPC already
@@ -2834,6 +3277,36 @@ func ensureNativeEvolutionConversation(
 		}
 	}
 	return conversation, nil
+}
+
+func retireNativeUnlinkedForLeadIntake(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	conversationID, remoteJID, providerMessageID, inboxEventKey, leadID string,
+) error {
+	var rawResult string
+	err := tx.QueryRow(ctx, `
+		select public.retire_whatsapp_unlinked_conversation_for_lead_intake(
+		  $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, nullif($7, '')::uuid
+		)::text
+	`, session.OrganizationID, session.ID, conversationID, remoteJID,
+		providerMessageID, inboxEventKey, leadID).Scan(&rawResult)
+	if err != nil {
+		return err
+	}
+	var outcome struct {
+		Retired        bool   `json:"retired"`
+		ConversationID string `json:"conversation_id"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(rawResult), &outcome); err != nil {
+		return fmt.Errorf("decode WhatsApp lead intake epoch retirement: %w", err)
+	}
+	if !outcome.Retired || outcome.ConversationID != conversationID {
+		return fmt.Errorf("%w: WhatsApp lead intake epoch retirement %s", ErrConversationBindingChanged, outcome.Reason)
+	}
+	return nil
 }
 
 func nativeConversationHasAttachedLead(conversation nativeEvolutionConversation, conversationMissing bool) bool {
@@ -2897,6 +3370,9 @@ func reconcileNativeEvolutionConversationIdentity(
 		from public.whatsapp_conversations
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
+		  and retired_at is null
+		  and (lead_id is not null or coalesce(is_group, false) = true
+		       or created_at > clock_timestamp() - interval '7 days')
 		  and (remote_jid = $3 or remote_jid = any($4::text[]))
 		order by id
 	`, session.OrganizationID, session.ID, canonicalJID, opaqueAliases)
@@ -2941,6 +3417,9 @@ func reconcileNativeEvolutionConversationIdentity(
 		from public.whatsapp_conversations
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
+		  and retired_at is null
+		  and (lead_id is not null or coalesce(is_group, false) = true
+		       or created_at > clock_timestamp() - interval '7 days')
 		  and id = any($3::uuid[])
 		order by id
 		for update
@@ -3249,7 +3728,7 @@ func nativeSingleEvolutionAliasLeadID(leadIDs []string) (string, error) {
 }
 
 func findSingleNativeEvolutionLead(ctx context.Context, tx pgx.Tx, organizationID string, message nativeEvolutionMessage) (nativeEvolutionLead, error) {
-	candidates := phoneMatchCandidates(append([]string{message.ContactPhone}, message.RemoteAliases...)...)
+	candidates := nativeContactPhoneCandidates(message)
 	if len(candidates) == 0 {
 		return nativeEvolutionLead{}, nil
 	}
@@ -3326,7 +3805,7 @@ func findScopedNativeEvolutionLeadByPhone(
 	message nativeEvolutionMessage,
 	originRoundRobinID string,
 ) (nativeEvolutionLead, error) {
-	candidates := phoneMatchCandidates(append([]string{message.ContactPhone}, message.RemoteAliases...)...)
+	candidates := nativeContactPhoneCandidates(message)
 	matchesByID := map[string]nativeEvolutionLead{}
 	for _, candidate := range candidates {
 		var match nativeEvolutionLead
@@ -3451,7 +3930,7 @@ func nativeEvolutionMessageLeadID(conversation nativeEvolutionConversation) stri
 }
 
 func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage, rule nativeInboundRule) (nativeEvolutionLead, error) {
-	if message.ContactPhone == "" || !message.IsCTWAAd {
+	if message.ContactPhone == "" || !nativeCTWAIntakeEligible(message) {
 		return nativeEvolutionLead{}, nil
 	}
 	ctwaConfirmationMethod := nativeCTWAAdConfirmationMethod(message)
@@ -3572,7 +4051,7 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		  p_metadata => $9::jsonb,
 		  p_origin_round_robin_id => nullif($15, '')::uuid
 		)
-	`, session.OrganizationID, firstNonEmpty(message.ContactName, message.ContactPhone), message.ContactPhone,
+	`, session.OrganizationID, firstNonEmpty(message.ContactName, message.ContactPhone), leadPhoneFromWhatsAppPN(message.ContactPhone),
 		firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline, rule.SourceLabel, sourceDetailFallback), session.ID, message.Content,
 		assignment.UserID, message.SentAt, metadata, assignment.PipelineID, assignment.StageID, createdBy,
 		message.CampaignPropertyCode, propertyID, targetRoundRobinID).Scan(
@@ -3885,7 +4364,7 @@ func resolveNativeCampaignProperty(ctx context.Context, tx pgx.Tx, organizationI
 	return matches[0], nil
 }
 
-func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversation nativeEvolutionConversation, message nativeEvolutionMessage, captureState, attendanceEntryID string) (bool, string, string, error) {
+func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversation nativeEvolutionConversation, message nativeEvolutionMessage, captureState, attendanceEntryID string, externalOutbound bool) (bool, string, string, error) {
 	suppressedFingerprint := ""
 	if captureState == "suppressed" {
 		suppressedFingerprint = nativeManagedWhatsAppMessageFingerprint(
@@ -3916,6 +4395,9 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		message.MediaError = ""
 	}
 	metadata := nativeEvolutionMessageMetadata(message, conversation)
+	if externalOutbound {
+		metadata["whatsapp_observation_origin"] = "external_session"
+	}
 	if captureState == "suppressed" {
 		metadata = map[string]any{
 			"source": "evolution_go_webhook",
@@ -3933,9 +4415,10 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		}
 	}
 	messageMetadata := jsonb(metadata)
-	var existingID, existingConversationID, existingLeadID, existingStatus string
+	var existingID, existingConversationID, existingLeadID, existingStatus, existingCaptureState string
 	rows, err := tx.Query(ctx, `
-		select id::text, conversation_id::text, coalesce(lead_id::text, ''), status
+		select id::text, conversation_id::text, coalesce(lead_id::text, ''), status,
+		       coalesce(capture_state, 'captured')
 		from public.whatsapp_messages
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
@@ -3956,7 +4439,7 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			rows.Close()
 			return false, "", "", errors.New("WhatsApp message provider identity conflict")
 		}
-		if err := rows.Scan(&existingID, &existingConversationID, &existingLeadID, &existingStatus); err != nil {
+		if err := rows.Scan(&existingID, &existingConversationID, &existingLeadID, &existingStatus, &existingCaptureState); err != nil {
 			rows.Close()
 			return false, "", "", err
 		}
@@ -3973,6 +4456,17 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		}
 		if existingLeadID != "" && existingLeadID != expectedLeadID {
 			return false, "", "", errors.New("WhatsApp message lead identity conflict")
+		}
+		if existingCaptureState == "unlinked_ephemeral" || existingCaptureState == "promoted_unlinked" ||
+			existingCaptureState == "observed_unattended" {
+			if existingLeadID != expectedLeadID ||
+				(existingCaptureState == "unlinked_ephemeral" && existingLeadID != "") ||
+				(existingCaptureState != "unlinked_ephemeral" && existingLeadID == "") {
+				return false, "", "", errors.New("WhatsApp unlinked message replay identity conflict")
+			}
+			// Provider retries cannot restore content/media after retention or
+			// mutate a message that was explicitly promoted to lead history.
+			return false, existingConversationID, existingID, nil
 		}
 		incomingStatus := "received"
 		if message.FromMe {
@@ -4019,7 +4513,7 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 	}
 	mediaStatus := message.MediaStatus
 	mediaError := message.MediaError
-	if captureState == "captured" && conversation.LeadResolutionQuarantineReason == "" && nativeIsMediaType(message.MessageType) {
+	if nativeEvolutionMessageHasVisibleCapture(captureState) && conversation.LeadResolutionQuarantineReason == "" && nativeIsMediaType(message.MessageType) {
 		if message.MediaStoragePath != "" {
 			mediaStatus = "ready"
 			mediaError = ""
@@ -4110,6 +4604,7 @@ func nativeEvolutionMessageMetadata(message nativeEvolutionMessage, conversation
 		"whatsapp_attribution": nativeCampaignAttribution(message),
 		"whatsapp_referral":    nativeCampaignReferralSnapshot(message),
 	}
+	appendNativePresentationMetadata(metadata, message)
 	if conversation.LeadResolutionQuarantineReason != "" {
 		metadata["lead_resolution_quarantine"] = map[string]any{
 			"reason":      conversation.LeadResolutionQuarantineReason,
@@ -4162,9 +4657,11 @@ type nativeEvolutionLockedMessageTarget struct {
 	CanonicalProviderID string
 	SentAt              *time.Time
 	CaptureState        string
+	ExpiredUnlinked     bool
 }
 
 var errNativeEvolutionTransportIdentityConflict = errors.New("WhatsApp transport identity conflict")
+var errNativeReceiptTargetsPending = errors.New("WhatsApp receipt targets pending")
 
 func nativeCanonicalProviderIdentity(providerMessageID string, messageID string) string {
 	return firstNonEmpty(strings.TrimSpace(providerMessageID), strings.TrimSpace(messageID))
@@ -4195,7 +4692,8 @@ func lockNativeEvolutionMessageTarget(
 			order by message.id
 			limit 2
 		), locked_conversation as materialized (
-			select target.id as target_id, conversation.id
+			select target.id as target_id, conversation.id, conversation.lead_id,
+			       conversation.is_group, conversation.retired_at, conversation.created_at
 			from target_identity as target
 			join public.whatsapp_conversations as conversation
 			  on conversation.id = target.conversation_id
@@ -4212,7 +4710,15 @@ func lockNativeEvolutionMessageTarget(
 			coalesce(message.provider_message_id, ''),
 			coalesce(message.client_message_id, ''),
 			message.sent_at,
-			coalesce(message.capture_state, 'captured')
+			coalesce(message.capture_state, 'captured'),
+			message.lead_id is null
+			  and conversation.lead_id is null
+			  and not coalesce(conversation.is_group, false)
+			  and (
+			    conversation.retired_at is not null
+			    or conversation.created_at <= clock_timestamp() - interval '7 days'
+			    or message.unlinked_retention_scrubbed_at is not null
+			  )
 		from target_identity as target
 		join locked_conversation as conversation
 		  on conversation.target_id = target.id
@@ -4247,6 +4753,7 @@ func lockNativeEvolutionMessageTarget(
 			&target.ClientMessageID,
 			&target.SentAt,
 			&target.CaptureState,
+			&target.ExpiredUnlinked,
 		); err != nil {
 			return nativeEvolutionLockedMessageTarget{}, err
 		}
@@ -4282,6 +4789,11 @@ func processNativeEvolutionDeletion(ctx context.Context, tx pgx.Tx, session nati
 	}
 	if err != nil {
 		return err
+	}
+	// The retention scrub keeps provider identity as a tombstone. A late delete
+	// must not append metadata or restore the preview on that expired epoch.
+	if target.ExpiredUnlinked {
+		return nil
 	}
 	tag, err := tx.Exec(ctx, `
 			update public.whatsapp_messages
@@ -4332,47 +4844,6 @@ func processNativeEvolutionDeletion(ctx context.Context, tx pgx.Tx, session nati
 }
 
 func processNativeEvolutionReaction(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage, inboxAcceptedAt time.Time, routingSnapshot *nativeIngressRoutingSnapshot) error {
-	target, err := lockNativeEvolutionMessageTarget(
-		ctx,
-		tx,
-		session,
-		message.ReactionTargetID,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("reaction target %s not found yet", message.ReactionTargetID)
-	}
-	if err != nil {
-		return err
-	}
-	if target.CaptureState == "suppressed" || target.LeadID == "" {
-		return nil
-	}
-	bindingID := ""
-	if routingSnapshot != nil {
-		bindingID = routingSnapshot.ActiveBindingID
-	} else {
-		bindingID, err = attendanceBindingID(ctx, tx, session.OrganizationID, target.ConversationID, session.ID, target.LeadID)
-		if err != nil {
-			return err
-		}
-	}
-	ingressSequence := int64(0)
-	if routingSnapshot != nil {
-		ingressSequence = routingSnapshot.IngressSequence
-	}
-	providerOccurredAt := message.SentAt
-	if message.ProviderTimestampMissing {
-		providerOccurredAt = time.Time{}
-	}
-	attendanceEntryID, err := eventAttendanceEntry(ctx, tx, session.OrganizationID,
-		target.ConversationID, session.ID, target.LeadID, bindingID,
-		message.ProviderMessageID, providerOccurredAt, inboxAcceptedAt, ingressSequence)
-	if err != nil {
-		return err
-	}
-	if attendanceEntryID == "" {
-		return nil
-	}
 	actorJID := normalizeRemoteAlias(message.SenderJID)
 	if message.FromMe {
 		var valid bool
@@ -4381,80 +4852,32 @@ func processNativeEvolutionReaction(ctx context.Context, tx pgx.Tx, session nati
 			actorJID, valid = canonicalWhatsAppSelfJID(session.PhoneNumber)
 		}
 		if !valid {
-			return fmt.Errorf("outbound reaction actor identity is unavailable")
+			return errors.New("outbound reaction actor identity is unavailable")
 		}
+	} else {
+		actorJID = firstNonEmpty(actorJID, message.RemoteJID)
 	}
-	actorJID = firstNonEmpty(actorJID, message.RemoteJID)
-	if actorJID == "" {
-		return fmt.Errorf("reaction actor is missing")
+	epoch := -1
+	inboxEventKey := ""
+	ingressSequence := int64(0)
+	if routingSnapshot != nil {
+		epoch = routingSnapshot.ProcessingEpoch
+		inboxEventKey = routingSnapshot.InboxEventKey
+		ingressSequence = routingSnapshot.IngressSequence
 	}
-	state := "active"
-	if message.ReactionEmoji == "" {
-		state = "removed"
+	var result string
+	err := tx.QueryRow(ctx, `
+		select public.apply_whatsapp_provider_reaction(
+		  $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8,
+		  $9::timestamptz, $10, $11, $12::bigint, null::uuid, $13
+		)::text
+	`, session.OrganizationID, session.ID, message.ProviderMessageID,
+		message.ReactionTargetID, actorJID, message.SenderName, message.FromMe,
+		message.ReactionEmoji, message.SentAt, inboxEventKey, epoch, ingressSequence, whatsappWebhookWorkerID).Scan(&result)
+	if err != nil && (strings.Contains(err.Error(), "whatsapp_reaction_target_identity_conflict") ||
+		strings.Contains(err.Error(), "whatsapp_reaction_event_identity_conflict")) {
+		return fmt.Errorf("%w: %v", errNativeEvolutionTransportIdentityConflict, err)
 	}
-	if _, err := tx.Exec(ctx, `
-		insert into public.whatsapp_message_reactions (
-			organization_id, session_id, conversation_id, target_message_id,
-			target_provider_message_id, provider_reaction_message_id, actor_jid,
-			actor_name, from_me, emoji, status, reacted_at, removed_at
-		) values (
-			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			$5, $6, $7, nullif($8, ''), $9, nullif($10, ''), $11, $12::timestamptz,
-			case when $11 = 'removed' then $12::timestamptz else null::timestamptz end
-		)
-		on conflict (organization_id, session_id, target_provider_message_id, actor_jid)
-		do update set
-			provider_reaction_message_id = excluded.provider_reaction_message_id,
-			actor_name = coalesce(excluded.actor_name, whatsapp_message_reactions.actor_name),
-			from_me = excluded.from_me,
-			emoji = excluded.emoji,
-			status = excluded.status,
-			reacted_at = excluded.reacted_at,
-			removed_at = excluded.removed_at,
-			updated_at = now()
-	`, session.OrganizationID, session.ID, target.ConversationID, target.ID, target.CanonicalProviderID,
-		message.ProviderMessageID, actorJID, message.SenderName, message.FromMe,
-		message.ReactionEmoji, state, message.SentAt); err != nil {
-		return err
-	}
-
-	direction := "inbound"
-	status := "received"
-	if message.FromMe {
-		direction = "outbound"
-		status = "sent"
-	}
-	_, err = tx.Exec(ctx, `
-		insert into public.whatsapp_messages (
-			organization_id, conversation_id, session_id, lead_id,
-			provider_message_id, message_id, from_me, direction, content,
-			message_type, reaction_to_message_id, reaction_emoji,
-			reaction_sender_jid, reaction_sender_name, remote_jid, sender_jid,
-			sender_name, status, sent_at, received_at, metadata, capture_state
-		) values (
-			$1::uuid, $2::uuid, $3::uuid, nullif($4, '')::uuid,
-			$5, $5, $6, $7, nullif($8, ''),
-			'reaction', $9, nullif($8, ''), $10, nullif($11, ''), $12, $10,
-			nullif($11, ''), $13, $14, case when $6 then null else now() end,
-			jsonb_build_object(
-			  'source', 'evolution_go_native',
-			  'attendance_entry_id', $15::uuid,
-			  'whatsapp_attendance_capture', jsonb_build_object(
-			    'state', 'captured', 'attendance_entry_id', $15::uuid
-			  )
-			), 'captured'
-		)
-		on conflict (conversation_id, message_id)
-		do update set
-			content = case when whatsapp_messages.capture_state = 'suppressed' then null else excluded.content end,
-			reaction_emoji = case when whatsapp_messages.capture_state = 'suppressed' then null else excluded.reaction_emoji end,
-			reaction_sender_jid = excluded.reaction_sender_jid,
-			reaction_sender_name = excluded.reaction_sender_name,
-			sent_at = excluded.sent_at,
-			updated_at = now()
-	`, session.OrganizationID, target.ConversationID, session.ID, target.LeadID,
-		message.ProviderMessageID, message.FromMe, direction, message.ReactionEmoji,
-		target.CanonicalProviderID, actorJID, message.SenderName, message.RemoteJID, status, message.SentAt, attendanceEntryID)
 	return err
 }
 
@@ -4624,11 +5047,13 @@ func resolveNativeStatusTransportTargets(
 }
 
 func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item pendingEvolutionWebhook, statuses []nativeEvolutionStatus) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	ctx, cancel := context.WithTimeout(ctx, nativeWebhookItemTimeout)
+	defer cancel()
+	tx, err := repo.beginNativeWebhookTx(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackWebhookTx(tx)
 	session, err := loadNativeEvolutionSession(ctx, tx, item)
 	if err != nil {
 		return err
@@ -4644,6 +5069,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 	}
 	failedOutboxIDs := make([]string, 0)
 	failedOutboxSeen := map[string]struct{}{}
+	unresolvedIDs := map[string]struct{}{}
 	for _, receipt := range statuses {
 		// Repeat the canonical outbox -> message acquisition order inside each
 		// READ COMMITTED receipt. Rows inserted after the batch pre-lock are then
@@ -4739,6 +5165,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 				ctx,
 				tx,
 				session.OrganizationID,
+				session.ID,
 				notificationReceipt,
 			)
 			if err != nil {
@@ -4756,7 +5183,9 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("message status target not found yet: %s", strings.Join(missing, ","))
+			for _, id := range missing {
+				unresolvedIDs[id] = struct{}{}
+			}
 		}
 	}
 	for _, outboxID := range failedOutboxIDs {
@@ -4764,13 +5193,23 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if len(unresolvedIDs) > 0 {
+		// Known identities are already committed monotonically. Keep the original
+		// signed batch in bounded retry so a future target receives its receipt;
+		// never acknowledge an absent/foreign target or undo its known siblings.
+		return fmt.Errorf("%w: %d unresolved identities", errNativeReceiptTargetsPending, len(unresolvedIDs))
+	}
+	return nil
 }
 
 func reconcileNativeNotificationWhatsAppReceipt(
 	ctx context.Context,
 	tx pgx.Tx,
 	organizationID string,
+	sessionID string,
 	receipt nativeEvolutionStatus,
 ) (map[string]bool, error) {
 	matched := map[string]bool{}
@@ -4786,13 +5225,14 @@ func reconcileNativeNotificationWhatsAppReceipt(
 		}
 		var rawOutcome string
 		if err := tx.QueryRow(ctx, `
-			select private.reconcile_notification_whatsapp_delivery(
+			select public.evolution_go_reconcile_notification_receipt(
 				$1::uuid,
-				$2,
+				$2::uuid,
 				$3,
-				$4::timestamptz
+				$4,
+				$5::timestamptz
 			)::text
-		`, organizationID, messageID, status, receipt.OccurredAt).Scan(&rawOutcome); err != nil {
+		`, organizationID, sessionID, messageID, status, receipt.OccurredAt).Scan(&rawOutcome); err != nil {
 			return nil, err
 		}
 
@@ -4801,6 +5241,11 @@ func reconcileNativeNotificationWhatsAppReceipt(
 		}
 		if err := json.Unmarshal([]byte(rawOutcome), &result); err != nil {
 			return nil, fmt.Errorf("decode notification WhatsApp receipt outcome: %w", err)
+		}
+		if strings.EqualFold(strings.TrimSpace(result.Outcome), "not_found") {
+			// Not-found is a pending identity, not a SQL failure. The caller commits
+			// independent known receipts and keeps this batch retryable.
+			continue
 		}
 		reconciled, err := nativeNotificationReceiptOutcomeMatched(result.Outcome)
 		if err != nil {

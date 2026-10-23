@@ -18,5 +18,7 @@ export function useDashboardVisits(filters: DashboardAPIFilters | undefined, ena
     enabled: enabled && isReady,
     queryFn: ({ signal }) => getDashboardVisits({ organizationId, filters, signal }),
     staleTime: 30_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   })
 }

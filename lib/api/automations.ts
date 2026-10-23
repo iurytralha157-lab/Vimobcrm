@@ -1,3 +1,4 @@
+import type { VimobAPIRequestIntent } from '@/lib/api/vimob-client'
 import {
   apiAutomationExecutionListResponseSchema,
   apiAutomationExecutionStepListResponseSchema,
@@ -12,7 +13,8 @@ import {
   apiAutomationTemplateResponseSchema,
   apiAutomationWithNodesResponseSchema,
   apiStartAutomationResponseSchema,
-  automationMediaTypeSchema,
+  automationMediaListQuerySchema,
+  automationExecutionListQuerySchema,
   automationRuntimeIssueKindSchema,
   createAutomationInputSchema,
   createAutomationTemplateInputSchema,
@@ -345,11 +347,13 @@ export const automationsAPI = {
     automationId: string,
     input: { leadId: string; conversationId?: string | null },
     organizationId?: string | null,
+    transport?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(startAutomationInputSchema, input, 'automations.start');
     const response = await vimobAPIRequest<Envelope<StartAutomationResult>>(
       `/v1/automations/${automationId}/start`,
       {
+        ...transport,
         method: 'POST',
         organizationId,
         body,
@@ -394,16 +398,19 @@ export const automationsAPI = {
     leadId?: string;
     activeOnly?: boolean;
     limit?: number;
+    offset?: number;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
     organizationId?: string | null;
   }) {
+    const query = parseDomainInput(automationExecutionListQuerySchema, {
+      automationId: params.automationId, leadId: params.leadId, activeOnly: params.activeOnly,
+      limit: params.limit, offset: params.offset, status: params.status, dateFrom: params.dateFrom, dateTo: params.dateTo,
+    }, 'automations.executions.query');
     const response = await vimobAPIRequest<Envelope<AutomationExecution[]>>('/v1/automation-executions', {
       organizationId: params.organizationId,
-      query: {
-        automationId: params.automationId,
-        leadId: params.leadId,
-        activeOnly: params.activeOnly,
-        limit: params.limit,
-      },
+      query,
     });
     validateDomainResponse(apiAutomationExecutionListResponseSchema, response, 'automations.executions.list');
     return response.data;
@@ -472,12 +479,12 @@ export const automationsAPI = {
 
   async listMedia(
     mediaType: AutomationMediaType,
-    params: { limit?: number; offset?: number; organizationId?: string | null } = {},
+    params: { limit?: number; offset?: number; search?: string; organizationId?: string | null } = {},
   ) {
-    const validatedMediaType = parseDomainInput(automationMediaTypeSchema, mediaType, 'automations.media.list');
+    const query = parseDomainInput(automationMediaListQuerySchema, { mediaType, limit: params.limit, offset: params.offset, search: params.search?.trim() || undefined }, 'automations.media.query');
     const response = await vimobAPIRequest<Envelope<AutomationMediaPage>>('/v1/automation-media', {
       organizationId: params.organizationId,
-      query: { mediaType: validatedMediaType, limit: params.limit, offset: params.offset },
+      query,
     });
     validateDomainResponse(apiAutomationMediaListResponseSchema, response, 'automations.media.list');
     return response.data;

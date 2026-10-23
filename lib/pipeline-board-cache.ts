@@ -1,4 +1,5 @@
 import { replaceEqualDeep } from '@tanstack/react-query';
+import { searchPhoneIncludes, searchTextIncludes } from '@/lib/search-text';
 
 export type PipelineBoardQueryKey = readonly unknown[];
 
@@ -32,10 +33,21 @@ export interface PipelineBoardLeadLike {
   property?: { preco?: number | null } | null;
 }
 
+export type PipelineLeadQueryScopeMatch = 'match' | 'mismatch' | 'unknown';
+
 export function pipelineLeadMatchesQueryKeyScope(
   queryKey: PipelineBoardQueryKey,
   lead: PipelineBoardLeadLike,
 ) {
+  return getPipelineLeadQueryScopeMatch(queryKey, lead) === 'match';
+}
+
+/** This checks filters, never authorization. Missing server facts are unknown. */
+export function getPipelineLeadQueryScopeMatch(
+  queryKey: PipelineBoardQueryKey,
+  lead: PipelineBoardLeadLike,
+) {
+  let hasUnknownCriteria = false;
   const isUnassignedFilter = queryKey[15] === true;
   const filterUserId = typeof queryKey[3] === 'string' ? queryKey[3] : undefined;
   if (
@@ -44,12 +56,12 @@ export function pipelineLeadMatchesQueryKeyScope(
     filterUserId !== 'all' &&
     filterUserId !== lead.assigned_user_id
   ) {
-    return false;
+    return 'mismatch' as const;
   }
 
   const dealStatus = typeof queryKey[7] === 'string' ? queryKey[7] : undefined;
   if (dealStatus && dealStatus !== 'all' && dealStatus !== lead.deal_status) {
-    return false;
+    return 'mismatch' as const;
   }
 
   const dateFrom = typeof queryKey[4] === 'string' ? Date.parse(queryKey[4]) : NaN;
@@ -66,59 +78,74 @@ export function pipelineLeadMatchesQueryKeyScope(
           : lead.created_at;
     const eventTime = eventAt ? Date.parse(eventAt) : NaN;
     if (!isOpenOperational && (!Number.isFinite(eventTime) || eventTime < dateFrom || eventTime > dateTo)) {
-      return false;
+      return 'mismatch' as const;
     }
   }
 
   const tagIds = typeof queryKey[6] === 'string'
     ? new Set(queryKey[6].split(',').map((tagId) => tagId.trim()).filter(Boolean))
     : undefined;
-  if (tagIds?.size && !lead.tags?.some((tag) => tag.id && tagIds.has(tag.id))) return false;
+  if (tagIds?.size && !lead.tags?.some((tag) => tag.id && tagIds.has(tag.id))) return 'mismatch' as const;
 
   const search = typeof queryKey[8] === 'string' ? queryKey[8].trim().toLocaleLowerCase('pt-BR') : '';
   if (search) {
-    const searchable = [lead.name, lead.email, lead.phone]
-      .filter((value): value is string => typeof value === 'string')
-      .join(' ')
-      .toLocaleLowerCase('pt-BR');
-    if (!searchable.includes(search)) return false;
+    if (!searchTextIncludes(lead.name, search)
+      && !searchTextIncludes(lead.email, search)
+      && !searchPhoneIncludes(lead.phone, search)) return 'mismatch' as const;
   }
 
   const expectedPageId = typeof queryKey[17] === 'string' ? queryKey[17] : undefined;
   const expectedCampaign = typeof queryKey[9] === 'string' ? queryKey[9] : undefined;
+  const expectedCampaigns: string[] = expectedCampaign ? [expectedCampaign] : [];
+  if (typeof queryKey[19] === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(queryKey[19]);
+      if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) return 'mismatch' as const;
+      expectedCampaigns.push(...parsed);
+    } catch { return 'mismatch' as const; }
+  }
   const expectedAdSet = typeof queryKey[10] === 'string' ? queryKey[10] : undefined;
   const expectedAd = typeof queryKey[11] === 'string' ? queryKey[11] : undefined;
-  if (expectedPageId || expectedCampaign || expectedAdSet || expectedAd) {
-    // Attribution filters must be proven by one enrichment row. Matching the
-    // page on one row and the campaign/ad on another could combine unrelated
-    // Meta reentries. Missing enrichment therefore fails closed until refetch.
+  if (expectedPageId || expectedCampaigns.length || expectedAdSet || expectedAd) {
+    // One metadata row can prove a match, but cannot prove the absence of a
+    // historical ledger entry or a legacy lead projection. Keep unknown
+    // membership separate so callers preserve an authorized snapshot and refetch.
     const hasMatchingAttribution = lead.lead_meta?.some((meta) => (
       (!expectedPageId || meta.page_id === expectedPageId) &&
-      (!expectedCampaign || meta.campaign_id === expectedCampaign || meta.campaign_name === expectedCampaign) &&
+      (!expectedCampaigns.length || expectedCampaigns.some((campaign) => meta.campaign_id === campaign || meta.campaign_name === campaign)) &&
       (!expectedAdSet || meta.adset_id === expectedAdSet || meta.adset_name === expectedAdSet) &&
       (!expectedAd || meta.ad_id === expectedAd || meta.ad_name === expectedAd)
     ));
-    if (!hasMatchingAttribution) return false;
+    if (!hasMatchingAttribution) hasUnknownCriteria = true;
   }
 
   const expectedSource = typeof queryKey[12] === 'string' ? queryKey[12] : undefined;
   if (expectedSource && lead.source !== expectedSource) {
-    return false;
+    return 'mismatch' as const;
   }
 
   const serializedUserIds = typeof queryKey[13] === 'string' ? queryKey[13] : undefined;
-  if (!isUnassignedFilter && serializedUserIds === '__none__') return false;
+  if (!isUnassignedFilter && serializedUserIds === '__none__') return 'mismatch' as const;
   if (!isUnassignedFilter && serializedUserIds) {
     const visibleUserIds = new Set(serializedUserIds.split(',').filter(Boolean));
-    if (!lead.assigned_user_id || !visibleUserIds.has(lead.assigned_user_id)) return false;
+    if (!lead.assigned_user_id || !visibleUserIds.has(lead.assigned_user_id)) return 'mismatch' as const;
   }
 
-  if (isUnassignedFilter && lead.assigned_user_id !== null) return false;
+  if (isUnassignedFilter && lead.assigned_user_id !== null) return 'mismatch' as const;
 
   const teamId = typeof queryKey[16] === 'string' ? queryKey[16] : undefined;
-  if (teamId && lead.team_id !== teamId) return false;
+  if (teamId) {
+    if (isUnassignedFilter) {
+      if (lead.team_id !== teamId) return 'mismatch' as const;
+    } else if (lead.assigned_user_id === null) {
+      return 'mismatch' as const;
+    } else {
+      // Assigned-team membership is not part of this DTO; team_id is queue provenance.
+      hasUnknownCriteria = true;
+    }
+  }
 
-  return true;
+  return hasUnknownCriteria ? 'unknown' as const : 'match' as const;
 }
 
 export interface PipelineBoardStageLike<TLead extends PipelineBoardLeadLike> {
@@ -360,9 +387,11 @@ export function patchPipelineLeadInBoard<
   board: TStage[] | undefined,
   leadId: string,
   patch: Partial<TLead>,
-  options?: { keepInDestination?: boolean; destinationIndex?: number },
+  options?: { keepInDestination?: boolean; destinationIndex?: number; scopeMatch?: PipelineLeadQueryScopeMatch },
 ) {
   if (!board) return board;
+  // Unknown filter membership may not move, insert, remove or rewrite a card.
+  if (options?.scopeMatch === 'unknown') return board;
 
   const currentLocation = findPipelineLeadLocation<TLead, TStage>(board, leadId);
   if (!currentLocation) return board;
@@ -381,13 +410,13 @@ export function patchPipelineLeadInBoard<
         destinationIndex: options?.destinationIndex ?? 0,
         fallbackLead: currentLocation.lead,
         optimisticPatch: patch,
-        keepInDestination: options?.keepInDestination ?? true,
+        keepInDestination: options?.scopeMatch ? options.scopeMatch === 'match' : options?.keepInDestination ?? true,
         version: 0,
       },
     ]);
   }
 
-  const keepLead = options?.keepInDestination ?? true;
+  const keepLead = options?.scopeMatch ? options.scopeMatch === 'match' : options?.keepInDestination ?? true;
   const patchedLead = { ...currentLocation.lead, ...patch } as TLead;
   const previousValue = getPipelineLeadValue(currentLocation.lead);
   const nextValue = keepLead ? getPipelineLeadValue(patchedLead) : 0;

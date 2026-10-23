@@ -34,6 +34,7 @@ import {
 import { useCommissionsByBroker } from "@/hooks/use-commissions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
+import { getFinancialPaidAmount, getFinancialOutstandingAmount } from "@/lib/financial/entry-amount";
 import {
   DatePreset,
   getDateRangeFromPreset,
@@ -124,17 +125,11 @@ function finiteNumber(value: unknown) {
 }
 
 function getPaidAmount(entry: FinancialReportEntry) {
-  const explicitPaidAmount = entry.paid_value ?? entry.paid_amount;
-  if (explicitPaidAmount != null) return finiteNumber(explicitPaidAmount);
-  return entry.status === "paid"
-    ? finiteNumber(entry.value ?? entry.amount)
-    : 0;
+  return getFinancialPaidAmount(entry);
 }
 
 function getOutstandingAmount(entry: FinancialReportEntry) {
-  const amount = finiteNumber(entry.value ?? entry.amount);
-  const paid = finiteNumber(entry.paid_value ?? entry.paid_amount);
-  return Math.max(amount - paid, 0);
+  return getFinancialOutstandingAmount(entry);
 }
 
 function isWithinDateRange(

@@ -1,4 +1,6 @@
-import { useState } from "react";
+"use client";
+
+import { useState, useRef } from "react";
 import {
   Check,
   Crown,
@@ -36,6 +38,10 @@ import {
 import { useTeams } from "@/hooks/use-teams";
 import { usePipelines } from "@/hooks/use-stages";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { useUserAccessScope } from "@/hooks/use-user-access-scope";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { canManageTeamPipeline, getTeamPipelineQueryState } from "@/lib/teams/team-pipeline-management";
 
 type TeamPipelineRelation = {
   team_id: string;
@@ -51,16 +57,34 @@ type TeamPipelineRelation = {
 };
 
 export function TeamPipelinesManager() {
-  const { data: teams = [], isLoading: teamsLoading } = useTeams();
-  const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
-  const { data: allTeamPipelines = [] } = useAllTeamPipelines();
+  const { activeOrganization } = useAuth();
+  return <TeamPipelinesManagement key={activeOrganization.organizationId || 'none'} />;
+}
+
+function TeamPipelinesManagement() {
+  const accessScope = useUserAccessScope();
+  const { hasPermission } = useUserPermissions();
+  const canReadTeams = accessScope.isAdmin || hasPermission('team_view');
+  const teamsQuery = useTeams({ enabled: canReadTeams });
+  const pipelinesQuery = usePipelines();
+  const relationsQuery = useAllTeamPipelines({ enabled: canReadTeams });
+  const teams = teamsQuery.data || [];
+  const pipelines = pipelinesQuery.data || [];
+  const allTeamPipelines = relationsQuery.data || [];
   const assignPipeline = useAssignPipelineToTeam();
   const removePipeline = useRemovePipelineFromTeam();
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const isLoading = teamsLoading || pipelinesLoading;
+  const queryState = getTeamPipelineQueryState([teamsQuery, pipelinesQuery, relationsQuery]);
+  const isRefreshing = teamsQuery.isFetching || pipelinesQuery.isFetching || relationsQuery.isFetching;
+  const isProcessing = assignPipeline.isPending || removePipeline.isPending;
+  const operation = useRef(false);
+  const canManageTeam = (teamId: string) => canManageTeamPipeline({
+    ...accessScope, hasPipelinePermission: hasPermission('pipeline_manage'),
+  }, teamId);
+  const hasPartialScope = accessScope.isTeamLeader && !accessScope.isAdmin && accessScope.memberRole !== 'manager';
   const teamPipelineRelations = allTeamPipelines as TeamPipelineRelation[];
 
   const getTeamPipelines = (teamId: string) =>
@@ -91,10 +115,15 @@ export function TeamPipelinesManager() {
     pipelineId: string,
     isAssigned: boolean,
   ) => {
-    if (isAssigned) {
-      await removePipeline.mutateAsync({ teamId, pipelineId });
-    } else {
-      await assignPipeline.mutateAsync({ teamId, pipelineId });
+    if (operation.current || isRefreshing || !canManageTeam(teamId)) return;
+    operation.current = true;
+    try {
+      if (isAssigned) await removePipeline.mutateAsync({ teamId, pipelineId });
+      else await assignPipeline.mutateAsync({ teamId, pipelineId });
+    } catch {
+      // Mutations display the error; preserve the authoritative checked value.
+    } finally {
+      operation.current = false;
     }
   };
 
@@ -105,9 +134,20 @@ export function TeamPipelinesManager() {
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId);
 
-  if (isLoading) {
+  if (!canReadTeams) {
+    return <div role="alert" className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-[12px]">A visualização destes vínculos exige a permissão de visualizar equipes.</div>;
+  }
+
+  if (queryState === 'error' || accessScope.isError) {
+    return <div role="alert" className="space-y-3 rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-[12px]">
+      <p>Não foi possível carregar equipes, pipelines e seus vínculos. Tente novamente antes de alterar.</p>
+      <Button variant="secondary" disabled={isRefreshing} onClick={() => void Promise.all([teamsQuery.refetch(), pipelinesQuery.refetch(), relationsQuery.refetch(), accessScope.refetch()])}>Tentar novamente</Button>
+    </div>;
+  }
+
+  if (queryState === 'loading' || accessScope.isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]">
+      <div role="status" aria-label="Carregando equipes e vínculos de pipelines" className="flex h-64 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]">
         <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
       </div>
     );
@@ -115,6 +155,7 @@ export function TeamPipelinesManager() {
 
   return (
     <div className="space-y-3">
+      <p className="text-[12px] text-[var(--app-text-secondary)]">Os vínculos organizam as pipelines das equipes. A visualização de leads segue as permissões de cada usuário.{hasPartialScope && ' Esta lista mostra apenas os vínculos das equipes que você lidera.'}</p>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
           <CardHeader className="space-y-1 p-4 pb-2">
@@ -161,7 +202,7 @@ export function TeamPipelinesManager() {
                     <div className="flex min-w-0 items-start justify-between gap-3">
                       <div className="min-w-0 space-y-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
+                          <span title={team.name} className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
                             {team.name}
                           </span>
                           {leaders.length > 0 && (
@@ -227,10 +268,10 @@ export function TeamPipelinesManager() {
                           <Badge
                             key={pipeline.id}
                             variant="secondary"
-                            className="gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
+                            className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
                           >
                             <GitBranch className="h-3 w-3" />
-                            {pipeline.name}
+                            <span className="min-w-0 truncate" title={pipeline.name}>{pipeline.name}</span>
                           </Badge>
                         ))}
                       </div>
@@ -275,7 +316,7 @@ export function TeamPipelinesManager() {
                           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-white">
                             <GitBranch className="h-3.5 w-3.5" />
                           </span>
-                          <span className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
+                          <span title={pipeline.name} className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
                             {pipeline.name}
                           </span>
                           {pipeline.is_default && (
@@ -294,17 +335,17 @@ export function TeamPipelinesManager() {
                               <Badge
                                 key={team.id}
                                 variant="secondary"
-                                className="gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
+                                className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
                               >
                                 <Users className="h-3 w-3" />
-                                {team.name}
+                                <span className="min-w-0 truncate" title={team.name}>{team.name}</span>
                               </Badge>
                             ))}
                           </div>
                         ) : (
                           <p className="flex items-center gap-1 pl-9 text-[11px] font-light text-[var(--app-text-tertiary)]">
                             <Unlink className="h-3 w-3" />
-                            Acessível a todos os usuários
+                             {hasPartialScope ? 'Nenhum vínculo visível neste escopo' : 'Sem equipe vinculada'}
                           </p>
                         )}
                       </div>
@@ -314,7 +355,7 @@ export function TeamPipelinesManager() {
                           variant="secondary"
                           className="shrink-0 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
                         >
-                          Restrita
+                           Com vínculos
                         </Badge>
                       )}
                     </div>
@@ -326,8 +367,8 @@ export function TeamPipelinesManager() {
         </Card>
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[90dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!isProcessing && !operation.current) setDialogOpen(open); }}>
+        <DialogContent data-management-editor className="max-h-[90dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-[14px] font-normal">
               <span className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-white">
@@ -336,7 +377,7 @@ export function TeamPipelinesManager() {
               {selectedTeam?.name}
             </DialogTitle>
             <DialogDescription className="text-[12px] font-light leading-[18px]">
-              Selecione as pipelines que esta equipe terá acesso.
+              {selectedTeamId && canManageTeam(selectedTeamId) ? 'Selecione as pipelines vinculadas a esta equipe.' : 'Visualização dos vínculos desta equipe. Você não tem permissão para alterá-los.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -346,8 +387,6 @@ export function TeamPipelinesManager() {
                 const isAssigned = selectedTeamId
                   ? isPipelineAssigned(selectedTeamId, pipeline.id)
                   : false;
-                const isProcessing =
-                  assignPipeline.isPending || removePipeline.isPending;
 
                 return (
                   <label
@@ -360,7 +399,8 @@ export function TeamPipelinesManager() {
                     <div className="flex min-w-0 items-center gap-3">
                       <Checkbox
                         checked={isAssigned}
-                        disabled={isProcessing}
+                        disabled={isProcessing || isRefreshing || !selectedTeamId || !canManageTeam(selectedTeamId)}
+                        aria-label={`Vincular pipeline ${pipeline.name} à equipe ${selectedTeam?.name || ''}`}
                         onCheckedChange={() => {
                           if (selectedTeamId) {
                             void handleTogglePipeline(
@@ -397,6 +437,7 @@ export function TeamPipelinesManager() {
 
           <Button
             variant="secondary"
+            disabled={isProcessing}
             className="h-9 w-full rounded-[6px] border-0 text-[12px] font-light shadow-none"
             onClick={() => setDialogOpen(false)}
           >

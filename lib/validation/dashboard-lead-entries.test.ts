@@ -32,3 +32,11 @@ test('dashboard rejeita link externo e paginação sem cursor', () => {
     data: { total: 2, items: [entry], hasMore: true, nextCursor: null },
   }).success, false)
 })
+
+test('dashboard preserva origem histórica longa no detalhe sem invalidar a página', () => {
+  const source = 'ã'.repeat(5000)
+  const result = dashboardLeadEntriesResponseSchema.parse({
+    data: { total: 1, items: [{ ...entry, source }], hasMore: false, nextCursor: null },
+  })
+  assert.equal(result.data.items[0].source, source)
+})

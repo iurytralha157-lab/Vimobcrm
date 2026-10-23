@@ -387,8 +387,9 @@ export function getSafeMessageMediaUrl(
     }
     CONTROL_OR_BIDI_CHARACTER.lastIndex = 0;
 
-    const match = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/]+={0,2})$/i.exec(candidate);
+    const match = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(;codecs=(?:opus|"opus"))?;base64,([a-z0-9+/]+={0,2})$/i.exec(candidate);
     if (!match || !SAFE_DATA_MIME_TYPES[kind].has(match[1].toLowerCase())) return null;
+    if (match[2] && (kind !== "audio" || !["audio/ogg", "audio/webm"].includes(match[1].toLowerCase()))) return null;
     return candidate;
   }
 
@@ -422,6 +423,11 @@ export function getSafeMessageMediaUrl(
   } catch {
     return null;
   }
+}
+
+export function getAttachableMessageMediaUrl(value: unknown, kind: MessageMediaKind): string | null {
+  const safeUrl = getSafeMessageMediaUrl(value, kind);
+  return safeUrl && /^https?:\/\//i.test(safeUrl) ? safeUrl : null;
 }
 
 export function getSafeExternalHttpUrl(value: unknown): string | null {
@@ -565,41 +571,73 @@ export async function createMessageMediaObjectUrl({
   url,
   kind,
   mimeType,
+  signal,
 }: {
   url: unknown;
   kind: MessageMediaKind;
   mimeType?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const safeUrl = getSafeMessageMediaUrl(url, kind);
   if (!safeUrl) throw new Error("INVALID_MEDIA_URL");
 
-  const response = await fetch(safeUrl, {
-    credentials: "same-origin",
-    referrerPolicy: "no-referrer",
-  });
-  if (!response.ok) throw new Error(`MEDIA_REQUEST_FAILED_${response.status}`);
-
-  const sourceBlob = await readResponseBlobWithLimit(response, MAX_BUFFERED_DOWNLOAD_BYTES);
+  const sourceBlob = await fetchMessageMediaBlob(safeUrl, signal);
   const blob = mimeType ? sourceBlob.slice(0, sourceBlob.size, mimeType) : sourceBlob;
   return URL.createObjectURL(blob);
 }
 
 export type MediaDownloadResult = "downloaded" | "opened";
 
+export class MessageMediaDownloadError extends Error {
+  readonly code: "http" | "timeout" | "aborted" | "network";
+  readonly status?: number;
+  constructor(code: "http" | "timeout" | "aborted" | "network", status?: number) {
+    super(code === "http" ? "O arquivo não está disponível. Atualize o link da mídia."
+      : code === "timeout" ? "O download demorou demais. Tente novamente."
+      : code === "aborted" ? "Download cancelado." : "Não foi possível baixar a mídia.");
+    this.name = "MessageMediaDownloadError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+async function fetchMessageMediaBlob(url: string, parentSignal?: AbortSignal, timeoutMs = 20_000): Promise<Blob> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  if (parentSignal?.aborted) throw new MessageMediaDownloadError("aborted");
+  parentSignal?.addEventListener("abort", cancel, { once: true });
+  const timeout = globalThis.setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  try {
+    const response = await fetch(url, { credentials: "same-origin", referrerPolicy: "no-referrer", signal: controller.signal });
+    if (!response.ok) throw new MessageMediaDownloadError("http", response.status);
+    return await readResponseBlobWithLimit(response, MAX_BUFFERED_DOWNLOAD_BYTES);
+  } catch (error) {
+    if (controller.signal.aborted) throw new MessageMediaDownloadError(timedOut ? "timeout" : "aborted");
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", cancel);
+  }
+}
+
 export async function downloadMessageMedia({
   url,
   kind,
   filename,
+  signal,
 }: {
   url: unknown;
   kind: MessageMediaKind;
   filename: unknown;
+  signal?: AbortSignal;
 }): Promise<MediaDownloadResult> {
   const safeUrl = getSafeMessageMediaUrl(url, kind);
   if (!safeUrl) throw new Error("INVALID_MEDIA_URL");
   if (typeof document === "undefined") throw new Error("DOWNLOAD_REQUIRES_BROWSER");
 
   const safeFilename = sanitizeMediaFilename(filename);
+  if (signal?.aborted) throw new MessageMediaDownloadError("aborted");
 
   if (safeUrl.startsWith("data:")) {
     clickDownloadLink(safeUrl, safeFilename, false);
@@ -607,18 +645,17 @@ export async function downloadMessageMedia({
   }
 
   try {
-    const response = await fetch(safeUrl, {
-      credentials: "same-origin",
-      referrerPolicy: "no-referrer",
-    });
-    if (!response.ok) throw new Error(`MEDIA_DOWNLOAD_FAILED_${response.status}`);
-
-    const blob = await readResponseBlobWithLimit(response, MAX_BUFFERED_DOWNLOAD_BYTES);
+    const blob = await fetchMessageMediaBlob(safeUrl, signal);
+    if (signal?.aborted) throw new MessageMediaDownloadError("aborted");
     const objectUrl = URL.createObjectURL(blob);
     clickDownloadLink(objectUrl, safeFilename, false);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
     return "downloaded";
-  } catch {
+  } catch (error) {
+    // Only an opaque browser network/CORS failure may use an isolated tab.
+    // Known HTTP failures, deadlines, cancellations and size errors stay errors.
+    if (!(error instanceof TypeError) || signal?.aborted
+      || (typeof navigator !== "undefined" && navigator.onLine === false)) throw error;
     // Cross-origin servers often disallow fetch. Opening the already-validated
     // URL in an isolated tab is the safe, memory-bounded browser fallback.
     clickDownloadLink(safeUrl, safeFilename, true);

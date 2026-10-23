@@ -38,10 +38,32 @@ func (repo Repository) Reschedule(ctx context.Context, tenantContext tenant.Cont
 	if existingID, found, err := findReplacementEventID(ctx, tx, tenantContext.OrganizationID, eventID); err != nil {
 		return RescheduleResult{}, err
 	} else if found {
-		if err := tx.Commit(ctx); err != nil {
+		// A retry reads current state; the replacement may since have been
+		// transferred or made private. Reauthorize before its full projection.
+		replacement, err := repo.getSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, existingID)
+		if err != nil {
 			return RescheduleResult{}, err
 		}
-		return repo.loadRescheduleResult(ctx, tenantContext, eventID, existingID, true)
+		if allowed, err := repo.canEditEvent(ctx, tx, tenantContext, replacement); err != nil {
+			return RescheduleResult{}, err
+		} else if !allowed {
+			return RescheduleResult{}, ErrScheduleConflict
+		}
+		previousResult, err := loadScheduleMutationEvent(ctx, tx, tenantContext, eventID)
+		if err != nil {
+			return RescheduleResult{}, err
+		}
+		newResult, err := loadScheduleMutationEvent(ctx, tx, tenantContext, existingID)
+		if err != nil {
+			return RescheduleResult{}, err
+		}
+		if !rescheduleReplayMatches(current, input, newResult) {
+			return RescheduleResult{}, ErrScheduleConflict
+		}
+		return RescheduleResult{PreviousEvent: previousResult, NewEvent: newResult, wasReplay: true}, nil
+	}
+	if err := validateExpectedScheduleVersion(current, input.ExpectedUpdatedAt); err != nil {
+		return RescheduleResult{}, err
 	}
 
 	if current.EventType != "visit" && current.EventType != "meeting" {
@@ -203,13 +225,31 @@ func (repo Repository) Reschedule(ctx context.Context, tenantContext tenant.Cont
 		return RescheduleResult{}, err
 	}
 
+	previousResult, err := loadScheduleMutationEvent(ctx, tx, tenantContext, eventID)
+	if err != nil {
+		return RescheduleResult{}, err
+	}
+	newResult, err := loadScheduleMutationEvent(ctx, tx, tenantContext, newEventID)
+	if err != nil {
+		return RescheduleResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RescheduleResult{}, err
 	}
 	if googleJobsEnqueued {
 		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
-	return repo.loadRescheduleResult(ctx, tenantContext, eventID, newEventID, false)
+	return RescheduleResult{PreviousEvent: previousResult, NewEvent: newResult}, nil
+}
+
+func rescheduleReplayMatches(current eventSnapshot, input rescheduleInput, replacement Event) bool {
+	isAllDay := current.IsAllDay
+	if input.IsAllDay != nil {
+		isAllDay = *input.IsAllDay
+	}
+	return replacement.StartTime.Equal(input.StartTime) && replacement.EndTime.Equal(input.EndTime) &&
+		replacement.IsAllDay == isAllDay && equalOptionalString(input.OutcomeNotes, current.OutcomeNotes) &&
+		(!input.ReminderMinutes.Set || equalOptionalInt(input.ReminderMinutes.Value, replacement.ReminderMinutes))
 }
 
 func (repo Repository) enqueueRescheduleGoogleSyncJobs(
@@ -221,23 +261,24 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 	previousEventID string,
 	newEventID string,
 ) (bool, error) {
-	var hasConnection bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.google_calendar_tokens connection
-			where connection.organization_id = $1::uuid
-			  and connection.user_id = $2::uuid
-			  and connection.disconnected_at is null
-		)
-	`, organizationID, ownerID).Scan(&hasConnection); err != nil {
-		return false, err
-	}
-	if !hasConnection {
-		return false, nil
-	}
+	var jobsEnqueued, eventsMarked int
+	err := tx.QueryRow(ctx, enqueueRescheduleGoogleSyncSQL,
+		organizationID, previousEventID, newEventID, actorID, ownerID,
+	).Scan(&jobsEnqueued, &eventsMarked)
+	return jobsEnqueued > 0, err
+}
 
-	if _, err := tx.Exec(ctx, `
+// Triggers may reject jobs during disconnect. Derive pending only from jobs
+// actually returned by the insert, inside the same schedule transaction.
+const enqueueRescheduleGoogleSyncSQL = `
+	with active_connection as (
+		select connection.id
+		from public.google_calendar_tokens connection
+		where connection.organization_id = $1::uuid
+		  and connection.user_id = $5::uuid
+		  and connection.disconnected_at is null
+		limit 1
+	), inserted_jobs as (
 		insert into public.google_calendar_sync_jobs (
 			organization_id,
 			schedule_event_id,
@@ -252,14 +293,7 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 			jsonb_build_object(
 				'event_id', $2::text,
 				'owner_user_id', $5::text,
-				'connection_id', (
-					select connection.id::text
-					from public.google_calendar_tokens connection
-					where connection.organization_id = $1::uuid
-					  and connection.user_id = $5::uuid
-					  and connection.disconnected_at is null
-					limit 1
-				),
+				'connection_id', connection.id::text,
 				'link_ids', coalesce((
 					select jsonb_agg(link.id::text order by link.id::text)
 					from public.google_calendar_event_links link
@@ -269,6 +303,7 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 				), '[]'::jsonb)
 			),
 			$4::uuid
+		from active_connection connection
 		union all
 		select
 			$1::uuid,
@@ -276,20 +311,22 @@ func (repo Repository) enqueueRescheduleGoogleSyncJobs(
 			'push_upsert',
 			jsonb_build_object('event_id', $3::text, 'owner_user_id', $5::text),
 			$4::uuid
-	`, organizationID, previousEventID, newEventID, actorID, ownerID); err != nil {
-		return false, err
-	}
-
-	_, err := tx.Exec(ctx, `
-		update public.schedule_events
-		set google_sync_status = 'pending',
+		from active_connection
+		returning schedule_event_id
+	), marked_events as (
+		update public.schedule_events event
+		set google_sync_status = case
+				when exists (select 1 from inserted_jobs job where job.schedule_event_id = event.id) then 'pending'
+				else 'not_connected'
+			end,
 			google_sync_error = null,
 			updated_at = now()
-		where organization_id = $1::uuid
-		  and id = any(array[$2::uuid, $3::uuid])
-	`, organizationID, previousEventID, newEventID)
-	return err == nil, err
-}
+		where event.organization_id = $1::uuid
+		  and event.id = any(array[$2::uuid, $3::uuid])
+		returning event.id
+	)
+	select (select count(*) from inserted_jobs), (select count(*) from marked_events)
+`
 
 func findReplacementEventID(ctx context.Context, tx pgx.Tx, organizationID string, previousEventID string) (string, bool, error) {
 	var eventID string
@@ -307,16 +344,4 @@ func findReplacementEventID(ctx context.Context, tx pgx.Tx, organizationID strin
 		return "", false, err
 	}
 	return eventID, true, nil
-}
-
-func (repo Repository) loadRescheduleResult(ctx context.Context, tenantContext tenant.Context, previousEventID string, newEventID string, wasReplay bool) (RescheduleResult, error) {
-	previousEvent, err := repo.Get(ctx, tenantContext, previousEventID)
-	if err != nil {
-		return RescheduleResult{}, err
-	}
-	newEvent, err := repo.Get(ctx, tenantContext, newEventID)
-	if err != nil {
-		return RescheduleResult{}, err
-	}
-	return RescheduleResult{PreviousEvent: previousEvent, NewEvent: newEvent, wasReplay: wasReplay}, nil
 }

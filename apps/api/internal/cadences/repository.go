@@ -318,9 +318,21 @@ func (repo Repository) SwitchLeadCadence(ctx context.Context, tenantContext tena
 	if err != nil {
 		return SwitchCadenceResult{}, err
 	}
+	// This must be a separate statement AFTER acquiring the lead lock: a
+	// STABLE pool lookup in the waiting SELECT can retain a pre-close snapshot
+	// even when PostgreSQL rechecks the newer lead tuple after that wait.
+	var queuePoolReadAccess *bool
+	if err := tx.QueryRow(ctx, `select private.queue_pool_read_access($1::uuid,$2::uuid,$3::uuid)`,
+		tenantContext.OrganizationID, leadID, tenantContext.UserID).Scan(&queuePoolReadAccess); err != nil {
+		return SwitchCadenceResult{}, err
+	}
+	if queuePoolReadAccess != nil && !*queuePoolReadAccess {
+		return SwitchCadenceResult{}, ErrCadenceNotFound
+	}
 	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
-		AssignedUserID: textValue(assignedUserID),
-		TeamID:         textValue(teamID),
+		AssignedUserID:      textValue(assignedUserID),
+		TeamID:              textValue(teamID),
+		QueuePoolReadAccess: queuePoolReadAccess,
 	}) {
 		return SwitchCadenceResult{}, tenant.ErrOrganizationAccessDenied
 	}

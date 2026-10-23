@@ -12,7 +12,7 @@ interface VerifyDomainResult {
 
 export function useVerifyDomain() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (domain: string): Promise<VerifyDomainResult> => {

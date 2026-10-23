@@ -1,39 +1,39 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `7b044d421b56a6704664670fb4330a1c8b3fa4472bb1fde980feaa66fee9203d`.
+O conteudo e deterministico para o digest `d21d8a4a73ebdb251f2f97f56679d559e3fc1b2d0febc7436da026d69f48511d`.
 
 ## Denominadores
 
 | Superficie | Total |
 | --- | ---: |
-| Rotas de arquivo | 89 |
-| Telas renderizaveis (sem redirects) | 83 |
+| Rotas de arquivo | 90 |
+| Telas renderizaveis (sem redirects) | 84 |
 | Aliases/redirects | 6 |
 | Rotas protegidas | 68 |
 | Rotas protegidas admin | 19 |
-| Rotas nao protegidas (publicas, site e auth) | 21 |
+| Rotas nao protegidas (publicas, site e auth) | 22 |
 | Rotas dinamicas | 17 |
-| Overlays unicos | 224 |
-| Formularios HTML unicos | 50 |
-| CTAs internos unicos | 1363 |
-| Controles complementares de overlay/tab | 284 |
+| Overlays unicos | 252 |
+| Formularios HTML unicos | 53 |
+| CTAs internos unicos | 1546 |
+| Controles complementares de overlay/tab | 308 |
 
-Overlays: `alertDialog` 62, `dialog` 85, `dropdownMenu` 30, `popover` 34, `sheet` 13.
+Overlays: `alertDialog` 75, `dialog` 97, `dropdownMenu` 31, `popover` 35, `sheet` 14.
 
-CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1254, `external` 6, `internal` 31, `internalDynamic` 78, `unknownDynamic` 48.
+CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1437, `external` 6, `internal` 33, `internalDynamic` 76, `unknownDynamic` 53.
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `336b8134e142368b849bc82540482bc52315febc9d8b003dfd7d95a6aa208a12`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `525b22210d6fb5b2604ea08a213736d42cccba345d00892a6b3ccfe573d03726`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
-| Rotas renderizaveis e aliases | 89 |
-| Overlays alcancaveis | 217 |
-| Formularios alcancaveis | 50 |
-| CTAs internos alcancaveis | 1327 |
-| Controles complementares alcancaveis | 277 |
+| Rotas renderizaveis e aliases | 90 |
+| Overlays alcancaveis | 247 |
+| Formularios alcancaveis | 53 |
+| CTAs internos alcancaveis | 1517 |
+| Controles complementares alcancaveis | 303 |
 
 Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associadas, permitindo que um caso E2E declare exatamente o ID coberto sem criar uma segunda contagem.
 
@@ -42,11 +42,11 @@ Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associa
 | Verificacao | Denominador |
 | --- | ---: |
 | Acesso das rotas protegidas x ADM/Lider/Usuario | 204 |
-| Tela renderizavel x desktop/mobile | 166 |
+| Tela renderizavel x desktop/mobile | 168 |
 | Contrato dos aliases | 6 |
-| Overlays alcancaveis por implementacao | 217 |
-| Formularios alcancaveis por implementacao | 50 |
-| CTAs internos alcancaveis por implementacao | 1327 |
+| Overlays alcancaveis por implementacao | 247 |
+| Formularios alcancaveis por implementacao | 53 |
+| CTAs internos alcancaveis por implementacao | 1517 |
 | CTAs das telas de erro/infraestrutura | 2 |
 
 Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve ser informada por categoria e, para o corte de 90%, tambem como `aprovados / planejados` com todo P0/P1 obrigatoriamente aprovado.
@@ -62,14 +62,14 @@ Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve s
 
 ## Lacunas do inventario estatico
 
-- 10 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
+- 9 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
 - 17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.
 - As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.
 - Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.
 - Elementos gerados por map/lista contam uma implementacao de codigo, nao a quantidade dependente dos dados em runtime.
 - Handlers, feature flags, permissoes e destinos dinamicos precisam de verificacao em runtime; este auditor e deliberadamente estatico.
 
-Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/CampaignPerformanceWidget.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/round-robin/RulesManager.tsx`, `components/features/settings/RolesTab.tsx`.
+Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/CampaignPerformanceWidget.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/round-robin/RulesManager.tsx`.
 
 Superficies de erro/infraestrutura verificadas separadamente: `app/(protected)/error.tsx`, `app/error.tsx`.
 
@@ -142,6 +142,7 @@ Delegacoes `Button asChild` a revisar: nenhuma.
 | `route:5f90c9110e44580c1481` | `/onboarding` | auth | alias | `/cadastro` |
 | `route:0233b370a86d721d0c7a` | `/pipeline` | protected | alias | `/crm/pipelines` |
 | `route:163894ba0666cc181b43` | `/politica-de-privacidade` | public | estatica | `-` |
+| `route:20cc968661bfffa23569` | `/preview/sem-organizacao` | public | estatica | `-` |
 | `route:e874539a5895b870985d` | `/properties` | protected | estatica | `-` |
 | `route:35522dc528c9d332e37e` | `/properties/[id]` | protected | dinamica | `-` |
 | `route:91094461966c868a9eb2` | `/properties/[id]/edit` | protected | dinamica | `-` |

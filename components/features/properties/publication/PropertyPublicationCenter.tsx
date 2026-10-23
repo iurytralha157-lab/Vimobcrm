@@ -27,6 +27,7 @@ import type {
 
 import { PropertyPublicationChannelCard } from './PropertyPublicationChannelCard'
 import { firstPublicationPreviewImages } from './preview-images'
+import { getSitePublicationState } from './site-publication-state'
 
 type PropertyPublicationCenterProps = {
   propertyId: string
@@ -88,7 +89,10 @@ export function PropertyPublicationCenter({ propertyId, assets, hasAssetPhotos }
   const overview = publicationsQuery.data
   const publications = overview.data.publications
   const activeDistributionCount = publications.filter((item) => (
-    item.desired_state === 'published' && item.published_version != null
+    item.channel === 'site'
+      ? getSitePublicationState(item, false, true).canOpenPublicSite
+      : item.desired_state === 'published' && item.published_version != null
+      && !item.checks.some((check) => ['status', 'grupo_olx_status', 'commercialization'].includes(check.code) && !check.resolved)
   )).length
   const readyCount = publications.filter((item) => item.readiness_state === 'ready').length
 

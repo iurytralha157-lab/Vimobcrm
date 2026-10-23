@@ -277,16 +277,36 @@ test("handler applies tenant references before provider and side effects", async
     handler.indexOf("async function insertOutboxMessage"),
     handler.indexOf("async function upsertAgentConversation"),
   );
+  const pauseGuard = handler.slice(
+    handler.indexOf("async function getCanonicalAIPauseReason"),
+    handler.indexOf("async function findActiveAgent"),
+  );
   assert.match(history, /\.eq\("organization_id", organizationId\)/);
   assert.match(history, /query = query\.eq\("session_id", sessionId\)/);
   assert.match(schedule, /reason: "manual_confirmation_required"/);
   assert.doesNotMatch(schedule, /\.from\(|\.insert\(/);
   assert.match(outbox, /conversationReferencesBelongToTenant\(/);
-  assert.match(outbox, /\.eq\("organization_id", organizationId\)/);
-  assert.match(outbox, /\.eq\("session_id", conversation\.session_id\)/);
   assert.match(outbox, /const currentLeadId = requireCurrentLeadId\(conversation\.lead_id\)/);
-  assert.match(outbox, /lead_id: currentLeadId/);
-  assert.match(outbox, /conversationUpdate\.eq\("lead_id", currentLeadId\)/);
+  assert.match(pauseGuard, /\.eq\("id", input\.conversationId\)/);
+  assert.match(pauseGuard, /\.eq\("organization_id", input\.organizationId\)/);
+  assert.match(pauseGuard, /\.eq\("session_id", input\.sessionId\)/);
+  const chunkLoop = outbox.indexOf("for (const [chunkIndex, chunk] of chunks.entries()) {");
+  const pauseCheck = outbox.indexOf("await getCanonicalAIPauseReason(");
+  const outboxInsert = outbox.indexOf('.from("outbox_messages").insert({');
+  assert.ok(chunkLoop >= 0 && pauseCheck > chunkLoop && outboxInsert > pauseCheck);
+  assert.match(
+    outbox.slice(pauseCheck, outboxInsert),
+    /organizationId,\s*sessionId: conversation\.session_id,\s*conversationId: conversation\.id,/,
+  );
+  assert.match(outbox.slice(pauseCheck, outboxInsert), /if \(pauseReason\) \{\s*return \{ kind: "suppressed"/);
+
+  const outboxInsertEnd = outbox.indexOf("});", outboxInsert);
+  assert.ok(outboxInsertEnd > outboxInsert);
+  const insertedValues = outbox.slice(outboxInsert, outboxInsertEnd);
+  assert.match(insertedValues, /conversation_id: conversation\.id/);
+  assert.match(insertedValues, /session_id: conversation\.session_id/);
+  assert.match(insertedValues, /organization_id: organizationId/);
+  assert.match(insertedValues, /lead_id: currentLeadId/);
 });
 
 test("AI resolves immutable inbound lead identity and fails closed on ambiguous phones", async () => {

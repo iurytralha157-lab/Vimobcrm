@@ -11,6 +11,7 @@ export type PipelineBoardQueryFilters = {
   searchQuery?: string;
   filterPage?: string;
   filterCampaign?: string;
+  filterCampaigns?: string[];
   filterAdSet?: string;
   filterAd?: string;
   filterSource?: string;
@@ -148,6 +149,7 @@ export function buildPipelineBoardQuery(params: {
     search: filters?.searchQuery,
     filterPage: filters?.filterPage,
     filterCampaign: filters?.filterCampaign,
+    filterCampaigns: filters?.filterCampaigns?.length ? [...new Set(filters.filterCampaigns)].sort() : undefined,
     filterAdSet: filters?.filterAdSet,
     filterAd: filters?.filterAd,
     filterSource: filters?.filterSource,

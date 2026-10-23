@@ -473,16 +473,16 @@ func TestScheduleDashboardVirtualStatusFiltersUseEndAndStartBoundaries(t *testin
 				if count := strings.Count(query, "se.status = 'scheduled'"); count < 2 {
 					t.Fatalf("overdue status must match the canonical partial-index predicate, found %d direct comparisons", count)
 				}
-				if count := strings.Count(query, "when coalesce(se.is_all_day, false) then"); count != 2 {
-					t.Fatalf("all-day overdue CASE must guard both the virtual filter and is_overdue, found %d uses", count)
+				if count := strings.Count(query, "when coalesce(se.is_all_day, false) then"); count != 3 {
+					t.Fatalf("all-day overdue CASE must guard the virtual filter, is_overdue and quality scope, found %d uses", count)
 				}
 				for _, allDayFragment := range []string{
 					"(se.end_time at time zone bounds.report_timezone)::date",
 					"(bounds.as_of at time zone bounds.report_timezone)::date",
 					"else se.end_time < bounds.as_of",
 				} {
-					if count := strings.Count(query, allDayFragment); count != 2 {
-						t.Fatalf("all-day overdue predicate must use %q in both SQL paths, found %d uses", allDayFragment, count)
+					if count := strings.Count(query, allDayFragment); count != 3 {
+						t.Fatalf("all-day overdue predicate must use %q in all three SQL paths, found %d uses", allDayFragment, count)
 					}
 				}
 			}
@@ -543,8 +543,8 @@ func TestScheduleDashboardNoneSourceAndCancelledAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build dashboard query: %v", err)
 	}
-	if !strings.Contains(query, "coalesce(nullif(btrim(se.lead_source_snapshot), ''), left(nullif(btrim(l.source), ''), 160), '__none__') = '__none__'") {
-		t.Fatal("__none__ must include events without a lead or without a lead source")
+	if !strings.Contains(query, "case when l.id is null then '__none__' else") || !strings.Contains(query, "160), '__none__') end) = '__none__'") {
+		t.Fatal("__none__ must include events without an authorized lead or without a lead source")
 	}
 	if !strings.Contains(query, "lower(btrim(se.status)) in ('cancelled', 'canceled')") {
 		t.Fatal("cancelled KPI/filter must include both persisted spellings")

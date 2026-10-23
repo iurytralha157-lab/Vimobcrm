@@ -41,7 +41,7 @@ export interface Commission {
 }
 
 export function useCommissionRules(options?: { enabled?: boolean }) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -54,7 +54,7 @@ export function useCommissionRules(options?: { enabled?: boolean }) {
 
 export function useCreateCommissionRule() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -82,7 +82,7 @@ export function useCreateCommissionRule() {
 
 export function useUpdateCommissionRule() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -111,7 +111,7 @@ export function useUpdateCommissionRule() {
 
 export function useDeleteCommissionRule() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -138,7 +138,7 @@ export function useCommissions(
   filters?: { status?: string; userId?: string; limit?: number; offset?: number },
   options?: { enabled?: boolean },
 ) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -151,7 +151,7 @@ export function useCommissions(
 
 export function useApproveCommission() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -182,7 +182,7 @@ export function useApproveCommission() {
 
 export function usePayCommission() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -219,7 +219,7 @@ export function usePayCommission() {
 
 export function useCancelCommission() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -249,7 +249,7 @@ export function useCancelCommission() {
 }
 
 export function useCommissionsByBroker() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({

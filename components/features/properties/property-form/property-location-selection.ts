@@ -6,6 +6,39 @@ type NeighborhoodChoice = {
   name: string
   city?: CityChoice | null
 }
+type CondominiumChoice = {
+  id: string
+  city?: CityChoice | null
+  neighborhood?: { id: string; name: string } | null
+  address?: string | null
+  cep?: string | null
+  default_condominium_fee?: number | null
+}
+
+function sameLocationCity(previous: PropertyFormData, city: CityChoice) {
+  const normalizeName = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR')
+  return normalizeName(previous.cidade) === normalizeName(city.name)
+    && previous.uf.trim().toUpperCase() === (city.uf || previous.uf).trim().toUpperCase()
+}
+
+export function selectLocationCondominium(previous: PropertyFormData, condominium: CondominiumChoice | null): PropertyFormData {
+  const changesCity = Boolean(condominium?.city?.id
+    && condominium.city.id !== previous.city_id && !sameLocationCity(previous, condominium.city))
+  const cepDigits = condominium?.cep?.replace(/\D/g, '').slice(0, 8)
+  return {
+    ...previous,
+    condominium_id: condominium?.id || '',
+    city_id: condominium?.city?.id || previous.city_id,
+    neighborhood_id: condominium?.neighborhood?.id || (changesCity ? '' : previous.neighborhood_id),
+    cidade: condominium?.city?.name || previous.cidade,
+    uf: condominium?.city?.uf || previous.uf,
+    bairro: condominium?.neighborhood?.name || (changesCity ? '' : previous.bairro),
+    endereco: condominium?.address || (changesCity ? '' : previous.endereco),
+    cep: cepDigits ? cepDigits.replace(/^(\d{5})(\d)/, '$1-$2') : changesCity ? '' : previous.cep,
+    condominio: condominium?.default_condominium_fee != null
+      ? String(condominium.default_condominium_fee).replace('.', ',') : previous.condominio,
+  }
+}
 
 export function setManualLocationField(
   previous: PropertyFormData,
@@ -53,9 +86,7 @@ export function selectLocationCity(previous: PropertyFormData, city: CityChoice)
   if (city.id === previous.city_id) {
     return { ...previous, cidade: city.name, uf: city.uf || previous.uf }
   }
-  const samePlace = previous.cidade.trim().toLocaleLowerCase('pt-BR')
-    === city.name.trim().toLocaleLowerCase('pt-BR')
-    && previous.uf.trim().toUpperCase() === (city.uf || previous.uf).trim().toUpperCase()
+  const samePlace = sameLocationCity(previous, city)
   if (samePlace) {
     return {
       ...previous,

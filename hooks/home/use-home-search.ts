@@ -35,7 +35,7 @@ function mapLeadResult(lead: Awaited<ReturnType<typeof leadsAPI.getLeads>>['data
 }
 
 export function useHomeSearch() {
-  const { activeOrganization, organization, profile } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId ?? undefined
 
   return useMutation({

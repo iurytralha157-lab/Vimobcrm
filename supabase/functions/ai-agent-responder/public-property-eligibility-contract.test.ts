@@ -40,7 +40,7 @@ test("every AI property disclosure path crosses the public-site eligibility boun
     mentionedLookup,
     search,
   ]) {
-    assert.match(disclosurePath, /filterPublicSiteEligibleProperties\(/);
+    assert.match(disclosurePath, /filterPublicSiteEligibleProperties\(|loadPublicPropertyCatalog\(/);
   }
 
   assert.match(handler, /"published_on_site"/);

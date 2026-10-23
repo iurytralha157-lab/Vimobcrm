@@ -1,6 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWhatsAppIntentMutation } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { whatsappAPI, type WhatsAppGroup } from "@/lib/api/whatsapp";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 export type WhatsAppGroupParticipant = string | {
   id?: string;
@@ -17,22 +18,21 @@ export type GroupInviteLinkResult = {
 export type { WhatsAppGroup };
 
 export function useWhatsAppGroups(sessionId?: string) {
-  const { activeOrganization, profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: ["whatsapp-groups", sessionId],
-    enabled: !!sessionId && !!activeOrganization.organizationId,
-    queryFn: async () => whatsappAPI.getGroups(sessionId!, activeOrganization.organizationId),
+    queryKey: ["whatsapp-groups", sessionId, scope.organizationId, scope.userId, scope.accessScope],
+    enabled: !!sessionId && !!scope.organizationId && !!scope.userId,
+    queryFn: async ({ signal }) => whatsappAPI.getGroups(sessionId!, scope.organizationId, { expectedUserId: scope.userId, signal }),
   });
 }
 
 export function useSyncGroups() {
   const qc = useQueryClient();
-  const { activeOrganization, profile } = useAuth();
 
-  return useMutation({
-    mutationFn: async (sessionId: string) => {
-      const result = await whatsappAPI.syncGroups(sessionId, activeOrganization.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async (sessionId: string, intent) => {
+      const result = await whatsappAPI.syncGroups(sessionId, intent.scope.organizationId, intent);
       return result.data;
     },
     onSuccess: (_d, sessionId) => qc.invalidateQueries({ queryKey: ["whatsapp-groups", sessionId] }),
@@ -40,41 +40,36 @@ export function useSyncGroups() {
 }
 
 export function useGroupInfo() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (args: { sessionId: string; jid: string }) => {
-      const result = await whatsappAPI.groupInfo(args.sessionId, args.jid, activeOrganization.organizationId);
+  return useWhatsAppIntentMutation({
+    mutationFn: async (args: { sessionId: string; jid: string }, intent) => {
+      const result = await whatsappAPI.groupInfo(args.sessionId, args.jid, intent.scope.organizationId, intent);
       return result.data;
     },
   });
 }
 
 export function useGroupInviteLink() {
-  const { activeOrganization, profile } = useAuth();
-
-  return useMutation({
-    mutationFn: async (args: { sessionId: string; jid: string }) =>
-      whatsappAPI.groupInviteLink(args.sessionId, args.jid, activeOrganization.organizationId) as Promise<GroupInviteLinkResult>,
+  return useWhatsAppIntentMutation({
+    mutationFn: async (args: { sessionId: string; jid: string }, intent) =>
+      whatsappAPI.groupInviteLink(args.sessionId, args.jid, intent.scope.organizationId, intent) as Promise<GroupInviteLinkResult>,
   });
 }
 
 export function useUpdateGroup() {
   const qc = useQueryClient();
-  const { activeOrganization, profile } = useAuth();
 
-  return useMutation({
+  return useWhatsAppIntentMutation({
     mutationFn: async (args: {
       sessionId: string;
       jid: string;
       field: "name" | "description" | "photo";
       value: string;
-    }) => {
+    }, intent) => {
       const result = await whatsappAPI.updateGroup(args.sessionId, {
         jid: args.jid,
         field: args.field,
         value: args.value,
-      }, activeOrganization.organizationId);
+      }, intent.scope.organizationId, intent);
       return result.data;
     },
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["whatsapp-groups", vars.sessionId] }),

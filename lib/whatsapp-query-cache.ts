@@ -1,4 +1,5 @@
 import type { QueryKey } from '@tanstack/react-query'
+import { sortWhatsAppMessages, WHATSAPP_MESSAGE_ORDERING_VERSION } from '@/lib/whatsapp-message-order'
 
 const WHATSAPP_SCOPE_MARKER = 'tenant-scope' as const
 const MISSING_SCOPE_VALUE = 'none' as const
@@ -7,6 +8,8 @@ export type WhatsAppQueryScope = {
   organizationId: string | null
   userId: string | null
   accessScope: string
+  /** Persisted draft ownership excludes the current Auth SID lifetime. */
+  draftAccessScope?: string
 }
 
 export type WhatsAppAccessContext = {
@@ -80,13 +83,23 @@ export const whatsappInboxTopic = (organizationId: string) =>
 export const WHATSAPP_MESSAGES_RECONCILE_EVENT = 'vimob:whatsapp-messages-reconcile'
 
 export type WhatsAppMessagesReconcileEventDetail = {
+  scope?: WhatsAppQueryScope
   conversationIds?: readonly string[]
+  leadIds?: readonly string[]
+  authorizationChanged?: boolean
 }
 
-export function isWhatsAppInboxWakePayload(payload: unknown): payload is { scope: 'conversations' } {
+export function isWhatsAppInboxWakePayload(payload: unknown): payload is { scope: 'conversations'; id?: string } {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false
   const record = payload as Record<string, unknown>
-  return Object.keys(record).length === 1 && record.scope === 'conversations'
+  if (record.scope !== 'conversations') return false
+  const keys = Object.keys(record)
+  if (keys.length === 1) return keys[0] === 'scope'
+  return keys.length === 2
+    && keys.includes('scope')
+    && keys.includes('id')
+    && typeof record.id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id)
 }
 
 /**
@@ -157,6 +170,10 @@ export const whatsappQueryKeys = {
       dealStatus?: string
       pageId?: string
       campaignIds?: string
+      adSetId?: string
+      adId?: string
+      leadCreatedFrom?: string
+      leadCreatedTo?: string
       hideGroups: boolean
       showArchived: boolean
       onlyLeads: boolean
@@ -188,6 +205,10 @@ export const whatsappQueryKeys = {
     params.lastMessageFrom ?? '',
     params.lastMessageTo ?? '',
     params.accessibleSessionKey,
+    params.adSetId ?? '',
+    params.adId ?? '',
+    params.leadCreatedFrom ?? '',
+    params.leadCreatedTo ?? '',
   ] as const,
   conversations: (
     scope: WhatsAppQueryScope,
@@ -201,6 +222,10 @@ export const whatsappQueryKeys = {
       dealStatus?: string
       pageId?: string
       campaignIds?: string
+      adSetId?: string
+      adId?: string
+      leadCreatedFrom?: string
+      leadCreatedTo?: string
       hideGroups: boolean
       showArchived: boolean
       onlyLeads: boolean
@@ -233,6 +258,10 @@ export const whatsappQueryKeys = {
     params.lastMessageTo ?? '',
     params.accessibleSessionKey,
     params.limit,
+    params.adSetId ?? '',
+    params.adId ?? '',
+    params.leadCreatedFrom ?? '',
+    params.leadCreatedTo ?? '',
   ] as const,
 	conversation: (scope: WhatsAppQueryScope, conversationId: string | null, expectedLeadId: string | null) => [
     ...scopedPrefix('whatsapp-conversation', scope),
@@ -288,6 +317,7 @@ export const whatsappQueryKeys = {
     params.leadId,
     params.limit,
     params.includeLeadHistory ? 'lead-history' : 'conversation-page',
+    `ordering-v${WHATSAPP_MESSAGE_ORDERING_VERSION}`,
   ] as const,
   paginatedMessagesScope: (scope: WhatsAppQueryScope) =>
     scopedPrefix('whatsapp-messages-paginated', scope),
@@ -308,6 +338,7 @@ export const whatsappQueryKeys = {
     conversationId,
     pageSize,
     expectedLeadId ?? MISSING_SCOPE_VALUE,
+    `ordering-v${WHATSAPP_MESSAGE_ORDERING_VERSION}`,
   ] as const,
   leadMessagesScope: (scope: WhatsAppQueryScope, leadId?: string | null) => [
     ...scopedPrefix('lead-messages', scope),
@@ -321,6 +352,7 @@ export const whatsappQueryKeys = {
     ...scopedPrefix('lead-messages', scope),
     leadId,
     pageSize,
+    `ordering-v${WHATSAPP_MESSAGE_ORDERING_VERSION}`,
   ] as const,
 }
 
@@ -517,7 +549,7 @@ export function flattenWhatsAppMessagePages<T extends PendingMessageIdentity>(
     })
   })
 
-  return messages
+  return sortWhatsAppMessages(messages)
 }
 
 /**
@@ -530,7 +562,7 @@ export function mergeWhatsAppMessagesWithLocalState<T extends PendingMessageIden
   cachedMessages?: readonly T[],
   options?: { nowMs?: number; uncertainTtlMs?: number },
 ): T[] {
-  if (!cachedMessages?.length) return [...serverMessages]
+  if (!cachedMessages?.length) return sortWhatsAppMessages(serverMessages)
 
   const serverAliases = new Set(serverMessages.flatMap(messageAliases))
   const nowMs = options?.nowMs ?? Date.now()
@@ -540,9 +572,7 @@ export function mergeWhatsAppMessagesWithLocalState<T extends PendingMessageIden
       && !messageAliases(message).some((alias) => serverAliases.has(alias)),
   ).map((message) => settleExpiredWhatsAppLocalMessage(message, nowMs, uncertainTtlMs))
 
-  return [...serverMessages, ...localOnly].sort((left, right) =>
-    (left.sent_at ?? '').localeCompare(right.sent_at ?? ''),
-  )
+  return sortWhatsAppMessages([...serverMessages, ...localOnly])
 }
 
 export function shouldRebaseWhatsAppMessagePages<T extends PendingMessageIdentity>(
@@ -584,9 +614,9 @@ export function mergeWhatsAppLatestMessagePage<
     .filter((message) => !messageAliases(message).some((alias) => latestAliases.has(alias)))
     .map((message) => settleExpiredWhatsAppLocalMessage(message, nowMs, uncertainTtlMs))
   const reconciledHeadMessages = flattenWhatsAppMessagePages([
-    { messages: latestPage.messages },
     { messages: localHeadMessages },
-  ]).sort((left, right) => (left.sent_at ?? '').localeCompare(right.sent_at ?? ''))
+    { messages: latestPage.messages },
+  ])
   const reconciledHeadAliases = new Set(reconciledHeadMessages.flatMap(messageAliases))
   const displacedCanonicalHead = cachedHeadMessages.filter(
     (message) => !isLocalOptimisticWhatsAppMessage(message)
@@ -597,7 +627,6 @@ export function mergeWhatsAppLatestMessagePage<
     ...cachedPages.slice(1).map((page) => ({ messages: page.messages })),
   ])
     .filter((message) => !messageAliases(message).some((alias) => reconciledHeadAliases.has(alias)))
-    .sort((left, right) => (left.sent_at ?? '').localeCompare(right.sent_at ?? ''))
   const oldestLoadedCursor = cachedPages.length > 0
     ? cachedPages[cachedPages.length - 1].nextCursor
     : latestPage.nextCursor
@@ -621,6 +650,36 @@ export function mergeWhatsAppLatestMessagePage<
   }
 
   return [reconciledHead, ...historicalPages]
+}
+
+/**
+ * Revalidate rows already shown in a loaded historical window. The canonical
+ * cursor page may extend beyond that window, so do not append its extra rows.
+ * A newer head/refetch/optimistic change wins over an older historical GET.
+ * Replacing the whole DTO also removes fields omitted by a deletion tombstone.
+ */
+export function mergeWhatsAppHistoricalMessagePage<
+  T extends PendingMessageIdentity,
+  TPage extends { messages: T[]; nextCursor: string | null },
+>(cachedPages: TPage[], freshMessages: readonly T[], snapshotMessages: readonly T[]): TPage[] {
+  const snapshotByAlias = new Map<string, T>()
+  const freshByAlias = new Map<string, T>()
+  snapshotMessages.forEach((message) => messageAliases(message).forEach((alias) => snapshotByAlias.set(alias, message)))
+  freshMessages.forEach((message) => messageAliases(message).forEach((alias) => freshByAlias.set(alias, message)))
+  let changed = false
+  const pages = cachedPages.map((page) => {
+    let pageChanged = false
+    const messages = page.messages.map((message) => {
+      const aliases = messageAliases(message)
+      const snapshot = aliases.map((alias) => snapshotByAlias.get(alias)).find(Boolean)
+      const fresh = aliases.map((alias) => freshByAlias.get(alias)).find(Boolean)
+      if (!fresh || message !== snapshot) return message
+      changed = pageChanged = true
+      return fresh
+    })
+    return pageChanged ? { ...page, messages } : page
+  })
+  return changed ? pages : cachedPages
 }
 
 const DEFINITIVE_SEND_FAILURES = [

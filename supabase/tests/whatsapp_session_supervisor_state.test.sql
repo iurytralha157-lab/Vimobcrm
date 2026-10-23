@@ -9,7 +9,7 @@ select has_table(
   'WhatsApp supervision keeps operational state outside the user-facing session table'
 );
 
-select col_is(
+select col_type_is(
   'private',
   'whatsapp_session_supervisor_state',
   'last_claimed_at',
@@ -17,7 +17,7 @@ select col_is(
   'the fair-scan cursor is a typed timestamp'
 );
 
-select col_is(
+select col_type_is(
   'private',
   'whatsapp_session_supervisor_state',
   'lease_expires_at',
@@ -25,7 +25,7 @@ select col_is(
   'cross-replica claims have an expiring lease'
 );
 
-select col_is(
+select col_type_is(
   'private',
   'whatsapp_session_supervisor_state',
   'claim_token',
@@ -33,7 +33,7 @@ select col_is(
   'cross-replica writes carry a fencing token'
 );
 
-select col_is(
+select col_type_is(
   'private',
   'whatsapp_session_supervisor_state',
   'provider_instance_key',

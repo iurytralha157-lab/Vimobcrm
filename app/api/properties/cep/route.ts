@@ -6,7 +6,10 @@ export async function GET(request: Request) {
     return Response.json({ error: "invalid_cep" }, { status: 400 });
   }
 
-  const result = await lookupPropertyCep(cep);
+  const result = await lookupPropertyCep(cep, fetch, { signal: request.signal });
+  if (result.kind === "cancelled") {
+    return Response.json({ error: "cep_lookup_cancelled" }, { status: 499 });
+  }
   if (result.kind === "not_found") {
     return Response.json({ error: "cep_not_found" }, { status: 404 });
   }

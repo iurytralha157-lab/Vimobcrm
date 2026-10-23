@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { format } from "date-fns";
+import { toast } from "sonner";
 
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -266,7 +267,7 @@ export interface MarketingDashboardFilters
   objective?: string | null;
 }
 
-export function useMarketingDashboard(filters: MarketingDashboardFilters) {
+export function useMarketingDashboard(filters: MarketingDashboardFilters, options: { enabled?: boolean } = {}) {
   const { isSuperAdmin, tenantContext } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const canManageIntegration =
@@ -275,7 +276,7 @@ export function useMarketingDashboard(filters: MarketingDashboardFilters) {
   const canSyncIntegration =
     canManageIntegration &&
     (isSuperAdmin || memberRole === "owner" || memberRole === "admin");
-  const insightsQuery = useCampaignInsights(filters);
+  const insightsQuery = useCampaignInsights(filters, options);
   // The analytics endpoint already returns a safe connection summary for
   // dashboard viewers. Full integration metadata is management-only.
   const integrationsQuery = useMetaIntegrations({ enabled: canManageIntegration });
@@ -472,10 +473,14 @@ export function useMarketingDashboard(filters: MarketingDashboardFilters) {
   }, [campaigns]);
 
   const sync = useCallback(() => {
+    if (insightsQuery.periodError) {
+      toast.error(insightsQuery.periodError);
+      return;
+    }
     const dateStart = formatCalendarDate(filters.dateRange.from);
     const dateStop = formatCalendarDate(filters.dateRange.to);
     syncMutation.mutate({ dateStart, dateStop });
-  }, [filters.dateRange.from, filters.dateRange.to, syncMutation]);
+  }, [filters.dateRange.from, filters.dateRange.to, insightsQuery.periodError, syncMutation]);
 
   return {
     dateRange: {

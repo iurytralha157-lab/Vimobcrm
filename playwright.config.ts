@@ -16,6 +16,7 @@ const e2eConfig = discoveryOnly
 const e2eProcessEnv = discoveryOnly ? {} : buildE2EProcessEnv();
 const appURL = new URL(e2eConfig.baseURL);
 const appPort = appURL.port || "3000";
+const isolatedLocalRun = Boolean(process.env.E2E_SUPABASE_WORKDIR);
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -44,14 +45,16 @@ export default defineConfig({
             command: "npm run api:dev",
             url: `${e2eConfig.apiURL}/readyz`,
             reuseExistingServer: false,
-            timeout: 120_000,
+            timeout: isolatedLocalRun ? 600_000 : 120_000,
             env: e2eProcessEnv,
           },
           {
             command: `npm run dev -- --hostname 127.0.0.1 --port ${appPort}`,
-            url: e2eConfig.baseURL,
+            url: isolatedLocalRun
+              ? new URL('/login', e2eConfig.baseURL).toString()
+              : e2eConfig.baseURL,
             reuseExistingServer: false,
-            timeout: 120_000,
+            timeout: isolatedLocalRun ? 600_000 : 120_000,
             env: e2eProcessEnv,
           },
         ],

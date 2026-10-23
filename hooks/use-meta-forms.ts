@@ -69,7 +69,7 @@ function normalizeMetaFormConfig(config: MetaFormConfigRecord): MetaFormConfig {
 }
 
 export function useMetaFormConfigs(integrationId: string | undefined) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -84,7 +84,7 @@ export function useMetaFormConfigs(integrationId: string | undefined) {
 }
 
 export function useAllMetaFormConfigs() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -99,7 +99,7 @@ export function useAllMetaFormConfigs() {
 }
 
 export function useFetchPageForms() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -110,7 +110,7 @@ export function useFetchPageForms() {
 
 export function useSaveFormConfig() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -161,7 +161,7 @@ export function useSaveFormConfig() {
 
 export function useToggleFormConfig() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -181,7 +181,7 @@ export function useToggleFormConfig() {
 
 export function useDeleteFormConfig() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({

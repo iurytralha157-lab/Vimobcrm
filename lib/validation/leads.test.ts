@@ -9,6 +9,7 @@ import {
   leadCustomSourceNameSchema,
   leadDistributionOutcomeSchema,
   leadMoveStageInputSchema,
+  leadAssignInputSchema,
   leadUpdateInputSchema,
 } from './leads'
 import {
@@ -65,6 +66,11 @@ test('normaliza e limita o nome de uma origem criada pelo usuario', () => {
 test('aceita apenas resultados conhecidos da distribuicao de criacao', () => {
   for (const outcome of [
     'assigned',
+    'pooled',
+    'queue_closed',
+    'queue_waiting',
+    'queue_limit_reached',
+    'queue_protected',
     'already_assigned',
     'no_matching_queue',
     'no_available_members',
@@ -135,17 +141,24 @@ test('aceita uma entrada valida de lead', () => {
   assert.equal(result.success, true)
 })
 
-test('vinculo de conversa na criacao exige o snapshot observado', () => {
+test('vinculo de conversa na criacao exige snapshot e confirmacao do historico', () => {
   assert.equal(leadCreateInputSchema.safeParse({
     name: 'Contato WhatsApp',
     conversationId: ORG_ID,
     expectedPreviousLeadId: 'unlinked',
+    confirmHistoryLink: true,
   }).success, true)
   assert.equal(leadCreateInputSchema.safeParse({
     name: 'Contato WhatsApp',
     conversationId: ORG_ID,
     expectedPreviousLeadId: ID,
+    confirmHistoryLink: true,
   }).success, true)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    conversationId: ORG_ID,
+    expectedPreviousLeadId: 'unlinked',
+  }).success, false)
   assert.equal(leadCreateInputSchema.safeParse({
     name: 'Contato WhatsApp',
     conversationId: ORG_ID,
@@ -153,6 +166,10 @@ test('vinculo de conversa na criacao exige o snapshot observado', () => {
   assert.equal(leadCreateInputSchema.safeParse({
     name: 'Contato WhatsApp',
     expectedPreviousLeadId: 'unlinked',
+  }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    confirmHistoryLink: true,
   }).success, false)
 })
 
@@ -309,6 +326,23 @@ test('aceita perfil, equipe e varios imoveis na edicao', () => {
 
 test('rejeita movimentacao para etapa invalida', () => {
   assert.equal(leadMoveStageInputSchema.safeParse({ stageId: 'etapa-invalida' }).success, false)
+})
+
+test('movimentacao preserva revisao exata em microssegundos e rejeita revisao invalida', () => {
+  const expectedUpdatedAt = '2026-10-16T10:00:00.000001Z'
+  assert.equal(leadMoveStageInputSchema.parse({ stageId: ID, expectedStageId: ORG_ID, expectedUpdatedAt }).expectedUpdatedAt, expectedUpdatedAt)
+  for (const invalid of ['', null, 'agora', 123]) {
+    assert.equal(leadMoveStageInputSchema.safeParse({ stageId: ID, expectedUpdatedAt: invalid }).success, false)
+  }
+})
+
+test('transferencia exige revisao original e preserva microssegundos inclusive ao remover responsavel', () => {
+  const expectedUpdatedAt = '2026-10-16T10:00:00.000001Z'
+  for (const assignedUserId of [ID, null]) {
+    assert.equal(leadAssignInputSchema.parse({ assignedUserId, expectedUpdatedAt }).expectedUpdatedAt, expectedUpdatedAt)
+    assert.equal(leadAssignInputSchema.safeParse({ assignedUserId }).success, false)
+    assert.equal(leadAssignInputSchema.safeParse({ assignedUserId, expectedUpdatedAt: 'agora' }).success, false)
+  }
 })
 
 test('valida a ordem visual separada do relogio da etapa', () => {

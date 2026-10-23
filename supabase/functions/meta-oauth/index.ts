@@ -2,7 +2,7 @@
 // NÃO adicione escopos `instagram_*` ou `instagram_basic` aqui.
 // A permissão do Instagram foi removida deste fluxo conforme solicitado.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +38,23 @@ type OAuthFlow = {
   expires_at: string;
 };
 
+type MetaLeadFormQuestion = { key?: string; label?: string; type?: string };
+type MetaLeadForm = {
+  id?: string;
+  name?: string;
+  status?: string;
+  leads_count?: number;
+  questions?: MetaLeadFormQuestion[];
+};
+type MetaPage = {
+  id: string;
+  name: string;
+  access_token: string;
+  picture?: { data?: { url?: string } };
+};
+type MetaFacebookUser = { id?: string; name?: string };
+type MetaPermission = { status?: string; permission: string };
+
 function sanitizeReturnUrl(raw?: string | null): string {
   try {
     const parsed = new URL(raw || DEFAULT_RETURN_URL);
@@ -47,7 +64,7 @@ function sanitizeReturnUrl(raw?: string | null): string {
     }
     if (parsed.hash === "#_=_") parsed.hash = "";
     return parsed.toString();
-  } catch (_error) {
+  } catch {
     return DEFAULT_RETURN_URL;
   }
 }
@@ -61,7 +78,7 @@ function appendOAuthParams(returnUrl: string, params: Record<string, string | un
       if (value !== undefined && value !== "") url.searchParams.set(key, value);
     }
     return url.toString();
-  } catch (_error) {
+  } catch {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== "") search.set(key, value);
@@ -81,7 +98,7 @@ function parseState(state: string | null): Record<string, unknown> {
   if (!state) return {};
   try {
     return JSON.parse(atob(state));
-  } catch (_error) {
+  } catch {
     return {};
   }
 }
@@ -103,13 +120,13 @@ function redirectWithSuccess(flowId: string, returnUrl: string): Response {
 }
 
 async function completeOAuthFlow(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   flow: OAuthFlow | null,
-  pages: any[],
+  pages: MetaPage[],
   userToken: string,
   returnUrl: string,
   adAccountId?: string | null,
-  facebookUser?: any,
+  facebookUser?: MetaFacebookUser | null,
 ): Promise<Response> {
   const data = {
     success: true,
@@ -164,8 +181,8 @@ async function completeOAuthFlow(
   return redirectWithSuccess(flow.id, returnUrl);
 }
 
-async function fetchLeadFormsCollection(pageId: string, accessToken: string, status?: string): Promise<any[]> {
-  const forms: any[] = [];
+async function fetchLeadFormsCollection(pageId: string, accessToken: string, status?: string): Promise<MetaLeadForm[]> {
+  const forms: MetaLeadForm[] = [];
   const params = new URLSearchParams({
     access_token: accessToken,
     fields: "id,name,status,leads_count,questions",
@@ -193,9 +210,9 @@ async function fetchLeadFormsCollection(pageId: string, accessToken: string, sta
   return forms;
 }
 
-async function fetchAllLeadForms(pageId: string, accessToken: string): Promise<any[]> {
-  const byId = new Map<string, any>();
-  const addForms = (forms: any[]) => {
+async function fetchAllLeadForms(pageId: string, accessToken: string): Promise<MetaLeadForm[]> {
+  const byId = new Map<string, MetaLeadForm>();
+  const addForms = (forms: MetaLeadForm[]) => {
     for (const form of forms) {
       if (form?.id) byId.set(form.id, form);
     }
@@ -220,7 +237,7 @@ async function fetchAllLeadForms(pageId: string, accessToken: string): Promise<a
 async function redirectWithError(
   error: string,
   returnUrl: string,
-  supabase?: ReturnType<typeof createClient>,
+  supabase?: SupabaseClient,
   flow?: OAuthFlow | null,
 ): Promise<Response> {
   if (supabase && flow?.id) {
@@ -248,60 +265,6 @@ async function redirectWithError(
       "cache-control": "no-store",
     },
   });
-}
-
-// Generate HTML page for errors
-function generateErrorPage(error: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <title>Erro na conexão</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-      color: white;
-    }
-    .container {
-      text-align: center;
-      padding: 2rem;
-      max-width: 400px;
-    }
-    .icon {
-      font-size: 3rem;
-      margin-bottom: 1rem;
-    }
-    h2 { margin-bottom: 0.5rem; }
-    p { opacity: 0.9; margin-bottom: 1rem; }
-    .error-detail {
-      background: rgba(0,0,0,0.2);
-      padding: 1rem;
-      border-radius: 8px;
-      font-size: 0.875rem;
-      word-break: break-word;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">❌</div>
-    <h2>Erro na conexão</h2>
-    <p>Não foi possível conectar sua conta do Facebook.</p>
-    <div class="error-detail">${error}</div>
-    <p style="margin-top: 1rem;">Você pode fechar esta janela e tentar novamente.</p>
-  </div>
-  <script>
-    if (window.opener) {
-      window.opener.postMessage({ type: 'META_OAUTH_ERROR', error: ${JSON.stringify(error)} }, '*');
-    }
-  </script>
-</body>
-</html>`;
 }
 
 serve(async (req) => {
@@ -404,7 +367,7 @@ serve(async (req) => {
 
       console.log("Long-lived token obtained, fetching user and pages...");
 
-      let facebookUser: any = null;
+      let facebookUser: MetaFacebookUser | null = null;
       try {
         const meResponse = await fetch(`${META_GRAPH_BASE_URL}/me?fields=id,name&access_token=${longLivedData.access_token}`);
         const meData = await meResponse.json();
@@ -426,7 +389,7 @@ serve(async (req) => {
         return redirectWithError(pagesData.error.message, returnUrl, supabase, flow);
       }
 
-      const pages = (pagesData.data || []).map((page: any) => ({
+      const pages = (pagesData.data || []).map((page: MetaPage) => ({
         id: page.id,
         name: page.name,
         access_token: page.access_token,
@@ -520,10 +483,8 @@ serve(async (req) => {
       pipeline_id,
       stage_id,
       default_status,
-      access_token,
       is_active,
       return_url,
-      ad_account_id,
       facebook_user_id,
       facebook_user_name,
       page_picture_url,
@@ -692,13 +653,15 @@ serve(async (req) => {
         console.log("Found integration for page:", integration.page_name);
 
         console.log("Fetching all forms from Meta API...");
-        let metaForms: any[] = [];
+        let metaForms: MetaLeadForm[] = [];
 
         try {
           metaForms = await fetchAllLeadForms(page_id, integration.access_token);
         } catch (rawError) {
-          const metaError = rawError as any;
-          console.error("Meta API error:", metaError);
+          const metaError = typeof rawError === "object" && rawError !== null
+            ? rawError as { message?: string; code?: string | number; error_subcode?: string | number }
+            : null;
+          console.error("Meta API error:", rawError);
           const errorMessage = metaError?.message || "Erro ao buscar formularios no Meta";
           
           // Update integration with error
@@ -723,12 +686,12 @@ serve(async (req) => {
 
         console.log(`Found ${metaForms.length || 0} forms`);
 
-        const forms = metaForms.map((form: any) => ({
+        const forms = metaForms.map((form) => ({
           id: form.id,
           name: form.name || form.id,
           status: form.status || "UNKNOWN",
           leads_count: form.leads_count,
-          questions: (form.questions || []).map((q: any) => ({
+          questions: (form.questions || []).map((q) => ({
             key: q.key,
             label: q.label,
             type: q.type,
@@ -819,7 +782,7 @@ serve(async (req) => {
           });
         }
 
-        const page = pagesData.data?.find((p: any) => p.id === page_id);
+        const page = pagesData.data?.find((p: MetaPage) => p.id === page_id);
         if (!page) {
           return new Response(JSON.stringify({ error: "Page not found or no access" }), {
             status: 404,
@@ -878,7 +841,7 @@ serve(async (req) => {
           const permRes = await fetch(permUrl);
           const permData = await permRes.json();
           if (permData.data) {
-            tokenPermissions = permData.data.filter((p: any) => p.status === "granted").map((p: any) => p.permission);
+            tokenPermissions = permData.data.filter((p: MetaPermission) => p.status === "granted").map((p: MetaPermission) => p.permission);
             console.log(`Page token permissions: ${tokenPermissions.join(", ")}`);
           }
         } catch (e) {

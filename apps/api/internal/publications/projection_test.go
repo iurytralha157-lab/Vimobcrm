@@ -683,6 +683,7 @@ func readyPublicationSource() publicationSource {
 		},
 		UpdatedAt:          time.Date(2026, 8, 1, 12, 30, 0, 0, time.UTC),
 		Status:             "active",
+		InventoryOpen:      true,
 		OwnerPresent:       true,
 		ResponsiblePresent: true,
 		Offers:             []sourceOffer{{OfferType: "sale", Status: "active", Price: 500000}},

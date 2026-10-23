@@ -205,6 +205,20 @@ export function LoginForm() {
       messageTimer = window.setTimeout(() => {
         setRecoveryMessage("Senha alterada com sucesso. Entre usando sua nova senha.");
       }, 0);
+    } else if (url.searchParams.get("passwordReset") === "unverified") {
+      url.searchParams.delete("passwordReset");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      messageTimer = window.setTimeout(() => {
+        setLoginError("A senha foi alterada, mas não conseguimos confirmar o encerramento das outras sessões. Entre com a nova senha e contate o suporte se notar atividade desconhecida.");
+      }, 0);
+    }
+
+    if (url.searchParams.get("logout") === "unverified") {
+      url.searchParams.delete("logout");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      messageTimer = window.setTimeout(() => {
+        setLoginError("Você saiu deste dispositivo, mas não conseguimos confirmar o encerramento das outras sessões. Entre novamente para tentar sair de todos os dispositivos.");
+      }, 0);
     }
 
     const emailConfirmation = url.searchParams.get("emailConfirmation");
@@ -415,16 +429,11 @@ export function LoginForm() {
       const { error } = signInResult.value;
 
       if (error) {
-        const code = "code" in error ? String(error.code) : "";
-        const requiresEmailConfirmation = code === "email_not_confirmed";
-        setEmailConfirmationPending(requiresEmailConfirmation);
+        // Keep account confirmation and invalid credentials indistinguishable.
+        setEmailConfirmationPending(true);
         setConfirmationResendMessage(null);
         setConfirmationResendError(null);
-        setLoginError(
-          requiresEmailConfirmation
-            ? "Confirme o link enviado ao seu e-mail antes de entrar."
-            : "E-mail ou senha inválidos. Confira os dados e tente novamente.",
-        );
+        setLoginError("Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.");
         return;
       }
 
@@ -536,7 +545,11 @@ export function LoginForm() {
       const { error } = recoveryResult.value;
 
       if (error) {
-        setRecoveryError("Não foi possível enviar o link. Confira o e-mail e tente novamente.");
+        // Auth error codes can differ for existing and unknown addresses.
+        // Keep the public response the same for every accepted email format.
+        setRecoveryMessage(
+          "Se existir uma conta com esse e-mail, você receberá um link de recuperação.",
+        );
         return;
       }
 
@@ -677,10 +690,10 @@ export function LoginForm() {
             method="post"
             autoComplete="on"
             onSubmit={handleSubmit}
-            className="space-y-4"
+            className="space-y-2"
             aria-busy={isSubmittingLogin}
           >
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <label
                 htmlFor="email"
                 className={labelClass}
@@ -716,7 +729,7 @@ export function LoginForm() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <label
                 htmlFor="password"
                 className={labelClass}

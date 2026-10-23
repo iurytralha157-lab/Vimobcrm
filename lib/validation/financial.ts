@@ -544,7 +544,12 @@ export const financialEntrySchema = z
     due_date: responseDateSchema,
     paid_date: responseDateSchema,
     payment_method: z.string().nullish(),
-    status: z.string().nullish(),
+    status: z.string().nullish().transform(value => {
+      if (value == null) return value
+      const normalized = value.trim().toLowerCase()
+      const aliases: Record<string, string> = { pendente: 'pending', parcial: 'partial', paga: 'paid', vencido: 'overdue', cancelada: 'cancelled' }
+      return aliases[normalized] ?? normalized
+    }),
     notes: z.string().nullish(),
     created_at: responseDateSchema,
     updated_at: responseDateSchema,

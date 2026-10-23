@@ -45,9 +45,10 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
-import { useCreateInvitations, useDeleteInvitation, useInvitations, useResendInvitation, useUpdateInvitation, type Invitation } from '@/hooks/use-invitations';
+import { getInvitationEmailLabel, getInvitationEmailState, useCreateInvitations, useDeleteInvitation, useInvitations, useResendInvitation, useUpdateInvitation, type Invitation } from '@/hooks/use-invitations';
 import { toast } from 'sonner';
 import { canManageOrganization } from '@/lib/access/organization';
+import { isTenantContextForOrganization } from '@/lib/access/tenant-navigation';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import {
   MAX_ORGANIZATION_INVITATIONS_PER_BATCH,
@@ -72,11 +73,13 @@ const createInvitationDraft = (id: number): InvitationDraft => ({
 });
 
 export function TeamTab({ search = '' }: { search?: string }) {
-  const { activeOrganization, profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { activeOrganization, profile, isSuperAdmin, tenantContext } = useAuth();
   const { t } = useLanguage();
   const { hasPermission } = useUserPermissions();
   const activeOrganizationId = activeOrganization.organizationId;
-  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const activeMemberRole = isTenantContextForOrganization(activeOrganizationId, tenantContext)
+    ? tenantContext?.memberRole
+    : undefined;
   const isAdmin = canManageOrganization({
     isSuperAdmin,
     memberRole: activeMemberRole,
@@ -94,6 +97,8 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const {
     data: invitations = [],
     isLoading: invitationsLoading,
+    isFetching: invitationsRefreshing,
+    dataUpdatedAt: invitationsUpdatedAt,
     isError: invitationsFailed,
     refetch: refetchInvitations,
   } = useInvitations({ enabled: canManageUsers });
@@ -112,6 +117,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const [transferLeadsToUserId, setTransferLeadsToUserId] = useState<string>('');
   const [transferPropertiesToUserId, setTransferPropertiesToUserId] = useState<string>('');
   const [invitationToDelete, setInvitationToDelete] = useState<Invitation | null>(null);
+  const [invitationToResend, setInvitationToResend] = useState<Invitation | null>(null);
   const [userToDeactivate, setUserToDeactivate] = useState<{ id: string; name: string } | null>(null);
 
   const nextInvitationDraftId = useRef(1);
@@ -138,6 +144,10 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const impactLeads = deleteImpact?.leads ?? 0;
   const impactProperties = deleteImpact?.properties ?? 0;
   const impactWhatsAppSessions = deleteImpact?.whatsapp_sessions ?? 0;
+  const impactTeams = deleteImpact?.teams ?? 0;
+  const impactCustomRoles = deleteImpact?.custom_roles ?? 0;
+  const impactPermissionOverrides = deleteImpact?.permission_overrides ?? 0;
+  const impactRoundRobinEntries = deleteImpact?.round_robin_entries ?? 0;
   const requiresLeadTransfer = impactLeads > 0;
   const requiresPropertyTransfer = impactProperties > 0;
   const canConfirmDelete =
@@ -147,14 +157,17 @@ export function TeamTab({ search = '' }: { search?: string }) {
     (!requiresLeadTransfer || !!transferLeadsToUserId) &&
     (!requiresPropertyTransfer || !!transferPropertiesToUserId);
   const normalizedSearch = normalizeSearchText(search);
-  const pendingInvitations = canManageUsers
+  const recentAcceptedCutoff = invitationsUpdatedAt - 30 * 24 * 60 * 60 * 1000;
+  const visibleInvitations = canManageUsers
     ? invitations.filter((invitation) => {
-        if (invitation.used_at || invitation.is_expired === true) return false;
+        if (invitation.used_at && Date.parse(invitation.used_at) < recentAcceptedCutoff) return false;
         if (!normalizedSearch) return true;
+        const state = invitation.used_at ? 'aceito' : invitation.is_expired ? 'expirado' : 'pendente';
         return normalizeSearchText([
           invitation.email ?? '',
           roleLabel(invitation.role),
-          'pendente',
+          state,
+          getInvitationEmailLabel(invitation),
         ].join(' ')).includes(normalizedSearch);
       })
     : [];
@@ -170,8 +183,8 @@ export function TeamTab({ search = '' }: { search?: string }) {
   });
   const hasManagedUsersOrInvitations =
     users.some((user) => user.role !== 'super_admin') ||
-    (canManageUsers && invitations.some(
-      (invitation) => !invitation.used_at && invitation.is_expired !== true,
+    (canManageUsers && invitations.some((invitation) =>
+      !invitation.used_at || Date.parse(invitation.used_at) >= recentAcceptedCutoff
     ));
 
   useEffect(() => {
@@ -212,11 +225,11 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
     if (requiresLeadTransfer && !transferLeadsToUserId) {
-      toast.error('Escolha para quem transferir os leads antes de excluir.');
+      toast.error('Escolha para quem transferir os leads antes de remover o membro.');
       return;
     }
     if (requiresPropertyTransfer && !transferPropertiesToUserId) {
-      toast.error('Escolha para quem transferir os imóveis antes de excluir.');
+      toast.error('Escolha para quem transferir os imóveis antes de remover o membro.');
       return;
     }
 
@@ -227,13 +240,13 @@ export function TeamTab({ search = '' }: { search?: string }) {
         transferLeadsToUserId: transferLeadsToUserId || null,
         transferPropertiesToUserId: transferPropertiesToUserId || null,
       });
-      toast.success('Usuário excluído com sucesso!');
+      toast.success('Membro removido desta organização.');
       setDeleteUserDialogOpen(false);
       setUserToDelete(null);
       setTransferLeadsToUserId('');
       setTransferPropertiesToUserId('');
     } catch (error: unknown) {
-      toast.error('Erro ao excluir usuário: ' + getErrorMessage(error, 'Erro desconhecido'));
+      toast.error('Erro ao remover membro: ' + getErrorMessage(error, 'Erro desconhecido'));
     } finally {
       setDeletingUser(false);
     }
@@ -309,6 +322,16 @@ export function TeamTab({ search = '' }: { search?: string }) {
     }
   };
 
+  const handleResendInvitation = async () => {
+    if (!invitationToResend) return;
+    try {
+      await resendInvitation.mutateAsync(invitationToResend.id);
+      setInvitationToResend(null);
+    } catch {
+      // The mutation shows the API error; keep the confirmation open for retry.
+    }
+  };
+
   const resetNewUserForm = () => {
     nextInvitationDraftId.current = 1;
     setInvitationDrafts([createInvitationDraft(0)]);
@@ -356,6 +379,19 @@ export function TeamTab({ search = '' }: { search?: string }) {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle className="text-[14px] font-normal text-foreground">{t.settings.users.title}</CardTitle>
+            {canManageUsers && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto h-9 rounded-[6px] text-xs"
+                onClick={() => void refetchInvitations()}
+                disabled={invitationsRefreshing}
+                aria-label="Atualizar convites"
+              >
+                <RefreshCw className={`mr-1.5 h-4 w-4 ${invitationsRefreshing ? 'animate-spin' : ''}`} />
+                Atualizar convites
+              </Button>
+            )}
             {canManageUsers && (
               <Dialog
                 open={userDialogOpen}
@@ -493,7 +529,8 @@ export function TeamTab({ search = '' }: { search?: string }) {
                     </div>
                     <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                       <p className="text-xs text-foreground">
-                        Cada pessoa receberá um <strong>convite por e-mail</strong> para criar o próprio acesso.
+                         O sistema criará um convite para cada pessoa e solicitará o envio por e-mail.
+                         Acompanhe o estado da entrega na lista de convites.
                         Nenhuma senha pronta será gerada ou compartilhada.
                       </p>
                     </div>
@@ -553,10 +590,10 @@ export function TeamTab({ search = '' }: { search?: string }) {
             ) : (
               <section
                 data-tour="team-users-list"
-                aria-label="Usuários e convites pendentes da organização"
+                 aria-label="Usuários e convites da organização"
                 className="space-y-3"
               >
-                  {visibleUsers.length === 0 && pendingInvitations.length === 0 ? (
+                   {visibleUsers.length === 0 && visibleInvitations.length === 0 ? (
                     <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-4 py-8 text-center text-sm text-muted-foreground">
                       {normalizedSearch && hasManagedUsersOrInvitations
                         ? 'Nenhum usuário ou convite encontrado para esta busca.'
@@ -564,7 +601,10 @@ export function TeamTab({ search = '' }: { search?: string }) {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {pendingInvitations.map((invitation) => {
+                       {visibleInvitations.map((invitation) => {
+                         const isAccepted = Boolean(invitation.used_at);
+                         const isExpired = !isAccepted && invitation.is_expired === true;
+                         const emailState = getInvitationEmailState(invitation);
                         const isResending =
                           resendInvitation.isPending &&
                           resendInvitation.variables === invitation.id;
@@ -591,22 +631,27 @@ export function TeamTab({ search = '' }: { search?: string }) {
                                   {invitation.email || 'Convite sem e-mail'}
                                 </p>
                                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                                  Válido até{' '}
-                                  {new Intl.DateTimeFormat('pt-BR').format(
-                                    new Date(invitation.expires_at),
-                                  )}
-                                </p>
+                                   {isAccepted ? 'Aceito em ' : isExpired ? 'Expirou em ' : 'Válido até '}
+                                   {new Intl.DateTimeFormat('pt-BR').format(
+                                     new Date(isAccepted ? invitation.used_at! : invitation.expires_at),
+                                   )}
+                                 </p>
+                                 <p
+                                   className={`mt-1 text-xs ${emailState === 'failed' || emailState === 'unknown' ? 'text-amber-700 dark:text-amber-200' : 'text-muted-foreground'}`}
+                                 >
+                                   E-mail: {getInvitationEmailLabel(invitation)}
+                                 </p>
                               </div>
                               <Badge
                                 variant="secondary"
-                                className="shrink-0 rounded-[6px] border-0 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-200"
-                              >
-                                Pendente
+                                 className={`shrink-0 rounded-[6px] border-0 text-[10px] ${isAccepted ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : isExpired ? 'bg-slate-500/10 text-slate-700 dark:text-slate-200' : 'bg-amber-500/10 text-amber-700 dark:text-amber-200'}`}
+                               >
+                                 {isAccepted ? 'Aceito' : isExpired ? 'Expirado' : 'Pendente'}
                               </Badge>
                             </div>
 
                             <div className="mt-4">
-                              {canManageAdminRole ? (
+                               {canManageAdminRole && !isAccepted && !isExpired ? (
                                 <Select
                                   value={invitation.role}
                                   onValueChange={(value) => updateInvitation.mutate({
@@ -644,35 +689,35 @@ export function TeamTab({ search = '' }: { search?: string }) {
                               )}
                             </div>
 
-                            {canManageInvitation && (
+                             {canManageInvitation && !isAccepted && (
                               <div className="mt-auto flex items-center gap-2 pt-4">
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="h-9 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-xs font-medium text-foreground shadow-none hover:bg-[var(--app-surface-hover)] hover:text-foreground"
-                                  onClick={() => resendInvitation.mutate(invitation.id)}
+                                   onClick={() => setInvitationToResend(invitation)}
                                   disabled={
                                     updateInvitation.isPending ||
                                     resendInvitation.isPending ||
                                     deleteInvitation.isPending ||
                                     !invitation.email
                                   }
-                                  title="Gerar um novo link e renovar a validade por 7 dias"
-                                  aria-label={`Reenviar convite para ${invitation.email || 'usuário'}`}
+                                   title="Gerar um novo link; o anterior deixará de funcionar"
+                                  aria-label={`${isExpired ? 'Renovar' : 'Reenviar'} convite para ${invitation.email || 'usuário'}`}
                                 >
                                   {isResending ? (
                                     <Loader2 className="mr-1.5 h-4 w-4 shrink-0 animate-spin" />
                                   ) : (
                                     <RefreshCw className="mr-1.5 h-4 w-4 shrink-0" />
                                   )}
-                                  <span className="truncate">Reenviar</span>
+                                   <span className="truncate">{isExpired ? 'Renovar' : 'Reenviar'}</span>
                                 </Button>
 
                                 <div
                                   className="flex h-9 min-w-0 flex-1 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-muted-foreground"
-                                  title="O acesso só pode ser ativado depois que o convite for aceito"
-                                >
-                                  <span className="truncate text-xs">Aguardando aceite</span>
+                                   title={isExpired ? 'O convite expirou e precisa de um novo link' : 'O acesso só pode ser ativado depois que o convite for aceito'}
+                                 >
+                                   <span className="truncate text-xs">{isExpired ? 'Prazo expirado' : 'Aguardando aceite'}</span>
                                 </div>
 
                                 <Button
@@ -888,10 +933,10 @@ export function TeamTab({ search = '' }: { search?: string }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir usuário</AlertDialogTitle>
+            <AlertDialogTitle>Remover membro desta organização</AlertDialogTitle>
             <AlertDialogDescription>
-              Antes de excluir <strong>{userToDelete?.name}</strong>, revise o que precisa ser transferido. O
-              histórico de leads e imóveis continua intacto.
+              Antes de remover <strong>{userToDelete?.name}</strong>, revise os vínculos e o que precisa ser
+              transferido. O histórico de leads e imóveis continua intacto.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-4">
@@ -901,7 +946,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
                 Carregando impacto do usuário...
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">Leads</p>
                   <p className="text-[20px] font-normal">{impactLeads}</p>
@@ -913,6 +958,22 @@ export function TeamTab({ search = '' }: { search?: string }) {
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">WhatsApp</p>
                   <p className="text-[20px] font-normal">{impactWhatsAppSessions}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Equipes</p>
+                  <p className="text-[20px] font-normal">{impactTeams}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Papéis personalizados</p>
+                  <p className="text-[20px] font-normal">{impactCustomRoles}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Permissões individuais</p>
+                  <p className="text-[20px] font-normal">{impactPermissionOverrides}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Entradas na distribuição</p>
+                  <p className="text-[20px] font-normal">{impactRoundRobinEntries}</p>
                 </div>
               </div>
             )}
@@ -964,6 +1025,12 @@ export function TeamTab({ search = '' }: { search?: string }) {
                 As conexões WhatsApp deste usuário serão desconectadas. Elas não serão transferidas.
               </p>
             )}
+            {(impactTeams > 0 || impactCustomRoles > 0 || impactPermissionOverrides > 0 || impactRoundRobinEntries > 0) && (
+              <p className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-200">
+                Os vínculos de equipe, distribuição e acesso desta organização serão revogados.
+                Se a pessoa voltar por convite, será necessário configurá-los novamente.
+              </p>
+            )}
             {deleteImpactFailed && (
               <p className="rounded-lg border border-destructive/25 bg-destructive/10 p-3 text-sm text-destructive">
                 Não foi possível calcular o impacto deste usuário. Tente novamente antes de excluir.
@@ -981,7 +1048,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Excluir
+              Remover membro
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1011,6 +1078,32 @@ export function TeamTab({ search = '' }: { search?: string }) {
             >
               {updateUser.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Desativar acesso
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!invitationToResend} onOpenChange={(open) => !open && !resendInvitation.isPending && setInvitationToResend(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Gerar novo link de convite?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Um novo link será solicitado para <strong>{invitationToResend?.email || 'esta pessoa'}</strong> e terá validade de 7 dias.
+              O link anterior deixará de funcionar. Se o envio anterior teve resultado desconhecido, ele ainda pode chegar depois com o link inválido.
+              Atualize os convites antes de continuar se precisar conferir o estado do e-mail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resendInvitation.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleResendInvitation();
+              }}
+              disabled={resendInvitation.isPending}
+            >
+              {resendInvitation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Gerar novo link
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -39,7 +39,8 @@ import {
   LayoutDashboard,
   Settings,
   Loader2,
-  Check
+  Check,
+  Power,
 } from 'lucide-react';
 import {
   useOrganizationRoles,
@@ -95,6 +96,7 @@ export function RolesTab() {
   const [editingRole, setEditingRole] = useState<OrganizationRole | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roleToDelete, setRoleToDelete] = useState<OrganizationRole | null>(null);
+  const [roleToToggle, setRoleToToggle] = useState<OrganizationRole | null>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -108,7 +110,7 @@ export function RolesTab() {
   const updatePermissions = useUpdateRolePermissions();
 
   // Quando abrir para edição, carregar permissões da função
-  const { data: rolePermissions = [] } = useRolePermissions(editingRole?.id || null);
+  const { data: rolePermissions = [], isLoading: rolePermissionsLoading } = useRolePermissions(editingRole?.id || null);
 
   useEffect(() => {
     if (!editingRole) return;
@@ -147,40 +149,54 @@ export function RolesTab() {
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) return;
+    if (!formName.trim() || (editingRole && rolePermissionsLoading)) return;
 
-    if (editingRole) {
-      // Atualizar função existente
-      await updateRole.mutateAsync({
-        id: editingRole.id,
-        name: formName.trim(),
-        description: formDescription.trim() || undefined,
-        color: formColor,
-      });
-      // Atualizar permissões
-      await updatePermissions.mutateAsync({
-        roleId: editingRole.id,
-        permissions: selectedPermissions,
-      });
-    } else {
-      // Criar nova função
-      await createRole.mutateAsync({
-        name: formName.trim(),
-        description: formDescription.trim() || undefined,
-        color: formColor,
-        permissions: selectedPermissions,
-      });
+    try {
+      if (editingRole) {
+        await updateRole.mutateAsync({
+          id: editingRole.id,
+          name: formName.trim(),
+          description: formDescription.trim() || undefined,
+          color: formColor,
+        });
+        await updatePermissions.mutateAsync({
+          roleId: editingRole.id,
+          permissions: selectedPermissions,
+        });
+      } else {
+        await createRole.mutateAsync({
+          name: formName.trim(),
+          description: formDescription.trim() || undefined,
+          color: formColor,
+          permissions: selectedPermissions,
+        });
+      }
+      setCreateDialogOpen(false);
+      resetForm();
+    } catch {
+      // Mutation hooks show the error and keep the form open for correction.
     }
-
-    setCreateDialogOpen(false);
-    resetForm();
   };
 
   const handleDelete = async () => {
     if (!roleToDelete) return;
-    await deleteRole.mutateAsync(roleToDelete.id);
-    setDeleteDialogOpen(false);
-    setRoleToDelete(null);
+    try {
+      await deleteRole.mutateAsync(roleToDelete.id);
+      setDeleteDialogOpen(false);
+      setRoleToDelete(null);
+    } catch {
+      // Keep the confirmation open when the server rejects the deletion.
+    }
+  };
+
+  const handleToggle = async () => {
+    if (!roleToToggle) return;
+    try {
+      await updateRole.mutateAsync({ id: roleToToggle.id, is_active: !roleToToggle.is_active });
+      setRoleToToggle(null);
+    } catch {
+      // Keep the confirmation open when the server rejects the change.
+    }
   };
 
   const togglePermission = (key: string) => {
@@ -444,7 +460,7 @@ export function RolesTab() {
               <Button variant="secondary" className="w-[40%]" onClick={() => setCreateDialogOpen(false)} disabled={isLoading}>
                 Cancelar
               </Button>
-              <Button className="w-[60%]" onClick={handleSave} disabled={!formName.trim() || isLoading}>
+              <Button className="w-[60%]" onClick={handleSave} disabled={!formName.trim() || isLoading || !!editingRole && rolePermissionsLoading}>
                 {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editingRole ? 'Salvar Alterações' : 'Criar Função'}
               </Button>
@@ -488,26 +504,25 @@ export function RolesTab() {
                       <CardTitle className="text-lg">{role.name}</CardTitle>
                     </div>
                     <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleOpenEdit(role)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
                       {!role.is_system && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => {
-                            setRoleToDelete(role);
-                            setDeleteDialogOpen(true);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <>
+                          {role.is_active && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Editar ${role.name}`} onClick={() => handleOpenEdit(role)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`${role.is_active ? 'Desativar' : 'Reativar'} ${role.name}`} onClick={() => setRoleToToggle(role)}>
+                            <Power className="h-4 w-4" />
+                          </Button>
+                          {role.assignment_count === 0 && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" aria-label={`Excluir ${role.name}`} onClick={() => {
+                              setRoleToDelete(role);
+                              setDeleteDialogOpen(true);
+                            }}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -518,6 +533,10 @@ export function RolesTab() {
                   )}
                 </CardHeader>
                 <CardContent className="pt-0">
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant={role.is_active ? 'secondary' : 'outline'}>{role.is_active ? 'Ativa' : 'Inativa'}</Badge>
+                    <span>{role.assigned_count} {role.assigned_count === 1 ? 'pessoa vinculada' : 'pessoas vinculadas'}</span>
+                  </div>
                   <RolePermissionsSummary roleId={role.id} />
                 </CardContent>
               </Card>
@@ -526,6 +545,26 @@ export function RolesTab() {
         )}
       </CardContent>
 
+      <AlertDialog open={!!roleToToggle} onOpenChange={(open) => { if (!open && !updateRole.isPending) setRoleToToggle(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{roleToToggle?.is_active ? 'Desativar função?' : 'Reativar função?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {roleToToggle?.assigned_count ?? 0} {roleToToggle?.assigned_count === 1 ? 'pessoa vinculada' : 'pessoas vinculadas'} {roleToToggle?.is_active
+                ? 'perderão as permissões desta função na próxima requisição.'
+                : 'voltarão a receber as permissões desta função na próxima requisição.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updateRole.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction disabled={updateRole.isPending} onClick={(event) => { event.preventDefault(); void handleToggle(); }}>
+              {updateRole.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {roleToToggle?.is_active ? 'Desativar' : 'Reativar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Dialog de confirmação de exclusão */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
@@ -533,7 +572,7 @@ export function RolesTab() {
             <AlertDialogTitle>Excluir função?</AlertDialogTitle>
             <AlertDialogDescription>
               Tem certeza que deseja excluir a função &quot;{roleToDelete?.name}&quot;?
-              Usuários com esta função perderão suas permissões associadas.
+              Ela não possui vínculos e a exclusão não poderá ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

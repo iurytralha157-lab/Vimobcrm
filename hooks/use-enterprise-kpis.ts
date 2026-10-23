@@ -12,7 +12,7 @@ export type KPIData = {
 };
 
 export function useEnterpriseKPIs(dateRange?: { from: Date; to: Date }) {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ["enterprise-kpis", activeOrganization.organizationId, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],

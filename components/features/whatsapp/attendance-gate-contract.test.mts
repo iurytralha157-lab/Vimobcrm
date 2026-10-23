@@ -35,20 +35,18 @@ test("contrato de attendance usa card e WhatsApp selecionado em GET e POST", () 
   assert.match(hookSource, /pending\.identityKey !== requestIdentityRef\.current/);
 });
 
-test("dialogo explica inicio temporal, visibilidade e ausencia de importacao", () => {
+test("dialogo separa entrada no atendimento de vinculo e historico", () => {
   assert.match(dialogSource, /Entrar no atendimento\?/);
-  assert.match(dialogSource, /mensagens enviadas e recebidas pelo WhatsApp selecionado/);
-  assert.match(dialogSource, /a partir da sua entrada/);
-  assert.match(dialogSource, /visíveis[\s\S]*quem tem acesso ao lead/);
-  assert.match(dialogSource, /Mensagens anteriores a esta entrada não serão acrescentadas ao histórico/);
-  assert.match(dialogSource, /registros antigos do card permanecem/);
+  assert.match(dialogSource, /enviar pelo CRM usando o WhatsApp selecionado/);
+  assert.match(dialogSource, /visíveis para quem tem acesso ao lead/);
+  assert.match(dialogSource, /A entrada no atendimento não anexa histórico antigo/);
+  assert.match(dialogSource, /anexado automaticamente quando você confirma o vínculo/);
 });
 
-test("as tres superficies passam pelo gate antes da mutacao de envio", () => {
+test("as duas superficies de envio passam pelo gate antes da mutacao", () => {
   for (const [name, source] of [
     ["conversas", conversationsSource],
     ["flutuante", floatingSource],
-    ["lead", leadThreadSource],
   ] as const) {
     assert.match(source, /useWhatsAppAttendanceGate/);
     assert.match(source, /<EnterAttendanceDialog/);
@@ -73,25 +71,18 @@ test("rascunho, audio e criacao de conversa aguardam confirmacao", () => {
   const floatingSend = sourceBetween(floatingSource, "const handleSendMessage", "const handleKeyPress");
   assert.ok(floatingSend.indexOf("ensureJoined") < floatingSend.indexOf('setMessageText("")'));
 
-  const leadSend = sourceBetween(leadThreadSource, "const handleSend = async", "const handleSendAudio");
-  assert.ok(leadSend.indexOf("ensureConversationAndAttendanceForSend") < leadSend.indexOf("setText('')"));
-  assert.match(leadThreadSource, /prepareTarget:[\s\S]*?ensureConversationForSend/);
-  assert.match(audioRecorderSource, /if \(sent !== false\) clearRecording\(\)/);
+  assert.match(audioRecorderSource, /result\?\.state === "unconfirmed"[\s\S]*?return;/);
+  assert.match(audioRecorderSource, /if \(result !== false && !\(typeof result === "object" && result\?\.state === "cancelled"\)\) clearRecording\(\)/);
 });
 
 test("arquivo cancelado pode ser escolhido novamente e reacoes tambem passam pelo gate", () => {
-  for (const [source, inputName] of [
-    [conversationsSource, "e"],
-    [floatingSource, "e"],
-    [leadThreadSource, "event"],
-  ] as const) {
+  for (const source of [conversationsSource, floatingSource]) {
     const fileSend = sourceBetween(source, "const handleFileSelect", "const handleReactToMessage");
     assert.match(fileSend, new RegExp(`if \\(!targetConversation|if \\(!joined`));
-    assert.match(fileSend, new RegExp(`${inputName}\\.target\\.value = [\"']{2}`));
+    assert.match(fileSend, /const input = 'target' in selection \? selection\.target : null/);
+    assert.match(fileSend, /if \(input\) input\.value = ["']{2}/);
 
-    const reactionSend = sourceBetween(source, "const handleReactToMessage", source === leadThreadSource
-      ? "const retryMediaDownload"
-      : source === conversationsSource
+    const reactionSend = sourceBetween(source, "const handleReactToMessage", source === conversationsSource
         ? "const handleArchive"
         : "const connectedSessions");
     assert.ok(reactionSend.indexOf("ensureJoined") < reactionSend.indexOf("reactToMessage.mutateAsync"));
@@ -101,6 +92,6 @@ test("arquivo cancelado pode ser escolhido novamente e reacoes tambem passam pel
 
 test("eventos de entrada ficam cronologicos sem duplicar o timeline do lead", () => {
   assert.match(conversationsSource, /attendanceEntries=\{attendanceGate\.entries\}/);
-  assert.match(floatingSource, /floatingTimelineItems[\s\S]*?attendanceGate\.entries\.map[\s\S]*?\.sort/);
+  assert.match(floatingSource, /floatingTimelineItems[\s\S]*?sortWhatsAppTimelineItems\(\[[\s\S]*?attendanceGate\.entries\.map/);
   assert.doesNotMatch(leadThreadSource, /kind: ['\"]attendance['\"]/);
 });

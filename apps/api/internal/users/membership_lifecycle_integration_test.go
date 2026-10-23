@@ -41,6 +41,16 @@ func TestOrganizationUserLifecycleAndDeletionAgainstLocalDatabase(t *testing.T) 
 	repository := NewRepository(database, AuthAdminConfig{})
 	tenantRepository := tenant.NewRepository(database)
 	actorContext := lifecycleActorContext(fixture)
+	delegatedUser := tenant.Context{
+		UserID: fixture.targetUserID, OrganizationID: fixture.organizationID,
+		MemberRole: "user", Permissions: []string{permissions.UsersManage},
+	}
+	if _, err := repository.GetDeleteUserImpact(ctx, delegatedUser, fixture.actorUserID); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("lower role must not preview admin removal, got %v", err)
+	}
+	if _, err := repository.GetDeleteUserImpact(ctx, actorContext, fixture.actorUserID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("admin must not preview own removal, got %v", err)
+	}
 	emptyResult, err := repository.DeleteOrganizationUser(
 		ctx,
 		actorContext,

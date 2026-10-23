@@ -61,6 +61,9 @@ func (repo Repository) JoinConversationAttendance(
 	conversationID string,
 	input attendanceInput,
 ) (AttendanceResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return AttendanceResponse{}, err
+	}
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return AttendanceResponse{}, ErrConversationNotFound
@@ -197,6 +200,11 @@ func lockAttendanceScope(
 	}
 	if err != nil {
 		return attendanceScope{}, err
+	}
+	if requireOwner {
+		if err := requireWhatsAppQueuePoolClaim(ctx, tx, tenantContext.OrganizationID, lockedLeadID, tenantContext.UserID); err != nil {
+			return attendanceScope{}, err
+		}
 	}
 	if requireOwner && lockedOwnerUserID != tenantContext.UserID && !leadAssigned {
 		return attendanceScope{}, ErrSessionNotFound

@@ -11,7 +11,6 @@ import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { getWhatsAppIntegrationAccess } from "@/lib/access/whatsapp-integration";
 import { isTenantContextForOrganization } from "@/lib/access/tenant-navigation";
 
-import { WhatsAppSessionStatusPanel } from "./WhatsAppSessionStatusPanel";
 
 function RestrictedState({
   title,
@@ -76,8 +75,7 @@ export default function WhatsAppSettingsScreen() {
 
   return (
     <AppLayout title="WhatsApp" borderless disableMainScroll>
-      <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-y-auto sm:pt-2">
-        <div className="flex w-full flex-col gap-4 pb-6">
+      <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col gap-3 overflow-hidden animate-in">
           {accessLoading ? (
             <div className="space-y-3" aria-label="Carregando integração WhatsApp">
               <Skeleton className="h-52 w-full rounded-[8px]" />
@@ -94,15 +92,8 @@ export default function WhatsAppSettingsScreen() {
               description="O módulo WhatsApp e a permissão de visualização são necessários. Líderes veem somente os usuários das equipes sob sua responsabilidade."
             />
           ) : (
-            <>
-              {access.canManageOwnSessions ? (
-                <WhatsAppIntegrationSettings />
-              ) : null}
-
-              <WhatsAppSessionStatusPanel />
-            </>
+            <WhatsAppIntegrationSettings compactPage unifiedPage allowManagement={access.canManageOwnSessions} />
           )}
-        </div>
       </div>
     </AppLayout>
   );

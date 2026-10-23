@@ -10,6 +10,7 @@ import (
 const (
 	defaultReservationExpirationInterval = time.Minute
 	defaultReservationExpirationBatch    = 100
+	reservationExpirationTimeout         = 30 * time.Second
 )
 
 type ReservationExpirationWorkerConfig struct {
@@ -44,7 +45,9 @@ func (repo Repository) StartReservationExpirationWorker(
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				expired, err := repo.DrainDueReservationBacklog(ctx, config.BatchSize)
+				expired, err := runReservationExpiration(ctx, reservationExpirationTimeout, func(runCtx context.Context) (int, error) {
+					return repo.DrainDueReservationBacklog(runCtx, config.BatchSize)
+				})
 				if err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("development reservation expiration worker failed", "error", err)
 				} else if expired > 0 {
@@ -54,6 +57,17 @@ func (repo Repository) StartReservationExpirationWorker(
 			}
 		}
 	}()
+}
+
+func runReservationExpiration(ctx context.Context, timeout time.Duration, expire func(context.Context) (int, error)) (expired int, err error) {
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = errors.New("development reservation expiration panic recovered")
+		}
+	}()
+	return expire(runCtx)
 }
 
 // DrainDueReservationBacklog keeps transactions short while immediately

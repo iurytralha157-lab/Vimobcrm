@@ -13,7 +13,7 @@ interface PushPayload {
   user_id: string;
   title: string;
   body: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
   priority?: 'high' | 'normal';
 }
 
@@ -24,6 +24,8 @@ interface WebPushSubscription {
     auth: string;
   };
 }
+
+type PushResult = { success: boolean; error?: unknown };
 
 // ==================== VAPID/Web Push Functions ====================
 
@@ -68,58 +70,6 @@ function base64UrlDecode(str: string): Uint8Array {
   return bytes;
 }
 
-// Parse PEM private key
-function parsePrivateKey(pem: string): Uint8Array {
-  // Remove PEM headers if present
-  const keyData = pem
-    .replace(/-----BEGIN (EC )?PRIVATE KEY-----/g, '')
-    .replace(/-----END (EC )?PRIVATE KEY-----/g, '')
-    .replace(/\s/g, '');
-  
-  return base64UrlDecode(keyData);
-}
-
-// Create VAPID JWT for authorization
-async function createVapidJwt(audience: string, subject: string, privateKeyPem: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now + 12 * 60 * 60; // 12 hours
-
-  const header = { alg: "ES256", typ: "JWT" };
-  const payload = {
-    aud: audience,
-    exp: exp,
-    sub: subject,
-  };
-
-  const headerB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
-  const payloadB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
-  const unsignedToken = `${headerB64}.${payloadB64}`;
-
-  // Import the ECDSA private key
-  const keyData = parsePrivateKey(privateKeyPem);
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    "pkcs8",
-    keyData.buffer as ArrayBuffer,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
-
-  // Sign the token
-  const signature = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    cryptoKey,
-    new TextEncoder().encode(unsignedToken)
-  );
-
-  // Convert signature from DER to raw format (64 bytes: r + s)
-  const sigArray = new Uint8Array(signature);
-  const signatureB64 = base64UrlEncode(sigArray);
-
-  return `${unsignedToken}.${signatureB64}`;
-}
-
 // Helper to extract raw P-256 key from SPKI/DER (91 bytes)
 function getRawPublicKey(publicKeyB64: string): string {
   const normalized = publicKeyB64
@@ -147,9 +97,9 @@ async function sendWebPushNotification(
   subscriptionJson: string,
   title: string,
   body: string,
-  data: Record<string, any> = {},
+  data: Record<string, unknown> = {},
   priority: 'high' | 'normal' = 'high'
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PushResult> {
   try {
     const subscription: WebPushSubscription = JSON.parse(subscriptionJson);
     const { privateKey, publicKey } = getVapidKeys();
@@ -180,13 +130,16 @@ async function sendWebPushNotification(
     console.log("[WebPush] Sent successfully");
     return { success: true };
 
-  } catch (error: any) {
-    if (error?.statusCode === 404 || error?.statusCode === 410) {
+  } catch (error: unknown) {
+    const failure = error && typeof error === "object"
+      ? error as { statusCode?: unknown; body?: unknown; message?: unknown }
+      : null;
+    if (failure?.statusCode === 404 || failure?.statusCode === 410) {
       console.log("[WebPush] Subscription expired/invalid");
       return { success: false, error: "invalid_token" };
     }
     console.error("[WebPush] Error:", error);
-    return { success: false, error: error?.body || error?.message || String(error) };
+    return { success: false, error: failure?.body || failure?.message || String(error) };
   }
 }
 
@@ -279,7 +232,7 @@ async function sendFCMNotification(
   accessToken: string,
   title: string,
   body: string,
-  data: Record<string, any> = {},
+  data: Record<string, unknown> = {},
   priority: 'high' | 'normal' = 'high'
 ): Promise<{ success: boolean; error?: string }> {
   const serviceAccountJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
@@ -359,7 +312,7 @@ async function sendFCMNotification(
       console.error("[FCM] Error response:", JSON.stringify(result));
       
       // Check for invalid token errors
-      const errorCode = result.error?.details?.find((d: any) => 
+      const errorCode = result.error?.details?.find((d: { errorCode?: string; "@type"?: string }) =>
         d.errorCode === "UNREGISTERED" || 
         d.errorCode === "INVALID_ARGUMENT" ||
         d["@type"]?.includes("BadRequest")
@@ -457,10 +410,10 @@ Deno.serve(async (req) => {
     let sentCount = 0;
     let failedCount = 0;
     const invalidTokenIds: string[] = [];
-    const failures: Array<{ token_id: string; platform: string; error: string }> = [];
+    const failures: Array<{ token_id: string; platform: string; error: unknown }> = [];
 
     for (const tokenRecord of tokens) {
-      let result: { success: boolean; error?: string };
+      let result: PushResult;
       
       if (tokenRecord.platform === 'web') {
         // Send via Web Push

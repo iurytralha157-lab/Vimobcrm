@@ -19,6 +19,7 @@ var (
 	ErrCommentNotFound   = errors.New("schedule comment not found")
 	ErrNoScheduleChanges = errors.New("no schedule changes provided")
 	ErrRecurrenceCreate  = errors.New("schedule recurrence could not be created")
+	ErrScheduleConflict  = errors.New("schedule event changed; refresh before retrying")
 )
 
 const maxScheduleReminderMinutes = 120
@@ -56,8 +57,8 @@ type Event struct {
 	OutcomeRecordedAt  *time.Time   `json:"outcome_recorded_at"`
 	RescheduledFromID  *string      `json:"rescheduled_from_event_id"`
 	RescheduledToID    *string      `json:"rescheduled_to_event_id"`
-	CreatedAt          time.Time    `json:"created_at"`
-	UpdatedAt          time.Time    `json:"updated_at"`
+	CreatedAt          *time.Time   `json:"created_at"`
+	UpdatedAt          *time.Time   `json:"updated_at"`
 	User               *UserRef     `json:"user"`
 	Lead               *LeadRef     `json:"lead"`
 	Property           *PropertyRef `json:"property"`
@@ -107,18 +108,23 @@ type Capabilities struct {
 }
 
 type Envelope[T any] struct {
-	Data T `json:"data"`
+	Data       T               `json:"data"`
+	Pagination *ListPagination `json:"pagination,omitempty"`
 }
 
 type ListFilter struct {
-	EventID   string
-	UserID    string
-	LeadID    string
-	StartTime *time.Time
-	EndTime   *time.Time
+	LeadPreview bool
+	EventID     string
+	UserID      string
+	LeadID      string
+	StartTime   *time.Time
+	EndTime     *time.Time
+	Limit       int
+	Offset      int
 }
 
 type CreateRequest struct {
+	ClientRequestID string    `json:"client_request_id,omitempty"`
 	Title           string    `json:"title"`
 	Description     string    `json:"description,omitempty"`
 	EventType       string    `json:"event_type,omitempty"`
@@ -137,6 +143,7 @@ type CreateRequest struct {
 }
 
 type createInput struct {
+	ClientRequestID string
 	Title           string
 	Description     *string
 	EventType       string
@@ -181,50 +188,54 @@ type patchStringSlice struct {
 }
 
 type UpdateRequest struct {
-	Title           patchString      `json:"title,omitempty"`
-	Description     patchString      `json:"description,omitempty"`
-	EventType       patchString      `json:"event_type,omitempty"`
-	StartTime       patchTime        `json:"start_time,omitempty"`
-	EndTime         patchTime        `json:"end_time,omitempty"`
-	IsAllDay        patchBool        `json:"is_all_day,omitempty"`
-	UserID          patchString      `json:"user_id,omitempty"`
-	LeadID          patchString      `json:"lead_id,omitempty"`
-	PropertyID      patchString      `json:"property_id,omitempty"`
-	TeamID          patchString      `json:"team_id,omitempty"`
-	Location        patchString      `json:"location,omitempty"`
-	Status          patchString      `json:"status,omitempty"`
-	Visibility      patchString      `json:"visibility,omitempty"`
-	ReminderMinutes patchInt         `json:"reminder_minutes,omitempty"`
-	RecurrenceRule  patchString      `json:"recurrence_rule,omitempty"`
-	Outcome         patchString      `json:"outcome,omitempty"`
-	OutcomeNotes    patchString      `json:"outcome_notes,omitempty"`
-	PerformedBy     patchString      `json:"performed_by,omitempty"`
-	AssigneeIDs     patchStringSlice `json:"assignee_ids,omitempty"`
+	ExpectedUpdatedAt *time.Time       `json:"expected_updated_at,omitempty"`
+	Title             patchString      `json:"title,omitempty"`
+	Description       patchString      `json:"description,omitempty"`
+	EventType         patchString      `json:"event_type,omitempty"`
+	StartTime         patchTime        `json:"start_time,omitempty"`
+	EndTime           patchTime        `json:"end_time,omitempty"`
+	IsAllDay          patchBool        `json:"is_all_day,omitempty"`
+	UserID            patchString      `json:"user_id,omitempty"`
+	LeadID            patchString      `json:"lead_id,omitempty"`
+	PropertyID        patchString      `json:"property_id,omitempty"`
+	TeamID            patchString      `json:"team_id,omitempty"`
+	Location          patchString      `json:"location,omitempty"`
+	Status            patchString      `json:"status,omitempty"`
+	Visibility        patchString      `json:"visibility,omitempty"`
+	ReminderMinutes   patchInt         `json:"reminder_minutes,omitempty"`
+	RecurrenceRule    patchString      `json:"recurrence_rule,omitempty"`
+	Outcome           patchString      `json:"outcome,omitempty"`
+	OutcomeNotes      patchString      `json:"outcome_notes,omitempty"`
+	PerformedBy       patchString      `json:"performed_by,omitempty"`
+	AssigneeIDs       patchStringSlice `json:"assignee_ids,omitempty"`
 }
 
 type updateInput UpdateRequest
 
 type CompleteRequest struct {
-	Status       string `json:"status"`
-	Outcome      string `json:"outcome,omitempty"`
-	OutcomeNotes string `json:"outcome_notes,omitempty"`
-	PerformedBy  string `json:"performed_by,omitempty"`
+	ExpectedUpdatedAt *time.Time `json:"expected_updated_at,omitempty"`
+	Status            string     `json:"status"`
+	Outcome           string     `json:"outcome,omitempty"`
+	OutcomeNotes      string     `json:"outcome_notes,omitempty"`
+	PerformedBy       string     `json:"performed_by,omitempty"`
 }
 
 type RescheduleRequest struct {
-	StartTime       time.Time `json:"start_time"`
-	EndTime         time.Time `json:"end_time"`
-	IsAllDay        *bool     `json:"is_all_day,omitempty"`
-	ReminderMinutes patchInt  `json:"reminder_minutes,omitempty"`
-	OutcomeNotes    string    `json:"outcome_notes,omitempty"`
+	ExpectedUpdatedAt *time.Time `json:"expected_updated_at,omitempty"`
+	StartTime         time.Time  `json:"start_time"`
+	EndTime           time.Time  `json:"end_time"`
+	IsAllDay          *bool      `json:"is_all_day,omitempty"`
+	ReminderMinutes   patchInt   `json:"reminder_minutes,omitempty"`
+	OutcomeNotes      string     `json:"outcome_notes,omitempty"`
 }
 
 type rescheduleInput struct {
-	StartTime       time.Time
-	EndTime         time.Time
-	IsAllDay        *bool
-	ReminderMinutes patchInt
-	OutcomeNotes    *string
+	ExpectedUpdatedAt *time.Time
+	StartTime         time.Time
+	EndTime           time.Time
+	IsAllDay          *bool
+	ReminderMinutes   patchInt
+	OutcomeNotes      *string
 }
 
 type RescheduleResult struct {
@@ -234,7 +245,8 @@ type RescheduleResult struct {
 }
 
 type AddCommentRequest struct {
-	Content string `json:"content"`
+	ClientRequestID string `json:"client_request_id,omitempty"`
+	Content         string `json:"content"`
 }
 
 type AddAssigneeRequest struct {
@@ -286,17 +298,18 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		filter.EndTime = &value
 	}
 
-	return filter, nil
+	return validateScheduleListFilter(filter, values)
 }
 
 func (request CreateRequest) Validate(defaultUserID string) (createInput, error) {
 	defaultReminderMinutes := 30
 	input := createInput{
+		ClientRequestID: strings.TrimSpace(request.ClientRequestID),
 		Title:           trimMax(request.Title, 180),
 		Description:     optionalString(request.Description, 2000),
 		EventType:       strings.TrimSpace(request.EventType),
-		StartTime:       request.StartTime,
-		EndTime:         request.EndTime,
+		StartTime:       schedulePersistedTime(request.StartTime),
+		EndTime:         schedulePersistedTime(request.EndTime),
 		IsAllDay:        boolValue(request.IsAllDay),
 		UserID:          strings.TrimSpace(request.UserID),
 		CreatedBy:       defaultUserID,
@@ -317,7 +330,7 @@ func (request CreateRequest) Validate(defaultUserID string) (createInput, error)
 	if !validEnum(input.EventType, "call", "email", "meeting", "task", "message", "visit") {
 		return createInput{}, fmt.Errorf("%w: event_type is invalid", ErrInvalidInput)
 	}
-	if input.StartTime.IsZero() || input.EndTime.IsZero() || input.EndTime.Before(input.StartTime) {
+	if input.StartTime.IsZero() || input.EndTime.IsZero() || !input.EndTime.After(input.StartTime) {
 		return createInput{}, fmt.Errorf("%w: event time is invalid", ErrInvalidInput)
 	}
 	if input.UserID == "" {
@@ -328,6 +341,13 @@ func (request CreateRequest) Validate(defaultUserID string) (createInput, error)
 		return createInput{}, fmt.Errorf("%w: user_id is invalid", ErrInvalidInput)
 	}
 	input.UserID = userID
+	if input.ClientRequestID != "" {
+		value, ok := normalizeUUID(input.ClientRequestID)
+		if !ok {
+			return createInput{}, fmt.Errorf("%w: client_request_id is invalid", ErrInvalidInput)
+		}
+		input.ClientRequestID = value
+	}
 
 	if input.Visibility == "" {
 		input.Visibility = "default"
@@ -368,6 +388,9 @@ func (request CreateRequest) Validate(defaultUserID string) (createInput, error)
 	}
 
 	seen := map[string]struct{}{}
+	if len(request.AssigneeIDs) > maxScheduleAssignees {
+		return createInput{}, fmt.Errorf("%w: assignee_ids exceeds limit", ErrInvalidInput)
+	}
 	for _, rawID := range request.AssigneeIDs {
 		value, ok := normalizeUUID(rawID)
 		if !ok {
@@ -388,25 +411,26 @@ func (request CreateRequest) Validate(defaultUserID string) (createInput, error)
 
 func (request UpdateRequest) Validate() (updateInput, error) {
 	input := updateInput{
-		Title:           validatePatchString(request.Title, 180),
-		Description:     validatePatchString(request.Description, 2000),
-		EventType:       validatePatchString(request.EventType, 40),
-		StartTime:       request.StartTime,
-		EndTime:         request.EndTime,
-		IsAllDay:        request.IsAllDay,
-		UserID:          request.UserID,
-		LeadID:          request.LeadID,
-		PropertyID:      request.PropertyID,
-		TeamID:          request.TeamID,
-		Location:        validatePatchString(request.Location, 500),
-		Status:          validatePatchString(request.Status, 40),
-		Visibility:      validatePatchString(request.Visibility, 40),
-		ReminderMinutes: request.ReminderMinutes,
-		RecurrenceRule:  validatePatchString(request.RecurrenceRule, 40),
-		Outcome:         validatePatchString(request.Outcome, 80),
-		OutcomeNotes:    validatePatchString(request.OutcomeNotes, 2000),
-		PerformedBy:     request.PerformedBy,
-		AssigneeIDs:     request.AssigneeIDs,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+		Title:             validatePatchString(request.Title, 180),
+		Description:       validatePatchString(request.Description, 2000),
+		EventType:         validatePatchString(request.EventType, 40),
+		StartTime:         schedulePersistedPatchTime(request.StartTime),
+		EndTime:           schedulePersistedPatchTime(request.EndTime),
+		IsAllDay:          request.IsAllDay,
+		UserID:            request.UserID,
+		LeadID:            request.LeadID,
+		PropertyID:        request.PropertyID,
+		TeamID:            request.TeamID,
+		Location:          validatePatchString(request.Location, 500),
+		Status:            validatePatchString(request.Status, 40),
+		Visibility:        validatePatchString(request.Visibility, 40),
+		ReminderMinutes:   request.ReminderMinutes,
+		RecurrenceRule:    validatePatchString(request.RecurrenceRule, 40),
+		Outcome:           validatePatchString(request.Outcome, 80),
+		OutcomeNotes:      validatePatchString(request.OutcomeNotes, 2000),
+		PerformedBy:       request.PerformedBy,
+		AssigneeIDs:       request.AssigneeIDs,
 	}
 
 	if !input.hasChanges() {
@@ -449,8 +473,8 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 	if input.UserID.Set && (input.UserID.Value == nil || *input.UserID.Value == "") {
 		return updateInput{}, fmt.Errorf("%w: user_id cannot be null", ErrInvalidInput)
 	}
-	if input.RecurrenceRule.Set && input.RecurrenceRule.Value != nil && *input.RecurrenceRule.Value != "" && *input.RecurrenceRule.Value != "none" && !validEnum(*input.RecurrenceRule.Value, "daily", "weekly", "monthly", "yearly") {
-		return updateInput{}, fmt.Errorf("%w: recurrence_rule is invalid", ErrInvalidInput)
+	if input.RecurrenceRule.Set {
+		return updateInput{}, fmt.Errorf("%w: recurrence is defined at creation and cannot be changed by an event patch", ErrInvalidInput)
 	}
 	if input.StartTime.Set && input.StartTime.Value == nil {
 		return updateInput{}, fmt.Errorf("%w: start_time cannot be null", ErrInvalidInput)
@@ -461,14 +485,14 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 	if input.IsAllDay.Set && input.IsAllDay.Value == nil {
 		return updateInput{}, fmt.Errorf("%w: is_all_day cannot be null", ErrInvalidInput)
 	}
-	if input.StartTime.Set && input.EndTime.Set && input.StartTime.Value != nil && input.EndTime.Value != nil && input.EndTime.Value.Before(*input.StartTime.Value) {
+	if input.StartTime.Set && input.EndTime.Set && input.StartTime.Value != nil && input.EndTime.Value != nil && !input.EndTime.Value.After(*input.StartTime.Value) {
 		return updateInput{}, fmt.Errorf("%w: event time is invalid", ErrInvalidInput)
 	}
 	if input.ReminderMinutes.Set && input.ReminderMinutes.Value != nil && (*input.ReminderMinutes.Value < 0 || *input.ReminderMinutes.Value > maxScheduleReminderMinutes) {
 		return updateInput{}, fmt.Errorf("%w: reminder_minutes is invalid", ErrInvalidInput)
 	}
 	if input.AssigneeIDs.Set {
-		if len(input.AssigneeIDs.Value) > 100 {
+		if len(input.AssigneeIDs.Value) > maxScheduleAssignees {
 			return updateInput{}, fmt.Errorf("%w: assignee_ids exceeds limit", ErrInvalidInput)
 		}
 		seen := map[string]struct{}{}
@@ -501,11 +525,17 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 			return updateInput{}, err
 		}
 	}
+	if input.ExpectedUpdatedAt != nil && input.ExpectedUpdatedAt.IsZero() {
+		return updateInput{}, fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
+	}
 
 	return input, nil
 }
 
 func (request CompleteRequest) Validate(defaultPerformerID string) (updateInput, error) {
+	if request.ExpectedUpdatedAt != nil && request.ExpectedUpdatedAt.IsZero() {
+		return updateInput{}, fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
+	}
 	status := normalizeScheduleStatus(request.Status)
 	if status == "" {
 		status = "completed"
@@ -547,27 +577,34 @@ func (request CompleteRequest) Validate(defaultPerformerID string) (updateInput,
 	}
 
 	return updateInput{
-		Status:       patchString{Set: true, Value: &status},
-		Outcome:      patchString{Set: true, Value: outcome},
-		OutcomeNotes: patchString{Set: true, Value: outcomeNotes},
-		PerformedBy:  patchString{Set: true, Value: performedBy},
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+		Status:            patchString{Set: true, Value: &status},
+		Outcome:           patchString{Set: true, Value: outcome},
+		OutcomeNotes:      patchString{Set: true, Value: outcomeNotes},
+		PerformedBy:       patchString{Set: true, Value: performedBy},
 	}, nil
 }
 
 func (request RescheduleRequest) Validate() (rescheduleInput, error) {
-	if request.StartTime.IsZero() || request.EndTime.IsZero() || request.EndTime.Before(request.StartTime) {
+	request.StartTime = schedulePersistedTime(request.StartTime)
+	request.EndTime = schedulePersistedTime(request.EndTime)
+	if request.StartTime.IsZero() || request.EndTime.IsZero() || !request.EndTime.After(request.StartTime) {
 		return rescheduleInput{}, fmt.Errorf("%w: event time is invalid", ErrInvalidInput)
 	}
 	if request.ReminderMinutes.Set && request.ReminderMinutes.Value != nil && (*request.ReminderMinutes.Value < 0 || *request.ReminderMinutes.Value > maxScheduleReminderMinutes) {
 		return rescheduleInput{}, fmt.Errorf("%w: reminder_minutes is invalid", ErrInvalidInput)
 	}
+	if request.ExpectedUpdatedAt != nil && request.ExpectedUpdatedAt.IsZero() {
+		return rescheduleInput{}, fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
+	}
 
 	return rescheduleInput{
-		StartTime:       request.StartTime,
-		EndTime:         request.EndTime,
-		IsAllDay:        request.IsAllDay,
-		ReminderMinutes: request.ReminderMinutes,
-		OutcomeNotes:    optionalString(request.OutcomeNotes, 2000),
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+		StartTime:         request.StartTime,
+		EndTime:           request.EndTime,
+		IsAllDay:          request.IsAllDay,
+		ReminderMinutes:   request.ReminderMinutes,
+		OutcomeNotes:      optionalString(request.OutcomeNotes, 2000),
 	}, nil
 }
 
@@ -668,7 +705,16 @@ func validateEventOutcomeTransition(current eventSnapshot, input updateInput) er
 }
 
 func validateAppointmentTimingMutation(current eventSnapshot, input updateInput) error {
-	if current.EventType != "visit" && current.EventType != "meeting" {
+	nextType := current.EventType
+	if input.EventType.Set && input.EventType.Value != nil {
+		nextType = *input.EventType.Value
+	}
+	currentIsAppointment := current.EventType == "visit" || current.EventType == "meeting"
+	nextIsAppointment := nextType == "visit" || nextType == "meeting"
+	if currentIsAppointment && !nextIsAppointment {
+		return fmt.Errorf("%w: appointments cannot become other activity types; preserve their history", ErrInvalidInput)
+	}
+	if !currentIsAppointment && !nextIsAppointment {
 		return nil
 	}
 
@@ -709,6 +755,9 @@ func normalizeScheduleStatus(status string) string {
 }
 
 func (request AddCommentRequest) Validate() (string, error) {
+	if _, err := scheduleCommentCommandID(request.ClientRequestID); err != nil {
+		return "", err
+	}
 	content := trimMax(request.Content, 2000)
 	if content == "" {
 		return "", fmt.Errorf("%w: content is required", ErrInvalidInput)

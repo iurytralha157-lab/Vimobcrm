@@ -1,0 +1,114 @@
+.dialog {
+  --pipeline-lead-padding: 14px;
+  width: min(1180px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  height: min(780px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+}
+
+/* Fluid tracks keep the work area usable without the old XL side-panel jump. */
+.dialog :global(.lead-detail-v2-grid) {
+  grid-template-columns: minmax(220px, 0.85fr) minmax(280px, 1.15fr) minmax(280px, 1fr);
+}
+
+.columnScroll {
+  padding: var(--pipeline-lead-padding);
+}
+
+.dialog :global(.lead-detail-v2-column) {
+  min-width: 0;
+}
+
+.dialog :global(.lead-stage-step) {
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 12px;
+}
+
+/* The history shares chat components; preserve their own metadata/player scale. */
+.dialog :global([class~="text-[10px]"]:not(:where(.lead-thread-panel *))),
+.dialog :global([class~="text-[10.5px]"]:not(:where(.lead-thread-panel *))),
+.dialog :global([class~="text-[11px]"]:not(:where(.lead-thread-panel *))),
+.portal,
+.portal :global([class~="text-[10px]"]),
+.portal :global([class~="text-[10.5px]"]),
+.portal :global([class~="text-[11px]"]) {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.dialog .tag,
+.tag {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 300;
+}
+
+.assigneeSearch :global([cmdk-input-wrapper]) {
+  margin: 4px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 6px;
+  background: var(--app-surface-soft);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.assigneeSearch :global([cmdk-input-wrapper]:focus-within) {
+  border-color: color-mix(in srgb, var(--vimob-accent) 50%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vimob-accent) 12%, transparent);
+}
+
+.assigneeSearch :global([cmdk-input-wrapper] > svg) {
+  color: var(--vimob-accent);
+  opacity: 1;
+}
+
+.assigneeSearch :global([cmdk-input]) {
+  font-size: 12px;
+}
+
+@media (max-width: 767px) {
+  .assigneeSearch :global([cmdk-input]) {
+    font-size: 16px;
+  }
+}
+
+.dialog :global(.lead-detail-primary-action),
+.dialog :global(.lead-detail-subtle-action) {
+  min-height: 28px;
+  font-size: 12px;
+}
+
+.dialog :global(.lead-detail-v2-scroll),
+.dialog :global(.lead-thread-scroll) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--app-text-secondary) 35%, transparent) transparent;
+}
+
+.dialog :global(.lead-detail-v2-scroll)::-webkit-scrollbar,
+.dialog :global(.lead-thread-scroll)::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+  height: 6px;
+}
+
+.dialog :global(.lead-detail-v2-scroll)::-webkit-scrollbar-thumb,
+.dialog :global(.lead-thread-scroll)::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-text-secondary) 35%, transparent);
+  background-clip: content-box;
+}
+
+@media (max-height: 760px) {
+  .dialog {
+    --pipeline-lead-padding: 10px;
+  }
+
+  .columnScroll > :global(section) {
+    gap: 8px;
+  }
+
+  .columnScroll > :global(section) > * + * {
+    margin-top: 10px;
+  }
+}

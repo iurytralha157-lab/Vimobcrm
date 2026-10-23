@@ -7,20 +7,24 @@ import {
   apiPropertyListResponseSchema,
   apiPropertyResponseSchema,
   apiPropertyStatsSchema,
+  apiPropertySitePublicationSchema,
   parseDomainInput,
   propertyCreateInputSchema,
   propertyDeleteInputSchema,
   propertyListQuerySchema,
   propertyUpdateInputSchema,
   validateDomainResponse,
+  uuidSchema,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 
 export type PropertyRecord = Tables<'properties'>
 export type PropertyManagedTerms = z.output<typeof apiPropertyManagedTermsSchema>
 export type PropertyWithCapabilities = PropertyRecord & {
   can_edit: boolean
   managed_terms: PropertyManagedTerms
+  site_publication?: z.output<typeof apiPropertySitePublicationSchema> | null
 }
 export type PropertyCreateInput = z.input<typeof propertyCreateInputSchema>
 export type PropertyUpdateInput = z.input<typeof propertyUpdateInputSchema>
@@ -36,6 +40,9 @@ type PropertyAPIOptions = {
   tipo_de_imovel?: string
   cidade?: string
   bairro?: string
+  city_id?: string
+  neighborhood_id?: string
+  uf?: string
   responsavel_id?: string
   quartos_min?: string | number
   suites_min?: string | number
@@ -128,9 +135,14 @@ export const propertiesAPI = {
     return response
   },
 
-  async getProperty(propertyId: string, organizationId: string) {
+  async getProperty(propertyId: string, organizationId: string, intent?: VimobAPIRequestIntent & { creationRecovery?: boolean }) {
     const response = await vimobAPIRequest<PropertyResponse>(`/v1/properties/${propertyId}`, {
+      expectedUserId: intent?.expectedUserId,
+      expectedSessionId: intent?.expectedSessionId,
+      signal: intent?.signal,
+      onRequestStart: intent?.onRequestStart,
       organizationId,
+      query: intent?.creationRecovery ? { creation_recovery: true } : undefined,
     })
     validateDomainResponse(apiPropertyResponseSchema, response, 'properties.get')
 
@@ -140,12 +152,16 @@ export const propertiesAPI = {
     }
   },
 
-  async createProperty(organizationId: string, data: PropertyCreateInput) {
+  async createProperty(organizationId: string, data: PropertyCreateInput, intent?: VimobAPIRequestIntent & { idempotencyKey?: string }) {
     const body = parseDomainInput(propertyCreateInputSchema, data, 'properties.create')
     const response = await vimobAPIRequest<PropertyCreateResponse>('/v1/properties', {
+      ...capturePropertyMutationIntent(intent),
       method: 'POST',
       organizationId,
       body,
+      headers: intent?.idempotencyKey
+        ? { 'Idempotency-Key': uuidSchema.parse(intent.idempotencyKey) }
+        : undefined,
     })
     validateDomainResponse(apiPropertyCreateResponseSchema, response, 'properties.create')
 
@@ -155,9 +171,10 @@ export const propertiesAPI = {
     }
   },
 
-  async updateProperty(propertyId: string, data: PropertyUpdateInput, organizationId: string) {
+  async updateProperty(propertyId: string, data: PropertyUpdateInput, organizationId: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(propertyUpdateInputSchema, data, 'properties.update')
     const response = await vimobAPIRequest<PropertyResponse>(`/v1/properties/${propertyId}`, {
+      ...capturePropertyMutationIntent(intent),
       method: 'PATCH',
       organizationId,
       body,
@@ -182,13 +199,14 @@ export const propertiesAPI = {
     }
   },
 
-  async deleteProperty(propertyId: string, expectedUpdatedAt: string, organizationId: string) {
+  async deleteProperty(propertyId: string, expectedUpdatedAt: string, organizationId: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(
       propertyDeleteInputSchema,
       { expected_updated_at: expectedUpdatedAt },
       'properties.delete',
     )
     await vimobAPIRequest<null>(`/v1/properties/${propertyId}`, {
+      ...capturePropertyMutationIntent(intent),
       method: 'DELETE',
       organizationId,
       body,

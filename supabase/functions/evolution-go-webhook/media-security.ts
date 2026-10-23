@@ -172,7 +172,8 @@ export async function validateWhatsAppPlaintextMedia(
     throw new WhatsAppMediaValidationError("media_too_large", "WhatsApp media exceeds 25 MiB");
   }
 
-  const actualDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const digestBytes = Uint8Array.from(bytes);
+  const actualDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestBytes));
   const encryptedDigest = decodeSHA256(input.fileEncSha256, "media_encrypted_sha256_invalid");
   if (encryptedDigest && constantTimeEqual(encryptedDigest, actualDigest)) {
     throw new WhatsAppMediaValidationError(

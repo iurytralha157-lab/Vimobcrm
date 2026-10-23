@@ -6,10 +6,12 @@ import {
   createNotificationInputSchema,
   dispatchNotificationInputSchema,
   okResponseSchema,
+  organizationIdSchema,
   parseDomainInput,
   validateDomainResponse,
 } from '@/lib/validation'
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from '@/lib/api/vimob-client'
+import { notificationListFiltersSchema, type NotificationCategory } from '@/lib/validation/notification-filters'
 
 type Envelope<T> = {
   data: T
@@ -73,13 +75,22 @@ export interface DispatchChannelResult {
 }
 
 export const notificationsAPI = {
-  async list(params: { userId?: string; limit?: number; cursor?: string | null } = {}): Promise<NotificationPage> {
+  async list(params: { userId?: string; limit?: number; cursor?: string | null; unreadOnly?: boolean; categories?: NotificationCategory[] } = {}, intent?: VimobAPIRequestIntent & { organizationId?: string }): Promise<NotificationPage> {
     const response = await vimobAPIRequest<Envelope<Notification[]> & { next_cursor?: string | null }>('/v1/notifications', {
-      query: {
+      signal: intent?.signal,
+      expectedUserId: intent?.expectedUserId,
+      expectedSessionId: intent?.expectedSessionId,
+      onRequestStart: intent?.onRequestStart,
+      organizationId: intent?.organizationId
+        ? parseDomainInput(organizationIdSchema, intent.organizationId, 'notifications.list.organization')
+        : undefined,
+      query: parseDomainInput(notificationListFiltersSchema, {
         userId: params.userId,
         limit: params.limit,
         cursor: params.cursor || undefined,
-      },
+        unreadOnly: params.unreadOnly,
+        categories: params.categories,
+      }, 'notifications.list.filters'),
     })
     validateDomainResponse(apiNotificationListResponseSchema, response, 'notifications.list')
     return {
@@ -128,7 +139,7 @@ export const notificationsAPI = {
     return response.data
   },
 
-  async dispatch(input: DispatchNotificationInput) {
+  async dispatch(input: DispatchNotificationInput, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(dispatchNotificationInputSchema, {
       event_key: input.eventKey,
       template_slug: input.templateSlug,
@@ -144,6 +155,9 @@ export const notificationsAPI = {
       channels: input.channels,
     }, 'notifications.dispatch')
     const response = await vimobAPIRequest<DispatchNotificationResult>('/v1/notifications/dispatch', {
+      signal: intent?.signal,
+      expectedUserId: intent?.expectedUserId,
+      onRequestStart: intent?.onRequestStart,
       method: 'POST',
       organizationId: input.organizationId,
       body,

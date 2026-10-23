@@ -18,9 +18,8 @@ import { adminAPI } from "@/lib/api/admin";
 import { resolveBillingPaymentStatus } from "@/lib/billing/checkout-ui-state";
 import { cn } from "@/lib/utils";
 import type { AdminUpdateOrganizationInput } from "@/lib/validation/admin";
-import type { AdminSection } from "@/components/features/admin/admin-navigation";
 import { AdminWarning, EmptyState } from "@/components/features/admin/AdminPrimitives";
-import { AdminUserActions, UsersRowsPreview } from "@/components/features/admin/AdminUsersContent";
+import { UsersRowsPreview } from "@/components/features/admin/AdminUsersContent";
 import {
   formatCurrency,
   formatDate,
@@ -55,11 +54,6 @@ import {
 import { OrganizationDeleteDialog } from "@/components/features/admin/AdminOrganizationsContent";
 
 type OrganizationUpdatePayload = AdminUpdateOrganizationInput;
-
-type AdminScreenProps = {
-  section: AdminSection;
-  organizationId?: string;
-};
 
 const NO_PLAN_VALUE = "__none__";
 const DEFAULT_PLAN_MODULES: SystemModuleKey[] = ["crm", "properties", "whatsapp", "agenda"];

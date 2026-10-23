@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -253,12 +254,44 @@ func parseExecutionListFilter(r *http.Request) (ExecutionFilter, error) {
 		activeOnly = value
 	}
 
-	return ExecutionFilter{
+	filter := ExecutionFilter{
 		AutomationID: strings.TrimSpace(r.URL.Query().Get("automationId")),
 		LeadID:       strings.TrimSpace(r.URL.Query().Get("leadId")),
 		ActiveOnly:   activeOnly,
 		Limit:        limit,
-	}, nil
+		Status:       strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))),
+	}
+	if filter.Status == "all" {
+		filter.Status = ""
+	}
+	if filter.Status != "" {
+		if _, ok := executionStatusFilterValues(filter.Status); !ok {
+			return ExecutionFilter{}, ErrInvalidInput
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 || value > 100000 {
+			return ExecutionFilter{}, ErrInvalidInput
+		}
+		filter.Offset = value
+	}
+	for _, item := range []struct {
+		key    string
+		target **time.Time
+	}{{"dateFrom", &filter.DateFrom}, {"dateTo", &filter.DateTo}} {
+		if raw := strings.TrimSpace(r.URL.Query().Get(item.key)); raw != "" {
+			value, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return ExecutionFilter{}, ErrInvalidInput
+			}
+			*item.target = &value
+		}
+	}
+	if filter.DateFrom != nil && filter.DateTo != nil && filter.DateTo.Before(*filter.DateFrom) {
+		return ExecutionFilter{}, ErrInvalidInput
+	}
+	return filter, nil
 }
 
 func (handler Handler) ListExecutionSummaries(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +459,8 @@ func (handler Handler) Start(w http.ResponseWriter, r *http.Request) {
 
 func writeAutomationError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrAutomationStageUnavailable):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "automation_stage_unavailable", "Uma etapa ou funil usado pelo fluxo está inativo ou indisponível nesta organização. Escolha um destino ativo antes de publicar ou ativar a automação.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_automation_input", "Automation input is invalid.")
 	case errors.Is(err, ErrAutomationMisconfigured):

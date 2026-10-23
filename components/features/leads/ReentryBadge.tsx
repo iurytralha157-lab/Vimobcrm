@@ -42,7 +42,7 @@ export function ReentryBadge({ count, lastEntryAt, className, size = 'sm' }: Ree
             aria-label={tooltipText}
             className={cn(
               'inline-flex items-center gap-1 rounded-full font-normal',
-              'bg-warning/15 text-warning border border-warning/30',
+              'border-0 bg-primary/50 text-white',
               sizeClass,
               className
             )}
@@ -51,7 +51,7 @@ export function ReentryBadge({ count, lastEntryAt, className, size = 'sm' }: Ree
             {value}
           </span>
         </TooltipTrigger>
-        <TooltipContent side="top">{tooltipText}</TooltipContent>
+        <TooltipContent side="top" className="font-thin">{tooltipText}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

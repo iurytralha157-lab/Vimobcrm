@@ -97,7 +97,7 @@ func (repo Repository) metaFormRuleValues(ctx context.Context, q queryer, organi
 		where organization_id = $1::uuid
 		  and round_robin_id = $2::uuid
 		  and coalesce(is_active, true) = true
-		  and coalesce(nullif(match_type, ''), conditions->>'match_type', name, '') = 'meta_form'
+		  and lower(btrim(coalesce(nullif(match_type, ''), conditions->>'match_type', name, ''))) in ('meta_form', 'form')
 	`, organizationID, roundRobinID)
 	if err != nil {
 		return nil, err

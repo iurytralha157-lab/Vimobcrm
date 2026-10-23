@@ -1,11 +1,13 @@
 'use client'
 
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, ReactNode } from 'react'
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useWhatsAppQueryScope } from '@/hooks/use-whatsapp-query-scope'
 import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cache'
+import { activateQueryClientAccess } from '@/lib/access/query-client-access'
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out'
 import {
   isWhatsAppQueryKey,
   isWhatsAppQueryKeyForScope,
@@ -51,6 +53,7 @@ function WhatsAppTenantCacheBoundary() {
 export function QueryProvider({ children }: { children: ReactNode }) {
   const {
     user,
+    session,
     profile,
     organization,
     activeOrganization,
@@ -77,9 +80,11 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     () => createTenantQueryClient(accessSignature),
     [accessSignature],
   )
+  const sessionId = getGlobalSignOutSessionId(session)
+  useLayoutEffect(() => activateQueryClientAccess(queryClient), [queryClient, sessionId])
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider key={accessSignature} client={queryClient}>
       <WhatsAppTenantCacheBoundary />
       {children}
     </QueryClientProvider>

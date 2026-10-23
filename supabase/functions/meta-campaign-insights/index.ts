@@ -10,6 +10,24 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
 
+type MetaAction = { action_type: string; value: string };
+type MetaInsight = {
+  actions?: MetaAction[];
+  cost_per_action_type?: MetaAction[];
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+};
+type MetaAd = {
+  id: string;
+  name?: string;
+  campaign_id?: string;
+  adset_id?: string;
+  status?: string;
+  effective_status?: string;
+  insights?: { data?: MetaInsight[] };
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -78,7 +96,7 @@ serve(async (req) => {
     const dateStart = date_start || defaultStart;
     const dateStop = date_stop || defaultStop;
 
-    const allInsights: any[] = [];
+    const allInsights: Record<string, unknown>[] = [];
 
     for (const integration of integrations) {
       const accessToken = integration.access_token;
@@ -161,9 +179,9 @@ serve(async (req) => {
           const insight = campaign.insights?.data?.[0] || {};
           const actions = insight.actions || [];
           
-          const leadsAction = actions.find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
-          const convAction = actions.find((a: any) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
-          const leadsCostAction = (insight.cost_per_action_type || []).find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const leadsAction = actions.find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const convAction = actions.find((a: MetaAction) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
+          const leadsCostAction = (insight.cost_per_action_type || []).find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
           
           const leadsCount = leadsAction ? parseInt(leadsAction.value) : 0;
           const convCount = convAction ? parseInt(convAction.value) : 0;
@@ -208,9 +226,9 @@ serve(async (req) => {
           const insight = adset.insights?.data?.[0] || {};
           const actions = insight.actions || [];
           
-          const leadsAction = actions.find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
-          const convAction = actions.find((a: any) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
-          const leadsCostAction = (insight.cost_per_action_type || []).find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const leadsAction = actions.find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const convAction = actions.find((a: MetaAction) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
+          const leadsCostAction = (insight.cost_per_action_type || []).find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
           
           const leadsCount = leadsAction ? parseInt(leadsAction.value) : 0;
           const convCount = convAction ? parseInt(convAction.value) : 0;
@@ -251,13 +269,13 @@ serve(async (req) => {
         const adsData = await adsRes.json();
 
         // Process all ads in parallel to avoid 150s timeout
-        const adPromises = (adsData.data || []).map(async (adData: any) => {
-          const insight = adData.insights?.data?.[0] || {};
+        const adPromises = (adsData.data || []).map(async (adData: MetaAd) => {
+          const insight: MetaInsight = adData.insights?.data?.[0] || {};
           const actions = insight.actions || [];
           
-          const leadsAction = actions.find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
-          const convAction = actions.find((a: any) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
-          const leadsCostAction = (insight.cost_per_action_type || []).find((a: any) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const leadsAction = actions.find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
+          const convAction = actions.find((a: MetaAction) => a.action_type === "messaging_conversations_started" || a.action_type === "onsite_conversion.messaging_conversation_started_7d");
+          const leadsCostAction = (insight.cost_per_action_type || []).find((a: MetaAction) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped");
           
           const leadsCount = leadsAction ? parseInt(leadsAction.value) : 0;
           const convCount = convAction ? parseInt(convAction.value) : 0;

@@ -38,6 +38,38 @@ interface DistributionAssignment {
   assigned_at: string | null;
 }
 
+interface ClosedStage {
+  id: string;
+  is_won: boolean | null;
+  is_lost: boolean | null;
+}
+
+interface PoolRedistributionResult {
+  success: boolean;
+  assigned_user_id: string | null;
+  pool_finalized: boolean;
+  skipped: boolean;
+  reason: string | null;
+}
+
+function parsePoolRedistributionResult(
+  value: unknown,
+): PoolRedistributionResult | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const result = value as Record<string, unknown>;
+  return {
+    success: result.success === true,
+    assigned_user_id: typeof result.assigned_user_id === "string"
+      ? result.assigned_user_id
+      : null,
+    pool_finalized: result.pool_finalized === true,
+    skipped: result.skipped === true,
+    reason: typeof result.reason === "string" ? result.reason : null,
+  };
+}
+
 const LEAD_SELECT =
   "id, name, organization_id, assigned_user_id, assigned_at, created_at, stage_id, stage_entered_at, deal_status, first_response_at, first_touch_at, last_contact_at, owner_last_activity_at, redistribution_warning_sent_at, redistribution_count, pipeline_id";
 
@@ -83,7 +115,10 @@ function tenSecondsAfter(date: Date) {
   return new Date(date.getTime() + 10_000);
 }
 
-async function getClosedStageIds(supabase: any, pipelineId: string) {
+async function getClosedStageIds(
+  supabase: ReturnType<typeof createClient>,
+  pipelineId: string,
+) {
   const { data, error } = await supabase
     .from("stages")
     .select("id, is_won, is_lost")
@@ -94,14 +129,14 @@ async function getClosedStageIds(supabase: any, pipelineId: string) {
   }
 
   return new Set<string>(
-    (data || [])
-      .filter((stage: any) => Boolean(stage.is_won) || Boolean(stage.is_lost))
-      .map((stage: any) => stage.id),
+    ((data || []) as ClosedStage[])
+      .filter((stage) => Boolean(stage.is_won) || Boolean(stage.is_lost))
+      .map((stage) => stage.id),
   );
 }
 
 async function filterRedistributableLeads(
-  supabase: any,
+  supabase: ReturnType<typeof createClient>,
   leads: LeadToRedistribute[],
   poolActivationDate: string,
   closedStageIds: Set<string>,
@@ -559,21 +594,22 @@ Deno.serve(async (req) => {
             },
           );
 
+          const distribution = parsePoolRedistributionResult(data);
           if (error) {
             console.error(`Error redistributing lead ${lead.id}:`, error);
             results.push({
               leadId: lead.id,
               success: false,
-              error: (error as any)?.message,
+              error: error.message,
             });
-          } else if ((data as any)?.success) {
-            const assignedUserId = String((data as any)?.assigned_user_id || "")
+          } else if (distribution?.success) {
+            const assignedUserId = String(distribution.assigned_user_id || "")
               .trim();
             if (!assignedUserId) {
               throw new Error("canonical_distribution_missing_assignee");
             }
 
-            if (!(data as any)?.pool_finalized) {
+            if (!distribution.pool_finalized) {
               throw new Error("pool_distribution_not_finalized");
             }
 
@@ -584,8 +620,8 @@ Deno.serve(async (req) => {
             results.push({
               leadId: lead.id,
               success: false,
-              skipped: Boolean((data as any)?.skipped),
-              error: (data as any)?.reason || "skipped",
+              skipped: Boolean(distribution?.skipped),
+              error: distribution?.reason || "skipped",
             });
           }
         } catch (error) {

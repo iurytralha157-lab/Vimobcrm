@@ -21,7 +21,7 @@ export interface VGVByBroker {
   won_vgv: number;
   open_count: number;
   open_vgv: number;
-  total_commission: number;
+  total_commission: number | null;
 }
 
 export interface StageVGV {

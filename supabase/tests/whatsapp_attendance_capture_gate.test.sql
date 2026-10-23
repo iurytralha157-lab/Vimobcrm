@@ -18,15 +18,16 @@ select has_trigger(
 
 select results_eq(
   $$
-    select column_name::text
+    select column_name::text collate "C"
     from information_schema.columns
     where table_schema = 'public'
       and table_name = 'whatsapp_attendance_entries'
+      and column_name not in ('marker_at', 'marker_kind')
     order by ordinal_position
   $$,
   $$
     values
-      ('id'::text),
+      ('id'::text collate "C"),
       ('organization_id'::text),
       ('conversation_id'::text),
       ('session_id'::text),
@@ -72,10 +73,12 @@ select ok(
         'bootstrap_provider_message_id',
         'bootstrap_ingress_sequence',
         'bootstrap_provider_occurred_at',
-        'bootstrap_inbox_created_at'
+        'bootstrap_inbox_created_at',
+        'marker_at',
+        'marker_kind'
       )
   ),
-  'every attendance identity and audit field is required; only bootstrap fields are nullable'
+  'every attendance identity and audit field is required; only bootstrap and legacy marker fields are nullable'
 );
 
 select col_type_is(
@@ -573,22 +576,35 @@ select ok(
   )
   or (
     function_oid is not null
-    and related_trigger_count = 2
-    and valid_trigger_count = 2
-    and position(
-      $$whatsapp_attendance_required$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
-    and position(
-      $$attended_message.capture_state = 'captured'$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
-    and position(
-      $$'captured',$$
-      in pg_catalog.pg_get_functiondef(function_oid)
-    ) > 0
+    and (
+      (related_trigger_count = 2
+      and valid_trigger_count = 2
+      and position(
+        $$whatsapp_attendance_required$$
+        in pg_catalog.pg_get_functiondef(function_oid)
+      ) > 0
+      and position(
+        $$attended_message.capture_state = 'captured'$$
+        in pg_catalog.pg_get_functiondef(function_oid)
+      ) > 0
+      and position(
+        $$'captured',$$
+        in pg_catalog.pg_get_functiondef(function_oid)
+      ) > 0)
+      or (
+        -- An explicitly disabled producer is safe too. Prove its response and
+        -- lack of SQL writes and producer triggers, rather than accepting an
+        -- arbitrary reason string or requiring triggers for a disabled feature.
+        related_trigger_count = 0
+        and valid_trigger_count = 0
+        and public.enqueue_managed_whatsapp_distribution_auto_reply(null, null, null, null)
+          @> '{"handled":true,"queued":false,"reason":"distribution_auto_reply_disabled"}'::jsonb
+        and pg_catalog.pg_get_functiondef(function_oid) !~*
+          '(insert[[:space:]]+into|update[[:space:]]+public|delete[[:space:]]+from|execute[[:space:]])'
+      )
+    )
   ),
-  'managed auto-reply stays absent or requires exact attendance before enqueue'
+  'managed auto-reply is absent, explicitly disabled, or requires exact attendance before enqueue'
 )
 from managed_auto_reply_state;
 
@@ -687,10 +703,11 @@ select ok(
       and lower(policy.qual) like
         '%capture_state is distinct from ''suppressed''::text%'
       and lower(policy.qual) like
-        '%whatsapp_message_conversation_session_matches%'
-      and lower(policy.qual) like '%can_view_whatsapp_conversation%'
+        '%whatsapp_message_epoch_matches%'
+      and lower(policy.qual) like '%whatsapp_actor_can_read_lead%'
+      and lower(policy.qual) like '%whatsapp_owner_can_view_session%'
   ),
-  'the legacy authenticated SELECT policy hides suppressed rows and retains its access guards'
+  'the retained SELECT policy hides suppressed rows and checks session epoch, lead scope and unlinked ownership'
 );
 
 select is(
@@ -834,7 +851,7 @@ select ok(
   obj_description(
     'public.whatsapp_attendance_entries'::regclass,
     'pg_class'
-  ) like '%Append-only backend ledger%'
+  ) ~* '(Append-only backend ledger|Backend attendance and capture ledger)'
   and col_description(
     'public.whatsapp_messages'::regclass,
     (
@@ -845,9 +862,14 @@ select ok(
         and attribute.attnum > 0
         and not attribute.attisdropped
     )
-  ) like '%NULL means legacy-visible history%'
+  ) like '%captured%'
+  and col_description(
+    'public.whatsapp_messages'::regclass,
+    (select attnum from pg_catalog.pg_attribute
+     where attrelid = 'public.whatsapp_messages'::regclass and attname = 'capture_state')
+  ) like '%observed_unattended%'
   ,
-  'the ledger and NULL-as-legacy capture semantics are documented in schema comments'
+  'the attendance ledger and current captured/observed semantics are documented in schema comments'
 );
 
 select * from finish();

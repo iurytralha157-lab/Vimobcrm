@@ -1,7 +1,8 @@
-import type { ComponentProps } from "react";
+import { Component, createRef, type ComponentProps, type ReactElement } from "react";
 import { ChevronDown, Download, Plus, Upload, Users } from "lucide-react";
 
 import { SharedFilters } from "@/components/shared/SharedFilters";
+import { MAX_LEAD_SOURCE_FILTER_LENGTH } from "@/lib/validation/filter-text";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -136,6 +137,32 @@ function ImportExportMenu({
   );
 }
 
+type ToolbarGroupsProps = { isMobile: boolean; summary: ReactElement; actions: ReactElement };
+
+/** Keyed groups keep filter state; a moved focused group may still need focus restored. */
+class ToolbarGroups extends Component<ToolbarGroupsProps, Record<string, never>, HTMLElement | null> {
+  private element = createRef<HTMLDivElement>();
+
+  getSnapshotBeforeUpdate(previous: ToolbarGroupsProps) {
+    if (previous.isMobile === this.props.isMobile) return null;
+    const focused = document.activeElement;
+    return focused instanceof HTMLElement && this.element.current?.contains(focused) ? focused : null;
+  }
+
+  componentDidUpdate(_previous: ToolbarGroupsProps, _state: Record<string, never>, focused: HTMLElement | null) {
+    if (focused?.isConnected && document.activeElement === document.body) focused.focus({ preventScroll: true });
+  }
+
+  render() {
+    const { isMobile, summary, actions } = this.props;
+    return (
+      <div ref={this.element} className="flex w-full flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-3">
+        {isMobile ? [actions, summary] : [summary, actions]}
+      </div>
+    );
+  }
+}
+
 export function ContactsToolbar({
   isMobile,
   totalCount,
@@ -149,12 +176,25 @@ export function ContactsToolbar({
   onImport,
   onExport,
 }: ContactsToolbarProps) {
-  if (isMobile) {
-    return (
-      <div className="app-toolbar flex flex-col gap-2 p-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <div data-tour="contacts-filters" className="min-w-0 flex-1">
-            <SharedFilters {...filters} />
+  const summary = (
+        <div key="summary" className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:flex md:shrink-0">
+          <LeadCountBadge isLoading={isCountLoading} totalCount={totalCount} className="justify-start" />
+
+          <ImportExportMenu
+            compact={isMobile}
+            canImportLeads={canImportLeads}
+            canExportLeads={canExportLeads}
+            isExporting={isExporting}
+            totalCount={totalCount}
+            onImport={onImport}
+            onExport={onExport}
+          />
+        </div>
+  );
+  const actions = (
+        <div key="actions" className={cn("grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-2 md:ml-auto md:flex md:flex-wrap md:items-center md:justify-end", !isMobile && "contacts-toolbar-actions")}>
+          <div data-tour="contacts-filters" className="min-w-0 max-w-full md:flex-none [&>div]:flex-wrap [&>div]:justify-start md:[&>div]:justify-end">
+            <SharedFilters {...filters} sourceFilterMaxLength={MAX_LEAD_SOURCE_FILTER_LENGTH} />
           </div>
 
           {canCreateLeads && (
@@ -163,70 +203,17 @@ export function ContactsToolbar({
               size="sm"
               onClick={onCreate}
               className="h-8 shrink-0 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
-              title="Novo Lead"
+              title={isMobile ? "Novo Lead" : undefined}
             >
               <Plus className="h-4 w-4" />
-              <span>Novo</span>
+              <span>{isMobile ? "Novo" : "Novo Lead"}</span>
             </Button>
           )}
         </div>
-
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-          <LeadCountBadge
-            isLoading={isCountLoading}
-            totalCount={totalCount}
-            className="justify-center"
-          />
-
-          <ImportExportMenu
-            compact
-            canImportLeads={canImportLeads}
-            canExportLeads={canExportLeads}
-            isExporting={isExporting}
-            totalCount={totalCount}
-            onImport={onImport}
-            onExport={onExport}
-          />
-        </div>
-      </div>
-    );
-  }
-
+  );
   return (
-    <div className="app-toolbar overflow-visible px-2 py-1">
-      <div className="flex items-center justify-between gap-3 w-full">
-        <div className="flex items-center gap-2">
-          <LeadCountBadge isLoading={isCountLoading} totalCount={totalCount} />
-
-          <ImportExportMenu
-            compact={false}
-            canImportLeads={canImportLeads}
-            canExportLeads={canExportLeads}
-            isExporting={isExporting}
-            totalCount={totalCount}
-            onImport={onImport}
-            onExport={onExport}
-          />
-        </div>
-
-        <div className="contacts-toolbar-actions flex min-w-0 items-center justify-end gap-2">
-          <div data-tour="contacts-filters">
-            <SharedFilters {...filters} />
-          </div>
-
-          {canCreateLeads && (
-            <Button
-              data-tour="contacts-new"
-              size="sm"
-              onClick={onCreate}
-              className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Novo Lead</span>
-            </Button>
-          )}
-        </div>
-      </div>
+    <div className="app-toolbar overflow-visible p-2 md:px-2 md:py-1">
+      <ToolbarGroups isMobile={isMobile} summary={summary} actions={actions} />
     </div>
   );
 }

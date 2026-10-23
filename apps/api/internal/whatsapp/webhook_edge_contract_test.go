@@ -51,7 +51,8 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`whatsapp_contact_identity_aliases`,
 		`managed_whatsapp_lead_identity_unresolved`,
 		`providerMessageIdSynthetic`,
-		`const content = normalizeText(extractContent(messageNode, message, mediaBlock)).replace(/\u0000/g, "") || null;`,
+		`const content = (normalizeText(extractContent(messageNode, message, mediaBlock)) || structuredMessageContent(messageNode)).replace(/\u0000/g, "") || null;`,
+		`hasCustomerContent: Boolean(content || media.type || promotedMediaUrl || base64 || isReaction || deletedMessageId)`,
 		`managed_whatsapp_distribution_requires_provider_message_id`,
 		`managed_whatsapp_distribution_provider_message_id_invalid`,
 		`managed_whatsapp_distribution_message_required`,
@@ -223,11 +224,12 @@ func TestAmbiguousLeadQuarantinePersistsNeutralEvidenceWithoutCardEffects(t *tes
 	for _, fragment := range []string{
 		`const eventLeadId = leadResolutionQuarantineReason`,
 		`terminalLeadResolutionQuarantineReason(storedBeforeProcessing?.metadata)`,
-		`&& !leadResolutionQuarantineReason) {`,
+		`&& !leadResolutionQuarantineReason && !intakeSplitRemoteJid) {`,
 		`lead_resolution_quarantine: {`,
 		`if (leadResolutionQuarantineReason || !eventBindingIsCurrent) {`,
 		`await completeStoredMessageEffects(session, result.message, message.messageId)`,
-		`const isMedia = !captureSuppressed && allowMediaEffects && !leadResolutionQuarantineReason`,
+		`const isMedia = !captureSuppressed && (allowMediaEffects || allowHistoricalMedia) && !leadResolutionQuarantineReason`,
+		`captureDecision.captureState !== "observed_unattended"`,
 		`updateQuery.eq("lead_id", expectedLeadId)`,
 		`updateQuery.is("lead_id", null)`,
 		`expectedLeadId,`,
@@ -310,7 +312,8 @@ func TestEdgeIntakeBindingUsesVersionedCASAndSuppressesLosingEventEffects(t *tes
 		"bindingResultIsCurrent = binding.isCurrent",
 		"let eventBindingIsCurrent = bindingResultIsCurrent ??",
 		`if (leadResolutionQuarantineReason || !eventBindingIsCurrent)`,
-		"allowMediaEffects && !leadResolutionQuarantineReason",
+		"whatsapp_event_binding_is_current: allowMediaEffects",
+		"allowHistoricalMedia = captureState === \"promoted_unlinked\"",
 	} {
 		if !strings.Contains(source, fragment) {
 			t.Fatalf("Edge intake CAS contract is missing %q", fragment)

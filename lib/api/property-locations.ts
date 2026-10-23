@@ -1,4 +1,5 @@
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 import { apiPropertyCityListResponseSchema, apiPropertyCityResponseSchema, apiPropertyCondominiumListResponseSchema, apiPropertyCondominiumResponseSchema, apiPropertyNeighborhoodListResponseSchema, apiPropertyNeighborhoodResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyCatalogDeleteInputSchema, propertyCityInputSchema, propertyCityUpdateInputSchema, propertyCondominiumInputSchema, propertyCondominiumUpdateInputSchema, propertyNeighborhoodInputSchema, propertyNeighborhoodUpdateInputSchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyCity = {
@@ -123,11 +124,12 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async createCity(organizationId: string, city: { name: string; uf?: string }) {
+  async createCity(organizationId: string, city: { name: string; uf?: string }, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.cities.create')
     const body = parseDomainInput(propertyCityInputSchema, city, 'property-locations.cities.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyCity>>('/v1/property-cities', {
       method: 'POST',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -135,12 +137,13 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async updateCity(organizationId: string, id: string, city: UpdatePropertyCityInput) {
+  async updateCity(organizationId: string, id: string, city: UpdatePropertyCityInput, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.cities.update')
     const cityId = parseDomainInput(entityIdSchema, id, 'property-locations.cities.update.id')
     const body = parseDomainInput(propertyCityUpdateInputSchema, city, 'property-locations.cities.update')
     const response = await vimobAPIRequest<ItemResponse<PropertyCity>>(`/v1/property-cities/${cityId}`, {
       method: 'PATCH',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -148,7 +151,7 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async deleteCity(organizationId: string, id: string, expectedUpdatedAt: string) {
+  async deleteCity(organizationId: string, id: string, expectedUpdatedAt: string, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.cities.delete')
     const cityId = parseDomainInput(entityIdSchema, id, 'property-locations.cities.delete.id')
     const body = parseDomainInput(propertyCatalogDeleteInputSchema, {
@@ -156,6 +159,7 @@ export const propertyLocationsAPI = {
     }, 'property-locations.cities.delete')
     await vimobAPIRequest<null>(`/v1/property-cities/${cityId}`, {
       method: 'DELETE',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -172,11 +176,12 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async createNeighborhood(organizationId: string, neighborhood: { name: string; city_id: string }) {
+  async createNeighborhood(organizationId: string, neighborhood: { name: string; city_id: string }, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.create')
     const body = parseDomainInput(propertyNeighborhoodInputSchema, neighborhood, 'property-locations.neighborhoods.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyNeighborhood>>('/v1/property-neighborhoods', {
       method: 'POST',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -184,12 +189,13 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async updateNeighborhood(organizationId: string, id: string, neighborhood: UpdatePropertyNeighborhoodInput) {
+  async updateNeighborhood(organizationId: string, id: string, neighborhood: UpdatePropertyNeighborhoodInput, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.update')
     const neighborhoodId = parseDomainInput(entityIdSchema, id, 'property-locations.neighborhoods.update.id')
     const body = parseDomainInput(propertyNeighborhoodUpdateInputSchema, neighborhood, 'property-locations.neighborhoods.update')
     const response = await vimobAPIRequest<ItemResponse<PropertyNeighborhood>>(`/v1/property-neighborhoods/${neighborhoodId}`, {
       method: 'PATCH',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -197,7 +203,7 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async deleteNeighborhood(organizationId: string, id: string, expectedUpdatedAt: string) {
+  async deleteNeighborhood(organizationId: string, id: string, expectedUpdatedAt: string, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.delete')
     const neighborhoodId = parseDomainInput(entityIdSchema, id, 'property-locations.neighborhoods.delete.id')
     const body = parseDomainInput(propertyCatalogDeleteInputSchema, {
@@ -205,6 +211,7 @@ export const propertyLocationsAPI = {
     }, 'property-locations.neighborhoods.delete')
     await vimobAPIRequest<null>(`/v1/property-neighborhoods/${neighborhoodId}`, {
       method: 'DELETE',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -224,11 +231,13 @@ export const propertyLocationsAPI = {
   async createCondominium(
     organizationId: string,
     condominium: CreatePropertyCondominiumInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.create')
     const body = parseDomainInput(propertyCondominiumInputSchema, condominium, 'property-locations.condominiums.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyCondominium>>('/v1/property-condominiums', {
       method: 'POST',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -240,12 +249,14 @@ export const propertyLocationsAPI = {
     organizationId: string,
     id: string,
     condominium: UpdatePropertyCondominiumInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.update')
     const condominiumId = parseDomainInput(entityIdSchema, id, 'property-locations.condominiums.update.id')
     const body = parseDomainInput(propertyCondominiumUpdateInputSchema, condominium, 'property-locations.condominiums.update')
     const response = await vimobAPIRequest<ItemResponse<PropertyCondominium>>(`/v1/property-condominiums/${condominiumId}`, {
       method: 'PATCH',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })
@@ -253,7 +264,7 @@ export const propertyLocationsAPI = {
     return response
   },
 
-  async deleteCondominium(organizationId: string, id: string, expectedUpdatedAt: string) {
+  async deleteCondominium(organizationId: string, id: string, expectedUpdatedAt: string, intent?: VimobAPIRequestIntent) {
     const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.delete')
     const condominiumId = parseDomainInput(entityIdSchema, id, 'property-locations.condominiums.delete.id')
     const body = parseDomainInput(propertyCatalogDeleteInputSchema, {
@@ -261,6 +272,7 @@ export const propertyLocationsAPI = {
     }, 'property-locations.condominiums.delete')
     await vimobAPIRequest<null>(`/v1/property-condominiums/${condominiumId}`, {
       method: 'DELETE',
+      ...capturePropertyMutationIntent(intent),
       organizationId: orgId,
       body,
     })

@@ -1,4 +1,8 @@
+import { hasVerifiedLeadReadInCache, type VerifiedLeadRead } from '@/lib/lead-read-snapshot';
+
 type LeadCapabilityFields = {
+  id?: string;
+  organization_id?: string | null;
   can_operate?: boolean;
   assigned_user_id?: string | null;
   team_id?: string | null;
@@ -30,12 +34,20 @@ export function canOperateLeadFromFreshRead(
     isSuccess: boolean;
     isFetchedAfterMount: boolean;
     isFetching: boolean;
+    dataUpdatedAt?: number;
     data?: LeadCapabilityFields | null;
   },
+  verifiedRead?: VerifiedLeadRead,
 ): boolean {
+  const verifiedBeforeMount = hasVerifiedLeadReadInCache(verifiedRead, {
+    data: freshRead.data,
+    dataUpdatedAt: freshRead.dataUpdatedAt,
+    organizationId: freshRead.data?.organization_id,
+    leadId: freshRead.data?.id,
+  });
   return hasLeadOperatePermission &&
     freshRead.isSuccess &&
-    freshRead.isFetchedAfterMount &&
+    (freshRead.isFetchedAfterMount || verifiedBeforeMount) &&
     !freshRead.isFetching &&
     freshRead.data?.can_operate === true;
 }

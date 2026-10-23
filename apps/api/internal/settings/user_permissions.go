@@ -11,13 +11,42 @@ import (
 )
 
 type permissionTarget struct {
-	role         string
-	isTeamLeader bool
-	name         string
-	email        string
-	avatarURL    *string
-	isActive     bool
+	role                 string
+	isTeamLeader         bool
+	name                 string
+	email                string
+	avatarURL            *string
+	isActive             bool
+	membershipActive     bool
+	membershipGeneration int64
 }
+
+const permissionTargetQuery = `
+		select lower(coalesce(nullif(om.role, ''), 'user')),
+		       exists (
+		         select 1 from public.team_members tm
+		         join public.teams team on team.id = tm.team_id
+		           and team.organization_id = tm.organization_id
+		           and coalesce(team.is_active, true) = true
+		         where tm.organization_id = om.organization_id
+		           and tm.user_id = om.user_id
+		           and tm.membership_generation = om.membership_generation
+		           and om.is_active = true
+		           and tm.is_active = true
+		           and tm.is_leader = true
+		       ),
+		       u.name,
+		       u.email,
+		       u.avatar_url,
+		       (coalesce(u.is_active, false) and coalesce(om.is_active, false)),
+		       coalesce(om.is_active, false),
+		       om.membership_generation
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		where om.organization_id = $1::uuid
+		  and om.user_id = $2::uuid
+		  and om.deleted_at is null
+	`
 
 func (repo Repository) GetUserPermissions(ctx context.Context, tenantContext tenant.Context, userID string) (UserPermissionProfile, error) {
 	if !canManageUserPermissions(tenantContext) {
@@ -125,7 +154,7 @@ func (repo Repository) ReplaceUserPermissions(ctx context.Context, tenantContext
 		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, overrides); err != nil {
+	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, target, overrides); err != nil {
 		return UserPermissionProfile{}, err
 	}
 	return repo.GetUserPermissions(ctx, tenantContext, userID)
@@ -162,7 +191,7 @@ func (repo Repository) ResetUserPermissions(ctx context.Context, tenantContext t
 	if !canApplyPermissionTransition(tenantContext, currentEffective, defaultEffective) {
 		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
 	}
-	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, map[string]bool{}); err != nil {
+	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, target, map[string]bool{}); err != nil {
 		return UserPermissionProfile{}, err
 	}
 	return repo.GetUserPermissions(ctx, tenantContext, userID)
@@ -170,31 +199,15 @@ func (repo Repository) ResetUserPermissions(ctx context.Context, tenantContext t
 
 func (repo Repository) getPermissionTarget(ctx context.Context, organizationID string, userID string) (permissionTarget, error) {
 	var target permissionTarget
-	err := repo.db.Pool().QueryRow(ctx, `
-		select lower(coalesce(nullif(om.role, ''), 'user')),
-		       exists (
-		         select 1 from public.team_members tm
-		         where tm.organization_id = om.organization_id
-		           and tm.user_id = om.user_id
-		           and tm.is_active = true
-		           and tm.is_leader = true
-		       ),
-		       u.name,
-		       u.email,
-		       u.avatar_url,
-		       (coalesce(u.is_active, false) and coalesce(om.is_active, false))
-		from public.organization_members om
-		join public.users u on u.id = om.user_id
-		where om.organization_id = $1::uuid
-		  and om.user_id = $2::uuid
-		  and om.deleted_at is null
-	`, organizationID, userID).Scan(
+	err := repo.db.Pool().QueryRow(ctx, permissionTargetQuery, organizationID, userID).Scan(
 		&target.role,
 		&target.isTeamLeader,
 		&target.name,
 		&target.email,
 		&target.avatarURL,
 		&target.isActive,
+		&target.membershipActive,
+		&target.membershipGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return permissionTarget{}, ErrInvalidInput
@@ -206,6 +219,10 @@ func (repo Repository) getUserRoleGrants(ctx context.Context, organizationID str
 	rows, err := repo.db.Pool().Query(ctx, `
 		select distinct ap.key
 		from public.user_organization_roles uor
+		join public.organization_roles role
+		  on role.id = uor.role_id
+		 and role.organization_id = uor.organization_id
+		 and role.is_active = true
 		join public.organization_role_permissions orp
 		  on orp.organization_id = uor.organization_id and orp.role_id = uor.role_id
 		join public.available_permissions ap on ap.id = orp.permission_id
@@ -256,12 +273,51 @@ func (repo Repository) getUserPermissionOverrides(ctx context.Context, organizat
 	return overrides, rows.Err()
 }
 
-func (repo Repository) replaceUserPermissionOverrides(ctx context.Context, tenantContext tenant.Context, userID string, overrides map[string]bool) error {
+// A permission edit computed before a removal/reinvitation must not write into
+// the new membership. The row lock also serializes this write with the grant
+// cleanup trigger on organization_members.
+// WhatsApp's first-provider-attempt fence holds this same row FOR SHARE and
+// resolves effective permissions afterward, so this transaction must retain
+// the exclusive lock through every override change and commit.
+func lockPermissionTargetForWrite(ctx context.Context, tx pgx.Tx, organizationID string, userID string, expected permissionTarget) error {
+	var role string
+	var membershipActive, userActive bool
+	var generation int64
+	err := tx.QueryRow(ctx, `
+		select lower(coalesce(nullif(om.role, ''), 'user')),
+		       coalesce(om.is_active, false),
+		       coalesce(u.is_active, false),
+		       om.membership_generation
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		where om.organization_id = $1::uuid
+		  and om.user_id = $2::uuid
+		  and om.deleted_at is null
+		for update of om
+	`, organizationID, userID).Scan(&role, &membershipActive, &userActive, &generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidInput
+	}
+	if err != nil {
+		return err
+	}
+	if generation != expected.membershipGeneration || role != expected.role ||
+		membershipActive != expected.membershipActive ||
+		(membershipActive && userActive) != expected.isActive {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func (repo Repository) replaceUserPermissionOverrides(ctx context.Context, tenantContext tenant.Context, userID string, target permissionTarget, overrides map[string]bool) error {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockPermissionTargetForWrite(ctx, tx, tenantContext.OrganizationID, userID, target); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		delete from public.user_permission_overrides
 		where organization_id = $1::uuid and user_id = $2::uuid

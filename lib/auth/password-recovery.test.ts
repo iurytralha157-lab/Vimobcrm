@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   capturePasswordRecoveryIntent,
   clearPasswordRecoveryEvidence,
+  getPasswordRecoveryRedirect,
   grantPasswordRecoveryProof,
   hasPasswordRecoveryAuthenticationMethod,
   hasPasswordRecoveryProof,
@@ -176,6 +177,29 @@ test('recognizes recovery only from the signed authentication-method claim', () 
   assert.equal(isPasswordRecoveryAccessToken('x'.repeat((16 * 1024) + 1)), false)
 })
 
+test('recovery redirect policy keeps recovery sessions out of normal navigation', () => {
+  const recoveryClaims = {
+    amr: [{ method: 'recovery' }, { method: 'token_refresh' }],
+  }
+
+  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/dashboard'), { kind: 'reset' })
+  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/settings/account'), { kind: 'reset' })
+  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/login'), {
+    kind: 'cancel',
+    next: '/login',
+  })
+  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/cadastro'), {
+    kind: 'cancel',
+    next: '/cadastro',
+  })
+  assert.equal(getPasswordRecoveryRedirect(recoveryClaims, '/reset-password'), null)
+  assert.equal(getPasswordRecoveryRedirect(recoveryClaims, '/convite/token'), null)
+
+  assert.equal(getPasswordRecoveryRedirect({ amr: [{ method: 'password' }] }, '/dashboard'), null)
+  assert.equal(getPasswordRecoveryRedirect({ amr: [{ method: 'token_refresh' }] }, '/dashboard'), null)
+  assert.equal(getPasswordRecoveryRedirect({ type: 'recovery' }, '/dashboard'), null)
+})
+
 test('frontend telemetry strips every auth credential and the complete fragment', () => {
   const safeLocation = getSafeTelemetryLocation(new URL(
     'https://app.test/reset-password?code=pkce-secret&token_hash=otp-secret&type=recovery&page=2#access_token=jwt-secret&refresh_token=refresh-secret',
@@ -226,7 +250,7 @@ test('reset screen maps external auth errors to fixed copy', () => {
   assert.doesNotMatch(resetPasswordScreenSource, /hashParams\?\.get\("error_description"\)/)
 })
 
-test('recovery email keeps the exact reset contract inside the canonical brand shell', () => {
+test('recovery email keeps the exact reset contract in the light Vimob layout', () => {
   const recoveryLinkOccurrences = recoveryEmailTemplateSource
     .split(recoveryTemplateLink)
     .length - 1
@@ -250,11 +274,23 @@ test('recovery email keeps the exact reset contract inside the canonical brand s
     recoveryEmailTemplateSource,
     /src="https:\/\/vimobcrm\.com\.br\/images\/logo-black\.png"/,
   )
-  assert.match(recoveryEmailTemplateSource, /width="142" height="48"/)
-  assert.match(recoveryEmailTemplateSource, /max-width:600px/)
-  assert.match(recoveryEmailTemplateSource, /bgcolor="#ff4529" height="6"/)
-  assert.match(recoveryEmailTemplateSource, /bgcolor="#d9341d"/)
-  assert.match(recoveryEmailTemplateSource, /mso-padding-alt:15px 24px/)
+  assert.match(recoveryEmailTemplateSource, /font-family:Geist,'Segoe UI',Arial,Helvetica,sans-serif/)
+  assert.match(recoveryEmailTemplateSource, /width="85" height="30"/)
+  assert.match(recoveryEmailTemplateSource, /max-width:560px/)
+  assert.match(recoveryEmailTemplateSource, /width="560" align="center"/)
+  assert.match(recoveryEmailTemplateSource, /bgcolor="#f7f8f6"/)
+  assert.match(recoveryEmailTemplateSource, /font-size:24px;font-weight:400/)
+  assert.match(recoveryEmailTemplateSource, /font-size:15px;line-height:1\.65/)
+  assert.match(recoveryEmailTemplateSource, /height="48" bgcolor="#ff4529"/)
+  assert.match(recoveryEmailTemplateSource, /mso-padding-alt:14px 18px/)
+  assert.match(recoveryEmailTemplateSource, /<td class="email-content" align="left"/)
+  assert.match(recoveryEmailTemplateSource, /<table class="email-action"[^>]*style="margin:0 0 26px/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /<table class="email-action"[^>]*width="100%"/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /\.email-action\s*\{\s*width:\s*100%/)
+  assert.match(recoveryEmailTemplateSource, /display:inline-block;padding:14px 18px;color:#ffffff;font-size:15px;font-weight:400/)
+  assert.match(recoveryEmailTemplateSource, /bgcolor="#ffffff"/)
+  assert.match(recoveryEmailTemplateSource, /@media only screen and \(max-width: 620px\)/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /box-shadow|border:1px|height="6"/)
   assert.match(recoveryEmailTemplateSource, /Não foi você\?/)
   assert.match(recoveryEmailTemplateSource, /copie e cole este endereço no navegador/)
   assert.match(
@@ -345,8 +381,9 @@ test('recovery exits are bounded and always navigate from a finally block', () =
   const finishSource = resetPasswordScreenSource.slice(finishStart, passwordErrorStart)
   assert.match(leaveSource, /runBestEffortAuthOperation/)
   assert.match(leaveSource, /finally \{\s*window\.location\.replace\(destination\)/)
-  assert.match(finishSource, /signOutPasswordRecoverySession\("global"/)
-  assert.match(finishSource, /signOutPasswordRecoverySession\("local"/)
+  assert.match(finishSource, /if \(outcome === "unverified"\) \{[\s\S]*?scope: "global"/)
+  assert.match(finishSource, /signOutPasswordRecoverySession\(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS\)/)
+  assert.match(resetPasswordScreenSource, /result\.sessionsRevoked !== true/)
   assert.match(finishSource, /finally \{[\s\S]*?window\.location\.replace/)
 })
 

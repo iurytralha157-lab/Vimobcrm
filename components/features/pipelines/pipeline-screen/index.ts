@@ -1,5 +1,5 @@
 export { PipelineBoard } from './PipelineBoard';
-export { PipelineDialogs } from './PipelineDialogs';
+export { PipelineDialogs, preloadPipelineLeadDialog } from './PipelineDialogs';
 export type { PipelineStageSettingsValue } from './PipelineDialogs';
 export { PipelineToolbar } from './PipelineToolbar';
 export {

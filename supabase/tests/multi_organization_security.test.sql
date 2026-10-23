@@ -225,10 +225,11 @@ select ok(
   and not public.can_view_whatsapp_conversation('70000000-0000-0000-0000-000000000002'),
   'Org A user authorizes only its linked WhatsApp conversation through the backend helper'
 );
-select results_eq(
+select throws_ok(
   $$select count(*)::bigint from public.audit_logs$$,
-  array[1::bigint],
-  'Org A user sees only Org A audit history'
+  '42501',
+  null,
+  'authenticated clients cannot read audit history directly'
 );
 select throws_ok(
   $$insert into public.audit_logs (organization_id, user_id, action, entity_type) values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'forged', 'security_test')$$,

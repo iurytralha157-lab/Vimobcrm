@@ -54,7 +54,7 @@ export const scheduleClockInputSchema = z
 const eventDateSchema = z
   .string()
   .trim()
-  .refine((value) => Number.isFinite(Date.parse(value)), "Data invalida");
+  .datetime({ offset: true, message: "Data invalida" });
 const reminderMinutesInputSchema = nonNegativeIntegerSchema.max(120);
 
 export const scheduleListQuerySchema = z
@@ -65,10 +65,22 @@ export const scheduleListQuerySchema = z
     startDate: z.date().optional(),
     endDate: z.date().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((query, ctx) => {
+    if (!query.eventId && !query.leadId && (!query.startDate || !query.endDate)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Selecione o periodo da agenda" });
+    }
+    if (query.startDate && query.endDate) {
+      const duration = query.endDate.getTime() - query.startDate.getTime();
+      if (duration < 0 || duration > 366 * 86_400_000) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["endDate"], message: "Periodo da agenda invalido ou maior que 366 dias" });
+      }
+    }
+  });
 
 export const createScheduleEventInputSchema = z
   .object({
+    client_request_id: uuidSchema.optional(),
     title: z.string().trim().min(1).max(180),
     description: z.string().trim().max(2_000).optional(),
     event_type: scheduleEventTypeSchema.default("task"),
@@ -87,12 +99,13 @@ export const createScheduleEventInputSchema = z
   })
   .strict()
   .refine(
-    (input) => Date.parse(input.end_time) >= Date.parse(input.start_time),
+    (input) => Date.parse(input.end_time) > Date.parse(input.start_time),
     { path: ["end_time"], message: "Fim deve ser posterior ao inicio" },
   );
 
 export const updateScheduleEventInputSchema = z
   .object({
+    expected_updated_at: eventDateSchema.optional(),
     title: z.string().trim().min(1).max(180).optional(),
     description: z.string().trim().max(2_000).nullable().optional(),
     event_type: scheduleEventTypeSchema.optional(),
@@ -107,24 +120,24 @@ export const updateScheduleEventInputSchema = z
     status: scheduleStatusSchema.optional(),
     visibility: scheduleVisibilitySchema.optional(),
     reminder_minutes: reminderMinutesInputSchema.nullish(),
-    recurrence_rule: scheduleRecurrenceSchema.nullish(),
     assignee_ids: z.array(uuidSchema).max(100).optional(),
   })
   .strict()
   .refine(
-    (input) => Object.values(input).some((value) => value !== undefined),
+    (input) => Object.entries(input).some(([key, value]) => key !== "expected_updated_at" && value !== undefined),
     "Informe ao menos uma alteracao",
   )
   .refine(
     (input) =>
       !input.start_time ||
       !input.end_time ||
-      Date.parse(input.end_time) >= Date.parse(input.start_time),
+      Date.parse(input.end_time) > Date.parse(input.start_time),
     { path: ["end_time"], message: "Fim deve ser posterior ao inicio" },
   );
 
 export const completeScheduleEventInputSchema = z
   .object({
+    expected_updated_at: eventDateSchema.optional(),
     status: scheduleStatusSchema,
     outcome: scheduleOutcomeSchema.nullish(),
     outcome_notes: z.string().trim().max(2_000).nullish(),
@@ -133,6 +146,7 @@ export const completeScheduleEventInputSchema = z
   .strict();
 export const rescheduleScheduleEventInputSchema = z
   .object({
+    expected_updated_at: eventDateSchema.optional(),
     start_time: eventDateSchema,
     end_time: eventDateSchema,
     is_all_day: z.boolean().optional(),
@@ -146,6 +160,7 @@ export const rescheduleScheduleEventInputSchema = z
   );
 export const scheduleCommentInputSchema = z
   .object({
+    client_request_id: uuidSchema.optional(),
     content: z.string().trim().min(1).max(2_000),
   })
   .strict();
@@ -234,7 +249,13 @@ export const apiScheduleAssigneeSchema = z
 
 export const apiScheduleEventListResponseSchema = apiEnvelopeSchema(
   z.array(apiScheduleEventSchema),
-);
+).extend({
+  pagination: z.object({
+    limit: z.number().int().min(1).max(500),
+    offset: nonNegativeIntegerSchema,
+    has_more: z.boolean(),
+  }).optional(),
+});
 export const apiScheduleEventResponseSchema = apiEnvelopeSchema(
   apiScheduleEventSchema,
 );
@@ -259,7 +280,14 @@ export const apiScheduleCapabilitiesResponseSchema = apiEnvelopeSchema(
   z
     .object({
       isTeamLeader: z.boolean(),
-      timeZone: z.string().trim().min(1).max(120).default("America/Sao_Paulo"),
+      timeZone: z.string().trim().min(1).max(120).refine((value) => {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: value }).format(0);
+          return true;
+        } catch {
+          return false;
+        }
+      }, "Fuso horario da organizacao invalido"),
     })
     .passthrough(),
 );

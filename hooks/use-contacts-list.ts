@@ -1,6 +1,8 @@
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { isDefinitiveLeadReadDenial } from '@/lib/lead-read-access';
 import { contactsAPI } from '@/lib/api/contacts';
 import { useAuth } from '@/contexts/AuthContext';
+import { MAX_SHARED_REPORT_RANGE_DAYS, validateDateRangeLimit } from '@/lib/filters/date-range-limits';
 
 const CONTACTS_STALE_TIME_MS = 1000 * 60 * 10;
 const CONTACTS_CACHE_TIME_MS = 1000 * 60 * 60;
@@ -18,6 +20,7 @@ export interface ContactListFilters {
   source?: string;
   pageId?: string;
   campaignId?: string;
+  campaignIds?: string[];
   adSetId?: string;
   adId?: string;
   dealStatus?: 'open' | 'won' | 'lost';
@@ -145,11 +148,27 @@ export function useContactsList(
 ) {
   const { activeOrganization, user } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
+  const queryClient = useQueryClient();
+  const queryKey = ['contacts-list', organizationId, user?.id, filters];
+  const periodError = validateDateRangeLimit(
+    filters.createdFrom && filters.createdTo
+      ? { from: new Date(filters.createdFrom), to: new Date(filters.createdTo) }
+      : null,
+    MAX_SHARED_REPORT_RANGE_DAYS,
+  );
 
-  return useQuery({
-    queryKey: ['contacts-list', organizationId, user?.id, filters],
-    queryFn: ({ signal }) => contactsAPI.list(filters, organizationId, { signal }),
-    enabled: !!user?.id && !!organizationId && (options?.enabled ?? true),
+  const query = useQuery({
+    queryKey,
+    queryFn: async ({ signal }) => {
+      if (periodError) throw new Error(periodError);
+      try {
+        return await contactsAPI.listPage(filters, organizationId, { signal });
+      } catch (error) {
+        if (!signal.aborted && isDefinitiveLeadReadDenial(error)) queryClient.setQueryData(queryKey, { data: [], total: 0 });
+        throw error;
+      }
+    },
+    enabled: !!user?.id && !!organizationId && !periodError && (options?.enabled ?? true),
     placeholderData: keepPreviousData,
     staleTime: CONTACTS_STALE_TIME_MS,
     gcTime: CONTACTS_CACHE_TIME_MS,
@@ -160,4 +179,6 @@ export function useContactsList(
     // several timeout windows before the error state becomes actionable.
     retry: false,
   });
+  const denied = isDefinitiveLeadReadDenial(query.error);
+  return { ...query, periodError, data: periodError || denied ? undefined : query.data?.data, total: periodError || denied ? undefined : query.data?.total, isPlaceholderData: !periodError && !denied && query.isPlaceholderData };
 }

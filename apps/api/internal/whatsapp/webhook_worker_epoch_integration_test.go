@@ -1,40 +1,12 @@
 package whatsapp
 
 import (
-	"context"
 	"fmt"
-	"net/url"
-	"os"
-	"strings"
 	"testing"
-	"time"
-
-	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
 func TestClaimCurrentEpochBacklogRootRequiredByLive(t *testing.T) {
-	databaseURL := strings.TrimSpace(os.Getenv("WHATSAPP_TEST_DATABASE_URL"))
-	if databaseURL == "" {
-		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
-	}
-	target, err := url.Parse(databaseURL)
-	if err != nil {
-		t.Fatalf("parse WHATSAPP_TEST_DATABASE_URL: %v", err)
-	}
-	if host := strings.ToLower(target.Hostname()); host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		t.Fatalf("webhook claim fixture requires loopback, got %q", host)
-	}
-	if strings.TrimPrefix(target.Path, "/") != "vimob_whatsapp_test" {
-		t.Fatal("webhook claim fixture requires the disposable vimob_whatsapp_test database")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	postgres, err := dbpkg.NewPostgres(ctx, dbpkg.Config{URL: databaseURL, HealthTimeout: 3 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(postgres.Close)
+	ctx, postgres := webhookDependencyDatabase(t)
 	fixture := createSessionConversationLockFixture(t, ctx, postgres.Pool(), "epoch-dependent-root")
 	t.Cleanup(func() { cleanupSessionConversationLockFixture(t, postgres.Pool(), fixture) })
 

@@ -41,14 +41,18 @@ func TestNormalizeMembersStrictRejectsMalformedID(t *testing.T) {
 }
 
 func TestUpdateRequiresAnActualMutationField(t *testing.T) {
+	expectedRevision := int64(1)
 	if hasTeamUpdate(UpdateTeamRequest{}) {
 		t.Fatal("empty update must not be accepted")
+	}
+	if hasTeamUpdate(UpdateTeamRequest{ExpectedRevision: &expectedRevision}) {
+		t.Fatal("expected_revision alone is not a mutation")
 	}
 	if hasTeamUpdate(UpdateTeamRequest{PreserveLeadership: true}) {
 		t.Fatal("preserveLeadership alone is not a mutation")
 	}
 	emptyMembers := []TeamMemberInput{}
-	if !hasTeamUpdate(UpdateTeamRequest{Members: emptyMembers}) {
+	if !hasTeamUpdate(UpdateTeamRequest{ExpectedRevision: &expectedRevision, Members: emptyMembers}) {
 		t.Fatal("an explicit empty member list must remain a valid mutation")
 	}
 }

@@ -15,6 +15,7 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function LocationSection() {
   const {
+    isSaving,
     formData,
     set,
     canManagePropertyCatalogs,
@@ -62,7 +63,8 @@ export function LocationSection() {
   const showManagerOnlyFields = !isEditing || canManagePropertyCatalogs;
 
   return (
-  <TabsContent value="location">
+  <TabsContent value="location" id="property-panel-location" aria-labelledby="property-tab-location" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card data-tour="property-location-section" className="app-card">
       <CardHeader>
         <CardTitle className="text-[14px] font-normal">
@@ -73,7 +75,7 @@ export function LocationSection() {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,.9fr)_minmax(240px,1fr)_140px]">
+        <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-[minmax(0,.9fr)_minmax(240px,1fr)_140px]">
           <div className="space-y-2">
             <Label htmlFor="property-address-visibility">
               Endereço no site público <RequiredMark />
@@ -157,7 +159,7 @@ export function LocationSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[84px_minmax(230px,1.2fr)_minmax(220px,1.1fr)_minmax(220px,1.15fr)]">
+        <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-2 @[960px]:grid-cols-[84px_minmax(230px,1.2fr)_minmax(220px,1.1fr)_minmax(220px,1.15fr)]">
           <div className="space-y-2">
             <Label htmlFor="property-state">UF <RequiredMark /></Label>
             <Input
@@ -421,7 +423,7 @@ export function LocationSection() {
             </Select>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_112px_minmax(220px,.55fr)]">
+        <div className="grid grid-cols-1 gap-4 @[760px]:grid-cols-[minmax(0,1fr)_112px_minmax(220px,.55fr)]">
           <div className="space-y-2">
             <Label htmlFor="property-street">Logradouro</Label>
             <Input
@@ -473,7 +475,7 @@ export function LocationSection() {
           </div>
         )}
         {canManagePropertyCatalogs && showAddCondominium && (
-          <div className="app-card-soft grid grid-cols-1 gap-3 border-0 p-3 md:grid-cols-[1.35fr_.85fr]">
+          <div className="app-card-soft grid grid-cols-1 gap-3 border-0 p-3 @[480px]:grid-cols-[1.35fr_.85fr]">
             <div className="space-y-2">
               <Label htmlFor="property-new-condominium-name">Nome do condomínio</Label>
               <Input
@@ -498,7 +500,7 @@ export function LocationSection() {
                 placeholder="800"
               />
             </div>
-            <div className="space-y-2 md:col-span-2">
+            <div className="space-y-2 @[480px]:col-span-2">
               <Label htmlFor="property-new-condominium-photo">Foto do condomínio (URL)</Label>
               <Input
                 id="property-new-condominium-photo"
@@ -538,7 +540,7 @@ export function LocationSection() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex justify-end md:col-span-2">
+            <div className="flex justify-end @[480px]:col-span-2">
               <Button
                 type="button"
                 onClick={handleCreateCondominium}
@@ -554,6 +556,7 @@ export function LocationSection() {
         )}
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

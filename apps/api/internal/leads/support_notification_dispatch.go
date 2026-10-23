@@ -175,6 +175,8 @@ func shouldDispatchLeadWhatsAppNotification(eventKey string) bool {
 	switch strings.TrimSpace(eventKey) {
 	case "onboarding_welcome":
 		return true
+	case queuePoolAvailableEvent:
+		return true
 	case "new_lead_received",
 		"lead_reentry",
 		"lead_duplicate_existing",
@@ -211,6 +213,8 @@ func isBillingNotificationEvent(eventKey string) bool {
 func isPlatformTransactionalNotificationEvent(eventKey string) bool {
 	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
 	return eventKey == "onboarding_welcome" ||
+		eventKey == queuePoolAvailableEvent ||
+		eventKey == whatsappInboundAttendantEvent ||
 		eventKey == "onboarding_email_confirmation" ||
 		eventKey == "schedule_reminder" ||
 		eventKey == "appointment_reminder" ||

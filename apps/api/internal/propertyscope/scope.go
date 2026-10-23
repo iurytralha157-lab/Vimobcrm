@@ -44,6 +44,18 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 				  on member.organization_id = leader.organization_id
 				 and member.team_id = leader.team_id
 				 and member.is_active = true
+				join public.organization_members leader_membership
+				  on leader_membership.organization_id = leader.organization_id
+				 and leader_membership.user_id = leader.user_id
+				 and leader_membership.is_active = true
+				 and leader_membership.deleted_at is null
+				 and leader_membership.membership_generation = leader.membership_generation
+				join public.organization_members member_membership
+				  on member_membership.organization_id = member.organization_id
+				 and member_membership.user_id = member.user_id
+				 and member_membership.is_active = true
+				 and member_membership.deleted_at is null
+				 and member_membership.membership_generation = member.membership_generation
 				where leader.organization_id = ` + alias + `.organization_id
 				  and leader.user_id = ` + userIDPlaceholder + `::uuid
 				  and leader.is_active = true

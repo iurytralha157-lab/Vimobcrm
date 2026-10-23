@@ -87,6 +87,10 @@ if (-not (Get-NetTCPConnection -State Listen -LocalPort $DatabaseTunnelPort -Err
 
 $apiPublicUrl = "http://127.0.0.1:$ApiPort"
 Wait-LocalHttp -Url "$apiPublicUrl/readyz" -ServiceName 'API local com banco real' -TimeoutSeconds 10
+$apiReadiness = Invoke-WebRequest -Uri "$apiPublicUrl/readyz" -UseBasicParsing -TimeoutSec 3
+if ($apiReadiness.Headers['X-Vimob-Database-Read-Only'] -ne 'true') {
+  throw 'A API local nao confirmou DATABASE_FORCE_READ_ONLY=true; inicie-a em modo somente leitura antes do frontend.'
+}
 
 Import-EnvironmentFile -Path $EnvironmentFile
 

@@ -14,6 +14,7 @@ import {
   type PublicPropertyPublication,
   type PublicPropertyPublicationContext,
 } from "./property-public-projection.ts";
+import { filterOpenPropertyInventory } from "../_shared/property-inventory-eligibility.ts";
 import { publicAPIBillingHasAccess } from "./public-api-access.ts";
 
 const corsHeaders = {
@@ -80,12 +81,11 @@ function legacyLeadWriteGoneResponse() {
   );
 }
 
-const PUBLIC_PROPERTY_STATUSES = ["active", "ativo"];
 const PROPERTY_BATCH_SIZE = 200;
 const API_KEY_USAGE_TOUCH_INTERVAL_MS = 60_000;
 const PUBLIC_PROPERTY_COLUMNS = [
-  "id", "code", "title", "descricao_site", "tipo", "tipo_de_imovel",
-  "finalidade", "tipo_de_negocio", "status", "published_on_site",
+  "id", "organization_id", "code", "title", "descricao_site", "tipo", "tipo_de_imovel",
+  "finalidade", "tipo_de_negocio", "status", "published_on_site", "autorizado_comercializacao",
   "is_featured", "destaque", "preco", "valor_locacao", "condominio",
   "iptu", "taxa_de_servico", "valor_itr", "seguro_incendio", "quartos",
   "suites", "banheiros", "vagas", "area_total", "area_util", "andar",
@@ -123,7 +123,7 @@ async function loadPublicationContexts(
   for (const propertyIdChunk of chunks(propertyIds, 100)) {
     const { data, error } = await supabase
       .from("property_channel_publications")
-      .select("id, property_id, desired_state, published_version")
+      .select("id, organization_id, property_id, channel, channel_account_key, desired_state, published_version")
       .eq("organization_id", organizationId)
       .eq("channel", "site")
       .eq("channel_account_key", "default")
@@ -247,7 +247,6 @@ async function listPublicProperties(
       .from("properties")
       .select(PUBLIC_PROPERTY_COLUMNS)
       .eq("organization_id", organizationId)
-      .in("status", PUBLIC_PROPERTY_STATUSES)
       .eq("published_on_site", true)
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
@@ -295,7 +294,6 @@ async function listPublicProperties(
       .from("properties")
       .select(PUBLIC_PROPERTY_COLUMNS)
       .eq("organization_id", organizationId)
-      .in("status", PUBLIC_PROPERTY_STATUSES)
       .in("id", propertyIdChunk);
     if (error) throw error;
     for (const property of propertyRows ?? []) {
@@ -311,6 +309,7 @@ async function listPublicProperties(
   });
 
   for (const propertyChunk of chunks(properties, PROPERTY_BATCH_SIZE)) {
+    const openInventory = await filterOpenPropertyInventory(supabase, organizationId, propertyChunk);
     const propertyIds = propertyChunk.map((property) => String(property.id));
     const contexts = await loadPublicationContexts(
       supabase,
@@ -318,7 +317,7 @@ async function listPublicProperties(
       propertyIds,
     );
 
-    for (const property of propertyChunk) {
+    for (const property of openInventory) {
       const propertyId = String(property.id);
       const context = contexts.get(propertyId) ?? {
         publication: null,
@@ -525,11 +524,14 @@ serve(async (req) => {
         .select(PUBLIC_PROPERTY_COLUMNS)
         .eq("id", propertyId)
         .eq("organization_id", organizationId)
-        .in("status", PUBLIC_PROPERTY_STATUSES)
         .maybeSingle();
 
       if (error) throw error;
       if (!property) {
+        return json({ error: "Property not found", code: "not_found" }, 404);
+      }
+      const openInventory = await filterOpenPropertyInventory(supabase, organizationId, [property]);
+      if (!openInventory.length) {
         return json({ error: "Property not found", code: "not_found" }, 404);
       }
       const contexts = await loadPublicationContexts(

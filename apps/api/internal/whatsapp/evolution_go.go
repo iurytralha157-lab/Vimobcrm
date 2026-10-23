@@ -228,17 +228,15 @@ func (client functionsClient) invokeEvolutionDirectWithResponseLimit(
 	if !ok {
 		response["error"] = evolutionErrorMessage(result.Data, result.RawText)
 	}
-	if !ok && isEvolutionSendAction(action) && isEvolutionRecipientNotRegistered(evolutionErrorMessage(result.Data, result.RawText)) {
+	if isEvolutionSendAction(action) && (!ok || evolutionSendHasError(result.Data)) && isEvolutionRecipientNotRegistered(evolutionErrorMessage(result.Data, result.RawText)) {
 		return response, fmt.Errorf("%w: %w", ErrProviderFailed, ErrRecipientNotRegistered)
 	}
-	if !ok && evolutionHTTPOutcomeUnknown(action, result.Status) {
+	if result.OK && isEvolutionSendAction(action) && !evolutionSendAcknowledged(result.Data) {
 		client.runtimeStats.providerOutcomeBecameUnknown()
-		return response, fmt.Errorf(
-			"%w: %w: Evolution Go operation %s returned ambiguous HTTP %d: %s",
-			ErrProviderFailed,
-			ErrProviderOutcomeUnknown,
-			action,
-			result.Status,
+		return response, fmt.Errorf("%w: %w: Evolution Go send acknowledgement is incomplete", ErrProviderFailed, ErrProviderOutcomeUnknown)
+	}
+	if !ok && evolutionHTTPOutcomeUnknown(action, result.Status) {
+		return response, client.evolutionAmbiguousHTTPError(action, result.Status,
 			providerErrorMessage(response, "provider response was ambiguous"),
 		)
 	}
@@ -283,6 +281,14 @@ func (client functionsClient) recoverEvolutionQRCode(
 		)
 		if err != nil {
 			return evolutionFetchResult{}, err
+		}
+		// This mutation uses the same HTTP uncertainty contract as direct
+		// provider actions, before any stale-client body heuristic can run.
+		if !forceResult.OK && evolutionHTTPOutcomeUnknown("instance.forceReconnect", forceResult.Status) {
+			return evolutionFetchResult{}, client.evolutionAmbiguousHTTPError(
+				"instance.forceReconnect", forceResult.Status,
+				evolutionErrorMessage(forceResult.Data, forceResult.RawText),
+			)
 		}
 		if !evolutionForceReconnectStarted(forceResult) {
 			return evolutionFetchResult{}, fmt.Errorf(
@@ -401,6 +407,18 @@ func evolutionHTTPOutcomeUnknown(action string, status int) bool {
 	// 429 is intentionally excluded because it is an explicit admission-control
 	// rejection and remains eligible for bounded, same-sender retry.
 	return status == http.StatusRequestTimeout || status == http.StatusTooEarly || status >= 500 && status <= 599
+}
+
+func (client functionsClient) evolutionAmbiguousHTTPError(action string, status int, message string) error {
+	client.runtimeStats.providerOutcomeBecameUnknown()
+	return fmt.Errorf(
+		"%w: %w: Evolution Go operation %s returned ambiguous HTTP %d: %s",
+		ErrProviderFailed,
+		ErrProviderOutcomeUnknown,
+		action,
+		status,
+		message,
+	)
 }
 
 func evolutionActionMayCommitMutation(action string) bool {

@@ -1,4 +1,5 @@
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 import { apiPropertyOwnerPageResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyCatalogDeleteInputSchema, propertyOwnerCatalogUpdateInputSchema, propertyOwnerInputSchema, propertyOwnerPageQuerySchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyOwnerProperty = {
@@ -94,10 +95,11 @@ export const propertyOwnersAPI = {
     }
   },
 
-  async createOwner(organizationId: string, owner: PropertyOwnerInput) {
+  async createOwner(organizationId: string, owner: PropertyOwnerInput, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(propertyOwnerInputSchema, owner, 'property-owners.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyOwner>>('/v1/property-owners', {
       method: 'POST',
+      ...capturePropertyMutationIntent(intent),
       organizationId,
       body,
     })
@@ -105,11 +107,12 @@ export const propertyOwnersAPI = {
     return response
   },
 
-  async updateOwner(organizationId: string, ownerId: string, owner: PropertyOwnerUpdateInput) {
+  async updateOwner(organizationId: string, ownerId: string, owner: PropertyOwnerUpdateInput, intent?: VimobAPIRequestIntent) {
     const id = parseDomainInput(entityIdSchema, ownerId, 'property-owners.update.id')
     const body = parseDomainInput(propertyOwnerCatalogUpdateInputSchema, owner, 'property-owners.update')
     const response = await vimobAPIRequest<ItemResponse<PropertyOwner>>(`/v1/property-owners/${id}`, {
       method: 'PATCH',
+      ...capturePropertyMutationIntent(intent),
       organizationId,
       body,
     })
@@ -117,13 +120,14 @@ export const propertyOwnersAPI = {
     return response
   },
 
-  async deactivateOwner(organizationId: string, ownerId: string, expectedUpdatedAt: string) {
+  async deactivateOwner(organizationId: string, ownerId: string, expectedUpdatedAt: string, intent?: VimobAPIRequestIntent) {
     const id = parseDomainInput(entityIdSchema, ownerId, 'property-owners.deactivate.id')
     const body = parseDomainInput(propertyCatalogDeleteInputSchema, {
       expected_updated_at: expectedUpdatedAt,
     }, 'property-owners.deactivate')
     await vimobAPIRequest<null>(`/v1/property-owners/${id}`, {
       method: 'DELETE',
+      ...capturePropertyMutationIntent(intent),
       organizationId,
       body,
     })

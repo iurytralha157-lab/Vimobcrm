@@ -254,8 +254,8 @@ export function AdminUserActions({ user }: { user: AdminRecord }) {
     onSuccess: (result) => {
       const email = getString(result, "email", getString(user, "email", ""));
       toast.success(email
-        ? `Enviamos o link de recuperação para ${email}.`
-        : "Enviamos o link de recuperação por e-mail.");
+        ? `Pedido de recuperação aceito para ${email}. A entrega do e-mail ainda não foi confirmada.`
+        : "Pedido de recuperação aceito. A entrega do e-mail ainda não foi confirmada.");
     },
     onError: (error) => {
       toast.error(`Erro ao resetar senha: ${getErrorMessage(error)}`);
@@ -318,7 +318,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
     mutationFn: async () => {
       if (!organizationId) throw new Error("Organização não informada.");
       const validated = adminInvitationInputSchema.parse(invitationInput);
-      return adminAPI.createInvitation(validated);
+      return adminAPI.createInvitation(validated, organizationId);
     },
     onSuccess: async (result) => {
       toast.success(result.email_sent === false

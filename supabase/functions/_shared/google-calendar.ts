@@ -21,14 +21,26 @@ import {
   googleAllDayRangeToScheduleRange,
   nextGoogleCivilDate,
   normalizeGoogleCalendarTimeZone,
-  scheduleInstantToGoogleDate,
+  scheduleAllDayRangeToGoogleRange,
 } from "./google-calendar-time.ts";
 import {
   decideGooglePullForLocalEvent,
   GOOGLE_CALENDAR_CONFLICT_MESSAGE,
   GoogleCalendarConflictError,
   hasUnsyncedVimobChanges,
+  conditionalGoogleWriteHeaders,
 } from "./google-calendar-conflict.ts";
+import {
+  assertGoogleCalendarOAuthReady,
+  googleCalendarFetchWithDeadline,
+  googleCalendarRetryAfter,
+  googleCalendarErrorStatus,
+  googleCalendarRetryPolicy,
+  GoogleCalendarRetryableError,
+  GoogleCalendarLeaseLostError,
+  GoogleCalendarVersionChangedError,
+  GoogleCalendarConnectionChangedError,
+} from "./google-calendar-delivery.ts";
 
 export type JsonRecord = Record<string, any>;
 
@@ -67,6 +79,7 @@ function googleCalendarInboundDisabled() {
 }
 
 export const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
+  global: { fetch: googleCalendarFetchWithDeadline },
   auth: {
     autoRefreshToken: false,
     persistSession: false,
@@ -537,7 +550,7 @@ export async function exchangeOAuthCode(code: string) {
     grant_type: "authorization_code",
   });
 
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  const response = await googleCalendarFetchWithDeadline(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -552,7 +565,7 @@ export async function exchangeOAuthCode(code: string) {
 }
 
 export async function fetchGoogleUserInfo(accessToken: string) {
-  const response = await fetch(GOOGLE_USERINFO_URL, {
+  const response = await googleCalendarFetchWithDeadline(GOOGLE_USERINFO_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const data = await response.json().catch(() => ({}));
@@ -628,16 +641,30 @@ export async function upsertConnectionFromOAuth(params: {
     (existingConnections || []) as JsonRecord[],
     accountEmail,
   );
+  if (existing?.disconnecting_at) throw new Error("Conta Google em desconexao. Aguarde antes de reconectar.");
 
   const previousToken = existing?.token_secret_ref
     ? await readTokenSecret(existing.token_secret_ref).catch(() => null)
     : null;
 
-  const tokenSecretRef = await saveTokenSecret({
-    existingSecretRef: existing?.token_secret_ref,
-    userId: params.state.user_id,
-    accountEmail,
-    token: {
+  const authorizedToken = {
+    ...params.tokenResponse,
+    refresh_token: params.tokenResponse.refresh_token || previousToken?.refresh_token || null,
+  };
+  // Google granular consent may authenticate the email without Calendar.
+  // Validate before any Vault or connection write and before reporting success.
+  assertGoogleCalendarOAuthReady(authorizedToken);
+
+  // HTTP consent has already completed. Vault and activation commit together
+  // behind the credential/lifecycle revision; no network runs under that lock.
+  const { data, error } = await supabase.rpc("google_calendar_activate_oauth_connection", {
+    p_connection_id: existing?.id || null,
+    p_organization_id: params.state.organization_id,
+    p_user_id: params.state.user_id,
+    p_expected_revision: existing?.credential_revision ?? null,
+    p_account_email: accountEmail,
+    p_account_picture_url: params.userInfo.picture || null,
+    p_token: {
       access_token: params.tokenResponse.access_token,
       refresh_token:
         params.tokenResponse.refresh_token ||
@@ -648,31 +675,7 @@ export async function upsertConnectionFromOAuth(params: {
       token_type: params.tokenResponse.token_type,
     },
   });
-
-  const row = {
-    organization_id: params.state.organization_id,
-    user_id: params.state.user_id,
-    account_email: existing?.account_email || accountEmail,
-    account_picture_url: params.userInfo.picture || null,
-    token_secret_ref: tokenSecretRef,
-    scopes: String(params.tokenResponse.scope || "")
-      .split(/\s+/)
-      .filter(Boolean),
-    expires_at: expiresAt,
-    calendar_id: existing?.calendar_id || "primary",
-    calendar_summary: existing?.calendar_summary || "Agenda principal",
-    sync_enabled: true,
-    sync_status: "connected",
-    disconnected_at: null,
-    connected_at: new Date().toISOString(),
-    last_error: null,
-  };
-
-  const query = existing
-    ? supabase.from("google_calendar_tokens").update(row).eq("id", existing.id)
-    : supabase.from("google_calendar_tokens").insert(row);
-  const { data, error } = await query.select("*").single();
-
+  if (error?.code === "40001") throw new GoogleCalendarConnectionChangedError();
   if (error) throw error;
   return data as JsonRecord;
 }
@@ -712,22 +715,24 @@ export async function getConnectionForUser(
   return data as JsonRecord | null;
 }
 
-export async function refreshAccessToken(connection: JsonRecord) {
+export async function refreshAccessToken(connection: JsonRecord, force = false) {
   const token = await readTokenSecret(connection.token_secret_ref);
   const expiresAt = token.expires_at ? new Date(token.expires_at).getTime() : 0;
 
-  if (token.access_token && expiresAt > Date.now() + 90_000) {
+  if (!force && token.access_token && expiresAt > Date.now() + 90_000) {
     return { connection, token };
   }
 
   if (!token.refresh_token) {
-    throw new Error(
+    throw new GoogleCalendarRetryableError(
       "Google nao retornou refresh_token. Reconecte a conta com consentimento.",
+      401,
     );
   }
 
   const config = getGoogleOAuthConfig();
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  await assertGoogleCalendarJobLease(connection);
+  const response = await googleCalendarFetchWithDeadline(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -741,16 +746,14 @@ export async function refreshAccessToken(connection: JsonRecord) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok && data.error === "invalid_grant") {
     const reconnectMessage = "Autorizacao Google expirada ou revogada. Reconecte sua conta.";
-    const { error: statusError } = await supabase
-      .from("google_calendar_tokens")
-      .update({ sync_status: "error", last_error: reconnectMessage })
-      .eq("id", connection.id);
-    if (statusError) console.error("google reconnect status persistence failed", statusError);
-    throw new Error(reconnectMessage);
+    // The fenced finish records the error atomically. A delayed refresh must
+    // never repaint a freshly reconnected account independently of that job.
+    throw new GoogleCalendarRetryableError(reconnectMessage, 401);
   }
   if (!response.ok)
-    throw new Error(
+    throw new GoogleCalendarRetryableError(
       data.error_description || data.error || "Falha ao renovar token Google.",
+      response.status, googleCalendarRetryAfter(response.headers.get("Retry-After")),
     );
 
   const nextToken = {
@@ -761,22 +764,17 @@ export async function refreshAccessToken(connection: JsonRecord) {
     token_type: data.token_type || token.token_type,
   };
 
-  await saveTokenSecret({
-    existingSecretRef: connection.token_secret_ref,
-    userId: connection.user_id,
-    accountEmail: connection.account_email,
-    token: nextToken,
+  await assertGoogleCalendarJobLease(connection);
+  const { data: updated, error } = await supabase.rpc("google_calendar_store_refreshed_token", {
+    p_connection_id: connection.id,
+    p_expected_revision: connection.credential_revision,
+    p_expected_secret_ref: connection.token_secret_ref,
+    p_allow_disconnecting: connection.vimob_disconnect === true,
+    p_token: nextToken,
   });
-
-  const { data: updated, error } = await supabase
-    .from("google_calendar_tokens")
-    .update({ expires_at: nextToken.expires_at, last_error: null })
-    .eq("id", connection.id)
-    .select("*")
-    .single();
-
+  if (error?.code === "40001") throw new GoogleCalendarVersionChangedError();
   if (error) throw error;
-  return { connection: updated as JsonRecord, token: nextToken };
+  return { connection: { ...updated, vimob_job: connection.vimob_job, vimob_disconnect: connection.vimob_disconnect } as JsonRecord, token: nextToken };
 }
 
 export function buildGoogleCalendarApiUrl(path: string) {
@@ -807,9 +805,11 @@ export async function googleFetch(
   path: string,
   init: RequestInit = {},
 ) {
+  await assertGoogleCalendarJobLease(connection);
   const requestUrl = buildGoogleCalendarApiUrl(path);
   let refreshed = await refreshAccessToken(connection);
-  let response = await fetch(requestUrl, {
+  await assertGoogleCalendarJobLease(connection);
+  let response = await googleCalendarFetchWithDeadline(requestUrl, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -819,16 +819,9 @@ export async function googleFetch(
   });
 
   if (response.status === 401) {
-    const token = await readTokenSecret(refreshed.connection.token_secret_ref);
-    token.expires_at = new Date(0).toISOString();
-    await saveTokenSecret({
-      existingSecretRef: refreshed.connection.token_secret_ref,
-      userId: refreshed.connection.user_id,
-      accountEmail: refreshed.connection.account_email,
-      token,
-    });
-    refreshed = await refreshAccessToken(refreshed.connection);
-    response = await fetch(requestUrl, {
+    refreshed = await refreshAccessToken(refreshed.connection, true);
+    await assertGoogleCalendarJobLease(connection);
+    response = await googleCalendarFetchWithDeadline(requestUrl, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -841,11 +834,11 @@ export async function googleFetch(
   return response;
 }
 
-class GoogleCalendarHttpError extends Error {
+class GoogleCalendarHttpError extends GoogleCalendarRetryableError {
   status: number;
 
-  constructor(message: string, status: number) {
-    super(message);
+  constructor(message: string, status: number, retryAfterSeconds: number | null = null) {
+    super(message, status, retryAfterSeconds);
     this.name = "GoogleCalendarHttpError";
     this.status = status;
   }
@@ -864,7 +857,8 @@ async function googleJson(
       data.error?.message ||
         data.error ||
         `Google Calendar error ${response.status}`,
-      response.status,
+      googleCalendarErrorStatus(response.status, data),
+      googleCalendarRetryAfter(response.headers.get("Retry-After")),
     );
   }
   return data as JsonRecord;
@@ -873,12 +867,11 @@ async function googleJson(
 async function getLinkedLead(event: JsonRecord) {
   if (!event.lead_id) return null;
 
-  const { data, error } = await supabase
-    .from("leads")
-    .select("id, name")
-    .eq("organization_id", event.organization_id)
-    .eq("id", event.lead_id)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("google_calendar_get_authorized_event_lead", {
+    p_event_id: event.id,
+    p_organization_id: event.organization_id,
+    p_owner_user_id: event.user_id,
+  });
   if (error) throw error;
   return data as JsonRecord | null;
 }
@@ -890,7 +883,7 @@ async function getOutboundEventContext(event: JsonRecord) {
   // requires separate membership and detail-visibility checks before lead
   // information can leave this account.
   return {
-    event: { ...event, lead, property: null },
+    event: { ...event, lead, lead_id: lead ? event.lead_id : null, property_id: null, property: null },
     attendeeEmails: [],
   };
 }
@@ -916,8 +909,9 @@ function scheduleEventToGoogle(
   const isAllDay = Boolean(event.is_all_day);
   const body: JsonRecord = {
     summary: buildGoogleEventSummary(event),
-    description: buildGoogleEventDescription(event),
-    location: event.location || undefined,
+    // Null explicitly clears a previously exported value on Google PATCH.
+    description: buildGoogleEventDescription(event) ?? null,
+    location: event.location || null,
     status:
       event.status === "cancelled" || event.status === "canceled"
         ? "cancelled"
@@ -928,15 +922,14 @@ function scheduleEventToGoogle(
   };
 
   if (isAllDay) {
+    const range = scheduleAllDayRangeToGoogleRange(
+      event.start_time, event.end_time, timeZone,
+    );
     body.start = {
-      date: scheduleInstantToGoogleDate(event.start_time, timeZone),
+      date: range.startDate,
     };
-    // Google treats all-day event ends as exclusive; Vimob stores the final
-    // included day.
     body.end = {
-      date: nextGoogleCivilDate(
-        scheduleInstantToGoogleDate(event.end_time, timeZone),
-      ),
+      date: range.exclusiveEndDate,
     };
   } else {
     body.start = { dateTime: event.start_time, timeZone };
@@ -1275,7 +1268,28 @@ type GoogleSyncExecutionContext = {
   trustedJobOrganizationId?: string | null;
   fallbackOwnerUserId?: string | null;
   fallbackConnectionId?: string | null;
+  jobId?: string;
+  jobWorker?: string;
 };
+
+async function assertGoogleCalendarJobLease(connection: JsonRecord) {
+  const job = connection.vimob_job;
+  if (!job) return;
+  const { data, error } = await supabase.rpc("google_calendar_job_heartbeat", {
+    p_job_id: job.id, p_worker: job.worker,
+  });
+  if (error) throw error;
+  if (data !== true) throw new GoogleCalendarLeaseLostError();
+}
+
+async function assertScheduleSnapshotCurrent(event: JsonRecord) {
+  const { data, error } = await supabase.from("schedule_events")
+    .select("user_id, updated_at").eq("id", event.id).eq("organization_id", event.organization_id).maybeSingle();
+  if (error) throw error;
+  if (!data || data.user_id !== event.user_id || data.updated_at !== event.updated_at) {
+    throw new GoogleCalendarVersionChangedError();
+  }
+}
 
 async function currentScheduleEventOwner(eventId: string, organizationId: string) {
   const { data, error } = await supabase
@@ -1291,16 +1305,20 @@ async function currentScheduleEventOwner(eventId: string, organizationId: string
 async function removeStaleGoogleWrite(
   connection: JsonRecord,
   googleEventId: string,
+  googleEventEtag: unknown,
 ) {
   const calendarId = encodeURIComponent(normalizeCalendarId(connection.calendar_id));
   const response = await googleFetch(
     connection,
     `/calendars/${calendarId}/events/${encodeURIComponent(googleEventId)}?sendUpdates=none`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: conditionalGoogleWriteHeaders(googleEventEtag) },
   );
   if (!response.ok && ![404, 410].includes(response.status)) {
-    throw new Error(`Falha ao remover evento Google sem compromisso Vimob (${response.status}).`);
+    const body = await response.json().catch(() => ({}));
+    throw new GoogleCalendarHttpError(`Falha ao remover evento Google sem compromisso Vimob (${response.status}).`,
+      googleCalendarErrorStatus(response.status, body), googleCalendarRetryAfter(response.headers.get("Retry-After")));
   }
+  await assertGoogleCalendarJobLease(connection);
   const { error } = await supabase
     .from("google_calendar_event_links")
     .update({
@@ -1316,82 +1334,13 @@ async function removeStaleGoogleWrite(
 }
 
 async function markConnectionOutboundSynced(connection: JsonRecord) {
-  const latestUnresolvedJob = async () => {
-    const { data, error } = await supabase
-      .from("google_calendar_sync_jobs")
-      .select("id, last_error")
-      .eq("organization_id", connection.organization_id)
-      .in("action", ["push_upsert", "push_delete"])
-      .in("status", ["failed", "dead"])
-      .contains("payload", { owner_user_id: connection.user_id })
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    return data as JsonRecord | null;
-  };
-  const persist = async (update: JsonRecord) => {
-    const { error } = await supabase
-      .from("google_calendar_tokens")
-      .update(update)
-      .eq("id", connection.id)
-      .eq("organization_id", connection.organization_id)
-      .eq("user_id", connection.user_id)
-      .is("disconnected_at", null);
-    if (error) console.error("failed to persist Google Calendar outbound sync time", error);
-  };
-  let unresolved: JsonRecord | null | undefined;
-  try {
-    unresolved = await latestUnresolvedJob();
-  } catch (error) {
-    console.error("failed to inspect unresolved Google Calendar outbound jobs", error);
-  }
-  const update: JsonRecord = { last_synced_at: new Date().toISOString() };
-  if (unresolved) {
-    update.sync_status = "error";
-    update.last_error = String(unresolved.last_error || "Envio Google pendente de revisao.").slice(0, 2_000);
-  } else if (unresolved === null) {
-    update.sync_status = "connected";
-    update.last_error = null;
-  }
-  await persist(update);
-  if (unresolved === null) {
-    // A second worker may fail between our read and status update. The failing
-    // worker records its job before marking the connection, so recheck once.
-    try {
-      const newlyUnresolved = await latestUnresolvedJob();
-      if (newlyUnresolved) {
-        await persist({
-          sync_status: "error",
-          last_error: String(newlyUnresolved.last_error || "Envio Google pendente de revisao.").slice(0, 2_000),
-        });
-      }
-    } catch (error) {
-      console.error("failed to recheck unresolved Google Calendar outbound jobs", error);
-    }
-  }
-}
-
-async function markConnectionOutboundError(job: JsonRecord, message: string) {
-  const ownerUserId = String(job.payload?.owner_user_id || "");
-  if (!ownerUserId || !job.organization_id) return;
-  const requestedConnectionId = String(
-    job.payload?.connection_id || job.connection_id || "",
-  );
-  const connectionId = requestedConnectionId || (
-    await getConnectionForUser(ownerUserId, job.organization_id, {
-      requireSyncEnabled: false,
-    })
-  )?.id;
-  if (!connectionId) return;
-  const { error } = await supabase
-    .from("google_calendar_tokens")
-    .update({ sync_status: "error", last_error: message.slice(0, 2_000) })
-    .eq("id", connectionId)
-    .eq("organization_id", job.organization_id)
-    .eq("user_id", ownerUserId)
-    .is("disconnected_at", null);
-  if (error) console.error("failed to persist Google Calendar outbound connection error", error);
+  const { error } = await supabase.rpc("google_calendar_refresh_outbound_connection_status", {
+    p_connection_id: connection.id,
+    p_organization_id: connection.organization_id,
+    p_owner_user_id: connection.user_id,
+    p_synced_at: new Date().toISOString(),
+  });
+  if (error) throw error;
 }
 
 function assertVimobGoogleEventIdentity(
@@ -1467,6 +1416,8 @@ export async function pushScheduleEventToGoogle(
     if (statusError) throw statusError;
     return { skipped: true, reason: "NO_CONNECTION" };
   }
+  if (connection.disconnecting_at) throw new GoogleCalendarRetryableError("Conta Google em desconexao.", 409);
+  if (execution.jobId) connection.vimob_job = { id: execution.jobId, worker: execution.jobWorker };
 
   const calendarId = encodeURIComponent(
     normalizeCalendarId(connection.calendar_id),
@@ -1509,6 +1460,7 @@ export async function pushScheduleEventToGoogle(
     }
   };
   const createOrRecoverGoogleEvent = async () => {
+    await assertScheduleSnapshotCurrent(event);
     try {
       return await googleJson(
         connection,
@@ -1523,10 +1475,11 @@ export async function pushScheduleEventToGoogle(
         throw error;
       const existing = await fetchVerifiedGoogleEvent(deterministicEventId);
       if (!existing) throw new Error("Evento Google em conflito nao encontrado para recuperacao.");
+      await assertScheduleSnapshotCurrent(event);
       return googleJson(
         connection,
         `/calendars/${calendarId}/events/${encodeURIComponent(deterministicEventId)}?sendUpdates=none`,
-        { method: "PATCH", body: JSON.stringify(body) },
+        { method: "PATCH", headers: conditionalGoogleWriteHeaders(existing.etag), body: JSON.stringify(body) },
       );
     }
   };
@@ -1535,11 +1488,12 @@ export async function pushScheduleEventToGoogle(
   if (link?.google_event_id && !link.deleted_at) {
     const current = await fetchVerifiedGoogleEvent(String(link.google_event_id));
     if (current) {
+      await assertScheduleSnapshotCurrent(event);
       try {
         googleEvent = await googleJson(
           connection,
           `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}?sendUpdates=none`,
-          { method: "PATCH", body: JSON.stringify(body) },
+          { method: "PATCH", headers: conditionalGoogleWriteHeaders(current.etag), body: JSON.stringify(body) },
         );
       } catch (error) {
         if (!(error instanceof GoogleCalendarHttpError) || ![404, 410].includes(error.status)) {
@@ -1554,11 +1508,14 @@ export async function pushScheduleEventToGoogle(
     googleEvent = await createOrRecoverGoogleEvent();
   }
 
+  await assertGoogleCalendarJobLease(connection);
+
   if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
-    await removeStaleGoogleWrite(connection, googleEvent.id);
+    await removeStaleGoogleWrite(connection, googleEvent.id, googleEvent.etag);
     return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
   }
   try {
+    await assertGoogleCalendarJobLease(connection);
     await upsertEventLink({
       connection,
       scheduleEventId: event.id,
@@ -1567,12 +1524,13 @@ export async function pushScheduleEventToGoogle(
     });
   } catch (linkError) {
     if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
-      await removeStaleGoogleWrite(connection, googleEvent.id);
+      await removeStaleGoogleWrite(connection, googleEvent.id, googleEvent.etag);
       return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
     }
     throw linkError;
   }
 
+  await assertGoogleCalendarJobLease(connection);
   const { data: updatedEvent, error: eventUpdateError } = await supabase
     .from("schedule_events")
     .update({
@@ -1591,10 +1549,12 @@ export async function pushScheduleEventToGoogle(
   if (eventUpdateError) throw eventUpdateError;
   if (!updatedEvent) {
     if (await currentScheduleEventOwner(event.id, event.organization_id) !== event.user_id) {
-      await removeStaleGoogleWrite(connection, googleEvent.id);
+      await removeStaleGoogleWrite(connection, googleEvent.id, googleEvent.etag);
       return { skipped: true, reason: "CANONICAL_EVENT_REMOVED_OR_TRANSFERRED" };
     }
-    return { skipped: true, reason: "CONCURRENT_LOCAL_CHANGE" };
+    // The provider may already have accepted this snapshot. Preserve the job
+    // and retry from the latest canonical event instead of reporting success.
+    return { deferred: true, reason: "CONCURRENT_LOCAL_CHANGE" };
   }
 
   await markConnectionOutboundSynced(connection);
@@ -1676,6 +1636,7 @@ export async function deleteScheduleEventFromGoogle(
     // Never use another user's Google token for this owner's delete job.
     if (connection?.user_id !== intendedOwnerUserId) continue;
     if (!connection?.token_secret_ref) continue;
+    if (execution.jobId) connection.vimob_job = { id: execution.jobId, worker: execution.jobWorker };
     const calendarId = encodeURIComponent(
       normalizeCalendarId(link.google_calendar_id),
     );
@@ -1685,17 +1646,22 @@ export async function deleteScheduleEventFromGoogle(
     if (lookup.status !== 404 && lookup.status !== 410) {
       const remoteEvent = await lookup.json().catch(() => ({}));
       if (!lookup.ok) {
-        throw new Error(remoteEvent.error?.message || `Falha ao verificar evento Google (${lookup.status}).`);
+        throw new GoogleCalendarHttpError(remoteEvent.error?.message || "Falha ao verificar evento Google.", googleCalendarErrorStatus(lookup.status, remoteEvent),
+          googleCalendarRetryAfter(lookup.headers.get("Retry-After")));
       }
       assertVimobGoogleEventIdentity(remoteEvent, eventId, organizationId, intendedOwnerUserId);
-      const response = await googleFetch(connection, `${eventPath}?sendUpdates=none`, { method: "DELETE" });
+      const response = await googleFetch(connection, `${eventPath}?sendUpdates=none`, {
+        method: "DELETE", headers: conditionalGoogleWriteHeaders(remoteEvent.etag),
+      });
       if (!response.ok && ![404, 410].includes(response.status)) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error?.message || `Falha ao remover evento Google (${response.status}).`);
+        throw new GoogleCalendarHttpError(data.error?.message || "Falha ao remover evento Google.", googleCalendarErrorStatus(response.status, data),
+          googleCalendarRetryAfter(response.headers.get("Retry-After")));
       }
       providerDeleted = response.ok;
     }
 
+    await assertGoogleCalendarJobLease(connection);
     const { error: linkUpdateError } = await supabase
       .from("google_calendar_event_links")
       .update({
@@ -1732,6 +1698,7 @@ export async function deleteScheduleEventFromGoogle(
     ) {
       throw new Error("Conexao Google fora do dono ou organizacao do evento removido.");
     }
+    if (execution.jobId) connection.vimob_job = { id: execution.jobId, worker: execution.jobWorker };
     const calendarId = encodeURIComponent(normalizeCalendarId(connection.calendar_id));
     const deterministicId = buildVimobGoogleEventId(eventId);
     const eventPath = `/calendars/${calendarId}/events/${encodeURIComponent(deterministicId)}`;
@@ -1739,17 +1706,19 @@ export async function deleteScheduleEventFromGoogle(
     if (lookup.status !== 404 && lookup.status !== 410) {
       const remoteEvent = await lookup.json().catch(() => ({}));
       if (!lookup.ok) {
-        throw new Error(
+        throw new GoogleCalendarHttpError(
           remoteEvent.error?.message || `Falha ao verificar evento Google (${lookup.status}).`,
+          googleCalendarErrorStatus(lookup.status, remoteEvent), googleCalendarRetryAfter(lookup.headers.get("Retry-After")),
         );
       }
       assertVimobGoogleEventIdentity(remoteEvent, eventId, organizationId, connection.user_id);
       const response = await googleFetch(connection, `${eventPath}?sendUpdates=none`, {
-        method: "DELETE",
+        method: "DELETE", headers: conditionalGoogleWriteHeaders(remoteEvent.etag),
       });
       if (!response.ok && ![404, 410].includes(response.status)) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error?.message || `Falha ao remover evento Google (${response.status}).`);
+        throw new GoogleCalendarHttpError(data.error?.message || "Falha ao remover evento Google.", googleCalendarErrorStatus(response.status, data),
+          googleCalendarRetryAfter(response.headers.get("Retry-After")));
       }
       if (response.ok) await markConnectionOutboundSynced(connection);
       deleted += 1;
@@ -1837,8 +1806,8 @@ async function upsertGoogleEventIntoSchedule(
     ? await findScheduleEventForConnection(
         connection,
         targetEventId,
-        ["shared", "private"].includes(String(link?.resolved_by || "")) &&
-          trustedIdentity?.eventId === targetEventId
+        trustedIdentity && ["shared", "private"].includes(String(link?.resolved_by || "")) &&
+          trustedIdentity.eventId === targetEventId
           ? trustedIdentity.ownerUserId
           : null,
       )
@@ -2286,7 +2255,7 @@ export async function stopGoogleWatches(connection: JsonRecord) {
 
   const warnings: string[] = [];
   for (const channel of channels || []) {
-    if (channel.resource_id) {
+    if (channel.resource_id && new Date(channel.expires_at).getTime() > Date.now()) {
       try {
         const response = await googleFetch(connection, "/channels/stop", {
           method: "POST",
@@ -2299,9 +2268,11 @@ export async function stopGoogleWatches(connection: JsonRecord) {
           warnings.push(
             `Google recusou a parada do canal ${channel.channel_id} (${response.status}).`,
           );
+          continue;
         }
       } catch (error) {
         warnings.push(errorMessage(error));
+        continue;
       }
     }
 
@@ -2426,6 +2397,7 @@ export async function processSyncJob(job: JsonRecord) {
     }
     return pushScheduleEventToGoogle(job.schedule_event_id, job.created_by || null, {
       trustedJobOrganizationId: job.organization_id,
+      jobId: job.id, jobWorker: job.locked_by,
     });
   }
   if (
@@ -2459,6 +2431,7 @@ export async function processSyncJob(job: JsonRecord) {
         trustedJobOrganizationId: job.organization_id,
         fallbackOwnerUserId: job.payload?.owner_user_id || null,
         fallbackConnectionId: job.payload?.connection_id || null,
+        jobId: job.id, jobWorker: job.locked_by,
       },
     );
   }
@@ -2470,97 +2443,54 @@ export async function processSyncJob(job: JsonRecord) {
 
 export async function executeSyncJob(job: JsonRecord) {
   try {
+    await assertGoogleCalendarJobLease({ vimob_job: { id: job.id, worker: job.locked_by } });
     const result = await processSyncJob(job);
     if ("deferred" in result && result.deferred) {
-      const { error } = await supabase
-        .from("google_calendar_sync_jobs")
-        .update({
-          status: "queued",
-          next_run_at: addSeconds(result.reason === "DELETE_OWNER_NOT_VERIFIED" ? 3600 : 10),
-          locked_at: null,
-          locked_by: null,
-        })
-        .eq("id", job.id);
-      if (error) throw error;
+      const finished = await finishGoogleCalendarJob(job, "queued", null,
+        result.reason === "DELETE_OWNER_NOT_VERIFIED" ? 3600 : 10);
+      if (!finished) throw new GoogleCalendarLeaseLostError();
       return { id: job.id, ok: true, deferred: true, result };
     }
-    const { error } = await supabase
-      .from("google_calendar_sync_jobs")
-      .update({
-        status: "succeeded",
-        locked_at: null,
-        locked_by: null,
-        last_error: null,
-      })
-      .eq("id", job.id);
-    if (error) throw error;
+    if (!(await finishGoogleCalendarJob(job, "succeeded"))) throw new GoogleCalendarLeaseLostError();
     return { id: job.id, ok: true, result };
   } catch (error) {
+    if (error instanceof GoogleCalendarLeaseLostError) {
+      return { id: job.id, ok: false, skipped: true, reason: "LEASE_LOST" };
+    }
+    if (error instanceof GoogleCalendarVersionChangedError ||
+      (error instanceof GoogleCalendarRetryableError && error.status === 412)) {
+      const finished = await finishGoogleCalendarJob(job, "queued", null, 10);
+      return { id: job.id, ok: finished, deferred: true, reason: "CONCURRENT_VERSION_CHANGE" };
+    }
     const attempts = Number(job.attempts || 0) + 1;
     const conflict = error instanceof GoogleCalendarConflictError;
     const message = errorMessage(error);
-    if (job.action === "push_upsert" && job.schedule_event_id) {
-      const { error: eventUpdateError } = await supabase
-        .from("schedule_events")
-        .update({
-          google_sync_status: conflict ? "conflict" : "error",
-          google_sync_error: message,
-        })
-        .eq("id", job.schedule_event_id)
-        .eq("organization_id", job.organization_id);
-      if (eventUpdateError) {
-        console.error(
-          "failed to persist Google Calendar event sync error",
-          eventUpdateError,
-        );
-      }
+    const retry = googleCalendarRetryPolicy(error, attempts);
+    const status = conflict || !retry.retryable || attempts >= Number(job.max_attempts || 5) ? "dead" : "failed";
+    // Outcome and visible errors commit together behind the SQL lease fence.
+    // No delayed Edge write can repaint a newer successful retry afterward.
+    if (!(await finishGoogleCalendarJob(job, status, message, retry.delaySeconds, true, conflict))) {
+      return { id: job.id, ok: false, skipped: true, reason: "LEASE_LOST" };
     }
-    if (job.action === "push_delete" && Array.isArray(job.payload?.link_ids)) {
-      const durableLinkIds = job.payload.link_ids.filter(
-        (value: unknown): value is string => typeof value === "string",
-      );
-      if (durableLinkIds.length > 0) {
-        const { error: linkUpdateError } = await supabase
-          .from("google_calendar_event_links")
-          .update({ last_error: message })
-          .in("id", durableLinkIds)
-          .eq("organization_id", job.organization_id)
-          .is("deleted_at", null);
-        if (linkUpdateError) {
-          console.error(
-            "failed to persist Google Calendar delete error",
-            linkUpdateError,
-          );
-        }
-      }
-    }
-    const { error: updateError } = await supabase
-      .from("google_calendar_sync_jobs")
-      .update({
-        status:
-          conflict || attempts >= Number(job.max_attempts || 5)
-            ? "dead"
-            : "failed",
-        attempts,
-        locked_at: null,
-        locked_by: null,
-        last_error: message,
-        next_run_at: addSeconds(Math.min(3600, 60 * attempts)),
-      })
-      .eq("id", job.id);
-    if (updateError) throw updateError;
-    await markConnectionOutboundError(job, message).catch((statusError) => {
-      console.error("failed to report Google Calendar outbound connection error", statusError);
-    });
     return { id: job.id, ok: false, error: message };
   }
 }
 
+async function finishGoogleCalendarJob(job: JsonRecord, status: string, message: string | null = null,
+  delaySeconds = 0, consumeAttempt = false, isConflict = false) {
+  const { data, error } = await supabase.rpc("google_calendar_finish_outbound_job", {
+    p_job_id: job.id, p_worker: job.locked_by, p_status: status, p_error: message,
+    p_delay_seconds: delaySeconds, p_consume_attempt: consumeAttempt, p_is_conflict: isConflict,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
 export async function runDueJobs(limit = 10) {
   const { data: jobs, error } = await supabase.rpc(
-    "google_calendar_claim_outbound_sync_jobs",
+    "google_calendar_claim_outbound_sync_jobs_v2",
     {
-      p_limit: Math.max(1, Math.min(Number(limit) || 10, 100)),
+      p_limit: Math.max(1, Math.min(Number(limit) || 10, 20)),
       p_worker: `google-calendar-sync-${crypto.randomUUID()}`,
     },
   );
@@ -2591,40 +2521,43 @@ export class GoogleCalendarDisconnectPendingError extends Error {
 }
 
 export async function disconnectConnection(connection: JsonRecord) {
-  const { data: outstanding, error: outstandingError } = await supabase
-    .from("google_calendar_sync_jobs")
-    .select("id")
-    .eq("organization_id", connection.organization_id)
-    .in("action", ["push_upsert", "push_delete"])
-    .in("status", ["queued", "running", "failed", "dead"])
-    .contains("payload", { owner_user_id: connection.user_id })
-    .limit(1)
-    .maybeSingle();
-  if (outstandingError) throw outstandingError;
-  if (outstanding) {
+  const { data: prepared, error: prepareError } = await supabase.rpc("google_calendar_begin_disconnect", {
+    p_connection_id: connection.id,
+  });
+  if (prepareError) throw prepareError;
+  if (prepared !== true) {
     throw new GoogleCalendarDisconnectPendingError();
   }
-
-  await stopGoogleWatches(connection);
-
-  const token = await readTokenSecret(connection.token_secret_ref).catch(
-    () => null,
-  );
-
-  const revocationToken = token?.refresh_token || token?.access_token;
-  if (revocationToken) {
-    await fetch("https://oauth2.googleapis.com/revoke", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  try {
+    // Preparation advances the lifecycle revision. Only this authenticated
+    // owner-disconnect flow may refresh an expiring token while the marker is
+    // set, to stop legacy channels before provider revocation.
+    const disconnectingConnection = await getConnectionById(connection.id);
+    if (!disconnectingConnection.disconnecting_at ||
+        disconnectingConnection.organization_id !== connection.organization_id ||
+        disconnectingConnection.user_id !== connection.user_id) {
+      throw new Error("Conexao Google mudou durante a desconexao. Tente novamente.");
+    }
+    disconnectingConnection.vimob_disconnect = true;
+    const watches = await stopGoogleWatches(disconnectingConnection);
+    if (watches?.warnings?.length) throw new Error("Nao foi possivel parar os canais Google. Tente novamente.");
+    const token = await readTokenSecret(disconnectingConnection.token_secret_ref);
+    const revocationToken = token?.refresh_token || token?.access_token;
+    if (!revocationToken) throw new Error("Autorizacao Google ausente; revisao necessaria antes de desconectar.");
+    const response = await googleCalendarFetchWithDeadline("https://oauth2.googleapis.com/revoke", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: revocationToken }),
-    }).catch(() => null);
+    });
+    // invalid_token means the provider has already revoked this capability.
+    const body = response.ok ? null : await response.json().catch(() => ({}));
+    if (!response.ok && !(response.status === 400 && body?.error === "invalid_token")) {
+      throw new Error("Google nao confirmou a revogacao. Tente desconectar novamente.");
+    }
+    const { error } = await supabase.rpc("google_calendar_disconnect_connection", { p_connection_id: connection.id });
+    if (error) throw error;
+  } catch (error) {
+    const { error: abortError } = await supabase.rpc("google_calendar_abort_disconnect", { p_connection_id: connection.id });
+    if (abortError) console.error("Google Calendar disconnect requires operational review", abortError);
+    throw error;
   }
-
-  const { error } = await supabase.rpc(
-    "google_calendar_disconnect_connection",
-    {
-      p_connection_id: connection.id,
-    },
-  );
-  if (error) throw error;
 }

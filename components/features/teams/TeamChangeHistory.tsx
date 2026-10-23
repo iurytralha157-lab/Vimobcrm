@@ -14,12 +14,15 @@ import {
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { useTeamHistory } from "@/hooks/use-teams";
 import type { TeamHistoryEvent } from "@/lib/api/teams";
+import { getTeamHistoryDetails } from "@/lib/teams/team-history-details";
 
 type DisplayHistoryEvent = {
   event: TeamHistoryEvent;
   groupedCount: number;
+  events: TeamHistoryEvent[];
 };
 
 function availabilitySubjectKey(event: TeamHistoryEvent) {
@@ -42,10 +45,11 @@ function groupHistoryEvents(events: TeamHistoryEvent[]): DisplayHistoryEvent[] {
       previous.event.created_at === event.created_at
     ) {
       previous.groupedCount += 1;
+      previous.events.push(event);
       continue;
     }
 
-    grouped.push({ event, groupedCount: 1 });
+    grouped.push({ event, groupedCount: 1, events: [event] });
   }
 
   return grouped;
@@ -115,7 +119,7 @@ function eventTime(value: string) {
 export function TeamChangeHistory({ teamId }: { teamId: string }) {
   const historyQuery = useTeamHistory(teamId);
   const displayHistory = useMemo(
-    () => groupHistoryEvents(historyQuery.data || []),
+    () => groupHistoryEvents([...new Map((historyQuery.data?.pages.flat() || []).map((event) => [event.id, event])).values()]),
     [historyQuery.data],
   );
 
@@ -170,7 +174,7 @@ export function TeamChangeHistory({ teamId }: { teamId: string }) {
               className="space-y-1"
               aria-label="Alterações recentes da equipe"
             >
-              {displayHistory.map(({ event, groupedCount }) => {
+              {displayHistory.map(({ event, groupedCount, events }) => {
                 const Icon = eventIcon(event);
                 const time = eventTime(event.created_at);
                 return (
@@ -193,11 +197,26 @@ export function TeamChangeHistory({ teamId }: { teamId: string }) {
                         · {event.user?.name || "Sistema"}
                         {groupedCount > 1 ? " · escala consolidada" : ""}
                       </p>
+                      <details className="mt-1 text-[10px] text-[var(--app-text-secondary)]">
+                        <summary className="cursor-pointer">Detalhes da alteração</summary>
+                        <div className="mt-1 space-y-1 rounded-[5px] bg-[var(--app-surface-solid)] p-2">
+                          {events.flatMap(getTeamHistoryDetails).map((detail, index) => (
+                            <p key={`${detail.label}:${index}`} className="break-words"><span className="font-normal">{detail.label}</span>: {detail.before ? `${detail.before} → ` : ""}{detail.after}</p>
+                          ))}
+                          {!events.some((item) => getTeamHistoryDetails(item).length > 0) && <p>Nenhum detalhe adicional registrado.</p>}
+                        </div>
+                      </details>
                     </div>
                   </li>
                 );
               })}
             </ol>
+            {historyQuery.hasNextPage && (
+              <Button type="button" variant="ghost" onClick={() => void historyQuery.fetchNextPage()} disabled={historyQuery.isFetchingNextPage} className="mt-2 h-8 w-full text-[11px] font-light">
+                {historyQuery.isFetchingNextPage ? "Carregando..." : "Carregar alterações anteriores"}
+              </Button>
+            )}
+            {historyQuery.isFetchNextPageError && <p role="status" className="mt-1 px-2 text-[10px] text-destructive">Não foi possível carregar mais alterações. Tente novamente.</p>}
           </>
         )}
       </div>

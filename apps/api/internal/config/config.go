@@ -23,6 +23,7 @@ import (
 type Config struct {
 	Environment              string
 	BackgroundWorkersEnabled bool
+	StageInactivityEnabled   bool
 	LogLevel                 slog.Level
 	HTTP                     HTTPConfig
 	Auth                     authpkg.Config
@@ -75,6 +76,7 @@ type EvolutionGoConfig struct {
 }
 
 type AutomationConfig struct {
+	CommandToken             string
 	RuntimeWorkerEnabled     bool
 	RuntimeWorkerInterval    time.Duration
 	InactivityWorkerInterval time.Duration
@@ -168,27 +170,29 @@ type AIConfig struct {
 }
 
 type WhatsAppConfig struct {
-	AIWorkerEnabled               bool
-	AIWorkerInterval              time.Duration
-	AIFollowUpWorkerEnabled       bool
-	AIFollowUpWorkerInterval      time.Duration
-	OutboxWorkerEnabled           bool
-	OutboxWorkerInterval          time.Duration
-	OutboxWorkerBatch             int
-	OutboxWorkerConcurrency       int
-	WebhookWorkerEnabled          bool
-	WebhookWorkerInterval         time.Duration
-	WebhookWorkerBatch            int
-	WebhookWorkerConcurrency      int
-	MediaWorkerEnabled            bool
-	MediaWorkerInterval           time.Duration
-	MediaWorkerLease              time.Duration
-	MediaWorkerConcurrency        int
-	SessionSupervisorEnabled      bool
-	SessionSupervisorInitialDelay time.Duration
-	SessionSupervisorInterval     time.Duration
-	SessionSupervisorBatch        int
-	SessionSupervisorRecoveryIDs  []string
+	PostFormFollowUpGuardEnabled   bool
+	AIWorkerEnabled                bool
+	AIWorkerInterval               time.Duration
+	AIFollowUpWorkerEnabled        bool
+	AIFollowUpWorkerInterval       time.Duration
+	OutboxWorkerEnabled            bool
+	OutboxWorkerInterval           time.Duration
+	OutboxWorkerBatch              int
+	OutboxWorkerConcurrency        int
+	WebhookWorkerEnabled           bool
+	WebhookWorkerInterval          time.Duration
+	WebhookWorkerBatch             int
+	WebhookWorkerConcurrency       int
+	MediaWorkerEnabled             bool
+	MediaWorkerInterval            time.Duration
+	MediaWorkerLease               time.Duration
+	MediaWorkerConcurrency         int
+	UnlinkedRetentionWorkerEnabled bool
+	SessionSupervisorEnabled       bool
+	SessionSupervisorInitialDelay  time.Duration
+	SessionSupervisorInterval      time.Duration
+	SessionSupervisorBatch         int
+	SessionSupervisorRecoveryIDs   []string
 }
 
 func (cfg HTTPConfig) Addr() string {
@@ -203,6 +207,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Environment:              env,
 		BackgroundWorkersEnabled: loadBackgroundWorkersEnabled(),
+		StageInactivityEnabled:   parseBool("STAGE_INACTIVITY_WORKER_ENABLED", false),
 		LogLevel:                 parseLogLevel(getEnv("API_LOG_LEVEL", "info")),
 		HTTP: HTTPConfig{
 			Host:              getEnv("API_HOST", "0.0.0.0"),
@@ -233,6 +238,7 @@ func Load() (Config, error) {
 			StartupRetryInterval: parseDuration("DATABASE_STARTUP_RETRY_INTERVAL", 5*time.Second),
 		},
 		Automations: AutomationConfig{
+			CommandToken:             strings.TrimSpace(os.Getenv("AUTOMATION_COMMAND_TOKEN")),
 			RuntimeWorkerEnabled:     parseBool("AUTOMATION_RUNTIME_WORKER_ENABLED", true),
 			RuntimeWorkerInterval:    parseDuration("AUTOMATION_RUNTIME_WORKER_INTERVAL", 30*time.Second),
 			InactivityWorkerInterval: parseDuration("AUTOMATION_INACTIVITY_WORKER_INTERVAL", 5*time.Minute),
@@ -300,27 +306,29 @@ func Load() (Config, error) {
 			AutoReplyToken: getEnv("AI_AUTOREPLY_TOKEN", os.Getenv("INTERNAL_WEBHOOK_TOKEN")),
 		},
 		WhatsApp: WhatsAppConfig{
-			AIWorkerEnabled:               parseBool("WHATSAPP_AI_WORKER_ENABLED", true),
-			AIWorkerInterval:              parseDuration("WHATSAPP_AI_WORKER_INTERVAL", time.Minute),
-			AIFollowUpWorkerEnabled:       parseBool("WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED", true),
-			AIFollowUpWorkerInterval:      parseDuration("WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL", 10*time.Minute),
-			OutboxWorkerEnabled:           parseBool("WHATSAPP_OUTBOX_WORKER_ENABLED", true),
-			OutboxWorkerInterval:          parseDuration("WHATSAPP_OUTBOX_WORKER_INTERVAL", time.Second),
-			OutboxWorkerBatch:             int(parseInt("WHATSAPP_OUTBOX_WORKER_BATCH", 10)),
-			OutboxWorkerConcurrency:       int(parseInt("WHATSAPP_OUTBOX_WORKER_CONCURRENCY", 4)),
-			WebhookWorkerEnabled:          parseBool("WHATSAPP_WEBHOOK_WORKER_ENABLED", true),
-			WebhookWorkerInterval:         parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
-			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 10)),
-			WebhookWorkerConcurrency:      int(parseInt("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY", 4)),
-			MediaWorkerEnabled:            parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
-			MediaWorkerInterval:           parseDuration("WHATSAPP_MEDIA_WORKER_INTERVAL", 2*time.Second),
-			MediaWorkerLease:              parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
-			MediaWorkerConcurrency:        int(parseInt("WHATSAPP_MEDIA_WORKER_CONCURRENCY", 4)),
-			SessionSupervisorEnabled:      parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
-			SessionSupervisorInitialDelay: parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
-			SessionSupervisorInterval:     parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
-			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 50)),
-			SessionSupervisorRecoveryIDs:  parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
+			PostFormFollowUpGuardEnabled:   loadWhatsAppPostFormFollowUpGuardEnabled(),
+			AIWorkerEnabled:                parseBool("WHATSAPP_AI_WORKER_ENABLED", true),
+			AIWorkerInterval:               parseDuration("WHATSAPP_AI_WORKER_INTERVAL", time.Minute),
+			AIFollowUpWorkerEnabled:        parseBool("WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED", true),
+			AIFollowUpWorkerInterval:       parseDuration("WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL", 10*time.Minute),
+			OutboxWorkerEnabled:            parseBool("WHATSAPP_OUTBOX_WORKER_ENABLED", true),
+			OutboxWorkerInterval:           parseDuration("WHATSAPP_OUTBOX_WORKER_INTERVAL", time.Second),
+			OutboxWorkerBatch:              int(parseInt("WHATSAPP_OUTBOX_WORKER_BATCH", 10)),
+			OutboxWorkerConcurrency:        int(parseInt("WHATSAPP_OUTBOX_WORKER_CONCURRENCY", 4)),
+			WebhookWorkerEnabled:           parseBool("WHATSAPP_WEBHOOK_WORKER_ENABLED", true),
+			WebhookWorkerInterval:          parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
+			WebhookWorkerBatch:             int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 10)),
+			WebhookWorkerConcurrency:       int(parseInt("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY", 4)),
+			MediaWorkerEnabled:             parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
+			MediaWorkerInterval:            parseDuration("WHATSAPP_MEDIA_WORKER_INTERVAL", 2*time.Second),
+			MediaWorkerLease:               parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
+			MediaWorkerConcurrency:         int(parseInt("WHATSAPP_MEDIA_WORKER_CONCURRENCY", 4)),
+			UnlinkedRetentionWorkerEnabled: parseBool("WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED", false),
+			SessionSupervisorEnabled:       parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
+			SessionSupervisorInitialDelay:  parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
+			SessionSupervisorInterval:      parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
+			SessionSupervisorBatch:         int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 50)),
+			SessionSupervisorRecoveryIDs:   parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
@@ -566,9 +574,9 @@ func (cfg Config) Validate() error {
 		if cfg.WhatsApp.MediaWorkerConcurrency < 1 || cfg.WhatsApp.MediaWorkerConcurrency > 16 {
 			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_CONCURRENCY must be between 1 and 16"))
 		}
-		if cfg.EvolutionGo.WebhookProcessorMode == "edge" || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) == 0 {
-			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_ENABLED requires a native webhook processor and a non-empty WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS scope"))
-		}
+		// The worker discovers active epoch-one cutovers from the database. An
+		// empty static scope is safe: it polls without claiming legacy sessions;
+		// global Edge mode also ignores any static wildcard for media claims.
 	}
 	if err := validateSessionIDAllowlist("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", cfg.WhatsApp.SessionSupervisorRecoveryIDs); err != nil {
 		validationErrors = append(validationErrors, err)

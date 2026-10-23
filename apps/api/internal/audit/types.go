@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -66,27 +65,6 @@ type ListFilter struct {
 	Limit          int
 }
 
-type CreateRequest struct {
-	Action         string         `json:"action"`
-	EntityType     string         `json:"entity_type"`
-	EntityID       string         `json:"entity_id,omitempty"`
-	OldData        map[string]any `json:"old_data,omitempty"`
-	NewData        map[string]any `json:"new_data,omitempty"`
-	OrganizationID string         `json:"organization_id,omitempty"`
-	UserAgent      string         `json:"user_agent,omitempty"`
-}
-
-type createInput struct {
-	Action         string
-	EntityType     string
-	EntityID       string
-	OldData        map[string]any
-	NewData        map[string]any
-	OrganizationID string
-	UserAgent      string
-	IPAddress      string
-}
-
 func ParseListFilter(values url.Values) (ListFilter, error) {
 	page, err := parseBoundedInt(values.Get("page"), 1, 1, 10_000)
 	if err != nil {
@@ -123,29 +101,6 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	return filter, nil
 }
 
-func (request CreateRequest) Validate(ipAddress string) (createInput, error) {
-	input := createInput{
-		Action:         trimMax(request.Action, 120),
-		EntityType:     trimMax(request.EntityType, 120),
-		EntityID:       trimMax(request.EntityID, 160),
-		OldData:        boundedMap(request.OldData, 8_000),
-		NewData:        boundedMap(request.NewData, 8_000),
-		OrganizationID: strings.TrimSpace(request.OrganizationID),
-		UserAgent:      trimMax(request.UserAgent, 500),
-		IPAddress:      trimMax(ipAddress, 80),
-	}
-	if input.Action == "" {
-		return createInput{}, fmt.Errorf("%w: action is required", ErrInvalidInput)
-	}
-	if input.EntityType == "" {
-		return createInput{}, fmt.Errorf("%w: entity_type is required", ErrInvalidInput)
-	}
-	if input.OrganizationID != "" && !isUUID(input.OrganizationID) {
-		return createInput{}, fmt.Errorf("%w: organization_id is invalid", ErrInvalidInput)
-	}
-	return input, nil
-}
-
 func parseBoundedInt(raw string, fallback int, minValue int, maxValue int) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -172,21 +127,4 @@ func trimMax(value string, max int) string {
 func isUUID(value string) bool {
 	var uuid pgtype.UUID
 	return uuid.Scan(strings.TrimSpace(value)) == nil && uuid.Valid
-}
-
-func boundedMap(value map[string]any, maxBytes int) map[string]any {
-	if value == nil {
-		return nil
-	}
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return map[string]any{"invalid": true}
-	}
-	if len(payload) <= maxBytes {
-		return value
-	}
-	return map[string]any{
-		"truncated":     true,
-		"originalBytes": len(payload),
-	}
 }

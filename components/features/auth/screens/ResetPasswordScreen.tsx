@@ -12,6 +12,7 @@ import { VimobLoader } from "@/components/shared/loading";
 import { supabase } from "@/lib/supabase/client";
 import { getFriendlyErrorMessage } from "@/lib/error-handler";
 import { settingsAPI } from "@/lib/api/settings";
+import { VimobAPIError } from "@/lib/api/vimob-error";
 import { setVimobAPIAccessToken } from "@/lib/api/vimob-client";
 import { PASSWORD_POLICY, strongPasswordSchema } from "@/lib/validation/password";
 import { runBestEffortAuthOperation } from "@/lib/auth/frontend-auth-reliability";
@@ -25,7 +26,7 @@ import {
   readPasswordRecoveryUrlEvidence,
 } from "@/lib/auth/password-recovery";
 
-type RecoveryState = "checking" | "ready" | "invalid" | "success";
+type RecoveryState = "checking" | "ready" | "invalid" | "incomplete" | "success";
 
 const RECOVERY_SIGN_OUT_WAIT_MS = 2_000;
 const RECOVERY_LOCAL_SIGN_OUT_WAIT_MS = 750;
@@ -82,11 +83,10 @@ function waitFor(milliseconds: number) {
 }
 
 async function signOutPasswordRecoverySession(
-  scope: "global" | "local",
   timeoutMs: number,
 ) {
   return runBestEffortAuthOperation(async () => {
-    const { error } = await supabase.auth.signOut({ scope });
+    const { error } = await supabase.auth.signOut({ scope: "local" });
     if (error) throw error;
   }, timeoutMs);
 }
@@ -112,21 +112,28 @@ async function leavePasswordRecovery(destination: string) {
   }
 }
 
-async function finishPasswordRecovery() {
+async function finishPasswordRecovery(outcome: "success" | "unverified") {
   if (typeof window === "undefined") return;
 
   try {
-    const [globalSignOutStatus] = await Promise.all([
-      signOutPasswordRecoverySession("global", RECOVERY_SIGN_OUT_WAIT_MS),
+    if (outcome === "unverified") {
+      // An older API replica may have changed the password without revoking sessions.
+      // Supabase JS can hide logout 401/403, so this remains best effort only.
+      await runBestEffortAuthOperation(async () => {
+        const { error } = await supabase.auth.signOut({ scope: "global" });
+        if (error) throw error;
+      }, RECOVERY_SIGN_OUT_WAIT_MS);
+    }
+
+    // The new API accepted global revocation before updating the password.
+    // Remove this browser's recovery session even when the old API did not prove it.
+    await Promise.all([
+      signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS),
       waitFor(RECOVERY_SUCCESS_MESSAGE_WAIT_MS),
     ]);
-
-    if (globalSignOutStatus !== "completed") {
-      await signOutPasswordRecoverySession("local", RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
-    }
   } finally {
     setVimobAPIAccessToken(null, null);
-    window.location.replace(`${ROUTES.LOGIN}?passwordReset=success`);
+    window.location.replace(`${ROUTES.LOGIN}?passwordReset=${outcome}`);
   }
 }
 
@@ -198,7 +205,9 @@ export default function ResetPasswordScreen() {
       ? "Link validado. Defina sua nova senha."
       : recoveryState === "invalid"
         ? validationMessage || "Não foi possível validar o link de recuperação."
-        : "Senha alterada com sucesso. Redirecionando para o login.";
+          : recoveryState === "incomplete"
+            ? validationMessage || "Não conseguimos confirmar a conclusão da troca de senha. Solicite um novo link."
+           : "Senha alterada com sucesso. Redirecionando para o login.";
 
   useEffect(() => {
     const animationFrame = window.requestAnimationFrame(() => {
@@ -383,6 +392,7 @@ export default function ResetPasswordScreen() {
     }
 
     setLoading(true);
+    let passwordChangeAttempted = false;
     try {
       const expectedUserId = recoveryUserIdRef.current;
       const [{ data: userData, error: userError }, { data: sessionData, error: sessionError }] = await Promise.all([
@@ -409,12 +419,13 @@ export default function ResetPasswordScreen() {
           variant: "destructive",
         });
         if (isPasswordRecoveryAccessToken(sessionData.session?.access_token)) {
-          void signOutPasswordRecoverySession("local", RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
+          void signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
         }
         return;
       }
 
       setVimobAPIAccessToken(sessionData.session.access_token, sessionData.session.user.id);
+      passwordChangeAttempted = true;
       const result = await settingsAPI.changePassword({
         password,
         source: "recovery",
@@ -428,6 +439,16 @@ export default function ResetPasswordScreen() {
           description: message,
           variant: "destructive",
         });
+        return;
+      }
+
+      if (result.sessionsRevoked !== true) {
+        setRecoveryState("incomplete");
+        setPassword("");
+        setConfirmPassword("");
+        recoveryUserIdRef.current = null;
+        clearPasswordRecoveryEvidence(window.sessionStorage);
+        await finishPasswordRecovery("unverified");
         return;
       }
 
@@ -447,9 +468,26 @@ export default function ResetPasswordScreen() {
             : "A senha foi alterada, mas não conseguimos confirmar o envio do aviso por e-mail.",
       });
 
-      await finishPasswordRecovery();
+      await finishPasswordRecovery("success");
     } catch (error) {
-      const message = passwordErrorMessage(error);
+      const message = passwordChangeAttempted
+        ? error instanceof VimobAPIError && error.code === "password_update_unconfirmed_after_revocation"
+          ? "A revogação das sessões foi aceita, mas não conseguimos confirmar se a nova senha foi salva. Solicite um novo link de recuperação."
+          : error instanceof VimobAPIError && error.code === "password_session_revocation_unconfirmed"
+            ? "A senha não foi atualizada porque não conseguimos confirmar a revogação das sessões. Solicite um novo link de recuperação."
+            : "Não conseguimos confirmar a troca de senha com segurança. Solicite um novo link de recuperação."
+        : passwordErrorMessage(error);
+      if (passwordChangeAttempted) {
+        recoveryUserIdRef.current = null;
+        clearPasswordRecoveryEvidence(window.sessionStorage);
+        setVimobAPIAccessToken(null, null);
+        cleanRecoveryUrl();
+        setRecoveryState("incomplete");
+        setValidationMessage(message);
+        setPassword("");
+        setConfirmPassword("");
+        void signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
+      }
       toast({
         title: "Erro ao alterar senha",
         description: message,
@@ -479,6 +517,8 @@ export default function ResetPasswordScreen() {
               ? "Defina sua nova senha"
               : recoveryState === "invalid"
                 ? "Link inválido ou expirado"
+                : recoveryState === "incomplete"
+                  ? "Não foi possível concluir"
                 : "Recuperar senha"}
           </h1>
           <p className="mt-1.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
@@ -496,13 +536,15 @@ export default function ResetPasswordScreen() {
         </div>
       ) : null}
 
-      {recoveryState === "invalid" ? (
+      {recoveryState === "invalid" || recoveryState === "incomplete" ? (
         <div className="space-y-6" aria-labelledby="password-recovery-heading">
           <div className="rounded-[6px] bg-primary/10 p-4 text-[var(--app-text-primary)]">
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
               <div>
-                <p className="text-[13px] font-medium">Link inválido ou expirado</p>
+                <p className="text-[13px] font-medium">
+                  {recoveryState === "incomplete" ? "Não foi possível concluir" : "Link inválido ou expirado"}
+                </p>
                 <p className="mt-1 text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   {validationMessage ||
                     "Solicite um novo link de redefinição de senha para continuar com segurança."}

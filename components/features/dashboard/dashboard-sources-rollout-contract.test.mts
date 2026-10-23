@@ -21,5 +21,5 @@ test('source chart opts into entries only when the stats API advertises them', (
   assert.match(chart, /const unit = 'Leads'/);
   assert.match(chart, /value === 1 \? 'lead' : 'leads'/);
   assert.doesNotMatch(chart, /'Origem das entradas'|'Origem dos cards'/);
-  assert.match(chart, /const canFilter = Boolean\(rawSource && onSourceChange\)/);
+  assert.match(chart, /const canFilter = Boolean\(onSourceChange && !getSourceFilterUnavailableReason\(rawSource\)\)/);
 });

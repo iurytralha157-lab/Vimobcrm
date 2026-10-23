@@ -24,6 +24,14 @@ test('rejects an unterminated quoted field', () => {
   assert.throws(() => parseContactsCSV('name,message\nAna,"incompleto'), /CSV_INVALID_QUOTES/);
 });
 
+test('rejects trailing text after a closing quote instead of silently changing the cell', () => {
+  for (const field of ['"Ana"Bruna', '"Ana" "Bruna"', '"Ana"=2+2']) {
+    assert.throws(() => parseContactsCSVRecords(`Nome;Email\n${field};ana@example.com`), /Linha 2.*após o fechamento das aspas/);
+  }
+  assert.deepEqual(parseContactsCSVRecords('Nome;Mensagem\n"Ana"  ;"Disse ""olá"""\t\r\n'), [{ rowNumber: 2, values: { nome: 'Ana', mensagem: 'Disse "olá"' } }]);
+  assert.deepEqual(parseContactsCSVRecords('Nome;Mensagem\n"Ana";"linha 1\nlinha 2"'), [{ rowNumber: 2, values: { nome: 'Ana', mensagem: 'linha 1\nlinha 2' } }]);
+});
+
 test('parses tab-delimited exports and keeps the physical source row', () => {
   assert.deepEqual(
     parseContactsCSVRecords('Nome\tTelefone\r\n\r\nAna\t05511999998888\r\n'),
@@ -50,7 +58,7 @@ test('round-trips the CRM CSV export into import-ready contact values', () => {
       telefone: '+5511999998888',
       email: 'ana@example.com',
       documento: '001234567890123456',
-      observacao: `'${unsafeFormula}`,
+      observacao: unsafeFormula,
     },
   }]);
 });
@@ -93,4 +101,22 @@ test('normalizes rich text, formula results and formatted numeric spreadsheet ce
   assert.equal(excelCellValueToText({ formula: '"001234"' }), '001234');
   assert.equal(excelCellValueToText({ formula: '2+2' }), '');
   assert.equal(excelCellValueToText(0), '0');
+});
+
+test('XLSX text and cached text results do not decode the CSV formula protection layer', () => {
+  const literal = '="Ana ""Silva"""';
+  assert.equal(excelCellValueToText(literal, literal), literal);
+  assert.equal(excelCellValueToText(literal), literal);
+  assert.equal(excelCellValueToText({ text: literal, hyperlink: 'https://example.invalid' }), literal);
+  assert.equal(excelCellValueToText({ richText: [{ text: '="Ana ' }, { text: '""Silva"""' }] }), literal);
+  assert.equal(excelCellValueToText({ formula: 'A1', result: literal }), literal);
+  assert.equal(excelCellValueToText({ formula: '"Ana ""Silva"""' }), 'Ana "Silva"');
+});
+
+test('rejects duplicate aliases, extra cells and populated cells without headers', () => {
+  assert.throws(() => parseContactsCSVRecords('Nome;Email;Email\nAna;one@example.com;two@example.com'), /duplicada/);
+  assert.throws(() => parseContactsCSVRecords('Nome;Email;E-mail\nAna;one@example.com;two@example.com'), /equivalente/);
+  assert.throws(() => parseContactsCSVRecords('Nome;Mensagem\nAna;primeira;descartada'), /Linha 2.*3 células/);
+  assert.throws(() => parseContactsCSVRecords('Nome;;Mensagem\nAna;descartada;primeira'), /sem cabeçalho/);
+  assert.deepEqual(parseContactsCSVRecords('Nome;Telefone\nAna'), [{ rowNumber: 2, values: { nome: 'Ana', telefone: '' } }]);
 });

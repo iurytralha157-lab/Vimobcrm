@@ -7,56 +7,56 @@ import (
 	"mime"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const leadAttachmentBucket = "whatsapp-media"
 
-func (repo Repository) UploadLeadAttachment(ctx context.Context, tenantContext tenant.Context, leadID string, fileName string, contentType string, size int64, body io.Reader) (LeadAttachment, error) {
+func (repo Repository) UploadLeadAttachment(ctx context.Context, tenantContext tenant.Context, leadID string, fileName string, contentType string, size int64, body io.Reader, requestKeys ...string) (LeadAttachment, error) {
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
 		return LeadAttachment{}, ErrInvalidInput
 	}
-	if size <= 0 {
+	if size <= 0 || size > maxLeadAttachmentUploadBytes {
 		return LeadAttachment{}, ErrInvalidInput
+	}
+	if len(requestKeys) != 1 {
+		return LeadAttachment{}, fmt.Errorf("%w: uploadRequestKey is required", ErrInvalidInput)
+	}
+	key, ok := normalizeUUID(requestKeys[0])
+	if !ok {
+		return LeadAttachment{}, fmt.Errorf("%w: uploadRequestKey must be a UUID", ErrInvalidInput)
 	}
 	if err := repo.ensureLeadEditable(ctx, tenantContext, leadID); err != nil {
 		return LeadAttachment{}, err
 	}
-
-	cleanName := sanitizeAttachmentFileName(fileName)
-	objectPath := fmt.Sprintf(
-		"orgs/%s/leads/%s/docs/%d-%s",
-		tenantContext.OrganizationID,
-		leadID,
-		time.Now().UTC().UnixNano(),
-		cleanName,
-	)
-
-	if err := repo.storage.upload(ctx, leadAttachmentBucket, objectPath, contentType, body); err != nil {
-		return LeadAttachment{}, err
+	content := make([]byte, int(size))
+	_, err := io.ReadFull(body, content)
+	if err != nil {
+		return LeadAttachment{}, fmt.Errorf("%w: attachment size does not match its content", ErrInvalidInput)
 	}
-
-	publicURL := repo.storage.publicURL(leadAttachmentBucket, objectPath)
+	var extra [1]byte
+	_, extraErr := io.ReadFull(body, extra[:])
+	if extraErr != io.EOF {
+		return LeadAttachment{}, fmt.Errorf("%w: attachment size does not match its content", ErrInvalidInput)
+	}
+	contentType = validatedAttachmentContentType(content)
+	cleanName := sanitizeAttachmentFileName(fileName)
+	digest := attachmentUploadDigest(leadID, cleanName, contentType, content)
+	objectPath := fmt.Sprintf("orgs/%s/leads/%s/docs/%s/%s-%s-%s", tenantContext.OrganizationID, leadID, tenantContext.UserID, key, digest[:16], cleanName)
 	fileSize := size
 	fileType := attachmentFileType(contentType, cleanName)
-
-	attachment, err := repo.CreateLeadAttachment(ctx, tenantContext, leadAttachmentCreateInput{
-		LeadID:   leadID,
-		FileName: cleanName,
-		FileURL:  publicURL,
-		FileType: &fileType,
-		FileSize: &fileSize,
-	})
+	columns, err := repo.getLeadAttachmentColumns(ctx)
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = repo.storage.delete(cleanupCtx, leadAttachmentBucket, objectPath)
 		return LeadAttachment{}, err
 	}
-	return attachment, nil
+	return repo.uploadLeadAttachmentWithReceipt(ctx, tenantContext, leadAttachmentCreateInput{
+		LeadID:   leadID,
+		FileName: cleanName,
+		FileType: &fileType,
+		FileSize: &fileSize,
+	}, content, contentType, attachmentUploadReceipt{key: key, digest: digest, leadID: leadID, objectPath: objectPath}, columns)
 }
 
 func sanitizeAttachmentFileName(value string) string {

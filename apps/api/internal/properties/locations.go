@@ -1214,15 +1214,15 @@ func (repo Repository) DeleteCondominium(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) insertCondominium(ctx context.Context, tx pgx.Tx, organizationID string, cityID string, neighborhoodID string, input CondominiumInput) (Location, error) {
-	hasLatitude, err := repo.tableHasColumn(ctx, "property_condominiums", "latitude")
+	hasLatitude, err := tableHasColumn(ctx, tx, "property_condominiums", "latitude")
 	if err != nil {
 		return nil, err
 	}
-	hasLongitude, err := repo.tableHasColumn(ctx, "property_condominiums", "longitude")
+	hasLongitude, err := tableHasColumn(ctx, tx, "property_condominiums", "longitude")
 	if err != nil {
 		return nil, err
 	}
-	hasRichColumns, err := repo.tableHasColumn(ctx, "property_condominiums", "default_condominium_fee")
+	hasRichColumns, err := tableHasColumn(ctx, tx, "property_condominiums", "default_condominium_fee")
 	if err != nil {
 		return nil, err
 	}

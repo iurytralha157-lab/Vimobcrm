@@ -137,6 +137,9 @@ func (repo Repository) LinkUnitProperty(
 	if snapshot.PropertyID != "" {
 		return UnitPropertyLinkResult{}, fmt.Errorf("%w: unit already has a linked property", ErrConflict)
 	}
+	if err := requireUnitInventoryOpen(ctx, tx, tenantContext.OrganizationID, developmentID, unitID); err != nil {
+		return UnitPropertyLinkResult{}, err
+	}
 
 	property, err := lockLinkedPropertyTx(ctx, tx, tenantContext.OrganizationID, input.PropertyID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -237,6 +240,9 @@ func (repo Repository) PromoteUnitProperty(
 	}
 	if snapshot.PropertyID != "" {
 		return UnitPropertyLinkResult{}, fmt.Errorf("%w: unit already has a linked property", ErrConflict)
+	}
+	if err := requireUnitInventoryOpen(ctx, tx, tenantContext.OrganizationID, developmentID, unitID); err != nil {
+		return UnitPropertyLinkResult{}, err
 	}
 
 	source, err := loadUnitPromotionSourceTx(ctx, tx, tenantContext.OrganizationID, developmentID, unitID)
@@ -992,7 +998,7 @@ func linkedPropertyStatusBlocksUnlink(propertyStatus string) bool {
 
 func developmentBlocksUnitPromotion(developmentStatus string, commercialStatus string) bool {
 	switch normalized(developmentStatus) {
-	case "cancelled", "archived":
+	case "cancelled", "archived", "suspended":
 		return true
 	}
 	switch normalized(commercialStatus) {

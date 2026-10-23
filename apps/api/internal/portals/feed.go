@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/grupoolx"
+	propertiesdomain "github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 )
 
 type feedListing struct {
@@ -485,11 +486,11 @@ func applyPublicAddressVisibility(location *vrSyncLocation, value string) {
 	if location == nil {
 		return
 	}
-	normalized := normalizeText(value)
-	if normalized == "completo" || normalized == "complete" || normalized == "all" {
+	normalized := propertiesdomain.NormalizePublicAddressVisibility(value)
+	if normalized == "completo" || normalizeText(value) == "all" {
 		return
 	}
-	if minimumFeedAddressVisibility(normalized) {
+	if normalized == "minimo" {
 		location.DisplayAddress = "City"
 		location.Neighborhood = ""
 		location.PostalCode = ""
@@ -512,12 +513,11 @@ func applyPublicAddressVisibility(location *vrSyncLocation, value string) {
 }
 
 func minimumFeedAddressVisibility(value string) bool {
-	switch normalizeText(value) {
-	case "minimo", "minimum", "city", "cidade":
-		return true
-	default:
+	// The old adapter explicitly supports All; preserve that existing choice.
+	if normalizeText(value) == "all" {
 		return false
 	}
+	return propertiesdomain.NormalizePublicAddressVisibility(value) == "minimo"
 }
 
 func validPublicationType(value string) bool {

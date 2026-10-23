@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -15,8 +15,13 @@ import {
   toggleCurrentPageSelection,
   type ContactsToolbarFilters,
 } from "@/components/features/contacts/contacts-screen";
+import { contactSelectionScope } from '@/components/features/contacts/contacts-screen/model';
+import { visibleLeadRead } from '@/lib/lead-read-access';
+import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFilters } from "@/contexts/FilterContext";
 import { useFloatingChat } from "@/contexts/FloatingChatContext";
 import { useContactsList, type ContactListFilters } from "@/hooks/use-contacts-list";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -27,7 +32,6 @@ import {
   type Lead,
 } from "@/hooks/use-leads";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
 import { usePipelines, useStages } from "@/hooks/use-stages";
 import { useTags } from "@/hooks/use-tags";
@@ -35,27 +39,33 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useOrganizationUsers } from "@/hooks/use-users";
 import { getErrorMessageOrFallback as getErrorMessage } from "@/lib/api/vimob-error";
+import { DomainValidationError } from "@/lib/validation/common";
+import { MAX_SHARED_REPORT_RANGE_DAYS } from "@/lib/filters/date-range-limits";
+import { FilterPeriodNotice } from "@/components/shared/filters/FilterPeriodNotice";
 
 export default function Contacts() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { openNewChat } = useFloatingChat();
-  const { activeOrganization, isSuperAdmin } = useAuth();
-  const { hasModule } = useOrganizationModules();
+  const { activeOrganization, isSuperAdmin, user, session } = useAuth();
   const { hasPermission } = useUserPermissions();
   const organizationId = activeOrganization.organizationId ?? null;
   const canDeleteLeads = isSuperAdmin || hasPermission("lead_delete");
   const canCreateLeads = isSuperAdmin || hasPermission("lead_create");
   const canImportLeads = isSuperAdmin || hasPermission("lead_import");
   const canExportLeads = isSuperAdmin || hasPermission("lead_export");
-  const canUseWhatsApp =
-    hasModule("whatsapp") &&
-    (isSuperAdmin || hasPermission("whatsapp_operate"));
+  // Messaging is reached from its dedicated screen; Contacts has no chat entry.
+  const canUseWhatsApp = false;
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
-  const [selectedPipeline, setSelectedPipeline] = useState<string>("all");
-  const [selectedStage, setSelectedStage] = useState<string>("all");
+  const { pipelineId: globalPipelineId, setPipelineId, filterApplicationRevision } = useFilters();
+  const selectedPipeline = globalPipelineId ?? "all";
+  const setSelectedPipeline = (value: string) => setPipelineId(value === "all" ? null : value);
+  const [stageSelection, setStageSelection] = useState({ pipelineId: globalPipelineId, revision: filterApplicationRevision, stageId: "all" });
+  const selectedStage = stageSelection.pipelineId === globalPipelineId && stageSelection.revision === filterApplicationRevision
+    ? stageSelection.stageId : "all";
+  const setSelectedStage = (stageId: string) => setStageSelection({ pipelineId: globalPipelineId, revision: filterApplicationRevision, stageId });
   const { data: pipelines = [] } = usePipelines();
 
   const {
@@ -78,6 +88,8 @@ export default function Contacts() {
     setPageId,
     campaignId,
     setCampaignId,
+    campaignIds,
+    setCampaignIds,
     adSetId,
     setAdSetId,
     adId,
@@ -99,13 +111,37 @@ export default function Contacts() {
     isLoadingAds,
     isLoadingTags,
     hasTagsError,
+    hasTeamOptionsError,
+    hasLeadMetaFiltersError,
+    hasDynamicOptionsError,
+    isRetryingDynamicOptions,
+    refetchTeams,
+    refetchLeadMetaFilters,
+    refetchTags,
     isFiltersHydrated,
+    periodError,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
     pipelineId: selectedPipeline !== "all" ? selectedPipeline : null,
     dateMode: "origin",
+    multiCampaigns: true,
+    dateRangeMaxDays: MAX_SHARED_REPORT_RANGE_DAYS,
   });
   const contactsDateRange = sharedFilters.dateRange;
+  const filterOptionsRetryRef = useRef(false);
+  const retryFilterOptions = async () => {
+    if (filterOptionsRetryRef.current || isRetryingDynamicOptions || periodError || !shouldLoadFilterOptions) return;
+    filterOptionsRetryRef.current = true;
+    try {
+      await Promise.allSettled([
+        ...(hasLeadMetaFiltersError ? [refetchLeadMetaFilters()] : []),
+        ...(hasTagsError ? [refetchTags()] : []),
+        ...(hasTeamOptionsError ? [refetchTeams()] : []),
+      ]);
+    } finally {
+      filterOptionsRetryRef.current = false;
+    }
+  };
 
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(
@@ -113,16 +149,15 @@ export default function Contacts() {
   );
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [deleteContactId, setDeleteContactId] = useState<string | null>(null);
+  const [deleteContactScope, setDeleteContactScope] = useState<string | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [lostLeadsView, setLostLeadsView] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selection, setSelection] = useState({ scope: '', ids: new Set<string>() });
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [shiftPressed, setShiftPressed] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
-  const openLeadDetails = (contactId: string) =>
-    setSelectedContactId(contactId);
 
   useEffect(() => {
     if (searchParams.get("new") !== "lead" || !canCreateLeads) return;
@@ -160,7 +195,16 @@ export default function Contacts() {
     };
   }, []);
 
-  const [page, setPage] = useState(1);
+  // Full snapshot applications and clearing reset local criteria before a query
+  // can observe them. Ordinary field edits keep their existing explicit reset.
+  const [pagination, setPagination] = useState({ revision: filterApplicationRevision, page: 1 });
+  const page = pagination.revision === filterApplicationRevision ? pagination.page : 1;
+  const setPage = useCallback((value: SetStateAction<number>) => setPagination((current) => ({
+    revision: filterApplicationRevision,
+    page: typeof value === "function"
+      ? value(current.revision === filterApplicationRevision ? current.page : 1)
+      : value,
+  })), [filterApplicationRevision]);
   const [pageSize, setPageSize] = useState(50);
   const [sortBy, setSortBy] =
     useState<ContactListFilters["sortBy"]>("created_at");
@@ -180,6 +224,7 @@ export default function Contacts() {
     source: selectedSource,
     pageId,
     campaignId,
+    campaignIds,
     adSetId,
     adId,
     dealStatus: effectiveDealStatus,
@@ -189,6 +234,25 @@ export default function Contacts() {
     page,
     pageSize,
   });
+  const selectionScope = contactSelectionScope(filters, normalizedSearch, { organizationId, userId: user?.id });
+  const [deleteScope] = useState(createLeadImportScope);
+  const deleteScopeKey = JSON.stringify([selectionScope, contactImportScopeKey(organizationId, user?.id, getGlobalSignOutSessionId(session))]);
+  useLayoutEffect(() => deleteScope.activate(deleteScopeKey), [deleteScope, deleteScopeKey]);
+  if (selection.scope !== selectionScope) {
+    setSelection({ scope: selectionScope, ids: new Set<string>() });
+    if (lastSelectedId !== null) setLastSelectedId(null);
+    if (deleteContactId !== null) setDeleteContactId(null);
+    if (deleteContactScope !== null) setDeleteContactScope(null);
+  }
+  const selectedIds = selection.scope === selectionScope ? selection.ids : new Set<string>();
+  const setSelectedIds = (value: Set<string> | ((current: Set<string>) => Set<string>)) => {
+    setSelection((current) => ({
+      scope: selectionScope,
+      ids: typeof value === 'function'
+        ? value(current.scope === selectionScope ? current.ids : new Set<string>())
+        : value,
+    }));
+  };
 
   const {
     data: contacts = [],
@@ -198,14 +262,16 @@ export default function Contacts() {
     error: contactsQueryError,
     isPlaceholderData: contactsPlaceholderData,
     refetch: refetchContacts,
+    total: contactsTotal,
   } = useContactsList(filters, { enabled: isFiltersHydrated });
   const {
-    data: selectedLead,
+    data: cachedSelectedLead,
     isFetching: isFetchingSelectedLead,
     isError: isSelectedLeadError,
     error: selectedLeadError,
     refetch: refetchSelectedLead,
   } = useLead(selectedContactId);
+  const selectedLead = visibleLeadRead(cachedSelectedLead, selectedLeadError);
   const filterPipelineId =
     selectedPipeline !== "all" ? selectedPipeline : undefined;
   const { data: filterStages = [] } = useStages(filterPipelineId);
@@ -223,7 +289,7 @@ export default function Contacts() {
   const deleteLead = useDeleteLead();
   const bulkDeleteLeads = useBulkDeleteLeads();
 
-  const totalCount = contacts[0]?.total_count || 0;
+  const totalCount = contactsTotal ?? contacts[0]?.total_count ?? 0;
   const totalPages = Math.ceil(totalCount / pageSize);
   const isOpeningLeadDetails = Boolean(
     selectedContactId && !selectedLead && isFetchingSelectedLead,
@@ -234,14 +300,17 @@ export default function Contacts() {
   const isInitialContactsLoading = isLoading && contacts.length === 0;
   const isContactsTransitioning =
     isInitialContactsLoading || contactsPlaceholderData || isSearchSettling;
+  const openLeadDetails = (contactId: string) => {
+    if (isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
+    setSelectedContactId(contactId);
+  };
   const showContactsRefreshError =
     contactsError && contacts.length > 0 && !isContactsTransitioning;
   const showContactsErrorState =
     contactsError && contacts.length === 0 && !isContactsTransitioning;
-  const contactsErrorMessage = getErrorMessage(
-    contactsQueryError,
-    "Tente novamente em instantes.",
-  );
+  const contactsErrorMessage = contactsQueryError instanceof DomainValidationError
+    ? "Não foi possível atualizar a lista. Tente novamente em instantes."
+    : getErrorMessage(contactsQueryError, "Tente novamente em instantes.");
 
   useEffect(() => {
     if (contactsPlaceholderData || isFetchingContacts || page <= 1) {
@@ -258,7 +327,7 @@ export default function Contacts() {
     return () => {
       isActive = false;
     };
-  }, [contactsPlaceholderData, isFetchingContacts, page, totalPages]);
+  }, [contactsPlaceholderData, isFetchingContacts, page, totalPages, setPage]);
 
   const handleClearFilters = () => {
     clearFilters();
@@ -268,10 +337,10 @@ export default function Contacts() {
     setPage(1);
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = () => { setSelectedIds(new Set()); setLastSelectedId(null); };
 
   const toggleSelectAll = () => {
-    if (!canDeleteLeads) return;
+    if (!canDeleteLeads || isContactsTransitioning || periodError) return;
     setSelectedIds(
       toggleCurrentPageSelection(
         selectedIds,
@@ -281,25 +350,36 @@ export default function Contacts() {
   };
 
   const toggleSelectOne = (contactId: string) => {
-    if (!canDeleteLeads) return;
+    if (!canDeleteLeads || isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
     setSelectedIds(
       toggleContactSelection({
         selectedIds,
         currentPageIds: contacts.map((contact) => contact.id),
         contactId,
         shiftPressed,
-        lastSelectedId,
+        lastSelectedId: selection.scope === selectionScope ? lastSelectedId : null,
       }),
     );
     setLastSelectedId(contactId);
   };
 
   const handleBulkDelete = async () => {
-    if (!canDeleteLeads || bulkDeleteLeads.isPending) return;
+    if (!canDeleteLeads || bulkDeleteLeads.isPending || isContactsTransitioning || periodError || selectedIds.size === 0) return;
 
+    const currentIds = contacts.filter((contact) => selectedIds.has(contact.id)).map((contact) => contact.id);
+    if (currentIds.length !== selectedIds.size) {
+      setSelectedIds(new Set(currentIds));
+      setBulkDeleteDialogOpen(false);
+      toast({ title: 'A seleção mudou', description: 'Confira os contatos visíveis antes de excluir.', variant: 'destructive' });
+      return;
+    }
+
+    const isCurrentScope = deleteScope.capture(deleteScopeKey);
+    if (!isCurrentScope()) return;
     try {
       const result = await bulkDeleteLeads.mutateAsync(Array.from(selectedIds));
-      setSelectedIds(new Set(result.failures.map(({ id }) => id)));
+      if (!isCurrentScope()) return;
+      setSelectedIds(new Set([...result.failures.map(({ id }) => id), ...result.unstartedIds]));
       setBulkDeleteDialogOpen(false);
 
       if (result.deletedIds.length > 0) {
@@ -315,7 +395,9 @@ export default function Contacts() {
           variant: "destructive",
         });
       }
+      if (result.unstartedIds.length > 0) toast({ title: 'Operação interrompida', description: `${result.unstartedIds.length} contato(s) não chegaram a ser enviados para exclusão. Confira a seleção antes de tentar novamente.`, variant: 'destructive' });
     } catch (error) {
+      if (!isCurrentScope()) return;
       toast({
         title: "Não foi possível excluir os contatos",
         description: getErrorMessage(error, "Tente novamente em instantes."),
@@ -324,11 +406,25 @@ export default function Contacts() {
     }
   };
 
+  const requestContactDelete = (contactId: string) => {
+    if (!canDeleteLeads || isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
+    setDeleteContactScope(selectionScope);
+    setDeleteContactId(contactId);
+  };
+
   const handleDeleteContact = async () => {
     if (!canDeleteLeads || !deleteContactId || deleteLead.isPending) return;
+    if (isContactsTransitioning || periodError || deleteContactScope !== selectionScope || !contacts.some((contact) => contact.id === deleteContactId)) {
+      setDeleteContactId(null);
+      toast({ title: 'A listagem mudou', description: 'Confira o contato na página atual antes de excluir.', variant: 'destructive' });
+      return;
+    }
 
+    const isCurrentScope = deleteScope.capture(deleteScopeKey);
+    if (!isCurrentScope()) return;
     try {
       await deleteLead.mutateAsync(deleteContactId);
+      if (!isCurrentScope()) return;
       setSelectedIds((current) => {
         const next = new Set(current);
         next.delete(deleteContactId);
@@ -370,6 +466,8 @@ export default function Contacts() {
     };
 
   const toolbarFilters: ContactsToolbarFilters = {
+    presentation: "sidebar",
+    dateRangeMaxDays: MAX_SHARED_REPORT_RANGE_DAYS,
     datePreset,
     onDatePresetChange: handleFilterChange(setDatePreset),
     onClearDatePreset: () => {
@@ -402,6 +500,8 @@ export default function Contacts() {
     onPageChange: handleFilterChange(setPageId),
     campaignId: sharedFilters.campaignId,
     onCampaignChange: handleFilterChange(setCampaignId),
+    campaignIds,
+    onCampaignsChange: handleFilterChange(setCampaignIds),
     adSetId: sharedFilters.adSetId,
     onAdSetChange: handleFilterChange(setAdSetId),
     adId: sharedFilters.adId,
@@ -433,14 +533,16 @@ export default function Contacts() {
     isLoadingAds,
     isLoadingTags,
     hasTagsError,
+    hasCampaignsError: hasLeadMetaFiltersError,
+    hasDynamicOptionsError,
+    isRetryingDynamicOptions,
+    onRetryDynamicOptions: retryFilterOptions,
     loadDynamicOptions: shouldLoadFilterOptions,
     includeUnassignedUserOption: true,
     onFiltersOpenChange: (open) => {
       if (open) setShouldLoadFilterOptions(true);
     },
     tourPrefix: "contacts",
-    triggerClassName:
-      "bg-[var(--app-surface-soft)] text-[10px] font-light hover:bg-[var(--app-surface-hover)]",
   };
 
   return (
@@ -457,10 +559,22 @@ export default function Contacts() {
           filters={toolbarFilters}
           onCreate={() => setIsCreateDialogOpen(true)}
           onImport={() => setImportDialogOpen(true)}
-          onExport={() => setExportDialogOpen(true)}
+          onExport={() => {
+            if (isSearchSettling) {
+              toast({ title: "Aguarde a busca atualizar", description: "A busca aplicada ainda está sendo atualizada. Tente exportar novamente em instantes." });
+              return;
+            }
+            if (periodError) {
+              toast({ title: "Ajuste o período antes de exportar", description: periodError, variant: "destructive" });
+              return;
+            }
+            setExportDialogOpen(true);
+          }}
         />
 
-        <ContactsList
+        {periodError ? (
+          <FilterPeriodNotice message={periodError} onClear={clearDateFilter} />
+        ) : <ContactsList
           isMobile={isMobile}
           contacts={contacts}
           isLoading={isLoading}
@@ -489,7 +603,7 @@ export default function Contacts() {
               openNewChat(contact.phone, contact.name, contact.id);
             }
           }}
-          onRequestDelete={setDeleteContactId}
+          onRequestDelete={requestContactDelete}
           onToggleSelectAll={toggleSelectAll}
           onToggleSelectOne={toggleSelectOne}
           onSort={handleSort}
@@ -505,7 +619,7 @@ export default function Contacts() {
               />
             ) : null
           }
-        />
+        />}
 
         <ContactsBulkSelectionBar
           canDeleteLeads={canDeleteLeads}
@@ -557,6 +671,7 @@ export default function Contacts() {
           onConfirmDelete={() => void handleDeleteContact()}
           bulkDeleteDialogOpen={bulkDeleteDialogOpen}
           selectedCount={selectedIds.size}
+          selectedNames={contacts.filter((contact) => selectedIds.has(contact.id)).map((contact) => contact.name)}
           isBulkDeletePending={bulkDeleteLeads.isPending}
           onBulkDeleteDialogOpenChange={(open) => {
             if (!bulkDeleteLeads.isPending) setBulkDeleteDialogOpen(open);
@@ -566,8 +681,18 @@ export default function Contacts() {
           importDialogOpen={importDialogOpen}
           onImportDialogOpenChange={setImportDialogOpen}
           canExportLeads={canExportLeads}
-          exportDialogOpen={exportDialogOpen}
-          exportFilters={buildContactExportFilters(filters)}
+          exportDialogOpen={exportDialogOpen && !periodError}
+          exportFilters={buildContactExportFilters({ ...filters, search: normalizedSearch || undefined })}
+          exportFilterValues={{
+            pipelineId: pipelines.find((item) => item.id === filters.pipelineId)?.name,
+            stageId: filterStages.find((item) => item.id === filters.stageId)?.name,
+            assigneeId: users.find((item) => item.id === filters.assigneeId)?.name || contacts.find((item) => item.assigned_user_id === filters.assigneeId)?.assignee_name || undefined,
+            tagIds: selectedTags.map((id) => allTagsFromHook.find((item) => item.id === id)?.name || id).join(', '),
+            campaignId: campaigns.find((item) => item.id === filters.campaignId)?.name,
+            campaignIds: campaignIds.map((id) => campaigns.find((item) => item.id === id)?.name || id).join(', '),
+            adSetId: adSets.find((item) => item.id === filters.adSetId)?.name,
+            adId: ads.find((item) => item.id === filters.adId)?.name,
+          }}
           organizationId={organizationId}
           totalCount={totalCount}
           onExportDialogOpenChange={setExportDialogOpen}

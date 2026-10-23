@@ -8,15 +8,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardLeadEntries } from '@/hooks/use-dashboard-lead-entries'
-import { sourceLabels } from '@/hooks/use-dashboard-filters'
+import { getDashboardSourceLabel } from '@/lib/analytics/dashboard-source-label'
 import type { DashboardAPIFilters } from '@/lib/api/dashboard'
 import type { DashboardLeadEntry } from '@/lib/validation/dashboard-lead-entries'
+import { getDashboardStatsFailureState } from '@/components/features/dashboard/dashboard-stats-error'
 
 type DashboardLeadEntriesDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCloseAutoFocus?: (event: Event) => void
+  onNavigate?: () => void
   filters?: DashboardAPIFilters
   available: boolean
+  availabilityError?: string
   onRetryAvailability: () => void
 }
 
@@ -32,9 +36,9 @@ function formatEntryDate(value: string) {
   }).format(date)
 }
 
-function EntryRow({ entry, onNavigate }: { entry: DashboardLeadEntry; onNavigate: () => void }) {
+function EntryRow({ entry, onClose, onNavigate }: { entry: DashboardLeadEntry; onClose: () => void; onNavigate?: () => void }) {
   const isReentry = entry.entryType === 'reentry'
-  const source = entry.source ? sourceLabels[entry.source] || entry.source : 'Origem não informada'
+  const source = getDashboardSourceLabel(entry.source)
 
   return (
     <li className="min-w-0 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3 sm:p-3.5">
@@ -61,7 +65,8 @@ function EntryRow({ entry, onNavigate }: { entry: DashboardLeadEntry; onNavigate
         </div>
         <Link
           href={entry.leadUrl}
-          onClick={onNavigate}
+          onClick={onClose}
+          onNavigate={onNavigate}
           className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
           aria-label={`Ver card de ${entry.name}`}
         >
@@ -72,15 +77,17 @@ function EntryRow({ entry, onNavigate }: { entry: DashboardLeadEntry; onNavigate
   )
 }
 
-export function DashboardLeadEntriesDialog({ open, onOpenChange, filters, available, onRetryAvailability }: DashboardLeadEntriesDialogProps) {
+export function DashboardLeadEntriesDialog({ open, onOpenChange, onCloseAutoFocus, onNavigate, filters, available, availabilityError, onRetryAvailability }: DashboardLeadEntriesDialogProps) {
   const query = useDashboardLeadEntries(filters, open && available)
   const pages = query.data?.pages ?? []
   const entries = pages.flatMap((page) => page.items)
   const total = pages[0]?.total ?? 0
+  const failureState = query.isAccessBlocked ? 'unavailable' : getDashboardStatsFailureState(entries.length > 0, query.isError, query.error)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        onCloseAutoFocus={onCloseAutoFocus}
         aria-describedby={undefined}
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(760px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(900px,calc(100vw-32px))] sm:max-w-[900px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
@@ -97,7 +104,7 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, filters, availa
           <div className="space-y-3 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
             {!available ? (
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-[12px] text-[var(--app-text-secondary)]">
-                <p>A lista de entradas e reentradas ainda não está disponível nesta versão da API.</p>
+                <p>{availabilityError || 'A lista de entradas e reentradas ainda não está disponível nesta versão da API.'}</p>
                 <Button type="button" variant="ghost" size="sm" className="mt-2 gap-1.5 text-primary" onClick={onRetryAvailability}>
                   <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Verificar novamente
                 </Button>
@@ -108,7 +115,7 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, filters, availa
                 <Skeleton className="h-24 rounded-[8px]" />
                 <Skeleton className="h-24 rounded-[8px]" />
               </div>
-            ) : query.isError && entries.length === 0 ? (
+            ) : failureState === 'unavailable' ? (
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-[12px] text-[var(--app-text-secondary)]">
                 <p>Não foi possível carregar as entradas deste período.</p>
                 <Button type="button" variant="ghost" size="sm" className="mt-2 gap-1.5 text-primary" onClick={() => void query.refetch()}>
@@ -117,6 +124,7 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, filters, availa
               </div>
             ) : (
               <>
+                {failureState === 'stale' ? <div role="status" className="rounded-[8px] bg-amber-500/10 p-3 text-[12px] text-[var(--app-text-secondary)]">Atualização indisponível. Exibindo as últimas entradas carregadas para estes filtros.<Button type="button" variant="ghost" size="sm" onClick={() => void query.refetch()}>Tentar novamente</Button></div> : null}
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2.5 text-[11px] font-light text-[var(--app-text-secondary)]">
                   <span><strong className="font-normal tabular-nums text-[var(--app-text-primary)]">{total.toLocaleString('pt-BR')}</strong> entradas nos filtros atuais</span>
                   <span className="tabular-nums">Exibindo {entries.length.toLocaleString('pt-BR')} de {total.toLocaleString('pt-BR')}</span>
@@ -128,7 +136,7 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, filters, availa
                 ) : (
                   <ul className="space-y-2">
                     {entries.map((entry) => (
-                      <EntryRow key={entry.entryId} entry={entry} onNavigate={() => onOpenChange(false)} />
+                      <EntryRow key={entry.entryId} entry={entry} onClose={() => onOpenChange(false)} onNavigate={onNavigate} />
                     ))}
                   </ul>
                 )}

@@ -62,6 +62,7 @@ func TestCreateRequestValidate(t *testing.T) {
 		},
 		ConversationID:         "22222222-2222-2222-2222-222222222222",
 		ExpectedPreviousLeadID: "unlinked",
+		ConfirmHistoryLink:     true,
 		TeamID:                 "44444444-4444-4444-4444-444444444444",
 		TagIDs:                 []string{"33333333-3333-3333-3333-333333333333", "33333333-3333-3333-3333-333333333333"},
 		RendaFamiliar:          "12000",
@@ -90,7 +91,7 @@ func TestCreateRequestValidate(t *testing.T) {
 		t.Fatalf("Validate() interest value = %#v", input.InterestValue)
 	}
 	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil ||
-		input.ExpectedPreviousLeadID == nil || *input.ExpectedPreviousLeadID != "unlinked" ||
+		input.ExpectedPreviousLeadID == nil || *input.ExpectedPreviousLeadID != "unlinked" || !input.ConfirmHistoryLink ||
 		input.TeamID == nil || input.RoundRobinID == nil {
 		t.Fatalf("Validate() new fields = %#v", input)
 	}
@@ -118,8 +119,10 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		{Name: "Ana", Phone: "+1 415 CALL-NOW"},
 		{Name: "Ana", PipelineID: "not-a-uuid"},
 		{Name: "Ana", ConversationID: "22222222-2222-4222-8222-222222222222"},
+		{Name: "Ana", ConversationID: "22222222-2222-4222-8222-222222222222", ExpectedPreviousLeadID: "unlinked"},
 		{Name: "Ana", ConversationID: "22222222-2222-4222-8222-222222222222", ExpectedPreviousLeadID: "invalid"},
 		{Name: "Ana", ExpectedPreviousLeadID: "unlinked"},
+		{Name: "Ana", ConfirmHistoryLink: true},
 		{Name: "Ana", TeamID: "not-a-uuid"},
 		{Name: "Ana", RoundRobinID: "not-a-uuid"},
 		{Name: "Ana", RoundRobinID: "66666666-6666-4666-8666-666666666666"},

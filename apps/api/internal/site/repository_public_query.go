@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	propertiesdomain "github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"net/url"
 	"strings"
@@ -289,7 +290,7 @@ func publicDealTypeAliases(dealType string) []string {
 }
 
 func publicPropertyActiveSQL() string {
-	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo', 'available', 'disponivel')"
+	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível') and p.autorizado_comercializacao is distinct from false"
 }
 
 func publicPropertySnapshotJoinSQL() string {
@@ -315,7 +316,7 @@ func publicPropertySnapshotJoinSQL() string {
 }
 
 func publicPropertyEligibilitySQL() string {
-	return `(publication_snapshot.payload is not null or (
+	return `(` + propertiesdomain.PropertyInventoryOpenSQL("p") + ` and (publication_snapshot.payload is not null or (
 		coalesce(p.published_on_site, false) = true
 		and not exists (
 			select 1
@@ -324,12 +325,16 @@ func publicPropertyEligibilitySQL() string {
 			  and publication_state.property_id = p.id
 			  and publication_state.channel = 'site'
 			  and publication_state.channel_account_key = 'default'
+			  and (publication_state.desired_state is distinct from 'published' or publication_state.published_version is not null)
 		)
-	))`
+	)))`
 }
 
 func publicPropertyStandaloneEligibilitySQL(alias string) string {
-	return `(exists (
+	return `(lower(trim(coalesce(` + alias + `.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')
+		and ` + propertiesdomain.PropertyInventoryOpenSQL(alias) + `
+		and ` + alias + `.autorizado_comercializacao is distinct from false
+		and (exists (
 		select 1
 		from public.property_channel_publications as publication
 		join public.property_channel_publication_versions as version
@@ -354,16 +359,21 @@ func publicPropertyStandaloneEligibilitySQL(alias string) string {
 			  and publication_state.property_id = ` + alias + `.id
 			  and publication_state.channel = 'site'
 			  and publication_state.channel_account_key = 'default'
+			  and (publication_state.desired_state is distinct from 'published' or publication_state.published_version is not null)
 		)
-	))`
+	)))`
 }
 
 func publicPropertyOutputSQL() string {
+	base := `(publication_snapshot.payload - 'valor_venda_avaliado' - 'valor_locacao_avaliado'
+		|| jsonb_build_object('public_address_visibility', ` + publicSnapshotVisibilitySQL() + `))`
+	approximate := base + ` - 'pais' - 'endereco' - 'numero' - 'complemento' - 'cep' - 'latitude' - 'longitude' - 'condominio_nome'`
 	return `case
 		when publication_snapshot.payload is not null then
 			case when ` + publicSnapshotHasCompleteAddressSQL() + `
-				then publication_snapshot.payload - 'valor_venda_avaliado' - 'valor_locacao_avaliado'
-				else publication_snapshot.payload - 'valor_venda_avaliado' - 'valor_locacao_avaliado' - 'condominio_nome'
+				then ` + base + `
+				when ` + publicSnapshotVisibilitySQL() + ` = 'parcial' then ` + approximate + `
+				else ` + approximate + ` - 'bairro'
 			end
 		else ` + publicPropertyJSONSQL() + `
 	end`
@@ -380,6 +390,10 @@ func publicPropertyTextSQL(snapshotKey string, legacySQL string) string {
 	}
 	if snapshotKey == "bairro" {
 		legacySQL = `(case when ` + publicAddressVisibilitySQL("p") + ` = 'minimo' then null else ` + legacySQL + ` end)`
+		return `case when publication_snapshot.payload is not null
+			then case when ` + publicSnapshotVisibilitySQL() + ` = 'minimo' then null
+				else nullif(publication_snapshot.payload->>'bairro', '') end
+			else ` + legacySQL + ` end`
 	}
 	return `case when publication_snapshot.payload is not null
 		then nullif(publication_snapshot.payload->>'` + snapshotKey + `', '')
@@ -387,7 +401,11 @@ func publicPropertyTextSQL(snapshotKey string, legacySQL string) string {
 }
 
 func publicSnapshotHasCompleteAddressSQL() string {
-	return "lower(trim(coalesce(publication_snapshot.payload->>'public_address_visibility', ''))) = 'completo'"
+	return publicSnapshotVisibilitySQL() + " = 'completo'"
+}
+
+func publicSnapshotVisibilitySQL() string {
+	return propertiesdomain.PublicSnapshotAddressVisibilitySQL("publication_snapshot.payload->>'public_address_visibility'")
 }
 
 func publicPropertyNumberSQL(snapshotKey string, legacySQL string) string {
@@ -403,20 +421,7 @@ func publicPropertyBooleanSQL(snapshotKey string, legacySQL string) string {
 }
 
 func publicAddressVisibilitySQL(alias string) string {
-	return `case lower(trim(coalesce(
-		nullif(` + alias + `.address_visibility, ''),
-		nullif(` + alias + `.public_address_visibility, ''),
-		'parcial'
-	)))
-		when 'completo' then 'completo'
-		when 'complete' then 'completo'
-		when 'full' then 'completo'
-		when 'minimo' then 'minimo'
-		when 'minimum' then 'minimo'
-		when 'city' then 'minimo'
-		when 'cidade' then 'minimo'
-		else 'parcial'
-	end`
+	return propertiesdomain.PropertyPublicAddressVisibilitySQL(alias)
 }
 
 func publicPropertyJSONSQL() string {

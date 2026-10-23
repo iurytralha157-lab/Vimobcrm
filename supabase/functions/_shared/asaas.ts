@@ -888,11 +888,20 @@ async function authorizedBillingUserId(
     .filter((roleId): roleId is string => Boolean(roleId));
   if (roleIds.length === 0) return null;
 
+  const { data: activeRoles } = await supabase
+    .from("organization_roles")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .in("id", roleIds);
+  const activeRoleIds = (activeRoles || []).map((role) => role.id);
+  if (activeRoleIds.length === 0) return null;
+
   const { data: canonicalPermission } = await supabase
     .from("organization_role_permissions")
     .select("permission:available_permissions!inner(key)")
     .eq("organization_id", organizationId)
-    .in("role_id", roleIds)
+    .in("role_id", activeRoleIds)
     .eq("permission.key", "settings_billing")
     .limit(1)
     .maybeSingle();
@@ -901,7 +910,7 @@ async function authorizedBillingUserId(
   const { data: legacyPermission } = await supabase
     .from("organization_role_permissions")
     .select("id")
-    .in("organization_role_id", roleIds)
+    .in("organization_role_id", activeRoleIds)
     .eq("permission_key", "settings_billing")
     .limit(1)
     .maybeSingle();

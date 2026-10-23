@@ -23,7 +23,7 @@ import { PropertyAssetDeleteDialog } from './PropertyAssetDeleteDialog'
 import { PropertyAssetDialog, type AssetSubmitCommand } from './PropertyAssetDialog'
 import { AssetCatalog } from './PropertyWorkspaceOverview'
 
-export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
+export function PropertyAssetManager({ propertyId, disabled = false }: { propertyId: string; disabled?: boolean }) {
   const workspaceQuery = usePropertyWorkspace(propertyId)
   const createMutation = useCreatePropertyAsset(propertyId)
   const updateMutation = useUpdatePropertyAsset(propertyId)
@@ -54,7 +54,7 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
   const canManage = Boolean(response?.meta.can_manage && response.meta.normalized_resources_available !== false)
   const photoCount = assets.filter((asset) => asset.asset_type === 'photo').length
   const photoCreationDisabled = photoCount >= PROPERTY_MEDIA_MAX_PHOTOS
-  const pending = createMutation.isPending
+  const pending = disabled || createMutation.isPending
     || updateMutation.isPending
     || deleteMutation.isPending
     || reorderMutation.isPending
@@ -132,6 +132,12 @@ export function PropertyAssetManager({ propertyId }: { propertyId: string }) {
           <p className="mt-1 text-[11px] font-light text-muted-foreground">
             Os arquivos ficam protegidos e as alterações desta área são salvas automaticamente.
           </p>
+          {photoCreationDisabled && (
+            <p className="mt-2 max-w-xl text-[11px] leading-5 text-muted-foreground">
+              O limite de 20 vale para novas fotos. Fotos importadas existentes são preservadas e os outros dados do imóvel continuam editáveis.
+              Para substituir uma foto usada no site, confira a versão na <a className="underline" href={`/properties/${propertyId}?tab=publication`}>Central de Publicação</a> antes de remover ou reenviar arquivos.
+            </p>
+          )}
           <p className="mt-1 text-[11px] font-light text-muted-foreground">
             {photoCount} de {PROPERTY_MEDIA_MAX_PHOTOS} fotos
             {photoCreationDisabled

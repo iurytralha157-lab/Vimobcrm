@@ -1,3 +1,5 @@
+import { isProtectedAppPath } from './post-login-redirect'
+
 const RECOVERY_INTENT_STORAGE_KEY = 'vimob:password-recovery:intent:v1'
 const RECOVERY_PROOF_STORAGE_KEY = 'vimob:password-recovery:proof:v1'
 const RECOVERY_EVIDENCE_TTL_MS = 15 * 60 * 1000
@@ -29,6 +31,12 @@ type AuthenticationMethodReference = {
 
 type AuthenticationMethodClaims = {
   amr?: unknown
+}
+
+const PUBLIC_AUTH_ROUTES = ['/login', '/cadastro', '/onboarding'] as const
+
+export function isPublicAuthRoute(pathname: string) {
+  return PUBLIC_AUTH_ROUTES.some((route) => pathname.startsWith(route))
 }
 
 function normalizeRecoveryPath(pathname: string) {
@@ -71,6 +79,26 @@ export function hasPasswordRecoveryAuthenticationMethod(claims: unknown) {
     && typeof entry === 'object'
     && (entry as AuthenticationMethodReference).method === 'recovery'
   ))
+}
+
+export function getPasswordRecoveryRedirect(claims: unknown, pathname: string):
+  | { kind: 'reset' }
+  | { kind: 'cancel'; next: '/login' | '/cadastro' }
+  | null {
+  if (!hasPasswordRecoveryAuthenticationMethod(claims)) return null
+
+  if (isProtectedAppPath(pathname)) {
+    return { kind: 'reset' }
+  }
+
+  if (isPublicAuthRoute(pathname)) {
+    return {
+      kind: 'cancel',
+      next: pathname.startsWith('/cadastro') ? '/cadastro' : '/login',
+    }
+  }
+
+  return null
 }
 
 export function readAccessTokenClaims(accessToken: string) {

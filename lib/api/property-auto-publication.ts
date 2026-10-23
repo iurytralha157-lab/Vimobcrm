@@ -3,19 +3,72 @@ import type {
   PropertyPublicationOverview,
   PublishPropertyInput,
 } from '@/lib/validation'
+import type { VimobAPIRequestIntent } from './vimob-client'
 
 type PublicationAPI = {
   getPublications: (
     organizationId: string,
     propertyId: string,
     signal?: AbortSignal,
+    intent?: VimobAPIRequestIntent,
   ) => Promise<PropertyPublicationOverview>
   publishSite: (
     organizationId: string,
     propertyId: string,
     input: PublishPropertyInput,
     idempotencyKey?: string,
+    intent?: VimobAPIRequestIntent,
   ) => Promise<PropertyPublicationOverview>
+}
+
+export type AutomaticSitePublicationAction = Readonly<{
+  publicationId: string | null
+  publicationUpdatedAt: string | null
+}>
+
+// Creation and its recovery always retain the original absence of a canonical
+// intent; a later withdrawal must not become a new automatic publish request.
+export const INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION: AutomaticSitePublicationAction = Object.freeze({
+  publicationId: null,
+  publicationUpdatedAt: null,
+})
+
+type AutomaticSitePublicationOptions = {
+  expectedUserId?: string
+  expectedSessionId?: string | null
+  canContinue?: () => boolean
+  action?: AutomaticSitePublicationAction
+}
+
+function assertPublicationScope(options?: AutomaticSitePublicationOptions) {
+  if (options?.canContinue && !options.canContinue()) {
+    throw new Error('publication_scope_changed: A sessão ou o formulário mudou. Reabra o imóvel antes de publicar.')
+  }
+}
+
+export async function captureAutomaticSitePublicationAction(
+  organizationId: string,
+  propertyId: string,
+  api?: PublicationAPI,
+  options?: AutomaticSitePublicationOptions,
+): Promise<AutomaticSitePublicationAction> {
+  assertPublicationScope(options)
+  const publicationApi = api ?? (await import('./property-publications')).propertyPublicationsAPI
+  assertPublicationScope(options)
+  const overview = await publicationApi.getPublications(organizationId, propertyId, undefined, {
+    expectedUserId: options?.expectedUserId,
+    expectedSessionId: options?.expectedSessionId,
+    onRequestStart: () => assertPublicationScope(options),
+  })
+  assertPublicationScope(options)
+  const site = overview.data.publications.find((item) => item.channel === 'site')
+  if (!site || (site.id !== null && !site.updated_at)) {
+    throw new Error('publication_revision_unavailable: Atualize a Central antes de salvar e publicar.')
+  }
+  return site.id === null ? INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION : {
+    publicationId: site.id,
+    publicationUpdatedAt: site.updated_at!,
+  }
 }
 
 export type AutomaticSitePublicationResult =
@@ -26,8 +79,25 @@ const pendingStates = new Set(['queued', 'publishing', 'pausing', 'unpublishing'
 const pendingJobs = new Set(['pending', 'processing', 'retry'])
 const formCheckCodes = new Set([
   'title', 'type', 'location', 'postal_code', 'description', 'offer',
-  'purpose', 'area', 'photo', 'status',
+  'purpose', 'area', 'photo', 'status', 'commercialization',
 ])
+
+function supersededAutomaticAction(
+  overview: PropertyPublicationOverview,
+  action: AutomaticSitePublicationAction = INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION,
+): AutomaticSitePublicationResult | null {
+  const site = overview.data.publications.find((item) => item.channel === 'site')
+  // A continuing published intent may receive worker revisions. A private or
+  // paused intent may resume only when this save started from that exact row.
+  if (!site || site.desired_state === 'published') return null
+  if (site.id === action.publicationId && (site.id === null
+    || (Boolean(site.updated_at) && site.updated_at === action.publicationUpdatedAt))) return null
+  return {
+    kind: 'blocked',
+    reasons: ['Uma retirada ou pausa posterior substituiu este salvamento. Confira a Central e salve novamente se quiser publicar.'],
+    fixableInForm: false,
+  }
+}
 
 function isProcessing(publication: PropertyChannelPublication) {
   return pendingStates.has(publication.observed_state)
@@ -65,6 +135,24 @@ export function planAutomaticSitePublication(
     }
   }
 
+  // Eligibility can change without changing the frozen snapshot (for example,
+  // commercialization consent). Never report success from version equality.
+  if (site.readiness_state !== 'ready' || blockers.length > 0) {
+    return {
+      kind: 'blocked',
+      reasons: blockers.map((check) => check.message || check.label)
+        .concat(blockers.length ? [] : ['A prontidão para publicação ainda não foi confirmada.']),
+      fixableInForm: blockers.some((check) => formCheckCodes.has(check.code)),
+    }
+  }
+  if (site.last_error && site.desired_state === 'published' && !isProcessing(site)) {
+    return {
+      kind: 'blocked',
+      reasons: ['A publicação falhou. Confira o erro na Central e use Tentar novamente.'],
+      fixableInForm: false,
+    }
+  }
+
   if (site.desired_state === 'published' && isProcessing(site)) {
     if (!canSupersedeProcessingVersion(site)) {
       return { kind: 'blocked', reasons: ['Uma remoção ou pausa está em processamento. Confira a Central antes de publicar novamente.'], fixableInForm: false }
@@ -81,14 +169,6 @@ export function planAutomaticSitePublication(
     && site.published_version !== null
     && site.published_version === site.current_version && !site.is_outdated) {
     return { kind: 'already-published', reasons: [] }
-  }
-  if (site.readiness_state !== 'ready' || blockers.length > 0) {
-    return {
-      kind: 'blocked',
-      reasons: blockers.map((check) => check.message || check.label)
-        .concat(blockers.length ? [] : ['A prontidão para publicação ainda não foi confirmada.']),
-      fixableInForm: blockers.some((check) => formCheckCodes.has(check.code)),
-    }
   }
   const updatingBusyVersion = site.desired_state === 'published'
     && site.is_outdated && canSupersedeProcessingVersion(site)
@@ -116,18 +196,29 @@ export async function requestAutomaticSitePublication(
   propertyId: string,
   api?: PublicationAPI,
   idempotencyKey?: string,
+  options?: AutomaticSitePublicationOptions,
 ): Promise<AutomaticSitePublicationResult> {
+  const assertScope = () => assertPublicationScope(options)
+  assertScope()
   const publicationModule = !api || !idempotencyKey
     ? await import('./property-publications')
     : null
   const publicationApi = api ?? publicationModule!.propertyPublicationsAPI
   const commandKey = idempotencyKey
     ?? publicationModule!.createPropertyPublicationIdempotencyKey('site-auto-publish')
-  let overview = await publicationApi.getPublications(organizationId, propertyId)
+  const intent: VimobAPIRequestIntent | undefined = options
+    ? { expectedUserId: options.expectedUserId, expectedSessionId: options.expectedSessionId, onRequestStart: assertScope }
+    : undefined
+  assertScope()
+  let overview = await publicationApi.getPublications(organizationId, propertyId, undefined, intent)
+  assertScope()
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const superseded = supersededAutomaticAction(overview, options?.action)
+    if (superseded) return superseded
     const plan = planAutomaticSitePublication(overview)
     if (plan.kind !== 'publish') return plan
     try {
+      assertScope()
       const response = await publicationApi.publishSite(
         organizationId,
         propertyId,
@@ -136,21 +227,24 @@ export async function requestAutomaticSitePublication(
           expected_publication_updated_at: plan.publicationUpdatedAt,
         },
         attempt === 0 ? commandKey : `${commandKey}-conflict-retry`,
+        intent,
       )
-      const site = response.data.publications.find((item) => item.channel === 'site')
-      if (site?.desired_state === 'published' && site.observed_state === 'published'
-        && site.published_version !== null
-        && site.published_version === site.current_version
-        && !site.is_outdated && !isProcessing(site)) {
-        return { kind: 'already-published', reasons: [] }
-      }
+      assertScope()
+      const responseSuperseded = supersededAutomaticAction(response, options?.action)
+      if (responseSuperseded) return responseSuperseded
+      const responsePlan = planAutomaticSitePublication(response)
+      if (responsePlan.kind === 'blocked' || responsePlan.kind === 'already-published') return responsePlan
       return { kind: 'requested', reasons: [] }
     } catch (error) {
       const conflict = typeof error === 'object' && error !== null
         && 'status' in error && error.status === 409
         && 'code' in error && error.code === 'publication_revision_conflict'
       if (!conflict || attempt > 0) throw error
-      const refreshed = await publicationApi.getPublications(organizationId, propertyId)
+      assertScope()
+      const refreshed = await publicationApi.getPublications(organizationId, propertyId, undefined, intent)
+      assertScope()
+      const refreshedSuperseded = supersededAutomaticAction(refreshed, options?.action)
+      if (refreshedSuperseded) return refreshedSuperseded
       const refreshedPlan = planAutomaticSitePublication(refreshed)
       if (refreshedPlan.kind !== 'publish') return refreshedPlan
       if (refreshed.data.property_updated_at !== overview.data.property_updated_at) {

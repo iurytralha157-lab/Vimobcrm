@@ -17,10 +17,20 @@ import (
 
 var ErrStorageNotConfigured = errors.New("whatsapp storage is not configured")
 
+type storageUploadHTTPError struct {
+	statusCode          int
+	objectAlreadyExists bool
+}
+
+func (err storageUploadHTTPError) Error() string {
+	return fmt.Sprintf("supabase storage upload returned HTTP %d", err.statusCode)
+}
+
 type StorageConfig struct {
-	ProjectURL  string
-	APIKey      string
-	EvolutionGo EvolutionGoConfig
+	ProjectURL                           string
+	APIKey                               string
+	EvolutionGo                          EvolutionGoConfig
+	WhatsAppPostFormFollowUpGuardEnabled bool
 }
 
 type EvolutionGoConfig struct {
@@ -49,7 +59,7 @@ func newStorageClient(config StorageConfig) storageClient {
 
 func (client storageClient) signedURL(ctx context.Context, bucket string, objectPath string, expiresIn int) (string, error) {
 	if client.projectURL == "" || client.apiKey == "" || strings.TrimSpace(objectPath) == "" {
-		return "", nil
+		return "", ErrStorageNotConfigured
 	}
 
 	body, _ := json.Marshal(map[string]any{"expiresIn": expiresIn})
@@ -78,7 +88,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 		return "", err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("supabase storage signed url failed: %s", strings.TrimSpace(string(payload)))
+		return "", storageSigningHTTPError{statusCode: response.StatusCode}
 	}
 
 	var parsed struct {
@@ -99,6 +109,16 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 func (client storageClient) upload(ctx context.Context, bucket string, objectPath string, contentType string, body io.Reader, upsert bool) error {
 	if client.projectURL == "" || client.apiKey == "" {
 		return ErrStorageNotConfigured
+	}
+	immutableDigest, immutable := immutableOutboundMediaPathDigest(objectPath)
+	immutable = immutable && bucket == whatsappMediaBucket
+	if immutable {
+		var err error
+		body, err = immutableOutboundUploadBody(body, immutableDigest)
+		if err != nil {
+			return err
+		}
+		upsert = false
 	}
 
 	endpoint := fmt.Sprintf(
@@ -132,11 +152,19 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		message := strings.TrimSpace(string(payload))
-		if message == "" {
-			message = response.Status
+		var parsed struct {
+			StatusCode string `json:"statusCode"`
+			Error      string `json:"error"`
+			Message    string `json:"message"`
 		}
-		return fmt.Errorf("supabase storage upload failed: %s", message)
+		_ = json.Unmarshal(payload, &parsed)
+		duplicate := (response.StatusCode == 400 || response.StatusCode == 409) &&
+			(parsed.StatusCode == "409" && strings.EqualFold(parsed.Error, "Duplicate") && strings.EqualFold(parsed.Message, "The resource already exists") ||
+				strings.EqualFold(parsed.Message, "Asset Already Exists"))
+		if immutable && duplicate {
+			return client.verifyOutboundMediaDigest(ctx, objectPath, immutableDigest)
+		}
+		return storageUploadHTTPError{statusCode: response.StatusCode, objectAlreadyExists: duplicate}
 	}
 
 	return nil
@@ -191,6 +219,74 @@ func (client storageClient) objectExists(ctx context.Context, bucket string, obj
 		}
 		return false, fmt.Errorf("supabase storage object reconciliation failed: %s", message)
 	}
+}
+
+type storageDeleteHTTPError struct {
+	statusCode int
+}
+
+func (err storageDeleteHTTPError) Error() string {
+	return fmt.Sprintf("supabase storage delete returned HTTP %d", err.statusCode)
+}
+
+// deleteUnlinkedMediaObject uses the Storage API so object bytes and metadata
+// are removed together. The caller holds the GC row lock and rechecks live
+// references before invoking it.
+func (client storageClient) deleteUnlinkedMediaObject(ctx context.Context, organizationID string, objectPath string) error {
+	if client.projectURL == "" || client.apiKey == "" {
+		return ErrStorageNotConfigured
+	}
+	if !validUnlinkedMediaGCPath(organizationID, objectPath) {
+		return errors.New("invalid unlinked media GC path")
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/%s/%s",
+		client.projectURL,
+		url.PathEscape(whatsappMediaBucket),
+		supabasehttp.EscapeObjectPath(objectPath),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	supabasehttp.SetServiceAuth(request, client.apiKey)
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound || response.StatusCode >= 200 && response.StatusCode < 300 {
+		return nil
+	}
+	if response.StatusCode == http.StatusBadRequest {
+		// The local self-hosted Storage API returns HTTP 400 with an embedded
+		// 404/not_found code for a missing object. Accept only that exact shape;
+		// other 400 responses remain operational errors.
+		var missing struct {
+			StatusCode string `json:"statusCode"`
+			Error      string `json:"error"`
+			Message    string `json:"message"`
+		}
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if json.Unmarshal(payload, &missing) == nil && missing.StatusCode == "404" &&
+			missing.Error == "not_found" && strings.EqualFold(missing.Message, "Object not found") {
+			return nil
+		}
+	}
+	return storageDeleteHTTPError{statusCode: response.StatusCode}
+}
+
+func validUnlinkedMediaGCPath(organizationID string, objectPath string) bool {
+	orgID, ok := normalizeUUID(organizationID)
+	if !ok || !strings.HasPrefix(objectPath, "orgs/"+orgID+"/") {
+		return false
+	}
+	if strings.ContainsAny(objectPath, "?#\r\n\t") {
+		return false
+	}
+	return whatsappMediaPathBelongsToOrganization(objectPath, orgID)
 }
 
 func storageObjectMissingResponse(payload []byte) bool {

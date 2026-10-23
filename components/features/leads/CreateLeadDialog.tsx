@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useId, useMemo, useRef } from 'react';
 import { maskCNPJ, maskCPF, maskRG } from '@/lib/masks';
 import { isValidE164Phone } from '@/lib/phone-utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
 import { formatPropertyCurrency } from '@/lib/property-display-utils';
+import { buildLeadEditFields, changedLeadFields, getLeadDraftKey, normalizeLeadInterestPropertyIds, shouldInitializeLeadForm, uploadLeadFiles } from '@/lib/lead-edit-session';
+import { LeadAttachmentRecovery } from '@/components/features/leads/LeadAttachmentRecovery';
+import { captureLeadRequestIntent } from '@/lib/lead-request-intent';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
+import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
+import { isDefinitiveLeadReadDenial } from '@/lib/lead-read-access';
+import { requiresWonLeadFinancialReview, WON_LEAD_FINANCIAL_REVIEW_MESSAGE } from '@/components/features/leads/lead-detail/financial-review';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -14,16 +22,19 @@ import { InternationalPhoneInput } from '@/components/shared/forms/International
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { FormWizardLayout } from '@/components/shared/forms/FormWizardLayout';
+import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from '@/config/form-wizard';
+import { LeadDraftPreview } from '@/components/features/leads/LeadDraftPreview';
 import { TagSelector } from '@/components/ui/tag-selector';
 import { Loader2, User, Briefcase, Building2, DollarSign, Trophy, XCircle, CircleDot, FileText, X, Home, Paperclip, Trash2, Plus } from 'lucide-react';
-import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
+import { PropertyPickerDialog, type PropertyPickerProperty } from '@/components/features/properties/PropertyPickerDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { usePipelines, useStages } from '@/hooks/use-stages';
-import { useProperties } from '@/hooks/use-properties';
+import { useSelectedProperties } from '@/hooks/properties/use-selected-properties';
 import { useCreateLead, useLead, useLeadSensitiveProfile, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
 import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
@@ -52,8 +63,12 @@ interface CreateLeadDialogProps {
   contactName?: string | null;
   conversationId?: string | null;
   expectedPreviousLeadId?: string | null;
+  confirmHistoryLink?: true;
   lead?: EditableLead | null;
   onSaved?: (lead: Lead) => void;
+  onCreated?: (leadId: string) => void;
+  accessBlocked?: boolean;
+  accessPending?: boolean;
 }
 
 type LeadFormErrors = Partial<Record<
@@ -114,12 +129,20 @@ export function CreateLeadDialog({
   contactName,
   conversationId,
   expectedPreviousLeadId,
+  confirmHistoryLink,
   lead: leadSummary,
   onSaved,
+  onCreated,
+  accessBlocked = false,
+  accessPending = false,
 }: CreateLeadDialogProps) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization, profile, user, session } = useAuth();
+  const [submissionScope] = useState(createLeadImportScope);
+  const submissionScopeKey = open && !accessBlocked ? JSON.stringify([contactImportScopeKey(activeOrganization.organizationId, user?.id, getGlobalSignOutSessionId(session)), leadSummary?.id ?? null]) : null;
+  useLayoutEffect(() => submissionScope.activate(submissionScopeKey), [submissionScope, submissionScopeKey]);
   const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
+  const canUploadAttachments = hasPermission('lead_operate');
   const { hasModule } = useOrganizationModules();
   const { data: allUsers = [] } = useOrganizationUsers();
   const allAssignableUsers = hasPermission('lead_operate') ? allUsers : allUsers.filter(u => u.id === profile?.id);
@@ -131,18 +154,17 @@ export function CreateLeadDialog({
     (hasPermission('property_view') || hasPermission('property_manage'));
   const [activeTab, setActiveTab] = useState('basic');
   const { data: pipelines = [] } = usePipelines();
-  const { data: properties = [], isLoading: propertiesLoading } = useProperties(undefined, {}, {
-    enabled: canViewProperties && open && activeTab === 'interest',
-  });
+  const [pickedProperties, setPickedProperties] = useState<{ organizationId: string | null | undefined; items: PropertyPickerProperty[] }>({ organizationId: activeOrganization.organizationId, items: [] });
   const createLead = useCreateLead();
   const updateLead = useUpdateLead();
   const isEditMode = Boolean(leadSummary?.id);
-  const { data: persistedLead, isLoading: isLoadingPersistedLead } = useLead(isEditMode ? leadSummary?.id || null : null);
+  const { data: persistedLead, isLoading: isLoadingPersistedLead, error: persistedLeadError } = useLead(isEditMode ? leadSummary?.id || null : null);
+  const editReadDenied = isEditMode && (isDefinitiveLeadReadDenial(persistedLeadError) || persistedLead?.can_operate === false || !hasPermission('lead_operate'));
   const {
     data: sensitiveProfile,
     isLoading: isLoadingSensitiveProfile,
     isError: sensitiveProfileError,
-  } = useLeadSensitiveProfile(isEditMode ? leadSummary?.id || null : null, { enabled: open && isEditMode });
+  } = useLeadSensitiveProfile(isEditMode ? leadSummary?.id || null : null, { enabled: open && isEditMode && !editReadDenied });
   const isLoadingEditLead = isEditMode && (isLoadingPersistedLead || isLoadingSensitiveProfile);
   const editableLead = useMemo<EditableLead | null>(() => {
     if (!isEditMode || !leadSummary) return null;
@@ -157,9 +179,7 @@ export function CreateLeadDialog({
   // Form state
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const draftKey = !isEditMode && activeOrganization.organizationId
-    ? `lead-draft-${activeOrganization.organizationId}-${defaultPipelineId || 'default'}-${defaultStageId || 'any-stage'}`
-    : null;
+  const draftKey = !isEditMode ? getLeadDraftKey(user?.id, activeOrganization.organizationId, defaultPipelineId, defaultStageId) : null;
 
   const getEmptyFormData = useCallback(() => {
     const metadata = asRecord(editableLead?.metadata);
@@ -169,9 +189,7 @@ export function CreateLeadDialog({
     const metadataPropertyIds = Array.isArray(metadata.interestPropertyIds)
       ? metadata.interestPropertyIds.filter((value): value is string => typeof value === 'string')
       : [];
-    const interestPropertyIds = metadataPropertyIds.length > 0
-      ? metadataPropertyIds
-      : primaryPropertyId ? [primaryPropertyId] : [];
+    const interestPropertyIds = normalizeLeadInterestPropertyIds(primaryPropertyId, metadataPropertyIds);
 
     return ({
     name: editableLead?.name || '',
@@ -220,9 +238,25 @@ export function CreateLeadDialog({
   }, [editableLead, profile?.id, defaultPipelineId, defaultStageId, sensitiveProfile?.cpf, sensitiveProfile?.rg]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
+  const initializedFormRef = useRef<string | null>(null);
+  const editBaseFormRef = useRef(formData);
+  const editBaseLeadRef = useRef<Lead | null>(null);
+  const [reloadEditOpen, setReloadEditOpen] = useState(false);
+  const [attachmentRecovery, setAttachmentRecovery] = useState<{ leadId: string; files: File[]; canUpload: boolean; onFinish: () => void } | null>(null);
+  const { properties: selectedProperties, isLoading: propertiesLoading } = useSelectedProperties(
+    formData.interest_property_ids, canViewProperties && open,
+  );
+  const properties = [...new Map([...selectedProperties, ...(pickedProperties.organizationId === activeOrganization.organizationId ? pickedProperties.items : [])].map(property => [property.id, property])).values()];
   const finalTab = isEditMode ? 'interest' : 'management';
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Keep the retained lifetime pin here; extract this legacy form's submission controller into hooks/leads separately.
+  const submissionAttemptRef = useRef<object | null>(null);
+  const submissionMountedRef = useRef(false);
+  useLayoutEffect(() => {
+    submissionMountedRef.current = true;
+    return () => { submissionMountedRef.current = false; };
+  }, []);
   const selectedTeam = teams.find((team) => team.id === formData.team_id);
   const selectedTeamUserIds = new Set((selectedTeam?.members || []).map((member) => member.user_id));
   const users = formData.team_id
@@ -308,6 +342,12 @@ export function CreateLeadDialog({
   // Restore draft or reset form when dialog opens
   /* eslint-disable react-hooks/set-state-in-effect -- Syncs the controlled dialog opening with local draft form state. */
   useEffect(() => {
+    if (!open) { initializedFormRef.current = null; return; }
+    const identity = `${activeOrganization.organizationId}:${user?.id}:${leadSummary?.id || 'new'}:${draftKey || ''}:${conversationId || ''}`;
+    const ready = isEditMode ? !isLoadingEditLead && !!persistedLead : pipelines.length > 0;
+    if (!shouldInitializeLeadForm(initializedFormRef.current, identity, ready)) return;
+    initializedFormRef.current = identity;
+    setAttachmentRecovery(null);
     if (open) {
       setDraftRestored(false);
       setErrors({});
@@ -316,8 +356,11 @@ export function CreateLeadDialog({
 
       if (isEditMode) {
         if (isLoadingEditLead || !editableLead) return;
+        const initial = getEmptyFormData();
+        editBaseFormRef.current = initial;
+        editBaseLeadRef.current = persistedLead ?? null;
         setPendingAttachments([]);
-        setFormData(getEmptyFormData());
+        setFormData(initial);
         setActiveTab('basic');
         return;
       }
@@ -343,7 +386,9 @@ export function CreateLeadDialog({
           if (saved) {
             const parsed = JSON.parse(saved);
             if (parsed.formData && !isFormEmpty(parsed.formData)) {
-              setFormData({ ...getEmptyFormData(), ...parsed.formData });
+              // A draft from a previous WhatsApp flow cannot restore a binding
+              // into an ordinary lead creation without a fresh confirmation.
+              setFormData({ ...getEmptyFormData(), ...parsed.formData, conversation_id: '' });
               if (parsed.activeTab) setActiveTab(parsed.activeTab);
               setDraftRestored(true);
               return;
@@ -360,10 +405,11 @@ export function CreateLeadDialog({
         stage_id: defaultStageId || '',
       });
     }
-  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingEditLead, editableLead]);
+  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingEditLead, editableLead, persistedLead, activeOrganization.organizationId, user?.id, leadSummary?.id]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
+    if (submissionAttemptRef.current || isSubmitting) return;
     removeLeadDraft(draftKey);
     setPendingAttachments([]);
     setDraftRestored(false);
@@ -375,9 +421,11 @@ export function CreateLeadDialog({
       pipeline_id: defaultPipelineId || defaultPipeline?.id || '',
       stage_id: defaultStageId || '',
     });
-  }, [draftKey, pipelines, defaultPipelineId, defaultStageId, getEmptyFormData]);
+  }, [draftKey, pipelines, defaultPipelineId, defaultStageId, getEmptyFormData, isSubmitting]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen && (submissionAttemptRef.current || isSubmitting)) return;
+    if (!nextOpen && attachmentRecovery) { attachmentRecovery.onFinish(); return; }
     if (!nextOpen && draftKey && !isFormEmpty(formData)) {
       try {
         localStorage.setItem(draftKey, JSON.stringify({ formData, activeTab }));
@@ -385,7 +433,7 @@ export function CreateLeadDialog({
     }
 
     onOpenChange(nextOpen);
-  }, [activeTab, draftKey, formData, isFormEmpty, onOpenChange]);
+  }, [activeTab, draftKey, formData, isFormEmpty, onOpenChange, isSubmitting, attachmentRecovery]);
 
   // Prevent accidental close on backdrop click when form has data
   const handleInteractOutside = useCallback((e: Event) => {
@@ -465,13 +513,12 @@ export function CreateLeadDialog({
   }, []);
 
   // Update stage when pipeline changes
-  /* eslint-disable react-hooks/set-state-in-effect -- Uses async stage data to select the first available stage. */
   useEffect(() => {
+    if (submissionAttemptRef.current || isSubmitting) return;
     if (formData.pipeline_id && stages.length > 0 && !formData.stage_id) {
-      setFormData(prev => ({ ...prev, stage_id: stages[0].id }));
+      setFormData(prev => submissionAttemptRef.current || isSubmitting ? prev : ({ ...prev, stage_id: stages[0].id }));
     }
-  }, [formData.pipeline_id, formData.stage_id, stages]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [formData.pipeline_id, formData.stage_id, stages, isSubmitting]);
 
   useEffect(() => {
     return () => {
@@ -483,6 +530,9 @@ export function CreateLeadDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (accessBlocked || accessPending || submissionAttemptRef.current || isSubmitting || attachmentRecovery || editReadDenied) return;
+    const isCurrentSubmission = submissionScope.capture(submissionScopeKey);
+    if (!isCurrentSubmission()) return;
 
     if (activeTab === 'basic') {
       if (validateBasicStep()) setActiveTab('profile');
@@ -506,11 +556,24 @@ export function CreateLeadDialog({
       toast.error('Não foi possível carregar CPF e RG com segurança. Reabra o formulário e tente novamente.');
       return;
     }
+    if (isEditMode && !editBaseLeadRef.current?.updated_at) {
+      toast.error('Não foi possível confirmar a versão atual do contato. Reabra a edição.');
+      return;
+    }
+    const editChanges = isEditMode ? changedLeadFields(buildLeadEditFields(editBaseFormRef.current, parseCurrencyInput), buildLeadEditFields(formData, parseCurrencyInput)) : null;
+    if (isEditMode && editBaseLeadRef.current && Object.keys(editChanges || {}).length === 0 && pendingAttachments.length === 0) {
+      onSaved?.(editBaseLeadRef.current);
+      onOpenChange(false);
+      return;
+    }
 
+    const submittedEditBaseLead = isEditMode && editBaseLeadRef.current ? { ...editBaseLeadRef.current } : null;
+    const submissionAttempt = {};
+    submissionAttemptRef.current = submissionAttempt;
     setIsSubmitting(true);
     try {
+      const requestIntent = captureLeadRequestIntent(user?.id, getGlobalSignOutSessionId(session));
       const initialFeedback = formData.feedback.trim() || (!isEditMode ? formData.message.trim() : '');
-      const currentFeedback = editableLead?.feedback?.trim() || '';
       const primaryPropertyId = formData.interest_property_ids[0] || formData.property_id || null;
       const profileInput = {
         personType: formData.person_type,
@@ -525,23 +588,11 @@ export function CreateLeadDialog({
         stateRegistration: formData.state_registration || undefined,
       };
 
-      const savedLead = isEditMode && editableLead
-        ? await updateLead.mutateAsync({
+      const savedResult = isEditMode && editableLead
+        ? Object.keys(editChanges || {}).length === 0 ? editBaseLeadRef.current! : await updateLead.mutateAsync({
           id: editableLead.id,
-          name: formData.name,
-          phone: formData.phone || null,
-          email: formData.email || null,
-          feedback: initialFeedback === currentFeedback ? undefined : initialFeedback || null,
-          source: formData.source || 'manual',
-          cargo: formData.cargo || null,
-          empresa: formData.empresa || null,
-          profissao: formData.profissao || null,
-          renda_familiar: formData.renda_familiar || null,
-          valor_interesse: parseCurrencyInput(formData.valor_interesse) ?? null,
-          property_id: primaryPropertyId,
-          interest_property_id: primaryPropertyId,
-          interest_property_ids: formData.interest_property_ids,
-          profile: profileInput,
+          ...editChanges,
+          expectedUpdatedAt: editBaseLeadRef.current?.updated_at,
         })
         : await createLead.mutateAsync({
           name: formData.name,
@@ -559,6 +610,9 @@ export function CreateLeadDialog({
           expected_previous_lead_id: formData.conversation_id
             ? expectedPreviousLeadId || undefined
             : undefined,
+          confirm_history_link: formData.conversation_id
+            ? confirmHistoryLink
+            : undefined,
           cargo: formData.cargo || undefined,
           empresa: formData.empresa || undefined,
           profissao: formData.profissao || undefined,
@@ -571,43 +625,55 @@ export function CreateLeadDialog({
           profile: profileInput,
         });
 
-      let failedAttachments = 0;
-      for (const file of pendingAttachments) {
-        try {
-          await leadAttachmentsAPI.upload(
-            savedLead.id,
-            file,
-            activeOrganization.organizationId,
-          );
-        } catch {
-          failedAttachments += 1;
-        }
-      }
-
-      if (failedAttachments > 0) {
-        toast.warning(`Lead ${isEditMode ? 'atualizado' : 'criado'}, mas ${failedAttachments} documento(s) não foram enviados.`);
+      const savedLead = 'lead' in savedResult ? savedResult.lead : savedResult;
+      if (!isCurrentSubmission()) return;
+      const canUploadSavedLead = canUploadAttachments && savedLead?.can_operate === true;
+      const failedFiles = canUploadSavedLead ? await uploadLeadFiles(pendingAttachments, (file) => leadAttachmentsAPI.upload(savedResult.id, file, activeOrganization.organizationId, requestIntent), isCurrentSubmission) : pendingAttachments;
+      if (!isCurrentSubmission()) return;
+      if (failedFiles.length > 0) {
+        toast.warning(`Lead ${isEditMode ? 'atualizado' : 'criado'}, mas ${failedFiles.length} documento(s) não foram enviados.`);
       } else if (pendingAttachments.length > 0) {
         toast.success(`${pendingAttachments.length} documento(s) anexado(s).`);
       }
 
       // Clear draft on success
       removeLeadDraft(draftKey);
-      setPendingAttachments([]);
+      setPendingAttachments(failedFiles);
       setDraftRestored(false);
       setErrors({});
-      if (isEditMode) toast.success('Lead atualizado com sucesso!');
-      onSaved?.(savedLead as Lead);
-      onOpenChange(false);
+      if (isEditMode) {
+        if (submittedEditBaseLead && savedLead && requiresWonLeadFinancialReview(submittedEditBaseLead, savedLead)) {
+          toast.warning(WON_LEAD_FINANCIAL_REVIEW_MESSAGE);
+        } else toast.success('Lead atualizado com sucesso!');
+      }
+      let finished = false;
+      const finish = () => {
+        if (finished || !isCurrentSubmission()) return;
+        finished = true;
+        setAttachmentRecovery(null);
+        setPendingAttachments([]);
+        if (savedLead) onSaved?.(savedLead as Lead);
+        if (!isEditMode) onCreated?.(savedResult.id);
+        onOpenChange(false);
+      };
+      if (failedFiles.length > 0) {
+        setAttachmentRecovery({ leadId: savedResult.id, files: failedFiles, canUpload: canUploadSavedLead, onFinish: finish });
+      } else finish();
     } catch {
       // Error handled by mutation
     } finally {
-      setIsSubmitting(false);
+      if (submissionAttemptRef.current === submissionAttempt) {
+        submissionAttemptRef.current = null;
+        if (submissionMountedRef.current) setIsSubmitting(false);
+      }
     }
   };
 
   const updateField = <K extends keyof typeof formData>(field: K, value: (typeof formData)[K]) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    if (submissionAttemptRef.current || isSubmitting) return;
+    setFormData(prev => submissionAttemptRef.current || isSubmitting ? prev : ({ ...prev, [field]: value }));
     setErrors(prev => {
+      if (submissionAttemptRef.current || isSubmitting) return prev;
       let changed = false;
       const next = { ...prev };
       const remove = (key: keyof LeadFormErrors) => {
@@ -641,6 +707,19 @@ export function CreateLeadDialog({
     });
   };
 
+  const handleStepChange = (step: string) => {
+    if (submissionAttemptRef.current || isSubmitting) return;
+    setActiveTab(step);
+  };
+
+  // React capture also covers selectors rendered in portals outside the fieldset.
+  const handleDraftInteractionCapture = (event: React.SyntheticEvent) => {
+    if (!submissionAttemptRef.current && !isSubmitting) return;
+    if (event.type === 'keydown' && ['Tab', 'Escape'].includes((event as React.KeyboardEvent).key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   const hasValidPhone = !formData.phone || isValidE164Phone(formData.phone);
   const hasValidEmail = !formData.email.trim() || EMAIL_REGEX.test(formData.email.trim());
   const hasContactChannel = (!!formData.phone && hasValidPhone) || (!!formData.email.trim() && hasValidEmail);
@@ -653,7 +732,7 @@ export function CreateLeadDialog({
     .map((propertyId) => properties.find((property) => property.id === propertyId))
     .filter((property): property is NonNullable<typeof property> => Boolean(property));
   const handleAttachmentSelection = (files: FileList | null) => {
-    if (!files) return;
+    if (submissionAttemptRef.current || isSubmitting || !files || !canUploadAttachments) return;
     const incoming = Array.from(files);
     const oversized = incoming.filter((file) => file.size > MAX_ATTACHMENT_BYTES);
     if (oversized.length > 0) {
@@ -661,6 +740,7 @@ export function CreateLeadDialog({
     }
 
     setPendingAttachments((current) => {
+      if (submissionAttemptRef.current || isSubmitting) return current;
       const keys = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
       const valid = incoming.filter((file) => file.size <= MAX_ATTACHMENT_BYTES && !keys.has(`${file.name}:${file.size}:${file.lastModified}`));
       const next = [...current, ...valid].slice(0, MAX_PENDING_ATTACHMENTS);
@@ -678,8 +758,9 @@ export function CreateLeadDialog({
   };
   const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
   const leadDialogSurfaceClass = cn(
-    "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[88vh] !w-[96vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-none sm:!w-[720px] sm:!max-w-[720px]",
-    "!duration-0 !transition-none flex flex-col overflow-hidden rounded-none will-change-transform sm:rounded-[24px]",
+    FORM_WIZARD_DIALOG_CLASS_NAME,
+    "!left-1/2 !right-auto !top-1/2 !bottom-auto !max-w-[1440px] !w-[calc(100vw-24px)] !border-0 !p-0 text-[var(--app-text-primary)]",
+    "!duration-0 !transition-none flex flex-col overflow-hidden will-change-transform",
     "data-[state=open]:!animate-none data-[state=closed]:!animate-none data-[state=closed]:!slide-out-to-right data-[state=open]:!slide-in-from-right",
     "[&_label]:text-[12px] [&_label]:font-light [&_label]:text-[var(--app-text-secondary)]",
     "[&_input]:h-10 [&_input]:border-0 [&_input]:bg-[var(--app-surface-soft)] [&_input]:text-[var(--app-text-primary)] [&_input]:placeholder:text-[var(--app-text-tertiary)] [&_input]:shadow-none [&_input]:ring-0",
@@ -776,6 +857,12 @@ export function CreateLeadDialog({
       return false;
     }
 
+    if (formData.deal_status === 'won' && !hasPermission('lead_operate')) {
+      toast.error('Seu perfil não possui permissão para registrar um negócio ganho.');
+      setActiveTab('management');
+      return false;
+    }
+
     if (formData.deal_status === 'lost' && !formData.lost_reason.trim()) {
       setErrors((previous) => ({ ...previous, lost_reason: 'Informe o motivo da perda' }));
       toast.error('Informe o motivo da perda');
@@ -787,7 +874,9 @@ export function CreateLeadDialog({
   };
 
   const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key !== 'Enter' || e.defaultPrevented || activeTab === finalTab) return;
+    if (e.key !== 'Enter' || e.defaultPrevented) return;
+    if (submissionAttemptRef.current || isSubmitting) { e.preventDefault(); return; }
+    if (activeTab === finalTab) return;
 
     const target = e.target as HTMLElement;
     if (
@@ -814,6 +903,9 @@ export function CreateLeadDialog({
       setActiveTab('management');
     }
   };
+
+  // Preserve form/attachment state in memory while Pipeline revalidates, without rendering private data.
+  if (accessBlocked) return null;
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -850,6 +942,12 @@ export function CreateLeadDialog({
           </div>
         )}
 
+        {isEditMode && editBaseLeadRef.current && persistedLead?.updated_at !== editBaseLeadRef.current.updated_at && !attachmentRecovery && <div role="status" className="mx-6 mt-2 flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2 text-sm">
+          <span>O contato recebeu uma atualização. Sua edição foi preservada.</span>
+          <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => {
+            if (!submissionAttemptRef.current && !isSubmitting) setReloadEditOpen(true);
+          }}>Recarregar dados atuais</Button>
+        </div>}
         {/* Draft restored banner */}
         {draftRestored && (
           <div className="mx-6 mt-2 flex items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
@@ -859,6 +957,7 @@ export function CreateLeadDialog({
             </div>
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={discardDraft}
               className="flex items-center gap-1 text-[12px] font-light text-primary hover:text-primary/80"
             >
@@ -868,19 +967,86 @@ export function CreateLeadDialog({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} className="flex flex-col flex-1 min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="px-6 pb-4 pt-3">
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-8 w-full rounded-[8px] bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
-                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Contato</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Pessoa</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Interesse</TabsTrigger>
-                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Gestão</TabsTrigger>}
-                </TabsList>
+        {editReadDenied ? <div role="alert" className="p-6 text-sm">Você não pode mais editar este contato ou ele foi excluído. Feche a edição e atualize a lista.</div> : attachmentRecovery ? <LeadAttachmentRecovery {...attachmentRecovery} canUpload={attachmentRecovery.canUpload && canUploadAttachments} onRunningChange={setIsSubmitting} /> : <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} aria-busy={isSubmitting} onPointerDownCapture={handleDraftInteractionCapture} onClickCapture={handleDraftInteractionCapture} onChangeCapture={handleDraftInteractionCapture} onKeyDownCapture={handleDraftInteractionCapture} className="flex flex-col flex-1 min-h-0">
+          <FormWizardLayout
+            navTourId="lead-form-tabs"
+            steps={[
+              { id: 'basic', label: 'Contato', icon: User, disabled: isSubmitting, tourId: 'lead-form-tab-basic', buttonId: `${fieldIdPrefix}-tab-basic`, panelId: `${fieldIdPrefix}-panel-basic` },
+              { id: 'profile', label: 'Pessoa', icon: Briefcase, disabled: isSubmitting, tourId: 'lead-form-tab-profile', buttonId: `${fieldIdPrefix}-tab-profile`, panelId: `${fieldIdPrefix}-panel-profile` },
+              { id: 'interest', label: 'Interesse', icon: Home, disabled: isSubmitting, tourId: 'lead-form-tab-interest', buttonId: `${fieldIdPrefix}-tab-interest`, panelId: `${fieldIdPrefix}-panel-interest` },
+              ...(!isEditMode ? [{ id: 'management', label: 'Gestão', icon: Building2, disabled: isSubmitting, tourId: 'lead-form-tab-management', buttonId: `${fieldIdPrefix}-tab-management`, panelId: `${fieldIdPrefix}-panel-management` }] : []),
+            ]}
+            activeStep={activeTab}
+            onStepChange={handleStepChange}
+            asideTitle="Card do lead"
+            aside={<LeadDraftPreview
+              name={formData.name}
+              phone={formData.phone}
+              email={formData.email}
+              personType={formData.person_type}
+              corporateName={formData.corporate_name}
+              profileSummary={[
+                ...(formData.person_type === 'individual' ? [
+                  { label: 'Nome social', value: formData.social_name },
+                  { label: 'Profissão', value: formData.profissao },
+                  { label: 'Renda', value: formData.renda_familiar },
+                ] : [{ label: 'Nome fantasia', value: formData.trade_name }]),
+                { label: 'Cargo', value: formData.cargo },
+                { label: 'Empresa', value: formData.empresa },
+              ]}
+              tagCount={formData.tag_ids.length}
+              source={formData.source}
+              feedback={formData.feedback}
+              value={formData.valor_interesse}
+              properties={canViewProperties ? selectedInterestProperties : []}
+              interestCount={canViewProperties ? formData.interest_property_ids.length : 0}
+              pipeline={pipelines.find((pipeline) => pipeline.id === formData.pipeline_id)?.name || ''}
+              stage={stages.find((stage) => stage.id === formData.stage_id)?.name || ''}
+              team={canSelectTeam ? selectedTeam?.name || (formData.team_id ? '' : 'Pessoal') : ''}
+              assignee={allAssignableUsers.find((user) => user.id === formData.assigned_user_id)?.name || ''}
+              dealStatus={dealStatusOptions.find((option) => option.value === formData.deal_status)?.label || 'Aberto'}
+              lostReason={formData.deal_status === 'lost' ? formData.lost_reason : ''}
+              attachmentNames={pendingAttachments.map((file) => file.name)}
+              isEditMode={isEditMode}
+            />}
+            footer={<div className="flex w-full items-center justify-end gap-2">
+              <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={isSubmitting} onClick={() => {
+                if (submissionAttemptRef.current || isSubmitting) return;
+                if (activeTab === 'basic') handleOpenChange(false);
+                else if (activeTab === 'profile') setActiveTab('basic');
+                else if (activeTab === 'interest') setActiveTab('profile');
+                else setActiveTab('interest');
+              }}>
+                {activeTab === 'basic' ? 'Cancelar' : 'Voltar'}
+              </Button>
+              {activeTab !== finalTab ? <Button
+                key="btn-avancar"
+                type="button"
+                className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
+                disabled={isSubmitting || isLoadingEditLead}
+                onClick={() => {
+                  if (submissionAttemptRef.current || isSubmitting) return;
+                  if (activeTab === 'basic' && validateBasicStep()) setActiveTab('profile');
+                  else if (activeTab === 'profile' && validateProfileStep()) setActiveTab('interest');
+                  else if (activeTab === 'interest' && !isEditMode) setActiveTab('management');
+                }}
+              >Avançar</Button> : <Button
+                key="btn-submit"
+                data-tour="lead-form-submit"
+                type="submit"
+                className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
+                disabled={accessPending || isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
+              >
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isSubmitting ? isEditMode ? 'Salvando...' : 'Criando...' : isEditMode ? 'Salvar alterações' : 'Criar Lead'}
+              </Button>}
+            </div>}
+          >
+              <fieldset disabled={isSubmitting} className="m-0 min-w-0 border-0 p-0">
+              <Tabs value={activeTab} onValueChange={handleStepChange} className="w-full">
 
                 {/* Basic Info Tab */}
-                <TabsContent data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
+                <TabsContent id={`${fieldIdPrefix}-panel-basic`} aria-labelledby={`${fieldIdPrefix}-tab-basic`} data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -907,6 +1073,7 @@ export function CreateLeadDialog({
                           <Label htmlFor={fieldIds.phone} className="text-sm font-medium">Telefone</Label>
                           <InternationalPhoneInput
                             id={fieldIds.phone}
+                            disabled={isSubmitting}
                             value={formData.phone}
                             onChange={(value) => updateField('phone', value)}
                             placeholder="(00) 00000-0000"
@@ -977,7 +1144,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Profile/Contract Tab */}
-                <TabsContent data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
+                <TabsContent id={`${fieldIdPrefix}-panel-profile`} aria-labelledby={`${fieldIdPrefix}-tab-profile`} data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
                   <div className="space-y-2">
                     <Label>Tipo de pessoa</Label>
                     <div className="grid grid-cols-2 gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
@@ -1006,7 +1173,7 @@ export function CreateLeadDialog({
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
                         <Label>Gênero</Label>
-                        <Select value={formData.gender || '__none__'} onValueChange={(value) => updateField('gender', value === '__none__' ? '' : value as typeof formData.gender)}>
+                        <Select disabled={isSubmitting} value={formData.gender || '__none__'} onValueChange={(value) => updateField('gender', value === '__none__' ? '' : value as typeof formData.gender)}>
                           <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Não informado</SelectItem>
@@ -1077,7 +1244,7 @@ export function CreateLeadDialog({
                   </div>
                 </TabsContent>
 
-                <TabsContent data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
+                <TabsContent id={`${fieldIdPrefix}-panel-interest`} aria-labelledby={`${fieldIdPrefix}-tab-interest`} data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
                   <div className="space-y-2">
                     <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Valor de interesse</Label>
                     <Input value={formData.valor_interesse} onChange={(e) => updateField('valor_interesse', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
@@ -1097,7 +1264,9 @@ export function CreateLeadDialog({
                           type="button"
                           aria-label={`Remover ${property.title || property.code || 'imóvel'}`}
                           onClick={() => {
+                            if (submissionAttemptRef.current || isSubmitting) return;
                             setFormData((previous) => {
+                              if (submissionAttemptRef.current || isSubmitting) return previous;
                               const nextIds = previous.interest_property_ids.filter((id) => id !== property.id);
                               const nextPrimary = properties.find((candidate) => candidate.id === nextIds[0]);
                               return {
@@ -1123,10 +1292,13 @@ export function CreateLeadDialog({
                         tipo_de_negocio: p.tipo_de_negocio, commission_percentage: p.commission_percentage, status: p.status,
                       }))}
                       selectedPropertyId={null}
-                      disabled={!canViewProperties}
+                      disabled={isSubmitting || !canViewProperties}
                       isLoading={propertiesLoading}
                       onSelect={(property) => {
+                        if (submissionAttemptRef.current || isSubmitting) return;
+                        setPickedProperties(previous => submissionAttemptRef.current || isSubmitting ? previous : ({ organizationId: activeOrganization.organizationId, items: [...(previous.organizationId === activeOrganization.organizationId ? previous.items.filter(item => item.id !== property.id) : []), property] }));
                         setFormData((previous) => {
+                          if (submissionAttemptRef.current || isSubmitting) return previous;
                           if (previous.interest_property_ids.includes(property.id)) return previous;
                           const nextIds = [...previous.interest_property_ids, property.id];
                           const becomesPrimary = !previous.property_id;
@@ -1141,7 +1313,7 @@ export function CreateLeadDialog({
                         });
                       }}
                       trigger={(
-                        <button type="button" disabled={!canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 px-3 text-[12px] font-light text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
+                        <button type="button" disabled={isSubmitting || !canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 px-3 text-[12px] font-light text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
                           <Plus className="h-3.5 w-3.5" />{selectedInterestProperties.length > 0 ? 'Adicionar outro imóvel' : 'Adicionar imóvel'}
                         </button>
                       )}
@@ -1158,6 +1330,7 @@ export function CreateLeadDialog({
                       id={`${fieldIdPrefix}-lead-attachments`}
                       type="file"
                       multiple
+                      disabled={isSubmitting || !canUploadAttachments}
                       accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
                       className="sr-only"
                       onChange={(event) => {
@@ -1165,9 +1338,10 @@ export function CreateLeadDialog({
                         event.currentTarget.value = '';
                       }}
                     />
-                    <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 text-[12px] font-light text-primary hover:bg-primary/15">
+                    {!canUploadAttachments && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil pode criar o contato, mas não possui permissão para anexar documentos.</p>}
+                    {canUploadAttachments && <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 text-[12px] font-light text-primary hover:bg-primary/15">
                       <Plus className="h-3.5 w-3.5" />Adicionar documentos
-                    </label>
+                    </label>}
                     {pendingAttachments.map((file) => (
                       <div key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
                         <FileText className="h-4 w-4 shrink-0 text-primary" />
@@ -1175,7 +1349,10 @@ export function CreateLeadDialog({
                           <p className="truncate text-xs font-medium text-[var(--app-text-primary)]">{file.name}</p>
                           <p className="text-[11px] text-[var(--app-text-tertiary)]">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
                         </div>
-                        <button type="button" aria-label={`Remover ${file.name}`} onClick={() => setPendingAttachments((current) => current.filter((item) => item !== file))} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive">
+                        <button type="button" aria-label={`Remover ${file.name}`} onClick={() => {
+                          if (submissionAttemptRef.current || isSubmitting) return;
+                          setPendingAttachments((current) => submissionAttemptRef.current || isSubmitting ? current : current.filter((item) => item !== file));
+                        }} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -1184,7 +1361,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Management Tab */}
-                {!isEditMode && <TabsContent data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
+                {!isEditMode && <TabsContent id={`${fieldIdPrefix}-panel-management`} aria-labelledby={`${fieldIdPrefix}-tab-management`} data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
                   <div className="grid gap-4 sm:grid-cols-2">
                     {canSelectTeam && (
                       <div className="space-y-2">
@@ -1193,14 +1370,16 @@ export function CreateLeadDialog({
                           Escopo do lead
                         </Label>
                         <Select
+                          disabled={isSubmitting}
                           value={formData.team_id || 'personal'}
                           onValueChange={(value) => {
+                            if (submissionAttemptRef.current || isSubmitting) return;
                             const nextTeamId = value === 'personal' ? '' : value;
                             const nextTeam = teams.find((team) => team.id === nextTeamId);
                             const memberIds = new Set((nextTeam?.members || []).map((member) => member.user_id));
                             const currentAssigneeIsValid = !nextTeamId || memberIds.has(formData.assigned_user_id);
                             const fallbackAssignee = allAssignableUsers.find((user) => memberIds.has(user.id))?.id || '';
-                            setFormData((previous) => ({
+                            setFormData((previous) => submissionAttemptRef.current || isSubmitting ? previous : ({
                               ...previous,
                               team_id: nextTeamId,
                               assigned_user_id: currentAssigneeIsValid ? previous.assigned_user_id : fallbackAssignee,
@@ -1225,6 +1404,7 @@ export function CreateLeadDialog({
                         Responsável
                       </Label>
                       <Select
+                        disabled={isSubmitting}
                         value={formData.assigned_user_id}
                         onValueChange={(v) => updateField('assigned_user_id', v)}
                       >
@@ -1243,6 +1423,7 @@ export function CreateLeadDialog({
                     <div className="space-y-2">
                       <Label>Status do Negócio</Label>
                       <Select
+                        disabled={isSubmitting}
                         value={formData.deal_status}
                         onValueChange={(v) => updateField('deal_status', v)}
                       >
@@ -1251,7 +1432,7 @@ export function CreateLeadDialog({
                         </SelectTrigger>
                         <SelectContent>
                           {dealStatusOptions.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value}>
+                            <SelectItem key={opt.value} value={opt.value} disabled={opt.value === 'won' && !canUploadAttachments}>
                               <div className="flex items-center gap-2">
                                 <opt.icon className={`h-3.5 w-3.5 ${opt.color}`} />
                                 {opt.label}
@@ -1281,6 +1462,7 @@ export function CreateLeadDialog({
                     <div className="space-y-2">
                       <Label>Pipeline</Label>
                       <Select
+                        disabled={isSubmitting}
                         value={formData.pipeline_id}
                         onValueChange={(v) => {
                           updateField('pipeline_id', v);
@@ -1304,7 +1486,7 @@ export function CreateLeadDialog({
                       <Select
                         value={formData.stage_id}
                         onValueChange={(v) => updateField('stage_id', v)}
-                        disabled={!formData.pipeline_id}
+                        disabled={isSubmitting || !formData.pipeline_id}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Selecione o estágio" />
@@ -1328,6 +1510,7 @@ export function CreateLeadDialog({
                     <div className="space-y-2">
                       <Label>Tags</Label>
                       <TagSelector
+                        disabled={isSubmitting}
                         selectedTagIds={formData.tag_ids}
                         onSelectTag={(tagId) => {
                           if (!formData.tag_ids.includes(tagId)) {
@@ -1344,48 +1527,24 @@ export function CreateLeadDialog({
                   </div>
                 </TabsContent>}
               </Tabs>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 gap-2 px-6 pb-6 pt-3">
-            <Button type="button" className="h-10 w-[40%] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)}>
-              Cancelar
-            </Button>
-            {activeTab !== finalTab ? (
-              <Button
-                key="btn-avancar"
-                type="button"
-                className="h-10 w-[60%] rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
-                onClick={() => {
-                  if (activeTab === 'basic') {
-                    if (!validateBasicStep()) return;
-                    setActiveTab('profile');
-                  }
-                  else if (activeTab === 'profile') {
-                    if (!validateProfileStep()) return;
-                    setActiveTab('interest');
-                  }
-                  else if (activeTab === 'interest' && !isEditMode) setActiveTab('management');
-                }}
-              >
-                Avançar
-              </Button>
-            ) : (
-              <Button
-                data-tour="lead-form-submit"
-                key="btn-submit"
-                type="submit"
-                className="h-10 w-[60%] rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90 disabled:opacity-40"
-                disabled={isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
-              >
-                {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {isSubmitting
-                  ? isEditMode ? 'Salvando...' : 'Criando...'
-                  : isEditMode ? 'Salvar alterações' : 'Criar Lead'}
-              </Button>
-            )}
-          </div>
-        </form>
+              </fieldset>
+          </FormWizardLayout>
+        </form>}
+        <AlertDialog open={reloadEditOpen} onOpenChange={setReloadEditOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader><AlertDialogTitle>Recarregar o contato?</AlertDialogTitle><AlertDialogDescription>As alterações ainda não salvas deste formulário serão descartadas. Os dados atuais do contato serão carregados.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>Manter minha edição</AlertDialogCancel><AlertDialogAction disabled={isSubmitting} onClick={() => {
+              if (submissionAttemptRef.current || isSubmitting || !persistedLead || isLoadingEditLead) return;
+              const initial = getEmptyFormData();
+              editBaseFormRef.current = initial;
+              editBaseLeadRef.current = persistedLead;
+              setFormData(initial);
+              setPendingAttachments([]);
+              setErrors({});
+              setActiveTab('basic');
+            }}>Recarregar e descartar edição</AlertDialogAction></AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </SheetContent>
     </Sheet>
   );

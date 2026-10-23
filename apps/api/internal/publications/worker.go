@@ -39,6 +39,9 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	if config.Lease <= 0 {
 		config.Lease = 2 * time.Minute
 	}
+	if config.Lease < 2*time.Second {
+		config.Lease = 2 * time.Second
+	}
 	if config.MaxAttempts < 1 {
 		config.MaxAttempts = 12
 	}
@@ -52,8 +55,15 @@ func (repo Repository) StartWorker(ctx context.Context, logger *slog.Logger) {
 	if !repo.config.Worker.Enabled {
 		return
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	workerID := publicationWorkerID()
 	go func() {
+		if repo.workerState != nil {
+			repo.workerState.running.Store(true)
+			defer repo.workerState.running.Store(false)
+		}
 		ticker := time.NewTicker(repo.config.Worker.Interval)
 		defer ticker.Stop()
 		repo.runWorkerBatch(ctx, logger, workerID)
@@ -80,13 +90,52 @@ func publicationWorkerID() string {
 }
 
 func (repo Repository) runWorkerBatch(ctx context.Context, logger *slog.Logger, workerID string) {
-	jobs, err := repo.claimJobs(ctx, workerID)
-	if err != nil {
-		logger.Error("property publication worker claim failed", "error", err)
-		return
+	if logger == nil {
+		logger = slog.Default()
 	}
-	for _, job := range jobs {
-		if err := repo.processJob(ctx, workerID, job); err != nil {
+	defer func() {
+		if recover() != nil {
+			if repo.workerState != nil {
+				repo.workerState.failed.Add(1)
+			}
+			logger.Error("property publication batch interrupted")
+		}
+	}()
+	if repo.workerState != nil {
+		repo.workerState.lastStarted.Store(time.Now().UnixNano())
+		defer func() { repo.workerState.lastCompleted.Store(time.Now().UnixNano()) }()
+	}
+	defer func() {
+		reconcileCtx, cancel := context.WithTimeout(ctx, min(5*time.Second, publicationJobTimeout(repo.config.Worker.Lease)))
+		defer cancel()
+		if err := repo.reconcileExhaustedJobs(reconcileCtx); err != nil {
+			logger.Error("property publication exhausted-job reconciliation failed", "error", err)
+		}
+	}()
+	for processed := 0; processed < repo.config.Worker.BatchSize; processed++ {
+		claimCtx, cancel := context.WithTimeout(ctx, publicationJobTimeout(repo.config.Worker.Lease))
+		// Claim only the job that can start now. A serial worker must not let
+		// the leases of an entire batch expire while earlier jobs are running.
+		jobs, err := repo.claimJobs(claimCtx, workerID, 1)
+		cancel()
+		if err != nil {
+			logger.Error("property publication worker claim failed", "error", err)
+			return
+		}
+		if len(jobs) == 0 {
+			if repo.workerState != nil {
+				repo.workerState.lastProgress.Store(time.Now().UnixNano())
+			}
+			return
+		}
+		job := jobs[0]
+		if repo.workerState != nil {
+			repo.workerState.processed.Add(1)
+		}
+		if err := repo.processJobSafely(ctx, workerID, job); err != nil {
+			if repo.workerState != nil {
+				repo.workerState.failed.Add(1)
+			}
 			logger.Error(
 				"property publication job failed",
 				"job_id", job.ID,
@@ -95,13 +144,18 @@ func (repo Repository) runWorkerBatch(ctx context.Context, logger *slog.Logger, 
 				"error", err,
 			)
 		}
+		if repo.workerState != nil {
+			repo.workerState.lastProgress.Store(time.Now().UnixNano())
+		}
 	}
-	if len(jobs) == repo.config.Worker.BatchSize {
-		wakePublicationWorker()
-	}
+	wakePublicationWorker()
 }
 
-func (repo Repository) claimJobs(ctx context.Context, workerID string) ([]pendingJob, error) {
+func (repo Repository) claimJobs(ctx context.Context, workerID string, limits ...int) ([]pendingJob, error) {
+	limit := repo.config.Worker.BatchSize
+	if len(limits) > 0 {
+		limit = limits[0]
+	}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select claimed.id::text,
 		       claimed.publication_id::text,
@@ -137,7 +191,7 @@ func (repo Repository) claimJobs(ctx context.Context, workerID string) ([]pendin
 		  on version.id = claimed.version_id
 		 and version.organization_id = claimed.organization_id
 		order by claimed.created_at, claimed.id
-	`, workerID, repo.config.Worker.BatchSize, repo.config.Worker.Lease.Seconds())
+	`, workerID, limit, repo.config.Worker.Lease.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +246,13 @@ func (repo Repository) claimJobs(ctx context.Context, workerID string) ([]pendin
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := repo.reconcileExhaustedJobs(ctx); err != nil {
-		return nil, err
+	// The serial runtime reconciles once per batch, rather than scanning all
+	// historic jobs for every single-job claim. Standalone callers retain the
+	// original claim-and-reconcile contract.
+	if len(limits) == 0 {
+		if err := repo.reconcileExhaustedJobs(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return jobs, nil
 }
@@ -256,25 +315,26 @@ func (repo Repository) processPublishJob(ctx context.Context, workerID string, j
 	if job.Version == nil || job.VersionID == nil || job.PayloadHash == nil || job.SourcePropertyUpdatedAt == nil {
 		return repo.failJob(ctx, workerID, job, "version_missing", "Publication version is missing.", true)
 	}
+	workerTenant, authorizationErr := repo.workerTenantForPublish(ctx, job)
+	if authorizationErr != nil {
+		return repo.failJob(ctx, workerID, job, "publication_access_unavailable", "O solicitante não possui mais acesso para publicar este imóvel.", publicationAuthorizationFailurePermanent(authorizationErr))
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if ok, err := jobFenceValid(ctx, tx, job, workerID); err != nil || !ok {
+	if ok, err := lockPublicationJobSource(ctx, tx, job, workerID, repo.config.Worker.Lease); err != nil || !ok {
 		if err != nil {
+			if errors.Is(err, errPublicationInventoryLock) {
+				return repo.finishRolledBackFailure(ctx, tx, workerID, job, "inventory_changed", "O vínculo de estoque mudou. A publicação será revalidada.", false, err)
+			}
 			return err
 		}
 		return nil
 	}
 
-	workerTenant := tenant.Context{
-		OrganizationID: job.OrganizationID,
-		UserID:         workerActor(job),
-		IsSuperAdmin:   true,
-		EnabledModules: []string{"properties", "site", "portals"},
-	}
 	scope, err := publicationScopeForJob(job)
 	if err != nil {
 		return repo.finishRolledBackFailure(ctx, tx, workerID, job, "unsupported_channel", "Unsupported publication channel.", true, err)
@@ -304,6 +364,9 @@ func (repo Repository) processPublishJob(ctx context.Context, workerID string, j
 	if !publishJobIsCurrent(*publication, job) {
 		return supersedeClaim(ctx, tx, workerID, job, "superseded", "A newer publication request replaced this job.")
 	}
+	if err := ensureProviderConfigurationStable(scope, publication, providerListingIDForScope(scope, source), source.GrupoOLXPublicationType); err != nil {
+		return repo.finishRolledBackFailure(ctx, tx, workerID, job, "channel_configuration_changed", "A configuração do anúncio mudou. Confira o canal antes de publicar novamente.", true, err)
+	}
 	checks, _, readinessState := evaluatePublicationReadiness(scope, source)
 	if readinessState != ReadinessReady {
 		return repo.finishRolledBackFailure(ctx, tx, workerID, job, "readiness_blocked", firstCheckMessage(checks), true, ErrPublicationNotReady)
@@ -314,7 +377,7 @@ func (repo Repository) processPublishJob(ctx context.Context, workerID string, j
 		return err
 	}
 	if !source.UpdatedAt.Equal(*job.SourcePropertyUpdatedAt) || currentHash != *job.PayloadHash {
-		return supersedeChangedSnapshot(ctx, tx, workerID, job, publication.ID, checks)
+		return repo.refreshChangedSnapshot(ctx, tx, workerID, job, *publication, workerTenant, source, scope, checks)
 	}
 
 	publicURL := source.GrupoOLXPublicURL
@@ -393,8 +456,11 @@ func (repo Repository) processUnpublishJob(ctx context.Context, workerID string,
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if ok, err := jobFenceValid(ctx, tx, job, workerID); err != nil || !ok {
+	if ok, err := lockPublicationJobSource(ctx, tx, job, workerID, repo.config.Worker.Lease); err != nil || !ok {
 		if err != nil {
+			if errors.Is(err, errPublicationInventoryLock) {
+				return repo.finishRolledBackFailure(ctx, tx, workerID, job, "inventory_changed", "O vínculo de estoque mudou. A retirada será revalidada.", false, err)
+			}
 			return err
 		}
 		return nil
@@ -500,6 +566,18 @@ func (repo Repository) failJob(ctx context.Context, workerID string, job pending
 		return err
 	}
 	defer tx.Rollback(ctx)
+	return repo.failJobWithTx(ctx, tx, workerID, job, code, message, permanent)
+}
+
+func (repo Repository) failJobWithTx(ctx context.Context, tx pgx.Tx, workerID string, job pendingJob, code string, message string, permanent bool) error {
+	// Failure accounting also updates canonical state. Deletion must be able to
+	// cascade property -> publication -> jobs without waiting on our job first.
+	valid, err := lockPublicationJobSource(ctx, tx, job, workerID, repo.config.Worker.Lease)
+	if err != nil || !valid {
+		// A property/job removed while we waited, or a reclaimed/expired lease,
+		// requires no failure write. Existing claim reconciliation owns retries.
+		return err
+	}
 	retryAt := time.Now().UTC().Add(publicationRetryDelay(job.Attempts))
 	var failed bool
 	err = tx.QueryRow(ctx, `
@@ -583,7 +661,11 @@ func publicationRetryDelay(attempt int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func jobFenceValid(ctx context.Context, tx pgx.Tx, job pendingJob, workerID string) (bool, error) {
+func jobFenceValid(ctx context.Context, tx pgx.Tx, job pendingJob, workerID string, leases ...time.Duration) (bool, error) {
+	leaseSeconds := float64(0)
+	if len(leases) > 0 {
+		leaseSeconds = leases[0].Seconds()
+	}
 	var valid bool
 	err := tx.QueryRow(ctx, `
 		select exists (
@@ -593,9 +675,12 @@ func jobFenceValid(ctx context.Context, tx pgx.Tx, job pendingJob, workerID stri
 		    and status = 'processing'
 		    and locked_by = $2
 		    and lease_token = $3::uuid
+		    and organization_id = $4::uuid
+		    and property_id = $5::uuid
+		    and ($6::double precision <= 0 or locked_at > clock_timestamp() - make_interval(secs => $6::double precision))
 		  for update
 		)
-	`, job.ID, workerID, job.LeaseToken).Scan(&valid)
+	`, job.ID, workerID, job.LeaseToken, job.OrganizationID, job.PropertyID, leaseSeconds).Scan(&valid)
 	return valid, err
 }
 
@@ -633,69 +718,6 @@ func supersedeClaim(ctx context.Context, tx pgx.Tx, workerID string, job pending
 		return nil
 	}
 	return tx.Commit(ctx)
-}
-
-func supersedeChangedSnapshot(
-	ctx context.Context,
-	tx pgx.Tx,
-	workerID string,
-	job pendingJob,
-	publicationID string,
-	checks []Check,
-) error {
-	validationErrors, err := json.Marshal(unresolvedChecks(checks))
-	if err != nil {
-		return err
-	}
-	command, err := tx.Exec(ctx, `
-		update public.property_channel_publication_jobs
-		set status = 'superseded',
-		    locked_at = null,
-		    locked_by = null,
-		    lease_token = null,
-		    last_error_code = 'snapshot_changed',
-		    last_error_message = 'Property data changed after this version was queued.',
-		    completed_at = now(),
-		    dead_lettered_at = null,
-		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-		  and lease_token = $3::uuid
-	`, job.ID, workerID, job.LeaseToken)
-	if err != nil {
-		return err
-	}
-	if command.RowsAffected() == 0 {
-		return nil
-	}
-	_, err = tx.Exec(ctx, `
-		update public.property_channel_publications
-		set observed_state = case when published_version is not null then 'published' else 'error' end,
-		    readiness_state = $3,
-		    validation_errors = $4::jsonb,
-		    last_error_code = 'snapshot_changed',
-		    last_error_message = 'Property data changed after this version was queued. Retry to publish a fresh version.',
-		    last_attempt_at = now(),
-		    updated_at = now()
-		where id = $1::uuid
-		  and organization_id = $2::uuid
-		  and desired_state = 'published'
-		  and current_version = $5
-	`, publicationID, job.OrganizationID, readinessFromChecks(checks), string(validationErrors), *job.Version)
-	if err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-func readinessFromChecks(checks []Check) string {
-	for _, check := range checks {
-		if check.Severity == "error" && !check.Resolved {
-			return ReadinessBlocked
-		}
-	}
-	return ReadinessReady
 }
 
 func publicationScopeForJob(job pendingJob) (publicationScope, error) {

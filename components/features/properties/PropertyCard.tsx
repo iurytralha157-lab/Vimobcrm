@@ -30,6 +30,7 @@ import {
   RotateCcw,
   KeyRound,
   History,
+  CircleAlert,
 } from "lucide-react";
 import { Property } from "@/hooks/use-properties";
 import type { PropertySiteInfo } from "@/lib/api/property-support";
@@ -38,6 +39,7 @@ import { getSafePropertyImageSource } from "@/lib/property-media";
 import { getPropertyMetadataString as metadataString } from "@/lib/property-display-utils";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { getSitePublicationCardState, type SitePublication } from "./publication/site-publication-state";
 
 type PropertyWithCommission = Property & {
   commission_percentage?: number | null;
@@ -46,6 +48,7 @@ type PropertyWithCommission = Property & {
 type PropertyWithPublication = Property & {
   published_on_site?: boolean | null;
   anunciar?: boolean | null;
+  site_publication?: SitePublication | null;
 };
 
 type PropertyWithMetadata = Property & {
@@ -133,6 +136,9 @@ export function PropertyCard({
   const isSitePublished = Boolean(
     publication.published_on_site ?? publication.anunciar ?? false,
   );
+  const canonicalSiteState = publication.site_publication?.id
+    ? getSitePublicationCardState(publication.site_publication, isSitePublished)
+    : null;
   const isPrivate = (!isSitePublished && !isUnavailable) || isPrivateStatus;
   const propertyType = displayPropertyType
     .normalize("NFD")
@@ -180,7 +186,7 @@ export function PropertyCard({
   const commissionPercentage = (property as PropertyWithCommission)
     .commission_percentage;
   const isPubliclyAvailable =
-    isSitePublished && !isPrivateStatus && !isUnavailable && !isInactive;
+    (canonicalSiteState?.canOpenPublicSite ?? isSitePublished) && !isPrivateStatus && !isUnavailable && !isInactive;
   const propertySiteUrl = isPubliclyAvailable
     ? buildPropertySiteUrl(property.code, siteInfo)
     : null;
@@ -192,6 +198,8 @@ export function PropertyCard({
         ? "Reservado"
         : isInactive
           ? "Inativo"
+          : canonicalSiteState
+            ? canonicalSiteState.label
           : isPrivate
             ? "Privado"
             : null;
@@ -201,6 +209,8 @@ export function PropertyCard({
       ? KeyRound
       : isReserved
         ? Clock
+        : canonicalSiteState?.tone === 'error'
+          ? CircleAlert
         : isPrivate
           ? Lock
           : Clock;
@@ -211,6 +221,10 @@ export function PropertyCard({
       ? "bg-sky-950 text-white hover:bg-sky-950 dark:bg-sky-200 dark:text-sky-950 dark:hover:bg-sky-200"
       : isReserved
         ? "bg-amber-950 text-white hover:bg-amber-950 dark:bg-amber-200 dark:text-amber-950 dark:hover:bg-amber-200"
+        : canonicalSiteState?.tone === 'error'
+          ? "bg-destructive/15 text-destructive hover:bg-destructive/15"
+        : canonicalSiteState?.tone === 'pending'
+          ? "bg-warning/15 text-warning hover:bg-warning/15"
         : "bg-black text-white hover:bg-black";
   const canRunAvailabilityActions = canUpdateAvailability ?? canEdit;
   const canDeleteProperty = canDelete ?? canEdit;
@@ -331,7 +345,7 @@ export function PropertyCard({
         </div>
 
         <div className="pointer-events-none absolute right-2 top-2 z-30 flex items-center gap-1.5">
-          {isPrivate && !isInactive && (
+          {isPrivate && !isInactive && !canonicalSiteState && (
             <Badge
               data-property-card-status="Privado"
               className={cn(

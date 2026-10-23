@@ -1,7 +1,9 @@
 package stageconfig
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -26,7 +28,17 @@ func (handler Handler) ListAutomations(w http.ResponseWriter, r *http.Request) {
 		writeStageConfigError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]StageAutomation]{Data: automations})
+	available := false
+	if len(automations) > 0 {
+		available = automations[0].InactivityRuntimeAvailable
+	} else {
+		available, err = handler.repo.InactivityRuntimeAvailable(r.Context())
+		if err != nil {
+			writeStageConfigError(w, r, err)
+			return
+		}
+	}
+	httpserver.WriteJSON(w, http.StatusOK, StageAutomationsEnvelope{Data: automations, InactivityRuntimeAvailable: available})
 }
 
 func (handler Handler) CreateAutomation(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +90,33 @@ func (handler Handler) DeleteAutomation(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := handler.repo.DeleteAutomation(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	if !canManageStageConfig(tenantContext) {
+		writeStageConfigError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
+	var request StageAutomationDeleteRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+		decoder.DisallowUnknownFields()
+		// Missing revisions from old DELETE clients fail closed with the same
+		// conflict contract as edits; malformed or multiple JSON values are 400.
+		if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+			return
+		}
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writeStageConfigError(w, r, err)
+		return
+	}
+	if err := handler.repo.DeleteAutomation(r.Context(), tenantContext, r.PathValue("id"), input); err != nil {
 		writeStageConfigError(w, r, err)
 		return
 	}
@@ -94,7 +132,12 @@ func (handler Handler) ToggleAutomation(w http.ResponseWriter, r *http.Request) 
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
-	automation, err := handler.repo.ToggleAutomation(r.Context(), tenantContext, r.PathValue("id"), request.IsActive)
+	input, err := request.Validate()
+	if err != nil {
+		writeStageConfigError(w, r, err)
+		return
+	}
+	automation, err := handler.repo.ToggleAutomation(r.Context(), tenantContext, r.PathValue("id"), input)
 	if err != nil {
 		writeStageConfigError(w, r, err)
 		return
@@ -174,6 +217,12 @@ func (handler Handler) UpsertPipelineSLASettings(w http.ResponseWriter, r *http.
 
 func writeStageConfigError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrStageAutomationChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "stage_automation_changed", "Esta automação foi alterada. Atualize os dados e revise seu rascunho antes de salvar.")
+	case errors.Is(err, ErrInactivityConfigurationChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "stage_inactivity_changed", "Esta regra foi alterada. Atualize os dados e revise seu rascunho antes de salvar.")
+	case errors.Is(err, ErrInactivityRuntimeNotReady):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "stage_inactivity_unavailable", "A regra de inatividade ainda não está disponível neste ambiente. Sua configuração não foi alterada.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_stage_config_input", err.Error())
 	case errors.Is(err, ErrNoChanges):

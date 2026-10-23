@@ -225,6 +225,9 @@ func (handler Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) 
 
 func (handler Handler) ShowInvitationByToken(w http.ResponseWriter, r *http.Request) {
 	setInvitationCapabilityResponseHeaders(w)
+	if !handler.requirePublicInvitationAllowance(w, r, "preview") {
+		return
+	}
 	item, err := handler.repo.ShowInvitationByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -240,6 +243,9 @@ func (handler Handler) ShowInvitationByToken(w http.ResponseWriter, r *http.Requ
 func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Request) {
 	setInvitationCapabilityResponseHeaders(w)
 	defer r.Body.Close()
+	if !handler.requirePublicInvitationAllowance(w, r, "accept") {
+		return
+	}
 	var request AcceptInvitationRequest
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
@@ -534,13 +540,28 @@ func (handler Handler) ListTableRows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := parsePositiveInt(r.URL.Query().Get("limit"), 60)
-	items, err := handler.repo.ListTableRows(r.Context(), tenantContext, r.PathValue("table"), limit)
+	// Legacy consumers keep their list-only response; paginated clients opt in with offset/search.
+	if !r.URL.Query().Has("offset") && !r.URL.Query().Has("search") {
+		limit := parsePositiveInt(r.URL.Query().Get("limit"), 60)
+		items, err := handler.repo.ListTableRows(r.Context(), tenantContext, r.PathValue("table"), limit)
+		if err != nil {
+			writeAdminError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
+		return
+	}
+	filter, err := parseAdminTableFilter(r.URL.Query())
 	if err != nil {
 		writeAdminError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
+	items, err := handler.repo.ListTableRowsPage(r.Context(), tenantContext, r.PathValue("table"), filter)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, items)
 }
 
 func (handler Handler) CountTableRows(w http.ResponseWriter, r *http.Request) {
@@ -936,6 +957,8 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "invitation_already_pending", "Ja existe um convite pendente para este usuario nesta imobiliaria.")
 	case errors.Is(err, ErrInvitationInProgress):
 		httpserver.WriteError(w, r, http.StatusConflict, "invitation_operation_in_progress", "Este convite ja esta sendo processado. Aguarde e tente novamente.")
+	case errors.Is(err, ErrInvitationAccountInactive):
+		httpserver.WriteError(w, r, http.StatusForbidden, "invitation_account_inactive", "Esta conta esta desativada. Procure o administrador.")
 	case errors.Is(err, ErrInvitationEmailMissing):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "invitation_email_missing", "Este convite nao possui um e-mail para reenvio.")
 	case errors.Is(err, ErrInvalidInput):

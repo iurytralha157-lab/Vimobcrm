@@ -19,6 +19,17 @@ const {
   sanitizeMediaFilename,
 } = await import(messageMediaModulePath);
 
+test("áudio Opus gravado mantém uma prévia local válida sem ampliar os MIME permitidos", () => {
+  for (const mime of ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/webm;codecs=\"opus\""]) {
+    const url = `data:${mime};base64,YQ==`;
+    assert.equal(getSafeMessageMediaUrl(url, "audio"), url);
+    assert.equal(getSafeMessageMediaUrl(url, "image"), null);
+  }
+  for (const mime of ["audio/webm;codecs=vorbis", "text/html;codecs=opus", "audio/mp4;codecs=opus", "audio/webm;codecs=opus;extra=1"]) {
+    assert.equal(getSafeMessageMediaUrl(`data:${mime};base64,YQ==`, "audio"), null);
+  }
+});
+
 const createImageRuntime = ({
   width = 2400,
   height = 1200,
@@ -235,10 +246,9 @@ test("não processa GIF e preserva o fallback de nome da timeline", async () => 
   assert.equal(timelineResult.name, "imagem.webp");
 });
 
-test("os três consumidores usam a implementação canônica e perfis explícitos", () => {
+test("os dois compositores ativos usam a implementação canônica e perfis explícitos", () => {
   const sources = {
     floating: readFileSync("components/features/chat/FloatingChat.tsx", "utf8"),
-    lead: readFileSync("components/features/leads/LeadUnifiedThread.tsx", "utf8"),
     conversations: readFileSync("components/features/whatsapp/ConversationsScreen.tsx", "utf8"),
   };
 
@@ -252,8 +262,6 @@ test("os três consumidores usam a implementação canônica e perfis explícito
   }
 
   assert.match(sources.floating, /OUTBOUND_IMAGE_COMPRESSION_PROFILES\.preservePngEncoding/);
-  assert.match(sources.lead, /OUTBOUND_IMAGE_COMPRESSION_PROFILES\.preferSmallerFile/);
-  assert.match(sources.lead, /fallbackBaseName:\s*'imagem'/);
   assert.match(sources.conversations, /OUTBOUND_IMAGE_COMPRESSION_PROFILES\.preferSmallerFile/);
 });
 

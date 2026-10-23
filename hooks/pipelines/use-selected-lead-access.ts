@@ -3,6 +3,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { leadsAPI } from '@/lib/api/leads';
+import type { Lead } from '@/hooks/use-leads';
+import type { VerifiedLeadRead } from '@/lib/lead-read-snapshot';
+import { readConsistentLeadSnapshot, reconcileLeadReadCache } from '@/lib/lead-read-consistency';
 
 export function useSelectedPipelineLeadAccess(params: {
   organizationId?: string | null;
@@ -24,12 +27,28 @@ export function useSelectedPipelineLeadAccess(params: {
     ],
     enabled: enabled && Boolean(organizationId && leadId),
     queryFn: async ({ signal }) => {
-      const { data, error } = await leadsAPI.getLead(leadId!, organizationId!, signal);
-      if (error) throw error;
+      const data = await readConsistentLeadSnapshot<Lead>({
+        organizationId: organizationId!, leadId: leadId!, signal,
+        read: async () => {
+          const result = await leadsAPI.getLead(leadId!, organizationId!, signal, { retry: false });
+          if (result.error) throw result.error;
+          return result.data as Lead | null;
+        },
+        getCached: () => queryClient.getQueryData<Lead>(['lead', organizationId, leadId]),
+      });
       if (!data) throw new Error('Lead indisponível');
       if (signal.aborted) throw new Error('Leitura cancelada');
-      queryClient.setQueryData(['lead', organizationId, leadId], data);
-      return true;
+      // The cache may advance in the microtask between the helper and this commit.
+      reconcileLeadReadCache(queryClient.getQueryData<Lead>(['lead', organizationId, leadId]), data);
+      const confirmedAt = Date.now();
+      queryClient.setQueryData(['lead', organizationId, leadId], data, { updatedAt: confirmedAt });
+      return {
+        data: data as Lead,
+        organizationId: organizationId!,
+        selectionVersion,
+        visibilityScopeKey,
+        confirmedAt,
+      } satisfies VerifiedLeadRead<Lead>;
     },
     staleTime: 0,
     gcTime: 0,

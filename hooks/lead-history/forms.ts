@@ -196,7 +196,9 @@ const FORM_ANSWER_LABEL_KEYS = [
 
 function formatWebhookQuestion(question: string) {
   const clean = question.trim();
-  const mapped = WEBHOOK_FIELD_LABELS[clean] || WEBHOOK_FIELD_LABELS[normalizeFieldKey(clean).replace(/\s+/g, '_')];
+  const normalized = normalizeFieldKey(clean).replace(/\s+/g, '_');
+  const mapped = (Object.hasOwn(WEBHOOK_FIELD_LABELS, clean) ? WEBHOOK_FIELD_LABELS[clean] : undefined)
+    || (Object.hasOwn(WEBHOOK_FIELD_LABELS, normalized) ? WEBHOOK_FIELD_LABELS[normalized] : undefined);
   if (mapped) return mapped;
   return formatMetaQuestion(clean).replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -238,7 +240,7 @@ export function extractMetaFormAnswers(metadata: HistoryMetadata) {
   const pushAnswer = (question: string, value: unknown, skipStandard: boolean) => {
     const cleanQuestion = formatMetaQuestion(question);
     if (!cleanQuestion || (skipStandard && isStandardMetaLeadField(cleanQuestion))) return;
-    const answer = answerText(value);
+    const answer = answerText(value, { preserveFalse: true });
     if (!answer) return;
     const key = `${normalizeFieldKey(cleanQuestion)}:${answer}`;
     if (seen.has(key)) return;
@@ -268,7 +270,7 @@ export function extractWebhookFormAnswers(source: Record<string, unknown> | null
     if (isWebhookTechnicalField(question)) return;
     const cleanQuestion = formatWebhookQuestion(question);
     if (!cleanQuestion) return;
-    const answer = answerText(value);
+    const answer = answerText(value, { preserveFalse: true });
     if (!answer) return;
     const key = `${normalizeFieldKey(cleanQuestion)}:${answer}`;
     if (seen.has(key)) return;

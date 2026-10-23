@@ -114,10 +114,8 @@ func TestTeamHistoryQueryScopesRelatedEntities(t *testing.T) {
 		"al.entity_type in ('team_member', 'team_pipeline')",
 		"al.entity_type = 'team_member_availability'",
 		"related_member.team_member_id is not null",
-		"ranked_history as",
-		"availability_event_rank",
 		"visible_history as",
-		"or availability_event_rank = 1",
+		"select * from team_history",
 		"ordered_history as",
 		"is_initial_creation_event",
 		"initial_creation_group_at",
@@ -127,6 +125,7 @@ func TestTeamHistoryQueryScopesRelatedEntities(t *testing.T) {
 		"left join public.users actor",
 		"left join public.users subject",
 		"limit $3",
+		"offset $4",
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(teamHistoryQuery, fragment) {

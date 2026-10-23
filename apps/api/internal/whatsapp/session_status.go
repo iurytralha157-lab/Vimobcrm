@@ -159,6 +159,18 @@ where ws.organization_id = $1::uuid
             join public.team_members member
               on member.organization_id = leader.organization_id
              and member.team_id = leader.team_id
+            join public.organization_members leader_membership
+              on leader_membership.organization_id = leader.organization_id
+             and leader_membership.user_id = leader.user_id
+             and coalesce(leader_membership.is_active, false) = true
+             and leader_membership.deleted_at is null
+             and leader_membership.membership_generation = leader.membership_generation
+            join public.organization_members member_membership
+              on member_membership.organization_id = member.organization_id
+             and member_membership.user_id = member.user_id
+             and coalesce(member_membership.is_active, false) = true
+             and member_membership.deleted_at is null
+             and member_membership.membership_generation = member.membership_generation
             join public.teams team
               on team.id = leader.team_id
              and team.organization_id = leader.organization_id

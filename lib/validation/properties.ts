@@ -204,6 +204,9 @@ export const propertyListQuerySchema = z
     tipo_de_imovel: z.string().trim().max(80).optional(),
     cidade: z.string().trim().max(120).optional(),
     bairro: z.string().trim().max(120).optional(),
+    city_id: uuidSchema.optional(),
+    neighborhood_id: uuidSchema.optional(),
+    uf: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
     responsavel_id: uuidSchema.optional(),
     quartos_min: optionalNonNegativeIntegerFilterSchema,
     suites_min: optionalNonNegativeIntegerFilterSchema,
@@ -234,7 +237,7 @@ export const propertyListQuerySchema = z
     ] as const) {
       const parsedMinimum = minimum === undefined ? 0 : Number(minimum);
       const parsedMaximum = maximum === undefined ? 0 : Number(maximum);
-      if (parsedMaximum > 0 && parsedMinimum > parsedMaximum) {
+      if (maximum !== undefined && parsedMinimum > parsedMaximum) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: [`${prefix}_min`],
@@ -426,12 +429,23 @@ export const propertyDeleteInputSchema = z
   })
   .strict();
 
+export const apiPropertySitePublicationSchema = z.object({
+  public_visible: z.boolean().optional(),
+  id: uuidSchema,
+  desired_state: z.enum(["published", "paused", "unpublished"]),
+  observed_state: z.enum(["draft", "queued", "publishing", "published", "pausing", "paused", "unpublishing", "unpublished", "error"]),
+  published_version: z.number().int().min(1).nullable(),
+  last_error_code: z.string().nullable().optional(),
+  last_error_message: z.string().nullable().optional(),
+}).passthrough();
+
 export const apiPropertySchema = z
   .object({
     id: uuidSchema,
     organization_id: uuidSchema,
     title: z.string().nullable().optional(),
     updated_at: z.string().trim().datetime({ offset: true }),
+    site_publication: apiPropertySitePublicationSchema.nullable().optional(),
   })
   .passthrough();
 

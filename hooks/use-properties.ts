@@ -1,22 +1,22 @@
 import {
-  keepPreviousData,
   useInfiniteQuery,
-  useMutation,
   useQuery,
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useOptionalActiveOrganizationId as useOrganizationId } from "@/hooks/use-active-organization";
 import {
   propertiesAPI,
   type PropertyHistoryEvent,
-  type PropertyRecord,
+  type PropertyCreateInput as PropertyAPICreateInput,
   type PropertyUpdateInput as PropertyAPIUpdateInput,
   type PropertyWithCapabilities,
 } from "@/lib/api/properties";
 import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
+import type { VimobAPIRequestIntent } from "@/lib/api/vimob-client";
 import {
   enforceClientActionRateLimit,
   getClientRateLimitMessage,
@@ -28,6 +28,10 @@ import {
   propertyUpdateInputSchema,
 } from "@/lib/validation";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import { usePropertyMutation } from "@/hooks/properties/use-property-mutation";
+import { useTenantQueryAccessSignature } from "@/hooks/shared/use-tenant-query-access-signature";
+import { reusePreviousDataWhenKeyPartsMatch } from "@/lib/query-placeholder-safety";
+import { propertyNumericFilterValue } from "@/lib/validation/property-filter-input";
 import {
   isPropertyWorkspaceConflict,
   propertyConflictQueryKeys,
@@ -38,14 +42,18 @@ export type Property = PropertyWithCapabilities;
 const EMPTY_PROPERTIES: Property[] = [];
 
 type PropertyMutationInput = Omit<
-  Partial<PropertyRecord>,
-  "id" | "code" | "organization_id" | "created_at" | "updated_at"
+  Partial<PropertyAPICreateInput>,
+  "title"
 > & {
+  title?: string | null;
   metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+  requestIntent?: VimobAPIRequestIntent;
 };
 type PropertyUpdateInput = PropertyAPIUpdateInput & {
   id: string;
   expected_updated_at: string;
+  requestIntent?: VimobAPIRequestIntent;
 };
 type PropertyDeleteInput = {
   id: string;
@@ -59,6 +67,9 @@ export interface PropertyFilters {
   tipo_de_imovel?: string;
   cidade?: string;
   bairro?: string;
+  city_id?: string;
+  neighborhood_id?: string;
+  uf?: string;
   responsavel_id?: string;
   quartos_min?: string;
   suites_min?: string;
@@ -103,12 +114,15 @@ function normalizeFilters(filters: PropertyFilters = {}) {
     tipo_de_imovel: filters.tipo_de_imovel || undefined,
     cidade: sanitizeSearchTerm(filters.cidade),
     bairro: sanitizeSearchTerm(filters.bairro),
+    city_id: filters.city_id || undefined,
+    neighborhood_id: filters.neighborhood_id || undefined,
+    uf: filters.uf || undefined,
     responsavel_id: filters.responsavel_id || undefined,
     quartos_min: parseNumericFilter(filters.quartos_min),
     suites_min: parseNumericFilter(filters.suites_min),
     banheiros_min: parseNumericFilter(filters.banheiros_min),
-    valor_min: parseNumericFilter(filters.valor_min),
-    valor_max: parseNumericFilter(filters.valor_max),
+    valor_min: propertyNumericFilterValue(filters.valor_min),
+    valor_max: propertyNumericFilterValue(filters.valor_max),
     aceita_permuta:
       filters.aceita_permuta === "true"
         ? true
@@ -149,10 +163,10 @@ function normalizeFilters(filters: PropertyFilters = {}) {
           ? false
           : undefined,
     vagas_min: parseNumericFilter(filters.vagas_min),
-    area_util_min: parseNumericFilter(filters.area_util_min),
-    area_util_max: parseNumericFilter(filters.area_util_max),
-    area_total_min: parseNumericFilter(filters.area_total_min),
-    area_total_max: parseNumericFilter(filters.area_total_max),
+    area_util_min: propertyNumericFilterValue(filters.area_util_min),
+    area_util_max: propertyNumericFilterValue(filters.area_util_max),
+    area_total_min: propertyNumericFilterValue(filters.area_total_min),
+    area_total_max: propertyNumericFilterValue(filters.area_total_max),
   };
 }
 
@@ -163,20 +177,23 @@ export function useProperties(
 ) {
   const { user } = useAuth();
   const organizationId = useOrganizationId();
+  const accessSignature = useTenantQueryAccessSignature();
   const { hasModule } = useOrganizationModules();
   const hasPropertiesModule = hasModule("properties");
   const normalizedSearch = sanitizeSearchTerm(search);
   const normalizedFilters = normalizeFilters(filters);
   const limit = options.limit ?? 1000;
+  const queryKey = [
+    "properties",
+    organizationId,
+    normalizedSearch,
+    normalizedFilters,
+    limit,
+    accessSignature,
+  ];
 
   return useQuery({
-    queryKey: [
-      "properties",
-      organizationId,
-      normalizedSearch,
-      normalizedFilters,
-      limit,
-    ],
+    queryKey,
     queryFn: async () => {
       if (!organizationId || !hasPropertiesModule) return EMPTY_PROPERTIES;
 
@@ -198,7 +215,15 @@ export function useProperties(
       hasPropertiesModule &&
       options.enabled !== false,
     select: (data) => (hasPropertiesModule ? data : EMPTY_PROPERTIES),
-    placeholderData: hasPropertiesModule ? keepPreviousData : EMPTY_PROPERTIES,
+    placeholderData: (previousData, previousQuery) =>
+      hasPropertiesModule
+        ? reusePreviousDataWhenKeyPartsMatch(
+            previousData,
+            previousQuery?.queryKey,
+            queryKey,
+            [1, 5],
+          )
+        : EMPTY_PROPERTIES,
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -213,17 +238,20 @@ export function useInfiniteProperties(
 ) {
   const { user } = useAuth();
   const organizationId = useOrganizationId();
+  const accessSignature = useTenantQueryAccessSignature();
   const normalizedSearch = sanitizeSearchTerm(search);
   const normalizedFilters = normalizeFilters(filters);
+  const queryKey = [
+    "properties-infinite",
+    organizationId,
+    normalizedSearch,
+    pageSize,
+    normalizedFilters,
+    accessSignature,
+  ];
 
   return useInfiniteQuery({
-    queryKey: [
-      "properties-infinite",
-      organizationId,
-      normalizedSearch,
-      pageSize,
-      normalizedFilters,
-    ],
+    queryKey,
     queryFn: async ({ pageParam = 0 }) => {
       if (!organizationId) {
         return {
@@ -254,7 +282,13 @@ export function useInfiniteProperties(
     },
     getNextPageParam: (lastPage) => lastPage.nextPage,
     initialPageParam: 0,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      reusePreviousDataWhenKeyPartsMatch(
+        previousData,
+        previousQuery?.queryKey,
+        queryKey,
+        [1, 5],
+      ),
     staleTime: 1000 * 30,
     enabled: !!user?.id && !!organizationId && options.enabled !== false,
   });
@@ -262,11 +296,17 @@ export function useInfiniteProperties(
 
 export function useProperty(id: string | null) {
   const organizationId = useOrganizationId();
+  const { user } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const accessSignature = useTenantQueryAccessSignature();
+  const { hasModule } = useOrganizationModules();
+  const allowed = Boolean(user?.id && organizationId && hasModule("properties")
+    && (hasPermission("property_view") || hasPermission("property_manage")));
 
-  return useQuery({
-    queryKey: ["property", organizationId, id],
+  const query = useQuery({
+    queryKey: ["property", organizationId, id, accessSignature],
     queryFn: async () => {
-      if (!id || !organizationId) return null;
+      if (!id || !organizationId || !allowed) return null;
 
       const { data, error } = await propertiesAPI.getProperty(
         id,
@@ -276,9 +316,10 @@ export function useProperty(id: string | null) {
 
       return data;
     },
-    enabled: !!id && !!organizationId,
+    enabled: !!id && allowed,
     staleTime: 0,
   });
+  return { ...query, data: allowed ? query.data : null };
 }
 
 export function usePropertyHistory(
@@ -310,10 +351,11 @@ export function useCreateProperty(
 ) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const organizationId = useOrganizationId();
 
-  return useMutation({
-    mutationFn: async (propertyInput: PropertyMutationInput) => {
+  return usePropertyMutation({
+    getRequestIntent: (input: PropertyMutationInput) => input.requestIntent,
+    mutationFn: async ({ idempotencyKey, requestIntent, ...propertyInput }: PropertyMutationInput, scope) => {
+      const organizationId = scope.organizationId;
       if (!user?.id) throw new Error("Usuário não autenticado");
       if (!organizationId) throw new Error("Usuário não possui organização");
 
@@ -333,6 +375,7 @@ export function useCreateProperty(
       const { data, error } = await propertiesAPI.createProperty(
         organizationId,
         createInput,
+        { ...requestIntent, ...scope.requestIntent, idempotencyKey },
       );
 
       if (error) throw error;
@@ -343,20 +386,21 @@ export function useCreateProperty(
 
       return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["properties"] });
-      queryClient.invalidateQueries({ queryKey: ["properties-infinite"] });
+    onSuccess: (_data, _variables, scope) => {
+      const organizationId = scope.organizationId;
+      queryClient.invalidateQueries({ queryKey: ["properties", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["properties-infinite", organizationId] });
       if (options.showSuccessToast !== false) {
-        toast.success("Imóvel cadastrado com sucesso!");
+        if (scope.isCurrent()) toast.success("Imóvel cadastrado com sucesso!");
       }
     },
-    onError: (error) => {
+    onError: (error, _variables, scope) => {
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
-        toast.error(rateLimitMessage);
+        if (scope.isCurrent()) toast.error(rateLimitMessage);
         return;
       }
-      toast.error("Erro ao cadastrar imóvel: " + getErrorMessage(error));
+      if (scope.isCurrent()) toast.error("Erro ao cadastrar imóvel: " + getErrorMessage(error));
     },
   });
 }
@@ -366,10 +410,11 @@ export function useUpdateProperty(
 ) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const organizationId = useOrganizationId();
 
-  return useMutation({
-    mutationFn: async ({ id, ...updates }: PropertyUpdateInput) => {
+  return usePropertyMutation({
+    getRequestIntent: (input: PropertyUpdateInput) => input.requestIntent,
+    mutationFn: async ({ id, requestIntent, ...updates }: PropertyUpdateInput, scope) => {
+      const organizationId = scope.organizationId;
       if (!user?.id) throw new Error("Usuário não autenticado");
       if (!organizationId) throw new Error("Usuário não possui organização");
 
@@ -387,6 +432,7 @@ export function useUpdateProperty(
         id,
         updateInput,
         organizationId,
+        { ...requestIntent, ...scope.requestIntent },
       );
 
       if (error) throw error;
@@ -397,7 +443,8 @@ export function useUpdateProperty(
 
       return data;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, scope) => {
+      const organizationId = scope.organizationId;
       queryClient.invalidateQueries({ queryKey: ["properties"] });
       queryClient.invalidateQueries({ queryKey: ["properties-infinite"] });
       queryClient.invalidateQueries({
@@ -417,25 +464,26 @@ export function useUpdateProperty(
         }
       }
       if (options.showSuccessToast !== false) {
-        toast.success("Imóvel atualizado!");
+        if (scope.isCurrent()) toast.success("Imóvel atualizado!");
       }
     },
-    onError: async (error, variables) => {
+    onError: async (error, variables, scope) => {
+      const organizationId = scope.organizationId;
       if (isPropertyWorkspaceConflict(error)) {
         await refreshPropertyAfterConflict(
           queryClient,
           organizationId,
           variables.id,
         );
-        toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
+        if (scope.isCurrent()) toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
         return;
       }
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
-        toast.error(rateLimitMessage);
+        if (scope.isCurrent()) toast.error(rateLimitMessage);
         return;
       }
-      toast.error("Erro ao atualizar imóvel: " + getErrorMessage(error));
+      if (scope.isCurrent()) toast.error("Erro ao atualizar imóvel: " + getErrorMessage(error));
     },
   });
 }
@@ -443,10 +491,10 @@ export function useUpdateProperty(
 export function useDeleteProperty() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const organizationId = useOrganizationId();
 
-  return useMutation({
-    mutationFn: async ({ id, expected_updated_at }: PropertyDeleteInput) => {
+  return usePropertyMutation({
+    mutationFn: async ({ id, expected_updated_at }: PropertyDeleteInput, scope) => {
+      const organizationId = scope.organizationId;
       if (!user?.id) throw new Error("Usuário não autenticado");
       if (!organizationId) throw new Error("Usuário não possui organização");
 
@@ -459,30 +507,33 @@ export function useDeleteProperty() {
         id,
         expected_updated_at,
         organizationId,
+        scope.requestIntent,
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["properties"] });
-      queryClient.invalidateQueries({ queryKey: ["properties-infinite"] });
-      toast.success("Imóvel excluído!");
+    onSuccess: (_data, _variables, scope) => {
+      const organizationId = scope.organizationId;
+      queryClient.invalidateQueries({ queryKey: ["properties", organizationId] });
+      queryClient.invalidateQueries({ queryKey: ["properties-infinite", organizationId] });
+      if (scope.isCurrent()) toast.success("Imóvel excluído!");
     },
-    onError: async (error, variables) => {
+    onError: async (error, variables, scope) => {
+      const organizationId = scope.organizationId;
       if (isPropertyWorkspaceConflict(error)) {
         await refreshPropertyAfterConflict(
           queryClient,
           organizationId,
           variables.id,
         );
-        toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
+        if (scope.isCurrent()) toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
         return;
       }
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
-        toast.error(rateLimitMessage);
+        if (scope.isCurrent()) toast.error(rateLimitMessage);
         return;
       }
-      toast.error("Erro ao excluir imóvel: " + getErrorMessage(error));
+      if (scope.isCurrent()) toast.error("Erro ao excluir imóvel: " + getErrorMessage(error));
     },
   });
 }

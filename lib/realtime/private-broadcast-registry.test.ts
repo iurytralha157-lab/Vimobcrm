@@ -258,12 +258,13 @@ test("isolates listener failures and reports reconnecting channel states", async
 
   await wait();
   transport.channels[0].onPayload({});
+  transport.channels[0].onStatus("SUBSCRIBED");
   transport.channels[0].onStatus("CHANNEL_ERROR", new Error("socket"));
   transport.channels[0].onStatus("TIMED_OUT");
   transport.channels[0].onStatus("SUBSCRIBED");
 
   assert.equal(healthyPayloads, 1);
-  assert.deepEqual(statuses, ["CHANNEL_ERROR", "TIMED_OUT", "SUBSCRIBED"]);
+  assert.deepEqual(statuses, ["SUBSCRIBED", "CHANNEL_ERROR", "TIMED_OUT", "SUBSCRIBED"]);
   assert.ok(diagnostics.includes("listener_error"));
   assert.ok(diagnostics.includes("channel_error"));
   assert.ok(diagnostics.includes("timed_out"));

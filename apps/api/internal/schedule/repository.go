@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
@@ -52,6 +53,8 @@ type eventSnapshot struct {
 	RescheduledFromID string
 	RescheduledToID   string
 	Visibility        string
+	UpdatedAt         time.Time
+	OutcomeNotes      *string
 }
 
 func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, immediateGoogleDispatch ...bool) Repository {
@@ -60,8 +63,17 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) ([]Event, error) {
+	page, err := repo.ListPage(ctx, tenantContext, filter)
+	return page.Events, err
+}
+
+func (repo Repository) ListPage(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (EventPage, error) {
 	if !canViewSchedule(tenantContext) {
-		return nil, tenant.ErrOrganizationAccessDenied
+		return EventPage{}, tenant.ErrOrganizationAccessDenied
+	}
+	filter, err := normalizeScheduleListFilter(filter)
+	if err != nil {
+		return EventPage{}, err
 	}
 	canViewAll := canViewAllScheduleEvents(tenantContext)
 	args := scheduleEventsQueryArgs(tenantContext, canViewAll)
@@ -102,6 +114,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	if filter.LeadID != "" {
 		addFilter("se.lead_id = $%d::uuid", filter.LeadID)
+		// Filtering must not reveal a relation hidden by the lead projection.
+		// Appointment participation and busy-slot access grant no lead access.
+		where = append(where, leadScheduleVisibilitySQL("$4", "$5", "$6", tenantContext.HasPermission(permissions.LeadViewOwn)))
 	}
 	if filter.StartTime != nil {
 		addFilter("se.end_time >= $%d::timestamptz", *filter.StartTime)
@@ -110,9 +125,15 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		addFilter("se.start_time <= $%d::timestamptz", *filter.EndTime)
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, scheduleEventsQuery(strings.Join(where, " and ")), args...)
+	args = append(args, filter.Limit+1, filter.Offset)
+	query := scheduleEventsQuery(strings.Join(where, " and "), tenantContext.HasPermission(permissions.LeadViewOwn))
+	if filter.LeadPreview {
+		query = scheduleLeadPreviewEventsQuery(strings.Join(where, " and "), tenantContext.HasPermission(permissions.LeadViewOwn))
+	}
+	query += fmt.Sprintf(" limit $%d::integer offset $%d::bigint", len(args)-1, len(args))
+	rows, err := repo.db.Pool().Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return EventPage{}, err
 	}
 	defer rows.Close()
 
@@ -120,15 +141,15 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	for rows.Next() {
 		event, err := scanEvent(rows)
 		if err != nil {
-			return nil, err
+			return EventPage{}, err
 		}
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return EventPage{}, err
 	}
 
-	return events, nil
+	return scheduleEventPage(events, filter), nil
 }
 
 func scheduleEventsQueryArgs(tenantContext tenant.Context, canViewAllSchedule bool) []any {
@@ -191,6 +212,12 @@ func (repo Repository) Capabilities(ctx context.Context, tenantContext tenant.Co
 			$3::boolean or exists (
 				select 1
 				from public.team_members tm
+				join public.organization_members member
+				  on member.organization_id = tm.organization_id
+				 and member.user_id = tm.user_id
+				 and member.membership_generation = tm.membership_generation
+				 and member.is_active = true
+				 and member.deleted_at is null
 				where tm.organization_id = $1::uuid
 				  and tm.user_id = $2::uuid
 				  and tm.is_active = true
@@ -243,10 +270,26 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.validateAssignees(ctx, tx, tenantContext, input.AssigneeIDs); err != nil {
 		return Event{}, err
 	}
+	if err := lockScheduleCreateCommand(ctx, tx, input.ClientRequestID); err != nil {
+		return Event{}, err
+	}
+	if existing, replay, err := findScheduleCreateReplay(ctx, tx, tenantContext, input); err != nil {
+		return Event{}, err
+	} else if replay {
+		// The replay path has only read/locked existing rows; the deferred
+		// rollback releases those locks without repeating any side effect.
+		return existing, nil
+	}
 
 	recurrenceCount := (*int)(nil)
 	recurrenceUntil := (*time.Time)(nil)
 	if input.RecurrenceRule != nil {
+		location, err := loadScheduleRecurrenceLocation(ctx, tx, tenantContext.OrganizationID)
+		if err != nil {
+			return Event{}, err
+		}
+		input.StartTime = input.StartTime.In(location)
+		input.EndTime = input.EndTime.In(location)
 		count := recurrenceMax(*input.RecurrenceRule)
 		until := addRecurrence(input.StartTime, *input.RecurrenceRule, count-1)
 		recurrenceCount = &count
@@ -256,6 +299,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	var eventID string
 	err = tx.QueryRow(ctx, `
 		insert into public.schedule_events (
+			id,
 			organization_id,
 			user_id,
 			lead_id,
@@ -277,6 +321,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			recurrence_count
 		)
 		values (
+			coalesce($19::uuid, gen_random_uuid()),
 			$1::uuid,
 			$2::uuid,
 			$3::uuid,
@@ -303,7 +348,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			$18::integer
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.CreatedBy, nullable(input.TeamID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceUntil, recurrenceCount).Scan(&eventID)
+	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.CreatedBy, nullable(input.TeamID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceUntil, recurrenceCount, pgvalue.NullableString(input.ClientRequestID)).Scan(&eventID)
 	if err != nil {
 		return Event{}, err
 	}
@@ -375,6 +420,10 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, err
 	}
 
+	result, err := loadScheduleMutationEvent(ctx, tx, tenantContext, eventID)
+	if err != nil {
+		return Event{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
 	}
@@ -385,7 +434,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		repo.recordScheduleGamification(tenantContext, "visit_scheduled", snapshot.ID)
 	}
 
-	return repo.Get(ctx, tenantContext, eventID)
+	return result, nil
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, eventID string, input updateInput) (Event, error) {
@@ -414,16 +463,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return Event{}, err
 		}
 	}
+	if err := validateExpectedScheduleVersion(current, input.ExpectedUpdatedAt); err != nil {
+		return Event{}, err
+	}
 
 	if input.UserID.Set && input.UserID.Value != nil {
 		if err := repo.ensureAssignableUser(ctx, tx, tenantContext, *input.UserID.Value); err != nil {
 			return Event{}, err
 		}
 	}
-	if input.LeadID.Set {
-		if err := repo.validateLead(ctx, tx, tenantContext, input.LeadID.Value); err != nil {
-			return Event{}, err
-		}
+	if err := repo.validateChangedLeadLink(ctx, tx, tenantContext, current.LeadID, input.LeadID); err != nil {
+		return Event{}, err
 	}
 	if input.PropertyID.Set {
 		if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID.Value); err != nil {
@@ -472,7 +522,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if input.EndTime.Set && input.EndTime.Value != nil {
 		nextEnd = *input.EndTime.Value
 	}
-	if nextEnd.Before(nextStart) {
+	if (input.StartTime.Set || input.EndTime.Set) && !nextEnd.After(nextStart) {
 		return Event{}, fmt.Errorf("%w: event time is invalid", ErrInvalidInput)
 	}
 	if err := validateEventOutcomeTransition(current, input); err != nil {
@@ -569,7 +619,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	assignments = append(assignments, "updated_at = now()")
 
-	if len(assignments) == 1 {
+	if len(assignments) == 1 && !input.AssigneeIDs.Set {
 		return Event{}, ErrNoScheduleChanges
 	}
 
@@ -659,6 +709,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, err
 	}
 
+	result, err := loadScheduleMutationEvent(ctx, tx, tenantContext, updatedID)
+	if err != nil {
+		return Event{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
 	}
@@ -669,7 +723,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		repo.recordScheduleGamification(tenantContext, "visit_confirmed", updated.ID)
 	}
 
-	return repo.Get(ctx, tenantContext, updatedID)
+	return result, nil
 }
 
 func (repo Repository) recordScheduleGamification(tenantContext tenant.Context, actionType string, referenceID string) {
@@ -694,11 +748,6 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, ErrEventNotFound
 	}
 
-	event, err := repo.Get(ctx, tenantContext, eventID)
-	if err != nil {
-		return Event{}, err
-	}
-
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return Event{}, err
@@ -715,6 +764,12 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, tenant.ErrOrganizationAccessDenied
 	}
 	if err := validateEventDeletion(current); err != nil {
+		return Event{}, err
+	}
+	// The confirmation belongs to the locked, currently authorized row. A
+	// pre-transaction read can precede an edit or a linked-lead scope change.
+	event, err := loadScheduleMutationEvent(ctx, tx, tenantContext, eventID)
+	if err != nil {
 		return Event{}, err
 	}
 	googleDeleteEnqueued, err := repo.enqueueScheduleGoogleDelete(
@@ -761,11 +816,16 @@ func (repo Repository) ListComments(ctx context.Context, tenantContext tenant.Co
 	if !ok {
 		return nil, ErrEventNotFound
 	}
-	if err := repo.ensureCanViewEvent(ctx, tenantContext, eventID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if err := repo.ensureCanViewEvent(ctx, tx, tenantContext, eventID); err != nil {
 		return nil, err
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		select
 			c.id::text,
 			c.event_id::text,
@@ -798,11 +858,23 @@ func (repo Repository) ListComments(ctx context.Context, tenantContext tenant.Co
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 
 	return comments, nil
 }
 
-func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Context, eventID string, content string) (Comment, error) {
+func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Context, eventID string, content string, commandIDs ...string) (Comment, error) {
+	commandID := ""
+	if len(commandIDs) > 0 {
+		var err error
+		commandID, err = scheduleCommentCommandID(commandIDs[0])
+		if err != nil {
+			return Comment{}, err
+		}
+	}
 	eventID, ok := normalizeUUID(eventID)
 	if !ok {
 		return Comment{}, ErrEventNotFound
@@ -823,23 +895,33 @@ func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Cont
 	} else if !ok {
 		return Comment{}, tenant.ErrOrganizationAccessDenied
 	}
+	if err := lockScheduleCommentCommand(ctx, tx, commandID); err != nil {
+		return Comment{}, err
+	}
+	if existing, replay, err := findScheduleCommentReplay(ctx, tx, tenantContext, eventID, commandID, content); err != nil {
+		return Comment{}, err
+	} else if replay {
+		return existing, nil
+	}
 
 	var commentID string
 	err = tx.QueryRow(ctx, `
 		insert into public.schedule_event_comments (
+			id,
 			organization_id,
 			event_id,
 			user_id,
 			content
 		)
 		values (
+			coalesce($5::uuid, gen_random_uuid()),
 			$1::uuid,
 			$2::uuid,
 			$3::uuid,
 			$4
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, eventID, tenantContext.UserID, content).Scan(&commentID)
+	`, tenantContext.OrganizationID, eventID, tenantContext.UserID, content, pgvalue.NullableString(commandID)).Scan(&commentID)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -861,11 +943,15 @@ func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Cont
 		return Comment{}, err
 	}
 
+	comment, err := loadScheduleComment(ctx, tx, tenantContext.OrganizationID, commentID)
+	if err != nil {
+		return Comment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Comment{}, err
 	}
 
-	return repo.getComment(ctx, tenantContext.OrganizationID, commentID)
+	return comment, nil
 }
 
 func (repo Repository) ListAssignees(ctx context.Context, tenantContext tenant.Context, eventID string) ([]AssigneeUser, error) {
@@ -873,41 +959,23 @@ func (repo Repository) ListAssignees(ctx context.Context, tenantContext tenant.C
 	if !ok {
 		return nil, ErrEventNotFound
 	}
-	if err := repo.ensureCanViewEvent(ctx, tenantContext, eventID); err != nil {
-		return nil, err
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
-		select
-			u.id::text,
-			u.name,
-			u.avatar_url
-		from public.schedule_event_assignees sea
-		join public.users u on u.id = sea.user_id
-		where sea.organization_id = $1::uuid
-		  and sea.event_id = $2::uuid
-		order by u.name asc, u.id asc
-	`, tenantContext.OrganizationID, eventID)
+	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	assignees := []AssigneeUser{}
-	for rows.Next() {
-		var assignee AssigneeUser
-		var avatar pgtype.Text
-		if err := rows.Scan(&assignee.ID, &assignee.Name, &avatar); err != nil {
-			return nil, err
-		}
-		assignee.AvatarURL = textPtr(avatar)
-		assignees = append(assignees, assignee)
-	}
-	if err := rows.Err(); err != nil {
+	defer tx.Rollback(ctx)
+	if err := repo.ensureCanViewEvent(ctx, tx, tenantContext, eventID); err != nil {
 		return nil, err
 	}
 
-	return assignees, nil
+	result, err := loadScheduleAssignees(ctx, tx, tenantContext.OrganizationID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Context, eventID string, userID string) ([]AssigneeUser, error) {
@@ -940,6 +1008,9 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 
 	assigneeAdded := false
 	if userID != current.UserID {
+		if err := validateScheduleAssigneeAddition(ctx, tx, tenantContext.OrganizationID, eventID, userID); err != nil {
+			return nil, err
+		}
 		tag, err := tx.Exec(ctx, `
 			insert into public.schedule_event_assignees (
 				organization_id,
@@ -959,11 +1030,13 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 		assigneeAdded = tag.RowsAffected() > 0
 	}
 
-	if err := repo.insertScheduleNotifications(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, []string{userID}, "Voce foi adicionado a uma atividade", current.Title, map[string]any{
-		"schedule_event_id": eventID,
-		"event_type":        current.EventType,
-	}); err != nil {
-		return nil, err
+	if assigneeAdded {
+		if err := repo.insertScheduleNotifications(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, []string{userID}, "Voce foi adicionado a uma atividade", current.Title, map[string]any{
+			"schedule_event_id": eventID,
+			"event_type":        current.EventType,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	googleJobEnqueued := false
 	if assigneeAdded {
@@ -981,14 +1054,17 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 		}
 	}
 
+	result, err := loadScheduleAssignees(ctx, tx, tenantContext.OrganizationID, eventID)
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	if googleJobEnqueued {
 		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
-
-	return repo.ListAssignees(ctx, tenantContext, eventID)
+	return result, nil
 }
 
 func (repo Repository) RemoveAssignee(ctx context.Context, tenantContext tenant.Context, eventID string, userID string) ([]AssigneeUser, error) {
@@ -1045,14 +1121,17 @@ func (repo Repository) RemoveAssignee(ctx context.Context, tenantContext tenant.
 		}
 	}
 
+	result, err := loadScheduleAssignees(ctx, tx, tenantContext.OrganizationID, eventID)
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	if googleJobEnqueued {
 		repo.kickGoogleCalendarOutboundWorker(ctx)
 	}
-
-	return repo.ListAssignees(ctx, tenantContext, eventID)
+	return result, nil
 }
 
 func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, organizationID string, parentID string, input createInput) ([]string, error) {
@@ -1064,9 +1143,13 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 	recurrenceUntil := addRecurrence(input.StartTime, *input.RecurrenceRule, maxOccurrences-1)
 	ids := make([]string, 0, maxOccurrences-1)
 	batch := &pgx.Batch{}
+	previousStart := input.StartTime
 	for index := 1; index < maxOccurrences; index++ {
-		nextStart := addRecurrence(input.StartTime, *input.RecurrenceRule, index)
-		nextEnd := addRecurrence(input.EndTime, *input.RecurrenceRule, index)
+		nextStart, nextEnd := recurringEventInterval(input, index)
+		if !nextStart.After(previousStart) || !nextEnd.After(nextStart) {
+			return nil, fmt.Errorf("%w: recurrence civil clock produced overlapping occurrence instants", ErrRecurrenceCreate)
+		}
+		previousStart = nextStart
 
 		batch.Queue(`
 			insert into public.schedule_events (
@@ -1295,21 +1378,25 @@ func (repo Repository) validateLead(ctx context.Context, querier queryRower, ten
 	if !tenantContext.HasPermission(permissions.LeadOperate) {
 		return tenant.ErrOrganizationAccessDenied
 	}
+	if err := requireScheduleLeadOutsideQueuePool(ctx, querier, tenantContext, *leadID); err != nil {
+		return err
+	}
 
-	var exists bool
+	var resource authorization.LeadResource
 	err := querier.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.leads l
-			where l.organization_id = $1::uuid
-			  and l.id = $2::uuid
-			  and `+leadVisibilitySQL("$3", "$4", "$5", tenantContext.HasPermission(permissions.LeadViewOwn))+`
-		)
-	`, tenantContext.OrganizationID, *leadID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team")).Scan(&exists)
+		select coalesce(l.assigned_user_id::text, ''),
+		       coalesce(nullif(to_jsonb(l)->>'team_id', ''), '')
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and l.id = $2::uuid
+	`, tenantContext.OrganizationID, *leadID).Scan(&resource.AssignedUserID, &resource.TeamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidReference
+	}
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if !authorization.CanOperateLead(tenantContext, resource) {
 		return ErrInvalidReference
 	}
 
@@ -1380,6 +1467,18 @@ func (repo Repository) ensureAssignableUser(ctx context.Context, querier queryRo
 			  on member.organization_id = leader.organization_id
 			 and member.team_id = leader.team_id
 			 and coalesce(member.is_active, true) = true
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = leader.organization_id
+			 and leader_membership.user_id = leader.user_id
+			 and leader_membership.membership_generation = leader.membership_generation
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
+			join public.organization_members member_membership
+			  on member_membership.organization_id = member.organization_id
+			 and member_membership.user_id = member.user_id
+			 and member_membership.membership_generation = member.membership_generation
+			 and member_membership.is_active = true
+			 and member_membership.deleted_at is null
 			where leader.organization_id = $1::uuid
 			  and leader.user_id = $2::uuid
 			  and coalesce(leader.is_active, true) = true
@@ -1448,7 +1547,7 @@ func (repo Repository) ensureEventPerformer(
 
 func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, eventID string) (eventSnapshot, error) {
 	var snapshot eventSnapshot
-	var leadID, outcome, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
+	var leadID, outcome, outcomeNotes, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	err := tx.QueryRow(ctx, `
 		select
 			id::text,
@@ -1456,22 +1555,24 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 			user_id::text,
 			lead_id::text,
 			title,
-			event_type,
+			coalesce(event_type, 'task'),
 			start_time,
 			end_time,
 			coalesce(is_all_day, false),
 			status,
 			outcome,
+			outcome_notes,
 			performed_by::text,
 			rescheduled_from_event_id::text,
 			rescheduled_to_event_id::text,
-			visibility
+			visibility,
+			coalesce(updated_at, created_at, start_time)
 		from public.schedule_events
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		limit 1
 		for update
-	`, organizationID, eventID).Scan(&snapshot.ID, &snapshot.OrganizationID, &snapshot.UserID, &leadID, &snapshot.Title, &snapshot.EventType, &snapshot.StartTime, &snapshot.EndTime, &snapshot.IsAllDay, &snapshot.Status, &outcome, &performedBy, &rescheduledFromID, &rescheduledToID, &snapshot.Visibility)
+	`, organizationID, eventID).Scan(&snapshot.ID, &snapshot.OrganizationID, &snapshot.UserID, &leadID, &snapshot.Title, &snapshot.EventType, &snapshot.StartTime, &snapshot.EndTime, &snapshot.IsAllDay, &snapshot.Status, &outcome, &outcomeNotes, &performedBy, &rescheduledFromID, &rescheduledToID, &snapshot.Visibility, &snapshot.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return eventSnapshot{}, ErrEventNotFound
 	}
@@ -1481,19 +1582,15 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 
 	snapshot.LeadID = textValue(leadID)
 	snapshot.Outcome = textValue(outcome)
+	snapshot.OutcomeNotes = textPtr(outcomeNotes)
 	snapshot.PerformedBy = textValue(performedBy)
 	snapshot.RescheduledFromID = textValue(rescheduledFromID)
 	snapshot.RescheduledToID = textValue(rescheduledToID)
 	return snapshot, nil
 }
 
-func (repo Repository) ensureCanViewEvent(ctx context.Context, tenantContext tenant.Context, eventID string) error {
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
+// The caller keeps the event lock until its protected content has been read.
+func (repo Repository) ensureCanViewEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, eventID string) error {
 	current, err := repo.getSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, eventID)
 	if err != nil {
 		return err
@@ -1506,7 +1603,7 @@ func (repo Repository) ensureCanViewEvent(ctx context.Context, tenantContext ten
 		return tenant.ErrOrganizationAccessDenied
 	}
 
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (repo Repository) canViewEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, snapshot eventSnapshot) (bool, error) {
@@ -1870,7 +1967,15 @@ func scheduleNotificationTargetURL(metadata map[string]any) string {
 	return "/agenda"
 }
 
-func scheduleEventsQuery(whereClause string) string {
+func scheduleEventsQuery(whereClause string, canViewOwnLeads ...bool) string {
+	return scheduleEventsQueryWithLeadJoin(whereClause, scheduleLeadJoinSQL("v", "l", "$4", "$5", "$6", scheduleCanViewOwnLeadProjection(canViewOwnLeads)))
+}
+
+func scheduleEventsQueryWithLeadJoin(whereClause string, leadJoin string) string {
+	return scheduleEventsQueryWithOrder(whereClause, leadJoin, "v.start_time asc, v.id asc")
+}
+
+func scheduleEventsQueryWithOrder(whereClause string, leadJoin string, orderClause string) string {
 	return `
 		with base as (
 			select
@@ -1907,17 +2012,17 @@ func scheduleEventsQuery(whereClause string) string {
 			v.id::text,
 			v.organization_id::text,
 			case when v.is_masked then null else v.user_id::text end,
-			case when v.is_masked then null else v.lead_id::text end,
+			case when v.is_masked or l.id is null then null else v.lead_id::text end,
 			case when v.is_masked or p.id is null then null else v.property_id::text end,
 			case when v.is_masked then null else v.created_by::text end,
 			case when v.is_masked then null else v.team_id::text end,
-			case when v.is_masked then null else v.lead_source_snapshot end,
+			case when v.is_masked or l.id is null then null else v.lead_source_snapshot end,
 			case when v.is_masked then 'Horario ocupado' else v.title end,
 			case when v.is_masked then 'Informacao privada' else v.description end,
-			case when v.is_masked then 'task' else v.event_type end,
+			case when v.is_masked then 'task' else coalesce(v.event_type, 'task') end,
 			v.start_time,
 			v.end_time,
-			v.is_all_day,
+			coalesce(v.is_all_day, false),
 			case when v.is_masked then null else v.location end,
 			v.status,
 			v.visibility,
@@ -1955,11 +2060,11 @@ func scheduleEventsQuery(whereClause string) string {
 			v.is_masked
 		from visible v
 		left join public.users u on u.id = v.user_id
-		left join public.leads l on l.id = v.lead_id
+		` + leadJoin + `
 		` + schedulePropertyJoinSQL("v", "p", "$7", "$8", "$9", "$10") + `
 		left join public.users cu on cu.id = v.completed_by
 		left join public.users pu on pu.id = v.performed_by
-		order by v.start_time asc, v.created_at asc, v.id asc`
+		order by ` + orderClause
 }
 
 func schedulePropertyJoinSQL(eventAlias string, propertyAlias string, canReadPlaceholder string, canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
@@ -1989,10 +2094,30 @@ func scheduleEventTeamLeaderScopeSQL(userIDPlaceholder string) string {
 	return `exists (
 			select 1
 			from public.team_members leader
+			join public.teams scope_team_entity
+			  on scope_team_entity.id = leader.team_id
+			 and scope_team_entity.organization_id = leader.organization_id
+			 and coalesce(scope_team_entity.is_active, false) = true
 			join public.team_members member
 			  on member.organization_id = leader.organization_id
 			 and member.team_id = leader.team_id
 			 and coalesce(member.is_active, true) = true
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = leader.organization_id
+			 and leader_membership.user_id = leader.user_id
+			 and leader_membership.membership_generation = leader.membership_generation
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
+			join public.organization_members member_membership
+			  on member_membership.organization_id = member.organization_id
+			 and member_membership.user_id = member.user_id
+			 and member_membership.membership_generation = member.membership_generation
+			 and member_membership.is_active = true
+			 and member_membership.deleted_at is null
+			join public.users scope_leader_user
+			  on scope_leader_user.id = leader.user_id and coalesce(scope_leader_user.is_active, false) = true
+			join public.users scope_member_user
+			  on scope_member_user.id = member.user_id and coalesce(scope_member_user.is_active, false) = true
 			where leader.organization_id = se.organization_id
 			  and leader.user_id = ` + userIDPlaceholder + `::uuid
 			  and coalesce(leader.is_active, true) = true
@@ -2048,9 +2173,11 @@ func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, c
 func scanEvent(row scanner) (Event, error) {
 	var event Event
 	var userID, leadID, propertyID, createdBy, teamID, leadSourceSnapshot, description, location, recurrenceParentID, recurrenceRule, googleEventID, googleSyncStatus, completedBy pgtype.Text
+	var eventType pgtype.Text
+	var isAllDay pgtype.Bool
 	var outcome, outcomeNotes, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	var reminderMinutes, recurrenceCount pgtype.Int4
-	var recurrenceUntil, completedAt, outcomeRecordedAt pgtype.Timestamptz
+	var recurrenceUntil, completedAt, outcomeRecordedAt, createdAt, updatedAt pgtype.Timestamptz
 	var userRefID, userName, userAvatarURL pgtype.Text
 	var leadRefID, leadName, leadPhone pgtype.Text
 	var propertyRefID, propertyTitle, propertyCode pgtype.Text
@@ -2068,10 +2195,10 @@ func scanEvent(row scanner) (Event, error) {
 		&leadSourceSnapshot,
 		&event.Title,
 		&description,
-		&event.EventType,
+		&eventType,
 		&event.StartTime,
 		&event.EndTime,
-		&event.IsAllDay,
+		&isAllDay,
 		&location,
 		&event.Status,
 		&event.Visibility,
@@ -2090,8 +2217,8 @@ func scanEvent(row scanner) (Event, error) {
 		&outcomeRecordedAt,
 		&rescheduledFromID,
 		&rescheduledToID,
-		&event.CreatedAt,
-		&event.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 		&userRefID,
 		&userName,
 		&userAvatarURL,
@@ -2112,6 +2239,11 @@ func scanEvent(row scanner) (Event, error) {
 	}
 
 	event.UserID = textPtr(userID)
+	event.EventType = "task"
+	if eventType.Valid {
+		event.EventType = eventType.String
+	}
+	event.IsAllDay = isAllDay.Valid && isAllDay.Bool
 	event.LeadID = textPtr(leadID)
 	event.PropertyID = textPtr(propertyID)
 	event.CreatedBy = textPtr(createdBy)
@@ -2134,6 +2266,8 @@ func scanEvent(row scanner) (Event, error) {
 	event.OutcomeRecordedAt = timePtr(outcomeRecordedAt)
 	event.RescheduledFromID = textPtr(rescheduledFromID)
 	event.RescheduledToID = textPtr(rescheduledToID)
+	event.CreatedAt = timePtr(createdAt)
+	event.UpdatedAt = timePtr(updatedAt)
 	event.AssigneeUserIDs = decodeStringArrayJSON(assigneesJSON)
 
 	if userRefID.Valid {
@@ -2152,7 +2286,7 @@ func scanEvent(row scanner) (Event, error) {
 		event.PerformedByUser = &UserRef{ID: performedUserID.String, Name: textValue(performedUserName)}
 	}
 
-	return event, nil
+	return redactBusyScheduleEvent(event), nil
 }
 
 func scanComment(row scanner) (Comment, error) {
@@ -2171,21 +2305,6 @@ func scanComment(row scanner) (Comment, error) {
 	}
 
 	return comment, nil
-}
-
-func addRecurrence(value time.Time, frequency string, amount int) time.Time {
-	switch frequency {
-	case "daily":
-		return value.AddDate(0, 0, amount)
-	case "weekly":
-		return value.AddDate(0, 0, amount*7)
-	case "monthly":
-		return value.AddDate(0, amount, 0)
-	case "yearly":
-		return value.AddDate(amount, 0, 0)
-	default:
-		return value
-	}
 }
 
 func recurrenceMax(frequency string) int {

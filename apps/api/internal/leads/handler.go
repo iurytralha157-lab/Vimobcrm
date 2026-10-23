@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -134,21 +135,10 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishLeadEvent(tenantContext, "lead.created", result.Lead.ID, map[string]any{
-		"leadId":              result.Lead.ID,
-		"pipelineId":          result.Lead.PipelineID,
-		"stageId":             result.Lead.StageID,
-		"assignedUserId":      result.Lead.AssignedUserID,
-		"reentry":             result.Reentry,
-		"assignedUserName":    result.AssignedUserName,
-		"distributionOutcome": result.DistributionOutcome,
-	})
-	httpserver.WriteJSON(w, http.StatusCreated, CreateResponse{
-		Data:                result.Lead,
-		Reentry:             result.Reentry,
-		AssignedUserName:    result.AssignedUserName,
-		DistributionOutcome: result.DistributionOutcome,
-	})
+	if !result.Replayed {
+		handler.publishLeadCreationEvent(tenantContext, result.Lead.ID)
+	}
+	httpserver.WriteJSON(w, http.StatusCreated, createLeadResponse(tenantContext, result))
 }
 
 func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -409,9 +399,31 @@ func (handler Handler) publishLeadEvent(tenantContext tenant.Context, eventType 
 }
 
 func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeQueueRuntimeError(w, r, err) {
+		return
+	}
+	if writeLeadFinancialError(w, r, err) {
+		return
+	}
 	switch {
+	case errors.Is(err, ErrLeadContactOutcomeConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_contact_outcome_command_conflict", "Esta tentativa já foi registrada com outros dados. Preserve suas anotações e revise o resultado.")
+	case errors.Is(err, ErrLeadContactOutcomeStorageUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_contact_outcome_storage_unavailable", "Não foi possível confirmar o registro. Preserve suas anotações e tente novamente com a mesma tentativa.")
+	case errors.Is(err, ErrLeadFeedbackConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_feedback_command_conflict", "This feedback command already has different content. Keep the draft and start a new command.")
+	case errors.Is(err, ErrLeadFeedbackStorageUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_feedback_storage_unavailable", "Feedback receipt storage is unavailable. Keep the draft and retry the same command later.")
+	case errors.Is(err, ErrCadenceCompletionConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_cadence_completion_conflict", "This cadence task was completed with another result. Refresh and review your notes.")
+	case errors.Is(err, ErrQueueManagedReleaseRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "queue_managed_release_required", "Escolha outro responsável para transferir este lead. Esta ação não pode deixá-lo sem responsável.")
+	case errors.Is(err, ErrQueuePoolConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "queue_pool_changed", "O lead mudou no bolsão. Atualize e tente novamente.")
 	case errors.Is(err, ErrLostReasonRequired):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_lost_reason_required", "lostReason is required when dealStatus is lost")
+	case errors.Is(err, ErrInvalidTagInput):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_tag_input", "Revise o nome, a cor e a versão da tag antes de tentar novamente.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_input", err.Error())
 	case errors.Is(err, ErrNoLeadChanges):
@@ -420,12 +432,28 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_stage_changed", "O lead mudou de etapa em outra sessão. Atualize e tente novamente.")
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
+	case errors.Is(err, ErrTagNameAlreadyExists):
+		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Já existe uma tag com este nome.")
+	case errors.Is(err, ErrTagChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "tag_changed", "Esta tag foi alterada em outra sessão. Atualize a lista e abra a edição novamente.")
+	case errors.Is(err, ErrTagInUse):
+		httpserver.WriteError(w, r, http.StatusConflict, "tag_in_use", "Esta tag está sendo usada em configurações. Remova ou substitua esses vínculos antes de excluir.")
 	case errors.Is(err, ErrLeadSourceAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_source_already_exists", "This lead source already exists.")
 	case errors.Is(err, ErrLeadAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Atencao: lead nao criado, pois ja esta cadastrado e atribuido a outro responsavel. Entre em contato com o administrador.")
 	case errors.Is(err, ErrLeadPhoneConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_phone_conflict", "Este telefone ja esta cadastrado em outro lead.")
+	case errors.Is(err, ErrLeadChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_changed", "Este contato foi alterado em outra sessão. Reabra a edição para conferir os dados atuais; suas alterações não foram gravadas.")
+	case errors.Is(err, ErrLeadImportRequestConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_import_request_conflict", "Esta linha já foi enviada com outras informações. Confira o resultado anterior antes de iniciar uma nova importação.")
+	case errors.Is(err, ErrLeadImportIdempotencyUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_import_idempotency_unavailable", "A proteção contra importações repetidas ainda não está disponível. Esta tentativa não gravou contatos; contate o administrador.")
+	case errors.Is(err, ErrLeadCreationWorkflowUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_creation_workflow_unavailable", "A criação de contatos ganhos ainda precisa da atualização do fluxo comercial. Nenhum contato foi gravado; preserve os dados e contate o administrador.")
+	case errors.Is(err, ErrContactsExportChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "contacts_export_changed", "Os contatos ou suas informações mudaram durante a exportação. Gere o arquivo novamente para incluir um conjunto consistente.")
 	case errors.Is(err, ErrLeadPropertyUnavailable):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
 	case errors.Is(err, ErrLeadPropertyRelinkWhileWon):
@@ -434,12 +462,30 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_reservation_unverified", "Não foi possível confirmar a reserva deste imóvel. Peça uma conferência ao administrador antes de alterar o resultado do lead.")
 	case errors.Is(err, ErrConversationBindingChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
+	case errors.Is(err, ErrWhatsAppSendInFlight):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_whatsapp_send_in_flight", ErrWhatsAppSendInFlight.Error())
+	case errors.Is(err, ErrLeadAssigneeTeamMismatch):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_assignee_team_mismatch", "O responsável precisa ser um membro ativo da equipe vinculada ao lead. Revise a equipe antes de transferir.")
+	case errors.Is(err, distribution.ErrIntakeDestinationUnavailable):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_destination_unavailable", "O funil selecionado precisa ter uma coluna ativa. Revise o destino do lead e tente novamente.")
+	case errors.Is(err, ErrLeadDestinationBusy):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_destination_busy", "O destino do lead está sendo alterado em outra sessão. Aguarde e revise a coluna antes de tentar novamente.")
+	case errors.Is(err, ErrMoveStageDestinationUnavailable):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_move_destination_unavailable", "The destination stage or pipeline is no longer available. Refresh and select an active stage.")
+	case errors.Is(err, ErrMoveStageConfigurationConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_move_configuration_conflict", "The destination stage has conflicting commercial rules. Ask a manager to review its configuration.")
+	case errors.Is(err, ErrLeadLinkedPropertyInvalid):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_linked_property_invalid", "The linked property is unavailable in this organization. Review the link before changing the commercial status.")
 	case errors.Is(err, ErrInvalidReference):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_reference", "One or more lead references do not belong to this organization.")
 	case errors.Is(err, ErrLeadNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "lead_not_found", "Lead was not found.")
 	case errors.Is(err, ErrStorageNotConfigured):
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "lead_storage_not_configured", "Lead storage is not configured.")
+	case errors.Is(err, ErrAttachmentUploadConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_attachment_upload_conflict", "Este documento já foi enviado com outras informações. Confira o envio anterior antes de escolher o arquivo novamente.")
+	case errors.Is(err, ErrAttachmentUploadUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_attachment_upload_unavailable", "Não foi possível confirmar a proteção do envio. Preserve o arquivo e tente novamente com a mesma seleção; contate o administrador se persistir.")
 	case errors.Is(err, ErrStorageOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "lead_storage_failed", "Lead storage operation failed.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

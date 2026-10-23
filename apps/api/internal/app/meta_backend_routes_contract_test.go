@@ -34,7 +34,8 @@ func TestMetaIntegrationRoutesAreOwnedByGoBackend(t *testing.T) {
 		t.Fatal("Meta Marketing Sync must receive META_APP_SECRET for appsecret_proof")
 	}
 	for _, guard := range []string{
-		`withModulePermission("campaigns", permissions.DashboardCampaignsView`,
+		`GET /v1/analytics/meta-insights", withActiveModulePermission("campaigns", permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.MetaInsights))`,
+		`GET /v1/analytics/campaign-insights", withActiveModulePermission("campaigns", permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.CampaignInsights))`,
 		`withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(metaMarketingSyncHandler.Sync))`,
 		`withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveMetaConversionFeedback))`,
 		`withModulesPermission([]string{"whatsapp", "campaigns"}, permissions.WhatsAppView, http.HandlerFunc(integrationsHandler.ListMetaConversations))`,
@@ -46,7 +47,7 @@ func TestMetaIntegrationRoutesAreOwnedByGoBackend(t *testing.T) {
 	}
 	for _, baseRoute := range []string{
 		`GET /v1/integrations/meta", withPermission(permissions.SettingsIntegrations`,
-		`POST /v1/integrations/meta/oauth/actions", withPermission(permissions.SettingsIntegrations`,
+		`POST /v1/integrations/meta/oauth/actions", withActivePermission(permissions.SettingsIntegrations`,
 		`GET /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations`,
 	} {
 		if !strings.Contains(source, baseRoute) {

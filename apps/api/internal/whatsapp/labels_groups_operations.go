@@ -86,6 +86,9 @@ func (repo Repository) ListChatLabels(ctx context.Context, tenantContext tenant.
 }
 
 func (repo Repository) SyncLabels(ctx context.Context, tenantContext tenant.Context, sessionID string) (SyncLabelsResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return SyncLabelsResponse{}, err
+	}
 	session, err := repo.GetSession(ctx, tenantContext, sessionID)
 	if err != nil {
 		return SyncLabelsResponse{}, err
@@ -371,6 +374,9 @@ func (repo Repository) RunProviderAction(ctx context.Context, tenantContext tena
 	requireSend, allowed := providerActionAllowed(action)
 	if !allowed {
 		return ProviderActionResponse{}, fmt.Errorf("%w: provider action is not allowed", ErrInvalidInput)
+	}
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return ProviderActionResponse{}, err
 	}
 
 	var session Session

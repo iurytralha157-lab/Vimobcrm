@@ -13,19 +13,25 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
+const maxLeadSourceFilterLength = 4096
+
 var (
-	ErrInvalidInput               = errors.New("invalid whatsapp input")
-	ErrInvalidReference           = errors.New("invalid whatsapp reference")
-	ErrSessionNotFound            = errors.New("whatsapp session not found")
-	ErrConversationNotFound       = errors.New("whatsapp conversation not found")
-	ErrMessageNotFound            = errors.New("whatsapp message not found")
-	ErrProviderFailed             = errors.New("whatsapp provider operation failed")
-	ErrProviderOutcomeUnknown     = errors.New("whatsapp provider outcome is unknown")
-	ErrRecipientNotRegistered     = errors.New("recipient_not_registered")
-	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
-	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
-	ErrAttendanceRequired         = errors.New("whatsapp attendance confirmation is required")
-	ErrSessionAccessRevoked       = errors.New("whatsapp session access revoked")
+	ErrInvalidInput                    = errors.New("invalid whatsapp input")
+	ErrInvalidReference                = errors.New("invalid whatsapp reference")
+	ErrSessionNotFound                 = errors.New("whatsapp session not found")
+	ErrConversationNotFound            = errors.New("whatsapp conversation not found")
+	ErrMessageNotFound                 = errors.New("whatsapp message not found")
+	ErrProviderFailed                  = errors.New("whatsapp provider operation failed")
+	ErrProviderOutcomeUnknown          = errors.New("whatsapp provider outcome is unknown")
+	ErrRecipientNotRegistered          = errors.New("recipient_not_registered")
+	ErrReactionTargetUnconfirmed       = errors.New("whatsapp reaction target is not confirmed")
+	ErrQuoteTargetUnavailable          = errors.New("whatsapp quote target is unavailable")
+	ErrFeatureUnavailable              = errors.New("whatsapp feature unavailable")
+	ErrConversationBindingChanged      = errors.New("whatsapp conversation binding changed")
+	ErrConversationHistoryLinkRequired = errors.New("whatsapp conversation history link required")
+	ErrAttendanceRequired              = errors.New("whatsapp attendance confirmation is required")
+	ErrSessionAccessRevoked            = errors.New("whatsapp session access revoked")
+	ErrMessageCursorRebaseRequired     = errors.New("whatsapp message cursor requires rebase")
 )
 
 type Session struct {
@@ -124,6 +130,10 @@ type Conversation struct {
 	PresenceUpdatedAt  *time.Time   `json:"presence_updated_at"`
 	LastMessage        *string      `json:"last_message"`
 	LastMessageAt      *time.Time   `json:"last_message_at"`
+	LastMessageFromMe  *bool        `json:"last_message_from_me"`
+	LastMessageStatus  *string      `json:"last_message_status"`
+	LastMessageID      *string      `json:"last_message_id"`
+	LastMessageSentAt  *time.Time   `json:"last_message_sent_at"`
 	UnreadCount        int          `json:"unread_count"`
 	IsGroup            bool         `json:"is_group"`
 	ArchivedAt         *time.Time   `json:"archived_at"`
@@ -133,6 +143,7 @@ type Conversation struct {
 	HistoricalLeadView bool         `json:"historical_lead_view,omitempty"`
 	Session            *SessionLite `json:"session,omitempty"`
 	Lead               *LeadLite    `json:"lead,omitempty"`
+	avatarReference    *conversationAvatarReference
 }
 
 // MarshalJSON keeps the operational Go model ergonomic while making missing
@@ -205,34 +216,44 @@ type TagRef struct {
 }
 
 type Message struct {
-	ID                  string         `json:"id"`
-	ConversationID      string         `json:"conversation_id"`
-	SessionID           *string        `json:"session_id"`
-	MessageID           string         `json:"message_id"`
-	ClientMessageID     *string        `json:"client_message_id,omitempty"`
-	FromMe              bool           `json:"from_me"`
-	Content             *string        `json:"content"`
-	MessageType         string         `json:"message_type"`
-	MediaURL            *string        `json:"media_url"`
-	MediaMimeType       *string        `json:"media_mime_type"`
-	MediaStatus         *string        `json:"media_status,omitempty"`
-	MediaError          *string        `json:"media_error,omitempty"`
-	MediaSize           *int64         `json:"media_size,omitempty"`
-	MediaStoragePath    *string        `json:"media_storage_path,omitempty"`
-	RemoteJID           *string        `json:"remote_jid,omitempty"`
-	ReactionToMessageID *string        `json:"reaction_to_message_id,omitempty"`
-	ReactionEmoji       *string        `json:"reaction_emoji,omitempty"`
-	ReactionSenderJID   *string        `json:"reaction_sender_jid,omitempty"`
-	ReactionSenderName  *string        `json:"reaction_sender_name,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
-	Status              string         `json:"status"`
-	DeliveryErrorCode   *string        `json:"delivery_error_code,omitempty"`
-	DeliveryFailedAt    *time.Time     `json:"delivery_failed_at,omitempty"`
-	SentAt              time.Time      `json:"sent_at"`
-	DeliveredAt         *time.Time     `json:"delivered_at"`
-	ReadAt              *time.Time     `json:"read_at"`
-	SenderJID           *string        `json:"sender_jid"`
-	SenderName          *string        `json:"sender_name"`
+	ID                   string           `json:"id"`
+	ConversationID       string           `json:"conversation_id"`
+	SessionID            *string          `json:"session_id"`
+	MessageID            string           `json:"message_id"`
+	ClientMessageID      *string          `json:"client_message_id,omitempty"`
+	FromMe               bool             `json:"from_me"`
+	Content              *string          `json:"content"`
+	MessageType          string           `json:"message_type"`
+	MediaURL             *string          `json:"media_url"`
+	MediaMimeType        *string          `json:"media_mime_type"`
+	MediaFilename        *string          `json:"media_filename,omitempty"`
+	Location             *MessageLocation `json:"location,omitempty"`
+	Contacts             []MessageContact `json:"contacts,omitempty"`
+	QuotedMessage        *QuotedMessage   `json:"quoted_message,omitempty"`
+	CanQuote             bool             `json:"can_quote"`
+	CanReact             bool             `json:"can_react"`
+	MediaStatus          *string          `json:"media_status,omitempty"`
+	MediaError           *string          `json:"media_error,omitempty"`
+	MediaSize            *int64           `json:"media_size,omitempty"`
+	MediaStoragePath     *string          `json:"media_storage_path,omitempty"`
+	RemoteJID            *string          `json:"remote_jid,omitempty"`
+	ReactionToMessageID  *string          `json:"reaction_to_message_id,omitempty"`
+	ReactionEmoji        *string          `json:"reaction_emoji,omitempty"`
+	ReactionSenderJID    *string          `json:"reaction_sender_jid,omitempty"`
+	ReactionSenderName   *string          `json:"reaction_sender_name,omitempty"`
+	Metadata             map[string]any   `json:"metadata,omitempty"`
+	Status               string           `json:"status"`
+	DeliveryErrorCode    *string          `json:"delivery_error_code,omitempty"`
+	DeliveryErrorReason  *string          `json:"delivery_error_reason,omitempty"`
+	DeliveryFailedAt     *time.Time       `json:"delivery_failed_at,omitempty"`
+	SentAt               time.Time        `json:"sent_at"`
+	DeliveredAt          *time.Time       `json:"delivered_at"`
+	ReadAt               *time.Time       `json:"read_at"`
+	SenderJID            *string          `json:"sender_jid"`
+	SenderName           *string          `json:"sender_name"`
+	SenderUserID         *string          `json:"sender_user_id,omitempty"`
+	OrderCreatedAt       time.Time        `json:"-"`
+	OrderIngressSequence int64            `json:"-"`
 }
 
 type MessagePage struct {
@@ -298,6 +319,14 @@ type ConversationListFilter struct {
 	DealStatus          string
 	PageID              string
 	CampaignIDs         []string
+	AdSetID             string
+	AdID                string
+	LeadCreatedFrom     *time.Time
+	LeadCreatedTo       *time.Time
+	ExpandedOptions     bool
+	OptionsSearch       string
+	OptionsOffset       int
+	OptionsLimit        int
 	LastMessageFrom     *time.Time
 	LastMessageTo       *time.Time
 	HideGroups          bool
@@ -319,24 +348,33 @@ type ConversationListMeta struct {
 }
 
 type ConversationFilterOption struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Color      string `json:"color,omitempty"`
+	CampaignID string `json:"campaignId,omitempty"`
+	AdSetID    string `json:"adsetId,omitempty"`
 }
 
 type ConversationFilterOptions struct {
-	Pipelines []ConversationFilterOption `json:"pipelines"`
-	Teams     []ConversationFilterOption `json:"teams"`
-	Users     []ConversationFilterOption `json:"users"`
-	Sources   []string                   `json:"sources"`
-	Tags      []ConversationFilterOption `json:"tags"`
-	Pages     []ConversationFilterOption `json:"pages"`
-	Campaigns []ConversationFilterOption `json:"campaigns"`
+	Pipelines  []ConversationFilterOption `json:"pipelines"`
+	Teams      []ConversationFilterOption `json:"teams"`
+	Users      []ConversationFilterOption `json:"users"`
+	Sources    []string                   `json:"sources"`
+	Tags       []ConversationFilterOption `json:"tags"`
+	Pages      []ConversationFilterOption `json:"pages"`
+	Campaigns  []ConversationFilterOption `json:"campaigns"`
+	AdSets     []ConversationFilterOption `json:"adSets,omitempty"`
+	Ads        []ConversationFilterOption `json:"ads,omitempty"`
+	HasMore    bool                       `json:"hasMore,omitempty"`
+	NextOffset *int                       `json:"nextOffset,omitempty"`
 }
 
 type MessageFilter struct {
 	Limit            int
 	CursorAt         *time.Time
 	CursorID         string
+	OrderingVersion  int
+	CursorCreatedAt  *time.Time
 	IncludeMediaURLs bool
 	ExpectedLeadID   string
 }
@@ -351,6 +389,8 @@ type HistoryAccessFilter struct {
 	ConversationID string
 	LeadID         string
 	AllMessages    bool
+	// Nil preserves the full first-page conversation envelope for old callers.
+	IncludeConversations *bool
 	MessageFilter
 }
 
@@ -387,6 +427,7 @@ type grantAccessInput struct {
 type LinkLeadRequest struct {
 	LeadID                 string `json:"leadId"`
 	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
+	OwnSessionOnly         bool   `json:"ownSessionOnly,omitempty"`
 }
 
 type ArchiveRequest struct {
@@ -436,6 +477,7 @@ type SendMessageRequest struct {
 	SendSessionID   *string `json:"sendSessionId,omitempty"`
 	ClientMessageID *string `json:"clientMessageId,omitempty"`
 	ExpectedLeadID  string  `json:"expectedLeadId"`
+	QuotedMessageID *string `json:"quotedMessageId,omitempty"`
 }
 
 type sendMessageInput struct {
@@ -448,6 +490,7 @@ type sendMessageInput struct {
 	SendSessionID      string
 	ClientMessageID    string
 	ExpectedLeadID     string
+	QuotedMessageID    string
 	InternalAutomation bool
 }
 
@@ -555,11 +598,16 @@ type HistorySyncRequest struct {
 }
 
 type StartConversationRequest struct {
-	Phone                  string `json:"phone"`
-	SessionID              string `json:"sessionId"`
-	LeadID                 string `json:"leadId,omitempty"`
-	LeadName               string `json:"leadName,omitempty"`
-	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
+	Phone                             string `json:"phone"`
+	SessionID                         string `json:"sessionId"`
+	OwnSessionOnly                    bool   `json:"ownSessionOnly,omitempty"`
+	LeadID                            string `json:"leadId,omitempty"`
+	LeadName                          string `json:"leadName,omitempty"`
+	ExpectedPreviousLeadID            string `json:"expectedPreviousLeadId"`
+	ConfirmPhoneChange                bool   `json:"confirmPhoneChange,omitempty"`
+	ExpectedPreviousConversationID    string `json:"expectedPreviousConversationId,omitempty"`
+	ConfirmDestinationHistory         bool   `json:"confirmDestinationHistory,omitempty"`
+	ExpectedDestinationConversationID string `json:"expectedDestinationConversationId,omitempty"`
 }
 
 type AttendanceRequest struct {
@@ -572,21 +620,47 @@ type attendanceInput struct {
 	SendSessionID  string
 }
 
+func validConversationFilterText(value string, maxLength int) bool {
+	return utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxLength && !strings.ContainsRune(value, '\x00')
+}
+
 func ParseConversationListFilter(values url.Values) (ConversationListFilter, error) {
 	filter := ConversationListFilter{
-		HideGroups:   parseBool(values.Get("hideGroups")),
-		ShowArchived: parseBool(values.Get("showArchived")),
-		OnlyLeads:    parseBool(values.Get("onlyLeads")),
-		WithoutLead:  parseBool(values.Get("withoutLead")),
-		PendingReply: parseBool(values.Get("pendingReply")),
-		Search:       strings.TrimSpace(values.Get("search")),
-		Limit:        80,
+		HideGroups:      parseBool(values.Get("hideGroups")),
+		ShowArchived:    parseBool(values.Get("showArchived")),
+		OnlyLeads:       parseBool(values.Get("onlyLeads")),
+		WithoutLead:     parseBool(values.Get("withoutLead")),
+		PendingReply:    parseBool(values.Get("pendingReply")),
+		Search:          strings.TrimSpace(values.Get("search")),
+		Limit:           80,
+		ExpandedOptions: parseBool(values.Get("expandedOptions")),
+		OptionsSearch:   strings.TrimSpace(values.Get("optionsSearch")),
+		OptionsLimit:    100,
+	}
+	if !validConversationFilterText(filter.OptionsSearch, 120) || !validConversationFilterText(filter.Search, 180) {
+		return ConversationListFilter{}, fmt.Errorf("%w: search is too long", ErrInvalidInput)
+	}
+	for _, field := range []struct {
+		name     string
+		target   *int
+		min, max int
+	}{
+		{"optionsOffset", &filter.OptionsOffset, 0, 1_000_000},
+		{"optionsLimit", &filter.OptionsLimit, 1, 200},
+	} {
+		if raw := values.Get(field.name); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < field.min || value > field.max {
+				return ConversationListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, field.name)
+			}
+			*field.target = value
+		}
 	}
 	if filter.OnlyLeads && filter.WithoutLead {
 		return ConversationListFilter{}, fmt.Errorf("%w: lead filters are mutually exclusive", ErrInvalidInput)
 	}
 	if source := strings.TrimSpace(values.Get("leadSource")); source != "" {
-		if len(source) > 120 {
+		if !validConversationFilterText(source, maxLeadSourceFilterLength) {
 			return ConversationListFilter{}, fmt.Errorf("%w: leadSource is invalid", ErrInvalidInput)
 		}
 		filter.LeadSource = source
@@ -637,7 +711,7 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 		filter.DealStatus = status
 	}
 	if page := strings.TrimSpace(values.Get("pageId")); page != "" && !strings.EqualFold(page, "all") {
-		if len(page) > 255 {
+		if !validConversationFilterText(page, 255) {
 			return ConversationListFilter{}, fmt.Errorf("%w: pageId is invalid", ErrInvalidInput)
 		}
 		filter.PageID = page
@@ -647,7 +721,7 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 		if campaign == "" || strings.EqualFold(campaign, "all") {
 			continue
 		}
-		if len(campaign) > 255 {
+		if !validConversationFilterText(campaign, 255) {
 			return ConversationListFilter{}, fmt.Errorf("%w: campaignIds contains oversized value", ErrInvalidInput)
 		}
 		filter.CampaignIDs = append(filter.CampaignIDs, campaign)
@@ -655,6 +729,38 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	filter.CampaignIDs = uniqueConversationFilterValues(filter.CampaignIDs)
 	if len(filter.CampaignIDs) > 50 {
 		return ConversationListFilter{}, fmt.Errorf("%w: campaignIds contains too many values", ErrInvalidInput)
+	}
+	for _, field := range []struct {
+		name   string
+		target *string
+	}{
+		{"adSetId", &filter.AdSetID}, {"adId", &filter.AdID},
+	} {
+		value := strings.TrimSpace(values.Get(field.name))
+		if value == "" || strings.EqualFold(value, "all") {
+			continue
+		}
+		if !validConversationFilterText(value, 255) {
+			return ConversationListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, field.name)
+		}
+		*field.target = value
+	}
+	for _, field := range []struct {
+		name   string
+		target **time.Time
+	}{
+		{"leadCreatedFrom", &filter.LeadCreatedFrom}, {"leadCreatedTo", &filter.LeadCreatedTo},
+	} {
+		if raw := strings.TrimSpace(values.Get(field.name)); raw != "" {
+			value, err := time.Parse(time.RFC3339Nano, raw)
+			if err != nil {
+				return ConversationListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, field.name)
+			}
+			*field.target = &value
+		}
+	}
+	if filter.LeadCreatedFrom != nil && filter.LeadCreatedTo != nil && filter.LeadCreatedFrom.After(*filter.LeadCreatedTo) {
+		return ConversationListFilter{}, fmt.Errorf("%w: lead creation period is invalid", ErrInvalidInput)
 	}
 	if filter.WithoutLead && conversationHasLeadFilters(filter) {
 		return ConversationListFilter{}, fmt.Errorf("%w: withoutLead cannot be combined with lead filters", ErrInvalidInput)
@@ -747,6 +853,12 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 	}
 
 	filter := MessageFilter{Limit: limit, IncludeMediaURLs: true}
+	if raw := strings.TrimSpace(values.Get("orderingVersion")); raw != "" {
+		if raw != "1" && raw != "2" {
+			return MessageFilter{}, fmt.Errorf("%w: orderingVersion is invalid", ErrInvalidInput)
+		}
+		filter.OrderingVersion, _ = strconv.Atoi(raw)
+	}
 	if raw := strings.TrimSpace(values.Get("expectedLeadId")); raw != "" {
 		value, err := validateExpectedConversationLeadSnapshot(raw)
 		if err != nil {
@@ -763,6 +875,21 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 	}
 	if raw := strings.TrimSpace(values.Get("cursor")); raw != "" {
 		parts := strings.Split(raw, "|")
+		if filter.OrderingVersion == 2 {
+			if len(parts) != 4 || parts[0] != "v2" {
+				return MessageFilter{}, fmt.Errorf("%w: cursor ordering version is invalid", ErrInvalidInput)
+			}
+			value, err := time.Parse(messageOrderTimestampLayout, parts[1])
+			createdAt, createdErr := time.Parse(messageOrderTimestampLayout, parts[2])
+			cursorID, ok := normalizeUUID(parts[3])
+			if err != nil || createdErr != nil || !ok || cursorID != parts[3] ||
+				value.Format(messageOrderTimestampLayout) != parts[1] ||
+				createdAt.Format(messageOrderTimestampLayout) != parts[2] {
+				return MessageFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+			}
+			filter.CursorAt, filter.CursorCreatedAt, filter.CursorID = &value, &createdAt, cursorID
+			return filter, nil
+		}
 		if len(parts) > 2 {
 			return MessageFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
 		}
@@ -824,6 +951,13 @@ func ParseHistoryAccessFilter(values url.Values) (HistoryAccessFilter, error) {
 	filter := HistoryAccessFilter{
 		AllMessages:   parseBool(values.Get("allMessages")),
 		MessageFilter: messageFilter,
+	}
+	if raw := strings.TrimSpace(values.Get("includeConversations")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return HistoryAccessFilter{}, fmt.Errorf("%w: includeConversations is invalid", ErrInvalidInput)
+		}
+		filter.IncludeConversations = &value
 	}
 	if filter.AllMessages && strings.TrimSpace(values.Get("limit")) == "" && strings.TrimSpace(values.Get("cursor")) == "" {
 		filter.MessageFilter.Limit = legacyAllMessagesLimit
@@ -913,6 +1047,7 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 		SendSessionID:   strings.TrimSpace(stringPtrValue(request.SendSessionID)),
 		ClientMessageID: strings.TrimSpace(stringPtrValue(request.ClientMessageID)),
 		ExpectedLeadID:  expectedLeadID,
+		QuotedMessageID: strings.TrimSpace(stringPtrValue(request.QuotedMessageID)),
 	}
 
 	if input.Text == "" && input.MediaURL == "" && input.Base64 == "" {
@@ -920,6 +1055,14 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 	}
 	if len(input.Text) > 10000 || len(input.MediaURL) > 4000 || len(input.Mimetype) > 255 || len(input.Filename) > 255 {
 		return sendMessageInput{}, fmt.Errorf("%w: message field exceeds the allowed size", ErrInvalidInput)
+	}
+	input.Filename = safeMediaFilename(input.Filename)
+	if input.QuotedMessageID != "" {
+		value, valid := normalizeUUID(input.QuotedMessageID)
+		if !valid {
+			return sendMessageInput{}, fmt.Errorf("%w: quotedMessageId is invalid", ErrInvalidInput)
+		}
+		input.QuotedMessageID = value
 	}
 	if len(input.ClientMessageID) > 200 {
 		return sendMessageInput{}, fmt.Errorf("%w: clientMessageId is too long", ErrInvalidInput)
@@ -1061,7 +1204,8 @@ func uniqueConversationFilterValues(values []string) []string {
 func conversationHasLeadFilters(filter ConversationListFilter) bool {
 	return filter.PipelineID != "" || filter.TeamID != "" || filter.UserID != "" ||
 		filter.LeadSource != "" || len(filter.TagIDs) > 0 || filter.DealStatus != "" ||
-		filter.PageID != "" || len(filter.CampaignIDs) > 0
+		filter.PageID != "" || len(filter.CampaignIDs) > 0 || filter.AdSetID != "" || filter.AdID != "" ||
+		filter.LeadCreatedFrom != nil || filter.LeadCreatedTo != nil
 }
 
 func validateExpectedLeadID(value string) (string, error) {

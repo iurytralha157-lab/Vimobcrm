@@ -17,6 +17,9 @@ func leadOperationCapability(tenantContext tenant.Context, assignedUserID string
 
 func withLeadOperationCapability(tenantContext tenant.Context, lead Lead) Lead {
 	canOperate := leadOperationCapability(tenantContext, lead.AssignedUserID, lead.TeamID)
+	if lead.QueuePoolReadAccess != nil {
+		canOperate = false
+	}
 	lead.CanOperate = &canOperate
 	return lead
 }
@@ -31,5 +34,8 @@ func withPipelineLeadOperationCapability(tenantContext tenant.Context, lead Pipe
 		teamID = *lead.TeamID
 	}
 	lead.CanOperate = leadOperationCapability(tenantContext, assignedUserID, teamID)
+	if lead.QueuePool != nil {
+		lead.CanOperate = false
+	}
 	return lead
 }

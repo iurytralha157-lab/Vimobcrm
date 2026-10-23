@@ -19,16 +19,18 @@ import {
   type ScheduleEvent,
 } from "@/hooks/use-schedule-events";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { isFinalScheduleStatus } from "@/lib/schedule-outcome";
+import { getConfirmedScheduleTimeZone, ScheduleTimeZoneStatus } from "@/components/features/schedule/ScheduleTimeZoneStatus";
 import {
-  DEFAULT_SCHEDULE_TIME_ZONE,
-  getScheduleLifecycleLabel,
-  getScheduleLifecycleState,
-  isFinalScheduleStatus,
-  type ScheduleLifecycleState,
-} from "@/lib/schedule-outcome";
+  getScheduleDisplayLifecycle,
+  getScheduleDisplayLifecycleLabel,
+  getScheduleDisplayTitle,
+  type ScheduleDisplayLifecycle,
+} from "@/components/features/schedule/schedule-event-presentation";
 import { cn } from "@/lib/utils";
 
-const lifecycleClasses: Record<ScheduleLifecycleState, string> = {
+const lifecycleClasses: Record<ScheduleDisplayLifecycle, string> = {
+  busy: "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
   open: "bg-primary/12 text-primary",
   overdue: "bg-red-500/12 text-red-600 dark:text-red-300",
   completed: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300",
@@ -79,12 +81,7 @@ function formatInTimeZone(
       ...options,
       timeZone,
     }).format(date);
-  } catch {
-    return new Intl.DateTimeFormat(locale.code || "pt-BR", {
-      ...options,
-      timeZone: DEFAULT_SCHEDULE_TIME_ZONE,
-    }).format(date);
-  }
+  } catch { return "Horário indisponível"; }
 }
 
 function getScheduleDateLabel(
@@ -155,8 +152,14 @@ export function CompactScheduleEventsList({
     ) : null;
   }
 
-  const timeZone =
-    capabilitiesQuery.data?.timeZone || DEFAULT_SCHEDULE_TIME_ZONE;
+  const timeZone = getConfirmedScheduleTimeZone(capabilitiesQuery);
+  if (!timeZone) {
+    return <div className="mt-3"><ScheduleTimeZoneStatus
+      failed={capabilitiesQuery.isError || capabilitiesQuery.isSuccess}
+      fetching={capabilitiesQuery.isFetching}
+      retry={() => void capabilitiesQuery.refetch()}
+    /></div>;
+  }
 
   return (
     <div
@@ -167,16 +170,8 @@ export function CompactScheduleEventsList({
     >
       {sortedEvents.map((event) => {
         const eventType = getScheduleEventType(event.event_type);
-        const EventIcon = scheduleEventTypeIcons[eventType] || Calendar;
-        const lifecycle = getScheduleLifecycleState({
-          status: event.status,
-          outcome: event.outcome,
-          startTime: event.start_time,
-          endTime: event.end_time,
-          isAllDay: event.is_all_day ?? false,
-          timeZone,
-          now: currentTime,
-        });
+        const EventIcon = event.is_masked ? Calendar : scheduleEventTypeIcons[eventType] || Calendar;
+        const lifecycle = getScheduleDisplayLifecycle(event, timeZone, currentTime);
         const isCompleted = lifecycle === "completed";
         const isFinalized = isFinalScheduleStatus(event.status);
         const StatusIcon =
@@ -216,11 +211,11 @@ export function CompactScheduleEventsList({
                   isCompleted && "line-through",
                 )}
               >
-                {event.title || scheduleEventTypeLabels[eventType]}
+                {getScheduleDisplayTitle(event)}
               </span>
               <span className="mt-px flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] font-light leading-tight text-[var(--app-text-secondary)]">
                 <span className="font-normal text-[var(--app-text-primary)]">
-                  {scheduleEventTypeLabels[eventType]}
+                  {event.is_masked ? "Horário ocupado" : scheduleEventTypeLabels[eventType]}
                 </span>
                 <span>-</span>
                 <span>{getScheduleDateLabel(event, locale, timeZone)}</span>
@@ -230,7 +225,7 @@ export function CompactScheduleEventsList({
                     lifecycleClasses[lifecycle],
                   )}
                 >
-                  {getScheduleLifecycleLabel(lifecycle)}
+                  {getScheduleDisplayLifecycleLabel(lifecycle)}
                 </span>
               </span>
             </span>

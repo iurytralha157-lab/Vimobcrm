@@ -43,6 +43,30 @@ func TestGoogleCalendarImmediateDispatchIsOptIn(t *testing.T) {
 	}
 }
 
+func TestWhatsAppUnlinkedRetentionWorkerIsOptIn(t *testing.T) {
+	t.Setenv("API_ENV", "development")
+	t.Setenv("SUPABASE_PROJECT_URL", "https://supabase.example.test")
+	t.Setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+	t.Setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+	t.Setenv("WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.WhatsApp.UnlinkedRetentionWorkerEnabled {
+		t.Fatal("unlinked retention worker must default to disabled")
+	}
+
+	t.Setenv("WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load enabled config: %v", err)
+	}
+	if !cfg.WhatsApp.UnlinkedRetentionWorkerEnabled {
+		t.Fatal("unlinked retention worker flag was ignored")
+	}
+}
+
 func testVAPIDKeyPair(t *testing.T, scalar byte) (string, string) {
 	t.Helper()
 	privateBytes := make([]byte, 32)
@@ -242,15 +266,15 @@ func TestConfigValidateRejectsUnsafeMediaWorkerTiming(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRequiresScopedNativeMediaWorkerOwnership(t *testing.T) {
+func TestConfigValidateAllowsDurableMediaWorkerOwnershipDiscovery(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		mode      string
 		allowlist []string
-		wantErr   bool
 	}{
-		{name: "edge global", mode: "edge", allowlist: []string{"*"}, wantErr: true},
-		{name: "native empty", mode: "native", wantErr: true},
+		{name: "edge empty discovers cutover", mode: "edge"},
+		{name: "edge static wildcard remains inert", mode: "edge", allowlist: []string{"*"}},
+		{name: "native empty discovers cutover", mode: "native"},
 		{name: "native canary", mode: "native", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}},
 		{name: "fallback canary", mode: "native_fallback", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}},
 		{name: "native global", mode: "native", allowlist: []string{"*"}},
@@ -266,11 +290,8 @@ func TestConfigValidateRequiresScopedNativeMediaWorkerOwnership(t *testing.T) {
 			cfg.EvolutionGo.WebhookRolloutSessionIDs = test.allowlist
 
 			err := cfg.Validate()
-			if test.wantErr && (err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_ENABLED requires")) {
-				t.Fatalf("expected ownership validation error, got %v", err)
-			}
-			if !test.wantErr && err != nil {
-				t.Fatalf("scoped native ownership rejected: %v", err)
+			if err != nil {
+				t.Fatalf("durable/static ownership discovery rejected: %v", err)
 			}
 		})
 	}

@@ -1,58 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, Loader2, MessageCircle, Paperclip, RefreshCw, Timer } from 'lucide-react';
-import { MessageBox } from '@/components/ui/message-box';
+import { Bot, Loader2, MessageCircle, RefreshCw, Timer } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
-import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
-import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
+import { DateSeparator, LoadOlderMessagesButton, ScrollToLatestButton } from '@/components/features/whatsapp';
+import { useWhatsAppThreadScroll } from '@/hooks/use-whatsapp-thread-scroll';
+import { useWhatsAppMessageNavigation } from '@/hooks/use-whatsapp-message-navigation';
+import { useWhatsAppMediaGallery } from '@/hooks/use-whatsapp-media-gallery';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
-import { getWhatsAppSendFailureStatus } from '@/lib/whatsapp-query-cache';
+import { flattenWhatsAppMessagePages } from '@/lib/whatsapp-query-cache';
+import { sortWhatsAppTimelineItems } from '@/lib/whatsapp-message-order';
+import { getWhatsAppMessageGrouping, isWhatsAppMessageBlockStart } from '@/lib/whatsapp-message-grouping';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
+import { getEventTone } from '@/components/features/leads/lead-detail/history-event-presentation';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
-import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
-import {
-  useSendWhatsAppMessage,
-  useReactToWhatsAppMessage,
-  useWhatsAppConversations,
-  useWhatsAppLeadRealtime,
-  type WhatsAppConversation,
-  type WhatsAppMessage,
-} from '@/hooks/use-whatsapp-conversations';
-import { useLeadMessages } from '@/hooks/use-lead-messages';
-import { useStartConversation } from '@/hooks/use-start-conversation';
-import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from '@/hooks/use-whatsapp-attendance';
+import { leadThreadInitialLoading, leadThreadWindow, LEAD_HISTORY_RENDER_PAGE_SIZE } from '@/hooks/lead-history/thread-state';
+import { useWhatsAppConversations, useWhatsAppLeadRealtime, type WhatsAppMessage } from '@/hooks/use-whatsapp-conversations';
+import { useLeadMessages, type LeadMessage } from '@/hooks/use-lead-messages';
+import { useWhatsAppQueryScope } from '@/hooks/use-whatsapp-query-scope';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
-import {
-  getWhatsAppMessageInputState,
-  getWhatsAppSendSessionId,
-  WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
-} from '@/lib/whatsapp-message-input';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
-import {
-  blobToBase64,
-  compressOutboundImageFile,
-  getMessageMediaExtension,
-  getOutboundMessageMediaKind,
-  OUTBOUND_IMAGE_COMPRESSION_PROFILES,
-} from '@/components/features/whatsapp/message-media';
 
 type LeadUnifiedThreadProps = {
   leadId: string;
   leadName: string;
   leadAvatarUrl?: string | null;
-  leadPhone?: string | null;
-  whatsappVerified?: boolean | null;
   leadCreatedAt?: string | null;
-  composerRequest?: { id: number; text?: string } | null;
-  readOnly?: boolean;
+  historyPagination?: boolean;
 };
 
 type ThreadItem =
@@ -66,13 +47,8 @@ type ThreadItem =
       id: string;
       kind: 'message';
       timestamp: string;
-      message: WhatsAppMessage;
+      message: WhatsAppMessage & Pick<LeadMessage, 'session_owner_name' | 'session_instance_name'>;
     };
-
-const LEAD_THREAD_IMAGE_COMPRESSION_OPTIONS = {
-  ...OUTBOUND_IMAGE_COMPRESSION_PROFILES.preferSmallerFile,
-  fallbackBaseName: 'imagem',
-};
 
 type MessageMediaStatus = 'pending' | 'ready' | 'failed' | null;
 
@@ -89,7 +65,8 @@ function getAttachmentFileName(event: UnifiedHistoryEvent) {
     metadata.attachment_name ||
     metadata.document_name;
 
-  if (metadataName) return String(metadataName);
+  const fileName = metadataText(metadataName);
+  if (fileName) return fileName;
 
   const text = `${event.label || ''} ${event.content || ''}`;
   const match = text.match(/(?:documento|arquivo)\s+anexad[oa]:?\s*(.+)$/i);
@@ -116,8 +93,8 @@ function metadataText(value: unknown): string | null {
     const trimmed = value.trim();
     return trimmed || null;
   }
-  if (value === null || value === undefined || value === false) return null;
-  return String(value);
+  if (value === true || (typeof value === 'number' && Number.isFinite(value))) return String(value);
+  return null;
 }
 
 function safeEventDate(value: string | null | undefined): Date | null {
@@ -133,7 +110,7 @@ function formatEventTime(value: string | null | undefined) {
 
 function isInternalNotificationMessage(message: WhatsAppMessage) {
   const metadata = (message.metadata || {}) as Record<string, unknown>;
-  const notificationType = String(metadata.notification_type || metadata.notificationType || '').toLowerCase();
+  const notificationType = (metadataText(metadata.notification_type) || metadataText(metadata.notificationType) || '').toLowerCase();
 
   return Boolean(
     metadata.internal_notification ||
@@ -163,23 +140,14 @@ function getStageNameFromMetadata(metadata: Record<string, unknown> | null | und
 function getOutcomeLabel(event: UnifiedHistoryEvent) {
   const outcome = metadataText(event.metadata?.outcome);
   if (!outcome) return null;
-  return OUTCOME_LABELS[outcome] || 'Resultado registrado';
-}
-
-function getOutcomeVariant(event: UnifiedHistoryEvent): 'success' | 'warning' | 'error' | 'default' {
-  const outcome = metadataText(event.metadata?.outcome);
-  if (!outcome) return 'default';
-  if (['answered', 'replied', 'scheduled', 'done'].includes(outcome)) return 'success';
-  if (['invalid_number', 'no_whatsapp', 'bounced'].includes(outcome)) return 'error';
-  if (['not_answered', 'busy', 'seen_no_reply', 'not_seen', 'not_replied'].includes(outcome)) return 'warning';
-  return 'default';
+  return Object.hasOwn(OUTCOME_LABELS, outcome) ? OUTCOME_LABELS[outcome] : 'Resultado registrado';
 }
 
 function getOutcomeActionLabel(event: UnifiedHistoryEvent) {
   const outcomeLabel = getOutcomeLabel(event);
   if (!outcomeLabel) return null;
 
-  const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
+  const channel = (metadataText(event.metadata?.channel) || event.channel || '').toLowerCase();
   if (event.type === 'call' || channel === 'call' || channel === 'phone') return `Ligação: ${outcomeLabel}`;
   if (event.type === 'email' || channel === 'email') return `E-mail: ${outcomeLabel}`;
   if (event.type === 'message' || channel === 'message' || channel === 'whatsapp') return `Mensagem: ${outcomeLabel}`;
@@ -203,15 +171,26 @@ function getLostReason(event: UnifiedHistoryEvent) {
 }
 
 function getEventDetail(event: UnifiedHistoryEvent) {
+  // Agenda context is projected once by the history builder. Re-reading raw
+  // notes or timestamps here would bypass that projection and its timezone.
+  if (event.type.startsWith('agenda_') || ['visit_scheduled', 'visit_made', 'visit_confirmed',
+    'meeting_scheduled', 'meeting_made', 'meeting_held'].includes(event.type)) {
+    return event.content?.trim() || null;
+  }
   const metadata = event.metadata || {};
+  if (metadataText(metadata.audit_action)
+    && (Object.hasOwn(metadata, 'lost_reason') || Object.hasOwn(metadata, 'deal_status'))) {
+    return event.content?.trim() || null;
+  }
   if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     return metadataText(metadata.answer) || event.content || null;
   }
   if (event.type === 'lead_updated') {
     return event.content?.trim() || null;
   }
+  if (event.type === 'property_interests_changed') return event.content?.trim() || null;
 
-  const toStatus = String(metadata.to_status || '').toLowerCase();
+  const toStatus = (metadataText(metadata.to_status) || '').toLowerCase();
   const isStageChangeEvent = event.type === 'stage_changed' || event.type === 'stage_change';
   if (isStageChangeEvent) {
     const from = getStageNameFromMetadata(metadata, 'from');
@@ -233,30 +212,11 @@ function getEventDetail(event: UnifiedHistoryEvent) {
   if (event.type === 'property_selected' || event.type === 'property_linked') {
     const title = metadataText(metadata.property_title) || metadataText(metadata.property_name);
     const code = metadataText(metadata.property_code) || metadataText(metadata.property_ref);
-    const rawPrice = Number(metadata.property_price);
+    const rawPrice = Number(metadataText(metadata.property_price));
     const price = Number.isFinite(rawPrice) && rawPrice > 0
       ? formatBRLCurrencyWithDefaultDecimals(rawPrice)
       : null;
     return [title, code, price].filter(Boolean).join('\n') || null;
-  }
-
-  if (
-    event.type === 'agenda_created' ||
-    event.type === 'agenda_rescheduled' ||
-    event.type === 'agenda_completed' ||
-    event.type === 'agenda_cancelled' ||
-    event.type === 'visit_scheduled' ||
-    event.type === 'visit_confirmed' ||
-    event.type === 'meeting_scheduled' ||
-    event.type === 'meeting_held'
-  ) {
-    const title = metadataText(metadata.title) || metadataText(metadata.event_title);
-    const startsAt =
-      metadataText(metadata.starts_at) ||
-      metadataText(metadata.start_at) ||
-      metadataText(metadata.start_time) ||
-      metadataText(metadata.scheduled_at);
-    return [title, startsAt].filter(Boolean).join('\n') || null;
   }
 
   const notes =
@@ -267,7 +227,7 @@ function getEventDetail(event: UnifiedHistoryEvent) {
     metadataText(metadata.comment);
 
   const outcomeLabel = getOutcomeLabel(event);
-  const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
+  const channel = (metadataText(event.metadata?.channel) || event.channel || '').toLowerCase();
   const isTaskOrCommunication = ['call', 'email', 'message', 'task_completed'].includes(event.type) || ['call', 'phone', 'email', 'message', 'whatsapp'].includes(channel);
 
   if (outcomeLabel && isTaskOrCommunication) {
@@ -305,6 +265,10 @@ function isAttachmentEvent(event: UnifiedHistoryEvent) {
 }
 
 function normalizeEventLabel(event: UnifiedHistoryEvent) {
+  if (event.type.startsWith('agenda_') || ['visit_scheduled', 'visit_made', 'visit_confirmed',
+    'meeting_scheduled', 'meeting_made', 'meeting_held'].includes(event.type)) {
+    return event.label;
+  }
   const label = (event.label || '').replace(/^Lead\s+"[^"]+"\s+/i, 'Lead ').trim();
   const content = event.content?.trim();
   const metadata = event.metadata || {};
@@ -313,6 +277,7 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   if (event.type === 'lead_updated') {
     return 'Dados do lead atualizados';
   }
+  if (event.type === 'property_interests_changed') return 'Imóveis de interesse atualizados';
 
   if (event.type === 'meta_form_answer') {
     const question = metadataText(metadata.question) || label.replace(/^Meta:\s*/i, '');
@@ -338,21 +303,12 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
     return 'Proposta registrada';
   }
 
-  if (event.type === 'agenda_created') return 'Atividade agendada';
-  if (event.type === 'agenda_rescheduled') return 'Atividade remarcada';
-  if (event.type === 'agenda_completed') return 'Atividade concluída';
-  if (event.type === 'agenda_cancelled') return 'Atividade cancelada';
-  if (event.type === 'visit_scheduled') return 'Visita agendada';
-  if (event.type === 'visit_confirmed') return 'Visita realizada';
-  if (event.type === 'meeting_scheduled') return 'Reunião agendada';
-  if (event.type === 'meeting_held') return 'Reunião realizada';
-
   if (event.type === 'first_response') {
     return content || label || 'Primeiro contato';
   }
 
   const outcomeLabel = getOutcomeLabel(event);
-  const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
+  const channel = (metadataText(event.metadata?.channel) || event.channel || '').toLowerCase();
   const isTaskOrCommunication = ['call', 'email', 'message', 'task_completed'].includes(event.type) || ['call', 'phone', 'email', 'message', 'whatsapp'].includes(channel);
 
   if (outcomeLabel && isTaskOrCommunication) {
@@ -377,21 +333,23 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   if (outcomeActionLabel) return outcomeActionLabel;
 
   if (event.type === 'lead_created' || /foi criado/i.test(label)) {
-    let source = String(metadata.source_label || metadata.source || event.sourceOrigin || '').trim();
+    let source = (metadataText(metadata.source_label) || metadataText(metadata.source) || event.sourceOrigin || '').trim();
     if (source === 'generic_webhook') source = 'Webhook';
     return source && !/manual/i.test(source) ? `Lead criado via ${source}` : 'Lead criado';
   }
 
   if (event.type === 'tag_added') {
-    return metadata.tag_name ? `Tag adicionada: ${metadata.tag_name}` : 'Tag adicionada';
+    const name = metadataText(metadata.tag_name);
+    return name ? `Tag adicionada: ${name}` : 'Tag adicionada';
   }
 
   if (event.type === 'tag_removed') {
-    return metadata.tag_name ? `Tag removida: ${metadata.tag_name}` : 'Tag removida';
+    const name = metadataText(metadata.tag_name);
+    return name ? `Tag removida: ${name}` : 'Tag removida';
   }
 
   if (event.type === 'status_change') {
-    const toStatus = String(metadata.to_status || metadata.new_status || '').toLowerCase();
+    const toStatus = (metadataText(metadata.to_status) || metadataText(metadata.new_status) || '').toLowerCase();
     if (toStatus === 'won') return 'Lead marcado como ganho';
     if (toStatus === 'lost') return 'Lead marcado como perdido';
     if (toStatus === 'open') return 'Lead reaberto';
@@ -417,17 +375,16 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   return content && content.length <= 72 ? content : label;
 }
 
-function eventSearchText(event: UnifiedHistoryEvent) {
-  return `${event.type || ''} ${event.label || ''} ${event.content || ''}`.toLowerCase();
-}
-
 function shouldShowEvent(event: UnifiedHistoryEvent) {
-  const text = eventSearchText(event);
   if ((event.type === 'lead_assigned' || event.type === 'lead_distribution_pending')
     && ['no_available_members', 'no_matching_queue'].includes(metadataText(event.metadata?.reason) || '')) return true;
-  if (event.type === 'lead_assigned' && text.includes('registro sem fila')) return false;
-  if (text.includes('sem fila de distribui')) return false;
-  if (text.includes('fila "') && text.includes('sem distribui')) return false;
+  // Distribution visibility follows reserved projection IDs, not user text.
+  if (event.type === 'lead_assigned' && event.source === 'timeline'
+    && !metadataText(event.metadata?.queue_runtime_event_id)) {
+    if (event.id.startsWith('lead-fallback-assigned-')) return false;
+    if (event.id.startsWith('distribution-')
+      && !metadataText(event.metadata?.assigned_user_id) && !metadataText(event.metadata?.to_user_id)) return false;
+  }
   if (isTechnicalMetaAnswerEvent(event)) return false;
   return true;
 }
@@ -462,142 +419,19 @@ function isTechnicalMetaAnswerEvent(event: UnifiedHistoryEvent) {
   return technicalFields.some((field) => question.includes(field)) || answer.includes('business.facebook.com/latest/');
 }
 
-function isWonStatusEvent(event: UnifiedHistoryEvent) {
-  const toStatus = String(event.metadata?.to_status || event.metadata?.new_status || '').toLowerCase();
-  return toStatus === 'won' || /marcado como ganho/i.test(`${event.label || ''} ${event.content || ''}`);
-}
-
-function isSaleConclusionEvent(event: UnifiedHistoryEvent) {
-  return /venda conclu/i.test(`${event.label || ''} ${event.content || ''}`);
-}
-
-function isNearbyEvent(event: UnifiedHistoryEvent, candidate: UnifiedHistoryEvent) {
-  const eventTime = new Date(event.timestamp).getTime();
-  const candidateTime = new Date(candidate.timestamp).getTime();
-  if (!Number.isFinite(eventTime) || !Number.isFinite(candidateTime)) return false;
-  return Math.abs(eventTime - candidateTime) <= 5 * 60 * 1000;
-}
-
-function removeRedundantEvents(events: UnifiedHistoryEvent[]) {
-  return events.filter((event) => {
-    if (!isSaleConclusionEvent(event)) return true;
-    return !events.some((candidate) => candidate.id !== event.id && isWonStatusEvent(candidate) && isNearbyEvent(event, candidate));
-  });
-}
-
 function isFeedbackEvent(event: UnifiedHistoryEvent) {
-  const kind = String(event.metadata?.kind || event.metadata?.event_kind || '').toLowerCase();
+  const kind = (metadataText(event.metadata?.kind) || metadataText(event.metadata?.event_kind) || '').toLowerCase();
   if (kind === 'feedback') return Boolean(event.content?.trim());
   return (event.type === 'note' || event.type === 'note_created') && Boolean(event.content?.trim()) && !isAttachmentEvent(event);
-}
-
-function getEventTone(event: UnifiedHistoryEvent, plainHistory: boolean) {
-  const text = `${event.type} ${event.label} ${event.content || ''}`.toLowerCase();
-  const toStatus = String(event.metadata?.to_status || event.metadata?.new_status || '').toLowerCase();
-  const neutralTone = plainHistory
-    ? 'bg-zinc-700 !text-white'
-    : 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
-
-  if (event.type === 'lead_created' || text.includes('foi criado')) {
-    return 'bg-green-600 !text-white';
-  }
-
-  if (event.type === 'first_response') {
-    return 'bg-amber-400 !text-amber-950';
-  }
-
-  if (event.type === 'assignee_changed' && metadataText(event.metadata?.reason) === 'manual_transfer') {
-    return 'bg-violet-600 !text-white';
-  }
-
-  if (event.type === 'task_completed') {
-    return neutralTone;
-  }
-
-  if (event.type === 'meta_form_answer') {
-    return 'bg-blue-600 !text-white';
-  }
-
-  if (event.type === 'webhook_form_answer') {
-    return 'bg-primary !text-primary-foreground';
-  }
-
-  if (event.type === 'property_selected' || event.type === 'property_linked') {
-    return plainHistory ? 'bg-orange-700 !text-white' : 'bg-primary/10 !text-primary';
-  }
-
-  if (
-    event.type === 'agenda_created' ||
-    event.type === 'agenda_rescheduled' ||
-    event.type === 'visit_scheduled' ||
-    event.type === 'visit_confirmed' ||
-    event.type === 'meeting_scheduled' ||
-    event.type === 'meeting_held'
-  ) {
-    return plainHistory ? 'bg-blue-600 !text-white' : 'bg-blue-500/10 !text-blue-600 dark:!text-blue-300';
-  }
-
-  if (event.type === 'proposal_sent') {
-    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
-  }
-
-  if (toStatus === 'won') {
-    return 'bg-emerald-600 !text-white';
-  }
-
-  if (toStatus === 'lost') {
-    return 'bg-red-600 !text-white';
-  }
-
-  if (toStatus === 'open') {
-    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
-  }
-
-  if (text.includes('ganho') || text.includes('venda conclu')) {
-    return 'bg-emerald-600 !text-white';
-  }
-
-  if (text.includes('perdido') || text.includes('perda')) {
-    return 'bg-red-600 !text-white';
-  }
-
-  if (text.includes('reaberto')) {
-    return plainHistory ? 'bg-amber-700 !text-white' : 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
-  }
-
-  const outcomeVariant = getOutcomeVariant(event);
-  if (outcomeVariant === 'success') return 'bg-emerald-600 !text-white';
-  if (outcomeVariant === 'warning') return 'bg-amber-600 !text-white';
-  if (outcomeVariant === 'error') return 'bg-red-600 !text-white';
-
-  if (event.type === 'stage_changed' || event.type === 'stage_change') {
-    return neutralTone;
-  }
-
-  if (event.type.includes('tag')) {
-    return plainHistory ? 'bg-violet-600 !text-white' : 'bg-primary/12 !text-primary';
-  }
-
-  return neutralTone;
-}
-
-function DatePill({ date, plainHistory }: { date: Date; plainHistory: boolean }) {
-  return (
-    <div className="my-2 flex justify-center">
-      <span className={cn('rounded-[6px] px-2 py-1 text-[10px] font-light text-[var(--app-text-tertiary)]', plainHistory ? 'bg-transparent' : 'bg-[var(--app-surface-soft)]')}>
-        {isSameDay(date, new Date()) ? 'Hoje' : format(date, "dd/MM/yyyy", { locale: ptBR })}
-      </span>
-    </div>
-  );
 }
 
 function EventActor({ event }: { event: UnifiedHistoryEvent }) {
   if (!event.actor) return null;
 
   return (
-    <Avatar className="h-5 w-5 shrink-0 border-0" title={event.actor.name}>
+    <Avatar className="h-6 w-6 shrink-0 border-0" title={event.actor.name}>
       <AvatarImage src={event.actor.avatar_url || undefined} alt={event.actor.name || 'Responsável'} />
-      <AvatarFallback className="bg-primary text-[9px] text-primary-foreground">
+      <AvatarFallback className="bg-primary text-[10px] text-primary-foreground">
         {event.actor.name?.[0]?.toUpperCase() || 'U'}
       </AvatarFallback>
     </Avatar>
@@ -657,15 +491,15 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
   if (pendingDistribution) {
     return (
       <div className="flex justify-end px-2">
-        <div className="max-w-[88%] rounded-[8px] border-l-2 border-primary bg-zinc-700 px-3 py-1.5 text-right text-[10px] text-white">
-          <div className="break-words leading-snug">
+        <div className="min-w-0 max-w-[88%] rounded-[6px] border-l-2 border-primary bg-zinc-700 px-2.5 py-1.5 text-right text-[11px] font-light leading-4 text-primary-foreground [overflow-wrap:anywhere]">
+          <div className="[overflow-wrap:anywhere]">
             {pendingDistribution.reason === 'no_matching_queue'
               ? 'Nenhuma fila de distribuição compatível para este lead'
               : pendingDistribution.queue
-                ? <>Tentativa de distribuição via <span className="font-medium">{pendingDistribution.queue}</span>: nenhum responsável disponível</>
+                ? <>Tentativa de distribuição via <span>{pendingDistribution.queue}</span>: nenhum responsável disponível</>
                 : 'Tentativa de distribuição: nenhum responsável disponível'}
           </div>
-          <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-white/80">
+          <div className="mt-1 flex items-center justify-end gap-1 text-[10px] leading-none text-primary-foreground/80">
             <span>{formatEventTime(event.timestamp)}</span>
             <Bot aria-hidden="true" className="h-3 w-3 shrink-0" />
           </div>
@@ -678,15 +512,15 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
   if (automaticAssignment) {
     return (
       <div className="flex justify-end px-2">
-        <div className="relative max-w-[88%] rounded-[8px] px-3 py-1.5 text-right text-[10px] text-white">
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[8px] bg-primary opacity-50" />
-          <div className="relative">
-            <div className="break-words leading-snug">
+        <div className="relative min-w-0 max-w-[88%] rounded-[6px] px-2.5 py-1.5 text-right text-[11px] font-light leading-4 text-primary-foreground [overflow-wrap:anywhere]">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[6px] bg-primary opacity-50" />
+          <div className="relative min-w-0">
+            <div className="[overflow-wrap:anywhere]">
               {automaticAssignment.action}
-              {automaticAssignment.recipient && <> <span aria-hidden="true">→</span> <span className="font-medium">{automaticAssignment.recipient}</span></>}
+              {automaticAssignment.recipient && <> <span aria-hidden="true">→</span> <span>{automaticAssignment.recipient}</span></>}
             </div>
-            {automaticAssignment.queue && <div className="mt-0.5 break-words text-[9px] text-white/90">Fila: {automaticAssignment.queue}</div>}
-            <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-white/90">
+            {automaticAssignment.queue && <div className="mt-0.5 text-[11px] text-primary-foreground/90 [overflow-wrap:anywhere]">Fila: {automaticAssignment.queue}</div>}
+            <div className="mt-1 flex items-center justify-end gap-1 text-[10px] leading-none text-primary-foreground/90">
               <span>{formatEventTime(event.timestamp)}</span>
               <Bot aria-hidden="true" className="h-3 w-3 shrink-0" />
             </div>
@@ -700,10 +534,10 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
   if (manualTransfer) {
     return (
       <div className="flex justify-end px-2">
-        <div className="flex max-w-[88%] items-end gap-1.5">
-          <div className="rounded-[8px] bg-violet-600 px-3 py-1.5 text-right text-[10px] text-white">
-            <div className="break-words leading-snug">Lead transferido para <span className="font-medium">{manualTransfer.recipient}</span></div>
-            <div className="mt-0.5 text-[9px] text-white/80">
+        <div className="flex min-w-0 max-w-[88%] items-end gap-1.5">
+          <div className="min-w-0 rounded-[6px] bg-violet-600 px-2.5 py-1.5 text-right text-[11px] font-light leading-4 text-primary-foreground [overflow-wrap:anywhere]">
+            <div className="[overflow-wrap:anywhere]">Lead transferido para <span>{manualTransfer.recipient}</span></div>
+            <div className="mt-1 text-[10px] leading-none text-primary-foreground/80">
               {manualTransfer.actor && <span>Por {manualTransfer.actor} · </span>}
               <span>{formatEventTime(event.timestamp)}</span>
             </div>
@@ -729,21 +563,21 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
     return (
       <div className="flex justify-end px-2">
         <div className={cn(
-          "min-w-0 max-w-[88%] overflow-hidden rounded-[8px] px-3 py-2 text-right text-primary-foreground shadow-none",
-          isWebhookAnswer ? "bg-primary" : "bg-blue-600",
+          'min-w-0 max-w-[88%] overflow-hidden rounded-[8px] px-3 py-2 text-right text-primary-foreground shadow-none [overflow-wrap:anywhere]',
+          isWebhookAnswer ? 'bg-primary' : 'bg-blue-600',
         )}>
-          <div className="text-[9px] font-light text-primary-foreground/70">
+          <div className="text-[10px] font-light leading-none text-primary-foreground/70">
             {isWebhookAnswer ? 'Webhook' : 'Meta Lead Ads'}
           </div>
-          <div className="mt-0.5 break-words text-[10px] font-normal leading-snug text-primary-foreground/90">
+          <div className="mt-1 text-[12px] font-[200] leading-[17px] text-primary-foreground/90 [overflow-wrap:anywhere]">
             {question}
           </div>
           {answer && (
-            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-primary-foreground/15 px-2.5 py-1.5 text-[11px] font-normal leading-snug text-primary-foreground [overflow-wrap:anywhere]">
+            <div className="mt-1 max-w-full overflow-hidden rounded-[6px] bg-primary-foreground/15 px-2.5 py-1.5 text-[12px] font-[200] leading-[17px] text-primary-foreground [overflow-wrap:anywhere]">
               {answer}
             </div>
           )}
-          <div className="mt-1.5 text-[9px] text-primary-foreground/65">
+          <div className="mt-1.5 text-[10px] font-light leading-none text-primary-foreground/65">
             {formatEventTime(event.timestamp)}
           </div>
         </div>
@@ -770,7 +604,7 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
 
     return (
       <div className="flex justify-end px-2">
-        <div className="max-w-[88%] overflow-hidden rounded-[8px] bg-blue-600 text-right text-primary-foreground shadow-none">
+        <div className="min-w-0 max-w-[88%] overflow-hidden rounded-[8px] bg-blue-600 text-right text-primary-foreground shadow-none [overflow-wrap:anywhere]">
           {(videoUrl || imageUrl) && (
             <div className="flex max-h-[260px] items-center justify-center bg-[var(--app-surface-soft)]">
               {videoUrl ? (
@@ -793,18 +627,18 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
           )}
 
           {!videoUrl && !imageUrl && (
-            <div className="px-3 pt-2 text-[10px] leading-snug text-primary-foreground/90">
+            <div className="px-3 pt-2 text-[12px] font-[200] leading-[17px] text-primary-foreground/90 [overflow-wrap:anywhere]">
               {creativeTitle}
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 px-3 py-2 text-[9px] text-primary-foreground/65">
+          <div className="flex items-center justify-end gap-2 px-3 py-2 text-[10px] font-light leading-none text-primary-foreground/65">
             {linkUrl && (
               <a
                 href={linkUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-[5px] bg-primary-foreground/15 px-2 py-1 text-[9px] font-light text-primary-foreground/85 hover:bg-primary-foreground/20"
+                className="rounded-[6px] bg-primary-foreground/15 px-2 py-1 text-[10px] font-light text-primary-foreground/85 hover:bg-primary-foreground/20"
               >
                 Abrir
               </a>
@@ -819,7 +653,7 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
   const bubble = (
     <div
       className={cn(
-        'rounded-[6px] px-3 py-1.5 text-[10px]',
+        'min-w-0 rounded-[6px] px-2.5 py-1.5 text-[11px] font-light leading-4 [overflow-wrap:anywhere]',
         alignment === 'center' ? 'text-center' : 'text-right',
         toneClass,
       )}
@@ -828,30 +662,30 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
       <div className={cn(isFirstResponse && 'inline-flex items-center justify-end gap-1.5')}>
         {isFirstResponse && <Timer className="h-3 w-3" />}
         <span>{normalizeEventLabel(event)}</span>
-        <span className={cn('ml-2', isFirstResponse ? 'text-amber-950/65' : isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
-          {formatEventTime(event.timestamp)}
-        </span>
-        {event.isAutomation && <Bot aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-2px]" />}
       </div>
       {detail && (
-        <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[10px] normal-case leading-snug', isSolidTone ? 'text-white/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
+        <div className={cn('mt-1 min-w-0 max-w-[15rem] whitespace-pre-wrap text-[11px] font-light normal-case leading-4 [overflow-wrap:anywhere]', isSolidTone ? 'text-primary-foreground/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
           {detail}
         </div>
       )}
+      <div className={cn('mt-1 flex items-center gap-1 text-[10px] leading-none', isFirstResponse ? 'text-amber-950/65' : isSolidTone ? 'text-primary-foreground/70' : 'text-[var(--app-text-tertiary)]', alignment === 'center' ? 'justify-center' : 'justify-end')}>
+        <span>{formatEventTime(event.timestamp)}</span>
+        {event.isAutomation && <Bot aria-hidden="true" className="h-3 w-3 shrink-0" />}
+      </div>
     </div>
   );
 
   if (alignment === 'center') {
     return (
       <div className="flex justify-center px-2">
-        <div className="max-w-[84%]">{bubble}</div>
+        <div className="min-w-0 max-w-[84%]">{bubble}</div>
       </div>
     );
   }
 
   return (
     <div className="flex justify-end px-2">
-      <div className="flex max-w-[88%] items-end gap-1.5">
+      <div className="flex min-w-0 max-w-[88%] items-end gap-1.5">
         {bubble}
         {!event.isAutomation && <EventActor event={event} />}
       </div>
@@ -864,12 +698,10 @@ function FeedbackBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; p
 
   return (
     <div className="flex items-end justify-end gap-2 px-2">
-      <div className={cn('max-w-[82%] rounded-[8px] px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)]', plainHistory ? 'bg-[var(--lead-history-message-bg)]' : 'bg-primary/12')}>
-        <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-light text-[var(--app-text-tertiary)]">
-          <span>Feedback</span>
-          <span>{formatEventTime(event.timestamp)}</span>
-        </div>
-        <div className="whitespace-pre-wrap break-words">{event.content}</div>
+      <div className={cn('min-w-0 max-w-[82%] rounded-[8px] px-3 py-2 text-[var(--app-text-primary)] [overflow-wrap:anywhere]', plainHistory ? 'bg-[var(--app-surface-solid)]' : 'bg-primary/12')}>
+        <div className="mb-0.5 text-[10px] font-light leading-none text-[var(--app-text-tertiary)]">Feedback</div>
+        <div className="whitespace-pre-wrap text-[12px] font-[200] leading-[17px] [overflow-wrap:anywhere]">{event.content}</div>
+        <div className="mt-1 text-right text-[10px] font-light leading-none text-[var(--app-text-tertiary)]">{formatEventTime(event.timestamp)}</div>
       </div>
       <Avatar className="h-6 w-6 shrink-0 border-0" title={actorName}>
         <AvatarImage src={event.actor?.avatar_url || undefined} alt={actorName} />
@@ -881,59 +713,48 @@ function FeedbackBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; p
   );
 }
 
-export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest, readOnly = false }: LeadUnifiedThreadProps) {
-  const [text, setText] = useState('');
-  const [composerHighlighted, setComposerHighlighted] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const lastHandledComposerRequestRef = useRef<number | null>(null);
+export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreatedAt, historyPagination = false }: LeadUnifiedThreadProps) {
+  const [renderWindow, setRenderWindow] = useState({ leadId, count: LEAD_HISTORY_RENDER_PAGE_SIZE });
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const lastThreadItemIdRef = useRef<string | null>(null);
   const { activeOrganization, profile, user } = useAuth();
+  const whatsappScope = useWhatsAppQueryScope();
   const currentUserId = profile?.id || user?.id || null;
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasWhatsAppModule = hasModule('whatsapp');
   const canViewWhatsApp = hasWhatsAppModule && (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
-  const canOperateWhatsApp = hasWhatsAppModule && hasPermission('whatsapp_operate');
   const {
     data: history = [],
     isLoading: loadingHistory,
+    isFetching: fetchingHistory,
     isError: historyError,
     refetch: refetchHistory,
-  } = useLeadHistory(leadId);
-  const shouldLoadComposerData = canViewWhatsApp && !readOnly;
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
-    enabled: shouldLoadComposerData,
-  });
-  const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
+    hasOlderHistory,
+    isFetchingOlderHistory,
+    olderHistoryError,
+    fetchOlderHistory,
+  } = useLeadHistory(leadId, { paginated: historyPagination });
+  const audioSenderAvatars = useMemo(() => {
+    const avatars = new Map<string, { userId: string; url: string }>();
+    for (const event of history) {
+      if (event.actor?.id && event.actor.avatar_url) {
+        avatars.set(event.actor.id.trim().toLowerCase(), { userId: event.actor.id, url: event.actor.avatar_url });
+      }
+    }
+    return avatars;
+  }, [history]);
+  // Disabled queries can still return scoped cached data. Keep this passive
+  // observer for existing message group/session/JID fallbacks, without loading
+  // conversations or sessions to prepare a send.
   const { data: conversations = [] } = useWhatsAppConversations(
-    undefined,
-    { hideGroups: true },
-    !shouldLoadComposerData ? [] : loadingSessions ? undefined : accessibleSessionIds,
-    80,
-    { enabled: shouldLoadComposerData },
+    undefined, { hideGroups: true }, [], 80, { enabled: false },
   );
-  useWhatsAppLeadRealtime(canViewWhatsApp, [leadId], {
-    reconcileOnSubscribe: !readOnly,
-  });
-
-  const linkedConversations = useMemo(
-    () => conversations.filter((item) => item.lead_id === leadId || item.lead?.id === leadId),
+  useWhatsAppLeadRealtime(canViewWhatsApp, [leadId], { reconcileOnSubscribe: false });
+  const displayConversation = useMemo(
+    () => conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null,
     [conversations, leadId],
   );
-  const displayConversation = linkedConversations[0] || null;
-  const conversation = useMemo<WhatsAppConversation | null>(() => {
-    const linked = linkedConversations;
-    const sendable = linked.filter((item) => (
-      Boolean(item.session_id)
-      && getWhatsAppSendSessionId(item, null, sessions, currentUserId) === item.session_id
-    ));
-    return sendable.find((item) => sessions.some((session) => (
-      session.id === item.session_id && session.owner_user_id === currentUserId
-    ))) || sendable[0] || null;
-  }, [currentUserId, linkedConversations, sessions]);
 
   const {
     data: messages = [],
@@ -943,11 +764,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     hasOlderMessages,
     loadOlderMessages,
     isLoadingOlder,
+    isFetchNextPageError: olderMessagesFailed,
   } = useLeadMessages(leadId, { pageSize: 40, enabled: canViewWhatsApp });
-  const sendMessage = useSendWhatsAppMessage();
-  const reactToMessage = useReactToWhatsAppMessage();
-  const startConversation = useStartConversation();
-
   const reactionMessages = useMemo(
     () => messages.filter((message) => message.message_type === 'reaction'),
     [messages],
@@ -961,110 +779,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     [messages],
   );
 
-  const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''));
-  const leadHasNoWhatsApp = whatsappVerified === false;
-  const messageInputConversation = useMemo(
-    () =>
-      conversation ||
-      (hasLeadPhone
-        ? {
-            lead_id: leadId,
-            session_id: null,
-            contact_phone: leadPhone,
-            remote_jid: null,
-            is_group: false,
-            session: null,
-          }
-        : null),
-    [conversation, hasLeadPhone, leadId, leadPhone],
-  );
-  const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions, currentUserId),
-    [messageInputConversation, sessions, currentUserId],
-  );
-  const canSendMessage = Boolean(
-    canOperateWhatsApp &&
-      hasLeadPhone &&
-      !leadHasNoWhatsApp &&
-      !whatsappMessageInputState.disabled,
-  );
-  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
-    if (!conversation?.id || !whatsappMessageInputState.sendSessionId) return null;
-    return {
-      conversationId: conversation.id,
-      expectedLeadId: leadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
-    };
-  }, [conversation, leadId, whatsappMessageInputState.sendSessionId]);
-  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
-    enabled: canViewWhatsApp && Boolean(attendanceTarget),
-    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${whatsappMessageInputState.sendSessionId || "none"}`,
-  });
-  const isSendingMessage = sendMessage.isPending
-    || startConversation.isPending
-    || attendanceGate.isResolving;
-  const inputPlaceholder = !hasWhatsAppModule
-    ? 'Módulo de WhatsApp indisponível'
-    : !canOperateWhatsApp
-      ? 'Você não tem permissão para enviar mensagens'
-    : !hasLeadPhone
-      ? 'Lead sem telefone cadastrado'
-      : leadHasNoWhatsApp
-        ? 'Este lead não tem WhatsApp'
-        : !conversation && !whatsappMessageInputState.disabled
-          ? 'Digite para iniciar a conversa com este lead'
-          : whatsappMessageInputState.placeholder;
-
-  useEffect(() => {
-    if (readOnly || !composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
-    lastHandledComposerRequestRef.current = composerRequest.id;
-
-    if (!canOperateWhatsApp) {
-      toast.error(
-        hasWhatsAppModule ? 'Sem permissão para enviar mensagens' : 'Módulo de WhatsApp indisponível',
-      );
-      return;
-    }
-
-    if (!hasLeadPhone) {
-      toast.error('Lead sem telefone', {
-        description: 'Cadastre um telefone antes de iniciar uma conversa.',
-      });
-      return;
-    }
-
-    if (leadHasNoWhatsApp) {
-      toast.error('Telefone sem WhatsApp', {
-        description: 'Este número foi identificado como indisponível no WhatsApp.',
-      });
-      return;
-    }
-
-    if (whatsappMessageInputState.disabled) {
-      toast.error('WhatsApp não conectado', {
-        description: whatsappMessageInputState.placeholder,
-      });
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      if (composerRequest.text) setText(composerRequest.text);
-      setComposerHighlighted(true);
-      textareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      textareaRef.current?.focus();
-    });
-    const timeout = window.setTimeout(() => setComposerHighlighted(false), 1600);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
-    };
-  }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, readOnly, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
-
   const items = useMemo<ThreadItem[]>(() => {
     const renderedMessages = visibleMessages.filter((message) => !isInternalNotificationMessage(message));
     const renderedMessageIds = new Set(renderedMessages.map((message) => message.id));
-    const visibleEvents = removeRedundantEvents(history.filter((event) => {
+    const visibleEvents = history.filter((event) => {
       if (!shouldShowEvent(event)) return false;
       if (!['whatsapp_message_queued', 'whatsapp_message_sent', 'whatsapp_message_failed'].includes(event.type)) {
         return true;
@@ -1072,7 +790,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       const messageRowId = metadataText(event.metadata?.message_row_id);
       // Keep the timeline fallback when the actual message is not loaded.
       return !messageRowId || !renderedMessageIds.has(messageRowId);
-    }));
+    });
     const hasLeadCreated = visibleEvents.some(
       (e) => e.type === 'lead_created' || /foi criado/i.test(e.label || '')
     );
@@ -1084,7 +802,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       event,
     }));
 
-    if (!hasLeadCreated && leadCreatedAt) {
+    // Paged history establishes canonical absence across the snapshot on the server.
+    // A creation row outside the loaded suffix must never become a synthetic event.
+    if (!historyPagination && !hasLeadCreated && leadCreatedAt) {
       finalEventItems.push({
         id: 'event-synthetic-created',
         kind: 'event',
@@ -1109,9 +829,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         message,
       }));
 
-    const sorted = [...finalEventItems, ...messageItems]
-      .filter((item) => item.timestamp)
-      .sort((a, b) => (safeEventDate(a.timestamp)?.getTime() ?? 0) - (safeEventDate(b.timestamp)?.getTime() ?? 0));
+    const sorted = sortWhatsAppTimelineItems([...finalEventItems, ...messageItems]
+      .filter((item) => item.timestamp));
 
     const createdIndex = sorted.findIndex(
       (item) =>
@@ -1125,221 +844,107 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     }
 
     return sorted;
-  }, [history, visibleMessages, leadCreatedAt]);
+  }, [history, visibleMessages, leadCreatedAt, historyPagination]);
 
-  useEffect(() => {
-    const lastItemId = items.at(-1)?.id ?? null;
-    if (!lastItemId || lastItemId === lastThreadItemIdRef.current) return;
-
-    const isInitialPosition = lastThreadItemIdRef.current === null;
-    lastThreadItemIdRef.current = lastItemId;
-    bottomRef.current?.scrollIntoView({
-      behavior: isInitialPosition ? 'auto' : 'smooth',
-      block: 'end',
-    });
-  }, [items]);
-
-  const ensureConversationForSend = async () => {
-    if (!canSendMessage) {
-      throw new Error(inputPlaceholder);
-    }
-
-    if (conversation) return conversation;
-
-    return startConversation.mutateAsync({
-      phone: leadPhone || '',
-      leadId,
-      leadName,
-      sessionId: whatsappMessageInputState.sendSessionId,
-      expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
-    });
-  };
-
-  const ensureConversationAndAttendanceForSend = async () => {
-    let targetConversation = conversation;
-    const joined = await attendanceGate.ensureJoined({
-      target: attendanceTarget,
-      prepareTarget: targetConversation
-        ? undefined
-        : async () => {
-            targetConversation = await ensureConversationForSend();
-            const sendSessionId = targetConversation.session_id
-              || whatsappMessageInputState.sendSessionId;
-            if (!sendSessionId) {
-              throw new Error('Não foi possível identificar o WhatsApp selecionado.');
-            }
-            return {
-              conversationId: targetConversation.id,
-              expectedLeadId: leadId,
-              sendSessionId,
-            };
-          },
-    });
-
-    return joined ? targetConversation : null;
-  };
-
-  const handleSend = async () => {
-    const content = text.trim();
-    if (!content || !canSendMessage || isSendingMessage) return;
-
-    try {
-      const targetConversation = await ensureConversationAndAttendanceForSend();
-      if (!targetConversation) return;
-
-      setText('');
-      await sendMessage.mutateAsync({
-        conversation: targetConversation,
-        text: content,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch (error) {
-      // A timeout after enqueue does not prove the provider rejected the
-      // message. Keep its pending history row instead of inviting a duplicate
-      // send from a restored draft.
-      if (getWhatsAppSendFailureStatus(error) !== 'confirming') {
-        setText(content);
-      }
-    }
-  };
-
-  const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!canSendMessage || isSendingMessage) {
-      toast.error('Áudio não enviado', {
-        description: inputPlaceholder,
-      });
-      return false;
-    }
-
-    const targetConversation = await ensureConversationAndAttendanceForSend();
-    if (!targetConversation) return false;
-    await sendMessage.mutateAsync({
-      conversation: targetConversation,
-      text: '',
-      mediaType: 'audio',
-      base64,
-      mimetype,
-      filename: `audio.${getMessageMediaExtension(mimetype, 'webm')}`,
-      previewMediaUrl: `data:${mimetype || 'audio/webm'};base64,${base64}`,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
-    });
-    return true;
-  };
-
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!canSendMessage || isSendingMessage) {
-      toast.error('Arquivo não enviado', {
-        description: inputPlaceholder,
-      });
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
-    const targetConversation = await ensureConversationAndAttendanceForSend();
-    if (!targetConversation) {
-      event.target.value = '';
-      return;
-    }
-
-    try {
-      const processedFile = await compressOutboundImageFile(
-        file,
-        LEAD_THREAD_IMAGE_COMPRESSION_OPTIONS,
-      );
-      const base64 = await blobToBase64(processedFile);
-      const mediaType = getOutboundMessageMediaKind(processedFile.type);
-      await sendMessage.mutateAsync({
-        conversation: targetConversation,
-        text: processedFile.name,
-        mediaType,
-        base64,
-        mimetype: processedFile.type || file.type || 'application/octet-stream',
-        filename: processedFile.name,
-        previewMediaUrl: `data:${processedFile.type || file.type || 'application/octet-stream'};base64,${base64}`,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch (error) {
-      toast.error('Erro ao enviar arquivo', {
-        description: error instanceof Error && error.message.length < 160
-          ? error.message
-          : 'Não foi possível enviar o arquivo.',
-      });
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const handleReactToMessage = async (message: WhatsAppMessage, emoji: string) => {
-    if (!conversation || conversation.id !== message.conversation_id) return;
-    const reactionSessionId = message.session_id || conversation.session_id;
-    if (!reactionSessionId) return;
-    const joined = await attendanceGate.ensureJoined({
-      target: {
-        conversationId: message.conversation_id,
-        expectedLeadId: leadId,
-        sendSessionId: reactionSessionId,
-      },
-    });
-    if (!joined) return;
-
-    await reactToMessage.mutateAsync({
-      conversation: {
-        ...(conversation || {}),
-        id: message.conversation_id,
-        session_id: reactionSessionId,
-        lead_id: leadId,
-        remote_jid: message.remote_jid || conversation?.remote_jid || '',
-      } as WhatsAppConversation,
-      targetMessage: message,
-      emoji,
-    });
-  };
-
-  const retryMediaDownload = async (messageId: string) => {
-    try {
-      await whatsappAPI.retryMediaDownload(messageId, activeOrganization.organizationId);
-      await refetchMessages();
-    } catch {
-      toast.error('Mídia não atualizada', {
-        description: 'Não foi possível buscar a mídia agora.',
-      });
-    }
-  };
+  const threadIdentity = JSON.stringify([activeOrganization.organizationId, currentUserId, leadId, canViewWhatsApp]);
+  const threadScroll = useWhatsAppThreadScroll(
+    JSON.stringify([threadIdentity, whatsappScope.accessScope]), items.at(-1)?.id ?? null,
+    threadScrollRef, bottomRef, { firstItemId: items[0]?.id ?? null },
+  );
+  // Read lifetime includes actor, organization, lead, permissions and Auth SID.
+  // A-B-A or unmount must retire old pagination callbacks without send state.
+  const audioContextKey = JSON.stringify([threadIdentity, whatsappScope.accessScope]);
+  const mediaGallery = useWhatsAppMediaGallery({ messages: visibleMessages.map(message => ({ ...message,
+    media_status: toMessageMediaStatus(message.media_status) })), scopeKey: audioContextKey });
+  const audioAuthorizationScope = audioContextKey;
+  const audioAuthorizationRef = useRef(audioAuthorizationScope);
+  const audioAuthorizationGenerationRef = useRef(0);
+  useLayoutEffect(() => {
+    audioAuthorizationRef.current = audioAuthorizationScope;
+    audioAuthorizationGenerationRef.current += 1;
+    return () => { audioAuthorizationRef.current = ''; audioAuthorizationGenerationRef.current += 1; };
+  }, [audioAuthorizationScope]);
 
   const handleLoadOlderMessages = async () => {
-    const scrollElement = threadScrollRef.current;
-    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
-    const previousScrollTop = scrollElement?.scrollTop ?? 0;
-
+    const authorizedScope = audioAuthorizationRef.current;
+    const generation = audioAuthorizationGenerationRef.current;
+    const current = () => audioAuthorizationRef.current === authorizedScope && audioAuthorizationGenerationRef.current === generation;
     try {
-      await loadOlderMessages();
+      await threadScroll.loadOlderPreservingPosition(async () => {
+        const result = await loadOlderMessages();
+        if (!current() || result.isError || result.isFetchNextPageError) return;
+        setRenderWindow((window) => ({ leadId, count: (window.leadId === leadId ? window.count : LEAD_HISTORY_RENDER_PAGE_SIZE) + 40 }));
+      });
     } catch {
+      if (!current()) return;
       toast.error('Histórico não carregado', {
         description: 'Não foi possível buscar as mensagens anteriores agora.',
       });
       return;
     }
 
-    window.requestAnimationFrame(() => {
-      if (!scrollElement) return;
-      scrollElement.scrollTop = previousScrollTop + scrollElement.scrollHeight - previousScrollHeight;
+  };
+
+  const isLoading = leadThreadInitialLoading(items.length, loadingHistory, loadingMessages);
+  const visibleCount = renderWindow.leadId === leadId ? renderWindow.count : LEAD_HISTORY_RENDER_PAGE_SIZE;
+  const displayed = leadThreadWindow(items, visibleCount);
+  const messageNavigation = useWhatsAppMessageNavigation({
+    scopeKey: JSON.stringify([threadIdentity, whatsappScope.accessScope, true]),
+    messages: displayed.items.flatMap(item => item.kind === 'message' ? [item.message as WhatsAppMessage] : []),
+    logRef: threadScrollRef,
+    readPage: canViewWhatsApp ? async (cursor, signal) => {
+      if (!whatsappScope.organizationId) return { messages: [], nextCursor: null };
+      const page = await whatsappAPI.getHistoryAccess({ leadId, organizationId: whatsappScope.organizationId,
+        limit: 40, cursor, signal });
+      return { messages: page.messages as WhatsAppMessage[], nextCursor: page.nextCursor };
+    } : undefined,
+    loadOlder: async () => {
+      if (visibleCount < items.length) {
+        setRenderWindow({ leadId, count: items.length });
+        return { messages: visibleMessages as WhatsAppMessage[], hasMore: Boolean(hasOlderMessages) };
+      }
+      const authorizedScope = audioAuthorizationRef.current;
+      const generation = audioAuthorizationGenerationRef.current;
+      const result = await loadOlderMessages();
+      if (result.isError || result.isFetchNextPageError || audioAuthorizationRef.current !== authorizedScope
+        || audioAuthorizationGenerationRef.current !== generation) throw Error('History page unavailable');
+      const allMessages = flattenWhatsAppMessagePages(result.data?.pages ?? []);
+      setRenderWindow({ leadId, count: allMessages.length + history.length });
+      return { messages: allMessages, hasMore: Boolean(result.hasNextPage) };
+    },
+  });
+  const showEarlierItems = () => {
+    void threadScroll.loadOlderPreservingPosition(async () => {
+      setRenderWindow({ leadId, count: visibleCount + LEAD_HISTORY_RENDER_PAGE_SIZE });
+    });
+  };
+  const loadEarlierHistory = () => {
+    const authorizedScope = audioAuthorizationRef.current;
+    const generation = audioAuthorizationGenerationRef.current;
+    void threadScroll.loadOlderPreservingPosition(async () => {
+      if (await fetchOlderHistory() && audioAuthorizationRef.current === authorizedScope && audioAuthorizationGenerationRef.current === generation) {
+        setRenderWindow({ leadId, count: visibleCount + LEAD_HISTORY_RENDER_PAGE_SIZE });
+      }
     });
   };
 
-  const isLoading = (loadingHistory && history.length === 0) || (loadingMessages && messages.length === 0);
-
   return (
-    <>
-      <EnterAttendanceDialog
-        {...attendanceGate.dialogProps}
-        contactName={leadName}
-      />
-      <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
-        <div ref={threadScrollRef} className={cn('lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3', readOnly && 'lead-thread-scroll-readable')}>
+      <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3 [--lead-history-message-bg:var(--app-surface-soft)]"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'none';
+          }
+        }}
+        onDrop={(event) => {
+          if (event.dataTransfer.files.length) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}>
+      {messageNavigation.error && <p role="status" className="px-3 py-2 text-[length:var(--app-font-size-caption)] font-light text-muted-foreground">{messageNavigation.error}</p>}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
+        <div ref={threadScrollRef} onScroll={threadScroll.onScroll} role="log" aria-label="Histórico de mensagens do lead" aria-live="polite" aria-relevant="additions" aria-atomic={false} className="lead-thread-scroll flex-1 overflow-y-auto px-1 pb-3 pt-3 lead-thread-scroll-readable">
           {isLoading && (
             <div className="flex h-full flex-col items-center justify-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-[var(--app-text-tertiary)]" />
@@ -1370,17 +975,47 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             </div>
           )}
 
+          {!isLoading && (loadingHistory || loadingMessages) && (
+            <p role="status" className="mx-2 text-xs text-[var(--app-text-secondary)]">
+              {loadingHistory ? 'Carregando atividades...' : 'Carregando mensagens...'}
+            </p>
+          )}
+
+          {!isLoading && displayed.hiddenCount > 0 && (
+            <div className="flex flex-col items-center justify-center gap-1.5 px-2 pb-1">
+              <button type="button" onClick={showEarlierItems} className="h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-3 text-xs">
+                Ver eventos anteriores ({displayed.hiddenCount})
+              </button>
+            </div>
+          )}
+
+          {!isLoading && hasOlderHistory && (
+            <div className="space-y-2 px-2 pb-1 text-center">
+              <p role="status" className="text-xs text-[var(--app-text-secondary)]">Há atividades anteriores ainda não carregadas.</p>
+              {olderHistoryError && (
+                <p role="alert" className="text-xs text-destructive">
+                  Não foi possível carregar as atividades anteriores. Tente novamente ou atualize o histórico.
+                </p>
+              )}
+              <button type="button" disabled={fetchingHistory || isFetchingOlderHistory}
+                onClick={loadEarlierHistory}
+                className="inline-flex h-8 items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-3 text-xs disabled:opacity-50">
+                {isFetchingOlderHistory && <Loader2 className="h-3 w-3 animate-spin" />}
+                {isFetchingOlderHistory ? 'Carregando atividades anteriores...' : olderHistoryError ? 'Tentar atividades anteriores novamente' : 'Carregar atividades anteriores'}
+              </button>
+              {olderHistoryError && <button type="button" onClick={() => void refetchHistory()}
+                className="ml-2 h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-3 text-xs">Atualizar histórico</button>}
+            </div>
+          )}
+
           {!isLoading && hasOlderMessages && (
             <div className="flex justify-center px-2 pb-1">
-              <button
-                type="button"
-                className="inline-flex h-8 items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-3 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+              <LoadOlderMessagesButton
                 onClick={() => void handleLoadOlderMessages()}
-                disabled={isLoadingOlder}
-              >
-                {isLoadingOlder && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {isLoadingOlder ? 'Carregando...' : 'Carregar mensagens anteriores'}
-              </button>
+                loading={isLoadingOlder}
+                error={olderMessagesFailed}
+              />
+              {olderMessagesFailed && <p role="alert" className="text-center text-xs text-destructive">Não foi possível carregar mensagens anteriores. O histórico atual foi mantido.</p>}
             </div>
           )}
 
@@ -1391,28 +1026,43 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             </div>
           )}
 
-          {!isLoading && items.map((item, index) => {
-            const previous = index > 0 ? items[index - 1] : null;
+          {!isLoading && displayed.items.map((item, index) => {
+            const previous = index > 0 ? displayed.items[index - 1] : null;
+            const next = displayed.items[index + 1];
+            const grouping = item.kind === 'message' ? getWhatsAppMessageGrouping(
+              previous?.kind === 'message' ? previous.message : null, item.message,
+              next?.kind === 'message' ? next.message : null,
+            ) : 'single';
             const itemDate = safeEventDate(item.timestamp);
             const previousDate = safeEventDate(previous?.timestamp);
             const showDate = Boolean(itemDate && (!previousDate || !isSameDay(previousDate, itemDate)));
 
             return (
-              <div key={item.id} className="space-y-3">
-                {showDate && itemDate && <DatePill date={itemDate} plainHistory={readOnly} />}
+              <div key={item.id} data-thread-item-id={item.id} className={cn('mt-2 first:mt-0', (grouping === 'middle' || grouping === 'last') && '!mt-0.5')}>
+                {showDate && itemDate && <DateSeparator date={itemDate} />}
                 {item.kind === 'event' ? (
                   isFeedbackEvent(item.event) ? (
-                    <FeedbackBubble event={item.event} plainHistory={readOnly} />
+                    <FeedbackBubble event={item.event} plainHistory />
                   ) : (
-                    <EventBubble event={item.event} plainHistory={readOnly} />
+                    <EventBubble event={item.event} plainHistory />
                   )
                 ) : (
                   <MessageErrorBoundary messageId={item.message.id}>
                     <WhatsAppMessageBubble
+                      grouping={grouping}
+                      showSenderName={isWhatsAppMessageBlockStart(grouping)}
                       content={item.message.content}
                       messageType={item.message.message_type || 'text'}
                       mediaUrl={item.message.media_url ?? null}
                       mediaMimeType={item.message.media_mime_type ?? null}
+                      mediaFilename={item.message.media_filename ?? null}
+                      storedMedia={Boolean(item.message.media_storage_path)}
+                      contacts={item.message.contacts}
+                      location={item.message.location}
+                      quotedMessage={item.message.quoted_message}
+                      mediaGallery={mediaGallery}
+                      mediaGalleryScopeKey={audioContextKey}
+                      onNavigateQuoted={(id) => messageNavigation.navigateTo(id, { conversationId: item.message.conversation_id, sessionId: item.message.session_id })}
                       mediaStatus={toMessageMediaStatus(item.message.media_status)}
                       mediaError={item.message.media_error ?? null}
                       mediaSize={item.message.media_size ?? null}
@@ -1420,30 +1070,31 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       status={item.message.status || ''}
                       sentAt={item.message.sent_at}
                       deliveryErrorCode={item.message.delivery_error_code ?? null}
+                      deliveryErrorReason={item.message.delivery_error_reason}
                       deliveryFailedAt={item.message.delivery_failed_at ?? null}
-                      senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
+                      senderName={item.message.sender_name ?? null}
+                      senderUserId={item.message.sender_user_id ?? null}
+                      viewerUserId={currentUserId}
+                      viewerAvatarUrl={profile?.id === user?.id ? profile?.avatar_url ?? null : null}
+                      viewerAvatarName={profile?.id === user?.id ? profile?.name ?? null : null}
+                      senderAvatarUrl={audioSenderAvatars.get(item.message.sender_user_id?.trim().toLowerCase() || '')?.url ?? null}
+                      senderAvatarUserId={audioSenderAvatars.get(item.message.sender_user_id?.trim().toLowerCase() || '')?.userId ?? null}
                       isGroup={displayConversation?.is_group ?? false}
-                      onRetryMedia={!readOnly
-                        ? () => retryMediaDownload(item.message.id)
-                        : undefined}
                       messageId={item.message.id}
                       leadId={leadId}
+                      canAttachToLead={false}
                       leadName={leadName}
                       contactAvatarUrl={leadAvatarUrl}
                       conversationRemoteJid={item.message.remote_jid ?? displayConversation?.remote_jid ?? null}
                       conversationSessionId={item.message.session_id ?? displayConversation?.session_id ?? null}
                       compact
-                      plainHistory={readOnly}
+                      plainHistory
                       reactionPickerPosition="outside"
                       reactions={(item.message.message_id
                         ? reactionsByMessageId.get(item.message.message_id)
                         : undefined)
                         || reactionsByMessageId.get(item.message.id)
                         || []}
-                      onReact={!readOnly && canOperateWhatsApp && conversation?.id === item.message.conversation_id && item.message.session_id
-                        ? (emoji) => handleReactToMessage(item.message as WhatsAppMessage, emoji)
-                        : undefined}
-                      isReacting={reactToMessage.isPending}
                     />
                   </MessageErrorBoundary>
                 )}
@@ -1453,53 +1104,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div ref={bottomRef} />
         </div>
 
-        {!readOnly && canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleFileSelect}
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx"
-            className="hidden"
-          />
-          <div className={cn('rounded-[8px] transition-shadow duration-300', composerHighlighted && 'ring-2 ring-primary/35 ring-offset-2 ring-offset-transparent')}>
-            <MessageBox
-              value={text}
-              onChange={setText}
-              onSend={handleSend}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder={inputPlaceholder}
-              disabled={!canSendMessage || isSendingMessage}
-              isSending={isSendingMessage}
-              multiline
-              inputRef={textareaRef}
-              compact
-              showRightActionsWhenEmpty={!isSendingMessage}
-              leftActions={
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!canSendMessage || isSendingMessage}
-                  title="Anexar mídia"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </button>
-              }
-              rightActions={
-                <AudioRecorderButton
-                  onSend={handleSendAudio}
-                  disabled={!canSendMessage || isSendingMessage}
-                />
-              }
-            />
-          </div>
-        </div>}
+        {threadScroll.showScrollToLatest && <ScrollToLatestButton onClick={threadScroll.scrollToLatest} />}
+
       </div>
       </section>
-    </>
   );
 }

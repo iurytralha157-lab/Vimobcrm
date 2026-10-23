@@ -21,6 +21,25 @@ function getCivilDateKey(timestamp: number, timeZone: string) {
   return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
 }
 
+/** Last occupied instant, supporting both inclusive CRM and exclusive Google ends. */
+export function getScheduleAllDayLastOccupiedInstant(
+  startTime: Date | string | number | null | undefined,
+  endTime: Date | string | number | null | undefined,
+  timeZone: string,
+): number | null {
+  if (endTime == null) return null;
+  const end = new Date(endTime).getTime();
+  if (!Number.isFinite(end)) return null;
+  const start = startTime == null ? Number.NaN : new Date(startTime).getTime();
+  // Comparing adjacent instants finds the civil boundary even on 23/25-hour
+  // days, and avoids treating midnight with fractional seconds as exclusive.
+  if (
+    Number.isFinite(start) && end > start &&
+    getCivilDateKey(end, timeZone) !== getCivilDateKey(end - 1, timeZone)
+  ) return end - 1;
+  return end;
+}
+
 export function isAttendanceScheduleType(
   eventType: string | null | undefined,
 ): eventType is "meeting" | "visit" {
@@ -114,16 +133,16 @@ export function getScheduleLifecycleState({
     ? endTimestamp
     : startTimestamp;
   if (isAllDay && Number.isFinite(dueTimestamp)) {
+    const lifecycleForZone = (zone: string) => {
+      const occupiedEnd = getScheduleAllDayLastOccupiedInstant(startTime, endTime, zone) ?? dueTimestamp;
+      return getCivilDateKey(occupiedEnd, zone) < getCivilDateKey(now, zone)
+        ? "overdue" as const
+        : "open" as const;
+    };
     try {
-      return getCivilDateKey(dueTimestamp, timeZone) <
-        getCivilDateKey(now, timeZone)
-        ? "overdue"
-        : "open";
+      return lifecycleForZone(timeZone);
     } catch {
-      return getCivilDateKey(dueTimestamp, DEFAULT_SCHEDULE_TIME_ZONE) <
-        getCivilDateKey(now, DEFAULT_SCHEDULE_TIME_ZONE)
-        ? "overdue"
-        : "open";
+      return lifecycleForZone(DEFAULT_SCHEDULE_TIME_ZONE);
     }
   }
   if (Number.isFinite(dueTimestamp) && dueTimestamp < now) {

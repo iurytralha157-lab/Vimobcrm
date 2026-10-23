@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,8 +34,9 @@ const (
 )
 
 type Repository struct {
-	db    *dbpkg.Postgres
-	cache *resolveCache
+	db          *dbpkg.Postgres
+	cache       *resolveCache
+	transaction tenantQuerier
 }
 
 type userProfile struct {
@@ -238,7 +240,7 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 
 	if tenantContext.IsSuperAdmin {
 		var active bool
-		err := repo.db.Pool().QueryRow(ctx, `
+		err := repo.queries().QueryRow(ctx, `
 			select exists (
 				select 1
 				from public.users u
@@ -252,13 +254,77 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 
 	var memberRole string
 	var billing billingSnapshot
-	err := repo.db.Pool().QueryRow(ctx, `
+	var roleGrantsCSV, overridesJSON string
+	var ledTeamIDs, ledUserIDs, ledPipelineIDs []string
+	err := repo.queries().QueryRow(ctx, `
+		with led_teams as (
+			select distinct tm.team_id
+			from public.team_members tm
+			join public.teams t on t.id = tm.team_id and t.organization_id = tm.organization_id
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = tm.organization_id
+			 and leader_membership.user_id = tm.user_id
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
+			 and leader_membership.membership_generation = tm.membership_generation
+			where tm.organization_id = $2::uuid
+			  and tm.user_id = $1::uuid
+			  and coalesce(tm.is_active, true) = true
+			  and coalesce(tm.is_leader, false) = true
+			  and coalesce(t.is_active, true) = true
+		),
+		led_users as (
+			select distinct member.user_id
+			from public.team_members member
+			join led_teams lt on lt.team_id = member.team_id
+			join public.users u on u.id = member.user_id
+			join public.organization_members om
+			  on om.organization_id = member.organization_id
+				 and om.user_id = member.user_id
+				 and om.is_active = true
+				 and om.deleted_at is null
+				 and om.membership_generation = member.membership_generation
+			where member.organization_id = $2::uuid
+			  and coalesce(member.is_active, true) = true
+			  and coalesce(u.is_active, false) = true
+			union
+			select $1::uuid
+		),
+		led_pipelines as (
+			select distinct tp.pipeline_id
+			from public.team_pipelines tp
+			join led_teams lt on lt.team_id = tp.team_id
+			join public.pipelines p on p.id = tp.pipeline_id and p.organization_id = tp.organization_id
+			where tp.organization_id = $2::uuid
+			  and coalesce(p.is_active, true) = true
+		)
 		select
 			coalesce(nullif(om.role, ''), 'user'),
 			coalesce(nullif(trim(o.subscription_status), ''), ''),
 			coalesce(nullif(trim(o.subscription_type), ''), ''),
 			o.trial_ends_at,
-			o.billing_grace_until
+			o.billing_grace_until,
+			coalesce((
+				select string_agg(distinct ap.key, ',' order by ap.key)
+				from public.user_organization_roles uor
+				join public.organization_roles role
+				  on role.id = uor.role_id and role.organization_id = uor.organization_id
+				 and role.is_active = true
+				join public.organization_role_permissions orp
+				  on orp.role_id = uor.role_id and orp.organization_id = uor.organization_id
+				join public.available_permissions ap on ap.id = orp.permission_id
+				where uor.user_id = $1::uuid
+				  and uor.organization_id = $2::uuid
+				  and uor.is_active = true
+			), ''),
+			coalesce((
+				select jsonb_object_agg(upo.permission_key, upo.allowed)::text
+				from public.user_permission_overrides upo
+				where upo.organization_id = $2::uuid and upo.user_id = $1::uuid
+			), '{}'),
+			array(select team_id::text from led_teams order by team_id),
+			array(select user_id::text from led_users order by user_id),
+			array(select pipeline_id::text from led_pipelines order by pipeline_id)
 		from public.organization_members om
 		join public.users u on u.id = om.user_id
 		join public.organizations o on o.id = om.organization_id
@@ -275,10 +341,28 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 		&billing.Type,
 		&billing.TrialEndsAt,
 		&billing.GraceUntil,
+		&roleGrantsCSV,
+		&overridesJSON,
+		&ledTeamIDs,
+		&ledUserIDs,
+		&ledPipelineIDs,
 	)
 	if err != nil || normalizeRole(memberRole) != normalizeRole(tenantContext.MemberRole) {
 		return false
 	}
+	var overrides map[string]bool
+	if err := json.Unmarshal([]byte(overridesJSON), &overrides); err != nil {
+		return false
+	}
+	roleGrants := []string{}
+	if roleGrantsCSV != "" {
+		roleGrants = strings.Split(roleGrantsCSV, ",")
+	}
+	tenantContext.IsTeamLeader = len(ledTeamIDs) > 0
+	tenantContext.LedTeamIDs = ledTeamIDs
+	tenantContext.LedUserIDs = ledUserIDs
+	tenantContext.LedPipelineIDs = ledPipelineIDs
+	tenantContext.Permissions = permissions.Resolve(memberRole, tenantContext.IsTeamLeader, roleGrants, overrides)
 
 	billing.applyToContext(tenantContext)
 	return true
@@ -326,7 +410,7 @@ func (repo Repository) getUserProfile(ctx context.Context, userID string) (userP
 	var profile userProfile
 	var organizationID pgtype.UUID
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select id::text, role, organization_id, is_active
 		from public.users
 		where id = $1::uuid
@@ -377,7 +461,7 @@ func (repo Repository) resolveSuperAdmin(ctx context.Context, profile userProfil
 }
 
 func (repo Repository) getEnabledModules(ctx context.Context, organizationID string) ([]string, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := repo.queries().Query(ctx, `
 		select lower(trim(module_name))
 		from public.organization_modules
 		where organization_id = $1::uuid
@@ -444,7 +528,7 @@ func (repo Repository) getOrganization(ctx context.Context, organizationID strin
 	var org organization
 	var logoURL pgtype.Text
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select
 			o.id::text,
 			o.name,
@@ -483,7 +567,7 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 	var logoURL pgtype.Text
 	var billing billingSnapshot
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select
 			u.id::text,
 			o.id::text,
@@ -534,7 +618,7 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 func (repo Repository) defaultActiveOrganizationID(ctx context.Context, userID string) (string, error) {
 	var organizationID string
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select om.organization_id::text
 		from public.organization_members om
 		join public.users u on u.id = om.user_id
@@ -563,9 +647,13 @@ func (repo Repository) defaultActiveOrganizationID(ctx context.Context, userID s
 func (repo Repository) getPermissions(ctx context.Context, userID string, organizationID string) ([]string, error) {
 	var csv string
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select coalesce(string_agg(distinct ap.key, ',' order by ap.key), '')
 		from public.user_organization_roles uor
+		join public.organization_roles role
+		  on role.id = uor.role_id
+		 and role.organization_id = uor.organization_id
+		 and role.is_active = true
 		join public.organization_role_permissions orp
 		  on orp.role_id = uor.role_id
 		 and orp.organization_id = uor.organization_id
@@ -589,7 +677,7 @@ func (repo Repository) getPermissions(ctx context.Context, userID string, organi
 }
 
 func (repo Repository) getPermissionOverrides(ctx context.Context, userID string, organizationID string) (map[string]bool, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := repo.queries().Query(ctx, `
 		select permission_key, allowed
 		from public.user_permission_overrides
 		where organization_id = $1::uuid
@@ -625,13 +713,19 @@ func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantConte
 		return tenantContext, nil
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := repo.queries().Query(ctx, `
 		with led_teams as (
 			select distinct tm.team_id
 			from public.team_members tm
 			join public.teams t
 			  on t.id = tm.team_id
 			 and t.organization_id = tm.organization_id
+			join public.organization_members leader_membership
+			  on leader_membership.organization_id = tm.organization_id
+			 and leader_membership.user_id = tm.user_id
+			 and leader_membership.is_active = true
+			 and leader_membership.deleted_at is null
+			 and leader_membership.membership_generation = tm.membership_generation
 			where tm.organization_id = $1::uuid
 			  and tm.user_id = $2::uuid
 			  and coalesce(tm.is_active, true) = true
@@ -645,9 +739,10 @@ func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantConte
 			join public.users u on u.id = member.user_id
 			join public.organization_members om
 			  on om.organization_id = member.organization_id
-			 and om.user_id = member.user_id
-			 and om.is_active = true
-			 and om.deleted_at is null
+				 and om.user_id = member.user_id
+				 and om.is_active = true
+				 and om.deleted_at is null
+				 and om.membership_generation = member.membership_generation
 			where member.organization_id = $1::uuid
 			  and coalesce(member.is_active, true) = true
 			  and coalesce(u.is_active, false) = true
@@ -707,7 +802,7 @@ func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantConte
 func (repo Repository) getLegacyPermissions(ctx context.Context, userID string, organizationID string) ([]string, error) {
 	var csv string
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := repo.queries().QueryRow(ctx, `
 		select coalesce(string_agg(distinct orp.permission_key, ',' order by orp.permission_key), '')
 		from public.user_organization_roles uor
 		join public.organization_roles org_role
@@ -715,8 +810,9 @@ func (repo Repository) getLegacyPermissions(ctx context.Context, userID string, 
 		join public.organization_role_permissions orp
 		  on orp.organization_role_id = org_role.id
 		where uor.user_id = $1::uuid
+		  and uor.is_active = true
 		  and org_role.organization_id = $2::uuid
-		  and coalesce(org_role.is_active, true) = true
+		  and org_role.is_active = true
 	`, userID, organizationID).Scan(&csv)
 	if isUndefinedSchemaError(err) {
 		return []string{}, nil

@@ -1,162 +1,27 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
-import vm from "node:vm";
-import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import { assertNoEffects, loadProxy, organizations, proxyRequest } from "./helpers/evolution-proxy-harness.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const proxyPath = path.join(
-  root,
-  "supabase",
-  "functions",
-  "evolution-go-proxy",
-  "index.ts",
-);
-
-async function loadEvolutionFetch({
-  apiUrl = "https://evolution.example.test",
-  apiKey = "provider-secret",
-  timeoutMs = 50,
-  fetchImpl,
-} = {}) {
-  const source = await readFile(proxyPath, "utf8");
-  const sourceFile = ts.createSourceFile(
-    "evolution-go-proxy.ts",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const declaration = sourceFile.statements.find(
-    (statement) =>
-      ts.isFunctionDeclaration(statement) && statement.name?.text === "evolutionFetch",
-  );
-  assert.ok(declaration, "missing evolutionFetch declaration");
-
-  const compiled = ts.transpileModule(
-    `${declaration.getText(sourceFile)}\nglobalThis.__contract = evolutionFetch;`,
-    {
-      compilerOptions: {
-        module: ts.ModuleKind.None,
-        target: ts.ScriptTarget.ES2022,
-      },
-    },
-  ).outputText;
-  const context = vm.createContext({
-    AbortController,
-    clearTimeout,
-    EVOLUTION_GO_API_KEY: apiKey,
-    EVOLUTION_GO_API_URL: apiUrl,
-    EVOLUTION_GO_REQUEST_TIMEOUT_MS: timeoutMs,
-    fetch: fetchImpl,
-    JSON,
-    setTimeout,
-    URL,
-  });
-  vm.runInContext(compiled, context);
-  return { source, evolutionFetch: context.__contract };
-}
-
-test("configuration failure is provably before the provider boundary", async () => {
-  let boundaryCalls = 0;
-  let fetchCalls = 0;
-  const { evolutionFetch } = await loadEvolutionFetch({
-    apiUrl: "",
-    fetchImpl: async () => {
-      fetchCalls += 1;
-      return new Response();
-    },
-  });
-
-  await assert.rejects(
-    evolutionFetch("POST", "/message/send", {
-      markBackendFetchAttempted: () => {
-        boundaryCalls += 1;
-      },
-    }),
-    /configuration missing/,
-  );
-  assert.equal(boundaryCalls, 0);
-  assert.equal(fetchCalls, 0);
+test("token, instance and organization overrides cannot cross the retired provider boundary", async () => {
+  const { handler, effects } = await loadProxy();
+  const actions = ["send.text", "send.media", "send.audio", "send.sticker", "send.location", "send.contact", "send.link", "send.poll", "message.edit", "message.delete", "message.react", "message.markread", "instance.create", "instance.logout", "instance.connect", "instance.qr", "instance.status"];
+  for (const action of actions) {
+    const response = await handler(proxyRequest(action, organizations[0], {
+      session_id: organizations[1], organization_id: organizations[1],
+      instance_id: "other-owner-instance", token: "forged-provider-token",
+      body: { number: "5511999990000", text: "Synthetic fixture", id: "0123456789ABCDEF0123456789ABCDEF" },
+    }));
+    assert.equal(response.status, 410, action);
+    assertNoEffects(effects);
+  }
 });
 
-test("provider 5xx crosses the boundary and remains an explicit provider result", async () => {
-  let boundaryCalls = 0;
-  let observedSignal;
-  const { evolutionFetch } = await loadEvolutionFetch({
-    fetchImpl: async (_url, init) => {
-      observedSignal = init.signal;
-      return new Response('{"error":"unavailable"}', {
-        status: 503,
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-
-  const result = await evolutionFetch("POST", "/message/send", {
-    body: { text: "hello" },
-    markBackendFetchAttempted: () => {
-      boundaryCalls += 1;
-    },
-  });
-
-  assert.equal(boundaryCalls, 1);
-  assert.equal(result.ok, false);
-  assert.equal(result.status, 503);
-  assert.ok(observedSignal instanceof AbortSignal);
-});
-
-test("timeout aborts the backend fetch after the effect boundary", async () => {
-  let boundaryCalls = 0;
-  const { evolutionFetch } = await loadEvolutionFetch({
-    timeoutMs: 5,
-    fetchImpl: async (_url, init) =>
-      new Promise((_resolve, reject) => {
-        init.signal.addEventListener(
-          "abort",
-          () => reject(new Error("backend request aborted")),
-          { once: true },
-        );
-      }),
-  });
-
-  await assert.rejects(
-    evolutionFetch("POST", "/message/send", {
-      body: { text: "hello" },
-      markBackendFetchAttempted: () => {
-        boundaryCalls += 1;
-      },
-    }),
-    /backend request aborted/,
-  );
-  assert.equal(boundaryCalls, 1);
-});
-
-test("proxy exposes effect_not_attempted only while the backend boundary is un-crossed", async () => {
-  const [proxySource, senderSource] = await Promise.all([
-    readFile(proxyPath, "utf8"),
-    readFile(
-      path.join(root, "supabase", "functions", "message-sender", "index.ts"),
-      "utf8",
-    ),
-  ]);
-
-  assert.equal(proxySource.match(/effect_not_attempted: true/g)?.length, 2);
-  assert.match(
-    proxySource,
-    /status >= 500 && !backendFetchAttempted[\s\S]*effect_not_attempted: true/,
-  );
-  assert.match(proxySource, /signal: abortController\.signal/);
-  assert.match(proxySource, /clearTimeout\(timeout\)/);
-
-  const failureStart = senderSource.indexOf("if (!response.ok || !data?.ok)");
-  const ambiguityStart = senderSource.indexOf(
-    "if (isAmbiguousProviderFailure(providerStatus))",
-    failureStart,
-  );
-  const failureBranch = senderSource.slice(failureStart, ambiguityStart);
-  assert.match(failureBranch, /data\?\.effect_not_attempted === true/);
-  assert.match(failureBranch, /throw new Error\(/);
+test("retirement handles malformed payloads and preflight without reading secrets or the body", async () => {
+  const { handler, effects } = await loadProxy();
+  for (const method of ["GET", "OPTIONS", "POST"]) {
+    const request = new Request("https://functions.example.test/evolution-go-proxy", { method });
+    request.json = () => { throw new Error("retirement must not inspect caller input"); };
+    assert.equal((await handler(request)).status, 410);
+  }
+  assertNoEffects(effects);
 });

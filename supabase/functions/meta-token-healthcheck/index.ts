@@ -12,6 +12,15 @@ const META_APP_SECRET = Deno.env.get("META_APP_SECRET") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
+type IntegrationHealthPatch = {
+  last_validated_at: string;
+  updated_at: string;
+  token_status?: "active" | "expired";
+  token_expires_at?: string;
+  is_connected?: boolean;
+  last_error?: string;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -37,7 +46,7 @@ serve(async (req) => {
         const response = await fetch(debugTokenUrl);
         const data = await response.json();
         
-        const patch: any = {
+        const patch: IntegrationHealthPatch = {
           last_validated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };

@@ -3,6 +3,7 @@ package pipelines
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -70,12 +71,20 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
+	if !canManagePipelines(tenantContext) {
+		writePipelineError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
 
 	defer r.Body.Close()
 	var request UpdatePipelineRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -102,7 +111,28 @@ func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := handler.repo.Delete(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	if !canManagePipelines(tenantContext) {
+		writePipelineError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
+	defer r.Body.Close()
+	var request DeletePipelineRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writePipelineError(w, r, err)
+		return
+	}
+	if err := handler.repo.Delete(r.Context(), tenantContext, r.PathValue("id"), input); err != nil {
 		writePipelineError(w, r, err)
 		return
 	}
@@ -226,7 +256,33 @@ func (handler Handler) DeleteStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := handler.repo.DeleteStage(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	if !canManagePipelines(tenantContext) {
+		writePipelineError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
+	var request DeleteStageRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+		decoder.DisallowUnknownFields()
+		// Old clients send an empty DELETE. Treat that as a missing revision,
+		// while malformed JSON and additional values remain invalid requests.
+		if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+			return
+		}
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writePipelineError(w, r, err)
+		return
+	}
+	if err := handler.repo.DeleteStage(r.Context(), tenantContext, r.PathValue("id"), input); err != nil {
 		writePipelineError(w, r, err)
 		return
 	}
@@ -240,12 +296,20 @@ func (handler Handler) SetDefaultRoundRobin(w http.ResponseWriter, r *http.Reque
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
+	if !canManagePipelines(tenantContext) {
+		writePipelineError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
 
 	defer r.Body.Close()
 	var request SetPipelineRoundRobinRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -266,6 +330,16 @@ func (handler Handler) SetDefaultRoundRobin(w http.ResponseWriter, r *http.Reque
 }
 
 func writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	var automationDependencies *StageAutomationDependenciesError
+	if errors.As(err, &automationDependencies) {
+		httpserver.WriteError(w, r, http.StatusConflict, "stage_has_automation_dependencies", automationDependencies.Error())
+		return
+	}
+	var archiveDependencies *StageArchiveDependenciesError
+	if errors.As(err, &archiveDependencies) {
+		httpserver.WriteError(w, r, http.StatusConflict, "stage_has_active_routing", archiveDependencies.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_pipeline_input", err.Error())
@@ -279,6 +353,10 @@ func writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_has_dependencies", "Esta etapa ou funil possui histórico ou configurações vinculadas. Revise esses vínculos antes de excluir.")
 	case errors.Is(err, ErrStagesChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_stages_changed", "As colunas mudaram em outra sessão. Atualize e tente novamente.")
+	case errors.Is(err, ErrPipelineChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "pipeline_changed", "O funil mudou em outra sessão. Atualize e revise antes de tentar novamente.")
+	case errors.Is(err, ErrRoundRobinBusy):
+		httpserver.WriteError(w, r, http.StatusConflict, "round_robin_busy", "A fila está sendo alterada em outra sessão. Aguarde e revise o destino antes de tentar novamente.")
 	case errors.Is(err, ErrPipelineNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "pipeline_not_found", "Pipeline was not found.")
 	case errors.Is(err, ErrStageNotFound):

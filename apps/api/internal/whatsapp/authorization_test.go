@@ -118,6 +118,51 @@ func TestLeadHistoryVisibilityKeepsDeletedSessionEvidence(t *testing.T) {
 	}
 }
 
+func TestSessionGrantRequiresCurrentAdministratorAndOrganizationScope(t *testing.T) {
+	query := sessionGrantExistsSQL("session", "$3::uuid", true)
+	for _, required := range []string{
+		"access.organization_id = session.organization_id",
+		"access.session_id = session.id",
+		"access.user_id = $3::uuid",
+		"access.granted_by = session.owner_user_id",
+		"access.grant_scope = 'organization'",
+		"access.grant_team_id is null",
+		"owner_member.deleted_at is null",
+		"recipient_member.deleted_at is null",
+		"owner_member.role)) in ('owner', 'admin')",
+		"access.can_send = true",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("grant gate lacks %q", required)
+		}
+	}
+	if strings.Contains(query, "'manager'") || strings.Contains(query, "access.grant_scope = 'team'") {
+		t.Fatal("legacy manager/team grants must be inert")
+	}
+	if strings.Contains(sessionGrantExistsSQL("session", "$3::uuid", false), "access.can_send = true") {
+		t.Fatal("a read-only session grant should not require send capability")
+	}
+}
+
+func TestOperationalInboxRestrictsSharedRecipientWithoutNarrowingHistory(t *testing.T) {
+	query := operationalConversationVisibilitySQL(true)
+	for _, required := range []string{
+		"ws.owner_user_id = $2::uuid",
+		"l.assigned_user_id = $2::uuid",
+		"access.user_id = $2::uuid",
+		"access.grant_scope = 'organization'",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("operational inbox lacks %q", required)
+		}
+	}
+	for _, history := range []string{conversationVisibilitySQL(true), leadHistoryVisibilitySQL(true)} {
+		if strings.Contains(history, "whatsapp_session_access") {
+			t.Fatal("canonical lead read scope must not depend on a number grant")
+		}
+	}
+}
+
 func TestMessageLeadPredicatesFailClosedOnMismatchedAttribution(t *testing.T) {
 	if got := conversationMessageLeadMatchSQL(); got != "(wm.lead_id = wc.lead_id or (wm.lead_id is null and wc.lead_id is null))" {
 		t.Fatalf("conversation message predicate = %q", got)

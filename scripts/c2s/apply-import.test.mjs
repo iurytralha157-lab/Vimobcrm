@@ -6,8 +6,6 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  ApplyImportError,
-  appendJournal,
   authorizeApply,
   buildApplyConfirmation,
   createSupabaseTransport,

@@ -124,6 +124,28 @@ export function scheduleInstantToGoogleDate(value: string, timeZone: string) {
   return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
+export function scheduleAllDayRangeToGoogleRange(
+  startTime: string,
+  endTime: string,
+  timeZone: string,
+) {
+  const start = Date.parse(startTime);
+  const end = Date.parse(endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new RangeError("Intervalo de dia inteiro invalido.");
+  }
+  const zone = normalizeGoogleCalendarTimeZone(timeZone);
+  // A civil boundary is an exclusive end, including 23/25-hour DST days.
+  // Fractional instants after midnight still occupy that next civil day.
+  const lastOccupied = civilDateKey(end, zone) !== civilDateKey(end - 1, zone)
+    ? end - 1
+    : end;
+  return {
+    startDate: civilDateKey(start, zone),
+    exclusiveEndDate: nextGoogleCivilDate(civilDateKey(lastOccupied, zone)),
+  };
+}
+
 export function googleAllDayRangeToScheduleRange(
   startDate: string,
   exclusiveEndDate: string,

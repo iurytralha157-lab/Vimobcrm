@@ -35,9 +35,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			  || jsonb_strip_nulls(jsonb_build_object(
 			    'strategy', coalesce(nullif(rr.strategy, ''), rr.rules->>'strategy', 'simple'),
 			    'target_stage_id', coalesce(rr.target_stage_id::text, rr.rules->>'target_stage_id'),
-			    'settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb),
 			    'reentry_behavior', coalesce(nullif(rr.reentry_behavior, ''), rr.rules->>'reentry_behavior', 'redistribute')
 			  ))
+			  || jsonb_build_object('settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb))
 			)::text,
 			rr.created_by::text,
 			rr.created_at,
@@ -50,7 +50,8 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			creator.id::text,
 			creator.name,
 			creator.email,
-			coalesce(logs.total, 0)
+			coalesce(logs.total, 0),
+			rr.revision
 		from public.round_robins rr
 		left join public.pipelines p
 		  on p.organization_id = rr.organization_id
@@ -173,9 +174,9 @@ func (repo Repository) getWithQueryer(
 			  || jsonb_strip_nulls(jsonb_build_object(
 			    'strategy', coalesce(nullif(rr.strategy, ''), rr.rules->>'strategy', 'simple'),
 			    'target_stage_id', coalesce(rr.target_stage_id::text, rr.rules->>'target_stage_id'),
-			    'settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb),
 			    'reentry_behavior', coalesce(nullif(rr.reentry_behavior, ''), rr.rules->>'reentry_behavior', 'redistribute')
 			  ))
+			  || jsonb_build_object('settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb))
 			)::text,
 			rr.created_by::text,
 			rr.created_at,
@@ -188,7 +189,8 @@ func (repo Repository) getWithQueryer(
 			creator.id::text,
 			creator.name,
 			creator.email,
-			coalesce(logs.total, 0)
+			coalesce(logs.total, 0),
+			rr.revision
 		from public.round_robins rr
 		left join public.pipelines p
 		  on p.organization_id = rr.organization_id
@@ -255,6 +257,11 @@ func (repo Repository) getWithQueryer(
 	}
 	item.Rules = rules
 	item.Members = members
+	eligibleUsers, err := repo.queueEligibleUserCount(ctx, q, tenantContext.OrganizationID, roundRobinID)
+	if err != nil {
+		return RoundRobin{}, err
+	}
+	item.EligibleUserCount = &eligibleUsers
 
 	return item, nil
 }

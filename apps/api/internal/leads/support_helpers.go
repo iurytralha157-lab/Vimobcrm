@@ -35,6 +35,7 @@ func (repo Repository) ensureLeadEditable(ctx context.Context, tenantContext ten
 			nullif(to_jsonb(l)->>'team_id', '')
 		from public.leads l
 		where organization_id = $1::uuid and id = $2::uuid
+		  and private.queue_pool_read_access(l.organization_id,l.id,null) is null
 		limit 1
 	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
 	if err == pgx.ErrNoRows {
@@ -73,6 +74,13 @@ func ensureLeadEditableForUpdate(
 	}
 	if err != nil {
 		return err
+	}
+	poolAccess, err := queuePoolAccessAfterLeadLock(ctx, tx, tenantContext.OrganizationID, leadID, nil)
+	if err != nil {
+		return err
+	}
+	if poolAccess != nil {
+		return ErrQueuePoolConflict
 	}
 	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
 		AssignedUserID: textValue(assignedUserID),

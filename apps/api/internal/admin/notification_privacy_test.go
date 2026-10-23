@@ -8,7 +8,7 @@ import (
 
 func TestGenericAdminMutationsRejectNotificationOutbox(t *testing.T) {
 	t.Parallel()
-	if isAllowedAdminTable("notifications") {
+	if isAllowedAdminWriteTable("notifications") || isAllowedAdminDeleteTable("notifications") {
 		t.Fatal("the notification outbox contains capabilities and PII and must not be generic CRUD")
 	}
 	if !isAllowedAdminReadTable("notifications") {

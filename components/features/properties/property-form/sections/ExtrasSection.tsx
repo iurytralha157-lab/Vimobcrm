@@ -9,6 +9,7 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function ExtrasSection() {
   const {
+    isSaving,
     formData,
     set,
     canManagePropertyCatalogs,
@@ -21,10 +22,11 @@ export function ExtrasSection() {
   } = usePropertyFormSections();
 
   return (
-  <TabsContent value="extras">
+  <TabsContent value="extras" id="property-panel-extras" aria-labelledby="property-tab-extras" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <div
       data-tour="property-extras-section"
-      className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+      className="grid grid-cols-1 @[760px]:grid-cols-2 gap-4"
     >
       <Card className="app-card">
         <CardContent className="pt-6">
@@ -65,6 +67,7 @@ export function ExtrasSection() {
         </CardContent>
       </Card>
     </div>
+      </fieldset>
   </TabsContent>
   );
 }

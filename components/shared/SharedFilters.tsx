@@ -1,21 +1,20 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
+  useId,
   type ReactNode,
 } from "react";
 import {
   Users,
-  User,
   Globe,
   X,
   SlidersHorizontal,
   Search,
   CircleDot,
-  Check,
-  ChevronsUpDown,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
@@ -27,24 +26,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { useTeams } from "@/hooks/use-teams";
+import type { QueryDataTrustScope } from "@/hooks/shared/use-query-data-trust";
+import { useQueryClient } from "@tanstack/react-query";
+import { isSharedFilterOptionsAccessDenied, refreshStaleSharedFilterOptions } from "@/lib/filters/shared-filter-options";
 import { useOrganizationUsers } from "@/hooks/use-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,17 +41,31 @@ import { useFilters } from "@/contexts/FilterContext";
 import { DatePreset } from "@/hooks/use-dashboard-filters";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import { BRAND_COLORS } from "@/config/brand-colors";
-import { normalizeSearchText, searchTextIncludes } from "@/lib/search-text";
+import { normalizeSearchText } from "@/lib/search-text";
 import { getUserFilterLabel } from "@/lib/user-display";
 import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
+import { SearchableFilterSelect } from "@/components/shared/SearchableFilterSelect";
+import { SharedUserFilter } from "@/components/shared/SharedUserFilter";
+import { FILTER_UI } from "@/config/filter-ui";
+import { FilterSelectionSummary, type ActiveFilterChip } from "@/components/shared/FilterSelectionSummary";
+import { getSourceFilterUnavailableReason } from "@/lib/validation/dashboard-filter-text";
+import { filterTextSchema, MAX_LEAD_SOURCE_FILTER_LENGTH } from "@/lib/validation/filter-text";
+
+import { SharedFilterPanel } from "@/components/shared/filters/SharedFilterPanel";
+import type { FilterPanelCloseReason } from "@/components/shared/filters/filter-panel-events";
+
+const sharedSearchSchema = filterTextSchema(180);
 
 interface SharedFiltersProps {
+  presentation?: "popover" | "sidebar";
   datePreset: DatePreset | null;
   onDatePresetChange: (preset: DatePreset | null) => void;
   onClearDatePreset?: () => void;
   customDateRange: { from: Date; to: Date } | null;
   onCustomDateRangeChange: (range: { from: Date; to: Date } | null) => void;
   defaultDatePreset?: DatePreset | null;
+  /** Report-specific duration bound; inherited shared periods are never changed. */
+  dateRangeMaxDays?: number;
 
   teamId: string | null;
   onTeamChange: (teamId: string | null) => void;
@@ -87,6 +89,7 @@ interface SharedFiltersProps {
   source: string | null;
   onSourceChange: (source: string | null) => void;
   dynamicSources?: { value: string; label: string }[];
+  sourceFilterMaxLength?: number;
   isLoadingSources?: boolean;
 
   pageId: string | null;
@@ -112,6 +115,8 @@ interface SharedFiltersProps {
   isLoadingTags?: boolean;
   hasTagsError?: boolean;
   hasDynamicOptionsError?: boolean;
+  /** Dashboard opts in without changing the other domains' catalog policy. */
+  cacheTrustScope?: QueryDataTrustScope;
   isRetryingDynamicOptions?: boolean;
   onRetryDynamicOptions?: () => void;
 
@@ -134,19 +139,25 @@ interface SharedFiltersProps {
   tourPrefix?: string;
   mobileIconOnly?: boolean;
   triggerClassName?: string;
-  advancedContent?: ReactNode;
+  clearButtonClassName?: string;
+  advancedContent?: ReactNode | ((layerScope: string) => ReactNode);
   advancedContentOnly?: boolean;
   hasAdvancedContentFilters?: boolean;
   showAdFilters?: boolean;
+  dateLabel?: string;
+  advancedFilterCount?: number;
+  leadFiltersPaused?: boolean;
 }
 
 export function SharedFilters({
+  presentation = "sidebar",
   datePreset,
   onDatePresetChange,
   onClearDatePreset,
   customDateRange,
   onCustomDateRangeChange,
   defaultDatePreset = null,
+  dateRangeMaxDays,
   teamId,
   onTeamChange,
   userId,
@@ -184,6 +195,7 @@ export function SharedFilters({
   onClear,
   hasActiveFilters,
   dynamicSources = [],
+  sourceFilterMaxLength = MAX_LEAD_SOURCE_FILTER_LENGTH,
   pages = [],
   campaigns = [],
   adSets = [],
@@ -198,6 +210,7 @@ export function SharedFilters({
   isLoadingTags = false,
   hasTagsError = false,
   hasDynamicOptionsError = false,
+  cacheTrustScope,
   isRetryingDynamicOptions = false,
   onRetryDynamicOptions,
   hideSearch = false,
@@ -207,18 +220,23 @@ export function SharedFilters({
   tourPrefix,
   mobileIconOnly = false,
   triggerClassName,
+  clearButtonClassName,
   advancedContent,
   advancedContentOnly = false,
   hasAdvancedContentFilters = false,
   showAdFilters = true,
+  dateLabel,
+  advancedFilterCount,
+  leadFiltersPaused = false,
 }: SharedFiltersProps) {
-  const { user, isSuperAdmin } = useAuth();
-  const { isHydrated: isFiltersHydrated } = useFilters();
+  const { user, isSuperAdmin, activeOrganization } = useAuth();
+  const queryClient = useQueryClient();
+  const { isHydrated: isFiltersHydrated, pipelineId: globalPipelineId, setPipelineId: setGlobalPipelineId, filterApplicationRevision } = useFilters();
   const { hasPermission } = useUserPermissions();
   const canViewAllLeads = isSuperAdmin || hasPermission("lead_view_all");
   const canViewTeamLeads = hasPermission("lead_view_team");
   const canUseScopeFilters = canViewAllLeads || canViewTeamLeads;
-  const hasPersistedScopeSelection = Boolean(
+  const hasActiveScopeSelection = Boolean(
     teamId ||
     (userId && userId !== "all" && userId !== "unassigned"),
   );
@@ -227,31 +245,43 @@ export function SharedFilters({
     scopeUsers === undefined &&
     isFiltersHydrated &&
     canUseScopeFilters &&
-    (loadDynamicOptions || hasPersistedScopeSelection);
+    (loadDynamicOptions || hasActiveScopeSelection);
   const teamsQuery = useTeams({
+    cacheTrustScope,
+    catalog: true,
     enabled: shouldLoadScopeOptions,
   });
   const usersQuery = useOrganizationUsers({
+    cacheTrustScope,
     enabled: shouldLoadScopeOptions,
     scope: "filters",
   });
-  const teams = useMemo(() => teamsQuery.data ?? [], [teamsQuery.data]);
-  const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
+  const { refetch: refetchTeams, isAccessBlocked: teamsAccessBlocked } = teamsQuery;
+  const { refetch: refetchUsers, isAccessBlocked: usersAccessBlocked } = usersQuery;
+  const teams = useMemo(() => isSharedFilterOptionsAccessDenied(teamsQuery.error) ? [] : (cacheTrustScope ? teamsQuery.displayData : teamsQuery.data) ?? [], [cacheTrustScope, teamsQuery.data, teamsQuery.displayData, teamsQuery.error]);
+  const users = useMemo(() => isSharedFilterOptionsAccessDenied(usersQuery.error) ? [] : (cacheTrustScope ? usersQuery.displayData : usersQuery.data) ?? [], [cacheTrustScope, usersQuery.data, usersQuery.displayData, usersQuery.error]);
   const isMobile = useIsMobile();
   const useMobileIcons = isMobile && mobileIconOnly;
   const currentUserId = user?.id;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [userFilterOpen, setUserFilterOpen] = useState(false);
-  const [userSearch, setUserSearch] = useState("");
-  const [campaignFilterOpen, setCampaignFilterOpen] = useState(false);
-  const [campaignSearch, setCampaignSearch] = useState("");
+  const [searchErrorState, setSearchError] = useState<{ message: string; revision: number; searchQuery: string } | null>(null);
+  const searchError = searchErrorState && searchErrorState.revision === filterApplicationRevision && searchErrorState.searchQuery === searchQuery
+    ? searchErrorState.message : "";
+  const filterScopeId = useId();
+  const filterLayerId = presentation === "sidebar" ? `sidebar-${filterScopeId}` : filterScopeId;
 
   // ✅ FIX: Usamos apenas refs para o input de busca — sem useState controlado
   // Isso evita re-renders a cada keystroke que causavam o "piscar" e perda de foco
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchDraftRef = useRef<string | null>(null);
   const onSearchChangeRef = useRef(onSearchChange);
   const searchQueryRef = useRef(searchQuery);
+  const setSearchInput = useCallback((input: HTMLInputElement | null) => {
+    if (input) input.value = searchDraftRef.current ?? searchQueryRef.current;
+    else if (searchInputRef.current) searchDraftRef.current = searchInputRef.current.value;
+    searchInputRef.current = input;
+  }, []);
   const internalSelectInteractionRef = useRef(false);
   const internalSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -267,22 +297,32 @@ export function SharedFilters({
 
   // ✅ FIX: Quando searchQuery mudar externamente (ex: limpar filtros),
   // atualiza o valor do input via ref sem causar re-render
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (
       searchInputRef.current &&
       searchInputRef.current.value !== searchQuery
     ) {
       searchInputRef.current.value = searchQuery;
     }
-  }, [searchQuery]);
+    searchDraftRef.current = searchQuery;
+  }, [searchQuery, filterApplicationRevision]);
 
   const commitSearch = useCallback(() => {
-    const nextSearch = searchInputRef.current?.value ?? "";
-    if (nextSearch !== searchQueryRef.current) {
-      onSearchChangeRef.current(nextSearch);
-      searchQueryRef.current = nextSearch;
+    // Some callers hide the search control or render only their advanced fields.
+    if (!searchInputRef.current) return true;
+    const nextSearch = searchInputRef.current.value;
+    const validated = sharedSearchSchema.safeParse(nextSearch);
+    if (!validated.success) {
+      setSearchError({ message: "Use até 180 caracteres válidos na busca. O texto não foi aplicado.", revision: filterApplicationRevision, searchQuery: searchQueryRef.current });
+      return false;
     }
-  }, []);
+    setSearchError(null);
+    if (validated.data !== searchQueryRef.current) {
+      onSearchChangeRef.current(validated.data);
+      searchQueryRef.current = validated.data;
+    }
+    return true;
+  }, [filterApplicationRevision]);
 
   const markInternalSelectInteraction = useCallback(() => {
     internalSelectInteractionRef.current = true;
@@ -324,25 +364,35 @@ export function SharedFilters({
       searchInputRef.current.value = "";
     }
     searchQueryRef.current = "";
+    setSearchError(null);
     onClear();
   }, [onClear]);
 
-  const handleFiltersOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open && internalSelectInteractionRef.current) {
-        return;
-      }
-      if (!open) {
-        commitSearch();
-        setUserFilterOpen(false);
-        setCampaignFilterOpen(false);
-        setCampaignSearch("");
-      }
-      setFiltersOpen(open);
-      onFiltersOpenChange?.(open);
-    },
-    [commitSearch, onFiltersOpenChange],
-  );
+  const handlePipelineFilterChange = useCallback((nextPipelineId: string | null) => {
+    onPipelineChange?.(nextPipelineId);
+    // A filter selection is shared; the Pipeline board's navigation selector is separate.
+    if (onPipelineChange && onPipelineChange !== setGlobalPipelineId && nextPipelineId !== globalPipelineId) {
+      setGlobalPipelineId(nextPipelineId);
+    }
+    onStageChange?.(null);
+  }, [globalPipelineId, onPipelineChange, onStageChange, setGlobalPipelineId]);
+
+  const tryCloseFilters = useCallback((reason: FilterPanelCloseReason) => {
+    if (reason === "outside" && internalSelectInteractionRef.current) return false;
+    if (!commitSearch()) { searchInputRef.current?.focus(); return false; }
+    setFiltersOpen(false);
+    onFiltersOpenChange?.(false);
+    return true;
+  }, [commitSearch, onFiltersOpenChange]);
+
+  const handleFiltersOpenChange = useCallback((open: boolean) => {
+    if (!open) { tryCloseFilters("outside"); return; }
+    setFiltersOpen(true);
+    onFiltersOpenChange?.(true);
+    void refreshStaleSharedFilterOptions(queryClient, activeOrganization.organizationId);
+    if (cacheTrustScope && teamsAccessBlocked) void refetchTeams({ cancelRefetch: false });
+    if (cacheTrustScope && usersAccessBlocked) void refetchUsers({ cancelRefetch: false });
+  }, [activeOrganization.organizationId, cacheTrustScope, onFiltersOpenChange, queryClient, teamsAccessBlocked, refetchTeams, usersAccessBlocked, refetchUsers, tryCloseFilters]);
 
   const isTeamLeader = canViewTeamLeads;
 
@@ -369,7 +419,7 @@ export function SharedFilters({
   const availableUsers = useMemo(() => {
     if (scopeUsers !== undefined) return scopeUsers;
     if (teamId) {
-      const team = teams.find((item) => item.id === teamId);
+      const team = availableTeams.find((item) => item.id === teamId);
       return users.filter((availableUser) =>
         team?.members?.some((member) => member.user_id === availableUser.id),
       );
@@ -386,77 +436,8 @@ export function SharedFilters({
     if (currentUserId) ledUserIds.add(currentUserId);
 
     return users.filter((availableUser) => ledUserIds.has(availableUser.id));
-  }, [availableTeams, canViewAllLeads, currentUserId, scopeUsers, teamId, teams, users]);
+  }, [availableTeams, canViewAllLeads, currentUserId, scopeUsers, teamId, users]);
 
-  useEffect(() => {
-    if (
-      !isFiltersHydrated ||
-      !scopeOptionsReady ||
-      (scopeUsers === undefined && (
-        !shouldLoadScopeOptions ||
-        teamsQuery.isFetching ||
-        usersQuery.isFetching ||
-        !teamsQuery.isSuccess ||
-        !usersQuery.isSuccess
-      )) ||
-      !showUserFilter ||
-      !userId ||
-      userId === "all" ||
-      (includeUnassignedUserOption && userId === "unassigned")
-    ) {
-      return;
-    }
-    if (!availableUsers.some((availableUser) => availableUser.id === userId)) {
-      onUserChange(null);
-    }
-  }, [
-    availableUsers,
-    includeUnassignedUserOption,
-    isFiltersHydrated,
-    onUserChange,
-    shouldLoadScopeOptions,
-    showUserFilter,
-    scopeUsers,
-    scopeOptionsReady,
-    teamsQuery.isFetching,
-    teamsQuery.isSuccess,
-    userId,
-    usersQuery.isFetching,
-    usersQuery.isSuccess,
-  ]);
-
-  const selectedUser = useMemo(
-    () => availableUsers.find((availableUser) => availableUser.id === userId),
-    [availableUsers, userId],
-  );
-  const isUnassignedUserFilter =
-    includeUnassignedUserOption && userId === "unassigned";
-
-  const matchingUsers = useMemo(() => {
-    const normalizedSearch = normalizeSearchText(userSearch);
-    if (!normalizedSearch) return availableUsers;
-
-    return availableUsers.filter((availableUser) => {
-      return (
-        searchTextIncludes(availableUser.name, normalizedSearch) ||
-        searchTextIncludes(availableUser.email, normalizedSearch)
-      );
-    });
-  }, [availableUsers, userSearch]);
-
-  const visibleUserOptions = useMemo(
-    () => matchingUsers.slice(0, 80),
-    [matchingUsers],
-  );
-  const hiddenUsersCount = Math.max(
-    0,
-    matchingUsers.length - visibleUserOptions.length,
-  );
-
-  const selectedCampaign = useMemo(
-    () => campaigns.find((campaign) => campaign.id === campaignId),
-    [campaignId, campaigns],
-  );
   const multiCampaigns = campaignIds !== undefined && onCampaignsChange !== undefined;
   const campaignPickerOptions = useMemo(() => {
     const nameCounts = new Map<string, number>();
@@ -471,14 +452,6 @@ export function SharedFilters({
         : campaign.name,
     }));
   }, [campaigns]);
-  const matchingCampaigns = useMemo(() => {
-    const normalizedSearch = normalizeSearchText(campaignSearch);
-    if (!normalizedSearch) return campaigns;
-    return campaigns.filter((campaign) =>
-      searchTextIncludes(campaign.name, normalizedSearch),
-    );
-  }, [campaignSearch, campaigns]);
-
   const hasDefaultExtraFilters =
     teamId !== null ||
     (userId !== null && userId !== "all") ||
@@ -492,158 +465,48 @@ export function SharedFilters({
     adId !== null ||
     tagIds.length > 0 ||
     dealStatus !== null ||
-    searchQuery !== "";
+    searchQuery.trim() !== "";
+  const hasActiveAdvancedFilters = hasAdvancedContentFilters || (advancedFilterCount ?? 0) > 0;
   const hasExtraFilters = advancedContentOnly
-    ? hasAdvancedContentFilters
-    : hasDefaultExtraFilters || hasAdvancedContentFilters;
+    ? hasActiveAdvancedFilters
+    : (!leadFiltersPaused && hasDefaultExtraFilters) || hasActiveAdvancedFilters;
   const hasActiveDateFilter =
-    Boolean(customDateRange) || datePreset !== defaultDatePreset;
+    !leadFiltersPaused && (Boolean(customDateRange) || datePreset !== defaultDatePreset);
 
   const filterSelectContentClass =
     "app-header-popover z-[130] rounded-[8px] border-0 p-1 [&_[role=option]]:rounded-[6px] [&_[role=option]]:text-[12px] [&_[role=option]]:font-light";
-  const dashboardTriggerClass =
-    "h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-[10px] font-light normal-case tracking-normal text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/30";
-  const filterControlClass =
-    "h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-1 focus:ring-primary/30";
-  const isFilterFloatingLayer = (target: EventTarget | null) => {
-    const element = target instanceof Element ? target : null;
-    return Boolean(
-      internalSelectInteractionRef.current ||
-      element?.closest("[data-radix-popper-content-wrapper]") ||
-      element?.closest("[role='listbox']") ||
-      element?.closest("[cmdk-list]"),
-    );
-  };
-  const getUserInitials = (name?: string | null, email?: string | null) => {
-    const source = name?.trim() || email?.trim() || "U";
-    return (
-      source
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase())
-        .join("") || "U"
-    );
-  };
-
-  return (
-    <div className="flex items-center justify-end gap-2 w-full">
-      {/* Data no início */}
-      {datePosition === "start" && (
-        <DateFilterPopover
-          datePreset={datePreset}
-          onDatePresetChange={handleDatePresetChange}
-          customDateRange={customDateRange}
-          onCustomDateRangeChange={onCustomDateRangeChange}
-          triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
-          triggerClassName={cn(
-            dashboardTriggerClass,
-            triggerClassName,
-            isMobile && "px-2",
-            useMobileIcons && "w-8 px-0",
-            hasActiveDateFilter &&
-              "bg-primary/50 text-white hover:bg-primary hover:text-white",
-          )}
-          iconOnly={useMobileIcons}
-          align="end"
-        />
-      )}
-
-      {/* Botão de filtros + popover */}
-      <div className="flex items-center gap-1">
-        <Popover
-          open={filtersOpen}
-          onOpenChange={handleFiltersOpenChange}
-          modal={false}
-        >
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              aria-expanded={filtersOpen}
-              aria-label={filtersOpen ? "Fechar filtros avançados" : "Abrir filtros avançados"}
-              data-tour={
-                tourPrefix ? `${tourPrefix}-advanced-filters` : undefined
-              }
-              className={cn(
-                dashboardTriggerClass,
-                triggerClassName,
-                isMobile && "px-2",
-                useMobileIcons && "w-8 px-0",
-                hasExtraFilters &&
-                  "bg-primary/50 text-white hover:bg-primary hover:text-white",
-              )}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              <span
-                className={
-                  useMobileIcons
-                    ? "sr-only"
-                    : isMobile
-                      ? "hidden xs:inline"
-                      : ""
-                }
-              >
-                Filtros
-              </span>
-              {hasExtraFilters && (
-                <Badge
-                  variant="default"
-                  className={cn(
-                    "ml-1 h-4 min-w-[16px] px-1 text-[9px] bg-primary flex items-center justify-center",
-                    isMobile && "h-4 w-4 p-0 text-[10px] ml-0.5",
-                  )}
-                />
-              )}
-            </Button>
-          </PopoverTrigger>
-
-          <PopoverContent
-            data-tour={tourPrefix ? `${tourPrefix}-filters-panel` : undefined}
-            align="end"
-            onOpenAutoFocus={(e) => e.preventDefault()}
-            onInteractOutside={(e) => {
-              if (isFilterFloatingLayer(e.target)) {
-                e.preventDefault();
-              }
-            }}
-            onPointerDownOutside={(e) => {
-              if (isFilterFloatingLayer(e.target)) {
-                e.preventDefault();
-              }
-            }}
-            onFocusOutside={(e) => {
-              if (isFilterFloatingLayer(e.target)) {
-                e.preventDefault();
-              }
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
-            className={cn(
-              "app-header-popover z-[100] w-72 rounded-[8px] border-0 p-2.5",
-              isMobile && "max-h-[80dvh] w-[280px] overflow-y-auto",
-            )}
-          >
-            {/* ✅ FIX: Conteúdo do filtro como JSX direto, não como sub-componente
-                Sub-componentes definidos dentro do pai são recriados a cada render,
-                causando desmontagem do <Input> e perda de foco a cada keystroke */}
+  const dashboardTriggerClass = FILTER_UI.trigger;
+  const filterControlClass = FILTER_UI.control;
+  const filterChips: ActiveFilterChip[] = [];
+  const addChip = (key: string, label: string, onRemove: () => void) => filterChips.push({ key, label, onRemove });
+  const unavailable = "indisponível";
+  if (!advancedContentOnly) {
+    if (pipelineId && onPipelineChange) addChip("pipeline", `Pipeline: ${pipelines.find((item) => item.id === pipelineId)?.name ?? unavailable}`, () => handlePipelineFilterChange(null));
+    if (stageId && onStageChange) addChip("stage", `Estágio: ${stages.find((item) => item.id === stageId)?.name ?? unavailable}`, () => onStageChange(null));
+    if (teamId) addChip("team", `Equipe: ${availableTeams.find((item) => item.id === teamId)?.name ?? unavailable}`, () => { onTeamChange(null); onUserChange(null); });
+    if (userId && userId !== "all") {
+      const selectedUser = availableUsers.find((item) => item.id === userId);
+      addChip("user", `Corretor: ${userId === "unassigned" ? "Sem responsável" : selectedUser ? getUserFilterLabel(selectedUser) : unavailable}`, () => onUserChange(null));
+    }
+    if (source) addChip("source", `Origem: ${dynamicSources.find((item) => item.value === source)?.label ?? source}`, () => onSourceChange(null));
+    if (pageId) addChip("page", `Página: ${pages.find((item) => item.id === pageId)?.name ?? unavailable}`, () => onPageChange(null));
+    if (multiCampaigns) campaignIds.forEach((id) => addChip(`campaign:${id}`, `Campanha: ${campaignPickerOptions.find((item) => item.id === id)?.name ?? `${unavailable} · …${id.slice(-6)}`}`, () => onCampaignsChange(campaignIds.filter((selectedId) => selectedId !== id))));
+    else if (campaignId) addChip("campaign", `Campanha: ${campaignPickerOptions.find((item) => item.id === campaignId)?.name ?? unavailable}`, () => onCampaignChange(null));
+    if (adSetId) addChip("adset", `Conjunto: ${adSets.find((item) => item.id === adSetId)?.name ?? unavailable}`, () => onAdSetChange(null));
+    if (adId) addChip("ad", `Anúncio: ${ads.find((item) => item.id === adId)?.name ?? unavailable}`, () => onAdChange(null));
+    Array.from(new Set(tagIds)).forEach((id) => addChip(`tag:${id}`, `Tag: ${tags.find((item) => item.id === id)?.name ?? unavailable}`, () => onTagsChange(tagIds.filter((selectedId) => selectedId !== id))));
+    if (dealStatus) addChip("status", `Status: ${{ open: "Aberto", won: "Ganho", lost: "Perdido" }[dealStatus] ?? dealStatus}`, () => onDealStatusChange(null));
+    if (searchQuery.trim()) addChip("search", `Busca: ${searchQuery}`, () => onSearchChange(""));
+  }
+  const mainFilterCount = new Set(filterChips.map((chip) => chip.key.split(":")[0])).size;
+  const extraFilterCount = (leadFiltersPaused ? 0 : mainFilterCount) + (advancedFilterCount ?? (hasAdvancedContentFilters ? 1 : 0));
+  const filterSummary = `${leadFiltersPaused ? "Filtros de lead pausados: " : ""}${filterChips.map((chip) => chip.label).join("; ")}`;
+  // One element tree preserves field identity across presentation rerenders.
+  const filterFields = (
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between pb-1">
-                <span className="text-[12px] font-light text-[var(--app-text-secondary)]">
-                  Filtros Avançados
-                </span>
-                {hasActiveFilters && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClearFilters}
-                    className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] font-light text-primary shadow-none hover:bg-[var(--app-surface-hover)]"
-                  >
-                    Limpar
-                  </Button>
-                )}
-              </div>
+              <FilterSelectionSummary chips={filterChips} paused={leadFiltersPaused} />
 
-              {hasDynamicOptionsError && (
+              {(hasDynamicOptionsError || (cacheTrustScope && (teamsAccessBlocked || usersAccessBlocked))) && (
                 <div
                   role="alert"
                   className="flex items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[10px] font-light text-[var(--app-text-secondary)]"
@@ -658,7 +521,11 @@ export function SharedFilters({
                       variant="ghost"
                       size="sm"
                       disabled={isRetryingDynamicOptions}
-                      onClick={onRetryDynamicOptions}
+                      onClick={() => {
+                        onRetryDynamicOptions?.();
+                        if (cacheTrustScope && teamsAccessBlocked) void refetchTeams({ cancelRefetch: false });
+                        if (cacheTrustScope && usersAccessBlocked) void refetchUsers({ cancelRefetch: false });
+                      }}
                       className="h-6 shrink-0 rounded-[5px] px-1.5 text-[10px] text-primary"
                     >
                       <RefreshCw
@@ -672,20 +539,26 @@ export function SharedFilters({
               )}
 
               <div className="grid gap-2">
-                {advancedContent}
+                {typeof advancedContent === "function" ? advancedContent(filterLayerId) : advancedContent}
                 {!advancedContentOnly ? (
                   <>
                     {/* ✅ FIX: Input UNCONTROLLED — sem value/onChange que causam re-render
                     Usamos defaultValue + ref. O valor é lido via ref no commitSearch. */}
                     {!hideSearch && (
-                      <div className="relative group">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground group-focus-within:text-primary" />
+                      <div>
+                        <div className="relative group" data-filter-search-container>
+                        <Search data-filter-search-icon aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground group-focus-within:text-primary" />
                         <Input
-                          ref={searchInputRef}
+                          ref={presentation === "sidebar" ? setSearchInput : searchInputRef}
                           placeholder="Buscar..."
+                          aria-label="Buscar nos registros"
+                          aria-describedby={`${filterLayerId}-search-help`}
+                          aria-invalid={Boolean(searchError)}
+                          data-filter-active={Boolean(searchQuery.trim())}
                           defaultValue={searchQuery}
                           onKeyDown={(e) => {
                             e.stopPropagation();
+                            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                             if (e.key === "Enter") {
                               e.preventDefault();
                               commitSearch();
@@ -695,327 +568,56 @@ export function SharedFilters({
                             e.stopPropagation();
                           }}
                           autoComplete="off"
-                          className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-8 text-[12px] font-light text-[var(--app-text-primary)] shadow-none placeholder:text-[var(--app-text-tertiary)] focus:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
+                          className={cn(filterControlClass, "pl-8 placeholder:text-[var(--app-text-tertiary)]")}
                         />
+                        </div>
+                        <p id={`${filterLayerId}-search-help`} className="mt-1 text-[10px] text-muted-foreground">Pressione Enter ou feche os filtros para aplicar a busca.</p>
+                        {searchError && <p role="alert" className="mt-1 text-[11px] text-destructive">{searchError}</p>}
                       </div>
                     )}
 
-                    {onPipelineChange && (pipelines.length > 0 || showEmptyScopeFilters) && (
-                      <Select
-                        value={pipelineId || "all"}
-                        disabled={showEmptyScopeFilters && pipelines.length === 0}
-                        onOpenChange={markInternalSelectInteraction}
-                        onValueChange={(value) => {
-                          onPipelineChange(value === "all" ? null : value);
-                          onStageChange?.(null);
-                        }}
-                      >
-                        <SelectTrigger
-                          aria-label="Filtrar por pipeline"
-                          onPointerDown={markInternalSelectInteraction}
-                          className={cn(
-                            filterControlClass,
-                            pipelineId && "text-primary",
-                          )}
-                        >
-                          <SelectValue placeholder="Pipeline" />
-                        </SelectTrigger>
-                        <SelectContent className={filterSelectContentClass}>
-                          <SelectItem value="all">{showEmptyScopeFilters && pipelines.length === 0
-                            ? scopeOptionsLoading ? "Carregando pipelines..." : scopeOptionsReady ? "Nenhuma pipeline" : "Pipelines indisponíveis"
-                            : "Todas pipelines"}</SelectItem>
-                          {pipelines.map((pipeline) => (
-                            <SelectItem key={pipeline.id} value={pipeline.id}>
-                              {pipeline.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {onPipelineChange && (pipelines.length > 0 || showEmptyScopeFilters || pipelineId) && (
+                      <SearchableFilterSelect
+                        value={pipelineId} onChange={handlePipelineFilterChange}
+                        options={pipelines.map((pipeline) => ({ value: pipeline.id, label: pipeline.name }))}
+                        allLabel="Todas pipelines" ariaLabel="Filtrar por pipeline" layerScope={filterLayerId}
+                        loading={scopeOptionsLoading} emptyLabel={scopeOptionsReady ? "Nenhuma pipeline" : "Pipelines indisponíveis"}
+                      />
                     )}
-
-                    {onStageChange && pipelineId && stages.length > 0 && (
-                      <Select
-                        value={stageId || "all"}
-                        onOpenChange={markInternalSelectInteraction}
-                        onValueChange={(value) =>
-                          onStageChange(value === "all" ? null : value)
-                        }
-                      >
-                        <SelectTrigger
-                          aria-label="Filtrar por estágio"
-                          onPointerDown={markInternalSelectInteraction}
-                          className={cn(
-                            filterControlClass,
-                            stageId && "text-primary",
-                          )}
-                        >
-                          <SelectValue placeholder="Estágio" />
-                        </SelectTrigger>
-                        <SelectContent className={filterSelectContentClass}>
-                          <SelectItem value="all">Todos estágios</SelectItem>
-                          {stages.map((stage) => (
-                            <SelectItem key={stage.id} value={stage.id}>
-                              {stage.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {onStageChange && pipelineId && (stages.length > 0 || stageId) && (
+                      <SearchableFilterSelect
+                        value={stageId} onChange={onStageChange}
+                        options={stages.map((stage) => ({ value: stage.id, label: stage.name }))}
+                        allLabel="Todos estágios" ariaLabel="Filtrar por estágio" layerScope={filterLayerId}
+                      />
                     )}
 
                     {/* Team Filter */}
-                    {(availableTeams.length > 0 || showEmptyScopeFilters) && (
-                      <Select
-                        value={teamId || "all"}
-                        disabled={showEmptyScopeFilters && availableTeams.length === 0}
-                        onOpenChange={markInternalSelectInteraction}
-                        onValueChange={(value) => {
-                          onTeamChange(value === "all" ? null : value);
-                          onUserChange(null);
-                        }}
-                      >
-                        <SelectTrigger
-                          onPointerDown={markInternalSelectInteraction}
-                          className={cn(
-                            filterControlClass,
-                            teamId && "text-primary",
-                          )}
-                        >
-                          <Users className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
-                          <SelectValue placeholder="Equipe" />
-                        </SelectTrigger>
-                        <SelectContent className={filterSelectContentClass}>
-                          <SelectItem value="all">{showEmptyScopeFilters && availableTeams.length === 0
-                            ? scopeOptionsLoading ? "Carregando equipes..." : scopeOptionsReady ? "Nenhuma equipe" : "Equipes indisponíveis"
-                            : "Todas equipes"}</SelectItem>
-                          {availableTeams.map((team) => (
-                            <SelectItem key={team.id} value={team.id}>
-                              {team.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {(availableTeams.length > 0 || showEmptyScopeFilters || teamId) && (
+                      <SearchableFilterSelect
+                        value={teamId} onChange={(value) => { onTeamChange(value); onUserChange(null); }}
+                        options={availableTeams.map((team) => ({ value: team.id, label: team.name }))}
+                        allLabel="Todas equipes" ariaLabel="Filtrar por equipe" layerScope={filterLayerId}
+                        icon={<Users className={FILTER_UI.icon} aria-hidden="true" />}
+                        loading={scopeOptionsLoading} emptyLabel={scopeOptionsReady ? "Nenhuma equipe" : "Equipes indisponíveis"}
+                      />
                     )}
 
                     {/* User Filter */}
                     {showUserFilter && (
-                      <Popover
-                        open={userFilterOpen}
-                        onOpenChange={setUserFilterOpen}
-                        modal={false}
-                      >
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            role="combobox"
-                            disabled={showEmptyScopeFilters && !scopeOptionsReady && availableUsers.length === 0}
-                            aria-expanded={userFilterOpen}
-                            onPointerDown={markInternalSelectInteraction}
-                            className={cn(
-                              filterControlClass,
-                              "justify-between outline-none ring-0 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
-                              userId && userId !== "all" && "text-primary",
-                            )}
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              {selectedUser ? (
-                                <Avatar className="h-5 w-5">
-                                  <AvatarImage
-                                    src={selectedUser.avatar_url || undefined}
-                                    alt={
-                                      selectedUser.name ||
-                                      selectedUser.email ||
-                                      "Corretor"
-                                    }
-                                  />
-                                  <AvatarFallback className="text-[9px]">
-                                    {getUserInitials(
-                                      selectedUser.name,
-                                      selectedUser.email,
-                                    )}
-                                  </AvatarFallback>
-                                </Avatar>
-                              ) : (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--app-surface-hover)]">
-                                  <User className="h-3.5 w-3.5 flex-shrink-0" />
-                                </span>
-                              )}
-                              <span className="truncate">
-                                {showEmptyScopeFilters && !scopeOptionsReady && availableUsers.length === 0
-                                  ? scopeOptionsLoading ? "Carregando usuários..." : "Usuários indisponíveis"
-                                  : selectedUser
-                                  ? getUserFilterLabel(selectedUser)
-                                  : isUnassignedUserFilter
-                                    ? "Sem responsável"
-                                    : "Todos"}
-                              </span>
-                            </span>
-                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          align="start"
-                          className="app-header-popover z-[140] w-[260px] rounded-[8px] border-0 p-1"
-                          onOpenAutoFocus={(event) => event.preventDefault()}
-                          onPointerDownCapture={markInternalSelectInteraction}
-                          onDoubleClick={(event) => event.stopPropagation()}
-                        >
-                          <Command
-                            shouldFilter={false}
-                            className="rounded-[6px] bg-transparent text-[12px] font-light [&_[cmdk-input-wrapper]]:border-b-0"
-                          >
-                            <CommandInput
-                              placeholder="Buscar corretor..."
-                              value={userSearch}
-                              onValueChange={setUserSearch}
-                              className="h-9 text-[12px] font-light"
-                            />
-                            <CommandList className="max-h-[260px]">
-                              {matchingUsers.length === 0 &&
-                              !includeUnassignedUserOption ? (
-                                <CommandEmpty>
-                                  Nenhum corretor encontrado.
-                                </CommandEmpty>
-                              ) : (
-                                <CommandGroup>
-                                  <CommandItem
-                                    value="all"
-                                    className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
-                                    onSelect={() => {
-                                      onUserChange(null);
-                                      setUserSearch("");
-                                      setUserFilterOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-3.5 w-3.5",
-                                        !userId ? "opacity-100" : "opacity-0",
-                                      )}
-                                    />
-                                    <span className="flex min-w-0 items-center gap-2">
-                                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--app-surface-hover)]">
-                                        <User className="h-3.5 w-3.5" />
-                                      </span>
-                                      <span>Todos</span>
-                                    </span>
-                                  </CommandItem>
-                                  {includeUnassignedUserOption && (
-                                    <CommandItem
-                                      value="unassigned Sem responsável"
-                                      className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
-                                      onSelect={() => {
-                                        onUserChange("unassigned");
-                                        setUserSearch("");
-                                        setUserFilterOpen(false);
-                                      }}
-                                    >
-                                      <Check
-                                        className={cn(
-                                          "mr-2 h-3.5 w-3.5",
-                                          isUnassignedUserFilter
-                                            ? "opacity-100"
-                                            : "opacity-0",
-                                        )}
-                                      />
-                                      <span className="flex min-w-0 items-center gap-2">
-                                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--app-surface-hover)]">
-                                          <User className="h-3.5 w-3.5" />
-                                        </span>
-                                        <span>Sem responsável</span>
-                                      </span>
-                                    </CommandItem>
-                                  )}
-                                  {visibleUserOptions.map((availableUser) => (
-                                    <CommandItem
-                                      key={availableUser.id}
-                                      value={`${availableUser.name || ""} ${availableUser.email || ""}`}
-                                      className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
-                                      onSelect={() => {
-                                        onUserChange(availableUser.id);
-                                        setUserSearch("");
-                                        setUserFilterOpen(false);
-                                      }}
-                                    >
-                                      <Check
-                                        className={cn(
-                                          "mr-2 h-3.5 w-3.5",
-                                          userId === availableUser.id
-                                            ? "opacity-100"
-                                            : "opacity-0",
-                                        )}
-                                      />
-                                      <Avatar className="mr-2 h-6 w-6">
-                                        <AvatarImage
-                                          src={
-                                            availableUser.avatar_url ||
-                                            undefined
-                                          }
-                                          alt={
-                                            availableUser.name ||
-                                            availableUser.email ||
-                                            "Corretor"
-                                          }
-                                        />
-                                        <AvatarFallback className="text-[10px]">
-                                          {getUserInitials(
-                                            availableUser.name,
-                                            availableUser.email,
-                                          )}
-                                        </AvatarFallback>
-                                      </Avatar>
-                                      <span className="truncate">
-                                        {getUserFilterLabel(availableUser)}
-                                      </span>
-                                    </CommandItem>
-                                  ))}
-                                  {hiddenUsersCount > 0 && (
-                                    <div className="px-8 py-2 text-[10px] text-muted-foreground">
-                                      Digite para buscar mais {hiddenUsersCount}{" "}
-                                      corretor(es).
-                                    </div>
-                                  )}
-                                </CommandGroup>
-                              )}
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
+                      <SharedUserFilter
+                        users={availableUsers} value={userId} onChange={onUserChange}
+                        includeUnassigned={includeUnassignedUserOption} layerScope={filterLayerId}
+                        loading={scopeOptionsLoading || (shouldLoadScopeOptions && usersQuery.isFetching)}
+                      />
                     )}
 
                     {/* Source Filter */}
-                    <Select
-                      value={source || "all"}
-                      disabled={isLoadingSources}
-                      onOpenChange={markInternalSelectInteraction}
-                      onValueChange={(value) =>
-                        onSourceChange(value === "all" ? null : value)
-                      }
-                    >
-                      <SelectTrigger
-                        disabled={isLoadingSources}
-                        aria-busy={isLoadingSources}
-                        onPointerDown={markInternalSelectInteraction}
-                        className={cn(
-                          filterControlClass,
-                          source && "text-primary",
-                        )}
-                      >
-                        <Globe className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
-                        <SelectValue
-                          placeholder={
-                            isLoadingSources ? "Carregando..." : "Origem"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent className={filterSelectContentClass}>
-                        <SelectItem value="all">Todas origens</SelectItem>
-                        {dynamicSources.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableFilterSelect
+                      value={source} onChange={onSourceChange} options={dynamicSources.map((option) => ({ ...option, disabledReason: getSourceFilterUnavailableReason(option.value, sourceFilterMaxLength) ?? undefined }))}
+                      allLabel="Todas origens" ariaLabel="Filtrar por origem" layerScope={filterLayerId}
+                      icon={<Globe className={FILTER_UI.icon} aria-hidden="true" />} loading={isLoadingSources}
+                    />
 
                     {/* Tag Filter */}
                     <div onPointerDownCapture={markInternalSelectInteraction}>
@@ -1046,6 +648,8 @@ export function SharedFilters({
                         )}
                         showSelectedBadges={false}
                         maxSelected={50}
+                        allowCreate={false}
+                        layerScope={filterLayerId}
                       />
                     </div>
 
@@ -1058,16 +662,19 @@ export function SharedFilters({
                       }
                     >
                       <SelectTrigger
+                        aria-label="Filtrar por status do negócio"
+                        data-filter-active={Boolean(dealStatus && dealStatus !== "all")}
                         onPointerDown={markInternalSelectInteraction}
                         className={cn(
                           filterControlClass,
+                          "justify-start gap-1.5 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:text-left",
                           dealStatus && "text-primary",
                         )}
                       >
-                        <CircleDot className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
+                        <CircleDot className="h-3.5 w-3.5 flex-shrink-0" />
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
-                      <SelectContent className={filterSelectContentClass}>
+                      <SelectContent data-filter-layer={filterLayerId} className={filterSelectContentClass}>
                         <SelectItem value="all">Todos status</SelectItem>
                         <SelectItem value="open">Aberto</SelectItem>
                         <SelectItem value="won">Ganho</SelectItem>
@@ -1088,165 +695,32 @@ export function SharedFilters({
                       </div>
 
                       <div className="space-y-2">
-                        <Select
-                          value={pageId || "all"}
-                          disabled={isLoadingPages}
-                          onOpenChange={markInternalSelectInteraction}
-                          onValueChange={(value) =>
-                            onPageChange(value === "all" ? null : value)
-                          }
-                        >
-                          <SelectTrigger
-                            aria-label="Filtrar por página do Facebook"
-                            aria-busy={isLoadingPages}
-                            onPointerDown={markInternalSelectInteraction}
-                            className={cn(filterControlClass, pageId && "text-primary")}
-                          >
-                            <SelectValue
-                              placeholder={isLoadingPages ? "Carregando páginas..." : "Todas páginas"}
-                            />
-                          </SelectTrigger>
-                          <SelectContent className={filterSelectContentClass}>
-                            <SelectItem value="all">Todas páginas</SelectItem>
-                            {pages.map((page) => (
-                              <SelectItem key={page.id} value={page.id}>
-                                {page.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <SearchableFilterSelect
+                          value={pageId} onChange={onPageChange}
+                          options={pages.map((page) => ({ value: page.id, label: page.name }))}
+                          allLabel="Todas páginas" ariaLabel="Filtrar por página do Facebook" layerScope={filterLayerId}
+                          loading={isLoadingPages}
+                        />
 
                         {/* Campaign */}
                         {multiCampaigns ? (
-                          <div onPointerDownCapture={markInternalSelectInteraction}>
-                            <SearchableTagPicker
-                              tags={campaignPickerOptions}
-                              selectedTagIds={campaignIds}
-                              onToggleTag={(nextId) => {
-                                onCampaignsChange(
-                                  campaignIds.includes(nextId)
-                                    ? campaignIds.filter((id) => id !== nextId)
-                                    : [...campaignIds, nextId],
-                                );
-                              }}
-                              onClearSelection={() => onCampaignsChange([])}
-                              loading={isLoadingCampaigns}
-                              error={hasCampaignsError}
-                              placeholder="Todas campanhas"
-                              itemNameSingular="campanha"
-                              itemNamePlural="campanhas"
-                              triggerIcon={<Globe className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                              triggerClassName={cn(filterControlClass, campaignIds.length > 0 && "text-primary")}
-                              showColorDot={false}
-                              showUnavailableId
-                              caseSensitiveIds
-                              showSelectedBadges={false}
-                              allowCreate={false}
-                              maxSelected={50}
-                              emptyMessage="Nenhuma campanha disponível"
-                            />
-                          </div>
+                          <SearchableTagPicker
+                            tags={campaignPickerOptions} selectedTagIds={campaignIds}
+                            onToggleTag={(nextId) => onCampaignsChange(campaignIds.includes(nextId) ? campaignIds.filter((id) => id !== nextId) : [...campaignIds, nextId])}
+                            onClearSelection={() => onCampaignsChange([])} loading={isLoadingCampaigns} error={hasCampaignsError}
+                            placeholder="Todas campanhas" itemNameSingular="campanha" itemNamePlural="campanhas"
+                            triggerIcon={<Globe className={FILTER_UI.icon} aria-hidden="true" />}
+                            triggerClassName={cn(filterControlClass, campaignIds.length > 0 && "text-primary")}
+                            showColorDot={false} showUnavailableId caseSensitiveIds showSelectedBadges={false}
+                            allowCreate={false} maxSelected={50} emptyMessage="Nenhuma campanha disponível" layerScope={filterLayerId}
+                          />
                         ) : (
-                        <div className="space-y-1">
-                          <Popover
-                            open={campaignFilterOpen}
-                            onOpenChange={(open) => {
-                              setCampaignFilterOpen(open);
-                              if (!open) setCampaignSearch("");
-                            }}
-                            modal={false}
-                          >
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                role="combobox"
-                                aria-expanded={campaignFilterOpen}
-                                aria-busy={isLoadingCampaigns}
-                                disabled={isLoadingCampaigns}
-                                onPointerDown={markInternalSelectInteraction}
-                                className={cn(
-                                  filterControlClass,
-                                  "justify-between outline-none ring-0 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
-                                  campaignId && "text-primary",
-                                )}
-                              >
-                                <span className="truncate">
-                                  {isLoadingCampaigns
-                                    ? "Carregando campanhas..."
-                                    : selectedCampaign?.name || "Todas campanhas"}
-                                </span>
-                                <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              align="start"
-                              className="app-header-popover z-[140] w-[260px] rounded-[8px] border-0 p-1"
-                              onOpenAutoFocus={(event) => event.preventDefault()}
-                              onPointerDownCapture={markInternalSelectInteraction}
-                              onDoubleClick={(event) => event.stopPropagation()}
-                            >
-                              <Command
-                                shouldFilter={false}
-                                className="rounded-[6px] bg-transparent text-[12px] font-light [&_[cmdk-input-wrapper]]:border-b-0"
-                              >
-                                <CommandInput
-                                  placeholder="Buscar campanha..."
-                                  value={campaignSearch}
-                                  onValueChange={setCampaignSearch}
-                                  className="h-9 text-[12px] font-light"
-                                />
-                                <CommandList className="max-h-[260px]">
-                                  {matchingCampaigns.length === 0 && (
-                                    <p className="px-2 py-3 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
-                                      Nenhuma campanha encontrada.
-                                    </p>
-                                  )}
-                                  <CommandGroup>
-                                    <CommandItem
-                                      value="all Todas campanhas"
-                                      className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
-                                      onSelect={() => {
-                                        onCampaignChange(null);
-                                        setCampaignSearch("");
-                                        setCampaignFilterOpen(false);
-                                      }}
-                                    >
-                                      <Check
-                                        className={cn(
-                                          "mr-2 h-3.5 w-3.5",
-                                          !campaignId ? "opacity-100" : "opacity-0",
-                                        )}
-                                      />
-                                      Todas campanhas
-                                    </CommandItem>
-                                    {matchingCampaigns.map((campaign) => (
-                                      <CommandItem
-                                        key={campaign.id}
-                                        value={`${campaign.name} ${campaign.id}`}
-                                        className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
-                                        onSelect={() => {
-                                          onCampaignChange(campaign.id);
-                                          setCampaignSearch("");
-                                          setCampaignFilterOpen(false);
-                                        }}
-                                      >
-                                        <Check
-                                          className={cn(
-                                            "mr-2 h-3.5 w-3.5",
-                                            campaignId === campaign.id
-                                              ? "opacity-100"
-                                              : "opacity-0",
-                                          )}
-                                        />
-                                        <span className="truncate">{campaign.name}</span>
-                                      </CommandItem>
-                                    ))}
-                                  </CommandGroup>
-                                </CommandList>
-                              </Command>
-                            </PopoverContent>
-                          </Popover>
-                        </div>
+                          <SearchableFilterSelect
+                            value={campaignId} onChange={onCampaignChange}
+                            options={campaignPickerOptions.map((campaign) => ({ value: campaign.id, label: campaign.name }))}
+                            allLabel="Todas campanhas" ariaLabel="Filtrar por campanha" layerScope={filterLayerId}
+                            loading={isLoadingCampaigns} error={hasCampaignsError}
+                          />
                         )}
 
                         {showAdFilters && multiCampaigns && campaignIds.length > 1 && (
@@ -1255,92 +729,24 @@ export function SharedFilters({
                           </p>
                         )}
 
-                        {/* Ad Set — só aparece se houver uma campanha selecionada */}
+                        {/* Ad Set — available for a single campaign */}
                         {showAdFilters && (multiCampaigns ? campaignIds.length === 1 : Boolean(campaignId)) && (
-                          <div className="space-y-1">
-                            <Select
-                              value={adSetId || "all"}
-                              disabled={isLoadingAdSets}
-                              onOpenChange={markInternalSelectInteraction}
-                              onValueChange={(value) =>
-                                onAdSetChange(value === "all" ? null : value)
-                              }
-                            >
-                              <SelectTrigger
-                                disabled={isLoadingAdSets}
-                                aria-busy={isLoadingAdSets}
-                                onPointerDown={markInternalSelectInteraction}
-                                className={cn(
-                                  filterControlClass,
-                                  "animate-in fade-in slide-in-from-top-1",
-                                )}
-                              >
-                                <SelectValue
-                                  placeholder={
-                                    isLoadingAdSets
-                                      ? "Carregando..."
-                                      : "Todos conjuntos"
-                                  }
-                                />
-                              </SelectTrigger>
-                              <SelectContent
-                                className={filterSelectContentClass}
-                              >
-                                <SelectItem value="all">
-                                  Todos conjuntos
-                                </SelectItem>
-                                {adSets.map((adSet) => (
-                                  <SelectItem key={adSet.id} value={adSet.id}>
-                                    {adSet.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          <SearchableFilterSelect
+                            value={adSetId} onChange={onAdSetChange}
+                            options={adSets.map((adSet) => ({ value: adSet.id, label: adSet.name }))}
+                            allLabel="Todos conjuntos" ariaLabel="Filtrar por conjunto de anúncios" layerScope={filterLayerId}
+                            loading={isLoadingAdSets}
+                          />
                         )}
 
-                        {/* Ad — só aparece se adSet selecionado */}
+                        {/* Ad — available after an ad set is selected */}
                         {showAdFilters && adSetId && (
-                          <div className="space-y-1">
-                            <Select
-                              value={adId || "all"}
-                              disabled={isLoadingAds}
-                              onOpenChange={markInternalSelectInteraction}
-                              onValueChange={(value) =>
-                                onAdChange(value === "all" ? null : value)
-                              }
-                            >
-                              <SelectTrigger
-                                disabled={isLoadingAds}
-                                aria-busy={isLoadingAds}
-                                onPointerDown={markInternalSelectInteraction}
-                                className={cn(
-                                  filterControlClass,
-                                  "animate-in fade-in slide-in-from-top-1",
-                                )}
-                              >
-                                <SelectValue
-                                  placeholder={
-                                    isLoadingAds
-                                      ? "Carregando..."
-                                      : "Todos criativos"
-                                  }
-                                />
-                              </SelectTrigger>
-                              <SelectContent
-                                className={filterSelectContentClass}
-                              >
-                                <SelectItem value="all">
-                                  Todos criativos
-                                </SelectItem>
-                                {ads.map((ad) => (
-                                  <SelectItem key={ad.id} value={ad.id}>
-                                    {ad.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          <SearchableFilterSelect
+                            value={adId} onChange={onAdChange}
+                            options={ads.map((ad) => ({ value: ad.id, label: ad.name }))}
+                            allLabel="Todos criativos" ariaLabel="Filtrar por anúncio" layerScope={filterLayerId}
+                            loading={isLoadingAds}
+                          />
                         )}
                       </div>
                     </div>
@@ -1348,17 +754,96 @@ export function SharedFilters({
                 ) : null}
               </div>
             </div>
-          </PopoverContent>
-        </Popover>
+  );
+  const filterTrigger = (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-expanded={filtersOpen}
+              aria-label={`${filtersOpen ? "Fechar" : "Abrir"} filtros avançados${extraFilterCount ? `, ${extraFilterCount} filtros aplicados` : ""}`}
+              title={filterSummary || "Filtros avançados"}
+              data-tour={
+                tourPrefix ? `${tourPrefix}-advanced-filters` : undefined
+              }
+              className={cn(
+                dashboardTriggerClass,
+                triggerClassName,
+                isMobile && "px-2",
+                useMobileIcons && "w-8 px-0",
+                hasExtraFilters &&
+                  "bg-primary/50 text-white hover:bg-primary hover:text-white",
+              )}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <span
+                className={
+                  useMobileIcons
+                    ? "sr-only"
+                    : isMobile
+                      ? "hidden min-[400px]:inline"
+                      : ""
+                }
+              >
+                Filtros
+              </span>
+              {hasExtraFilters && (
+                <Badge
+                  variant="default"
+                  className={cn(
+                    "ml-1 h-4 min-w-[16px] px-1 text-[9px] bg-primary flex items-center justify-center",
+                    isMobile && "h-4 w-4 p-0 text-[10px] ml-0.5",
+                  )}
+                >{extraFilterCount || 1}</Badge>
+              )}
+            </Button>
+  );
+
+  return (
+    <div className="flex items-center justify-end gap-2 w-full">
+      {/* Data no início */}
+      {datePosition === "start" && (
+        <DateFilterPopover
+          datePreset={datePreset}
+          onDatePresetChange={handleDatePresetChange}
+          customDateRange={customDateRange}
+          onCustomDateRangeChange={onCustomDateRangeChange}
+          dateRangeMaxDays={dateRangeMaxDays}
+          filterApplicationRevision={filterApplicationRevision}
+          triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
+          triggerClassName={cn(
+            dashboardTriggerClass,
+            triggerClassName,
+            isMobile && "px-2",
+            useMobileIcons && "w-8 px-0",
+            hasActiveDateFilter &&
+              "bg-primary/50 text-white hover:bg-primary hover:text-white",
+          )}
+          iconOnly={useMobileIcons}
+          dateLabel={leadFiltersPaused ? `${dateLabel || "Período"} (pausado)` : dateLabel}
+          defaultPreset={defaultDatePreset}
+          align="end"
+        />
+      )}
+
+      {/* Botão de filtros + popover */}
+      <div className="flex items-center gap-1">
+        <SharedFilterPanel
+          presentation={presentation} open={filtersOpen} onOpenChange={handleFiltersOpenChange}
+          onRequestClose={tryCloseFilters} trigger={filterTrigger} layerScope={filterLayerId}
+          tourPrefix={tourPrefix} isMobile={isMobile} count={extraFilterCount}
+          hasActiveFilters={hasActiveFilters} onClear={handleClearFilters}
+          onOpenAutoFocus={(event) => { if (!hideSearch && searchInputRef.current) { event.preventDefault(); searchInputRef.current.focus(); } }}
+        >{filterFields}</SharedFilterPanel>
 
         {/* Botão limpar fora do popover (desktop) */}
         {hasActiveFilters && !isMobile && (
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+            className={cn("h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]", clearButtonClassName)}
             onClick={handleClearFilters}
             title="Limpar todos os filtros"
+            aria-label="Limpar todos os filtros"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -1372,6 +857,8 @@ export function SharedFilters({
           onDatePresetChange={handleDatePresetChange}
           customDateRange={customDateRange}
           onCustomDateRangeChange={onCustomDateRangeChange}
+          dateRangeMaxDays={dateRangeMaxDays}
+          filterApplicationRevision={filterApplicationRevision}
           triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
           triggerClassName={cn(
             dashboardTriggerClass,
@@ -1381,6 +868,8 @@ export function SharedFilters({
               "bg-primary/50 text-white hover:bg-primary hover:text-white",
           )}
           iconOnly={useMobileIcons}
+          dateLabel={leadFiltersPaused ? `${dateLabel || "Período"} (pausado)` : dateLabel}
+          defaultPreset={defaultDatePreset}
           align="end"
         />
       )}

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase/client'
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out'
 import {
   VimobAPIError,
   getTechnicalErrorMessage,
@@ -39,21 +40,31 @@ let accessTokenCache: APIAccessTokenCache | null = null
 let accessTokenPromise: APIAccessTokenResolution | null = null
 let accessTokenGeneration = 0
 
-type RequestOptions = {
+export type VimobAPIRequestIntent = {
+  signal?: AbortSignal
+  expectedUserId?: string | null
+  expectedSessionId?: string | null
+  onRequestStart?: () => void
+}
+
+type RequestOptions = VimobAPIRequestIntent & {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   query?: Record<string, string | number | boolean | readonly string[] | null | undefined>
   body?: unknown
   organizationId?: string | null
-  signal?: AbortSignal
   timeoutMs?: number
   retry?: boolean
   skipTelemetry?: boolean
   keepalive?: boolean
   headers?: HeadersInit
   cache?: RequestCache
+  // Domain APIs may decode a reviewed business-conflict handshake. Error bodies
+  // are not retained unless the caller explicitly validates their data.
+  decodeErrorData?: (code: string, payload: unknown) => unknown
 }
 
 type APIErrorEnvelope = {
+  data?: unknown
   error?: string | {
     code?: string
     message?: string
@@ -73,6 +84,28 @@ export function setVimobAPIAccessToken(
   )
 }
 
+export function getVimobAPIAccessTokenUserId() {
+  return activeAccessTokenIdentity?.userId ?? null
+}
+
+/** Client gesture pin only; the backend remains responsible for JWT validation. */
+export function getVimobAPIAccessTokenSessionId() {
+  return getGlobalSignOutSessionId(activeAccessTokenIdentity ? { access_token: activeAccessTokenIdentity.token } : null)
+}
+
+function assertExpectedRequestIdentity(options: RequestOptions) {
+  if ((options.expectedUserId !== undefined && (
+    !options.expectedUserId || options.expectedUserId !== activeAccessTokenIdentity?.userId
+  )) || (options.expectedSessionId !== undefined && (
+    !options.expectedSessionId || options.expectedSessionId !== getVimobAPIAccessTokenSessionId()
+  ))) {
+    throw new VimobAPIError('O usuário da sessão mudou. Reabra o atendimento antes de continuar.', {
+      code: 'api_request_identity_changed',
+      status: 409,
+    })
+  }
+}
+
 export async function vimobAPIRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   throwIfAborted(options.signal)
 
@@ -84,6 +117,7 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   }
 
   const accessToken = await resolveWithAbortSignal(getAccessTokenForAPI(), options.signal)
+  assertExpectedRequestIdentity(options)
   assertAccessTokenAllowedForRequest(path, options.method, accessToken)
   throwIfAborted(options.signal)
 
@@ -95,6 +129,7 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
     clearAccessTokenCache()
     const refreshedAccessToken = await resolveWithAbortSignal(refreshAccessTokenForAPI(), options.signal)
     if (refreshedAccessToken) {
+      assertExpectedRequestIdentity(options)
       assertAccessTokenAllowedForRequest(path, options.method, refreshedAccessToken)
       headers = createAuthenticatedHeaders(refreshedAccessToken, options)
       result = await makeRequestWithLocalFallback(path, options, headers)
@@ -113,6 +148,7 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
       code: apiError?.code || 'api_error',
       status: result.response.status,
       requestId: apiError?.requestId,
+      responseData: options.decodeErrorData?.(apiError?.code || 'api_error', envelope?.data),
     })
 
     if (!options.skipTelemetry) {
@@ -308,6 +344,7 @@ export async function vimobPublicAPIRequest<T>(path: string, options: Omit<Reque
       code: apiError?.code || 'api_error',
       status: result.response.status,
       requestId: apiError?.requestId,
+      responseData: options.decodeErrorData?.(apiError?.code || 'api_error', envelope?.data),
     })
   }
 
@@ -318,6 +355,9 @@ async function makeRequest(path: string, options: RequestOptions, headers: Heade
   const requestSignal = createRequestSignal(options.signal, options.timeoutMs)
 
   try {
+    throwIfAborted(requestSignal.signal)
+    assertExpectedRequestIdentity(options)
+    options.onRequestStart?.()
     const response = await fetch(buildAPIURL(path, options.query, baseURL), {
       method: options.method || 'GET',
       headers,

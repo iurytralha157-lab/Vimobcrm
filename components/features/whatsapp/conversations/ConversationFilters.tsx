@@ -2,6 +2,7 @@ import { useState } from "react";
 import { MessageCircle, Search } from "lucide-react";
 
 import { SharedFilters } from "@/components/shared/SharedFilters";
+import { CONVERSATION_LIST_UI } from "@/components/features/whatsapp/conversation-list-ui";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,9 @@ type ConversationFiltersProps = {
   currentChannelValue: string;
   onChannelChange: (value: string) => void;
   options?: WhatsAppConversationFilterOptions;
+  optionsHasMore: boolean;
+  optionsLoadingMore: boolean;
+  onLoadMoreOptions: () => void;
   optionsLoading: boolean;
   optionsError: boolean;
   optionsRetrying: boolean;
@@ -49,6 +53,10 @@ type ConversationFiltersProps = {
   onPageChange: (id: string | null) => void;
   campaignIds: string[];
   onCampaignsChange: (ids: string[]) => void;
+  adSetId: string | null;
+  onAdSetChange: (id: string | null) => void;
+  adId: string | null;
+  onAdChange: (id: string | null) => void;
   datePreset: DatePreset | null;
   onDatePresetChange: (preset: DatePreset | null) => void;
   customDateRange: { from: Date; to: Date } | null;
@@ -74,6 +82,9 @@ export function ConversationFilters({
   currentChannelValue,
   onChannelChange,
   options,
+  optionsHasMore,
+  optionsLoadingMore,
+  onLoadMoreOptions,
   optionsLoading,
   optionsError,
   optionsRetrying,
@@ -96,6 +107,10 @@ export function ConversationFilters({
   onPageChange,
   campaignIds,
   onCampaignsChange,
+  adSetId,
+  onAdSetChange,
+  adId,
+  onAdChange,
   datePreset,
   onDatePresetChange,
   customDateRange,
@@ -116,14 +131,24 @@ export function ConversationFilters({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const isWhatsApp = activePlatform === "whatsapp";
 
-  const advancedContent = isWhatsApp ? (
+  const advancedContent = (layerScope: string) => isWhatsApp ? (
     <>
+      {optionsHasMore && (
+        <Button type="button" variant="ghost" size="sm" onClick={onLoadMoreOptions} disabled={optionsLoadingMore} aria-busy={optionsLoadingMore} className="h-8 rounded-[6px] text-xs font-light">
+          {optionsLoadingMore ? 'Carregando opções...' : 'Carregar mais opções'}
+        </Button>
+      )}
+      {withoutLeadOnly && (
+        <p role="status" className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
+          Filtros de lead pausados enquanto você consulta conversas sem lead.
+        </p>
+      )}
       {(sessions?.length ?? 0) > 1 && (
         <Select value={currentChannelValue} onValueChange={onChannelChange}>
-          <SelectTrigger aria-label="Filtrar por conta WhatsApp" className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
+          <SelectTrigger aria-label="Filtrar por conta WhatsApp" data-filter-active={currentChannelValue !== "whatsapp-all"} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
             <SelectValue placeholder="Todas as contas" />
           </SelectTrigger>
-          <SelectContent className="z-[140] bg-popover">
+          <SelectContent data-filter-layer={layerScope} className="z-[140] bg-popover">
             <SelectItem value="whatsapp-all">Todas as contas</SelectItem>
             {sessions?.map((session) => (
               <SelectItem key={session.id} value={`whatsapp-${session.id}`}>
@@ -134,19 +159,19 @@ export function ConversationFilters({
         </Select>
       )}
       <div className="grid gap-2 border-b border-[var(--app-border)] pb-2">
-        <label data-tour="conversations-archived" className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+        <label data-tour="conversations-archived" data-filter-active={showArchived} className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
           <span>Arquivadas</span>
           <Checkbox checked={showArchived} onCheckedChange={(checked) => onShowArchivedChange(checked === true)} />
         </label>
-        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+        <label data-filter-active={onlyLeads} className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
           <span>Somente leads</span>
           <Checkbox checked={onlyLeads} onCheckedChange={(checked) => onOnlyLeadsChange(checked === true)} />
         </label>
-        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+        <label data-filter-active={withoutLeadOnly} className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
           <span>Sem lead</span>
           <Checkbox checked={withoutLeadOnly} onCheckedChange={(checked) => onWithoutLeadOnlyChange(checked === true)} />
         </label>
-        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+        <label data-filter-active={pendingReplyOnly} className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
           <span>Sem resposta</span>
           <Checkbox checked={pendingReplyOnly} onCheckedChange={(checked) => onPendingReplyOnlyChange(checked === true)} />
         </label>
@@ -166,8 +191,8 @@ export function ConversationFilters({
           variant="outline"
           size="sm"
           className={cn(
-            "h-8 shrink-0 gap-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] font-light shadow-none",
-            isWhatsApp && "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground",
+            "h-8 shrink-0 gap-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[length:var(--app-font-size-caption)] font-light shadow-none",
+            isWhatsApp && CONVERSATION_LIST_UI.selectedChannel,
           )}
           onClick={onSelectWhatsApp}
         >
@@ -177,11 +202,12 @@ export function ConversationFilters({
         {isWhatsApp && (
           <SharedFilters
             datePreset={datePreset}
-            onDatePresetChange={onDatePresetChange}
+            onDatePresetChange={(preset) => { onDatePresetChange(preset); if (preset) onWithoutLeadOnlyChange(false); }}
             customDateRange={customDateRange}
-            onCustomDateRangeChange={onCustomDateRangeChange}
+            onCustomDateRangeChange={(range) => { onCustomDateRangeChange(range); if (range) onWithoutLeadOnlyChange(false); }}
             defaultDatePreset={null}
             datePosition="start"
+            dateLabel="Criação do lead"
             teamId={teamId}
             onTeamChange={(id) => { onTeamChange(id); if (id) onWithoutLeadOnlyChange(false); }}
             userId={userId}
@@ -210,14 +236,15 @@ export function ConversationFilters({
             campaigns={options?.campaigns ?? []}
             isLoadingCampaigns={optionsLoading}
             hasCampaignsError={optionsError}
-            adSetId={null}
-            onAdSetChange={() => {}}
-            adId={null}
-            onAdChange={() => {}}
-            showAdFilters={false}
+            adSetId={adSetId}
+            onAdSetChange={(id) => { onAdSetChange(id); if (id) onWithoutLeadOnlyChange(false); }}
+            adId={adId}
+            onAdChange={(id) => { onAdChange(id); if (id) onWithoutLeadOnlyChange(false); }}
+            adSets={options?.adSets ?? []}
+            ads={options?.ads ?? []}
             tagIds={tagIds}
             onTagsChange={(ids) => { onTagsChange(ids); if (ids.length) onWithoutLeadOnlyChange(false); }}
-            tags={options?.tags.map((tag) => ({ ...tag, color: "#ff4b3a" })) ?? []}
+            tags={options?.tags.map((tag) => ({ ...tag, color: tag.color || "#6b7280" })) ?? []}
             isLoadingTags={optionsLoading}
             hasTagsError={optionsError}
             dealStatus={dealStatus}
@@ -229,13 +256,16 @@ export function ConversationFilters({
             hasActiveFilters={activeFilterCount > 0}
             hasAdvancedContentFilters={showArchived || onlyLeads || withoutLeadOnly || pendingReplyOnly || currentChannelValue !== "whatsapp-all"}
             advancedContent={advancedContent}
+            leadFiltersPaused={withoutLeadOnly}
+            advancedFilterCount={[showArchived, onlyLeads, withoutLeadOnly, pendingReplyOnly, currentChannelValue !== "whatsapp-all", Boolean(searchTerm.trim())].filter(Boolean).length}
             hasDynamicOptionsError={optionsError || (filtersOpen && !optionsLoading && !options)}
             isRetryingDynamicOptions={optionsRetrying}
             onRetryDynamicOptions={onRetryOptions}
             onFiltersOpenChange={(open) => { setFiltersOpen(open); onFiltersOpenChange(open); }}
             loadDynamicOptions={filtersOpen}
             tourPrefix="conversations"
-            triggerClassName="min-w-0 shrink-0 border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
+            triggerClassName="min-w-0 shrink-0"
+            clearButtonClassName={CONVERSATION_LIST_UI.clear}
           />
         )}
       </div>
@@ -244,10 +274,11 @@ export function ConversationFilters({
         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           aria-label="Buscar conversas"
-          placeholder={isWhatsApp ? "Buscar conversas..." : "Buscar no Instagram/Meta..."}
+          placeholder={isWhatsApp ? "Nome, telefone ou última mensagem..." : "Buscar no Instagram/Meta..."}
+          maxLength={180}
           value={searchTerm}
           onChange={(event) => onSearchTermChange(event.target.value)}
-          className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-8 pr-3 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-white/[0.09] focus-visible:ring-offset-0"
+          className={CONVERSATION_LIST_UI.search}
         />
       </div>
     </div>

@@ -7,23 +7,57 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
+// Use current active memberships for assigned leads. Only an explicitly
+// unassigned filter uses the lead's recorded queue team. EXISTS avoids counting
+// a lead twice when its assignee belongs to more than one team.
+const campaignInsightsTeamFilterSQL = `(
+	params.team_id is null
+	or (params.unassigned and lead.team_id = params.team_id)
+	or (not params.unassigned and exists (
+		select 1 from public.team_members member
+		join public.teams team on team.id = member.team_id
+		  and team.organization_id = member.organization_id and team.is_active = true
+		join public.users assignee on assignee.id = member.user_id
+		  and coalesce(assignee.is_active, false) = true
+		join public.organization_members membership on membership.organization_id = member.organization_id
+		  and membership.user_id = member.user_id and coalesce(membership.is_active, false) = true
+		  and membership.deleted_at is null and membership.membership_generation = member.membership_generation
+		where member.organization_id = lead.organization_id and member.team_id = params.team_id
+		  and member.user_id = lead.assigned_user_id and coalesce(member.is_active, true) = true
+	))
+)`
+
 func (repo Repository) MetaInsights(ctx context.Context, tenantContext tenant.Context, values url.Values) ([]map[string]any, error) {
+	if err := validateSiteAnalyticsValues(values); err != nil {
+		return nil, err
+	}
+	if err := validateAnalyticsFilterText(values, map[string]int{"campaignId": 255, "adSetId": 255, "adId": 255}); err != nil {
+		return nil, err
+	}
+	campaignIDs, err := normalizeCampaignInsightIDs(values)
+	if err != nil {
+		return nil, err
+	}
 	return repo.queryJSONRows(ctx, `
 		select to_jsonb(mi)
 		from public.meta_campaign_insights mi
 		where mi.organization_id = $1::uuid
 		  and ($2 = '' or mi.date_start >= nullif($2, '')::date)
 		  and ($3 = '' or mi.date_stop <= nullif($3, '')::date)
-		  and ($4 = '' or mi.campaign_id = $4)
+		  and (cardinality($4::text[]) = 0 or mi.campaign_id = any($4::text[]))
 		  and ($5 = '' or mi.adset_id = $5)
 		  and ($6 = '' or mi.ad_id = $6)
 		order by mi.date_start desc
 		limit 2000
-	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"), values.Get("campaignId"), values.Get("adSetId"), values.Get("adId"))
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"), campaignIDs, values.Get("adSetId"), values.Get("adId"))
 }
 
 func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
 	if err := validateCampaignInsightsValues(values); err != nil {
+		return nil, err
+	}
+	campaignIDs, err := normalizeCampaignInsightIDs(values)
+	if err != nil {
 		return nil, err
 	}
 	tagIDs, err := normalizeCampaignInsightTagIDs(values.Get("tagIds"))
@@ -42,11 +76,12 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			select
 				nullif($2, '')::date as date_from,
 				nullif($3, '')::date as date_to,
-				nullif($4, '') as campaign_id,
+				$4::text[] as campaign_ids,
 				nullif($5, '') as adset_id,
 				nullif($6, '') as ad_id,
 				nullif($7, '')::uuid as team_id,
-				nullif($8, '')::uuid as user_id,
+				nullif(nullif($8, ''), 'unassigned')::uuid as user_id,
+				$8 = 'unassigned' as unassigned,
 				lower(nullif($9, '')) as source,
 				case
 					when nullif($10, '') is null then null::uuid[]
@@ -56,6 +91,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				nullif($12, '') as account_id,
 				nullif($13, '') as objective,
 				nullif($14, '') as page_id,
+				nullif($15, '')::uuid as pipeline_id,
 				(
 					nullif($14, '') is not null
 					or
@@ -63,6 +99,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					or nullif($8, '') is not null
 					or nullif($10, '') is not null
 					or nullif($11, '') is not null
+					or nullif($15, '') is not null
 				) as has_crm_scope_filter
 		),
 		report_settings as (
@@ -99,7 +136,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  and (params.date_to is null or metric.metric_date <= params.date_to)
 			  and (params.account_id is null or metric.external_account_id = params.account_id)
 			  and (params.objective is null or metric.objective = params.objective)
-			  and (params.campaign_id is null or metric.campaign_id = params.campaign_id)
+			  and (cardinality(params.campaign_ids) = 0 or metric.campaign_id = any(params.campaign_ids) or metric.campaign_name = any(params.campaign_ids))
 			  and (
 			    params.page_id is null
 			    or (
@@ -363,8 +400,9 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			    or attribution.page_id = params.page_id
 			  )
 			  and (
-			    params.campaign_id is null
-			    or attribution.campaign_id = params.campaign_id
+			    cardinality(params.campaign_ids) = 0
+			    or attribution.campaign_id = any(params.campaign_ids)
+			    or attribution.campaign_name = any(params.campaign_ids)
 			  )
 			  and (
 			    params.adset_id is null
@@ -382,8 +420,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			      where matching_paid_campaign.campaign_id = attribution.campaign_id
 			    )
 			  )
-			  and (params.team_id is null or lead.team_id = params.team_id)
+			  and `+campaignInsightsTeamFilterSQL+`
 			  and (params.user_id is null or lead.assigned_user_id = params.user_id)
+			  and (params.pipeline_id is null or lead.pipeline_id = params.pipeline_id)
+			  and (not params.unassigned or lead.assigned_user_id is null)
 			  and (
 			    params.source is null
 			    or params.source in ('meta', 'meta_ads', 'facebook', 'instagram')
@@ -655,7 +695,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  or (
 			    params.ad_id is null
 			    and params.adset_id is null
-			    and params.campaign_id is not null
+			    and cardinality(params.campaign_ids) > 0
 			    and (
 			      metric.level = 'campaign'
 			      or (
@@ -693,7 +733,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  or (
 			    params.ad_id is null
 			    and params.adset_id is null
-			    and params.campaign_id is null
+			    and cardinality(params.campaign_ids) = 0
 			    and (
 			      metric.level = 'campaign'
 			      or (
@@ -1368,7 +1408,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					  on asset.source_kind = 'paid'
 					 and current_paid_ad.ad_id = asset.ad_id
 					where asset.organization_id = $1::uuid
-					  and (params.campaign_id is null or asset.campaign_id = params.campaign_id)
+					  and (cardinality(params.campaign_ids) = 0 or asset.campaign_id = any(params.campaign_ids) or asset.campaign_name = any(params.campaign_ids))
 					  and (params.adset_id is null or asset.adset_id = params.adset_id)
 					  and (params.ad_id is null or asset.ad_id = params.ad_id)
 					  and (
@@ -1589,7 +1629,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				'summaryLevel', case
 					when (select ad_id from params) is not null then 'ad'
 					when (select adset_id from params) is not null then 'adset'
-					when (select campaign_id from params) is not null then 'campaign'
+					when cardinality((select campaign_ids from params)) > 0 then 'campaign'
 					when exists(select 1 from paid_selected where level = 'campaign')
 						and exists(select 1 from paid where level = 'account')
 						then 'account_with_campaign_fallback'
@@ -1614,7 +1654,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 		tenantContext.OrganizationID,
 		dateOnly(values, "dateFrom"),
 		dateOnly(values, "dateTo"),
-		values.Get("campaignId"),
+		campaignIDs,
 		values.Get("adSetId"),
 		values.Get("adId"),
 		values.Get("teamId"),
@@ -1625,5 +1665,6 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 		values.Get("accountId"),
 		values.Get("objective"),
 		values.Get("pageId"),
+		values.Get("pipelineId"),
 	)
 }

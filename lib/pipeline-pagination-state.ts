@@ -1,16 +1,34 @@
 export const PIPELINE_STAGE_PAGE_SIZE = 12;
 export const PIPELINE_STAGE_RESTORE_LIMIT = 60;
 
-export function hasMorePipelineStageLeadsAfterPage(params: {
+type PipelineStagePageProgress = {
   totalCount: number;
   loadedCount: number;
   receivedCount: number;
   addedCount: number;
   requestedCount: number;
-}) {
-  return params.addedCount > 0 &&
-    params.receivedCount >= params.requestedCount &&
-    params.totalCount > params.loadedCount;
+  hasMore?: boolean;
+  countIsEstimate?: boolean;
+};
+
+export function hasMorePipelineStageLeadsAfterPage(params: PipelineStagePageProgress) {
+  // A cohort may grow between requests. The initial total cannot exhaust a page.
+  return params.addedCount > 0 && params.receivedCount > 0 &&
+    (params.hasMore ?? params.receivedCount >= params.requestedCount);
+}
+
+export function getPipelineStagePaginationAfterPage(params: PipelineStagePageProgress) {
+  const hasMore = hasMorePipelineStageLeadsAfterPage(params);
+  return {
+    has_more: hasMore,
+    // Keep optimistic projections consistent with the known prefix/continuation.
+    // Only a fresh board snapshot supplies the exact whole-cohort metric.
+    total_lead_count: hasMore
+      ? Math.max(params.totalCount, params.loadedCount + 1)
+      : params.loadedCount,
+    pagination_count_is_estimate: hasMore &&
+      (params.countIsEstimate === true || params.totalCount <= params.loadedCount),
+  };
 }
 
 export type PipelinePaginationLead = {
@@ -125,7 +143,8 @@ export function buildPipelineStageRestorePlans(
     const loadedCount = stage.leads?.length || 0;
     const desiredCount = Math.min(
       normalizedCounts[stage.id] || loadedCount,
-      Math.max(Number(stage.total_lead_count) || 0, loadedCount),
+      stage.has_more === true ? PIPELINE_STAGE_RESTORE_LIMIT
+        : Math.max(Number(stage.total_lead_count) || 0, loadedCount),
       PIPELINE_STAGE_RESTORE_LIMIT,
     );
     const missingCount = desiredCount - loadedCount;

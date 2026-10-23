@@ -42,7 +42,10 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 	var hasAssetPhotos bool
 	workspaceQuery := `
 		select
-			to_jsonb(visible_property)::text,
+			(to_jsonb(visible_property) || jsonb_build_object(
+				'published_on_site', ` + propertyPublishedOnSiteSQL("visible_property", "site_publication") + `,
+				'site_publication', ` + propertySitePublicationMetadataSQL("site_publication", "visible_property") + `
+			))::text,
 			coalesce((
 				select jsonb_agg(` + workspaceOfferProjection("offer", "$4::boolean") + ` order by offer.offer_type, offer.id)
 				from public.property_offers offer
@@ -99,6 +102,7 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 				  and any_photo.asset_type = 'photo'
 			)
 		from public.properties visible_property
+		` + propertySitePublicationJoinSQL("visible_property", "site_publication") + `
 		where ` + visibilityClause + `
 		limit 1
 	`
@@ -296,8 +300,12 @@ func (repo Repository) getLegacyWorkspace(
 
 	var propertyJSON string
 	err := repo.db.Pool().QueryRow(ctx, `
-		select to_jsonb(visible_property)::text
+		select (to_jsonb(visible_property) || jsonb_build_object(
+			'published_on_site', `+propertyPublishedOnSiteSQL("visible_property", "site_publication")+`,
+			'site_publication', `+propertySitePublicationMetadataSQL("site_publication", "visible_property")+`
+		))::text
 		from public.properties visible_property
+		`+propertySitePublicationJoinSQL("visible_property", "site_publication")+`
 		where `+visibilityClause+`
 		limit 1
 	`, workspaceArguments...).Scan(&propertyJSON)
@@ -922,7 +930,7 @@ func buildWorkspaceSummaryWithAssetFence(workspace PropertyWorkspace, hasAssetPh
 		{Code: "photo", Label: "Ao menos uma foto publica", Resolved: publicPhoto},
 		{Code: "owner", Label: "Proprietario vinculado", Resolved: currentOwner},
 		{Code: "responsible", Label: "Corretor responsavel definido", Resolved: workspaceString(workspace.Property, "responsible_user_id") != "" || workspaceString(workspace.Property, "cadastrado_por") != ""},
-		{Code: "status", Label: "Imovel disponivel para divulgacao", Resolved: status == "active" || status == "ativo" || status == "disponivel"},
+		{Code: "status", Label: "Imovel disponivel para divulgacao", Resolved: status == "active" || status == "ativo" || status == "available" || status == "disponivel"},
 	}
 
 	resolved := 0

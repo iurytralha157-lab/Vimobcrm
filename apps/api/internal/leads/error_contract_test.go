@@ -129,8 +129,8 @@ func TestLeadIntakeRechecksLegacyAndScopedIdentityInsideTheTransaction(t *testin
 	}
 	lockIndex := strings.Index(reentry, "lockLeadIntakeIdentity")
 	lookupIndex := strings.Index(reentry, "findExistingLeadByPhoneForUpdate")
-	authorizeIndex := strings.Index(reentry, "authorization.CanUseLeadForMutation")
-	updateIndex := strings.Index(reentry, "update public.leads")
+	authorizeIndex := strings.LastIndex(reentry, "authorizeLeadReentry")
+	updateIndex := strings.Index(reentry, "applyConservativeLeadReentry")
 	if !(lockIndex >= 0 && lockIndex < lookupIndex && lookupIndex < authorizeIndex && authorizeIndex < updateIndex) {
 		t.Fatal("reentry must lock, re-read, reauthorize, and only then update")
 	}

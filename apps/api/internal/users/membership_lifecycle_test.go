@@ -140,8 +140,9 @@ func TestMembershipDeletionLifecycleContract(t *testing.T) {
 		t.Fatal("accepting a new invitation must restore a tombstoned membership")
 	}
 	if !strings.Contains(repository, "syncCanonicalUserAccess") ||
-		!strings.Contains(repository, "is_active = selected_state.organization_id is not null") {
-		t.Fatal("membership changes must synchronize the legacy canonical user access fields")
+		!strings.Contains(repository, "organization_id = selected_state.organization_id") ||
+		strings.Contains(repository, "is_active = selected_state.organization_id is not null") {
+		t.Fatal("membership changes must update the canonical organization without deriving global account suspension from membership state")
 	}
 	if strings.Contains(repository, "public.users current_user") {
 		t.Fatal("canonical access synchronization must not use the reserved current_user keyword as a SQL alias")

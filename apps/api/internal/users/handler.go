@@ -306,6 +306,8 @@ func writeUserError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_user_input", err.Error())
 	case errors.Is(err, ErrUserNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "user_not_found", "User was not found.")
+	case errors.Is(err, ErrUserTeamMembershipChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "user_team_membership_changed", "As equipes deste usuário mudaram durante a exclusão. Atualize a página e tente novamente.")
 	case errors.Is(err, ErrUserConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "user_conflict", "User already exists.")
 	case errors.Is(err, ErrAuthAdminNotConfigured):

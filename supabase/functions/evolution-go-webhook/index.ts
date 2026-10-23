@@ -11,6 +11,7 @@ import {
   selectSupabaseAdminSecretKey,
 } from "../_shared/supabase-secret-keys.ts";
 import { whatsappCTWAConfirmationMethod } from "../_shared/whatsapp-ctwa.ts";
+import { isWhatsAppPostFormFollowUp } from "../_shared/whatsapp-post-form.ts";
 import {
   claimEvolutionMessageDelivery,
   completeEvolutionMessageDelivery,
@@ -24,6 +25,15 @@ import {
   WebhookRequestBodyError,
   type EvolutionGoWebhookAuthorization,
 } from "./request-security.ts";
+import {
+  readWhatsAppEdgeExecutionHeaders,
+  runWhatsAppEdgeExecutionWithFence,
+} from "./edge-execution-fence.ts";
+import { normalizeEvolutionLabelColor } from "./label-color.ts";
+import { persistProviderReaction } from "./provider-reaction.ts";
+import { reconcileUnmatchedNotificationReceipts } from "./notification-receipt.ts";
+import { guardStoredContactIdentity, isStoredContactPNConflict } from "./stored-contact-identity.ts";
+import { structuredMessageContent, structuredMessagePresentation, isEncryptedMessageEditControl, encryptedEditHasFrozenCaptureRoute } from "./structured-content.ts";
 import {
   appendConversationUnreadEffect,
   completedEvolutionGoEffectMetadata,
@@ -52,7 +62,7 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
-type WhatsAppMessageCaptureState = "legacy" | "captured" | "suppressed";
+type WhatsAppMessageCaptureState = "legacy" | "captured" | "suppressed" | "unlinked_ephemeral" | "promoted_unlinked" | "observed_unattended";
 
 type WhatsAppAttendanceCaptureDecision = {
   captureState: WhatsAppMessageCaptureState;
@@ -62,6 +72,8 @@ type WhatsAppAttendanceCaptureDecision = {
   ingressSequence: number | null;
   inboxCreatedAt: string | null;
   messageFingerprint: string;
+  historyLeadId?: string | null;
+  externalOutbound?: boolean;
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -180,7 +192,7 @@ function persistedWhatsAppMessageCaptureState(
   if (!storedMessage) return null;
   const value = cleanText(storedMessage.capture_state);
   if (!value) return "legacy";
-  if (["legacy", "captured", "suppressed"].includes(value)) {
+  if (["legacy", "captured", "suppressed", "unlinked_ephemeral", "promoted_unlinked", "observed_unattended"].includes(value)) {
     return value as WhatsAppMessageCaptureState;
   }
   throw new Error("whatsapp_message_capture_state_invalid");
@@ -305,6 +317,8 @@ function phoneFromJidLike(value: unknown) {
   const digits = normalizeDigits(left);
   if (digits.length < 8) return "";
   if (hasDomain) return digits;
+  if (raw.startsWith("+")) return digits;
+  if (raw.startsWith("00")) return digits.slice(2);
   if (digits.startsWith("55")) return digits;
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits;
@@ -312,9 +326,16 @@ function phoneFromJidLike(value: unknown) {
 
 function phoneMatchVariantsForWhatsApp(...values: unknown[]) {
   const variants: string[] = [];
+  const reference = values.map(normalizeText).find((value) => /@(s\.whatsapp\.net|c\.us)$/i.test(value.trim()));
+  const referencePhone = reference ? phoneFromJidLike(reference) : "";
   for (const value of values) {
-    const raw = normalizeText(value).trim().toLowerCase();
-    const phone = phoneFromJidLike(value);
+    let raw = normalizeText(value).trim().toLowerCase();
+    if (referencePhone && !raw.includes("@") && normalizeDigits(raw) === referencePhone) raw = `+${referencePhone}`;
+    const phone = phoneFromJidLike(raw);
+    if (phone && !phone.startsWith("55") && (raw.startsWith("+") || raw.startsWith("00") || raw.includes("@"))) {
+      variants.push(`+${phone}`);
+      continue;
+    }
     const rawDigits = (
       raw.includes("@g.us") ||
       raw.includes("@lid") ||
@@ -349,6 +370,25 @@ function firstPhoneJid(values: string[]) {
   return "";
 }
 
+function contactPNIdentityKey(value: unknown, referencePhone = "") {
+  const raw = normalizeText(value).trim().toLowerCase();
+  const at = raw.indexOf("@");
+  if (at >= 0 && !["s.whatsapp.net", "c.us"].includes(raw.slice(at + 1))) return "";
+  let phone = at < 0 && raw.startsWith("+") ? normalizeDigits(raw)
+    : at < 0 && raw.startsWith("00") ? normalizeDigits(raw).slice(2)
+    : at < 0 && referencePhone && normalizeDigits(raw) === referencePhone ? referencePhone
+    : phoneFromJidLike(raw);
+  if (phone.length < 8 || phone.length > 15) return "";
+  if (phone.startsWith("55") && phone.length === 13 && phone[4] === "9") phone = phone.slice(0, 4) + phone.slice(5);
+  return phone;
+}
+
+function contactPNsConflict(values: unknown[]) {
+  const reference = values.map(normalizeText).find((value) => /@(s\.whatsapp\.net|c\.us)$/i.test(value.trim()));
+  const referencePhone = reference ? phoneFromJidLike(reference) : "";
+  return new Set(values.map((value) => contactPNIdentityKey(value, referencePhone)).filter(Boolean)).size > 1;
+}
+
 function whatsappIdentityForMessage(message: any) {
   if (!message) {
     return {
@@ -373,6 +413,8 @@ function whatsappIdentityForMessage(message: any) {
 
   const rawInfo = firstPresent(message.raw?.Info, message.raw?.info, {});
   const rawDeviceSentMeta = firstPresent(rawInfo?.DeviceSentMeta, rawInfo?.deviceSentMeta, {});
+  const raw = message.raw || {};
+  const rawKey = firstPresent(raw.key, raw.Key, {});
   const contactSideJids = message.fromMe
     ? [
         message.remoteJid,
@@ -401,19 +443,29 @@ function whatsappIdentityForMessage(message: any) {
         rawInfo?.Chat,
         rawInfo?.chat,
       ];
+  const identityEvidence = [
+    ...contactSideJids, rawKey.remoteJid, rawKey.RemoteJID, rawKey.remote_jid,
+    raw.remoteJid, raw.remote_jid, raw.chat, raw.chatId, raw.chatJid, raw.chat_jid, raw.jid,
+    rawInfo.JID, rawInfo.jid,
+    ...(message.fromMe
+      ? [raw.recipient, raw.recipientJid, raw.to, raw.phone, raw.number]
+      : [raw.sender, raw.senderJid, raw.from, raw.phone, raw.number]),
+  ];
+  const pnConflict = contactPNsConflict(identityEvidence);
   const contactPhone = contactSideJids.map(phoneFromJidLike).find(Boolean) || "";
   const remoteJid = contactPhone ? `${contactPhone}@s.whatsapp.net` : normalizeJid(message.remoteJid, false);
   const remoteAliases = unique([
     remoteJid,
     contactPhone ? `${contactPhone}@c.us` : "",
-    ...contactSideJids.map((value) => normalizeJid(value, false)),
-    ...contactSideJids.map((value) => normalizeText(value)),
+    ...(pnConflict ? [] : contactSideJids.map((value) => normalizeJid(value, false))),
+    ...(pnConflict ? [] : contactSideJids.map((value) => normalizeText(value))),
   ].filter(Boolean));
 
   return {
     remoteJid,
     contactPhone,
     isGroup: false,
+    pnConflict,
     remoteAliases,
     phoneVariants: phoneMatchVariantsForWhatsApp(contactPhone, ...contactSideJids),
   };
@@ -1468,13 +1520,29 @@ async function reconcileHandledWhatsAppMessageTransport(
     }
   }
   if (!existing?.id) return;
-  if (persistedWhatsAppMessageCaptureState(existing) === "suppressed") {
+  const existingCaptureState = persistedWhatsAppMessageCaptureState(existing);
+  if (existingCaptureState === "suppressed") {
     await redactSuppressedStoredMessage(
       session,
       existing,
       message.messageId,
     );
     return;
+  }
+  if (existingCaptureState === "unlinked_ephemeral") {
+    const { data: epoch, error: epochError } = await supabase
+      .from("whatsapp_conversations")
+      .select("id, lead_id, retired_at, created_at")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", existing.conversation_id)
+      .maybeSingle();
+    if (epochError) throw epochError;
+    if (
+      !epoch || epoch.lead_id || epoch.retired_at
+      || !Number.isFinite(Date.parse(cleanText(epoch.created_at) || ""))
+      || Date.now() >= Date.parse(epoch.created_at) + 7 * 24 * 60 * 60 * 1000
+    ) return;
   }
 
   const existingStoragePath = normalizeText(existing.media_storage_path).trim() || null;
@@ -1632,7 +1700,7 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
   // PostgreSQL text cannot contain NUL. Preserve every other byte-equivalent
   // character, including leading/trailing whitespace used by the lifecycle
   // fingerprint, while matching the native Go parser's sanitation.
-  const content = normalizeText(extractContent(messageNode, message, mediaBlock)).replace(/\u0000/g, "") || null;
+  const content = (normalizeText(extractContent(messageNode, message, mediaBlock)) || structuredMessageContent(messageNode)).replace(/\u0000/g, "") || null;
   const mediaType = media.type || (content ? "text" : "unknown");
   const messageType = mediaType === "unknown" ? "text" : mediaType;
   const providerMessageId = [
@@ -1716,6 +1784,14 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
   return {
     messageId,
     providerMessageIdSynthetic,
+    isEncryptedEditControl: isEncryptedMessageEditControl(messageNode, {
+      providerIdSynthetic: providerMessageIdSynthetic,
+      hasCampaignSignal: Object.keys(referral || {}).length > 0,
+      remoteJid,
+      unsupportedIdentity: !isGroup && isLidJid(remoteJid) && !(fromMe ? sentFallbackJids : receivedFallbackJids).some((value) => phoneFromJidLike(value)),
+      hasCustomerContent: Boolean(content || media.type || promotedMediaUrl || base64 || isReaction || deletedMessageId),
+      outerMessage: message,
+    }),
     remoteJid,
     senderJid,
     senderName,
@@ -1723,12 +1799,14 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
     groupName,
     fromMe,
     isGroup,
+    legacyContextualIntake: false,
     sentAt: timestamp,
     providerOccurredAt,
     messageType: deletedMessageId ? "deleted_event" : (isReaction ? "reaction" : messageType),
     content: deletedMessageId ? null : (isReaction ? normalizeText(firstPresent(reactionPayload?.text, reactionPayload?.emoji)) : content),
     mediaUrl,
     mediaMimeType: mimeType || null,
+    presentationMetadata: structuredMessagePresentation(messageNode, message, mediaBlock),
     mediaBase64: base64,
     mediaSize: Number(firstPresent(mediaBlock.fileLength, mediaBlock.FileLength, message.mediaSize, message.fileSize)) || null,
     mediaFileSha256: normalizeText(firstPresent(
@@ -1888,6 +1966,36 @@ function isConfirmedClickToWhatsAppAd(message: ReturnType<typeof normalizeMessag
   return Boolean(clickToWhatsAppAdConfirmationMethod(message));
 }
 
+// Ad provenance remains intact. Only the known post-form continuation is kept
+// out of new lead intake; previously frozen contextual events retain their policy.
+function isPostFormFollowUpWithoutLeadIntake(message: ReturnType<typeof normalizeMessage>) {
+  return Boolean(message && !message.fromMe && !message.isGroup
+    && message.messageType !== "reaction" && message.messageType !== "deleted_event"
+    && !message.legacyContextualIntake && isConfirmedClickToWhatsAppAd(message)
+    && isWhatsAppPostFormFollowUp(message.content));
+}
+
+function isEligibleClickToWhatsAppLeadIntake(message: ReturnType<typeof normalizeMessage>) {
+  return isConfirmedClickToWhatsAppAd(message) && !isPostFormFollowUpWithoutLeadIntake(message);
+}
+
+function usesLegacyCTWAIntakeDecision(ingress: WhatsAppIngressRoutingSnapshot | null) {
+  // Only ingress can accept the new policy. Legacy deliveries without a snapshot
+  // and durable contextual decisions keep their original semantics during rollout.
+  return !ingress || ingress.contextKind === "contextual_intake";
+}
+
+function hasOrdinaryWhatsAppCaptureContext(
+  message: ReturnType<typeof normalizeMessage>,
+  ingress: WhatsAppIngressRoutingSnapshot,
+) {
+  if (ingress.contextKind !== "organic") return false;
+  if (!ingress.contextProof) return !isConfirmedClickToWhatsAppAd(message);
+  return ingress.contextProof === "post_form_followup_v1"
+    && isConfirmedClickToWhatsAppAd(message)
+    && isPostFormFollowUpWithoutLeadIntake(message);
+}
+
 function whatsappAttributionUtmSource(message: ReturnType<typeof normalizeMessage>) {
   const sourceApp = cleanText(firstPresent(
     message?.referral?.source_app,
@@ -1953,7 +2061,7 @@ async function findInboundRule(session: JsonRecord, message: ReturnType<typeof n
   ));
   if (matchingRules.length === 0) return null;
 
-  const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message);
+  const confirmedCtwaAd = isEligibleClickToWhatsAppLeadIntake(message);
   let firstManualRule: JsonRecord | null = null;
   for (const rule of matchingRules) {
     const targetsSessionQueue = Boolean(optionalUuid(rule?.target_round_robin_id))
@@ -2154,6 +2262,13 @@ async function isManagedWhatsAppMessageDistributionRule(
     && inboundMatchValue.toLowerCase() === persistedMatchValue.trim().toLowerCase();
 }
 
+// A WhatsApp PN already includes its country code; bare 10/11-digit lead RPC
+// inputs otherwise default to Brazil. Keep the established BR storage format.
+function leadPhoneFromWhatsAppPN(phone: string) {
+  if (!phone || phone.startsWith("55") || phone.startsWith("+")) return phone;
+  return `+${phone}`;
+}
+
 async function findLeadByPhone(
   organizationId: string,
   phone: string,
@@ -2161,7 +2276,7 @@ async function findLeadByPhone(
 ) {
   const parameters: JsonRecord = {
     p_organization_id: organizationId,
-    p_phone: phone,
+    p_phone: leadPhoneFromWhatsAppPN(phone),
   };
   if (originRoundRobinId !== undefined) {
 	// Supplying the third argument selects the queue-scoped overload. The
@@ -2360,7 +2475,7 @@ async function ensureLead(
 
   const identity = whatsappIdentityForMessage(message);
   const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message);
-  const confirmedCtwaAd = Boolean(ctwaConfirmationMethod);
+  const confirmedCtwaAd = Boolean(ctwaConfirmationMethod) && !isPostFormFollowUpWithoutLeadIntake(message);
 	const canonicalNonManagedIntake = confirmedCtwaAd && !managedMessageDistribution;
 	if (
 	  canonicalNonManagedIntake
@@ -2596,8 +2711,8 @@ async function ensureLead(
     .rpc("upsert_whatsapp_webhook_lead", {
       p_organization_id: session.organization_id,
       p_name: message.contactName || phone,
-      p_phone: phone,
-      p_whatsapp: phone,
+      p_phone: leadPhoneFromWhatsAppPN(phone),
+      p_whatsapp: leadPhoneFromWhatsAppPN(phone),
       p_whatsapp_avatar_url: avatarUrl,
       p_whatsapp_avatar_synced_at: avatarUrl ? now : null,
       p_source_detail: campaignLabel || sourceLabel,
@@ -3152,7 +3267,7 @@ async function enrichManagedWhatsAppLeadEntryAttribution(
   options: { allowMissing?: boolean } = {},
 ) {
   if (!leadId || !message) return false;
-  if (!isConfirmedClickToWhatsAppAd(message)) return false;
+  if (!isEligibleClickToWhatsAppLeadIntake(message)) return false;
   const { data, error } = await supabase.rpc("enrich_whatsapp_lead_entry_attribution", {
     p_organization_id: session.organization_id,
     p_lead_id: leadId,
@@ -3356,7 +3471,7 @@ async function recoverPersistedNonManagedWhatsAppMessage(
     content: normalizeText(storedMessage.content),
     sentAt: persistedSentAt,
     remoteJid: cleanText(storedMessage.remote_jid) || cleanText(conversation.remote_jid) || "",
-    senderJid: cleanText(storedMessage.sender_jid),
+    senderJid: cleanText(storedMessage.sender_jid) || message.senderJid,
     senderName: cleanText(storedMessage.sender_name),
     fromMe: false,
     isGroup: false,
@@ -3517,6 +3632,13 @@ async function findWhatsAppIdentityAlias(
   return resolveWhatsAppIdentityAliasRows(data || [], normalizedAliases);
 }
 
+function storedContactPhoneAlias(value: unknown, referenceJid: unknown) {
+  const reference = phoneFromJidLike(referenceJid);
+  const raw = normalizeText(value);
+  if (reference && normalizeDigits(raw) === reference) return reference;
+  return phoneFromJidLike(raw);
+}
+
 async function upsertWhatsAppIdentityAliases(
   session: JsonRecord,
   identity: ReturnType<typeof whatsappIdentityForMessage>,
@@ -3528,15 +3650,16 @@ async function upsertWhatsAppIdentityAliases(
     : (conversation.remote_jid || identity.remoteJid);
   const canonicalJid = normalizeJid(preferredCanonical, identity.isGroup);
   if (!canonicalJid || !isUsableCanonicalJid(canonicalJid)) return;
+  const persistedContactPhone = storedContactPhoneAlias(conversation.contact_phone, canonicalJid);
 
   const contactPhone = identity.isGroup
     ? null
-    : (identity.contactPhone || conversation.contact_phone || phoneFromJidLike(canonicalJid) || null);
+    : (identity.contactPhone || persistedContactPhone || phoneFromJidLike(canonicalJid) || null);
   const aliases = mergeWhatsAppIdentityAliases(identity, [
     canonicalJid,
     conversation.remote_jid,
-    conversation.contact_phone ? `${conversation.contact_phone}@s.whatsapp.net` : "",
-    conversation.contact_phone ? `${conversation.contact_phone}@c.us` : "",
+    persistedContactPhone ? `${persistedContactPhone}@s.whatsapp.net` : "",
+    persistedContactPhone ? `${persistedContactPhone}@c.us` : "",
     ...extraAliases,
   ]);
   const now = new Date().toISOString();
@@ -3585,6 +3708,7 @@ async function safelyUpsertWhatsAppIdentityAliases(
     // otherwise a delayed provider event can overwrite a newer binding.
     await upsertWhatsAppIdentityAliases(session, identity, conversation, extraAliases);
   } catch (error) {
+    if (isStoredContactPNConflict(error)) throw error;
     console.warn("[evolution-go-webhook] identity alias update failed; message processing will continue", {
       session_id: session.id,
       conversation_id: conversation.id,
@@ -3602,6 +3726,14 @@ type WhatsAppConversationBindingSnapshot = {
 
 type WhatsAppIngressRoutingSnapshot = WhatsAppConversationBindingSnapshot & {
   state: "bound" | "lead_match" | "unlinked" | "quarantine" | "contextual_intake" | "provider_replay" | "predecessor_inherit";
+  unlinkedCapturePolicy: "v1" | null;
+  expiredUnlinkedConversationId: string | null;
+  expiredUnlinkedRemoteJid: string | null;
+  intakeUnlinkedConversationId: string | null;
+  intakeUnlinkedRemoteJid: string | null;
+  // In-memory only: set after the compare-and-swap retires the old epoch.
+  intakeSplitRemoteJid?: string | null;
+  capturedAt: string | null;
   eventLeadId: string | null;
   providerMessageId: string;
   inboxEventKey: string;
@@ -3663,6 +3795,12 @@ function ingressRoutingSnapshotForMessage(
     throw new Error("whatsapp_ingress_snapshot_scope_invalid");
   }
   const state = cleanText(row.state) as WhatsAppIngressRoutingSnapshot["state"] | null;
+  const unlinkedCapturePolicy = cleanText(row.unlinked_capture_policy);
+  const expiredUnlinkedConversationId = optionalUuid(row.expired_unlinked_conversation_id);
+  const expiredUnlinkedRemoteJid = cleanText(row.expired_unlinked_remote_jid);
+  const intakeUnlinkedConversationId = optionalUuid(row.intake_unlinked_conversation_id);
+  const intakeUnlinkedRemoteJid = cleanText(row.intake_unlinked_remote_jid);
+  const capturedAt = cleanText(row.captured_at);
   if (!state || ![
     "bound",
     "lead_match",
@@ -3697,6 +3835,11 @@ function ingressRoutingSnapshotForMessage(
   const predecessorProcessingLane = cleanText(row.predecessor_processing_lane) as "live" | "backlog" | null;
   if (
     !contextKind || !["organic", "contextual_intake"].includes(contextKind)
+    || (contextProof === "post_form_followup_v1" && (
+      contextKind !== "organic" || !isPostFormFollowUpWithoutLeadIntake(message)
+      || managedMessageDistribution || managedEventPending || managedEventHandled
+      || ruleId || originRoundRobinId
+    ))
     || !inboxEventKey
     || !processingLane || !["live", "backlog"].includes(processingLane)
     || !routingKey
@@ -3706,6 +3849,30 @@ function ingressRoutingSnapshotForMessage(
     || typeof row.managed_event_handled !== "boolean"
     || !targetMode || !["snapshot", "inherit_predecessor"].includes(targetMode)
     || !Number.isSafeInteger(ingressSequence) || ingressSequence <= 0
+    || (unlinkedCapturePolicy && unlinkedCapturePolicy !== "v1")
+    || (row.expired_unlinked_conversation_id != null && !expiredUnlinkedConversationId)
+    || (Boolean(expiredUnlinkedConversationId) !== Boolean(expiredUnlinkedRemoteJid))
+    || (row.intake_unlinked_conversation_id != null && !intakeUnlinkedConversationId)
+    || (Boolean(intakeUnlinkedConversationId) !== Boolean(intakeUnlinkedRemoteJid))
+    || (capturedAt && !Number.isFinite(Date.parse(capturedAt)))
+    || (expiredUnlinkedConversationId && (
+      unlinkedCapturePolicy !== "v1"
+      || !["unlinked", "lead_match", "contextual_intake"].includes(state)
+      || conversationId
+      || currentLeadId
+      || activeBindingId
+      || !capturedAt
+      || targetMode !== "snapshot"
+    ))
+    || (intakeUnlinkedConversationId && (
+      expiredUnlinkedConversationId
+      || unlinkedCapturePolicy !== "v1"
+      || !["lead_match", "contextual_intake"].includes(state)
+      || conversationId || currentLeadId || activeBindingId
+      || !capturedAt || targetMode !== "snapshot"
+      || (state === "lead_match" && !eventLeadId)
+      || (state === "contextual_intake" && !contextProof)
+    ))
     || (activeBindingId && (!conversationId || !currentLeadId))
     || (state === "quarantine" && (!quarantineReason || eventLeadId))
     || (state !== "quarantine" && quarantineReason)
@@ -3732,6 +3899,12 @@ function ingressRoutingSnapshotForMessage(
   }
   return {
     state,
+    unlinkedCapturePolicy: unlinkedCapturePolicy === "v1" ? "v1" : null,
+    expiredUnlinkedConversationId,
+    expiredUnlinkedRemoteJid,
+    intakeUnlinkedConversationId,
+    intakeUnlinkedRemoteJid,
+    capturedAt,
     conversationId,
     eventLeadId,
     currentLeadId,
@@ -3757,17 +3930,73 @@ function ingressRoutingSnapshotForMessage(
   };
 }
 
+async function splitUnlinkedLeadIntakeEpoch(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  ingress: WhatsAppIngressRoutingSnapshot | null,
+  hasPersistedProviderIdentity: boolean,
+): Promise<string | null> {
+  if (!ingress || hasPersistedProviderIdentity || !message || message.fromMe || message.isGroup
+    || message.messageType === "reaction" || message.messageType === "deleted"
+    || ingress.unlinkedCapturePolicy !== "v1" || !ingress.capturedAt
+    || ingress.targetMode !== "snapshot"
+    || ingress.currentLeadId || ingress.activeBindingId || ingress.leadResolutionQuarantineReason
+    || !["lead_match", "contextual_intake"].includes(ingress.state)) return null;
+
+  const oldConversationId = ingress.intakeUnlinkedConversationId || ingress.conversationId;
+  if (!oldConversationId) return null;
+  let oldRemoteJid = ingress.intakeUnlinkedRemoteJid;
+  if (!oldRemoteJid) {
+    // Pre-cutover snapshots froze the old physical ID. Recover only its exact
+    // route, never a later phone or alias match.
+    const { data: oldConversation, error } = await supabase
+      .from("whatsapp_conversations")
+      .select("remote_jid")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", oldConversationId)
+      .maybeSingle();
+    if (error) throw error;
+    oldRemoteJid = cleanText(oldConversation?.remote_jid);
+  }
+  if (!oldRemoteJid) throw new Error("whatsapp_intake_unlinked_epoch_route_missing");
+  const { data: outcome, error } = await supabase.rpc(
+    "retire_whatsapp_unlinked_conversation_for_lead_intake",
+    {
+      p_organization_id: session.organization_id,
+      p_session_id: session.id,
+      p_expected_conversation_id: oldConversationId,
+      p_remote_jid: oldRemoteJid,
+      p_provider_message_id: message.messageId,
+      p_inbox_event_key: ingress.inboxEventKey,
+      p_lead_id: ingress.eventLeadId,
+    },
+  );
+  if (error) throw error;
+  if (!isRecord(outcome) || outcome.retired !== true
+    || optionalUuid(outcome.conversation_id) !== oldConversationId) {
+    throw new Error(`whatsapp_intake_unlinked_epoch_split_${cleanText(outcome?.reason) || "failed"}`);
+  }
+  // The new physical epoch uses the exact route proven by the retirement RPC.
+  // A new PN/LID alias on this callback must not create a parallel epoch.
+  return oldRemoteJid;
+}
+
 function orderMessagesByIngressRoutingSnapshot(
   payload: unknown,
   session: JsonRecord,
   messages: ReturnType<typeof extractMessages>,
   authorization: AuthorizedEvolutionGoWebhook,
 ) {
-  const ordered = messages.map((message, originalIndex) => ({
-    message,
-    originalIndex,
-    snapshot: ingressRoutingSnapshotForMessage(payload, session, message, authorization),
-  }));
+  const ordered = messages.map((message, originalIndex) => {
+    const normalized = normalizeMessage(message.rawMessage, message.envelope);
+    if (!normalized) throw new Error("whatsapp_ingress_snapshot_message_required");
+    return {
+      message,
+      originalIndex,
+      snapshot: ingressRoutingSnapshotForMessage(payload, session, normalized, authorization),
+    };
+  });
   const sequenced = ordered.filter((entry) => entry.snapshot !== null);
   if (sequenced.length === 0) return messages;
   if (sequenced.length !== ordered.length) {
@@ -3828,6 +4057,8 @@ type WhatsAppInheritedRoutingTarget = {
   conversationId: string | null;
   leadId: string | null;
   activeBindingId: string | null;
+  predecessorProviderMessageId: string | null;
+  predecessorIngressSequence: number | null;
 };
 
 async function resolveWhatsAppInheritedRoutingTarget(
@@ -3859,12 +4090,20 @@ async function resolveWhatsAppInheritedRoutingTarget(
       conversationId: null,
       leadId: null,
       activeBindingId: null,
+      predecessorProviderMessageId: null,
+      predecessorIngressSequence: null,
     };
   }
   const conversationId = optionalUuid(data.conversation_id);
   const leadId = optionalUuid(data.lead_id);
   const activeBindingId = optionalUuid(data.active_binding_id);
-  if (data.terminal || reason || !conversationId || !leadId || !activeBindingId) {
+  const predecessorProviderMessageId = cleanText(data.predecessor_provider_message_id);
+  const predecessorIngressSequence = Number(data.predecessor_ingress_sequence);
+  if (data.terminal || reason || !conversationId || !leadId || !activeBindingId
+    || predecessorProviderMessageId !== snapshot.predecessorProviderMessageId
+    || !Number.isSafeInteger(predecessorIngressSequence)
+    || predecessorIngressSequence <= 0
+    || predecessorIngressSequence >= snapshot.ingressSequence) {
     throw new Error("whatsapp_inherited_target_result_incomplete");
   }
   return {
@@ -3874,6 +4113,8 @@ async function resolveWhatsAppInheritedRoutingTarget(
     conversationId,
     leadId,
     activeBindingId,
+    predecessorProviderMessageId,
+    predecessorIngressSequence,
   };
 }
 
@@ -3918,11 +4159,12 @@ async function captureWhatsAppConversationBindingSnapshot(
   storedConversationId?: unknown,
 ): Promise<WhatsAppConversationBindingSnapshot> {
   if (!message) throw new Error("Missing normalized message");
+  if (whatsappIdentityForMessage(message).pnConflict) throw new Error("whatsapp_contact_pn_conflict");
   const requiredConversationId = optionalUuid(storedConversationId);
   if (storedConversationId && !requiredConversationId) {
     throw new Error("whatsapp_stored_conversation_identity_invalid");
   }
-  const snapshotSelect = "id, lead_id, remote_jid, active_bindings:whatsapp_conversation_lead_bindings(id, lead_id, active_to)";
+  const snapshotSelect = "id, lead_id, remote_jid, contact_phone, active_bindings:whatsapp_conversation_lead_bindings(id, lead_id, active_to)";
   if (requiredConversationId) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
@@ -3934,6 +4176,7 @@ async function captureWhatsAppConversationBindingSnapshot(
       .maybeSingle();
     if (error) throw error;
     if (!data) throw new Error("whatsapp_stored_conversation_missing");
+    await guardStoredContactIdentity(supabase, session, data, whatsappIdentityForMessage(message).remoteAliases, contactPNsConflict);
     return parseWhatsAppConversationBindingSnapshot(data);
   }
   const identity = whatsappIdentityForMessage(message);
@@ -3961,8 +4204,8 @@ async function captureWhatsAppConversationBindingSnapshot(
       ...identityAliases,
       aliasMatch.alias_jid,
       aliasMatch.canonical_jid,
-      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@s.whatsapp.net` : "",
-      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@c.us` : "",
+      aliasMatch.contact_phone ? `${storedContactPhoneAlias(aliasMatch.contact_phone, remoteJid)}@s.whatsapp.net` : "",
+      aliasMatch.contact_phone ? `${storedContactPhoneAlias(aliasMatch.contact_phone, remoteJid)}@c.us` : "",
     ]);
   }
 
@@ -3975,6 +4218,7 @@ async function captureWhatsAppConversationBindingSnapshot(
       .eq("session_id", session.id)
       .in("remote_jid", identityAliases)
       .is("deleted_at", null)
+      .is("retired_at", null)
       .is("active_bindings.active_to", null)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
@@ -3997,6 +4241,7 @@ async function captureWhatsAppConversationBindingSnapshot(
       .eq("session_id", session.id)
       .in("contact_phone", phoneVariants)
       .is("deleted_at", null)
+      .is("retired_at", null)
       .is("active_bindings.active_to", null)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
@@ -4005,6 +4250,7 @@ async function captureWhatsAppConversationBindingSnapshot(
     }
     existing = data?.[0] || null;
   }
+  if (existing) await guardStoredContactIdentity(supabase, session, existing, identity.remoteAliases, contactPNsConflict);
   return parseWhatsAppConversationBindingSnapshot(existing);
 }
 
@@ -4014,19 +4260,26 @@ async function ensureConversation(
   lead: JsonRecord | null,
   storedConversationId?: unknown,
   knownLeadResolutionQuarantineReason?: string | null,
+  ingress?: WhatsAppIngressRoutingSnapshot | null,
 ) {
   if (!message) throw new Error("Missing normalized message");
   const identity = whatsappIdentityForMessage(message);
+  if (identity.pnConflict) throw new Error("whatsapp_contact_pn_conflict");
   let remoteJid = identity.remoteJid || message.remoteJid;
   let contactPhone = message.isGroup ? null : (identity.contactPhone || null);
   let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, remoteJid]);
+  const intakeSplitRemoteJid = cleanText(ingress?.intakeSplitRemoteJid);
+  if (intakeSplitRemoteJid) {
+    remoteJid = intakeSplitRemoteJid;
+    identityAliases = unique([...identityAliases, remoteJid]);
+  }
   const requiredConversationId = optionalUuid(storedConversationId);
   if (storedConversationId && !requiredConversationId) {
     throw new Error("whatsapp_stored_conversation_identity_invalid");
   }
   let leadResolutionQuarantineReason = cleanText(knownLeadResolutionQuarantineReason) || null;
   let aliasMatch: JsonRecord | null = null;
-  if (!requiredConversationId && !leadResolutionQuarantineReason) {
+  if (!requiredConversationId && !leadResolutionQuarantineReason && !intakeSplitRemoteJid) {
     const aliasLookup = await findWhatsAppIdentityAlias(session, identityAliases);
     aliasMatch = aliasLookup.match;
     leadResolutionQuarantineReason = aliasLookup.quarantineReason;
@@ -4049,14 +4302,84 @@ async function ensureConversation(
       ...identityAliases,
       aliasMatch.alias_jid,
       aliasMatch.canonical_jid,
-      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@s.whatsapp.net` : "",
-      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@c.us` : "",
+      aliasMatch.contact_phone ? `${storedContactPhoneAlias(aliasMatch.contact_phone, remoteJid)}@s.whatsapp.net` : "",
+      aliasMatch.contact_phone ? `${storedContactPhoneAlias(aliasMatch.contact_phone, remoteJid)}@c.us` : "",
     ]);
   }
 
   const attribution = whatsappAttribution(message);
   const resolvedGroupName = message.isGroup ? await resolveGroupName(session, remoteJid, message.groupName) : null;
   const conversationOwnerUserId = optionalUuid(session.owner_user_id);
+
+  if (
+    !requiredConversationId
+    && ingress?.unlinkedCapturePolicy === "v1"
+    && ingress.state === "unlinked"
+    && (!ingress.capturedAt
+      || Date.now() >= Date.parse(ingress.capturedAt) + 7 * 24 * 60 * 60 * 1000)
+  ) {
+    // An old first-message snapshot without a persisted conversation cannot
+    // acquire a later epoch just because its worker was delayed.
+    throw new Error("whatsapp_unlinked_ingress_age_exceeded");
+  }
+
+  // A post-expiry ingress route names the exact old epoch. Retire that row by
+  // compare-and-swap before looking up an active alias or inserting the next
+  // epoch. A persisted provider retry with a stored conversation ID never
+  // takes this path.
+  if (!requiredConversationId && ingress?.expiredUnlinkedConversationId) {
+    if (
+      ingress.unlinkedCapturePolicy !== "v1"
+      || !["unlinked", "lead_match", "contextual_intake"].includes(ingress.state)
+      || !ingress.capturedAt
+      || message.fromMe
+      || message.isGroup
+    ) {
+      throw new Error("whatsapp_unlinked_epoch_route_invalid");
+    }
+    const oldConversationId = ingress.expiredUnlinkedConversationId;
+    const { data: oldConversation, error: oldError } = await supabase
+      .from("whatsapp_conversations")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", oldConversationId)
+      .maybeSingle();
+    if (oldError) throw oldError;
+    if (
+      !oldConversation
+      || !ingress.expiredUnlinkedRemoteJid
+      || cleanText(oldConversation.remote_jid) !== ingress.expiredUnlinkedRemoteJid
+    ) {
+      throw new Error("whatsapp_unlinked_epoch_route_missing");
+    }
+    const { data: retirement, error: retirementError } = await supabase.rpc(
+      "retire_whatsapp_unlinked_conversation_epoch",
+      {
+        p_organization_id: session.organization_id,
+        p_session_id: session.id,
+        p_expected_conversation_id: oldConversationId,
+        p_remote_jid: ingress.expiredUnlinkedRemoteJid,
+      },
+    );
+    if (retirementError) throw retirementError;
+    if (
+      !isRecord(retirement)
+      || typeof retirement.retired !== "boolean"
+      || optionalUuid(retirement.conversation_id) !== oldConversationId
+    ) {
+      throw new Error("whatsapp_unlinked_epoch_retirement_invalid");
+    }
+    if (!retirement.retired) {
+      if (retirement.reason === "lead_bound") {
+        return {
+          ...oldConversation,
+          __whatsapp_identity_alias_quarantine_reason: "whatsapp_unlinked_epoch_lead_bound",
+        };
+      }
+      throw new Error(`whatsapp_unlinked_epoch_retirement_${cleanText(retirement.reason) || "failed"}`);
+    }
+  }
 
   let existing: JsonRecord | null = null;
   let canonicalConflict = false;
@@ -4080,8 +4403,9 @@ async function ensureConversation(
       .select("*")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
-      .in("remote_jid", identityAliases)
+      .in("remote_jid", intakeSplitRemoteJid ? [intakeSplitRemoteJid] : identityAliases)
 	  .is("deleted_at", null)
+	  .is("retired_at", null)
 	  .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
 
@@ -4100,7 +4424,7 @@ async function ensureConversation(
     ? []
     : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, ...identityAliases);
 
-  if (!existing && !leadResolutionQuarantineReason && !message.isGroup && phoneVariants.length > 0) {
+  if (!existing && !intakeSplitRemoteJid && !leadResolutionQuarantineReason && !message.isGroup && phoneVariants.length > 0) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
@@ -4108,6 +4432,7 @@ async function ensureConversation(
       .eq("session_id", session.id)
       .in("contact_phone", phoneVariants)
 	  .is("deleted_at", null)
+	  .is("retired_at", null)
 	  .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
 	if ((data || []).length > 1) {
@@ -4117,6 +4442,13 @@ async function ensureConversation(
   }
 
   if (existing) {
+    await guardStoredContactIdentity(supabase, session, existing, identity.remoteAliases, contactPNsConflict);
+    if (ingress?.state === "unlinked" && ingress.unlinkedCapturePolicy === "v1"
+      && (existing.retired_at || optionalUuid(existing.lead_id))) {
+      // A late event pinned to the old epoch may be attached through the
+      // history resolver, but must not mutate the new owner or its aliases.
+      return existing;
+    }
     if (leadResolutionQuarantineReason) {
       return {
         ...existing,
@@ -4206,13 +4538,14 @@ async function ensureConversation(
     .single();
 
   if (error) {
-    if (isUniqueViolation(error, "whatsapp_conversations_session_id_remote_jid_key")) {
+    if (isUniqueViolation(error, "whatsapp_conversations_active_session_remote_jid_uidx")) {
       const { data: recovered, error: recoveryError } = await supabase
         .from("whatsapp_conversations")
         .select("*")
         .eq("organization_id", session.organization_id)
         .eq("session_id", session.id)
         .eq("remote_jid", remoteJid)
+        .is("retired_at", null)
         .maybeSingle();
       if (recoveryError) throw recoveryError;
       if (recovered) {
@@ -4290,7 +4623,7 @@ async function activateWhatsAppConversationLeadBinding(
     session,
     whatsappIdentityForMessage(message),
     boundConversation,
-    [message.remoteJid, message.senderJid],
+    [message.remoteJid, ...(message.fromMe ? [] : [message.senderJid])],
   );
   return {
     conversation: boundConversation,
@@ -4299,16 +4632,61 @@ async function activateWhatsAppConversationLeadBinding(
   };
 }
 
+async function whatsappOutboundHasManagedOrigin(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+): Promise<boolean> {
+  if (!message?.fromMe || !message.messageId) return false;
+  for (const identityColumn of ["provider_message_id", "client_message_id"] as const) {
+    const { data, error } = await supabase
+      .from("whatsapp_outbox")
+      .select("id")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq(identityColumn, message.messageId)
+      .limit(1);
+    if (error) throw error;
+    if (data?.length) return true;
+  }
+  for (const identityColumn of ["sent_message_id", "client_message_id"] as const) {
+    const { data, error } = await supabase
+      .from("outbox_messages")
+      .select("id")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("conversation_id", conversation.id)
+      .eq(identityColumn, message.messageId)
+      .limit(1);
+    if (error) throw error;
+    if (data?.length) return true;
+  }
+  const { data: managedMessage, error: messageError } = await supabase
+    .from("whatsapp_messages")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("provider_message_id", message.messageId)
+    .not("client_message_id", "is", null)
+    .limit(1);
+  if (messageError) throw messageError;
+  return Boolean(managedMessage?.length);
+}
+
 async function resolveWhatsAppAttendanceCapture(
   session: JsonRecord,
   conversation: JsonRecord,
   eventLeadId: string | null,
   eventBindingIsCurrent: boolean,
+  leadResolutionQuarantineReason: string | null,
   ingress: WhatsAppIngressRoutingSnapshot | null,
+  inheritedRoutingTarget: WhatsAppInheritedRoutingTarget | null,
   message: ReturnType<typeof normalizeMessage>,
   resolvedLead: JsonRecord | null,
   storedMessage: JsonRecord | null,
+  managedOutbound: boolean,
 ): Promise<WhatsAppAttendanceCaptureDecision> {
+  if (!message) throw new Error("whatsapp_attendance_capture_message_required");
   const derivedMessageFingerprint = await sha256Hex(
     `${session.organization_id}\u001f${session.id}\u001f${message?.messageId || ""}\u001f${message?.content || ""}`,
   );
@@ -4334,6 +4712,76 @@ async function resolveWhatsAppAttendanceCapture(
       inboxCreatedAt: null,
       messageFingerprint,
     };
+  }
+
+  // The immutable ingress row and the database's epoch ledger decide whether
+  // an old unlinked event still belongs to the owner-only segment or to a
+  // history link confirmed after its webhook was accepted.
+  if (
+    conversation?.id
+    && ingress?.state === "unlinked"
+    && ingress.unlinkedCapturePolicy === "v1"
+    && ingress.targetMode === "snapshot"
+    && ingress.capturedAt
+    && hasOrdinaryWhatsAppCaptureContext(message, ingress)
+    && !ingress.eventLeadId
+    && !ingress.currentLeadId
+    && !ingress.activeBindingId
+    && !ingress.managedMessageDistribution
+    && !ingress.managedEventPending
+    && !ingress.managedEventHandled
+    && (!ingress.conversationId || ingress.conversationId === conversation.id)
+    && (!leadResolutionQuarantineReason
+      || ["whatsapp_ingress_unlinked_after_binding_change", "whatsapp_unlinked_epoch_expired"]
+        .includes(leadResolutionQuarantineReason))
+    && !managedOutbound
+    && !message?.isGroup
+    && !message?.providerMessageIdSynthetic
+    && !isEligibleClickToWhatsAppLeadIntake(message)
+    && message?.messageType !== "reaction"
+  ) {
+    const providerOccurredAt = cleanText(message.providerOccurredAt);
+    if (providerOccurredAt && Number.isFinite(Date.parse(providerOccurredAt))) {
+      const { data: inbox, error: inboxError } = await supabase
+        .from("whatsapp_webhook_inbox")
+        .select("created_at")
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .eq("event_key", ingress.inboxEventKey)
+        .maybeSingle();
+      if (inboxError) throw inboxError;
+      const inboxCreatedAt = cleanText(inbox?.created_at);
+      if (inboxCreatedAt && Number.isFinite(Date.parse(inboxCreatedAt))
+        && Date.parse(providerOccurredAt) <= Date.parse(inboxCreatedAt)) {
+        const { data: historyDecision, error: historyError } = await supabase.rpc(
+          "resolve_whatsapp_unlinked_history_capture",
+          {
+            p_organization_id: session.organization_id,
+            p_session_id: session.id,
+            p_conversation_id: conversation.id,
+            p_provider_message_id: message.messageId,
+            p_inbox_event_key: ingress.inboxEventKey,
+          },
+        );
+        if (historyError) throw historyError;
+        const captureState = cleanText(historyDecision?.capture_state);
+        const historyLeadId = optionalUuid(historyDecision?.lead_id);
+        if (!isRecord(historyDecision)
+          || !captureState || !["unlinked_ephemeral", "promoted_unlinked", "suppressed"].includes(captureState)
+          || (captureState === "promoted_unlinked") !== Boolean(historyLeadId)
+        ) throw new Error("whatsapp_unlinked_history_capture_invalid");
+        return {
+          captureState: captureState as WhatsAppMessageCaptureState,
+          reason: cleanText(historyDecision.reason) || "verified_organic_unlinked_ingress",
+          bindingId: null,
+          attendanceEntryId: null,
+          ingressSequence: ingress.ingressSequence,
+          inboxCreatedAt,
+          messageFingerprint,
+          historyLeadId,
+        };
+      }
+    }
   }
 
   if (!eventBindingIsCurrent || !eventLeadId || !conversation?.id) {
@@ -4478,7 +4926,7 @@ async function resolveWhatsAppAttendanceCapture(
     && !message.isGroup
     && message.messageType !== "reaction"
     && !message.providerMessageIdSynthetic
-    && isConfirmedClickToWhatsAppAd(message)
+    && isEligibleClickToWhatsAppLeadIntake(message)
     && ingress.contextKind === "contextual_intake"
     && initialProviderEventId === `${session.id}:${message.messageId}`
   ) {
@@ -4546,10 +4994,102 @@ async function resolveWhatsAppAttendanceCapture(
   const attendanceEntryId = optionalUuid(manualResult.data?.id)
     || (autoEntryEffective ? autoEntryId : null);
 
+  const organicBoundObservation = !attendanceEntryId
+    && ingress.state === "bound"
+    && ingress.targetMode === "snapshot"
+    && hasOrdinaryWhatsAppCaptureContext(message, ingress)
+    && ingress.eventLeadId === eventLeadId
+    && ingress.currentLeadId === eventLeadId
+    && ingress.activeBindingId === bindingId
+    && ingress.conversationId === conversation.id
+    && optionalUuid(conversation.lead_id) === eventLeadId
+    && !ingress.managedMessageDistribution
+    && !ingress.managedEventPending
+    && !ingress.managedEventHandled
+    && !message.isGroup
+    && !message.providerMessageIdSynthetic
+    && !isEligibleClickToWhatsAppLeadIntake(message)
+    && message.messageType !== "reaction"
+    && !managedOutbound;
+
+  // The first organic message after a lead match has no binding or physical
+  // lead conversation in the immutable pre-ACK snapshot. The current binding
+  // and lead row above prove the newly created destination after the split.
+  const organicFirstLeadMatchObservation = !attendanceEntryId
+    && ingress.state === "lead_match"
+    && ingress.targetMode === "snapshot"
+    && ingress.unlinkedCapturePolicy === "v1"
+    && Boolean(ingress.capturedAt)
+    && hasOrdinaryWhatsAppCaptureContext(message, ingress)
+    && !ingress.leadResolutionQuarantineReason
+    && !leadResolutionQuarantineReason
+    && ingress.eventLeadId === eventLeadId
+    && !ingress.currentLeadId
+    && !ingress.activeBindingId
+    && !ingress.conversationId
+    && optionalUuid(conversation.lead_id) === eventLeadId
+    && !ingress.managedMessageDistribution
+    && !ingress.managedEventPending
+    && !ingress.managedEventHandled
+    && !message.fromMe
+    && !message.isGroup
+    && !message.providerMessageIdSynthetic
+    && !isEligibleClickToWhatsAppLeadIntake(message)
+    && message.messageType !== "reaction"
+    && message.messageType !== "deleted"
+    && !managedOutbound;
+
+  // A dependent organic event freezes its exact predecessor before ACK.
+  // The resolver checks that predecessor and the CAS proves its resulting
+  // binding is still current. Do not rewrite the immutable ingress snapshot
+  // to look like a direct bound event.
+  const organicInheritedObservation = !storedMessage
+    && !attendanceEntryId
+    && ingress.state === "predecessor_inherit"
+    && ingress.targetMode === "inherit_predecessor"
+    && ingress.bindingEligible
+    && Boolean(ingress.capturedAt)
+    && hasOrdinaryWhatsAppCaptureContext(message, ingress)
+    && !ingress.leadResolutionQuarantineReason
+    && !leadResolutionQuarantineReason
+    && !ingress.eventLeadId
+    && Boolean(ingress.predecessorProviderMessageId)
+    && Boolean(ingress.predecessorInboxEventKey)
+    && Boolean(ingress.predecessorProcessingLane)
+    && ingress.providerMessageId === message.messageId
+    && inheritedRoutingTarget?.ready === true
+    && inheritedRoutingTarget.terminal === false
+    && inheritedRoutingTarget.conversationId === conversation.id
+    && inheritedRoutingTarget.leadId === eventLeadId
+    && inheritedRoutingTarget.activeBindingId === bindingId
+    && inheritedRoutingTarget.predecessorProviderMessageId === ingress.predecessorProviderMessageId
+    && inheritedRoutingTarget.predecessorIngressSequence! < ingress.ingressSequence
+    && (!ingress.conversationId || ingress.conversationId === conversation.id)
+    && optionalUuid(conversation.lead_id) === eventLeadId
+    && !ingress.managedMessageDistribution
+    && !ingress.managedEventPending
+    && !ingress.managedEventHandled
+    && !message.isGroup
+    && !message.providerMessageIdSynthetic
+    && !isEligibleClickToWhatsAppLeadIntake(message)
+    && message.messageType !== "reaction"
+    && message.messageType !== "deleted"
+    && !managedOutbound;
+
   return {
-    captureState: attendanceEntryId ? "captured" : "suppressed",
+    captureState: attendanceEntryId
+      ? "captured"
+      : organicBoundObservation || organicFirstLeadMatchObservation || organicInheritedObservation
+      ? "observed_unattended"
+      : "suppressed",
     reason: attendanceEntryId
       ? "attendance_entry_effective_for_ingress"
+      : organicBoundObservation
+      ? "organic_bound_without_attendance"
+      : organicFirstLeadMatchObservation
+      ? "organic_first_lead_match_without_attendance"
+      : organicInheritedObservation
+      ? "organic_inherited_without_attendance"
       : "attendance_entry_not_effective",
     bindingId,
     attendanceEntryId,
@@ -4664,6 +5204,30 @@ async function insertMessage(
     "id, conversation_id, lead_id, capture_state, media_storage_path, media_status, media_error, metadata",
   );
   const existingCaptureState = persistedWhatsAppMessageCaptureState(existing);
+  if (existingCaptureState === "unlinked_ephemeral") {
+    if (
+      optionalUuid(existing?.conversation_id) !== optionalUuid(conversation.id)
+      || optionalUuid(existing?.lead_id)
+      || eventLeadId
+    ) {
+      throw new Error("whatsapp_unlinked_message_replay_identity_conflict");
+    }
+    // The original content/media/classification are immutable on retry. The
+    // pending effect ledger can still finish the original preview update.
+    return { inserted: false, message: existing };
+  }
+  if (existingCaptureState === "promoted_unlinked") {
+    if (optionalUuid(existing?.conversation_id) !== optionalUuid(conversation.id)) {
+      throw new Error("whatsapp_promoted_unlinked_replay_identity_conflict");
+    }
+    return { inserted: false, message: existing };
+  }
+  if (existingCaptureState === "observed_unattended") {
+    if (optionalUuid(existing?.conversation_id) !== optionalUuid(conversation.id)) {
+      throw new Error("whatsapp_observed_message_replay_identity_conflict");
+    }
+    return { inserted: false, message: existing };
+  }
   const captureState = existingCaptureState || captureDecision.captureState;
   if (!existing && captureState === "legacy") {
     throw new Error("new_whatsapp_message_cannot_be_legacy");
@@ -4678,7 +5242,8 @@ async function insertMessage(
   // Quarantine persists only neutral provider evidence. It must never start a
   // media download/storage side effect for whichever card currently owns the
   // physical conversation.
-  const isMedia = !captureSuppressed && allowMediaEffects && !leadResolutionQuarantineReason
+  const allowHistoricalMedia = captureState === "promoted_unlinked" && !leadResolutionQuarantineReason;
+  const isMedia = !captureSuppressed && (allowMediaEffects || allowHistoricalMedia) && !leadResolutionQuarantineReason
     && ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
   const media = isMedia && !existing?.media_storage_path
     ? await storeInboundMedia({ session, message })
@@ -4695,9 +5260,11 @@ async function insertMessage(
 
   const capturedMetadata = pendingEvolutionGoEffectMetadata({
     source: "evolution_go_webhook",
+    ...(!leadResolutionQuarantineReason ? message.presentationMetadata : {}),
     whatsapp_event_binding_is_current: allowMediaEffects
       && !leadResolutionQuarantineReason,
     whatsapp_attendance_capture: captureAudit,
+    ...(captureDecision.externalOutbound ? { whatsapp_observation_origin: "external_session" } : {}),
     ...(leadResolutionQuarantineReason
       ? {
         lead_resolution_quarantine: {
@@ -4745,14 +5312,15 @@ async function insertMessage(
     message_id: message.messageId,
     provider_message_id: message.messageId,
     from_me: message.fromMe,
+    direction: message.fromMe ? "outbound" : "inbound",
     message_type: message.messageType,
     content: captureSuppressed ? null : message.content,
-    media_url: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : message.mediaUrl,
-    media_mime_type: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.contentType || message.mediaMimeType),
+    media_url: captureSuppressed || (!allowMediaEffects && !allowHistoricalMedia) || leadResolutionQuarantineReason ? null : message.mediaUrl,
+    media_mime_type: captureSuppressed || (!allowMediaEffects && !allowHistoricalMedia) || leadResolutionQuarantineReason ? null : (media?.contentType || message.mediaMimeType),
     media_storage_path: mediaStoragePath,
     media_status: mediaStatus,
     media_error: mediaError,
-    media_size: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.size || message.mediaSize),
+    media_size: captureSuppressed || (!allowMediaEffects && !allowHistoricalMedia) || leadResolutionQuarantineReason ? null : (media?.size || message.mediaSize),
     remote_jid: conversation.remote_jid || message.remoteJid,
     sender_jid: captureSuppressed ? null : message.senderJid,
     sender_name: captureSuppressed ? null : message.senderName,
@@ -4890,6 +5458,34 @@ async function completeStoredMessageEffects(
   }
 }
 
+async function expiredUnlinkedDeletionTarget(session: JsonRecord, target: JsonRecord): Promise<boolean> {
+  const captureState = persistedWhatsAppMessageCaptureState(target);
+  if (captureState !== "unlinked_ephemeral" && captureState !== "suppressed") return false;
+  if (optionalUuid(target.lead_id)) return false;
+  const conversationId = optionalUuid(target.conversation_id);
+  if (!conversationId) return false;
+
+  const { data: conversation, error } = await supabase
+    .from("whatsapp_conversations")
+    .select("lead_id, is_group, created_at, retired_at, unlinked_retention_v1")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!conversation || !conversation.unlinked_retention_v1 || optionalUuid(conversation.lead_id)
+    || conversation.is_group) return false;
+  const createdAt = Date.parse(cleanText(conversation.created_at) || "");
+  if (!Number.isFinite(createdAt)) throw new Error("whatsapp_unlinked_deletion_epoch_invalid");
+  return Boolean(conversation.retired_at) || Date.now() >= createdAt + 7 * 24 * 60 * 60 * 1000;
+}
+
+function expiredUnlinkedDeletionWriteRejection(error: unknown): boolean {
+  return isRecord(error)
+    && cleanText(error.code) === "23514"
+    && (cleanText(error.message) || "").includes("expired_unlinked_message_content_forbidden");
+}
+
 async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
   if (!message?.deletedMessageId) return false;
 
@@ -4902,6 +5498,11 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
     .maybeSingle();
   if (targetError) throw targetError;
   if (!target) return false;
+
+  // The provider deletion is an idempotent transport event. Once the complete
+  // unlinked conversation has expired, it must not refill its scrubbed content
+  // or turn an old callback into a retry that blocks the route.
+  if (await expiredUnlinkedDeletionTarget(session, target)) return true;
 
   const deletedAt = new Date().toISOString();
   if (persistedWhatsAppMessageCaptureState(target) === "suppressed") {
@@ -4927,7 +5528,11 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
       .eq("session_id", session.id)
       .eq("id", target.id)
       .eq("capture_state", "suppressed");
-    if (suppressedDeleteError) throw suppressedDeleteError;
+    if (suppressedDeleteError) {
+      if (expiredUnlinkedDeletionWriteRejection(suppressedDeleteError)
+        && await expiredUnlinkedDeletionTarget(session, target)) return true;
+      throw suppressedDeleteError;
+    }
     return true;
   }
   const originalMetadata = isRecord(target.metadata) ? target.metadata : {};
@@ -4955,7 +5560,11 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("id", target.id);
-  if (updateError) throw updateError;
+  if (updateError) {
+    if (expiredUnlinkedDeletionWriteRejection(updateError)
+      && await expiredUnlinkedDeletionTarget(session, target)) return true;
+    throw updateError;
+  }
 
   if (target.sent_at) {
     let conversationUpdate = supabase
@@ -5260,11 +5869,32 @@ type AuthorizedEvolutionGoWebhook = Extract<
   { authorized: true }
 >;
 
+async function loadTrustedPNRouteQuarantineIDs(session: JsonRecord, payload: any, authorization: AuthorizedEvolutionGoWebhook,
+  fence: { inboxId: string; executionId: string } | null) {
+  const metadata = payload?.__vimob_ingress;
+  if (!Array.isArray(metadata?.identity_quarantined_provider_message_ids)) return [] as string[];
+  if (authorization.contract !== "internal_worker_lease" || !fence || metadata.identity_quarantine_reason !== "whatsapp_contact_pn_route_conflict") {
+    throw new Error("whatsapp_pn_route_quarantine_untrusted");
+  }
+  const result = await supabase.rpc("read_whatsapp_webhook_pn_route_quarantine", {
+    p_organization_id: session.organization_id, p_session_id: session.id,
+    p_inbox_id: fence.inboxId, p_execution_id: fence.executionId,
+  });
+  if (result.error || !Array.isArray(result.data) || result.data.some((id: unknown) => typeof id !== "string" || !id || id.length > 200)
+    || JSON.stringify(result.data) !== JSON.stringify(metadata.identity_quarantined_provider_message_ids)) {
+    throw new Error("whatsapp_pn_route_quarantine_untrusted");
+  }
+  return result.data as string[];
+}
+
 async function handleMessages(
   session: JsonRecord,
   payload: any,
   event: string,
   authorization: AuthorizedEvolutionGoWebhook,
+  executionId: string | null,
+  trustedQuarantinedIDs: string[] = [],
+  workerFence: { inboxId: string; executionId: string } | null = null,
 ) {
   let messages = extractMessages(payload);
   if (messages.length > 0 && authorization.contract !== "internal_worker_lease") {
@@ -5274,16 +5904,43 @@ async function handleMessages(
     // returns a retryable failure instead of acknowledging weaker provenance.
     throw new Error("whatsapp_durable_ingress_required");
   }
-  if (messages.length > 1) {
-    messages = orderMessagesByIngressRoutingSnapshot(payload, session, messages, authorization);
-  }
   let processed = 0;
   let duplicates = 0;
   let inProgress = 0;
+  let quarantined = 0;
+
+  // New technical controls have no routing capture. Retained eligible/unknown
+  // controls require recovery before any member can create business effects;
+  // uncaptured controls must not block ordering of their real-message siblings.
+  messages = messages.filter(({ rawMessage, envelope }) => {
+    const message = normalizeMessage(rawMessage, envelope);
+    if (message && trustedQuarantinedIDs.includes(message.messageId)) {
+      quarantined += 1;
+      return false;
+    }
+    if (message && whatsappIdentityForMessage(message).pnConflict) {
+      // The authenticated Go admission keeps the original callback and neutral
+      // ignored-event reason. No destination, claim, alias or message may run.
+      quarantined += 1;
+      return false;
+    }
+    if (!message?.isEncryptedEditControl) return true;
+    if (encryptedEditHasFrozenCaptureRoute(payload, message.messageId)) {
+      throw new Error("whatsapp_encrypted_edit_requires_explicit_recovery");
+    }
+    processed += 1;
+    return false;
+  });
+  if (messages.length > 1) {
+    messages = orderMessagesByIngressRoutingSnapshot(payload, session, messages, authorization);
+  }
 
   for (const { rawMessage, envelope } of messages) {
     const message = normalizeMessage(rawMessage, envelope);
     if (!message) throw new Error("Unsupported message-like Evolution payload");
+    if (message.messageType !== "reaction" && !message.deletedMessageId && !["image", "video", "audio", "document", "sticker"].includes(message.messageType) && !message.content) {
+      throw new Error("Unsupported message-like Evolution content");
+    }
     if (message.messageType === "reaction" && !message.reactionToMessageId) {
       throw new Error("Evolution reaction is missing its target message");
     }
@@ -5337,6 +5994,22 @@ async function handleMessages(
         continue;
       }
 
+      if (message.messageType === "reaction") {
+        // Reaction capture belongs to the exact target, not to a newly
+        // resolved lead. The RPC locks target/conversation and commits both
+        // reaction projections with provenance; no intake/unread/preview runs.
+        const reactionSnapshot = ingressRoutingSnapshotForMessage(payload, session, message, authorization);
+        const outcome = await persistProviderReaction(supabase, {
+          organizationId: session.organization_id,
+          sessionId: session.id,
+          sessionPhone: cleanText(session.phone_number),
+        }, message, reactionSnapshot ? { ...reactionSnapshot, executionId } : null);
+        if (ownedClaim) await completeEvolutionMessageDelivery(supabase, ownedClaim);
+        if (outcome === "duplicate") duplicates += 1;
+        else processed += 1;
+        continue;
+      }
+
       let storedBeforeProcessing = await findStoredMessage(session, message);
       if (storedBeforeProcessing) {
         const state = storedEvolutionGoEffectState(
@@ -5344,6 +6017,7 @@ async function handleMessages(
           message.messageId,
         );
         if (state === "completed") {
+          const completedConversationId = optionalUuid(storedBeforeProcessing.conversation_id);
           if (persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "suppressed") {
             storedBeforeProcessing = await redactSuppressedStoredMessage(
               session,
@@ -5354,10 +6028,10 @@ async function handleMessages(
             );
           }
           await reconcileHandledWhatsAppMessageTransport(session, message);
-          if (storedBeforeProcessing.conversation_id) {
+          if (completedConversationId) {
             await releaseConversationMessageEffect(
               session,
-              storedBeforeProcessing.conversation_id,
+              completedConversationId,
               message.messageId,
             );
           }
@@ -5373,17 +6047,49 @@ async function handleMessages(
           // those effects; keep the durable caller retrying for remediation.
           throw new Error("Stored Evolution message has no recoverable effect ledger");
         }
+        if (persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "promoted_unlinked") {
+          // Promotion moved this already captured content into lead history in
+          // one database transaction. A provider retry may finish its effect
+          // ledger, but must not run attendance, routing or lead effects again.
+          await completeStoredMessageEffects(session, storedBeforeProcessing, message.messageId);
+          if (storedBeforeProcessing.conversation_id) {
+            await releaseConversationMessageEffect(
+              session,
+              storedBeforeProcessing.conversation_id,
+              message.messageId,
+            );
+          }
+          if (ownedClaim) await completeEvolutionMessageDelivery(supabase, ownedClaim);
+          processed += 1;
+          continue;
+        }
       }
 
       const providerEventBinding = await findWhatsAppProviderEventBinding(session, message);
       const storedConversationId = optionalUuid(storedBeforeProcessing?.conversation_id);
       const storedLeadId = optionalUuid(storedBeforeProcessing?.lead_id);
-      const ingressRoutingSnapshot = ingressRoutingSnapshotForMessage(
+      const storedCaptureState = persistedWhatsAppMessageCaptureState(storedBeforeProcessing);
+      let ingressRoutingSnapshot = ingressRoutingSnapshotForMessage(
         payload,
         session,
         message,
         authorization,
       );
+      // Decisions accepted before the post-form policy must keep their original
+      // ledger/binding on replay. New continuations carry the organic marker.
+      message.legacyContextualIntake = usesLegacyCTWAIntakeDecision(ingressRoutingSnapshot);
+      if (
+        storedCaptureState === "unlinked_ephemeral"
+        && (
+          storedLeadId
+          || providerEventBinding
+          || ingressRoutingSnapshot?.state !== "unlinked"
+          || message.isGroup
+          || message.messageType === "reaction"
+        )
+      ) {
+        throw new Error("whatsapp_unlinked_message_replay_routing_conflict");
+      }
       let inheritedRoutingTarget: WhatsAppInheritedRoutingTarget | null = null;
       let inheritedRoutingQuarantineReason: string | null = null;
       if (
@@ -5430,6 +6136,36 @@ async function handleMessages(
       ) {
         throw new Error("whatsapp_ingress_snapshot_persistence_identity_conflict");
       }
+      if (
+        !storedBeforeProcessing
+        && !providerEventBinding
+        && ingressRoutingSnapshot?.unlinkedCapturePolicy === "v1"
+        && ingressRoutingSnapshot.state === "unlinked"
+        && (!ingressRoutingSnapshot.capturedAt
+          || Date.now() >= Date.parse(ingressRoutingSnapshot.capturedAt) + 7 * 24 * 60 * 60 * 1000)
+      ) {
+        // An unprocessed event older than its entire allowed lifetime has no
+        // visible conversation to recover. Its immutable routing snapshot is
+        // the replay tombstone; complete the durable delivery without opening
+        // a new epoch seven days late.
+        if (ownedClaim) await completeEvolutionMessageDelivery(supabase, ownedClaim);
+        processed += 1;
+        continue;
+      }
+
+      const intakeSplitRemoteJid = await splitUnlinkedLeadIntakeEpoch(
+        session, message, ingressRoutingSnapshot,
+        Boolean(storedBeforeProcessing || providerEventBinding),
+      );
+      if (intakeSplitRemoteJid) {
+        // Keep the database snapshot immutable; this local route now addresses
+        // the new physical lead epoch after the exact old one was retired.
+        ingressRoutingSnapshot = {
+          ...ingressRoutingSnapshot!,
+          conversationId: null,
+          intakeSplitRemoteJid,
+        };
+      }
 
       // Freeze the physical conversation's binding version before any lead or
       // routing resolution. The later row-locked CAS records a losing event as
@@ -5460,9 +6196,10 @@ async function handleMessages(
         terminalLeadResolutionQuarantineReason(storedBeforeProcessing?.metadata)
         || conversationBindingSnapshot.leadResolutionQuarantineReason
         || inheritedRoutingQuarantineReason;
-      const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message);
+      let confirmedCtwaAd = isEligibleClickToWhatsAppLeadIntake(message);
       const isReactionEvent = message.messageType === "reaction";
-      if (!message.fromMe && !message.isGroup && !isReactionEvent && !leadResolutionQuarantineReason) {
+      if (!message.fromMe && !message.isGroup && !isReactionEvent && !leadResolutionQuarantineReason
+        && storedCaptureState !== "unlinked_ephemeral") {
         let managedEntryLookup: JsonRecord | null = null;
         try {
           managedEntryLookup = await lookupManagedWhatsAppLeadEntry(session, message);
@@ -5473,6 +6210,10 @@ async function handleMessages(
             error: redactLogText(error),
           });
           throw error;
+        }
+        if (managedEntryLookup?.handled === true || managedEntryLookup?.pending === true) {
+          message.legacyContextualIntake = true;
+          confirmedCtwaAd = isEligibleClickToWhatsAppLeadIntake(message);
         }
         if (
           ingressRoutingSnapshot
@@ -5630,6 +6371,7 @@ async function handleMessages(
           || inheritedRoutingTarget?.conversationId
           || ingressRoutingSnapshot?.conversationId,
         leadResolutionQuarantineReason,
+        ingressRoutingSnapshot,
       );
       const conversationAliasQuarantineReason = cleanText(
         conversation.__whatsapp_identity_alias_quarantine_reason,
@@ -5662,7 +6404,7 @@ async function handleMessages(
         eventLeadId = binding.eventLeadId;
         bindingResultIsCurrent = binding.isCurrent;
       }
-      if (!eventLeadId && !leadResolutionQuarantineReason) {
+      if (!eventLeadId && !leadResolutionQuarantineReason && storedCaptureState !== "unlinked_ephemeral") {
         eventLeadId = optionalUuid(lead?.id || (ingressRoutingSnapshot ? null : conversation.lead_id));
       }
       if (leadResolutionQuarantineReason) {
@@ -5686,23 +6428,49 @@ async function handleMessages(
         leadResolutionQuarantineReason = "whatsapp_ingress_unlinked_after_binding_change";
         eventBindingIsCurrent = false;
       }
-      const attachedLead = eventLeadId
+      let attachedLead = eventLeadId
         ? (optionalUuid(lead?.id) === eventLeadId ? lead : { id: eventLeadId })
         : null;
+      const managedOutbound = await whatsappOutboundHasManagedOrigin(session, conversation, message);
       const captureDecision = await resolveWhatsAppAttendanceCapture(
         session,
         conversation,
         eventLeadId,
         eventBindingIsCurrent,
+        leadResolutionQuarantineReason,
         ingressRoutingSnapshot,
+        inheritedRoutingTarget,
         message,
         lead,
         storedBeforeProcessing,
+        managedOutbound,
       );
+      if (captureDecision.captureState === "promoted_unlinked") {
+        eventLeadId = optionalUuid(captureDecision.historyLeadId);
+        if (!eventLeadId) throw new Error("whatsapp_promoted_unlinked_lead_missing");
+        attachedLead = { id: eventLeadId };
+        leadResolutionQuarantineReason = null;
+        // Earlier history is attached without rerunning current-card effects.
+        eventBindingIsCurrent = false;
+      } else if (captureDecision.captureState === "unlinked_ephemeral") {
+        if (eventLeadId || optionalUuid(conversation.lead_id)) {
+          throw new Error("whatsapp_unlinked_history_resolver_returned_active_lead");
+        }
+        leadResolutionQuarantineReason = null;
+        eventBindingIsCurrent = true;
+      }
+      captureDecision.externalOutbound = message.fromMe
+        && !managedOutbound
+        && captureDecision.captureState !== "suppressed";
       const captureSuppressed = captureDecision.captureState === "suppressed";
       // Persist the selected rule before the message write. A managed retry can
       // then recover the immutable lead and queue context after later failures.
-      if (!leadResolutionQuarantineReason && eventBindingIsCurrent) {
+      if (
+        !leadResolutionQuarantineReason && eventBindingIsCurrent
+        && captureDecision.captureState !== "unlinked_ephemeral"
+        && captureDecision.captureState !== "promoted_unlinked"
+        && captureDecision.captureState !== "observed_unattended"
+      ) {
         await logInbound(session, conversation, attachedLead, rule, message);
       }
       const result = await insertMessage(
@@ -5753,7 +6521,7 @@ async function handleMessages(
         continue;
       }
 
-      if (!captureSuppressed) {
+      if (!captureSuppressed && captureDecision.captureState !== "promoted_unlinked") {
         eventBindingIsCurrent = eventBindingIsCurrent
           && await updateConversationAfterMessage(session, conversation, eventLeadId, message);
       }
@@ -5767,7 +6535,7 @@ async function handleMessages(
         || (managedMessageDistribution && managedEntryWasPending)
       );
 
-      if (shouldPersistAttribution && !isReactionEvent) {
+      if (shouldPersistAttribution && attachedLead?.id && !isReactionEvent) {
         await upsertLeadMetaAttribution(session, conversation, attachedLead, message);
         if (!managedMessageDistribution && result.inserted) {
           await logLeadEntryAttribution(session, conversation, attachedLead, message);
@@ -5777,7 +6545,7 @@ async function handleMessages(
 
       let autoReplyTriggered = false;
       if (
-        !captureSuppressed
+        captureDecision.captureState === "captured"
         && eventBindingIsCurrent
         && eventLeadId
         && result.inserted
@@ -5802,7 +6570,7 @@ async function handleMessages(
       }
       // Keep the local durability contract: the API request is awaited and its
       // idempotent queue write must succeed before the message ledger is final.
-      if (!captureSuppressed && eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
+      if (captureDecision.captureState === "captured" && eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
         await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
       }
       await completeStoredMessageEffects(
@@ -5820,6 +6588,21 @@ async function handleMessages(
       }
       processed += 1;
     } catch (error) {
+      if (isStoredContactPNConflict(error)) {
+        if (authorization.contract !== "internal_worker_lease" || !workerFence || executionId !== workerFence.executionId) {
+          throw new Error("whatsapp_contact_pn_quarantine_untrusted");
+        }
+        const quarantine = await supabase.rpc("record_whatsapp_webhook_contact_pn_quarantine", {
+          p_organization_id: session.organization_id,
+          p_session_id: session.id,
+          p_inbox_id: workerFence.inboxId,
+          p_execution_id: workerFence.executionId,
+          p_provider_message_id: message.messageId,
+        });
+        if (quarantine.error || quarantine.data !== true) throw new Error("whatsapp_contact_pn_quarantine_rejected");
+        quarantined += 1;
+        continue;
+      }
       if (ownedClaim) {
         try {
           await retryEvolutionMessageDelivery(supabase, ownedClaim);
@@ -5831,7 +6614,7 @@ async function handleMessages(
     }
   }
 
-  return { processed, duplicates, inProgress };
+  return { processed, duplicates, inProgress, quarantined };
 }
 
 function statusFromProvider(value: unknown) {
@@ -5854,6 +6637,7 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
   ].filter(isRecord);
 
   let updated = 0;
+  const unresolvedMessageIds = new Set<string>();
   for (const entry of entries) {
     const messageIds = unique([
       ...toArray(firstPresent(entry.MessageIDs, entry.messageIds, entry.message_ids)),
@@ -5947,11 +6731,26 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
       ...(targets || []).map((target: JsonRecord) => normalizeText(target.message_id)),
       ...(outboxTargets || []).map((target: JsonRecord) => normalizeText(target.provider_message_id)),
     ].filter(Boolean));
+    // Reminder sends live in the notification outbox, not whatsapp_messages.
+    // Reconcile only identities absent from the session-scoped conversation outbox.
+    const notificationMatches = await reconcileUnmatchedNotificationReceipts(
+      supabase,
+      { organizationId: session.organization_id, sessionId: session.id },
+      messageIds.filter((messageId) => !matchedMessageIds.has(messageId)),
+      status,
+      receiptAt,
+    );
+    for (const messageId of notificationMatches) matchedMessageIds.add(messageId);
+    for (const messageId of matchedMessageIds) unresolvedMessageIds.delete(messageId);
     const missingMessageIds = messageIds.filter((messageId) => !matchedMessageIds.has(messageId));
-    if (missingMessageIds.length > 0) {
-      throw new Error(`MESSAGE_STATUS_TARGET_NOT_FOUND:${missingMessageIds.join(",")}`);
-    }
+    for (const messageId of missingMessageIds) unresolvedMessageIds.add(messageId);
     updated += targetIds?.length || 0;
+  }
+  // REST/RPC writes above are committed individually. Preserve known progress
+  // in every batch order, then retain the original durable batch for bounded
+  // retry of targets that can still arrive. Never acknowledge unknown IDs.
+  if (unresolvedMessageIds.size > 0) {
+    throw new Error(`MESSAGE_STATUS_TARGET_NOT_FOUND:${[...unresolvedMessageIds].join(",")}`);
   }
   return updated;
 }
@@ -6051,7 +6850,7 @@ async function upsertLabels(session: JsonRecord, payload: any) {
       session_id: session.id,
       remote_label_id: remoteLabelId || name,
       name: name || remoteLabelId,
-      color: normalizeText(firstPresent(label.color, label.hexColor)) || "#FF4529",
+      color: normalizeEvolutionLabelColor(label),
       predefined: parseBoolean(label.predefined),
     };
 
@@ -6151,6 +6950,12 @@ Deno.serve(async (req) => {
     supabase = createClient(SUPABASE_URL, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    const workerFence = authorization.contract === "internal_worker_lease"
+      ? readWhatsAppEdgeExecutionHeaders(req.headers)
+      : null;
+    if (authorization.contract === "internal_worker_lease" && !workerFence) {
+      return json({ ok: false, error: "WhatsApp worker execution token is required" }, 409);
+    }
     const payload = await readBoundedJsonBody<any>(req);
     const event = normalizeText(firstPresent(
       payload.event,
@@ -6187,56 +6992,81 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "Webhook session binding failed" }, status);
     }
 
-    const resolvedSessionStatus = normalizeText(resolved.session.status).trim().toLowerCase();
-    if (
-      resolved.session.is_active === false
-      || ["deleted", "disabled"].includes(resolvedSessionStatus)
-    ) {
+    const process = async () => {
+      const trustedQuarantinedIDs = await loadTrustedPNRouteQuarantineIDs(resolved.session, payload, authorization, workerFence);
+      const resolvedSessionStatus = normalizeText(resolved.session.status).trim().toLowerCase();
+      if (
+        resolved.session.is_active === false
+        || ["deleted", "disabled"].includes(resolvedSessionStatus)
+      ) {
+        return json({
+          ok: true,
+          ignored: true,
+          reason: "INACTIVE_SESSION",
+          session_id: resolved.session.id,
+        });
+      }
+
+      const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;
+      const connectionStatus = (
+        event.includes("connection") ||
+        event.includes("connect") ||
+        event.includes("logout") ||
+        payload.data?.LoggedIn !== undefined ||
+        payload.data?.connected !== undefined ||
+        payload.LoggedIn !== undefined
+      ) ? await handleConnection(resolved.session, payload) : null;
+
+      const labelsProcessed = event.includes("label") ? await upsertLabels(resolved.session, payload) : 0;
+      const groupsProcessed = event.includes("group") ? await upsertGroups(resolved.session, payload) : 0;
+      const isMessageStatusEvent = event.includes("status") || event.includes("receipt") || event.includes("ack");
+      const statusUpdated = isMessageStatusEvent
+        ? await handleMessageStatus(resolved.session, payload)
+        : 0;
+      const messageResult = isMessageStatusEvent
+        ? { processed: 0, duplicates: 0, inProgress: 0 }
+        : await handleMessages(
+          resolved.session,
+          payload,
+          event,
+          authorization,
+          workerFence?.executionId || null,
+          trustedQuarantinedIDs,
+          workerFence,
+        );
+
       return json({
         ok: true,
-        ignored: true,
-        reason: "INACTIVE_SESSION",
         session_id: resolved.session.id,
-      });
+        qrUpdated,
+        connectionStatus,
+        messagesProcessed: messageResult.processed,
+        messageDuplicates: messageResult.duplicates,
+        messagesInProgress: messageResult.inProgress,
+        statusUpdated,
+        labelsProcessed,
+        groupsProcessed,
+      }, messageResult.inProgress > 0 ? 202 : 200);
+    };
+
+    if (authorization.contract !== "internal_worker_lease") {
+      return await process();
     }
-
-    const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;
-    const connectionStatus = (
-      event.includes("connection") ||
-      event.includes("connect") ||
-      event.includes("logout") ||
-      payload.data?.LoggedIn !== undefined ||
-      payload.data?.connected !== undefined ||
-      payload.LoggedIn !== undefined
-    ) ? await handleConnection(resolved.session, payload) : null;
-
-    const labelsProcessed = event.includes("label") ? await upsertLabels(resolved.session, payload) : 0;
-    const groupsProcessed = event.includes("group") ? await upsertGroups(resolved.session, payload) : 0;
-    const isMessageStatusEvent = event.includes("status") || event.includes("receipt") || event.includes("ack");
-    const statusUpdated = isMessageStatusEvent
-      ? await handleMessageStatus(resolved.session, payload)
-      : 0;
-    const messageResult = isMessageStatusEvent
-      ? { processed: 0, duplicates: 0, inProgress: 0 }
-      : await handleMessages(
-        resolved.session,
-        payload,
-        event,
-        authorization,
-      );
-
-    return json({
-      ok: true,
-      session_id: resolved.session.id,
-      qrUpdated,
-      connectionStatus,
-      messagesProcessed: messageResult.processed,
-      messageDuplicates: messageResult.duplicates,
-      messagesInProgress: messageResult.inProgress,
-      statusUpdated,
-      labelsProcessed,
-      groupsProcessed,
-    }, messageResult.inProgress > 0 ? 202 : 200);
+    const organizationId = optionalUuid(resolved.session.organization_id);
+    const sessionId = optionalUuid(resolved.session.id);
+    if (!workerFence || !organizationId || !sessionId) {
+      return json({ ok: false, error: "WhatsApp worker execution scope is invalid" }, 409);
+    }
+    return await runWhatsAppEdgeExecutionWithFence(
+      supabase,
+      {
+        organizationId,
+        sessionId,
+        inboxId: workerFence.inboxId,
+        executionId: workerFence.executionId,
+      },
+      process,
+    );
   } catch (error) {
     if (error instanceof WebhookRequestBodyError) {
       return json({ ok: false, error: error.code }, error.status);

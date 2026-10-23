@@ -146,10 +146,11 @@ export class VimobAPIError extends Error {
   status: number
   requestId?: string
   technicalMessage: string
+  readonly responseData?: unknown
 
   constructor(
     technicalMessage: string,
-    options: { code: string; status: number; requestId?: string },
+    options: { code: string; status: number; requestId?: string; responseData?: unknown },
   ) {
     super(getPublicErrorMessage({
       code: options.code,
@@ -161,5 +162,6 @@ export class VimobAPIError extends Error {
     this.status = options.status
     this.requestId = options.requestId
     this.technicalMessage = technicalMessage
+    this.responseData = options.responseData
   }
 }

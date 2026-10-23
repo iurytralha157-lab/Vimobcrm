@@ -13,6 +13,7 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function StructureSection() {
   const {
+    isSaving,
     formData,
     set,
     displayedPurposeOptions,
@@ -37,7 +38,8 @@ export function StructureSection() {
   const showManagerOnlyFields = !isEditing || canManagePropertyCatalogs;
 
   return (
-  <TabsContent value="structure">
+  <TabsContent value="structure" id="property-panel-structure" aria-labelledby="property-tab-structure" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card data-tour="property-structure-section" className="app-card">
       <CardHeader>
         <CardTitle className="text-[14px] font-normal">
@@ -56,7 +58,7 @@ export function StructureSection() {
             placeholder="Ex: Apartamento 3 quartos..."
           />
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 @[480px]:grid-cols-3">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label htmlFor="property-purpose">Finalidade</Label>
@@ -210,7 +212,7 @@ export function StructureSection() {
             </Select>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-status">Status</Label>
             <Select
@@ -247,6 +249,7 @@ export function StructureSection() {
         </div>
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

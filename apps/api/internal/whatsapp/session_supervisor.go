@@ -1067,7 +1067,10 @@ func (repo Repository) blockSessionRecovery(ctx context.Context, organizationID 
 }
 
 func isProviderStaleClientError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "client disconnected")
+	// A gateway may echo this text after reconnect already started. Preserve
+	// uncertainty so the supervisor blocks recovery instead of forcing it again.
+	return err != nil && !errors.Is(err, ErrProviderOutcomeUnknown) &&
+		strings.Contains(strings.ToLower(err.Error()), "client disconnected")
 }
 
 func evolutionSupervisorConnectPlan(
@@ -1206,11 +1209,6 @@ func (repo Repository) patchSessionSettings(ctx context.Context, organizationID 
 	return err
 }
 
-func (repo Repository) updateSessionStatusFromProvider(ctx context.Context, session Session, normalizedStatus string, result map[string]any) error {
-	_, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true)
-	return err
-}
-
 // updateSessionStatusFromProviderIfCurrent is a compare-and-swap between the
 // row snapshot loaded immediately before the provider request and the returned
 // observation. A webhook that lands while the HTTP request is in flight changes
@@ -1259,6 +1257,13 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 		  and coalesce(advanced_settings->>'webhook_state_event_rank', '') = $5::text
 		  and coalesce(advanced_settings->>'webhook_state_event_key', '') = $6::text
 		  and (
+		    $8::text not in ('connected', 'qr_ready')
+		    or not (
+		      lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) = 'false'
+		      and lower(coalesce(advanced_settings->>'auto_reconnect_blocked_reason', '')) = 'user_logged_out'
+		    )
+		  )
+		  and (
 		    $7::text = ''
 		    or exists (
 		      select 1
@@ -1270,7 +1275,7 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 		    )
 		  )
 		for update
-	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey, claimToken).Scan(&currentPhone)
+	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey, claimToken, normalizedStatus).Scan(&currentPhone)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if claimToken != "" {
 			if _, err := tx.Exec(ctx, `

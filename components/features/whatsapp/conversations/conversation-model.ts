@@ -1,4 +1,5 @@
 import { format, isToday, isYesterday } from "date-fns";
+import { getWhatsAppAvatarCandidates } from "@/lib/whatsapp-avatar";
 
 import type { MetaConversation } from "@/hooks/use-meta-conversations";
 import type {
@@ -22,6 +23,7 @@ export type DisplayMessage = Pick<
       WhatsAppMessage,
       | "media_error"
       | "delivery_error_code"
+      | "delivery_error_reason"
       | "delivery_failed_at"
       | "media_storage_path"
       | "media_status"
@@ -33,6 +35,16 @@ export type DisplayMessage = Pick<
       | "session_id"
       | "sender_jid"
       | "sender_name"
+      | "sender_user_id"
+      | "client_message_id"
+      | "media_filename"
+      | "media_size"
+      | "conversation_id"
+      | "contacts"
+      | "location"
+      | "quoted_message"
+      | "can_quote"
+      | "can_react"
     >
   > & {
     metadata?: Record<string, unknown>;
@@ -50,7 +62,7 @@ export type ConversationSearchNormalizer = (value: string) => string;
 const getSearchDigits = (value: string) => value.replace(/\D/g, "");
 
 export const getConversationAvatarUrl = (conversation?: WhatsAppConversation | null) =>
-  conversation?.lead?.whatsapp_avatar_url || conversation?.contact_picture || undefined;
+  getWhatsAppAvatarCandidates(conversation?.lead?.whatsapp_avatar_url, conversation?.contact_picture)[0];
 
 export const hasConversationLead = (conversation: ScreenConversation) =>
   Boolean(conversation.lead_id || conversation.lead?.id);
@@ -67,9 +79,7 @@ export function filterWhatsAppConversations(
   if (filters.withoutLeadOnly) {
     filtered = filtered.filter((conversation) => !hasConversationLead(conversation));
   }
-  if (filters.pendingReplyOnly) {
-    filtered = filtered.filter((conversation) => (conversation.unread_count ?? 0) > 0);
-  }
+  // The API determines reply state. Reading an inbound message does not answer it.
 
   return filtered;
 }

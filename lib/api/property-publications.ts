@@ -1,3 +1,4 @@
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 import {
   apiPropertyPublicationOverviewResponseSchema,
   mutatePropertyPublicationInputSchema,
@@ -10,7 +11,7 @@ import {
   type PublishPropertyInput,
 } from '@/lib/validation'
 
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 
 export function createPropertyPublicationIdempotencyKey(action: string) {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
@@ -45,12 +46,15 @@ async function publishChannel(
   channel: PropertyPublicationCommandChannel,
   input: PublishPropertyInput,
   idempotencyKey = createPropertyPublicationIdempotencyKey(`${channel}-publish`),
+  intent?: VimobAPIRequestIntent,
 ) {
+  intent = capturePropertyMutationIntent(intent);
   const context = publicationCommandContext(channel, 'publish')
   const body = parseDomainInput(publishPropertyInputSchema, input, context)
   const response = await vimobAPIRequest<unknown>(
     `/v1/properties/${propertyId}/publications/${publicationChannelRoute[channel]}/publish`,
     {
+      ...intent,
       method: 'POST',
       organizationId,
       body,
@@ -66,12 +70,15 @@ async function unpublishChannel(
   channel: PropertyPublicationCommandChannel,
   input: MutatePropertyPublicationInput,
   idempotencyKey = createPropertyPublicationIdempotencyKey(`${channel}-unpublish`),
+  intent?: VimobAPIRequestIntent,
 ) {
+  intent = capturePropertyMutationIntent(intent);
   const context = publicationCommandContext(channel, 'unpublish')
   const body = parseDomainInput(mutatePropertyPublicationInputSchema, input, context)
   const response = await vimobAPIRequest<unknown>(
     `/v1/properties/${propertyId}/publications/${publicationChannelRoute[channel]}/unpublish`,
     {
+      ...intent,
       method: 'POST',
       organizationId,
       body,
@@ -87,12 +94,15 @@ async function retryChannel(
   channel: PropertyPublicationCommandChannel,
   input: MutatePropertyPublicationInput,
   idempotencyKey = createPropertyPublicationIdempotencyKey(`${channel}-retry`),
+  intent?: VimobAPIRequestIntent,
 ) {
+  intent = capturePropertyMutationIntent(intent);
   const context = publicationCommandContext(channel, 'retry')
   const body = parseDomainInput(mutatePropertyPublicationInputSchema, input, context)
   const response = await vimobAPIRequest<unknown>(
     `/v1/properties/${propertyId}/publications/${publicationChannelRoute[channel]}/retry`,
     {
+      ...intent,
       method: 'POST',
       organizationId,
       body,
@@ -107,10 +117,11 @@ export const propertyPublicationsAPI = {
     organizationId: string,
     propertyId: string,
     signal?: AbortSignal,
+    intent?: VimobAPIRequestIntent,
   ) {
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/publications`,
-      { organizationId, signal, retry: false },
+      { ...intent, organizationId, signal: signal ?? intent?.signal, retry: false },
     )
     return parseOverview(response, 'property-publications.get')
   },
@@ -124,8 +135,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: PublishPropertyInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('publish'),
+    intent?: VimobAPIRequestIntent,
   ) {
-    return publishChannel(organizationId, propertyId, 'site', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return publishChannel(organizationId, propertyId, 'site', input, idempotencyKey, intent)
   },
 
   async unpublishSite(
@@ -133,8 +146,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: MutatePropertyPublicationInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('unpublish'),
+  intent?: VimobAPIRequestIntent,
   ) {
-    return unpublishChannel(organizationId, propertyId, 'site', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return unpublishChannel(organizationId, propertyId, 'site', input, idempotencyKey, intent)
   },
 
   async retrySite(
@@ -142,8 +157,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: MutatePropertyPublicationInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('retry'),
+  intent?: VimobAPIRequestIntent,
   ) {
-    return retryChannel(organizationId, propertyId, 'site', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return retryChannel(organizationId, propertyId, 'site', input, idempotencyKey, intent)
   },
 
   async publishGrupoOLX(
@@ -151,8 +168,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: PublishPropertyInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('grupo-olx-publish'),
+  intent?: VimobAPIRequestIntent,
   ) {
-    return publishChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return publishChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey, intent)
   },
 
   async unpublishGrupoOLX(
@@ -160,8 +179,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: MutatePropertyPublicationInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('grupo-olx-unpublish'),
+  intent?: VimobAPIRequestIntent,
   ) {
-    return unpublishChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return unpublishChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey, intent)
   },
 
   async retryGrupoOLX(
@@ -169,8 +190,10 @@ export const propertyPublicationsAPI = {
     propertyId: string,
     input: MutatePropertyPublicationInput,
     idempotencyKey = createPropertyPublicationIdempotencyKey('grupo-olx-retry'),
+  intent?: VimobAPIRequestIntent,
   ) {
-    return retryChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey)
+  intent = capturePropertyMutationIntent(intent);
+    return retryChannel(organizationId, propertyId, 'grupo_olx', input, idempotencyKey, intent)
   },
 }
 

@@ -20,15 +20,16 @@ type conditionConflictValue struct {
 func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, organizationID string, excludeRoundRobinID *string, rules []ruleInput) error {
 	wanted := map[string][]conditionConflictValue{}
 	for _, rule := range rules {
-		if _, ok := uniqueConditionTypes[rule.MatchType]; !ok || !rule.IsActive {
+		matchType := canonicalRuleMatchType(rule.MatchType)
+		if _, ok := uniqueConditionTypes[matchType]; !ok || !rule.IsActive {
 			continue
 		}
 		sessionID := ""
-		if rule.MatchType == whatsappMessageContainsConditionType {
+		if matchType == whatsappMessageContainsConditionType {
 			sessionID, _ = whatsappSessionIDFromMatch(rule.Match)
 		}
-		for _, value := range uniqueConditionValues(rule.MatchType, rule.MatchValue) {
-			wanted[rule.MatchType] = append(wanted[rule.MatchType], conditionConflictValue{
+		for _, value := range uniqueConditionValues(matchType, rule.MatchValue) {
+			wanted[matchType] = append(wanted[matchType], conditionConflictValue{
 				Value:     value,
 				SessionID: sessionID,
 			})
@@ -45,7 +46,7 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 			jsonb_build_object(
 				'match_type', coalesce(nullif(rrr.match_type, ''), rrr.conditions->>'match_type', rrr.name, ''),
 				'match_value', coalesce(nullif(rrr.match_value, ''), rrr.conditions->>'match_value', ''),
-				'match', coalesce(rrr.match, rrr.conditions->'match', '{}'::jsonb)
+				'match', (coalesce(rrr.conditions->'match', '{}'::jsonb) || coalesce(rrr.match, '{}'::jsonb))
 			)::text
 		from public.round_robin_rules rrr
 		join public.round_robins rr
@@ -69,6 +70,7 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 		_ = roundRobinID
 		payload := parseObject(raw)
 		matchType, _ := payload["match_type"].(string)
+		matchType = canonicalRuleMatchType(matchType)
 		if _, ok := uniqueConditionTypes[matchType]; !ok {
 			continue
 		}
@@ -107,7 +109,13 @@ func conditionValuesConflict(matchType string, left string, right string) bool {
 
 func uniqueConditionValues(matchType string, matchValue string) []string {
 	if matchType != whatsappMessageContainsConditionType {
-		return splitValues(matchValue)
+		values := splitValues(matchValue)
+		if matchType == "webhook" || matchType == "whatsapp_session" {
+			for index, value := range values {
+				values[index] = strings.ToLower(value)
+			}
+		}
+		return values
 	}
 	value := strings.ToLower(strings.TrimSpace(matchValue))
 	if value == "" {

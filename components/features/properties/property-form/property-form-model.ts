@@ -3,13 +3,15 @@ import { sitePublicationFormReadinessSchema } from "@/lib/validation/property-pu
 import {
   getPropertyPhotoCount,
   PROPERTY_MEDIA_MAX_PHOTOS,
-  withoutEphemeralPropertyMedia,
 } from "@/lib/property-media-draft";
 import {
   removePropertyOwnerMutationFields,
   shouldRequirePropertyOwnerDetails,
 } from "./property-owner-privacy";
 import { formatFixedBRLCurrency } from "@/lib/utils/formatting";
+import { parseLocaleNumber } from "@/components/features/properties/property-form/property-form-numbers";
+import { createPropertyCreationDraftStore } from "@/components/features/properties/property-form/property-creation-draft";
+export { normalizeLocaleNumberString, parseLocaleNumber, parseCurrencyInput, parseDecimalInput, formatCurrencyEditable } from "@/components/features/properties/property-form/property-form-numbers";
 export interface PropertyFormData {
   // Existing fields
   title: string;
@@ -265,27 +267,9 @@ export function optionsWithCurrent(options: string[], current: string) {
 export const formatCurrencyDisplay = (value: string): string => {
   if (!value) return "";
   const parsed = parseLocaleNumber(value);
-  if (parsed === null) return "";
+  if (parsed === null || !Number.isFinite(parsed)) return "";
   return formatFixedBRLCurrency(parsed);
 };
-
-export const parseCurrencyInput = (value: string): string =>
-  normalizeLocaleNumberString(value, 2);
-export const parseDecimalInput = (value: string): string =>
-  value.replace(/[^\d,.]/g, "");
-export function formatCurrencyEditable(value: string) {
-  if (!value) return "";
-  const normalized = normalizeLocaleNumberString(value, 2);
-  if (!normalized) return "";
-
-  const [integer = "0", fraction] = normalized.split(".");
-  const formattedInteger = Number(integer || "0").toLocaleString("pt-BR", {
-    maximumFractionDigits: 0,
-  });
-  return fraction === undefined
-    ? formattedInteger
-    : `${formattedInteger},${fraction}`;
-}
 
 export const onlyCepDigits = (value: string) => value.replace(/\D/g, "").slice(0, 8);
 export const formatCep = (value: string) => {
@@ -343,6 +327,12 @@ const SEASONAL_DEAL_TYPES = new Set(["temporada", "season"]);
 
 export function normalizePropertyStatus(value?: string | null) {
   switch (normalize(value || "")) {
+    case "":
+    case "active":
+    case "ativo":
+    case "available":
+    case "disponivel":
+      return "ativo";
     case "reserved":
     case "reservado":
       return "reservado";
@@ -358,12 +348,14 @@ export function normalizePropertyStatus(value?: string | null) {
       return "inativo";
     case "draft":
     case "rascunho":
+    case "private":
+    case "privado":
       return "rascunho";
     case "archived":
     case "arquivado":
       return "arquivado";
     default:
-      return "ativo";
+      return value?.trim() || "ativo";
   }
 }
 export const isLandType = (value: string) =>
@@ -378,7 +370,7 @@ export const isSupportedDealType = (value: string) =>
 
 export type PropertyMutationInput = Omit<
   Partial<Property>,
-  "id" | "code" | "organization_id" | "created_at" | "updated_at"
+  "id" | "code" | "organization_id" | "created_at" | "updated_at" | "metadata"
 > & {
   metadata?: Record<string, unknown>;
   property_type_id?: string | null;
@@ -447,43 +439,6 @@ function removePropertyManagerOnlyMutationFields(
   }
 }
 
-export function normalizeLocaleNumberString(value: string, maxDecimals?: number) {
-  const cleaned = value.replace(/[^\d,.]/g, "");
-  if (!cleaned) return "";
-
-  const lastComma = cleaned.lastIndexOf(",");
-  const lastDot = cleaned.lastIndexOf(".");
-  const decimalIndex = lastComma > lastDot ? lastComma : lastDot;
-  const separator = decimalIndex >= 0 ? cleaned[decimalIndex] : "";
-  const fraction =
-    decimalIndex >= 0 ? cleaned.slice(decimalIndex + 1).replace(/\D/g, "") : "";
-  const integerSource =
-    decimalIndex >= 0 ? cleaned.slice(0, decimalIndex) : cleaned;
-  const hasComma = cleaned.includes(",");
-  const dotCount = (cleaned.match(/\./g) || []).length;
-
-  if (
-    !separator ||
-    fraction.length === 0 ||
-    (separator === "." && !hasComma && fraction.length === 3) ||
-    (separator === "." && !hasComma && dotCount > 1 && fraction.length > 2)
-  ) {
-    return cleaned.replace(/\D/g, "");
-  }
-
-  const integer = integerSource.replace(/\D/g, "") || "0";
-  const decimals =
-    typeof maxDecimals === "number" ? fraction.slice(0, maxDecimals) : fraction;
-  return decimals ? `${integer}.${decimals}` : integer;
-}
-
-export function parseLocaleNumber(value: string) {
-  const normalized = normalizeLocaleNumberString(value);
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 export function propertyDraftKey(
   organizationId?: string | null,
   userId?: string | null,
@@ -491,28 +446,19 @@ export function propertyDraftKey(
   return `${DRAFT_KEY_PREFIX}:${organizationId || "no-organization"}:${userId || "anonymous"}`;
 }
 
-export function readDraft(draftKey: string) {
-  const raw = localStorage.getItem(draftKey);
-  if (!raw) return null;
+const creationDraftStore = createPropertyCreationDraftStore(initialFormData);
+export const readDraftState = creationDraftStore.read;
 
-  const draft = JSON.parse(raw) as Partial<PropertyFormData>;
-  return withoutEphemeralPropertyMedia({
-    ...initialFormData,
-    ...draft,
-  } as PropertyFormData);
+export function readDraft(draftKey: string) {
+  return readDraftState(draftKey).draft;
 }
 
 export function saveDraft(draftKey: string, data: PropertyFormData) {
-  localStorage.setItem(
-    draftKey,
-    // File/blob references cannot survive a reload. Keeping them would make
-    // the form look complete while the bytes are unavailable for upload.
-    JSON.stringify(withoutEphemeralPropertyMedia(data)),
-  );
+  return creationDraftStore.save(draftKey, data);
 }
 
-export function clearDraft(draftKey: string) {
-  localStorage.removeItem(draftKey);
+export function clearDraft(draftKey: string, options: { isEditing?: boolean } = {}) {
+  return options.isEditing || creationDraftStore.clear(draftKey);
 }
 
 export function getPropertyFormRules(formData: PropertyFormData) {
@@ -541,7 +487,7 @@ export function getPropertyValidationIssues(
   const requireOwnerDetails = shouldRequirePropertyOwnerDetails(
     options.isEditing,
     options.canEditOwnerDetails,
-  );
+  ) && !formData.owner_id;
   const hasOwnerContact = [
     formData.owner_cellphone,
     formData.owner_phone_residential,
@@ -554,6 +500,9 @@ export function getPropertyValidationIssues(
   );
 
   return [
+    !["ativo", "reservado", "vendido", "alugado", "inativo", "rascunho", "arquivado"].includes(normalizePropertyStatus(formData.status))
+      ? { label: "Selecione um status reconhecido para o imóvel", tab: "structure", fieldId: "property-status" }
+      : null,
     !formData.cadastrado_por.trim()
       ? {
           label: "Responsável pela captação",
@@ -662,6 +611,7 @@ export function getPropertyPublicationValidationIssues(
     propertyType: formData.tipo_de_imovel,
     dealTypeSupported: isSupportedDealType(formData.tipo_de_negocio),
     status: normalize(formData.status),
+    commercializationAuthorized: formData.autorizado_comercializacao,
     cep: formData.cep,
     uf: formData.uf,
     cidade: formData.cidade,
@@ -682,6 +632,7 @@ export function getPropertyPublicationValidationIssues(
   if (result.success) return [];
 
   const issueByField: Record<string, ValidationIssue> = {
+    commercializationAuthorized: { label: "Autorização de comercialização", tab: "characteristics", fieldId: "property-commercialization-authorized" },
     title: { label: "Título comercial", tab: "structure", fieldId: "property-title" },
     propertyType: { label: "Tipo de imóvel", tab: "structure", fieldId: "property-type" },
     dealTypeSupported: { label: "Modalidade válida", tab: "structure", fieldId: "property-deal-type" },
@@ -718,8 +669,9 @@ export function buildPropertyMutationInput(
   const parseInteger = (value: string) => {
     const normalized = value.trim();
     if (!normalized) return null;
-    const parsed = Number(normalized);
-    return Number.isInteger(parsed) ? parsed : null;
+    // Preserve invalid values for the shared Zod schema to reject. Dropping a
+    // fractional/invalid integer to null would silently clear persisted data.
+    return Number(normalized.replace(",", "."));
   };
 
   const propertyData: PropertyMutationInput = {

@@ -170,6 +170,24 @@ func (repo Repository) ensureRoundRobinMemberMutable(ctx context.Context, q quer
 	if _, err := repo.getStateForUpdate(ctx, q, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return "", err
 	}
+	// Queue visibility does not authorize every participant in a shared queue.
+	// Re-read after locking the parent so team synchronization cannot change the
+	// participant context between authorization and the mutation.
+	var userID, teamID *string
+	if err := q.QueryRow(ctx, `
+		select user_id::text, team_id::text
+		from public.round_robin_members
+		where organization_id = $1::uuid and round_robin_id = $2::uuid and id = $3::uuid
+		for update
+	`, tenantContext.OrganizationID, roundRobinID, memberID).Scan(&userID, &teamID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrMemberNotFound
+		}
+		return "", err
+	}
+	if err := ensureResolvedMemberInScope(tenantContext, userID, teamID); err != nil {
+		return "", err
+	}
 	return roundRobinID, nil
 }
 

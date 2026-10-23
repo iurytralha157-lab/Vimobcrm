@@ -137,20 +137,23 @@ test("reação só é liberada depois que a mensagem possui alvo persistido e co
     message_id: "provider-message-id",
     client_message_id: "client-message-id",
     status: "sent",
+    can_react: true,
   };
 
   assert.equal(canReactToWhatsAppMessage(canonical), true);
   assert.equal(canReactToWhatsAppMessage({ ...canonical, status: "delivered" }), true);
   assert.equal(canReactToWhatsAppMessage({ ...canonical, status: "read" }), true);
   assert.equal(canReactToWhatsAppMessage({ ...canonical, status: "received" }), true);
-  assert.equal(canReactToWhatsAppMessage({ ...canonical, status: "queued" }), true);
+  assert.equal(canReactToWhatsAppMessage({ ...canonical, status: "played" }), true);
 
-  for (const status of ["pending", "confirming", "failed", "error"]) {
+  for (const status of ["pending", "queued", "sending", "unconfirmed", "confirming", "failed", "error", "", "deleted"]) {
     assert.equal(canReactToWhatsAppMessage({ ...canonical, status }), false, status);
   }
 
   assert.equal(canReactToWhatsAppMessage({ ...canonical, id: "" }), false);
   assert.equal(canReactToWhatsAppMessage({ ...canonical, message_id: "" }), false);
+  assert.equal(canReactToWhatsAppMessage({ ...canonical, can_react: false }), false);
+  assert.equal(canReactToWhatsAppMessage({ ...canonical, can_react: undefined }), false);
 
   const optimisticId = "client-only-id";
   assert.equal(canReactToWhatsAppMessage({
@@ -164,7 +167,7 @@ test("reação só é liberada depois que a mensagem possui alvo persistido e co
     id: "legacy-message-id",
     message_id: "legacy-message-id",
     status: "sent",
-  }), true);
+  }), false);
 });
 
 test("picker de reações usa portal com colisão e fecha sem vazar Escape", () => {

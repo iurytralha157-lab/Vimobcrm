@@ -35,6 +35,7 @@ function createHarness() {
   vm.runInNewContext(serviceWorkerSource, {
     self,
     URL,
+    URLSearchParams,
     Promise,
     console,
     encodeURIComponent,
@@ -64,6 +65,17 @@ test('notification click rejects external, public and protocol-relative targets'
     await clickNotification(harness, { url: unsafeTarget });
     assert.deepEqual(harness.opened, ['https://app.vimobcrm.com.br/notifications']);
   }
+});
+
+test('old inbound WhatsApp push opens the exact conversation or its authorized lead', async () => {
+  const lead = '11111111-1111-4111-8111-111111111111';
+  const conversation = '22222222-2222-4222-8222-222222222222';
+  const harness = createHarness();
+  await clickNotification(harness, { target_url: `/crm?leadId=${lead}`, type: 'whatsapp', metadata: { whatsapp_conversation_id: conversation } });
+  assert.deepEqual(harness.opened, [`https://app.vimobcrm.com.br/crm/conversas?conversation=${conversation}&lead=${lead}`]);
+  const legacy = createHarness();
+  await clickNotification(legacy, { url: `/crm?leadId=${lead}` });
+  assert.deepEqual(legacy.opened, [`https://app.vimobcrm.com.br/crm/conversas?lead=${lead}`]);
 });
 
 test('notification click preserves a protected same-origin path and legacy lead route', async () => {

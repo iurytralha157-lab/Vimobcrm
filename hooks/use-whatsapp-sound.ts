@@ -1,31 +1,18 @@
 import { useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-
-type WhatsAppRealtimeMessage = {
-  from_me?: boolean | null;
-  created_at?: string | null;
-};
+import { createWhatsAppSoundGate } from "@/lib/whatsapp-sound-message";
 
 type WebkitAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
 };
 
 export function useWhatsAppSound() {
-  const { activeOrganization, user, organization } = useAuth();
-  const lastPlayedRef = useRef<number>(0);
-  const notifyAfterRef = useRef<number>(0);
+  const { activeOrganization, user } = useAuth();
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (!user?.id || !activeOrganization.organizationId) return;
-    notifyAfterRef.current = Date.now();
-
-    const isFreshRealtimeInsert = (createdAt?: string | null) => {
-      if (!createdAt) return true;
-      const createdTime = Date.parse(createdAt);
-      if (Number.isNaN(createdTime)) return true;
-      return createdTime >= notifyAfterRef.current - 5000;
-    };
+    const soundGate = createWhatsAppSoundGate(activeOrganization.organizationId, user.id, Date.now());
 
     const playPopSound = () => {
       try {
@@ -61,21 +48,18 @@ export function useWhatsAppSound() {
     };
 
     const onMessageInsert = (event: Event) => {
-      const message = (event as CustomEvent<WhatsAppRealtimeMessage>).detail;
-      if (!message || message.from_me) return;
-      if (!isFreshRealtimeInsert(message.created_at)) return;
-
       const now = Date.now();
-      if (now - lastPlayedRef.current < 1500) return;
-      lastPlayedRef.current = now;
+      if (!soundGate((event as CustomEvent<unknown>).detail, now)) return;
 
       playPopSound();
     };
 
     window.addEventListener("vimob:whatsapp-message-insert", onMessageInsert);
+    window.addEventListener("vimob:whatsapp-message-changed", onMessageInsert);
 
     return () => {
       window.removeEventListener("vimob:whatsapp-message-insert", onMessageInsert);
+      window.removeEventListener("vimob:whatsapp-message-changed", onMessageInsert);
     };
   }, [user?.id, activeOrganization.organizationId]);
 }

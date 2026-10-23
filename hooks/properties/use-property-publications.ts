@@ -1,8 +1,9 @@
 'use client'
 
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
+
 import { useEffect, useRef } from 'react'
 import {
-  useMutation,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -114,7 +115,7 @@ async function invalidatePropertyPublicationConsumers(
 
 function usePublicationCache(propertyId: string | null) {
   const queryClient = useQueryClient()
-  const { organizationId, accessSignature } = usePropertyPublicationQueryScope()
+  const { userId, organizationId, accessSignature } = usePropertyPublicationQueryScope()
   const publicationKey = propertyPublicationKeys.detail(
     organizationId,
     accessSignature,
@@ -140,7 +141,7 @@ function usePublicationCache(propertyId: string | null) {
     await invalidateConsumers()
   }
 
-  return { organizationId, accessSignature, invalidate, applyResponse }
+  return { userId, organizationId, accessSignature, invalidate, applyResponse }
 }
 
 function publicationChannelLabel(channel: PropertyPublicationCommandChannel) {
@@ -249,14 +250,15 @@ export function usePublishPropertyOnChannel(
   propertyId: string | null,
   channel: PropertyPublicationCommandChannel,
 ) {
-  const { organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
+  const { userId, organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
   const idempotency = usePublicationCommandIdempotency(
-    `${channel}:publish:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
+    `${channel}:publish:${userId ?? 'unknown'}:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
   )
 
-  return useMutation({
+  return usePropertyMutation({
+    resourceId: `${channel}:${propertyId ?? ''}`,
     mutationKey: ['property-publications', channel, 'publish', organizationId, propertyId],
-    mutationFn: async (input: PublishPropertyInput) => {
+    mutationFn: async (input: PublishPropertyInput, scope) => {
       if (!organizationId || !propertyId) {
         throw new Error('Organização ou imóvel não identificado')
       }
@@ -266,16 +268,17 @@ export function usePublishPropertyOnChannel(
         channel,
         input,
         idempotency.keyFor(input),
+        scope.requestIntent,
       )
     },
-    onSuccess: async (response) => {
+    onSuccess: async (response, _input, scope) => {
       idempotency.clear()
       await applyResponse(response)
-      toast.success(channel === 'grupo_olx'
+      if (scope.isCurrent()) toast.success(channel === 'grupo_olx'
         ? 'Atualização do XML do Grupo OLX enviada para processamento'
         : 'Publicação enviada para processamento')
     },
-    onError: (error) => handleMutationError(error, invalidate, channel),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) handleMutationError(error, invalidate, channel); },
   })
 }
 
@@ -291,14 +294,15 @@ export function useUnpublishPropertyFromChannel(
   propertyId: string | null,
   channel: PropertyPublicationCommandChannel,
 ) {
-  const { organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
+  const { userId, organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
   const idempotency = usePublicationCommandIdempotency(
-    `${channel}:unpublish:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
+    `${channel}:unpublish:${userId ?? 'unknown'}:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
   )
 
-  return useMutation({
+  return usePropertyMutation({
+    resourceId: `${channel}:${propertyId ?? ''}`,
     mutationKey: ['property-publications', channel, 'unpublish', organizationId, propertyId],
-    mutationFn: async (input: MutatePropertyPublicationInput) => {
+    mutationFn: async (input: MutatePropertyPublicationInput, scope) => {
       if (!organizationId || !propertyId) {
         throw new Error('Organização ou imóvel não identificado')
       }
@@ -308,16 +312,17 @@ export function useUnpublishPropertyFromChannel(
         channel,
         input,
         idempotency.keyFor(input),
+        scope.requestIntent,
       )
     },
-    onSuccess: async (response) => {
+    onSuccess: async (response, _input, scope) => {
       idempotency.clear()
       await applyResponse(response)
-      toast.success(channel === 'grupo_olx'
+      if (scope.isCurrent()) toast.success(channel === 'grupo_olx'
         ? 'Retirada do XML do Grupo OLX enviada para processamento'
         : 'Remoção do site enviada para processamento')
     },
-    onError: (error) => handleMutationError(error, invalidate, channel),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) handleMutationError(error, invalidate, channel); },
   })
 }
 
@@ -333,14 +338,15 @@ export function useRetryPropertyPublication(
   propertyId: string | null,
   channel: PropertyPublicationCommandChannel = 'site',
 ) {
-  const { organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
+  const { userId, organizationId, applyResponse, invalidate } = usePublicationCache(propertyId)
   const idempotency = usePublicationCommandIdempotency(
-    `${channel}:retry:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
+    `${channel}:retry:${userId ?? 'unknown'}:${organizationId ?? 'unknown'}:${propertyId ?? 'unknown'}`,
   )
 
-  return useMutation({
+  return usePropertyMutation({
+    resourceId: `${channel}:${propertyId ?? ''}`,
     mutationKey: ['property-publications', channel, 'retry', organizationId, propertyId],
-    mutationFn: async (input: MutatePropertyPublicationInput) => {
+    mutationFn: async (input: MutatePropertyPublicationInput, scope) => {
       if (!organizationId || !propertyId) {
         throw new Error('Organização ou imóvel não identificado')
       }
@@ -350,16 +356,17 @@ export function useRetryPropertyPublication(
         channel,
         input,
         idempotency.keyFor(input),
+        scope.requestIntent,
       )
     },
-    onSuccess: async (response) => {
+    onSuccess: async (response, _input, scope) => {
       idempotency.clear()
       await applyResponse(response)
-      toast.success(channel === 'grupo_olx'
+      if (scope.isCurrent()) toast.success(channel === 'grupo_olx'
         ? 'Nova tentativa do XML do Grupo OLX enviada para processamento'
         : 'Nova tentativa enviada para processamento')
     },
-    onError: (error) => handleMutationError(error, invalidate, channel),
+    onError: (error, _input, scope) => { if (scope.isCurrent()) handleMutationError(error, invalidate, channel); },
   })
 }
 

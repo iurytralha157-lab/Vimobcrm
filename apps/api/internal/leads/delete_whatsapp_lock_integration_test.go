@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -44,7 +45,7 @@ func TestDeleteLeadWhatsAppLockOrder(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
+		_, _ = postgres.Pool().Exec(cleanupCtx, `update public.users set organization_id=null where organization_id=$1::uuid;delete from public.organizations where id = $1::uuid`, organizationID)
 		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.users where id = $1::uuid`, userID)
 		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
 	})
@@ -178,8 +179,11 @@ func TestDeleteLeadWhatsAppLockOrder(t *testing.T) {
 		if err := linker.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if err := awaitLeadDelete(deleteDone); err != nil {
-			t.Fatalf("delete after concurrent link commit: %v", err)
+		if err := awaitLeadDelete(deleteDone); !errors.Is(err, ErrConversationBindingChanged) {
+			t.Fatalf("new route must force an atomic retry without waiting under exclusive lead lock: %v", err)
+		}
+		if err := repository.Delete(ctx, tenantContext, leadID); err != nil {
+			t.Fatalf("fresh attempt after concurrent link: %v", err)
 		}
 		assertLeadDeletedAndConversationDetached(t, ctx, postgres.Pool(), leadID, conversationID)
 	})

@@ -16,6 +16,8 @@ import {
   apiAdminUserListResponseSchema,
   apiAdminNotificationDispatchSettingsResponseSchema,
   apiAdminNotificationDeliveryOperationsResponseSchema,
+  apiWhatsAppNotificationResetPreviewResponseSchema,
+  apiWhatsAppNotificationResetResponseSchema,
   apiCountResponseSchema,
   apiDynamicRecordListResponseSchema,
   apiDynamicRecordResponseSchema,
@@ -30,8 +32,12 @@ import {
   safePathSegmentSchema,
   uuidSchema,
   validateDomainResponse,
+  whatsAppNotificationResetInputSchema,
+  whatsAppNotificationResetScopeSchema,
+  type WhatsAppNotificationResetScope,
 } from '@/lib/validation';
-import { vimobAPIRequest, vimobPublicAPIRequest } from './vimob-client';
+import { vimobAPIRequest, vimobPublicAPIRequest, type VimobAPIRequestIntent } from './vimob-client';
+import { adminTableFilterSchema, adminTablePageSchema } from '@/lib/validation/admin-table-filters';
 
 type Envelope<T> = {
   data: T;
@@ -181,9 +187,12 @@ export const adminAPI = {
 
   async createInvitation<T = AdminJSON>(body: AdminJSON, organizationId?: string | null) {
     const validatedBody = parseDomainInput(adminInvitationInputSchema, body, 'admin.invitations.create');
+    if (validatedBody.organizationId && organizationId && validatedBody.organizationId !== organizationId) {
+      throw new Error('A organização do convite difere da organização selecionada.');
+    }
     const response = await vimobAPIRequest<Envelope<T>>('/v1/invitations', {
       method: 'POST',
-      organizationId,
+      organizationId: validatedBody.organizationId ?? organizationId,
       body: validatedBody,
     });
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.create');
@@ -304,6 +313,13 @@ export const adminAPI = {
     return response.data;
   },
 
+  async listTableRowsPage(table: string, filters: { search?: string; limit?: number; offset?: number } = {}) {
+    const validatedTable = parseDomainInput(safePathSegmentSchema, table, 'admin.tables.page.table');
+    const query = parseDomainInput(adminTableFilterSchema, filters, 'admin.tables.page.filters');
+    const response = await vimobAPIRequest<unknown>(`/v1/admin/tables/${validatedTable}`, { query });
+    return parseDomainInput(adminTablePageSchema, response, 'admin.tables.page.response');
+  },
+
   async countTableRows(table: string) {
     const validatedTable = parseDomainInput(safePathSegmentSchema, table, 'admin.tables.count.table');
     const response = await vimobAPIRequest<{ count: number }>(`/v1/admin/tables/${validatedTable}/count`);
@@ -396,6 +412,35 @@ export const adminAPI = {
     });
     validateDomainResponse(okResponseSchema, response, 'admin.notification-deliveries.replay');
     return response;
+  },
+
+  async previewWhatsAppNotificationReset(
+    input: WhatsAppNotificationResetScope,
+    organizationId: string,
+    intent: VimobAPIRequestIntent = {},
+  ) {
+    const query = parseDomainInput(whatsAppNotificationResetScopeSchema, input, 'admin.notification-deliveries.whatsapp-reset-preview');
+    const response = await vimobAPIRequest<unknown>('/v1/admin/notification-deliveries/whatsapp-reset-preview', {
+      ...intent,
+      organizationId,
+      query,
+    });
+    return validateDomainResponse(apiWhatsAppNotificationResetPreviewResponseSchema, response, 'admin.notification-deliveries.whatsapp-reset-preview').data;
+  },
+
+  async resetWhatsAppNotifications(
+    input: unknown,
+    organizationId: string,
+    intent: VimobAPIRequestIntent = {},
+  ) {
+    const body = parseDomainInput(whatsAppNotificationResetInputSchema, input, 'admin.notification-deliveries.whatsapp-reset');
+    const response = await vimobAPIRequest<unknown>('/v1/admin/notification-deliveries/whatsapp-reset', {
+      ...intent,
+      method: 'POST',
+      organizationId,
+      body,
+    });
+    return validateDomainResponse(apiWhatsAppNotificationResetResponseSchema, response, 'admin.notification-deliveries.whatsapp-reset').data;
   },
 
   async orphanMemberStats<T = AdminJSON>() {

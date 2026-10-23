@@ -14,15 +14,16 @@ const formatters: LeadHistoryFormatters = {
 test('preserva o contrato de query e cache do hook publico', () => {
   const source = readFileSync('hooks/use-lead-history.ts', 'utf8');
 
-  assert.match(source, /queryKey:\s*\['lead-history-v2', leadId\]/);
-  assert.match(source, /getLeadHistoryRaw<LeadHistoryRaw>\(leadId, organizationId\)/);
+  assert.match(source, /queryKey:\s*paginated \? keys\.projection : \['lead-history-v2', leadId\]/);
+  assert.match(source, /getLeadHistoryRaw<LeadHistoryRaw>\(leadId, organizationId, \{ signal \}\)/);
   assert.match(source, /enabled:\s*!!leadId && !!organizationId/);
   assert.match(source, /staleTime:\s*60_000/);
   assert.match(source, /gcTime:\s*10 \* 60_000/);
-  assert.match(source, /refetchOnWindowFocus:\s*false/);
+  assert.match(source, /refetchOnMount:\s*'always'/);
+  assert.match(source, /refetchOnWindowFocus:\s*true/);
 });
 
-test('deduplica pelo fingerprint, mantém o registro mais completo e respeita a timeline autoritativa', () => {
+test('preserva notas distintas e deduplica somente a transição correspondente na timeline', () => {
   const raw: LeadHistoryRaw = {
     timelineEvents: [{
       id: 'timeline-stage',
@@ -60,12 +61,13 @@ test('deduplica pelo fingerprint, mantém o registro mais completo e respeita a 
   const history = buildLeadHistory(raw, 'lead-1', formatters);
 
   assert.deepEqual(history.map(({ id }) => id), [
+    'activity-note-less-detail',
     'activity-note-more-detail',
     'timeline-timeline-stage',
   ]);
-  assert.deepEqual(history[0]?.actor, { id: 'user-1', name: 'Ana', avatar_url: undefined });
-  assert.equal(history[1]?.label, 'Movido: Novo → Contato');
-  assert.equal(history[1]?.content, 'Novo → Contato');
+  assert.deepEqual(history[1]?.actor, { id: 'user-1', name: 'Ana', avatar_url: undefined });
+  assert.equal(history[2]?.label, 'Movido: Novo → Contato');
+  assert.equal(history[2]?.content, 'Novo → Contato');
 });
 
 test('prioriza a mudança de etapa da API e não atribui ao destinatário o registro isolado do gatilho', () => {

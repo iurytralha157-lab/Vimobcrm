@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,7 +67,8 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
 			u.created_at::text,
-			u.updated_at::text
+			u.updated_at::text,
+			u.organization_id
 		from public.users u
 		join public.organization_members om
 		  on om.user_id = u.id
@@ -89,6 +91,8 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 		      where team_member.organization_id = $1::uuid
 		        and team_member.user_id = u.id
 		        and team_member.team_id::text = any($5::text[])
+		        and team_member.is_active = true
+		        and team_member.membership_generation = om.membership_generation
 		    )
 		    or exists (
 		      select 1
@@ -114,7 +118,7 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 
 	users := []User{}
 	for rows.Next() {
-		user, err := scanUser(rows)
+		user, err := scanOrganizationUser(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -370,12 +374,22 @@ func (repo Repository) GetDeleteUserImpact(ctx context.Context, tenantContext te
 	if !ok {
 		return DeleteUserImpact{}, ErrInvalidInput
 	}
+	if userID == tenantContext.UserID {
+		return DeleteUserImpact{}, ErrInvalidInput
+	}
 
 	existing, err := repo.getOrganizationUser(ctx, tenantContext.OrganizationID, userID)
 	if err != nil {
 		return DeleteUserImpact{}, err
 	}
 	if existing.Role == "super_admin" {
+		return DeleteUserImpact{}, tenant.ErrOrganizationAccessDenied
+	}
+	currentMemberRole, err := repo.organizationMemberRole(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return DeleteUserImpact{}, err
+	}
+	if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
 		return DeleteUserImpact{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -410,14 +424,11 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginOrganizationUserDeletion(ctx, tenantContext.OrganizationID, userID)
 	if err != nil {
 		return DeleteUserResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
-		return DeleteUserResult{}, err
-	}
 	lockedMemberRole, err := organizationMemberRoleForUpdate(
 		ctx,
 		tx,
@@ -515,6 +526,70 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		}
 	}
 
+	// Keep the historical queue rows while a managed WhatsApp snapshot may be
+	// pending. The membership generation in the picker makes those rows
+	// ineligible after a later invitation restores this membership.
+	if _, err := tx.Exec(ctx, `
+		update public.user_organization_roles
+		set is_active = false,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		  and is_active = true
+	`, tenantContext.OrganizationID, userID); err != nil {
+		return DeleteUserResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from public.user_permission_overrides
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+	`, tenantContext.OrganizationID, userID); err != nil {
+		return DeleteUserResult{}, err
+	}
+	deletedMembers, err := tx.Query(ctx, `
+		delete from public.team_members
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		returning team_id::text
+	`, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+	touchedTeams := make(map[string]struct{})
+	for deletedMembers.Next() {
+		var teamID string
+		if err := deletedMembers.Scan(&teamID); err != nil {
+			deletedMembers.Close()
+			return DeleteUserResult{}, err
+		}
+		touchedTeams[teamID] = struct{}{}
+	}
+	err = deletedMembers.Err()
+	deletedMembers.Close()
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+	teamIDs := make([]string, 0, len(touchedTeams))
+	for teamID := range touchedTeams {
+		teamIDs = append(teamIDs, teamID)
+	}
+	sort.Strings(teamIDs)
+	for _, teamID := range teamIDs {
+		tag, err := tx.Exec(ctx, `
+			update public.teams
+			set revision = revision + 1,
+			    updated_at = clock_timestamp()
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		`, tenantContext.OrganizationID, teamID)
+		if err != nil {
+			return DeleteUserResult{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			return DeleteUserResult{}, fmt.Errorf("team revision parent missing during user removal")
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `
 		update public.organization_members
 		set is_active = false,
@@ -535,6 +610,103 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 	}
 
 	return DeleteUserResult{Success: true, Impact: impact}, nil
+}
+
+// The Teams gateway acquires a parent team lock before touching a user or its
+// memberships. Collect and lock those parents first, in UUID order, so user
+// removal follows the same order. A concurrent team save can add an association
+// while this transaction waits; retry with a fresh transaction in that case.
+func (repo Repository) beginOrganizationUserDeletion(ctx context.Context, organizationID, userID string) (pgx.Tx, error) {
+	const maxTeamLockAttempts = 5
+	sawMissingParent := false
+	for attempt := 0; attempt < maxTeamLockAttempts; attempt++ {
+		sawMissingParent = false
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		tx, err := repo.db.Pool().Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		teamIDs, err := organizationUserTeamIDs(ctx, tx, organizationID, userID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		lockedTeams := make(map[string]struct{}, len(teamIDs))
+		for _, teamID := range teamIDs {
+			var lockedID string
+			lockErr := tx.QueryRow(ctx, `
+				select id::text
+				from public.teams
+				where organization_id = $1::uuid
+				  and id = $2::uuid
+				for no key update
+			`, organizationID, teamID).Scan(&lockedID)
+			if errors.Is(lockErr, pgx.ErrNoRows) {
+				sawMissingParent = true
+				continue // A concurrent deletion removed the parent and its members.
+			}
+			if lockErr != nil {
+				err = lockErr
+				break
+			}
+			lockedTeams[lockedID] = struct{}{}
+		}
+		if err == nil {
+			err = lockCanonicalUserAccess(ctx, tx, userID)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		currentTeamIDs, err := organizationUserTeamIDs(ctx, tx, organizationID, userID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		needsRetry := false
+		for _, teamID := range currentTeamIDs {
+			if _, locked := lockedTeams[teamID]; !locked {
+				needsRetry = true
+				break
+			}
+		}
+		if needsRetry {
+			if err := tx.Rollback(ctx); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return tx, nil
+	}
+	if sawMissingParent {
+		return nil, fmt.Errorf("%w: team_member references a missing team after %d attempts", ErrUserTeamMembershipChanged, maxTeamLockAttempts)
+	}
+	return nil, fmt.Errorf("%w: team memberships changed after %d attempts", ErrUserTeamMembershipChanged, maxTeamLockAttempts)
+}
+
+func organizationUserTeamIDs(ctx context.Context, tx pgx.Tx, organizationID, userID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		select distinct tm.team_id::text
+		from public.team_members tm
+		where tm.organization_id = $1::uuid
+		  and tm.user_id = $2::uuid
+		order by 1
+	`, organizationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	teamIDs := []string{}
+	for rows.Next() {
+		var teamID string
+		if err := rows.Scan(&teamID); err != nil {
+			return nil, err
+		}
+		teamIDs = append(teamIDs, teamID)
+	}
+	return teamIDs, rows.Err()
 }
 
 func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRower, organizationID string, userID string) (DeleteUserImpact, error) {
@@ -565,8 +737,42 @@ func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRowe
 				  and owner_user_id = $2::uuid
 				  and coalesce(is_active, true) = true
 				  and coalesce(status, '') <> 'deleted'
-			) as whatsapp_sessions
-	`, organizationID, userID).Scan(&impact.Leads, &impact.Properties, &impact.WhatsAppSessions)
+			) as whatsapp_sessions,
+			(
+				select count(*)
+				from public.team_members
+				where organization_id = $1::uuid
+				  and user_id = $2::uuid
+			) as teams,
+			(
+				select count(*)
+				from public.user_organization_roles
+				where organization_id = $1::uuid
+				  and user_id = $2::uuid
+				  and is_active = true
+			) as custom_roles,
+			(
+				select count(*)
+				from public.user_permission_overrides
+				where organization_id = $1::uuid
+				  and user_id = $2::uuid
+			) as permission_overrides,
+			(
+				select count(*)
+				from public.round_robin_members
+				where organization_id = $1::uuid
+				  and user_id = $2::uuid
+				  and coalesce(is_active, true) = true
+			) as round_robin_entries
+	`, organizationID, userID).Scan(
+		&impact.Leads,
+		&impact.Properties,
+		&impact.WhatsAppSessions,
+		&impact.Teams,
+		&impact.CustomRoles,
+		&impact.PermissionOverrides,
+		&impact.RoundRobinEntries,
+	)
 	if err != nil {
 		return DeleteUserImpact{}, err
 	}
@@ -895,12 +1101,25 @@ type userScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanUser(row userScanner) (User, error) {
+// The catalogue preserves the active membership organization while sharing
+// eligibility uses the user's original profile organization. Other user
+// endpoints keep their existing ten-column projection and JSON contract.
+func scanOrganizationUser(row userScanner) (User, error) {
+	var homeOrganizationID pgtype.UUID
+	user, err := scanUser(row, &homeOrganizationID)
+	if err == nil && homeOrganizationID.Valid {
+		value := homeOrganizationID.String()
+		user.HomeOrganizationID = &value
+	}
+	return user, err
+}
+
+func scanUser(row userScanner, additional ...any) (User, error) {
 	var user User
 	var organizationID pgtype.UUID
 	var avatarURL, whatsapp pgtype.Text
 
-	err := row.Scan(
+	destinations := []any{
 		&user.ID,
 		&organizationID,
 		&user.Name,
@@ -911,7 +1130,8 @@ func scanUser(row userScanner) (User, error) {
 		&whatsapp,
 		&user.CreatedAt,
 		&user.UpdatedAt,
-	)
+	}
+	err := row.Scan(append(destinations, additional...)...)
 	if err != nil {
 		return User{}, err
 	}
@@ -1133,7 +1353,6 @@ func syncCanonicalUserAccess(
 		update public.users target_user
 		set
 			organization_id = selected_state.organization_id,
-			is_active = selected_state.organization_id is not null,
 			role = case
 				when target_user.role = 'super_admin' then target_user.role
 				when selected_state.role in ('owner', 'admin') then 'admin'

@@ -94,7 +94,7 @@ func TestConversationListFilterParsesLeadSource(t *testing.T) {
 	if err != nil || filter.LeadSource != "Meta Ads" {
 		t.Fatalf("lead source filter = %q, error = %v", filter.LeadSource, err)
 	}
-	if _, err := ParseConversationListFilter(url.Values{"leadSource": {strings.Repeat("x", 121)}}); err == nil {
+	if _, err := ParseConversationListFilter(url.Values{"leadSource": {strings.Repeat("x", 4097)}}); err == nil {
 		t.Fatal("leadSource exceeding contract limit must be rejected")
 	}
 }

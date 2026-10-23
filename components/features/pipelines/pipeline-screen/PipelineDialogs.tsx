@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react';
+import { lazy, Suspense, type FormEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
 
@@ -25,11 +25,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 import type { LeadDetailLead } from '@/components/features/leads/lead-detail';
-import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
+import type { LeadAssigneeCatalogState } from '@/components/features/leads';
+import type { Lead } from '@/hooks/use-leads';
+import type { VerifiedLeadRead } from '@/lib/lead-read-snapshot';
+import type { PipelineLead, Stage, StageWithLeads } from '@/hooks/use-stages';
 import type { Tag } from '@/hooks/use-tags';
 import type { User } from '@/hooks/use-users';
 
 import { LeadDialogErrorBoundary } from './LeadDialogErrorBoundary';
+import { PipelineLeadLoadingDialog } from './PipelineLeadLoadingDialog';
+import { toStageEditorValues } from './stage-editor-contract';
+import type { StageSettingsTab } from '@/components/features/pipelines/StageSettingsDialog';
 
 const StageSettingsDialog = dynamic(
   () =>
@@ -52,13 +58,14 @@ const StagesEditorDialog = dynamic(
     ),
   { loading: () => null },
 );
-const LeadDetailDialog = dynamic(
-  () =>
-    import('@/components/features/leads/LeadDetailDialog').then(
-      (module) => module.LeadDetailDialog,
-    ),
-  { loading: () => null },
-);
+const loadLeadDetailDialog = () => import('@/components/features/leads/LeadDetailDialog');
+const LeadDetailDialog = lazy(() => loadLeadDetailDialog().then((module) => ({ default: module.LeadDetailDialog })));
+
+// Start the code download alongside the access read; no lead data is rendered
+// until that read succeeds. The boundary still handles a failed chunk load.
+export function preloadPipelineLeadDialog() {
+  void loadLeadDetailDialog().catch(() => undefined);
+}
 const CreateLeadDialog = dynamic(
   () =>
     import('@/components/features/leads/CreateLeadDialog').then(
@@ -77,17 +84,26 @@ export type PipelineStageSettingsValue = {
   is_won: boolean;
   is_lost: boolean;
   is_active: boolean;
+  updated_at?: string | null;
 };
 
 type PipelineDialogsProps = {
   selectedLead: PipelineLead | null;
+  selectedLeadLoading: boolean;
+  verifiedLeadRead?: VerifiedLeadRead<Lead>;
+  selectedLeadAccessPending: boolean;
+  selectedLeadAccessBlocked?: boolean;
+  onRetrySelectedLeadAccess?: () => void;
   editingLead: PipelineLead | null;
   lostReasonLead: PipelineLead | null;
   lostReasonPending: boolean;
   stages: StageWithLeads[];
   allTags: Tag[];
   users: User[];
+  usersState?: LeadAssigneeCatalogState;
   settingsStage: StageWithLeads | null;
+  settingsStageTab?: StageSettingsTab;
+  settingsStageReturnFocus?: HTMLButtonElement | null;
   settingsStageForDialog: PipelineStageSettingsValue | null;
   newLeadDialogOpen: boolean;
   newLeadStageId: string | null;
@@ -103,9 +119,12 @@ type PipelineDialogsProps = {
   createStagePending: boolean;
   attentionSettingsOpen: boolean;
   stagesEditorOpen: boolean;
+  archivedStages?: Stage[];
   currentPipelineName: string;
   pipelineToDelete: { id: string; name: string } | null;
   deletePipelinePending: boolean;
+  deletePipelineBlocked?: boolean;
+  deletePipelineError?: string | null;
   onCloseSelectedLead: () => void;
   onEditSelectedLead: (lead: LeadDetailLead) => void;
   onCloseEditingLead: () => void;
@@ -130,13 +149,21 @@ type PipelineDialogsProps = {
 
 export function PipelineDialogs({
   selectedLead,
+  selectedLeadLoading,
+  verifiedLeadRead,
+  selectedLeadAccessPending,
+  selectedLeadAccessBlocked = false,
+  onRetrySelectedLeadAccess,
   editingLead,
   lostReasonLead,
   lostReasonPending,
   stages,
   allTags,
   users,
+  usersState,
   settingsStage,
+  settingsStageTab = 'general',
+  settingsStageReturnFocus,
   settingsStageForDialog,
   newLeadDialogOpen,
   newLeadStageId,
@@ -152,9 +179,12 @@ export function PipelineDialogs({
   createStagePending,
   attentionSettingsOpen,
   stagesEditorOpen,
+  archivedStages = [],
   currentPipelineName,
   pipelineToDelete,
   deletePipelinePending,
+  deletePipelineBlocked = false,
+  deletePipelineError,
   onCloseSelectedLead,
   onEditSelectedLead,
   onCloseEditingLead,
@@ -178,26 +208,38 @@ export function PipelineDialogs({
 }: PipelineDialogsProps) {
   return (
     <>
+      {selectedLeadLoading && <PipelineLeadLoadingDialog onClose={onCloseSelectedLead} accessError={selectedLeadAccessBlocked} retrying={selectedLeadAccessPending} onRetry={onRetrySelectedLeadAccess} />}
       {selectedLead && (
         <LeadDialogErrorBoundary
+          key={`${verifiedLeadRead?.organizationId}:${selectedLead.id}:${verifiedLeadRead?.selectionVersion}`}
           leadId={selectedLead.id}
           onClose={onCloseSelectedLead}
         >
-          <LeadDetailDialog
-            key={selectedLead.id}
-            lead={selectedLead}
-            stages={stages}
-            onClose={onCloseSelectedLead}
-            onEdit={onEditSelectedLead}
-            allTags={allTags}
-            allUsers={users}
-          />
+          <Suspense fallback={<PipelineLeadLoadingDialog onClose={onCloseSelectedLead} />}>
+            <LeadDetailDialog
+              key={selectedLead.id}
+              lead={selectedLead}
+              stages={stages}
+              onClose={onCloseSelectedLead}
+              onEdit={onEditSelectedLead}
+              allTags={allTags}
+              allUsers={users}
+              allUsersState={usersState}
+              variant="pipeline"
+              verifiedRead={verifiedLeadRead}
+              readAccessPending={selectedLeadAccessPending}
+              readAccessBlocked={selectedLeadAccessBlocked}
+            />
+          </Suspense>
         </LeadDialogErrorBoundary>
       )}
 
       {settingsStageForDialog && (
         <StageSettingsDialog
+          key={`${settingsStageForDialog.id}:${settingsStageTab}`}
           open={Boolean(settingsStage)}
+          initialTab={settingsStageTab}
+          returnFocusElement={settingsStageReturnFocus}
           onOpenChange={(open) => {
             if (!open) onSettingsStageClose();
           }}
@@ -222,6 +264,8 @@ export function PipelineDialogs({
             if (!nextOpen) onCloseEditingLead();
           }}
           lead={editingLead}
+          accessBlocked={selectedLeadAccessBlocked}
+          accessPending={selectedLeadAccessPending}
           onSaved={onEditingLeadSaved}
         />
       )}
@@ -401,14 +445,8 @@ export function PipelineDialogs({
           onOpenChange={onStagesEditorOpenChange}
           pipelineId={selectedPipelineId}
           pipelineName={currentPipelineName}
-          stages={stages.map((stage) => ({
-            id: stage.id,
-            name: stage.name,
-            color: stage.color || PIPELINE_STAGE_COLOR_FALLBACK,
-            position: stage.position,
-            lead_count: stage.total_lead_count ?? stage.leads.length ?? 0,
-            stage_key: stage.stage_key || undefined,
-          }))}
+          stages={toStageEditorValues(stages)}
+          archivedStages={toStageEditorValues(archivedStages)}
         />
       )}
 
@@ -425,6 +463,7 @@ export function PipelineDialogs({
               A pipeline &quot;{pipelineToDelete?.name}&quot; será removida. Se ela tiver
               leads, o sistema vai bloquear a exclusão para proteger os dados.
             </AlertDialogDescription>
+            {deletePipelineError && <p role="alert" className="text-xs text-destructive">{deletePipelineError}</p>}
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:space-x-0">
             <AlertDialogCancel
@@ -439,7 +478,7 @@ export function PipelineDialogs({
                 event.preventDefault();
                 onDeletePipeline();
               }}
-              disabled={deletePipelinePending}
+              disabled={deletePipelinePending || deletePipelineBlocked}
             >
               {deletePipelinePending && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

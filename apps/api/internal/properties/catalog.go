@@ -57,7 +57,7 @@ func (repo Repository) ListCatalog(ctx context.Context, tenantContext tenant.Con
 
 	iconSelect := "null::text as icon"
 	if kind.supportsIcon() {
-		hasIcon, err := repo.tableHasColumn(ctx, table, "icon")
+		hasIcon, err := tableHasColumn(ctx, repo.db.Pool(), table, "icon")
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +201,7 @@ func (repo Repository) createCatalogItemTx(ctx context.Context, tx pgx.Tx, tenan
 
 	hasIcon := false
 	if kind.supportsIcon() {
-		hasIcon, err = repo.tableHasColumn(ctx, table, "icon")
+		hasIcon, err = tableHasColumn(ctx, tx, table, "icon")
 		if err != nil {
 			return CatalogItem{}, err
 		}
@@ -221,7 +221,7 @@ func (repo Repository) getCatalogItemTx(ctx context.Context, tx pgx.Tx, organiza
 
 	iconSelect := "null::text as icon"
 	if kind.supportsIcon() {
-		hasIcon, err := repo.tableHasColumn(ctx, table, "icon")
+		hasIcon, err := tableHasColumn(ctx, tx, table, "icon")
 		if err != nil {
 			return CatalogItem{}, err
 		}
@@ -260,9 +260,15 @@ func (repo Repository) insertCatalogItemWithIcon(ctx context.Context, tx pgx.Tx,
 	`, organizationID, input.Name, input.Icon))
 }
 
-func (repo Repository) tableHasColumn(ctx context.Context, table string, column string) (bool, error) {
+type propertyColumnQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// Mutation callers pass their transaction so schema inspection cannot acquire
+// a second pool connection while retaining the first one.
+func tableHasColumn(ctx context.Context, queryer propertyColumnQueryer, table string, column string) (bool, error) {
 	var exists bool
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select exists (
 			select 1
 			from information_schema.columns

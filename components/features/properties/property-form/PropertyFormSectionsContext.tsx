@@ -52,6 +52,7 @@ export type PropertyFormSectionsContextValue = {
   property?: Property | null;
   propertyId: string | null;
   isEditing: boolean;
+  isSaving: boolean;
   router: ReturnType<typeof useRouter>;
   activeOrganizationId?: string;
 
@@ -132,6 +133,9 @@ export type PropertyFormSectionsContextValue = {
   createFeature: ReturnType<typeof useCreatePropertyFeature>;
   createProximity: ReturnType<typeof useCreatePropertyProximity>;
   handleImagesChange: (images: string[], mainImage: string) => void;
+  onPreparingPhotosChange: (preparing: boolean) => void;
+  canContinuePhotos: () => boolean;
+  isPreparingPhotos: boolean;
 };
 
 const PropertyFormSectionsContext =

@@ -1,5 +1,5 @@
 import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
-import { normalizeSearchText, searchTextIncludes } from '@/lib/search-text';
+import { normalizeSearchText, searchPhoneIncludes, searchTextIncludes } from '@/lib/search-text';
 
 type FilterPipelineStagesInput = {
   stages: StageWithLeads[];
@@ -20,7 +20,7 @@ export function filterPipelineStages({
     const matchesCurrentSearch = (lead: PipelineLead) => {
       if (!normalizedSearch) return true;
       const nameMatch = searchTextIncludes(lead.name, normalizedSearch);
-      const phoneMatch = (lead.phone || '').includes(normalizedSearch);
+      const phoneMatch = searchPhoneIncludes(lead.phone, normalizedSearch);
       const emailMatch = searchTextIncludes(lead.email, normalizedSearch);
       return nameMatch || phoneMatch || emailMatch;
     };

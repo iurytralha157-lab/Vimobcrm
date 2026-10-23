@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from '@/hooks/dashboard/use-dashboard-query';
 
 import {
   getDashboardCampaigns,
@@ -9,7 +9,7 @@ import {
 } from "@/lib/api/dashboard";
 import { useDashboardQueryScope } from "@/hooks/use-dashboard-stats";
 
-const DASHBOARD_CAMPAIGNS_STALE_TIME_MS = 1000 * 60 * 10;
+const DASHBOARD_CAMPAIGNS_STALE_TIME_MS = 1000 * 60;
 
 export function useDashboardCampaigns(
   filters: DashboardAPIFilters,
@@ -19,7 +19,7 @@ export function useDashboardCampaigns(
     useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
 
-  return useQuery({
+  return useDashboardQuery({
     queryKey: [
       "dashboard-campaigns",
       organizationId,
@@ -31,5 +31,7 @@ export function useDashboardCampaigns(
     queryFn: ({ signal }) =>
       getDashboardCampaigns({ organizationId, filters, signal }),
     staleTime: DASHBOARD_CAMPAIGNS_STALE_TIME_MS,
-  });
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+  }, { accessSignature, isReady });
 }

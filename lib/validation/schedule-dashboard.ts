@@ -448,6 +448,25 @@ const scheduleDashboardPerformerRankingSchema = z
     });
   });
 
+export const scheduleDashboardDataQualitySchema = z.object({
+  period_events: nonNegativeIntegerSchema,
+  missing_created_by: nonNegativeIntegerSchema,
+  missing_lead_source_snapshot: nonNegativeIntegerSchema,
+  completed_without_performer: nonNegativeIntegerSchema,
+  completed_without_result_time: nonNegativeIntegerSchema,
+  // No period can be assigned to these records; this count uses authorized
+  // scope and non-temporal filters rather than pretending they occurred now.
+  unknown_result_time_in_scope: nonNegativeIntegerSchema,
+}).superRefine((quality, context) => {
+  for (const field of ["missing_created_by", "missing_lead_source_snapshot", "completed_without_performer", "completed_without_result_time"] as const) {
+    if (quality[field] > quality.period_events) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Cobertura invalida para o periodo" });
+    }
+  }
+});
+
+export type ScheduleDashboardDataQuality = z.infer<typeof scheduleDashboardDataQualitySchema>;
+
 export const scheduleDashboardDataSchema = z
   .object({
     report_timezone: z.string().trim().min(1).max(120),
@@ -463,6 +482,7 @@ export const scheduleDashboardDataSchema = z
     upcoming_events: z.array(scheduleDashboardUpcomingEventSchema).max(10),
     overdue_by_owner: z.array(scheduleDashboardOverdueOwnerSchema),
     performer_ranking: z.array(scheduleDashboardPerformerRankingSchema),
+    data_quality: scheduleDashboardDataQualitySchema.optional(),
   })
   .passthrough()
   .superRefine((dashboard, context) => {

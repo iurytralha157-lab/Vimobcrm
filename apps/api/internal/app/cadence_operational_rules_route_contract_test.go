@@ -12,7 +12,7 @@ func TestStageOperationalRulesUpdateRouteAcceptsEitherManagementPermissionWithin
 		t.Fatalf("read routes.go: %v", err)
 	}
 
-	required := `mux.Handle("PUT /v1/stages/{id}/operational-rules", withOrganization(tenant.RequireAnyPermission(
+	required := `mux.Handle("PUT /v1/stages/{id}/operational-rules", withActiveOrganization(tenant.RequireAnyPermission(
 		[]string{permissions.PipelineManage, permissions.AutomationsManage},
 		http.HandlerFunc(cadencesHandler.UpsertOperationalRules),
 	)))`

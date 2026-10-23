@@ -11,6 +11,8 @@ import {
 import { usePipelines } from '@/hooks/use-stages';
 import { useRoundRobins } from '@/hooks/use-round-robins';
 import { useUpdatePipelineRoundRobin } from '@/hooks/use-pipeline-round-robin';
+import { pipelineRevisionSchema } from '@/lib/validation/pipelines';
+import { toast } from 'sonner';
 
 const getDefaultRoundRobinId = (pipeline: object) => {
   if (!('default_round_robin_id' in pipeline)) return null;
@@ -20,15 +22,25 @@ const getDefaultRoundRobinId = (pipeline: object) => {
 };
 
 export function PipelineRoundRobinManager() {
-  const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
+  const { data: pipelines = [], isLoading: pipelinesLoading, refetch } = usePipelines();
   const { data: roundRobins = [], isLoading: rrLoading } = useRoundRobins();
   const updatePipelineRR = useUpdatePipelineRoundRobin();
 
-  const handleChange = async (pipelineId: string, roundRobinId: string | null) => {
-    await updatePipelineRR.mutateAsync({
-      pipelineId,
-      roundRobinId: roundRobinId === 'none' ? null : roundRobinId
-    });
+  const handleChange = async (pipeline: { id: string; revision?: string }, roundRobinId: string | null) => {
+    if (!updatePipelineRR.isScopeCurrent()) return;
+    const parsed = pipelineRevisionSchema.safeParse(pipeline.revision);
+    if (!parsed.success) {
+      toast.error('Atualize e revise este funil antes de selecionar a fila padrão.');
+      void refetch();
+      return;
+    }
+    try {
+      await updatePipelineRR.mutateAsync({
+        pipelineId: pipeline.id,
+        expectedRevision: parsed.data,
+        roundRobinId: roundRobinId === 'none' ? null : roundRobinId,
+      });
+    } catch { /* The scoped mutation owns the failure notification. */ }
   };
 
   if (pipelinesLoading || rrLoading) {
@@ -85,7 +97,8 @@ export function PipelineRoundRobinManager() {
                   <div className="flex items-center gap-2">
                     <Select
                       value={currentRRId || 'none'}
-                      onValueChange={(value) => handleChange(pipeline.id, value)}
+                      onValueChange={(value) => handleChange(pipeline, value)}
+                      disabled={updatePipelineRR.isPending || !pipelineRevisionSchema.safeParse(pipeline.revision).success}
                     >
                       <SelectTrigger className="w-64">
                         <SelectValue placeholder="Selecione uma fila..." />

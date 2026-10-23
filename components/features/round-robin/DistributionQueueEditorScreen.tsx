@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -8,7 +8,6 @@ import { ptBR } from "date-fns/locale";
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   Filter,
   RefreshCw,
   ShieldX,
@@ -19,6 +18,8 @@ import { DistributionQueueEditor } from "@/components/features/round-robin/Distr
 import { DistributionQueueChangeHistory } from "@/components/features/round-robin/DistributionQueueChangeHistory";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FORM_WIZARD_DIALOG_CLASS_NAME } from "@/config/form-wizard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -29,10 +30,11 @@ import { useRoundRobin, type RoundRobin } from "@/hooks/use-round-robins";
 import { useUserAccessScope } from "@/hooks/use-user-access-scope";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobAPIError } from "@/lib/api/vimob-client";
+import { normalizeExistingDistributionQueue } from "@/lib/round-robin/distribution-queue-form";
+import { requireSuccessfulQueueReload } from "@/lib/round-robin/reload-result";
 
 const MANAGEMENT_DISTRIBUTION_URL = "/crm/management?tab=distribution";
-const DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS =
-  "h-[600px] xl:h-full xl:min-h-0";
+
 
 function QueueMetric({
   icon: Icon,
@@ -47,7 +49,7 @@ function QueueMetric({
     <div className="min-w-0 rounded-[8px] bg-[var(--app-surface-solid)] p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">
+          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
             {label}
           </p>
           <p className="mt-1 truncate text-[20px] font-normal leading-none text-[var(--app-text-primary)]">
@@ -73,10 +75,11 @@ function canAccessQueue(
   const ledUserIds = new Set(access.ledUserIds);
   return (
     queue.created_by === currentUserId ||
+    (Boolean(queue.target_pipeline_id) && access.ledPipelineIds.includes(queue.target_pipeline_id!)) ||
     queue.members.some(
       (member) =>
-        (member.team_id && ledTeamIds.has(member.team_id)) ||
-        (!member.team_id && member.user_id && ledUserIds.has(member.user_id)),
+        member.is_active !== false && ((member.team_id && ledTeamIds.has(member.team_id)) ||
+        (member.user_id && ledUserIds.has(member.user_id))),
     )
   );
 }
@@ -121,14 +124,15 @@ export default function DistributionQueueEditorScreen(
   const isLoading =
     permissionsLoading ||
     access.isLoading ||
-    (canManageDistribution && isEditing && roundRobinQuery.isLoading);
+    (canManageDistribution && isEditing && (roundRobinQuery.isLoading ||
+      (roundRobinQuery.isFetching && !roundRobinQuery.isFetchedAfterMount)));
   const queueNotFound =
     roundRobinQuery.error instanceof VimobAPIError &&
     roundRobinQuery.error.status === 404;
 
   if (isLoading) {
     return (
-      <AppLayout title={title} disableMainScroll>
+      <QueueEditorStateDialog title={title} onClose={() => router.push(MANAGEMENT_DISTRIBUTION_URL)}>
         <div className="flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden">
           <Skeleton className="h-8 w-40 rounded-[6px]" />
           {isEditing && (
@@ -140,37 +144,37 @@ export default function DistributionQueueEditorScreen(
           )}
           <Skeleton className="min-h-0 flex-1 rounded-[8px]" />
         </div>
-      </AppLayout>
+      </QueueEditorStateDialog>
     );
   }
 
   if (!canManageDistribution) {
     return (
-      <AppLayout title={title}>
+      <QueueEditorStateDialog title={title} onClose={() => router.push(MANAGEMENT_DISTRIBUTION_URL)}>
         <QueueMessage
           icon={ShieldX}
           title="Acesso não disponível"
           description="Seu perfil não possui permissão para gerenciar filas de distribuição."
         />
-      </AppLayout>
+      </QueueEditorStateDialog>
     );
   }
 
   if (isEditing && queueNotFound) {
     return (
-      <AppLayout title={title}>
+      <QueueEditorStateDialog title={title} onClose={() => router.push(MANAGEMENT_DISTRIBUTION_URL)}>
         <QueueMessage
           icon={ShieldX}
           title="Fila não encontrada"
           description="A fila não existe ou está fora do seu escopo de gestão."
         />
-      </AppLayout>
+      </QueueEditorStateDialog>
     );
   }
 
   if (isEditing && roundRobinQuery.isError && !queue) {
     return (
-      <AppLayout title={title}>
+      <QueueEditorStateDialog title={title} onClose={() => router.push(MANAGEMENT_DISTRIBUTION_URL)}>
         <QueueMessage
           icon={AlertTriangle}
           title="Não foi possível carregar a fila"
@@ -186,19 +190,19 @@ export default function DistributionQueueEditorScreen(
             </Button>
           }
         />
-      </AppLayout>
+      </QueueEditorStateDialog>
     );
   }
 
   if (isEditing && (!queue || !queueIsInScope)) {
     return (
-      <AppLayout title={title}>
+      <QueueEditorStateDialog title={title} onClose={() => router.push(MANAGEMENT_DISTRIBUTION_URL)}>
         <QueueMessage
           icon={ShieldX}
           title="Fila não encontrada"
           description="A fila não existe ou está fora do seu escopo de gestão."
         />
-      </AppLayout>
+      </QueueEditorStateDialog>
     );
   }
 
@@ -215,36 +219,29 @@ export default function DistributionQueueEditorScreen(
 
   return (
     <AppLayout title={title} disableMainScroll>
-      <div className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light xl:pb-0">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-          <Button
-            asChild
-            variant="ghost"
-            className="h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-          >
-            <Link href={MANAGEMENT_DISTRIBUTION_URL}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-              Voltar para Gestão
-            </Link>
-          </Button>
-          {isEditing && queue && (
-            <span className="min-w-0 truncate text-right text-[10px] font-light text-[var(--app-text-tertiary)] sm:text-[11px]">
-              Criada por {creator} em {createdAt}
-            </span>
-          )}
-        </div>
-
-        {isEditing && roundRobinQuery.isError && (
-          <div
-            role="status"
-            className="flex items-start gap-2 rounded-[8px] bg-warning/10 px-3 py-2 text-[11px] font-light text-warning"
-          >
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Não foi possível atualizar a fila agora. O rascunho foi mantido e a
-            tela continua usando os últimos dados carregados.
-          </div>
-        )}
-
+      <DistributionQueueEditor
+        presentation="dialog"
+        open
+        queue={queue ? normalizeExistingDistributionQueue(queue) : null}
+        closeOnSave={!isEditing}
+        onOpenChange={(open) => { if (!open) router.push(MANAGEMENT_DISTRIBUTION_URL); }}
+        onReload={isEditing ? async () => normalizeExistingDistributionQueue(requireSuccessfulQueueReload(await roundRobinQuery.refetch())) : undefined}
+        onSave={async (data) => {
+          if (isEditing && queue) {
+            return normalizeExistingDistributionQueue(await updateQueue.mutateAsync({ id: queue.id, ...data }));
+          }
+          return normalizeExistingDistributionQueue(await createQueue.mutateAsync(data));
+        }}
+        allowedTeamIds={canManageAllDistribution ? undefined : access.ledTeamIds}
+        allowedUserIds={canManageAllDistribution ? undefined : access.ledUserIds}
+        allowedPipelineIds={allowedPipelineIds}
+        aside={isEditing && queue ? <DistributionQueueChangeHistory queueId={queue.id} /> : undefined}
+        summary={isEditing && queue ? (
+          <>
+            <details className="rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light">
+              <summary className="cursor-pointer font-normal">Indicadores da distribuição</summary>
+              <p className="mt-3 text-[10px] text-[var(--app-text-tertiary)]">Criada por {creator} em {createdAt}</p>
+              <div className="mt-3">
         {isEditing && queue && (
           <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
             <QueueMetric
@@ -255,12 +252,12 @@ export default function DistributionQueueEditorScreen(
             <QueueMetric
               icon={UsersRound}
               label="Participantes"
-              value={queue.members.length}
+              value={queue.members.filter((member) => member.is_active !== false).length}
             />
             <QueueMetric
               icon={Filter}
               label="Critérios"
-              value={queue.rules.length}
+              value={queue.rules.filter((rule) => !('is_active' in rule) || rule.is_active !== false).length}
             />
             <QueueMetric
               icon={Activity}
@@ -269,51 +266,36 @@ export default function DistributionQueueEditorScreen(
             />
           </div>
         )}
-
-        <div
-          className={`grid min-w-0 shrink-0 gap-3 xl:min-h-[360px] xl:flex-1 ${
-            isEditing
-              ? "xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]"
-              : "grid-cols-1"
-          }`}
-        >
-          <div className={DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS}>
-            <DistributionQueueEditor
-              presentation="page"
-              open
-              queue={queue || null}
-              onOpenChange={(open) => {
-                if (!open) router.push(MANAGEMENT_DISTRIBUTION_URL);
-              }}
-              onSave={async (data) => {
-                if (isEditing && queue) {
-                  await updateQueue.mutateAsync({ id: queue.id, ...data });
-                  return;
-                }
-                const createdQueue = await createQueue.mutateAsync(data);
-                router.replace(
-                  `/crm/management/distribution/${createdQueue.id}/edit`,
-                );
-              }}
-              allowedTeamIds={
-                canManageAllDistribution ? undefined : access.ledTeamIds
-              }
-              allowedUserIds={
-                canManageAllDistribution ? undefined : access.ledUserIds
-              }
-              allowedPipelineIds={allowedPipelineIds}
-            />
+              </div>
+            </details>
+        {isEditing && roundRobinQuery.isError && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-[8px] bg-warning/10 px-3 py-2 text-[11px] font-light text-warning"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Não foi possível atualizar a fila agora. O rascunho foi mantido e a
+            tela continua usando os últimos dados carregados.
           </div>
+        )}
+          </>
+        ) : undefined}
+      />
+    </AppLayout>
+  );
+}
 
-          {isEditing && queue && (
-            <div
-              className={`${DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS} min-w-0 w-full`}
-            >
-              <DistributionQueueChangeHistory queueId={queue.id} />
-            </div>
-          )}
-        </div>
-      </div>
+function QueueEditorStateDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <AppLayout title={title} disableMainScroll>
+      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent data-management-editor="distribution" className={FORM_WIZARD_DIALOG_CLASS_NAME} aria-describedby={undefined} onInteractOutside={(event) => event.preventDefault()}>
+          <DialogHeader className="shrink-0 border-b border-[var(--app-border)] px-5 py-4 text-left">
+            <DialogTitle className="pr-8 text-[15px] font-normal">{title}</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

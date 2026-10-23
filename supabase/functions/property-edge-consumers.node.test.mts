@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import ts from "typescript";
+import { buildGoogleEventDescription } from "./_shared/google-calendar-event.ts";
 import { handleRequest as retiredWordPressMediaMigration } from "./auto-migrate-wp-images/index.ts";
 import {
   projectPublicProperty,
+  normalizePublicAddressVisibility,
   publicPropertyIsEligible,
   publicPropertyMatchesFilters,
 } from "./public-api/property-public-projection.ts";
@@ -14,6 +17,8 @@ function source(relativePath: string) {
 }
 
 const publicApi = source("./public-api/index.ts");
+const aiPublicProperties = source("./ai-agent-responder/public-property-eligibility.ts");
+const aiResponder = source("./ai-agent-responder/index.ts");
 const calendar = source("./_shared/google-calendar.ts");
 const rateLimiter = source("./_shared/rate-limit.ts");
 const wordpressMigration = source("./auto-migrate-wp-images/index.ts");
@@ -23,8 +28,20 @@ const mediaLifecycleMigration = source("../migrations/20260908000636_normalize_p
 const providerMediaMigration = source("../migrations/20260908101026_reconcile_provider_property_assets.sql");
 const publicationRepository = source("../../apps/api/internal/publications/repository.go");
 
+function calendarFunction<T>(name: string, dependencies: Record<string, unknown>): T {
+  const parsed = ts.createSourceFile("google-calendar.ts", calendar, ts.ScriptTarget.ESNext, true);
+  const declaration = parsed.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  assert.ok(declaration, name);
+  const compiled = ts.transpileModule(
+    `${declaration.getText(parsed).replace(/^export\s+/, "")}\nreturn ${name};`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
+  ).outputText;
+  return new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies)) as T;
+}
+
 const property = {
   id: "33333333-3333-4333-8333-333333333333",
+  organization_id: "22222222-2222-4222-8222-222222222222",
   code: "AP-10",
   title: "Live title",
   descricao: "internal description",
@@ -49,11 +66,39 @@ const property = {
   metadata: { hidden_site_image_urls: ["https://cdn.example/hidden.jpg"] },
 };
 
+test("unknown privacy and minimum aliases redact legacy and delivered public addresses", () => {
+  for (const visibility of [" Mínimo ", "minimal", "unknown", "", null, 42]) {
+    assert.equal(normalizePublicAddressVisibility(visibility), "minimo");
+    const legacy = projectPublicProperty({ ...property, address_visibility: visibility, public_address_visibility: visibility }, null);
+    const frozen = projectPublicProperty(property, {
+      id: property.id, public_address_visibility: visibility,
+      bairro: "PRIVATE", endereco: "PRIVATE", numero: "123", complemento: "PRIVATE", cep: "12345678",
+      latitude: -23.5, longitude: -46.6, cidade: "Sao Paulo", estado: "SP",
+    });
+    for (const result of [legacy, frozen]) {
+      assert.equal(result.address.neighborhood, null);
+      for (const field of ["street", "number", "complement", "zipcode", "latitude", "longitude"] as const) assert.equal(result.address[field], null, field);
+      assert.equal(result.address.city, "Sao Paulo");
+    }
+  }
+  for (const visibility of ["parcial", " PARTIAL "]) {
+    const result = projectPublicProperty({ ...property, address_visibility: visibility }, null);
+    assert.equal(result.address.neighborhood, "Centro"); assert.equal(result.address.street, null);
+  }
+  for (const visibility of ["completo", " Full ", "complete"]) {
+    const result = projectPublicProperty({ ...property, address_visibility: visibility }, null);
+    assert.equal(result.address.street, "Rua sigilosa");
+  }
+});
+
 test("canonical site state is authoritative over compatibility booleans", () => {
   assert.equal(publicPropertyIsEligible(property, {
     publication: {
       id: "44444444-4444-4444-8444-444444444444",
       property_id: property.id,
+      organization_id: property.organization_id,
+      channel: "site",
+      channel_account_key: "default",
       desired_state: "unpublished",
       published_version: null,
     },
@@ -68,6 +113,9 @@ test("canonical site state is authoritative over compatibility booleans", () => 
   const publication = {
     id: "44444444-4444-4444-8444-444444444444",
     property_id: property.id,
+    organization_id: property.organization_id,
+    channel: "site",
+    channel_account_key: "default",
     desired_state: "published",
     published_version: 7,
   };
@@ -89,6 +137,47 @@ test("canonical site state is authoritative over compatibility booleans", () => 
     snapshot: { id: property.id },
     ambiguous: true,
   }), false, "ambiguous canonical rows must fail closed");
+});
+
+test("first canonical delivery preserves only an authorized live legacy announcement", () => {
+  const publication = { id: "44444444-4444-4444-8444-444444444444", organization_id: property.organization_id,
+    property_id: property.id, channel: "site", channel_account_key: "default", desired_state: "published", published_version: null };
+  assert.equal(publicPropertyIsEligible(property, { publication, snapshot: null }), true);
+  for (const candidate of [
+    { ...property, published_on_site: false }, { ...property, status: "reserved" },
+    { ...property, autorizado_comercializacao: false },
+  ]) assert.equal(publicPropertyIsEligible(candidate, { publication, snapshot: null }), false);
+  for (const malformed of [ { ...publication, desired_state: "unpublished" }, { ...publication, desired_state: "paused" },
+    { ...publication, organization_id: "different" }, { ...publication, channel_account_key: "other" },
+    { ...publication, published_version: 0 }, { ...publication, published_version: undefined },
+  ]) assert.equal(publicPropertyIsEligible(property, { publication: malformed, snapshot: null }), false);
+  for (const status of ["active", "ativo", "available", "disponivel"]) {
+    assert.equal(publicPropertyIsEligible({ ...property, status, autorizado_comercializacao: null }, { publication, snapshot: null }), true);
+  }
+});
+
+test("public API status aliases use a closed normalized gate after bounded public candidate queries", () => {
+  const context = { publication: null, snapshot: null };
+  for (const status of ["active", "Ativo", "available", "disponivel", " Disponível "]) {
+    assert.equal(publicPropertyIsEligible({ ...property, status }, context), true, status);
+    assert.equal(publicPropertyIsEligible({ ...property, status, autorizado_comercializacao: false }, context), false);
+    assert.equal(publicPropertyIsEligible({ ...property, status, published_on_site: false }, context), false);
+  }
+  for (const status of ["reserved", "draft", "private", "unavailable", "unknown", null, ""]) {
+    assert.equal(publicPropertyIsEligible({ ...property, status }, context), false, String(status));
+  }
+  assert.doesNotMatch(publicApi, /\.in\("status"/);
+  assert.match(publicApi, /\.eq\("published_on_site", true\)/);
+  assert.match(publicApi, /\.eq\("desired_state", "published"\)/);
+  assert.match(publicApi, /\.eq\("organization_id", organizationId\)/);
+  assert.match(publicApi, /if \(!publicPropertyIsEligible\(property, context\)\)/);
+  assert.match(publicApi, /for \(const property of openInventory\)/);
+  assert.match(publicApi, /filterOpenPropertyInventory\(supabase, organizationId, \[property\]\)/);
+  assert.match(aiPublicProperties, /await filterOpenPropertyInventory\(supabase, organizationId/);
+  assert.match(aiResponder, /loadPublicPropertyCatalog\(/);
+  const propertySelect = aiResponder.slice(aiResponder.indexOf("function propertySelect()"));
+  assert.match(propertySelect, /"address_visibility"/);
+  assert.match(propertySelect, /"public_address_visibility"/);
 });
 
 test("public property projection freezes canonical copy and enforces address privacy", () => {
@@ -279,12 +368,44 @@ test("legacy WordPress media migration is a side-effect-free tombstone", async (
 
 test("Google Calendar omits generated property context and requires active membership", () => {
   assert.doesNotMatch(calendar, /async function getLinkedProperty/);
-  assert.match(calendar, /event:\s*\{ \.\.\.event, lead, property: null \}/);
+  assert.match(calendar, /event:\s*\{\s*\.\.\.event,\s*lead,\s*lead_id:\s*lead\s*\?\s*event\.lead_id\s*:\s*null,\s*property_id:\s*null,\s*property:\s*null\s*,?\s*\}/);
   assert.match(calendar, /\.eq\("is_active", true\)/);
   assert.match(calendar, /if \(!membership\) return false/);
   const membershipCheck = calendar.indexOf("if (!membership) return false");
   const ownerGrant = calendar.indexOf("if (event.user_id === userId) return true");
   assert.ok(membershipCheck >= 0 && ownerGrant > membershipCheck);
+});
+
+test("Google Calendar outbound projection removes property context and unauthorized lead context", async () => {
+  type OutboundEvent = {
+    description: string;
+    lead: { name: string } | null;
+    lead_id: string | null;
+    property: { title: string; code: string } | null;
+    property_id: string | null;
+  };
+  const event = {
+    description: "User-authored agenda description",
+    lead_id: "synthetic-lead",
+    lead: { name: "STALE LEAD CONTEXT" },
+    property_id: "synthetic-property",
+    property: { title: "PRIVATE PROPERTY CONTEXT", code: "PRIVATE-CODE" },
+  };
+  for (const lead of [null, { name: "Authorized lead" }]) {
+    const project = calendarFunction<(input: typeof event) => Promise<{ event: OutboundEvent; attendeeEmails: unknown[] }>>(
+      "getOutboundEventContext",
+      { getLinkedLead: async () => lead },
+    );
+    const result = await project(event);
+    assert.equal(result.event.property, null);
+    assert.equal(result.event.property_id, null);
+    assert.equal(result.event.lead, lead);
+    assert.equal(result.event.lead_id, lead ? event.lead_id : null);
+    assert.deepEqual(result.attendeeEmails, []);
+    assert.equal(buildGoogleEventDescription(result.event), lead
+      ? `${event.description}\n\nVínculos do Vimob CRM\nLead/cliente: ${lead.name}`
+      : event.description);
+  }
 });
 
 test("admin ingestion keeps tenant-scoped writes and the canonical 20-photo ceiling", () => {

@@ -3,7 +3,12 @@ import { format as formatDate } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { contactsAPI } from '@/lib/api/contacts';
 import { buildContactExportCSV } from '@/lib/export-contacts-csv';
+import { buildContactExportDynamicColumns } from '@/lib/contact-export-dynamic';
+import { collectContactExportPages, prepareContactExportDownload } from '@/lib/contact-export-pages';
+import { serializeContactTags } from '@/lib/contact-tag-transfer';
+import { validateContactExportLayout, validateContactExportXLSXCell } from '@/lib/contact-export-limits';
 import type { Contact, ContactListFilters } from '@/hooks/use-contacts-list';
+import type { VimobAPIRequestIntent } from '@/lib/api/vimob-client';
 
 export { buildContactExportCSV, escapeContactExportCSVCell } from '@/lib/export-contacts-csv';
 
@@ -20,6 +25,7 @@ export interface ContactExportFilters {
   source?: string;
   pageId?: string;
   campaignId?: string;
+  campaignIds?: string[];
   adSetId?: string;
   adId?: string;
   dealStatus?: string;
@@ -43,6 +49,8 @@ interface ExportOptions {
   columnKeys?: readonly ContactExportColumnKey[];
   includeDynamicFields?: boolean;
   signal?: AbortSignal;
+  requestIntent?: VimobAPIRequestIntent;
+  shouldContinue?: () => boolean;
   onProgress?: (progress: ContactExportProgress) => void;
 }
 
@@ -53,13 +61,6 @@ type ExportColumn = {
   readonly key: string;
   readonly width: number;
   readonly value?: (contact: Contact) => string | number | boolean | null | undefined;
-};
-
-type JsonScalar = string | number | boolean | null;
-type JsonRecord = Record<string, unknown>;
-type ContactExportExtras = {
-  answers: Record<string, string>;
-  flattened: Record<string, Record<string, string>>;
 };
 
 interface LegacyExportLead {
@@ -74,18 +75,6 @@ interface LegacyExportLead {
   created_at: string;
 }
 
-const sourceLabels: Record<string, string> = {
-  manual: 'Manual',
-  meta: 'Meta Ads',
-  site: 'Site',
-  wordpress: 'WordPress',
-  website: 'Website',
-  whatsapp: 'WhatsApp',
-  instagram: 'Instagram',
-  indicacao: 'Indicação',
-  outro: 'Outro',
-};
-
 const dealStatusLabels: Record<string, string> = {
   open: 'Aberto',
   won: 'Ganho',
@@ -99,10 +88,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function formatTags(tags: unknown) {
   if (!Array.isArray(tags)) return '';
 
-  return tags
+  return serializeContactTags(tags
     .map((tag) => (isRecord(tag) && typeof tag.name === 'string' ? tag.name : ''))
-    .filter(Boolean)
-    .join(', ');
+    .filter(Boolean));
 }
 
 function formatOptionalDate(value?: string | null) {
@@ -112,10 +100,6 @@ function formatOptionalDate(value?: string | null) {
   if (Number.isNaN(date.getTime())) return '';
 
   return formatDate(date, 'dd/MM/yyyy HH:mm', { locale: ptBR });
-}
-
-function sourceLabel(source?: string | null) {
-  return sourceLabels[source || ''] || source || '';
 }
 
 function dealStatusLabel(status?: string | null) {
@@ -130,193 +114,6 @@ function boolLabel(value?: boolean | null) {
 
 function jsonText(value?: string | null) {
   return value && value !== '{}' ? value : '';
-}
-
-function parseJsonRecord(value?: string | null): JsonRecord | null {
-  if (!value || value === '{}') return null;
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeDynamicKey(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 90);
-}
-
-function stringifyExportValue(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => stringifyExportValue(item)).filter(Boolean).join(', ');
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function isScalar(value: unknown): value is JsonScalar {
-  return value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
-}
-
-function flattenJsonScalars(value: unknown, prefix = '', depth = 0, output: Record<string, string> = {}) {
-  if (depth > 4 || value == null) return output;
-
-  if (isScalar(value)) {
-    if (prefix) output[prefix] = stringifyExportValue(value);
-    return output;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.every(isScalar)) {
-      if (prefix) output[prefix] = stringifyExportValue(value);
-      return output;
-    }
-
-    value.slice(0, 20).forEach((item, index) => {
-      flattenJsonScalars(item, `${prefix}.${index + 1}`, depth + 1, output);
-    });
-    return output;
-  }
-
-  if (!isRecord(value)) return output;
-
-  Object.entries(value)
-    .slice(0, 250)
-    .forEach(([key, item]) => {
-      const path = prefix ? `${prefix}.${key}` : key;
-      flattenJsonScalars(item, path, depth + 1, output);
-    });
-
-  return output;
-}
-
-function collectFieldAnswers(value: unknown, output: Record<string, string> = {}) {
-  if (value == null) return output;
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectFieldAnswers(item, output));
-    return output;
-  }
-
-  if (!isRecord(value)) return output;
-
-  const labelCandidate =
-    value.name ??
-    value.question ??
-    value.label ??
-    value.field_label ??
-    value.field_name ??
-    value.key ??
-    value.title;
-  const answerCandidate =
-    value.values ??
-    value.value ??
-    value.answer ??
-    value.response ??
-    value.field_value ??
-    value.text;
-
-  if (typeof labelCandidate === 'string' && answerCandidate != null) {
-    const answer = stringifyExportValue(answerCandidate);
-    if (answer) output[labelCandidate] = answer;
-  }
-
-  Object.values(value).forEach((item) => {
-    if (Array.isArray(item) || isRecord(item)) collectFieldAnswers(item, output);
-  });
-
-  return output;
-}
-
-const jsonSourceDefinitions = [
-  { prefix: 'Metadado', keyPrefix: 'metadata' },
-  { prefix: 'Meta payload', keyPrefix: 'meta_payload' },
-  { prefix: 'Meta raw', keyPrefix: 'meta_raw' },
-] as const;
-
-function contactJsonSources(contact: Contact) {
-  return [
-    { ...jsonSourceDefinitions[0], value: parseJsonRecord(contact.metadata_json) },
-    { ...jsonSourceDefinitions[1], value: parseJsonRecord(contact.meta_payload_json) },
-    { ...jsonSourceDefinitions[2], value: parseJsonRecord(contact.meta_raw_payload_json) },
-  ];
-}
-
-function buildContactExportExtras(contact: Contact): ContactExportExtras {
-  const answers: Record<string, string> = {};
-  const flattened: Record<string, Record<string, string>> = {};
-
-  contactJsonSources(contact).forEach((source) => {
-    if (!source.value) return;
-    Object.assign(answers, collectFieldAnswers(source.value));
-    flattened[source.keyPrefix] = flattenJsonScalars(source.value);
-  });
-
-  return { answers, flattened };
-}
-
-function buildExportExtras(contacts: Contact[]) {
-  return new Map(contacts.map((contact) => [contact.id, buildContactExportExtras(contact)]));
-}
-
-function buildDynamicExportColumns(contacts: Contact[], extrasByContactId: Map<string, ContactExportExtras>): ExportColumn[] {
-  const columns = new Map<string, ExportColumn>();
-
-  const addColumn = (column: ExportColumn) => {
-    if (!columns.has(column.key)) columns.set(column.key, column);
-  };
-
-  contacts.forEach((contact) => {
-    const extras = extrasByContactId.get(contact.id);
-    if (!extras) return;
-
-    Object.keys(extras.answers).forEach((question) => {
-      const normalized = normalizeDynamicKey(question);
-      if (!normalized) return;
-
-      addColumn({
-        header: `Pergunta: ${question}`,
-        key: `question_${normalized}`,
-        width: 34,
-        value: (row) => extrasByContactId.get(row.id)?.answers[question] || '',
-      });
-    });
-
-    jsonSourceDefinitions.forEach((source) => {
-      const flattened = extras.flattened[source.keyPrefix];
-      if (!flattened) return;
-
-      Object.keys(flattened).forEach((path) => {
-        const normalized = normalizeDynamicKey(`${source.keyPrefix}_${path}`);
-        if (!normalized) return;
-
-        addColumn({
-          header: `${source.prefix}: ${path}`,
-          key: `extra_${normalized}`,
-          width: 32,
-          value: (row) => {
-            return extrasByContactId.get(row.id)?.flattened[source.keyPrefix]?.[path] || '';
-          },
-        });
-      });
-    });
-  });
-
-  return Array.from(columns.values()).sort((a, b) => a.header.localeCompare(b.header, 'pt-BR'));
 }
 
 function resolveStaticExportColumns(
@@ -338,7 +135,6 @@ function resolveStaticExportColumns(
 
 function buildExportColumns(
   contacts: Contact[],
-  extrasByContactId: Map<string, ContactExportExtras>,
   columnKeys?: readonly ContactExportColumnKey[],
   includeDynamicFields = true,
 ) {
@@ -347,7 +143,7 @@ function buildExportColumns(
 
   return [
     ...staticColumns,
-    ...buildDynamicExportColumns(contacts, extrasByContactId),
+    ...buildContactExportDynamicColumns(contacts),
   ];
 }
 
@@ -361,7 +157,7 @@ const contactExportColumns = [
   { header: 'Status interno', key: 'status_interno', width: 18 },
   { header: 'Pipeline', key: 'pipeline', width: 20 },
   { header: 'ID da pipeline', key: 'pipeline_id', width: 36 },
-  { header: 'Atendimento/Estágio', key: 'estagio', width: 24 },
+  { header: 'Estágio', key: 'estagio', width: 24 },
   { header: 'ID do estágio', key: 'estagio_id', width: 36 },
   { header: 'Responsável', key: 'responsavel', width: 24 },
   { header: 'ID do responsável', key: 'responsavel_id', width: 36 },
@@ -385,6 +181,7 @@ const contactExportColumns = [
   { header: 'Faixa de valor do imóvel', key: 'faixa_valor_imovel', width: 24 },
   { header: 'Renda familiar', key: 'renda_familiar', width: 20 },
   { header: 'Finalidade da compra', key: 'finalidade_compra', width: 24 },
+  { header: 'Recursos próprios', key: 'recursos_proprios', width: 20 },
   { header: 'Procura financiamento', key: 'procura_financiamento', width: 20 },
   { header: 'Trabalha', key: 'trabalha', width: 12 },
   { header: 'Cargo', key: 'cargo', width: 20 },
@@ -401,7 +198,7 @@ const contactExportColumns = [
   { header: 'ID do imóvel', key: 'imovel_id', width: 36 },
   { header: 'ID do imóvel de interesse', key: 'imovel_interesse_id', width: 36 },
   { header: 'ID do plano de interesse', key: 'plano_interesse_id', width: 36 },
-  { header: 'Mensagem do lead', key: 'mensagem', width: 44 },
+  { header: 'Mensagem', key: 'mensagem', width: 44 },
   { header: 'Mensagem inicial', key: 'mensagem_inicial', width: 44 },
   { header: 'Campanha', key: 'campanha', width: 28 },
   { header: 'ID da campanha', key: 'campanha_id', width: 24 },
@@ -531,6 +328,7 @@ const profileColumnKeys = new Set<ContactExportColumnKey>([
   'faixa_valor_imovel',
   'renda_familiar',
   'finalidade_compra',
+  'recursos_proprios',
   'procura_financiamento',
   'trabalha',
   'cargo',
@@ -709,7 +507,7 @@ function buildContactExportRow(
     estagio_id: contact.stage_id || '',
     responsavel: contact.assignee_name || '',
     responsavel_id: contact.assigned_user_id || '',
-    origem: sourceLabel(contact.source),
+    origem: contact.source || '',
     origem_detalhe: contact.source_detail || '',
     prioridade: contact.priority || '',
     tags: formatTags(contact.tags),
@@ -729,6 +527,7 @@ function buildContactExportRow(
     faixa_valor_imovel: contact.faixa_valor_imovel || '',
     renda_familiar: contact.renda_familiar || '',
     finalidade_compra: contact.finalidade_compra || '',
+    recursos_proprios: boolLabel(contact.is_own_resource),
     procura_financiamento: boolLabel(contact.procura_financiamento),
     trabalha: boolLabel(contact.trabalha),
     cargo: contact.cargo || '',
@@ -797,19 +596,27 @@ function buildContactExportRow(
   return row;
 }
 
-function addContactWorksheetRows(
+async function addContactWorksheetRows(
   worksheet: ExcelJS.Worksheet,
   contacts: Contact[],
   columns: readonly ExportColumn[],
+  signal?: AbortSignal,
 ) {
-  contacts.forEach((contact) => {
-    const worksheetRow = worksheet.addRow(buildContactExportRow(contact, columns));
-    columns.forEach((column, index) => {
+  for (let index = 0; index < contacts.length; index += 1) {
+    signal?.throwIfAborted();
+    const contact = contacts[index];
+    const row = buildContactExportRow(contact, columns);
+    columns.forEach((column) => validateContactExportXLSXCell(row[column.key]));
+    const worksheetRow = worksheet.addRow(row);
+    columns.forEach((column, columnIndex) => {
       if (isSpreadsheetTextColumn(column)) {
-        worksheetRow.getCell(index + 1).numFmt = '@';
+        worksheetRow.getCell(columnIndex + 1).numFmt = '@';
       }
     });
-  });
+    if ((index + 1) % 250 === 0) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+    }
+  }
 }
 
 export async function exportContactsFiltered({
@@ -820,14 +627,18 @@ export async function exportContactsFiltered({
   columnKeys,
   includeDynamicFields = columnKeys === undefined,
   signal,
+  requestIntent,
+  shouldContinue,
   onProgress,
 }: ExportOptions) {
   signal?.throwIfAborted();
-  const contacts = await fetchAllFilteredContacts(
+  const { contacts, verifyVersion } = await fetchAllFilteredContacts(
     filters,
     organizationId,
     signal,
     onProgress,
+    requestIntent,
+    shouldContinue,
   );
 
   if (contacts.length === 0) {
@@ -841,13 +652,10 @@ export async function exportContactsFiltered({
     total: contacts.length,
   });
   await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+  signal?.throwIfAborted();
 
-  const extrasByContactId = includeDynamicFields
-    ? buildExportExtras(contacts)
-    : new Map<string, ContactExportExtras>();
   const columns = buildExportColumns(
     contacts,
-    extrasByContactId,
     columnKeys,
     includeDynamicFields,
   );
@@ -855,6 +663,7 @@ export async function exportContactsFiltered({
   if (columns.length === 0) {
     throw new Error('Selecione ao menos uma coluna para exportar');
   }
+  validateContactExportLayout(exportFormat, contacts.length, columns.length);
 
   if (exportFormat === 'csv') {
     signal?.throwIfAborted();
@@ -863,12 +672,14 @@ export async function exportContactsFiltered({
       processed: contacts.length,
       total: contacts.length,
     });
-    downloadCSV(contacts, filename, columns);
+    await downloadCSV(contacts, filename, columns, verifyVersion, signal);
     return contacts.length;
   }
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Contatos');
+
+  columns.forEach((column) => validateContactExportXLSXCell(column.header));
 
   worksheet.columns = columns.map(({ header, key, width }) => ({
     header,
@@ -876,7 +687,7 @@ export async function exportContactsFiltered({
     width,
   }));
 
-  addContactWorksheetRows(worksheet, contacts, columns);
+  await addContactWorksheetRows(worksheet, contacts, columns, signal);
   styleHeader(worksheet);
 
   signal?.throwIfAborted();
@@ -885,7 +696,7 @@ export async function exportContactsFiltered({
     processed: contacts.length,
     total: contacts.length,
   });
-  await downloadWorkbook(workbook, filename, exportFormat);
+  await downloadWorkbook(workbook, filename, exportFormat, verifyVersion, signal);
   return contacts.length;
 }
 
@@ -894,70 +705,59 @@ async function fetchAllFilteredContacts(
   organizationId?: string | null,
   signal?: AbortSignal,
   onProgress?: (progress: ContactExportProgress) => void,
+  requestIntent?: VimobAPIRequestIntent,
+  shouldContinue?: () => boolean,
 ) {
-  const pageSize = 500;
-  const contacts: Contact[] = [];
-  const contactIds = new Set<string>();
-  let page = 1;
-  let totalCount: number | null = null;
-
-  onProgress?.({ phase: 'fetching', processed: 0, total: null });
-
-  while (page <= 10000) {
+  const assertCurrentScope = () => {
     signal?.throwIfAborted();
-    const pageContacts = await contactsAPI.list({
-      ...(filters as ContactListFilters),
-      sortBy: 'created_at',
-      sortDir: 'desc',
-      page,
-      limit: pageSize,
-      mode: 'export',
-    }, organizationId, { signal });
-
-    if (pageContacts.length === 0) break;
-
-    pageContacts.forEach((contact) => {
-      if (contactIds.has(contact.id)) return;
-      contactIds.add(contact.id);
-      contacts.push(contact);
-    });
-    totalCount = pageContacts[0]?.total_count ?? totalCount;
-    onProgress?.({
-      phase: 'fetching',
-      processed: contacts.length,
-      total: totalCount,
-    });
-
-    if (pageContacts.length < pageSize) break;
-    if (totalCount !== null && contacts.length >= totalCount) break;
-
-    page += 1;
-  }
-
-  if (totalCount !== null && contacts.length < totalCount) {
-    throw new Error(
-      'A lista de contatos mudou durante a exportação. Tente novamente para gerar um arquivo completo.',
-    );
-  }
-
-  return contacts;
+    if (shouldContinue && !shouldContinue()) {
+      throw new DOMException('O contexto da exportação mudou.', 'AbortError');
+    }
+  };
+  return collectContactExportPages<Contact>({
+    signal,
+    onProgress: (progress) => onProgress?.({ phase: 'fetching', ...progress }),
+    fetchPage: async (query, pageSignal) => {
+      assertCurrentScope();
+      const page = await contactsAPI.listPage({
+        ...(filters as ContactListFilters),
+        sortBy: 'created_at',
+        sortDir: 'desc',
+        mode: 'export',
+        ...query,
+      }, organizationId, { ...requestIntent, signal: pageSignal });
+      assertCurrentScope();
+      return page;
+    },
+  });
 }
 
-function downloadCSV(
+async function downloadCSV(
   contacts: Contact[],
   filename: string,
   columns: readonly ExportColumn[],
+  beforeDownload?: () => Promise<void>,
+  signal?: AbortSignal,
 ) {
   const headers = columns.map((column) => column.header);
-  const rows = contacts.map((contact) => {
-    const row = buildContactExportRow(contact, columns);
-    return columns.map((column) => row[column.key]);
-  });
+  const rows: Array<Array<ContactExportRow[string]>> = [];
+  for (let index = 0; index < contacts.length; index += 1) {
+    signal?.throwIfAborted();
+    const row = buildContactExportRow(contacts[index], columns);
+    rows.push(columns.map((column) => row[column.key]));
+    if ((index + 1) % 250 === 0) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+    }
+  }
+  signal?.throwIfAborted();
   const csv = buildContactExportCSV(
     headers,
     rows,
     columns.map(isSpreadsheetTextColumn),
   );
+
+  await prepareContactExportDownload(async () => csv, beforeDownload, signal);
+  signal?.throwIfAborted();
 
   downloadFile(
     csv,
@@ -986,14 +786,22 @@ async function downloadWorkbook(
   workbook: ExcelJS.Workbook,
   filename: string,
   exportFormat: ContactExportFormat,
+  beforeDownload?: () => Promise<void>,
+  signal?: AbortSignal,
 ) {
   if (exportFormat === 'csv') {
-    const buffer = await workbook.csv.writeBuffer();
+    const buffer = await prepareContactExportDownload(
+      () => workbook.csv.writeBuffer(), beforeDownload, signal,
+    );
+    signal?.throwIfAborted();
     downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;');
     return;
   }
 
-  const buffer = await workbook.xlsx.writeBuffer();
+  const buffer = await prepareContactExportDownload(
+    () => workbook.xlsx.writeBuffer(), beforeDownload, signal,
+  );
+  signal?.throwIfAborted();
   downloadFile(buffer, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
@@ -1043,7 +851,7 @@ export async function exportContacts({
       estagio: lead.stage?.name || '',
       responsavel: lead.assignee?.name || '',
       tags: formatTags(lead.tags),
-      fonte: sourceLabel(lead.source),
+      fonte: lead.source || '',
       mensagem: lead.message || '',
       criacao: formatOptionalDate(lead.created_at),
     });

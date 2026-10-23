@@ -106,6 +106,30 @@ function getGroup(pathname) {
 }
 
 function getAccess(registration, pathname) {
+  if (pathname === "/v1/audit-logs") {
+    if (registration.includes("auditHandler.RejectClientCreate")) {
+      return "Sessão ativa; escrita genérica retirada (410)";
+    }
+    if (registration.includes("withActiveAuthTenant(")) {
+      return "Sessão ativa; proprietário, administrador ou SuperAdmin";
+    }
+  }
+
+  const activePermission = registration.match(
+    /withActivePermission\(permissions\.([A-Za-z0-9_]+)/,
+  );
+  if (activePermission) {
+    return `Sessão ativa + organização + permissão ${activePermission[1]}`;
+  }
+
+  if (registration.includes("withActiveOrganization(")) {
+    return "Sessão ativa + organização";
+  }
+
+  if (registration.includes("withActiveAuthTenant(")) {
+    return "Sessão ativa + usuário autenticado";
+  }
+
   const modulesPermission = registration.match(
     /withModulesPermission\(\[\]string\{([^}]+)\}, permissions\.([A-Za-z0-9_]+)/,
   );

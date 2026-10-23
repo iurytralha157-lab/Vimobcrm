@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, RefreshCw, UserRoundX, UsersRound, X } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -11,10 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { DashboardLeadDistribution } from "@/hooks/use-dashboard-stats";
+import { useDashboardQueryScope, type DashboardLeadDistribution } from "@/hooks/use-dashboard-stats";
+import { useDashboardDialogFocus } from "@/hooks/dashboard/use-dashboard-dialog-focus";
 import { visibleBrokerDistributionRows } from "./lead-distribution-rows";
-
-const TEAM_SELECTION_STORAGE_PREFIX = "vimob:dashboard:teams:selected";
 
 type AvailableTeam = {
   id: string;
@@ -63,89 +62,41 @@ function sortChartRows(rows: ChartRow[]) {
   );
 }
 
-function readTeamSelection(raw: string | null): string[] | null {
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
-      return null;
-    }
-    return Array.from(new Set(parsed.filter((id) => id.trim() !== "")));
-  } catch {
-    return null;
-  }
-}
-
 function usePinnedTeamIds(
   organizationId: string | null | undefined,
   currentUserId: string | null | undefined,
   availableTeams: AvailableTeam[] | undefined,
 ) {
-  const storageKey = useMemo(
-    () =>
-      organizationId && currentUserId
-        ? `${TEAM_SELECTION_STORAGE_PREFIX}:${organizationId}:${currentUserId}`
-        : null,
-    [organizationId, currentUserId],
-  );
-  const [selectedTeamIds, setSelectedTeamIds] = useState<string[] | null>(null);
-  const [hydratedKey, setHydratedKey] = useState<string | null | undefined>();
+  const scopeKey = JSON.stringify([organizationId ?? null, currentUserId ?? null]);
+  const [selection, setSelection] = useState<{ scopeKey: string; ids: string[] | null }>({
+    scopeKey,
+    ids: null,
+  });
+  let activeSelection = selection.scopeKey === scopeKey ? selection.ids : null;
 
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      if (!storageKey) {
-        setSelectedTeamIds(null);
-        setHydratedKey(null);
-        return;
-      }
-      try {
-        setSelectedTeamIds(readTeamSelection(localStorage.getItem(storageKey)));
-      } catch {
-        setSelectedTeamIds(null);
-      }
-      setHydratedKey(storageKey);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [storageKey]);
-
-  // Teams may have been deactivated or removed since the preference was saved.
-  useEffect(() => {
-    if (!storageKey || hydratedKey !== storageKey || !availableTeams || selectedTeamIds === null) {
-      return;
-    }
+  // Keep only teams still available during this visit; an unloaded catalog is temporary.
+  if (activeSelection !== null && availableTeams) {
     const visibleIds = new Set(availableTeams.map((team) => team.id));
-    const nextIds = selectedTeamIds.filter((id) => visibleIds.has(id));
-    if (nextIds.length === selectedTeamIds.length) return;
-    const nextSelection = nextIds.length > 0 ? nextIds : null;
-    queueMicrotask(() => setSelectedTeamIds(nextSelection));
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(nextSelection));
-    } catch {
-      // The selection remains usable in memory when storage is restricted.
+    const nextIds = activeSelection.filter((id) => visibleIds.has(id));
+    if (nextIds.length !== activeSelection.length) {
+      activeSelection = nextIds.length > 0 ? nextIds : null;
     }
-  }, [availableTeams, hydratedKey, selectedTeamIds, storageKey]);
-
-  const activeSelection = hydratedKey === storageKey ? selectedTeamIds : null;
+  }
+  // Reset before children render, including an A -> B -> A scope change.
+  if (selection.scopeKey !== scopeKey || activeSelection !== selection.ids) {
+    setSelection({ scopeKey, ids: activeSelection });
+  }
 
   const saveSelection = (ids: string[]) => {
     const validIds = new Set((availableTeams ?? []).map((team) => team.id));
     const nextIds = Array.from(new Set(ids.filter((id) => validIds.has(id))));
     const nextSelection =
       nextIds.length === validIds.size ? null : nextIds;
-    setSelectedTeamIds(nextSelection);
-    if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(nextSelection));
-    } catch {
-      // The selection remains usable in memory when storage is restricted.
-    }
+    setSelection({ scopeKey, ids: nextSelection });
   };
 
-  return { activeSelection, saveSelection, isHydrated: hydratedKey === storageKey };
+  // This selection is immediately ready: there is no persisted state to hydrate.
+  return { activeSelection, saveSelection, isHydrated: true };
 }
 
 function DistributionSkeleton() {
@@ -462,6 +413,10 @@ function TeamPicker({
   isReady: boolean;
   onSave: (ids: string[]) => void;
 }) {
+  const dashboardScope = useDashboardQueryScope();
+  const dialogFocus = useDashboardDialogFocus(
+    dashboardScope.isReady && dashboardScope.canViewLeadDistribution ? dashboardScope.accessSignature : null,
+  );
   const [open, setOpen] = useState(false);
   const [draftIds, setDraftIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
@@ -492,7 +447,10 @@ function TeamPicker({
     <>
       <button
         type="button"
-        onClick={() => handleOpenChange(true)}
+        onClick={(event) => {
+          dialogFocus.captureTrigger(event.currentTarget);
+          handleOpenChange(true);
+        }}
         disabled={!isReady || teams === undefined || teams.length === 0}
         aria-label="Escolher equipes exibidas"
         aria-haspopup="dialog"
@@ -502,7 +460,7 @@ function TeamPicker({
         <ChevronDown className="h-3 w-3" aria-hidden="true" />
       </button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[440px] flex-col gap-3 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-5">
+        <DialogContent onCloseAutoFocus={dialogFocus.onCloseAutoFocus} aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[440px] flex-col gap-3 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-5">
           <DialogHeader className="text-left">
             <DialogTitle className="text-[15px] font-normal">Equipes exibidas</DialogTitle>
           </DialogHeader>

@@ -2,6 +2,11 @@ import { dedupeActivityEvents, isStageChangeTriggerActivity } from './activity-d
 import { auditContent, auditEventType, auditVisibleKeys, visibleAuditData } from './audit';
 import { extractMetaCreative, extractMetaFormAnswers, extractWebhookFormAnswers } from './forms';
 import { asMetadata, metadataRecord, metadataString, metadataNumber } from './metadata';
+import { historyTimesMatch, sameHistoryOccurrence } from './occurrence';
+import { mergeQueueHistory } from './queue-events';
+import { consolidateReentryProjection } from './reentry-deduplication';
+import { initialHistoryRepresentations } from './initial-history-deduplication';
+import { getAgendaHistoryPresentation } from './agenda-history';
 import {
   ACTIVITY_ONLY_TYPES,
   TIMELINE_AUTHORITY_TYPES,
@@ -36,6 +41,8 @@ export function buildLeadHistory(
   const distributionLogs = raw.distributionLogs || [];
   const assignmentLogs = raw.assignmentLogs || [];
   const auditLogs = raw.auditLogs || [];
+  const incomplete = raw.historyCoverage?.complete === false;
+  const canonicalPresence = raw.historyCoverage?.canonicalPresence;
 
   // Collect all user IDs that need resolution from metadata
   const userIdsToResolve = new Set<string>();
@@ -60,6 +67,10 @@ export function buildLeadHistory(
   });
   auditLogs.forEach((log) => {
     if (log.user_id) userIdsToResolve.add(log.user_id);
+    const oldAssignee = metadataString(asMetadata(log.old_data).assigned_user_id);
+    const newAssignee = metadataString(asMetadata(log.new_data).assigned_user_id);
+    if (oldAssignee) userIdsToResolve.add(oldAssignee);
+    if (newAssignee) userIdsToResolve.add(newAssignee);
   });
   if (lead?.assigned_user_id) userIdsToResolve.add(lead.assigned_user_id);
 
@@ -77,6 +88,7 @@ export function buildLeadHistory(
   }
 
   const dedupedActivityEvents = dedupeActivityEvents(activityEvents);
+  const initialRepresentations = initialHistoryRepresentations({ ...raw, activityEvents: dedupedActivityEvents }, leadId);
 
   // Build unified events from timeline
   const timelineMapped: UnifiedHistoryEvent[] = timelineEvents.map((event) => {
@@ -95,6 +107,7 @@ export function buildLeadHistory(
     const actor = !isQueueDistribution && !isPendingDistribution && actorId ? (userMap.get(actorId) || null) : null;
     const responseSeconds = metadataNumber(meta.response_seconds);
     const isAttendanceJoin = event.event_type === 'whatsapp_attendance_joined';
+    const agenda = getAgendaHistoryPresentation(event.event_type, meta, { description: event.description, timeZone: formatters.timeZone });
 
     return {
       id: `timeline-${event.id}`,
@@ -105,8 +118,8 @@ export function buildLeadHistory(
           ? distributionFailureReason === 'no_available_members'
             ? unavailableDistributionLabel(distributionQueueName)
             : 'Nenhuma fila de distribuição compatível'
-          : buildLabel(event.event_type, meta),
-      content: isAttendanceJoin || isPendingDistribution ? undefined : buildContent(event.event_type, meta, formatters),
+          : agenda?.label || buildLabel(event.event_type, meta),
+      content: isAttendanceJoin || isPendingDistribution ? undefined : agenda ? agenda.content : buildContent(event.event_type, meta, formatters),
       timestamp: event.event_at || event.created_at || new Date().toISOString(),
       actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url } : null,
       source: 'timeline' as const,
@@ -140,6 +153,7 @@ export function buildLeadHistory(
   // Build unified events from activities (with deduplication)
   const activityMapped: UnifiedHistoryEvent[] = dedupedActivityEvents
     .filter((activity) => {
+      if (activity.type === 'lead_created') return !initialRepresentations.creationActivityIds.has(activity.id);
       if (activity.type === 'assignee_changed') {
         const targetId = metadataString(asMetadata(activity.metadata).to_user_id);
         const activityTime = new Date(activity.created_at).getTime();
@@ -159,10 +173,14 @@ export function buildLeadHistory(
       // Always include activity-only types
       if (ACTIVITY_ONLY_TYPES.has(activity.type)) return true;
       if (activity.type === 'lead_reentry' && asMetadata(activity.metadata).entry_type === 'manual_reentry') return true;
-      // Skip if timeline already has authority over this type
-      if (TIMELINE_AUTHORITY_TYPES.has(activity.type) && timelineTypesPresent.has(activity.type)) return false;
-      // Also map stage_change → stage_changed
-      if (activity.type === 'stage_change' && timelineTypesPresent.has('stage_changed')) return false;
+      if (TIMELINE_AUTHORITY_TYPES.has(activity.type) && timelineEvents.some((event) => sameHistoryOccurrence({
+        id: activity.id, type: activity.type, timestamp: activity.created_at,
+        actorId: isStageChangeTriggerActivity(activity) ? null : activity.user_id,
+        content: activity.content, metadata: activity.metadata,
+      }, {
+        id: event.id, type: event.event_type, timestamp: event.event_at || event.created_at,
+        actorId: event.actor_user_id || event.user_id, content: event.description, metadata: event.metadata,
+      }))) return false;
       return true;
     })
     .map((activity) => {
@@ -172,12 +190,15 @@ export function buildLeadHistory(
       const actor = isStageChangeTriggerActivity(activity)
         ? null
         : actorFromQuery || (actorId ? userMap.get(actorId) || null : null);
+      const agenda = getAgendaHistoryPresentation(activity.type, meta, { content: activity.content, timeZone: formatters.timeZone });
 
       return {
         id: `activity-${activity.id}`,
         type: activity.type,
-        label: buildLabel(activity.type, meta),
-        content: activity.content || buildContent(activity.type, meta, formatters),
+        label: agenda?.label || buildLabel(activity.type, meta),
+        content: agenda ? agenda.content : activity.type === 'property_interests_changed'
+          ? buildContent(activity.type, meta, formatters)
+          : activity.content || buildContent(activity.type, meta, formatters),
         timestamp: activity.created_at,
         actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url || undefined } : null,
         source: 'activity' as const,
@@ -266,6 +287,7 @@ export function buildLeadHistory(
   });
 
   const webhookFormAnswerMappedFromLeadMeta: UnifiedHistoryEvent[] = (() => {
+    if (incomplete) return [];
     if (webhookFormAnswerMappedFromActivities.length > 0) return [];
     const rawPayload = metadataRecord(leadMeta?.raw_payload);
     const isWebhook = lead?.source === 'webhook' || leadMeta?.platform === 'webhook' || leadMeta?.source_type === 'generic_webhook';
@@ -348,6 +370,7 @@ export function buildLeadHistory(
   });
 
   const metaCreativeMappedFromLeadMeta: UnifiedHistoryEvent[] = (() => {
+    if (incomplete) return [];
     if (metaCreativeMappedFromActivities.length > 0) return [];
     const creative = extractMetaCreative(leadMeta as Record<string, unknown> | null);
     if (!creative) return [];
@@ -387,13 +410,15 @@ export function buildLeadHistory(
     }];
   })();
 
+  const reentryProjection = consolidateReentryProjection(entryEvents, [...timelineMapped, ...activityMapped], leadId, !incomplete);
   // Build entry events mapped to unified format
   const entriesMapped: UnifiedHistoryEvent[] = entryEvents
-    .filter((entry) => entry.entry_type !== 'initial') // Remove redundancy with "Lead criado"
-    .map((entry, index) => ({
+    .filter((entry) => entry.entry_type !== 'initial')
+    .flatMap((entry, index) => reentryProjection.representedEntryIds.has(entry.id) ? [] : [{
       id: `entry-${entry.id}`,
       type: 'lead_reentry',
-      label: `${index + 2}ª Entrada`, // First re-entry is the 2nd entry
+      // The loaded suffix cannot establish a global entry ordinal yet.
+      label: incomplete ? 'Reentrada' : `${index + 2}ª Entrada`,
       content: `Origem: ${entry.source}${entry.campaign_name ? ` | Campanha: ${entry.campaign_name}` : ''}`,
       timestamp: entry.created_at,
       actor: null,
@@ -401,7 +426,7 @@ export function buildLeadHistory(
       metadata: { ...entry },
       channel: entry.source,
       isAutomation: false,
-    }));
+    }]);
 
   const distributionMapped: UnifiedHistoryEvent[] = distributionLogs
     .filter((log) => {
@@ -423,7 +448,13 @@ export function buildLeadHistory(
               ? logEventId === timelineEventId
               : Number.isFinite(eventTime) && Number.isFinite(logTime) && Math.abs(eventTime - logTime) <= 5_000);
         }
-        return event.event_type === 'lead_assigned';
+        if (event.event_type !== 'lead_assigned') return false;
+        const logEventId = metadataString(asMetadata(log.metadata).distribution_event_id);
+        const timelineEventId = metadataString(meta.distribution_event_id);
+        if (logEventId && timelineEventId) return logEventId === timelineEventId;
+        const targetId = metadataString(meta.assigned_user_id) || metadataString(meta.to_user_id);
+        return Boolean(log.assigned_user_id && targetId === log.assigned_user_id)
+          && historyTimesMatch(event.event_at || event.created_at, log.created_at);
       });
       return !hasTimelineQueue;
     })
@@ -442,6 +473,7 @@ export function buildLeadHistory(
           ? `Fila "${queueName}" sem distribuição`
           : 'Sem fila de distribuição compatível';
       const metadata: HistoryMetadata = {
+        distribution_event_id: typeof logMetadata.distribution_event_id === 'string' ? logMetadata.distribution_event_id : null,
         queue_id: log.round_robin_id,
         distribution_queue_id: log.round_robin_id,
         queue_name: queueName,
@@ -451,7 +483,8 @@ export function buildLeadHistory(
         to_user_id: log.assigned_user_id,
         to_user_name: assignedName,
         reason,
-        is_initial_distribution: true,
+        is_initial_distribution: typeof logMetadata.is_initial_distribution === 'boolean'
+          ? logMetadata.is_initial_distribution : logMetadata.previous_user_id ? false : undefined,
       };
 
       return {
@@ -471,12 +504,13 @@ export function buildLeadHistory(
   const assignmentMapped: UnifiedHistoryEvent[] = assignmentLogs
     .filter((log) => {
       if (log.reason === 'manual_transfer') return true;
+      if (initialRepresentations.initialAssignmentLogIds.has(log.id)) return !initialRepresentations.representedAssignmentLogIds.has(log.id);
       return ![...timelineMapped.filter((event) => event.type === 'lead_assigned' && event.isAutomation), ...distributionMapped].some((event) => {
         const meta = asMetadata(event.metadata);
         const sameUser = (metadataString(meta.to_user_id) || metadataString(meta.assigned_user_id)) === log.new_user_id;
-        const sameReason = metadataString(meta.reason) === log.reason || metadataString(meta.queue_id) === metadataString(log.reason);
-        const distance = Math.abs(new Date(event.timestamp).getTime() - new Date(log.created_at).getTime());
-        return sameUser && (sameReason || distance < 5000);
+        const previousUser = metadataString(meta.from_user_id);
+        return sameUser && (!previousUser || !log.old_user_id || previousUser === log.old_user_id)
+          && historyTimesMatch(event.timestamp, log.created_at);
       });
     })
     .map((log) => {
@@ -522,7 +556,8 @@ export function buildLeadHistory(
   // Older WhatsApp acknowledgements persisted the metric without a dedicated
   // first_response timeline row. Show the recorded fact once, from the lead.
   if (lead?.first_response_at && !timelineTypesPresent.has('first_response')
-    && !activityTypesPresent.has('first_response')) {
+    && !activityTypesPresent.has('first_response') && !canonicalPresence?.firstResponse
+    && (!incomplete || canonicalPresence?.firstResponse === false)) {
     const metadata: HistoryMetadata = {
       channel: lead.first_response_channel,
       response_seconds: lead.first_response_seconds,
@@ -543,7 +578,8 @@ export function buildLeadHistory(
     });
   }
   const hasLeadCreated = timelineTypesPresent.has('lead_created') || activityTypesPresent.has('lead_created');
-  if (lead && !hasLeadCreated) {
+  if (lead && !hasLeadCreated && !canonicalPresence?.leadCreated
+    && (!incomplete || canonicalPresence?.leadCreated === false)) {
     const label = sourceLabel(lead.source);
     fallbackEvents.push({
       id: `lead-fallback-created-${lead.id}`,
@@ -561,12 +597,14 @@ export function buildLeadHistory(
   }
 
   const hasAssignmentEvent =
+    (raw.queueRuntimeEvents || []).some(event => ['assigned', 'manual_claim', 'stage_rule_assigned'].includes(event.event_type)) ||
     timelineTypesPresent.has('lead_assigned') ||
     timelineTypesPresent.has('assignee_changed') ||
     activityTypesPresent.has('assignee_changed') ||
     assignmentMapped.length > 0 ||
     distributionMapped.length > 0;
-  if (lead?.assigned_user_id && !hasAssignmentEvent) {
+  if (lead?.assigned_user_id && !hasAssignmentEvent && !canonicalPresence?.assignment
+    && (!incomplete || canonicalPresence?.assignment === false)) {
     const assignedUser = lead.assigned_user || userMap.get(lead.assigned_user_id);
     const assignedName = assignedUser?.name || 'Responsável atual';
     fallbackEvents.push({
@@ -597,7 +635,13 @@ export function buildLeadHistory(
       if (eventType === 'lead_created' && hasLeadCreated) return false;
       if (
         audit.action === 'move_stage' &&
-        (timelineTypesPresent.has('stage_changed') || activityTypesPresent.has('stage_change'))
+        !keys.some(key => key === 'lost_reason' || key === 'deal_status') &&
+        [...timelineMapped, ...activityMapped].some((event) => sameHistoryOccurrence({
+          type: 'stage_changed', timestamp: audit.created_at, actorId: audit.user_id,
+          metadata: { old_stage_id: asMetadata(audit.old_data).stage_id, new_stage_id: asMetadata(audit.new_data).stage_id },
+        }, {
+          type: event.type, timestamp: event.timestamp, actorId: event.actor?.id, metadata: event.metadata,
+        }))
       ) {
         return false;
       }
@@ -642,10 +686,9 @@ export function buildLeadHistory(
     });
 
   // Merge and sort chronologically (oldest first)
-  return [
+  return mergeQueueHistory(raw, [
     ...fallbackEvents,
-    ...timelineMapped,
-    ...activityMapped,
+    ...reentryProjection.events,
     ...assignmentMapped,
     ...auditMapped,
     ...metaCreativeMappedFromActivities,
@@ -655,7 +698,7 @@ export function buildLeadHistory(
     ...webhookFormAnswerMappedFromLeadMeta,
     ...entriesMapped,
     ...distributionMapped,
-  ].sort(
+  ]).sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 }

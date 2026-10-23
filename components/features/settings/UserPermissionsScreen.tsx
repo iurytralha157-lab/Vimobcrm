@@ -25,6 +25,9 @@ import {
   useUserPermissionsAdmin,
 } from '@/hooks/use-user-permissions-admin'
 import { getOrganizationMemberRoleLabel } from '@/lib/user-display'
+import { useAuth } from '@/contexts/AuthContext'
+import { useAssignUserRole, useOrganizationRoles, useUserOrganizationRoles } from '@/hooks/use-organization-roles'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const domainLabels: Record<string, string> = {
   access: 'Usuários e acesso',
@@ -52,11 +55,26 @@ function userInitials(name?: string) {
 }
 
 export default function UserPermissionsScreen({ userId }: { userId: string }) {
+  const { activeOrganization } = useAuth()
+  return <UserPermissionsEditor key={`${activeOrganization.organizationId ?? 'none'}:${userId}`} userId={userId} />
+}
+
+function UserPermissionsEditor({ userId }: { userId: string }) {
   const { data, isLoading, error } = useUserPermissionsAdmin(userId)
+  const { data: roles = [] } = useOrganizationRoles()
+  const { data: assignments = [] } = useUserOrganizationRoles()
+  const assignRole = useAssignUserRole()
   const replacePermissions = useReplaceUserPermissions(userId)
   const resetPermissions = useResetUserPermissions(userId)
   const [editedValues, setEditedValues] = useState<Record<string, boolean> | null>(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
+  const [roleDialogOpen, setRoleDialogOpen] = useState(false)
+  const assignedRoleId = assignments.find((assignment) => assignment.user_id === userId)?.organization_role_id ?? 'none'
+  const nextRoleId = selectedRoleId ?? assignedRoleId
+  const nextRoleName = nextRoleId === 'none'
+    ? 'Sem função personalizada'
+    : roles.find((role) => role.id === nextRoleId)?.name ?? 'Função personalizada'
   const values = editedValues ?? Object.fromEntries(
     (data?.permissions ?? []).map((permission) => [permission.key, permission.allowed]),
   )
@@ -88,6 +106,17 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
       toast.success('Permissões restauradas para o padrão.')
     } catch (mutationError) {
       toast.error(mutationError instanceof Error ? mutationError.message : 'Não foi possível restaurar as permissões.')
+    }
+  }
+
+  const handleAssignRole = async () => {
+    try {
+      await assignRole.mutateAsync({ userId, roleId: nextRoleId === 'none' ? null : nextRoleId })
+      setEditedValues(null)
+      setSelectedRoleId(null)
+      setRoleDialogOpen(false)
+    } catch {
+      // The mutation hook reports the server error and preserves the choice.
     }
   }
 
@@ -135,6 +164,31 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
             <ShieldCheck className="h-5 w-5 text-primary" />
             <p className="text-sm">Proprietários e administradores possuem acesso total e não podem ter permissões individuais removidas.</p>
           </div>
+        )}
+
+        {data && !data.locked && (
+          <section className="rounded-lg bg-muted/40 p-4 md:p-5">
+            <h2 className="text-sm font-medium">Função personalizada</h2>
+            <p className="mt-1 text-xs text-muted-foreground">A função complementa as permissões do perfil deste membro.</p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select value={nextRoleId} onValueChange={setSelectedRoleId} disabled={assignRole.isPending}>
+                <SelectTrigger className="w-full sm:max-w-sm" aria-label="Função personalizada do membro">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem função personalizada</SelectItem>
+                  {roles.map((role) => (
+                    <SelectItem key={role.id} value={role.id} disabled={!role.is_active}>
+                      {role.name}{role.is_active ? '' : ' (inativa)'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button type="button" disabled={selectedRoleId === null || selectedRoleId === assignedRoleId || assignRole.isPending} onClick={() => setRoleDialogOpen(true)}>
+                Aplicar função
+              </Button>
+            </div>
+          </section>
         )}
 
         {!data?.locked && (
@@ -226,6 +280,24 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
               >
                 {resetPermissions.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Restaurar padrão
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={roleDialogOpen} onOpenChange={(open) => { if (!open && !assignRole.isPending) setRoleDialogOpen(false) }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Alterar função personalizada?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {data?.name ?? 'Este membro'} passará a usar {nextRoleName}. O acesso será recalculado na próxima requisição.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={assignRole.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction disabled={assignRole.isPending} onClick={(event) => { event.preventDefault(); void handleAssignRole() }}>
+                {assignRole.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Confirmar
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

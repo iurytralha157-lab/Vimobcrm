@@ -41,15 +41,22 @@ func (repo Repository) insertMembers(
 
 		var nextPosition int
 		if err := tx.QueryRow(ctx, `
-			select coalesce(max(position), -1) + 1
+			select coalesce(max(position)::bigint, -1) + 1
 			from public.round_robin_members
 			where organization_id = $1::uuid
 			  and round_robin_id = $2::uuid
 		`, organizationID, roundRobinID).Scan(&nextPosition); err != nil {
 			return nil, err
 		}
+		if nextPosition > 2147483647 {
+			return nil, ErrInvalidInput
+		}
 
 		var insertedID string
+		active := true
+		if member.IsActive != nil {
+			active = *member.IsActive
+		}
 		err = tx.QueryRow(ctx, `
 			insert into public.round_robin_members (
 				organization_id,
@@ -67,10 +74,10 @@ func (repo Repository) insertMembers(
 				$4::uuid,
 				$5,
 				$6,
-				true
+				$7
 			)
 			returning id::text
-		`, organizationID, roundRobinID, nullable(teamID), nullable(userID), member.Weight, nextPosition).Scan(&insertedID)
+		`, organizationID, roundRobinID, nullable(teamID), nullable(userID), member.Weight, nextPosition, active).Scan(&insertedID)
 		if err != nil {
 			return nil, err
 		}
@@ -180,6 +187,12 @@ func (repo Repository) activeUserTeamIDs(
 		  on t.id = tm.team_id
 		 and t.organization_id = tm.organization_id
 		 and coalesce(t.is_active, true) = true
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.membership_generation = tm.membership_generation
+		 and om.is_active = true
+		 and om.deleted_at is null
 		where tm.organization_id = $1::uuid
 		  and tm.user_id = $2::uuid
 		  and coalesce(tm.is_active, true) = true
@@ -233,6 +246,7 @@ func (repo Repository) validateUser(ctx context.Context, q queryer, organization
 			where u.id = $2::uuid
 			  and coalesce(u.is_active, false) = true
 			  and coalesce(om.is_active, false) = true
+			  and om.deleted_at is null
 		)
 	`, organizationID, userID).Scan(&exists)
 	if err != nil {

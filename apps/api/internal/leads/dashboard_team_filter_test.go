@@ -37,6 +37,7 @@ func TestDashboardTeamFilterMatchesCurrentAssigneeTeamLikePipeline(t *testing.T)
 		"dom.user_id = dtm.user_id",
 		"coalesce(dom.is_active, false) = true",
 		"dom.deleted_at is null",
+		"dom.membership_generation = dtm.membership_generation",
 		"dtm.organization_id = l.organization_id",
 		"dtm.team_id = $5::uuid",
 		"dtm.user_id = l.assigned_user_id",
@@ -51,6 +52,28 @@ func TestDashboardTeamFilterMatchesCurrentAssigneeTeamLikePipeline(t *testing.T)
 	}
 	if len(args) != 5 || args[4] != teamID {
 		t.Fatalf("team filter args = %#v, want selected team %q", args, teamID)
+	}
+}
+
+func TestDashboardPropertyTeamFilterRequiresCurrentTeamMembership(t *testing.T) {
+	where, _, err := buildDashboardPropertyWhere(tenant.Context{
+		OrganizationID: "22222222-2222-4222-8222-222222222222",
+		UserID:         "11111111-1111-4111-8111-111111111111",
+		MemberRole:     "admin",
+	}, DashboardFilter{TeamID: "33333333-3333-4333-8333-333333333333"}, false)
+	if err != nil {
+		t.Fatalf("build dashboard property where: %v", err)
+	}
+	teamClause := where[len(where)-1]
+	for _, required := range []string{
+		"ptm.is_active = true",
+		"pom.is_active = true",
+		"pom.deleted_at is null",
+		"pom.membership_generation = ptm.membership_generation",
+	} {
+		if !strings.Contains(teamClause, required) {
+			t.Fatalf("property team filter is missing %q: %s", required, teamClause)
+		}
 	}
 }
 

@@ -247,7 +247,7 @@ export function AgendaAdaptiveChart({
   );
 
   return (
-    <section className="flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none">
+    <section className="flex h-[300px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[360px]">
       <div className="px-4 pb-2 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">

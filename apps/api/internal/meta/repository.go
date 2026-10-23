@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -1354,6 +1353,9 @@ func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookP
 	if err := repo.incrementStats(ctx, tx, integration.ID, formConfig.ID); err != nil {
 		return "", false, err
 	}
+	if err := distribution.ValidatePersistedIntakeDestination(ctx, tx, integration.OrganizationID, leadID); err != nil {
+		return "", false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", false, err
 	}
@@ -1970,6 +1972,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				rrm.organization_id,
 				rrm.user_id,
 				rrm.team_id,
+				rrm.membership_generation,
 				coalesce(rrm.position, 0) as position,
 				rrm.created_at,
 				coalesce(entry_logs.total, 0) as entry_total
@@ -1998,6 +2001,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				entries.organization_id,
 				entries.user_id,
 				entries.team_id,
+				entries.membership_generation,
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
@@ -2012,6 +2016,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
+			 and tm.membership_generation = entries.membership_generation
 			 and coalesce(tm.is_active, true) = true
 			where entries.user_id is not null
 			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
@@ -2024,6 +2029,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				entries.organization_id,
 				tm.user_id,
 				entries.team_id,
+				tm.membership_generation,
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
@@ -2047,6 +2053,8 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		  on om.organization_id = candidates.organization_id
 		 and om.user_id = candidates.user_id
 		 and coalesce(om.is_active, true) = true
+		 and om.deleted_at is null
+		 and om.membership_generation = candidates.membership_generation
 		join public.users u
 		  on u.id = candidates.user_id
 		 and coalesce(u.is_active, true) = true
@@ -3149,7 +3157,7 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 		case "email":
 			lead.Email = &value
 		case "phone":
-			if canonical, err := phonenumber.Canonicalize(value); err == nil && canonical != "" {
+			if canonical, err := canonicalizeMetaPhoneContact(value); err == nil && canonical != "" {
 				lead.Phone = &canonical
 			}
 		case "message":
@@ -3415,14 +3423,9 @@ func metaText(primary map[string]any, fallback map[string]any, keys ...string) s
 }
 
 func hasFieldData(payload map[string]any) bool {
-	if _, ok := payload["field_data"]; ok {
-		return true
-	}
-	if nested, ok := payload["lead_data"].(map[string]any); ok {
-		_, ok := nested["field_data"]
-		return ok
-	}
-	return false
+	// A present but empty field_data is not an identity snapshot. Fetch Graph
+	// details instead of retrying the same empty webhook payload indefinitely.
+	return len(extractFieldData(payload)) > 0
 }
 
 func guessLeadTarget(key string) string {

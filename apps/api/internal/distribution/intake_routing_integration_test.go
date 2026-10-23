@@ -150,6 +150,16 @@ func TestResolveIntakeDestinationAgainstLocalPostgres(t *testing.T) {
 	if len(tagDestination.TagIDs) != 1 || tagDestination.TagIDs[0] != tagID {
 		t.Fatalf("validated tag snapshot = %#v, want %s", tagDestination.TagIDs, tagID)
 	}
+	// Retire the actual catalog reference before removing the tag. Inactive
+	// rules still count as configurations and cannot bypass the deletion guard.
+	if _, err := tx.Exec(ctx, `delete from public.round_robin_rules where organization_id = $1::uuid and round_robin_id = $2::uuid and match_type = 'tag'`, organizationID, tagQueue); err != nil {
+		t.Fatalf("remove routing tag reference: %v", err)
+	}
+	// An active ruleless queue would deliberately become a fallback and obscure
+	// the stale-tag assertion below, so retire this fixture's queue as well.
+	if _, err := tx.Exec(ctx, `update public.round_robins set is_active = false where organization_id = $1::uuid and id = $2::uuid`, organizationID, tagQueue); err != nil {
+		t.Fatalf("retire tag queue fixture: %v", err)
+	}
 	if _, err := tx.Exec(ctx, `delete from public.tags where organization_id = $1::uuid and id = $2::uuid`, organizationID, tagID); err != nil {
 		t.Fatalf("delete routing tag: %v", err)
 	}
@@ -192,6 +202,45 @@ func TestResolveIntakeDestinationAgainstLocalPostgres(t *testing.T) {
 			wantQueue = webhookQueueB
 		}
 		assertIntakeQueue(t, destination, wantQueue, "redistribute")
+	}
+
+	literalCampaignQueue := insertQueue("Literal campaign comma", "keep_assignee")
+	if _, err := tx.Exec(ctx, `
+		insert into public.round_robin_rules (
+		  organization_id, round_robin_id, match_type, match_value, match, is_active, priority
+		) values ($1::uuid, $2::uuid, 'campaign_contains', $3,
+		  jsonb_build_object('campaign_name_contains_literals', jsonb_build_array($3::text)), true, 400)
+	`, organizationID, literalCampaignQueue, "Lançamento, Centro"); err != nil {
+		t.Fatalf("insert literal comma campaign: %v", err)
+	}
+	legacyCampaignQueue := insertQueue("Legacy campaign CSV", "redistribute")
+	insertRule(legacyCampaignQueue, "campaign_contains", "Vila, Jardim", 400)
+	for _, scenario := range []struct {
+		name, campaign, queue, reentry string
+	}{
+		{"literal full phrase", "Promoção Lançamento, Centro 2026", literalCampaignQueue, "keep_assignee"},
+		{"literal case insensitive", "LANÇAMENTO, CENTRO", literalCampaignQueue, "keep_assignee"},
+		{"literal first CSV fragment cannot match", "Lançamento Norte", "", ""},
+		{"literal second CSV fragment cannot match", "Centro Novo", "", ""},
+		{"legacy first CSV fragment remains valid", "Vila Verde", legacyCampaignQueue, "redistribute"},
+		{"legacy second CSV fragment remains valid", "Jardim Novo", legacyCampaignQueue, "redistribute"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			destination, err := ResolveIntakeDestination(ctx, tx, IntakeContext{
+				OrganizationID: organizationID, PipelineID: &pipelineID,
+				Source: "campaign_fixture", UTMCampaign: &scenario.campaign, RequireExplicitRule: true,
+			})
+			if err != nil {
+				t.Fatalf("resolve campaign %q: %v", scenario.campaign, err)
+			}
+			if scenario.queue == "" {
+				if !destination.Resolved || destination.RoundRobinID != nil {
+					t.Fatalf("fragment claimed a literal queue: %#v", destination)
+				}
+				return
+			}
+			assertIntakeQueue(t, destination, scenario.queue, scenario.reentry)
+		})
 	}
 
 	fallbackQueue := insertQueue("Pipeline fallback", "keep_assignee")

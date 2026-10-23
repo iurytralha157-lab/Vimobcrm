@@ -2,6 +2,7 @@ import type {
   MemberAvailability,
   TeamMemberAvailabilityInput,
 } from "@/lib/api/teams";
+import { availabilityClockForEditor, availabilityClockForInput, availabilityClockSeconds, isAvailabilityClock } from "@/lib/teams/availability-clock";
 
 export interface DaySchedule {
   day_of_week: number;
@@ -31,6 +32,10 @@ export const TIME_OPTIONS = Array.from({ length: 48 }, (_, index) => {
   return `${hours}:${minutes}`;
 }).concat("23:59");
 
+export function availabilityTimeOptions(...savedClocks: string[]) {
+  return [...new Set([...TIME_OPTIONS, ...savedClocks.filter(isAvailabilityClock)])].sort();
+}
+
 export function createDefaultAvailabilityWeek(): DaySchedule[] {
   return Array.from({ length: 7 }, (_, day) => ({
     day_of_week: day,
@@ -54,7 +59,7 @@ export function hasCompleteAvailabilityWeek(
 }
 
 export function availabilityToWeek(
-  availability: readonly MemberAvailability[],
+  availability: readonly TeamMemberAvailabilityInput[],
 ): DaySchedule[] {
   const defaults = createDefaultAvailabilityWeek();
   const hasAnySavedDay = availability.length > 0;
@@ -68,10 +73,12 @@ export function availabilityToWeek(
     }
     return {
       day_of_week: saved.day_of_week,
-      is_active: saved.is_active,
-      is_all_day: saved.is_all_day,
-      start_time: saved.start_time?.slice(0, 5) || fallback.start_time,
-      end_time: saved.end_time?.slice(0, 5) || fallback.end_time,
+      is_active: saved.is_active !== false,
+      is_all_day: saved.is_all_day === true,
+      // A missing or malformed saved clock needs an explicit repair. It must
+      // not become the default shift merely because another field is saved.
+      start_time: availabilityClockForEditor(saved.start_time),
+      end_time: availabilityClockForEditor(saved.end_time),
     };
   });
 }
@@ -82,19 +89,32 @@ export function isValidAvailabilityWeek(week: readonly DaySchedule[]) {
   if (days.size !== 7) return false;
   if (!week.some((entry) => entry.is_active)) return false;
 
-  const clockPattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
   return week.every((entry) => {
     if (entry.day_of_week < 0 || entry.day_of_week > 6) return false;
-    if (!entry.is_active || entry.is_all_day) return true;
+    if (entry.is_all_day) return true;
+    if (!entry.is_active) return (!entry.start_time || isAvailabilityClock(entry.start_time)) && (!entry.end_time || isAvailabilityClock(entry.end_time));
     // start_time > end_time is allowed: it represents a shift that starts on
     // this day and rolls over past midnight into the next day (e.g. 22:00
     // to 06:00). Only an exact match (zero-length shift) is invalid.
     return (
-      clockPattern.test(entry.start_time) &&
-      clockPattern.test(entry.end_time) &&
-      entry.start_time !== entry.end_time
+      isAvailabilityClock(entry.start_time) &&
+      isAvailabilityClock(entry.end_time) &&
+      availabilityClockSeconds(entry.start_time) !== availabilityClockSeconds(entry.end_time)
     );
   });
+}
+
+export type AvailabilityWeekReviewReason = "missing" | "incomplete" | "invalid";
+
+export function availabilityWeekReviewReason(availability: readonly TeamMemberAvailabilityInput[]): AvailabilityWeekReviewReason | null {
+  if (availability.length === 0) return "missing";
+  if (!hasCompleteAvailabilityWeek(availability)) return "incomplete";
+  if (availability.some((day) => !day.is_all_day && (
+    (day.start_time != null && !isAvailabilityClock(day.start_time)) ||
+    (day.end_time != null && !isAvailabilityClock(day.end_time)) ||
+    (day.is_active !== false && (!isAvailabilityClock(day.start_time) || !isAvailabilityClock(day.end_time)))
+  )) || !isValidAvailabilityWeek(availabilityToWeek(availability))) return "invalid";
+  return null;
 }
 
 export function toAvailabilityInput(
@@ -105,8 +125,8 @@ export function toAvailabilityInput(
     .sort((left, right) => left.day_of_week - right.day_of_week)
     .map((entry) => ({
       day_of_week: entry.day_of_week,
-      start_time: entry.is_all_day ? null : `${entry.start_time}:00`,
-      end_time: entry.is_all_day ? null : `${entry.end_time}:00`,
+      start_time: entry.is_all_day ? null : availabilityClockForInput(entry.start_time),
+      end_time: entry.is_all_day ? null : availabilityClockForInput(entry.end_time),
       is_all_day: entry.is_all_day,
       is_active: entry.is_active,
     }));

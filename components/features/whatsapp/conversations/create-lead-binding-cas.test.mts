@@ -17,8 +17,12 @@ test("criar lead pela conversa propaga o snapshot observado ate a API", () => {
   const api = readRepoFile("lib/api/leads.ts");
 
   assert.match(screen, /getWhatsAppConversationMessageScope\([\s\S]*?\)\.expectedLeadId/);
-  assert.match(screen, /expectedPreviousLeadId:\s*expectedPreviousLeadId \|\| undefined/);
+  assert.match(screen, /getConversationLinkPreview\([\s\S]*?expectedPreviousLeadId/);
+  assert.match(screen, /confirmCreateLeadLinkPreview[\s\S]*?confirmHistoryLink: true/);
   assert.match(overlays, /expectedPreviousLeadId=\{createLeadContact\.expectedPreviousLeadId\}/);
+  assert.match(overlays, /confirmHistoryLink=\{createLeadContact\.confirmHistoryLink\}/);
   assert.match(dialog, /expected_previous_lead_id:\s*formData\.conversation_id[\s\S]*?expectedPreviousLeadId \|\| undefined/);
+  assert.match(dialog, /confirm_history_link:\s*formData\.conversation_id[\s\S]*?confirmHistoryLink/);
   assert.match(api, /expectedPreviousLeadId:\s*data\.expected_previous_lead_id/);
+  assert.match(api, /confirmHistoryLink:\s*data\.confirm_history_link/);
 });

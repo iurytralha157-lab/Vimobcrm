@@ -23,7 +23,18 @@ const BILLING_BLOCKED_STATUSES = new Set([
   'cancelada',
 ]);
 
-function isBlockedOrganization(organization: any) {
+type OrganizationAccess = {
+  is_active?: boolean | null;
+  subscription_status?: string | null;
+  name?: string | null;
+};
+
+const EXCLUDED_SITE_FIELDS = new Set([
+  'organization_id', 'subdomain', 'organizations', 'id', 'is_active',
+  'domain_verified', 'domain_verified_at', 'created_at', 'updated_at',
+]);
+
+function isBlockedOrganization(organization: OrganizationAccess | null | undefined) {
   return (
     organization?.is_active === false ||
     BILLING_BLOCKED_STATUSES.has(String(organization?.subscription_status || '').toLowerCase())
@@ -69,7 +80,7 @@ Deno.serve(async (req) => {
     }
 
     if (directMatch) {
-      const directOrganization = (directMatch as any).organizations;
+      const directOrganization = directMatch.organizations as OrganizationAccess | null;
       if (isBlockedOrganization(directOrganization)) {
         return new Response(
           JSON.stringify({
@@ -83,14 +94,16 @@ Deno.serve(async (req) => {
 
       console.log(`Domain resolved via direct lookup: ${domain} -> org: ${directMatch.organization_id}`);
       
-      const { organization_id, subdomain, organizations, id, is_active, domain_verified, domain_verified_at, created_at, updated_at, ...siteFields } = directMatch;
-      const orgName = (organizations as any)?.name || null;
+      const siteFields = Object.fromEntries(
+        Object.entries(directMatch).filter(([field]) => !EXCLUDED_SITE_FIELDS.has(field)),
+      );
+      const orgName = directOrganization?.name || null;
       
       return new Response(
         JSON.stringify({
           found: true,
-          organization_id,
-          subdomain,
+          organization_id: directMatch.organization_id,
+          subdomain: directMatch.subdomain,
           site_config: {
             ...siteFields,
             organization_name: orgName,

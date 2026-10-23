@@ -16,6 +16,9 @@ import (
 var errWhatsAppSessionLifecycleConflict = errors.New("whatsapp session lifecycle fence changed")
 
 func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.Context, input createSessionInput) (SessionOperationResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return SessionOperationResponse{}, err
+	}
 	sessionID, err := createWhatsAppSessionID()
 	if err != nil {
 		return SessionOperationResponse{}, fmt.Errorf("%w: could not allocate WhatsApp session identity: %v", ErrProviderFailed, err)
@@ -220,6 +223,9 @@ func (repo Repository) DeleteSession(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) GetQRCode(ctx context.Context, tenantContext tenant.Context, sessionID string) (QRCodeResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return QRCodeResponse{}, err
+	}
 	session, err := repo.GetSession(ctx, tenantContext, sessionID)
 	if err != nil {
 		return QRCodeResponse{}, err
@@ -241,38 +247,32 @@ func (repo Repository) GetQRCode(ctx context.Context, tenantContext tenant.Conte
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
-		if errors.Is(err, ErrProviderFailed) {
-			if isProviderDisconnectedError(err) || isProviderMissingInstanceError(err) {
-				_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
-			}
-			return QRCodeResponse{}, nil
-		}
 		return QRCodeResponse{}, err
 	}
 	if !providerResultOK(result) {
-		message := providerErrorMessage(result, "QR Code ainda nao disponivel.")
-		if firstString(result, "status", "data.status") == "404" || isProviderDisconnectedMessage(message) {
-			_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
-		}
+		// QR availability is not a connection observation. Even a 404 may be a
+		// missing provider route while the paired client remains connected.
 		return QRCodeResponse{}, nil
 	}
 
 	qr := firstString(result, "data.data.qrcode", "data.qrcode", "data.Qrcode", "qrcode", "Qrcode")
 	if qr != "" {
-		_, _ = repo.db.Pool().Exec(ctx, `
-			update public.whatsapp_sessions
-			set status = 'qr_ready',
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			  and status <> 'connected'
-		`, tenantContext.OrganizationID, session.ID)
+		applied, err := repo.applySessionQRCodeObservation(ctx, session, qr)
+		if err != nil {
+			return QRCodeResponse{}, err
+		}
+		if !applied {
+			return QRCodeResponse{}, nil
+		}
 	}
 
 	return QRCodeResponse{Base64: qr, QRCode: qr}, nil
 }
 
 func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext tenant.Context, sessionID string) (ConnectionStatusResponse, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return ConnectionStatusResponse{}, err
+	}
 	session, err := repo.GetSession(ctx, tenantContext, sessionID)
 	if err != nil {
 		return ConnectionStatusResponse{}, err
@@ -295,18 +295,8 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
-		if errors.Is(err, ErrProviderOutcomeUnknown) {
-			return ConnectionStatusResponse{}, err
-		}
-		if isProviderDisconnectedError(err) {
-			_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
-			return ConnectionStatusResponse{
-				Connected:        false,
-				Status:           "disconnected",
-				State:            "close",
-				InstanceNotFound: isProviderMissingInstanceError(err),
-			}, nil
-		}
+		// Transport errors do not prove the client disconnected. Authoritative
+		// provider responses are classified below, independently of error text.
 		return ConnectionStatusResponse{}, err
 	}
 
@@ -314,30 +304,15 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 	if !authoritative {
 		return ConnectionStatusResponse{}, fmt.Errorf("%w: Evolution Go connection status is unavailable", ErrProviderOutcomeUnknown)
 	}
-	if err := repo.updateSessionStatusFromProvider(ctx, session, normalizedStatus, result); err != nil {
-		return ConnectionStatusResponse{}, err
-	}
-	connected := normalizedStatus == "connected"
-	state := "close"
-	if connected {
-		state = "open"
-	} else if normalizedStatus == "qr_ready" {
-		state = "qr"
-	}
-
 	rawData := firstMap(result, "data.data", "data.instance", "data.session", "data", "instance", "session")
 	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "user.id")
-	return ConnectionStatusResponse{
-		Connected:        connected,
-		Status:           normalizedStatus,
-		State:            state,
-		InstanceNotFound: instanceMissing,
-		Instance: map[string]any{
-			"wuid": wuid,
+	return reconcileSessionConnectionObservation(
+		connectionStatusResponse(normalizedStatus, instanceMissing, wuid),
+		func() (bool, error) {
+			return repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true)
 		},
-		RawResponse: nil,
-		RawStatus:   nil,
-	}, nil
+		func() (Session, error) { return repo.GetSession(ctx, tenantContext, session.ID) },
+	)
 }
 
 func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant.Context, sessionID string) (SessionOperationResponse, error) {
@@ -533,19 +508,6 @@ func (repo Repository) LogoutSession(ctx context.Context, tenantContext tenant.C
 	return result, nil
 }
 
-func (repo Repository) markSessionDisconnected(ctx context.Context, organizationID string, sessionID string) error {
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_sessions
-		set status = 'disconnected',
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and coalesce(is_active, true) = true
-		  and coalesce(status, '') not in ('deleted', 'disabled')
-	`, organizationID, sessionID)
-	return err
-}
-
 func (repo Repository) markSessionLoggedOut(ctx context.Context, organizationID string, sessionID string, operationID string) error {
 	command, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_sessions
@@ -604,6 +566,9 @@ func (repo Repository) setSessionAutoReconnect(ctx context.Context, organization
 func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantContext tenant.Context, sessionID string, enabled bool) error {
 	if !canManageNotificationSender(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
+	}
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
 	}
 
 	sessionID, ok := normalizeUUID(sessionID)
@@ -729,6 +694,9 @@ func revalidateNotificationSenderAdmin(ctx context.Context, tx pgx.Tx, tenantCon
 }
 
 func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, input ToggleAutoReplyRequest) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return ErrSessionNotFound
@@ -871,6 +839,9 @@ func (repo Repository) aiAgentAvailable(ctx context.Context, organizationID stri
 }
 
 func (repo Repository) GetManageableSession(ctx context.Context, tenantContext tenant.Context, sessionID string) (Session, error) {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return Session{}, err
+	}
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return Session{}, ErrSessionNotFound
@@ -898,6 +869,9 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) ensureCanCreateSession(ctx context.Context, tenantContext tenant.Context) error {
+	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+		return err
+	}
 	quota, err := repo.GetSessionQuota(ctx, tenantContext.OrganizationID)
 	if err != nil {
 		return err

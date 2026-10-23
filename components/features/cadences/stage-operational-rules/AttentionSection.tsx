@@ -159,7 +159,7 @@ export function AttentionSection({
               strokeWidth={1.5}
             />
             <div className="min-w-0">
-              <p className="text-[11px] font-light text-[var(--app-text-primary)]">
+              <p className="text-[12px] font-light text-[var(--app-text-primary)]">
                 Herança aplicada automaticamente
               </p>
               <p className="mt-0.5 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
@@ -177,7 +177,7 @@ export function AttentionSection({
         <>
           <div className="mt-3 flex flex-col gap-2.5 rounded-[8px] bg-[var(--app-surface-solid)] p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="text-[11px] font-light text-[var(--app-text-primary)]">
+              <p className="text-[12px] font-light text-[var(--app-text-primary)]">
                 Comportamento local
               </p>
               <p className="mt-0.5 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
@@ -231,7 +231,7 @@ export function AttentionSection({
               {draft.attention.mode === 'shadow' && (
                 <div className="mt-3 flex items-start gap-2 rounded-[8px] bg-warning/10 px-3 py-2.5">
                   <Eye className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.5} />
-                  <p className="text-[11px] font-light leading-[17px] text-[var(--app-text-secondary)]">
+                  <p className="text-[12px] font-light leading-[17px] text-[var(--app-text-secondary)]">
                     Modo observação: acompanha os prazos sem exibir cobranças em
                     Prioridades e atenções. Use para calibrar as regras antes de ativá-las.
                   </p>
@@ -243,7 +243,7 @@ export function AttentionSection({
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success"
                     strokeWidth={1.5}
                   />
-                  <p className="text-[11px] font-light leading-[17px] text-[var(--app-text-secondary)]">
+                  <p className="text-[12px] font-light leading-[17px] text-[var(--app-text-secondary)]">
                     Ativação segura: leads que já estão nesta etapa não recebem cobrança
                     retroativa. A regra começa numa nova entrada na etapa ou num novo ciclo
                     de responsável.
@@ -403,7 +403,7 @@ function GlobalAttentionNotice({
         strokeWidth={1.5}
       />
       <div className="min-w-0">
-        <p className="text-[11px] font-light text-[var(--app-text-primary)]">{title}</p>
+        <p className="text-[12px] font-light text-[var(--app-text-primary)]">{title}</p>
         <p className="mt-0.5 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
           {description}
         </p>
@@ -449,7 +449,7 @@ function DeadlineRule({
             >
               {title}
             </Label>
-            <p className="mt-0.5 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
+            <p className="mt-0.5 text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
               {description}
             </p>
           </div>

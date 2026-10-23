@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { PropertyCepRequests } from "../properties/property-cep-request";
 
 import {
   canAssignProperties,
@@ -252,14 +253,31 @@ test("consulta de CEP aplica latest-request-wins e cancela resposta obsoleta", (
     "components/features/properties/property-form/sections/LocationSection.tsx",
   );
 
+  assert.ok(formSource.includes("usePropertyCepLookup({"));
+  assert.ok(formSource.includes("if (!isFormScopeCurrent(formScope)) return;"));
+  assert.ok(formSource.includes("onlyCepDigits(previous.cep) === cep"));
+  const lookupSource = readWorkspaceFile("hooks/properties/use-property-cep-lookup.ts");
   for (const marker of [
-    "cepLookupAbortRef.current?.abort()",
-    "const controller = new AbortController()",
-    "signal: controller.signal",
-    "requestSequence !== cepLookupSequenceRef.current",
+    "requests.current.begin()",
+    "fetchPropertyCepAddress(cep, request.controller.signal)",
+    "if (!requests.current.isCurrent(request)) return;",
+    "coordinator.invalidate()",
   ]) {
-    assert.ok(formSource.includes(marker), `guarda de CEP ausente: ${marker}`);
+    assert.ok(lookupSource.includes(marker), "guarda de CEP extraida ausente: " + marker);
   }
+  // Exercise the actual extracted coordinator: even a fetch that ignores abort
+  // cannot apply the previous request or overwrite a later manual address edit.
+  const requests = new PropertyCepRequests();
+  const first = requests.begin();
+  const second = requests.begin();
+  assert.equal(first.controller.signal.aborted, true);
+  assert.equal(requests.isCurrent(first), false);
+  assert.equal(requests.isCurrent(second), true);
+  requests.finish(first);
+  assert.equal(requests.isCurrent(second), true);
+  requests.invalidate();
+  assert.equal(second.controller.signal.aborted, true);
+  assert.equal(requests.isCurrent(second), false);
   assert.ok(locationSource.includes("void lookupCep(digits);"));
   assert.equal(locationSource.includes("if (digits.length === 8)"), false);
 });

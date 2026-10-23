@@ -82,8 +82,6 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 	for _, fragment := range []string{
 		"pointerValue(conversation.LeadID) != input.ExpectedLeadID",
 		"and wc.lead_id = $4::uuid",
-		"and wc.lead_id = $%d::uuid",
-		"and wc.lead_id is null",
 		"lockConversationSendSession(ctx, tx, tenantContext, session.ID)",
 		"for update of wc",
 	} {
@@ -91,8 +89,20 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 			t.Fatalf("message mutation source is missing stale-card guard %q", fragment)
 		}
 	}
-	if mismatchIndex, uploadIndex := strings.Index(messageSource, "pointerValue(conversation.LeadID) != input.ExpectedLeadID"), strings.Index(messageSource, "repo.storage.upload"); mismatchIndex < 0 || uploadIndex < 0 || mismatchIndex > uploadIndex {
+	if mismatchIndex, uploadIndex := strings.Index(messageSource, "pointerValue(conversation.LeadID) != input.ExpectedLeadID"), strings.Index(messageSource, "repo.prepareOutboundMedia(ctx,"); mismatchIndex < 0 || uploadIndex < 0 || mismatchIndex > uploadIndex {
 		t.Fatal("SendMessage must reject an already-stale card before persisting outbound media")
+	}
+	preflightBytes, err := os.ReadFile("outbound_media_preflight.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflightSource := string(preflightBytes)
+	uploadIndex := strings.Index(preflightSource, "repo.storage.uploadImmutable(ctx,")
+	for _, guard := range []string{"oldConversation != conversationID || oldLead != leadID", `oldDigest != "" && oldDigest != digest`} {
+		guardIndex := strings.Index(preflightSource, guard)
+		if guardIndex < 0 || uploadIndex < 0 || guardIndex >= uploadIndex {
+			t.Fatalf("media preflight must reject changed intent %q before immutable upload", guard)
+		}
 	}
 	sendStart := strings.Index(messageSource, "func (repo Repository) SendMessage")
 	sendEnd := strings.Index(messageSource, "func (repo Repository) MarkAsSeenOnWhatsApp")
@@ -111,10 +121,8 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 		t.Fatal("unable to isolate MarkAsSeenOnWhatsApp")
 	}
 	markSeenSource := messageSource[markSeenStart:markSeenEnd]
-	markSeenSessionLock := strings.Index(markSeenSource, "lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, sessionID)")
-	markSeenConversationLock := strings.Index(markSeenSource, "for update of wc")
-	if markSeenSessionLock < 0 || markSeenConversationLock < 0 || markSeenSessionLock >= markSeenConversationLock {
-		t.Fatal("MarkAsSeenOnWhatsApp must lock session before conversation")
+	if !strings.Contains(markSeenSource, "lockOperationalInboxConversation(ctx, tx, tenantContext, conversationID, expectedLeadID)") {
+		t.Fatal("MarkAsSeenOnWhatsApp must use the current operational inbox authorization fence")
 	}
 	commitIndex := strings.Index(markSeenSource, "tx.Commit(ctx)")
 	providerIndex := strings.Index(markSeenSource, `repo.functions.invokeEvolution(ctx, "message.markread"`)
@@ -128,14 +136,29 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 	}
 	repositorySource := string(repositoryBytes)
 	for _, fragment := range []string{
-		`expectedLeadPredicate := "lead_id is null"`,
-		`expectedLeadPredicate := "wc.lead_id is null"`,
 		`lead_id = $%d::uuid`,
-		`wc.lead_id = $%d::uuid`,
+		`repo.mutateConversationInbox(ctx, tenantContext, conversationID, expectedLeadID, false, false, true)`,
 	} {
 		if !strings.Contains(repositorySource, fragment) {
 			t.Fatalf("conversation mutation repository is missing stale-card guard %q", fragment)
 		}
+	}
+
+	inboxBytes, err := os.ReadFile("conversation_inbox_mutation.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inboxSource := string(inboxBytes)
+	for _, fragment := range []string{"validateExpectedConversationLeadSnapshot(expectedLeadID)", "result.LeadID != expectedLeadID", "coalesce(wc.lead_id::text,'')=$7", `currentWhatsAppActorSnapshotPredicateSQL("$10")`} {
+		if !strings.Contains(inboxSource, fragment) {
+			t.Fatalf("inbox mutation missing current-card/actor guard %q", fragment)
+		}
+	}
+	actorLock := strings.Index(inboxSource, "lockWhatsAppUserMembershipRows(")
+	sessionFence := strings.Index(inboxSource, "for share`, actor.OrganizationID, result.SessionID")
+	conversationFence := strings.Index(inboxSource, "for update of wc")
+	if actorLock < 0 || sessionFence < actorLock || conversationFence < sessionFence {
+		t.Fatal("operational inbox authorization must lock actors before session and conversation")
 	}
 
 	if !strings.Contains(reactionTargetAuthorizationSQL(true), "and wc.lead_id = $7::uuid") {

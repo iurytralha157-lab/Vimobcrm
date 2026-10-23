@@ -93,6 +93,7 @@ export function useScheduleDashboard(
       }),
     enabled: isReady && options.enabled !== false,
     staleTime: SCHEDULE_DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
     refetchInterval: SCHEDULE_DASHBOARD_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previousData, previousQuery) => {

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { readStandaloneLocalSupabaseStatus } from './standalone-local-stack';
 
 export const E2E_ORGANIZATION_ID = '11111111-1111-4111-8111-111111111111';
 export const E2E_TEAM_ID = '22222222-2222-4222-8222-222222222222';
@@ -98,6 +99,9 @@ const PRODUCTION_E2E_HOSTS = new Set([
 export function loadE2EEnvFiles(rootDir = process.cwd()) {
   if (envLoaded) return;
   envLoaded = true;
+
+  // The explicit standalone harness supplies only synthetic process settings.
+  if (process.env.E2E_STANDALONE_LOCAL_STACK_MANIFEST) return;
 
   for (const fileName of ['.env.e2e.local', '.env.e2e']) {
     const filePath = path.join(rootDir, fileName);
@@ -199,6 +203,57 @@ export function requireE2ESupabaseConfig() {
 export function buildE2EProcessEnv(): Record<string, string> {
   const config = getE2EConfig();
   const trimmedSupabaseURL = config.supabaseURL.replace(/\/+$/, '');
+  const localWhatsAppWorker = readEnv('E2E_LOCAL_WHATSAPP_WEBHOOK_WORKER') === 'true';
+  if (localWhatsAppWorker) {
+    const loopbackTargets = [
+      config.baseURL, config.apiURL, config.supabaseURL, config.databaseURL,
+    ].every((value) => ['127.0.0.1', 'localhost'].includes(new URL(value).hostname));
+    if (
+      !readEnv('E2E_SUPABASE_WORKDIR')
+      || !loopbackTargets
+      || new URL(config.baseURL).port !== '3100'
+      || new URL(config.apiURL).port !== '8181'
+      || new URL(config.supabaseURL).port !== readEnv('E2E_EXPECT_SUPABASE_PORT', '57721')
+      || new URL(config.databaseURL).port !== readEnv('E2E_EXPECT_DATABASE_PORT', '57722')
+    ) {
+      throw new Error('The local WhatsApp webhook worker requires the isolated loopback stack and exact expected ports.');
+    }
+    // The worker claims globally. Refuse to start it if another local fixture
+    // still owns an unfinished inbox row.
+    const preflight = `
+      const { Client } = require('pg');
+      (async () => {
+        const client = new Client({ connectionString: process.env.E2E_PREFLIGHT_DATABASE_URL });
+        await client.connect();
+        try {
+          const result = await client.query(
+            "select count(*)::int as n from public.whatsapp_webhook_inbox where status in ('pending', 'retry', 'processing')"
+          );
+          if (result.rows[0].n !== 0) throw new Error('The disposable WhatsApp inbox has unfinished rows');
+        } finally {
+          await client.end();
+        }
+      })().catch((error) => { console.error(error.message); process.exitCode = 1; });
+    `;
+    try {
+      execFileSync(process.execPath, ['-e', preflight], {
+        cwd: process.cwd(),
+        env: { ...process.env, E2E_PREFLIGHT_DATABASE_URL: config.databaseURL },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+        windowsHide: true,
+      });
+    } catch {
+      throw new Error('Refusing to start the local WhatsApp webhook worker: inbox preflight failed.');
+    }
+  }
+  const requestedNextDistDir = readEnv('E2E_NEXT_DIST_DIR');
+  if (requestedNextDistDir && (
+    !readEnv('E2E_SUPABASE_WORKDIR') || !/^\.next-[a-z0-9-]+$/.test(requestedNextDistDir)
+  )) {
+    throw new Error('E2E_NEXT_DIST_DIR requires an isolated workdir and a simple .next-* directory name.');
+  }
   const env: Record<string, string | undefined> = {
     ...process.env,
     API_ENV: 'test',
@@ -217,13 +272,13 @@ export function buildE2EProcessEnv(): Record<string, string> {
     WHATSAPP_AI_WORKER_ENABLED: 'false',
     WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED: 'false',
     WHATSAPP_OUTBOX_WORKER_ENABLED: 'false',
-    WHATSAPP_WEBHOOK_WORKER_ENABLED: 'false',
+    WHATSAPP_WEBHOOK_WORKER_ENABLED: localWhatsAppWorker ? 'true' : 'false',
     WHATSAPP_SESSION_SUPERVISOR_ENABLED: 'false',
     APP_PUBLIC_URL: config.baseURL,
     NEXT_PUBLIC_VIMOB_API_URL: config.apiURL,
     NEXT_PUBLIC_SITE_URL: config.baseURL,
     VIMOB_API_URL: config.apiURL,
-    NEXT_DIST_DIR: '.next-e2e',
+    NEXT_DIST_DIR: requestedNextDistDir || '.next-e2e',
     NEXT_PUBLIC_SUPABASE_URL: config.supabaseURL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: config.supabaseAnonKey,
     SUPABASE_PROJECT_URL: config.supabaseURL,
@@ -266,6 +321,9 @@ function normalizeEnvValue(value: string) {
 
 function getLocalSupabaseStatus(workdir?: string): LocalSupabaseStatus {
   const verifiedWorkdir = workdir ? verifyIsolatedSupabaseWorkdir(workdir) : undefined;
+  if (readEnv('E2E_STANDALONE_LOCAL_STACK_MANIFEST')) {
+    return readStandaloneLocalSupabaseStatus(verifiedWorkdir);
+  }
   const cacheKey = verifiedWorkdir || 'default';
   const cached = localSupabaseStatus.get(cacheKey);
   if (cached) return cached;

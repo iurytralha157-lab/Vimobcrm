@@ -1,142 +1,52 @@
+import { useLayoutEffect, useRef } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
-import {
-  getPipelineLeadValue,
-  patchPipelineLeadInBoard,
-  pipelineLeadMatchesQueryKeyScope,
-} from '@/lib/pipeline-board-cache';
-import type { LeadDetailLead, PipelineCacheStage } from './types';
+import { useAuth } from '@/contexts/AuthContext';
+import type { LeadDetailLead } from './types';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
-import { mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
+import { applyScopedLeadStatusPatch, rollbackScopedLeadStatusPatch,
+  type LeadStatusCachePatch, type LeadStatusCacheRollback } from '@/lib/pipeline-status-cache';
 
 export type LeadDetailPipelineCacheSnapshot = Array<[QueryKey, unknown]>;
+const rollbackBySnapshot = new WeakMap<LeadDetailPipelineCacheSnapshot, LeadStatusCacheRollback>();
 
 export function useLeadDetailPipelineCache() {
   const queryClient = useQueryClient();
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
+  const scope = useRef({ organizationId, client: queryClient });
+  useLayoutEffect(() => { scope.current = { organizationId, client: queryClient }; }, [organizationId, queryClient]);
 
-  const updatePipelineAssigneeCache = (nextLead: LeadDetailLead) => {
-    const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({
-      queryKey: ['stages-with-leads'],
-    });
-    const nextUpdatedAt = new Date().toISOString();
-
-    snapshots.forEach(([queryKey, cachedData]) => {
-      if (!Array.isArray(cachedData)) return;
-
-      const keyParts = Array.isArray(queryKey) ? queryKey : [];
-      const shouldKeepInFilteredView = pipelineLeadMatchesQueryKeyScope(
-        keyParts,
-        nextLead,
-      );
-
-      let changed = false;
-      const nextStages = cachedData.map((stage) => {
-        if (!Array.isArray(stage?.leads)) return stage;
-
-        let stageChanged = false;
-        let removedValue = 0;
-        const nextLeads = stage.leads.reduce<LeadDetailLead[]>((acc, stageLead) => {
-          if (stageLead?.id !== nextLead.id) {
-            acc.push(stageLead);
-            return acc;
-          }
-
-          changed = true;
-          stageChanged = true;
-
-          if (!shouldKeepInFilteredView) {
-            removedValue = getPipelineLeadValue(stageLead);
-            return acc;
-          }
-
-          acc.push(mergeLeadOperationCapability(stageLead, {
-            ...stageLead,
-            assigned_user_id: nextLead.assigned_user_id,
-            assignee: nextLead.assignee || undefined,
-            updated_at: nextUpdatedAt,
-            can_operate: undefined,
-          }));
-          return acc;
-        }, []);
-
-        if (!stageChanged) return stage;
-
-        const totalLeadCount = Number(stage.total_lead_count ?? stage.leads.length);
-        const currentTotalValue = Number(stage.total_value);
-        return {
-          ...stage,
-          leads: nextLeads,
-          total_lead_count: shouldKeepInFilteredView
-            ? totalLeadCount
-            : Math.max(totalLeadCount - 1, 0),
-          total_value:
-            !shouldKeepInFilteredView && Number.isFinite(currentTotalValue)
-              ? Math.max(currentTotalValue - removedValue, 0)
-              : stage.total_value,
-        };
-      });
-
-      if (changed) queryClient.setQueryData(queryKey, nextStages);
-    });
-
+  const updatePipelineLeadCache = (leadId: string, patch: Partial<LeadDetailLead>) => {
+    const organizationId = scope.current.organizationId;
+    if (!organizationId || scope.current.client !== queryClient ||
+      (patch.organization_id && patch.organization_id !== organizationId)) return [];
+    const snapshots = queryClient.getQueriesData({ queryKey: ['stages-with-leads', organizationId] });
+    const rollback = applyScopedLeadStatusPatch(queryClient, organizationId, leadId,
+      patch as LeadStatusCachePatch, { boardsOnly: true, authoritative: Boolean(patch.updated_at) });
+    rollbackBySnapshot.set(snapshots, rollback);
     return snapshots;
   };
 
-  const updatePipelineLeadCache = (
-    leadIdToUpdate: string,
-    patch: Partial<LeadDetailLead>,
-  ) => {
-    const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({
-      queryKey: ['stages-with-leads'],
-    });
-    const nextUpdatedAt = new Date().toISOString();
-
-    snapshots.forEach(([queryKey, cachedData]) => {
-      if (!Array.isArray(cachedData)) return;
-
-      const currentLead = cachedData
-        .flatMap((stage) => stage.leads)
-        .find((stageLead) => stageLead?.id === leadIdToUpdate);
-      if (!currentLead) return;
-
-      const nextLead: LeadDetailLead = mergeLeadOperationCapability(currentLead, {
-        ...currentLead,
-        ...patch,
-        updated_at: nextUpdatedAt,
-        can_operate: patch.can_operate,
-      });
-      const nextStages = patchPipelineLeadInBoard<LeadDetailLead, PipelineCacheStage>(cachedData, leadIdToUpdate, nextLead, {
-        keepInDestination: pipelineLeadMatchesQueryKeyScope(
-          Array.isArray(queryKey) ? queryKey : [],
-          nextLead,
-        ),
-        destinationIndex: 0,
-      });
-
-      if (nextStages !== cachedData) queryClient.setQueryData(queryKey, nextStages);
-    });
-
-    return snapshots;
-  };
+  const updatePipelineAssigneeCache = (nextLead: LeadDetailLead) => updatePipelineLeadCache(nextLead.id, {
+    organization_id: nextLead.organization_id,
+    assigned_user_id: nextLead.assigned_user_id,
+    assignee: nextLead.assignee || undefined,
+    can_operate: undefined,
+  });
 
   const restorePipelineCache = (snapshots: LeadDetailPipelineCacheSnapshot) => {
-    snapshots.forEach(([queryKey, data]) => {
-      queryClient.setQueryData(queryKey, data);
-    });
+    const rollback = rollbackBySnapshot.get(snapshots);
+    rollbackBySnapshot.delete(snapshots);
+    if (!rollback || rollback.organizationId !== scope.current.organizationId || scope.current.client !== queryClient) return;
+    rollbackScopedLeadStatusPatch(queryClient, rollback);
+    // A fresh read may have superseded the optimistic patch. Always reconcile;
+    // never replace a board with the old whole-query snapshot.
+    void queryClient.invalidateQueries({ queryKey: ['stages-with-leads', rollback.organizationId], refetchType: 'active' });
   };
 
-  const refreshPipelineInBackground = (
-    organizationId: string | null | undefined,
-    leadId: string,
-    reason: string,
-  ) => {
-    if (!organizationId) return;
+  const refreshPipelineInBackground = (organizationId: string | null | undefined, leadId: string, reason: string) => {
+    if (!organizationId || scope.current.organizationId !== organizationId || scope.current.client !== queryClient) return;
     notifyLeadRealtimeChange({ organizationId, leadId, reason });
   };
-
-  return {
-    refreshPipelineInBackground,
-    restorePipelineCache,
-    updatePipelineAssigneeCache,
-    updatePipelineLeadCache,
-  };
+  return { refreshPipelineInBackground, restorePipelineCache, updatePipelineAssigneeCache, updatePipelineLeadCache };
 }

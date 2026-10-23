@@ -248,6 +248,9 @@ func (repo Repository) mutateItem(ctx context.Context, tenantContext tenant.Cont
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockAttentionItemLeadMutation(ctx, tx, tenantContext, itemID); err != nil {
+		return Item{}, err
+	}
 	current, err := repo.showItemTx(ctx, tx, tenantContext.OrganizationID, itemID, true)
 	if err != nil {
 		return Item{}, err
@@ -275,7 +278,7 @@ func (repo Repository) mutateItem(ctx context.Context, tenantContext tenant.Cont
 func (repo Repository) showItemTx(ctx context.Context, tx pgx.Tx, organizationID, itemID string, lock bool) (Item, error) {
 	lockClause := ""
 	if lock {
-		lockClause = " for update of i"
+		lockClause = " for update of i skip locked"
 	}
 	item, err := scanItem(tx.QueryRow(ctx, itemSelectSQL()+`
 		where i.organization_id = $1::uuid and i.id = $2::uuid
@@ -336,7 +339,7 @@ func itemVisibilitySQL(context tenant.Context, requestedScope string) (string, [
 		where += " and i.assigned_user_id = $2::uuid"
 	case "team":
 		if canViewOrganizationAttention(context) && len(context.LedUserIDs) == 0 {
-			return where, args, nil
+			break
 		}
 		if !context.IsTeamLeader || len(context.LedUserIDs) == 0 {
 			return "", nil, ErrForbidden
@@ -351,6 +354,8 @@ func itemVisibilitySQL(context tenant.Context, requestedScope string) (string, [
 	default:
 		return "", nil, fmt.Errorf("%w: scope is invalid", ErrInvalidInput)
 	}
+	args = append(args, context.UserID)
+	where += fmt.Sprintf(" and coalesce(private.queue_pool_read_access(i.organization_id,i.lead_id,$%d::uuid),true)", len(args))
 	return where, args, nil
 }
 

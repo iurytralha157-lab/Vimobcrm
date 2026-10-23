@@ -35,7 +35,9 @@ Os hooks de leitura (`useLeads`, `useLead`) ja passam pela API nova.
 `useDealStatusChange` usa `PATCH /v1/leads/{id}`: o backend altera status, timestamps e atividades de status/venda.
 `useDeleteLead`, `useAddLeadTag` e `useRemoveLeadTag` tambem passam pela API nova.
 Movimentacao no funil usa `POST /v1/leads/{id}/move-stage` via `leadsAPI.moveLeadStage`, substituindo o RPC `move_lead_stage`.
+O board e o popup enviam `expectedStageId` e `expectedUpdatedAt` do gesto original (timestamp sem converter para `Date`). A revisao tambem vale para reordenar na mesma coluna e permanece fixa durante a escolha do motivo de perda. Apenas uma resposta confirmada da propria fila local pode fornecer a revisao de um movimento sucessor. Conflitos `409 lead_changed`/`lead_stage_changed` reconciliam os caches e exigem nova acao explicita, sem repetir a movimentacao.
 Transferencia de responsavel usa `POST /v1/leads/{id}/assign` via `leadsAPI.assignLead`, substituindo o RPC `transfer_lead_assignee`.
+O payload de transferencia exige `expectedUpdatedAt` exato do clique original, inclusive apos confirmar uma escala. `assignLead` mantem os quatro argumentos anteriores e recebe a revisao no quinto; nao faz retry. Um `409 lead_changed` atualiza a leitura e exige selecionar novamente. O backend novo de detalhe de conversa retorna `updated_at` sem converter o timestamp no cliente. A leitura aceita uma API anterior sem esse campo, mas recusa a transferencia ate uma leitura com revisao; nao busca uma revisao nova depois da escolha.
 Round-robin usa `POST /v1/leads/{id}/redistribute` via `leadsAPI.redistributeLeadRoundRobin`, substituindo o RPC `redistribute_lead_round_robin`.
 
 `lead-enrichments.ts` e `pipeline-board.ts` usam a Vimob API para carregar o funil com tags, tarefas, meta ads, usuario responsavel, imovel de interesse, contagens por etapa e paginacao de colunas. O board deixa de montar essas consultas auxiliares no browser.
@@ -123,3 +125,36 @@ reserva consumida permanece como tombstone ate esse prazo contra replay.
 Ainda pendente de migracao:
 
 - outros dominios fora de Leads.
+
+## Contratos de detalhes do lead
+
+O PATCH de lead preserva os interesses existentes quando recebe somente um novo
+`propertyId`/`interestPropertyId`: o principal fica primeiro em
+`interestPropertyIds`. Uma lista explicita substitui/reordena a colecao; lista
+vazia limpa os vinculos. Dois IDs singulares explicitos diferentes sao rejeitados.
+A normalizacao ocorre sob a revisao e o lock do lead, antes de validar tenant,
+visibilidade de novos imoveis e reserva de lead ganho. Alteracao de secundario
+gera audit privado com IDs e atividade publica `property_interests_changed` com
+contagens, ator e `operation_id`, sem nomes/IDs de imoveis na atividade.
+
+Respostas de mudanca comercial podem incluir `financialReviewRequired: true`
+(normalizado para `financial_review_required`). Esse sinal pede revisao dos
+lancamentos existentes; a API do lead nao cancela, recalcula ou apaga pagamentos,
+comissoes ou contratos.
+
+`whatsappAPI.getHistoryAccess` aceita `includeConversations?: boolean`.
+O parametro e opcional e conserva o envelope de conversas da primeira pagina por
+padrao. `useLeadMessages` pede `false`, pois consome somente mensagens/cursor;
+isso elimina a listagem e a revalidacao individual de conversas que esse card nao
+usa. A autorizacao do lead, o SQL de mensagens, os filtros de tenant, a politica
+de midia e a paginacao continuam os mesmos. O parametro nao concede capacidade de
+envio nem substitui as confirmacoes do inicio de conversa.
+
+`GET /v1/lead-attachments?leadId=...&metadataOnly=true` retorna os metadados
+visiveis com `file_url: null` e `availability: "not_requested"`, sem assinar
+arquivos durante a listagem. O padrao continua assinando para os consumidores
+existentes. Para abrir um arquivo, `GET /v1/leads/{id}/attachments/{attachmentId}/access`
+retorna `{ data: LeadAttachment }` e revalida organizacao, lead, anexo e origem
+do documento/mensagem antes de liberar a URL temporaria. Sem acesso ou falha
+de assinatura, nenhuma URL publica alternativa e exposta. A resposta de acesso
+usa `Cache-Control: private, no-store`.

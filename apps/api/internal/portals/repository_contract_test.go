@@ -21,6 +21,13 @@ func TestGrupoOLXFeedIsCanonicalFirstWithPropertyScopedLegacyFallback(t *testing
 		"version.version = publication.published_version",
 		"version.payload->'channel_config'->>'client_listing_id'",
 		"version.payload->'property'",
+		"join public.properties current_property",
+		"current_property.organization_id = publication.organization_id",
+		"current_property.id = publication.property_id",
+		"lower(trim(coalesce(current_property.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')",
+		"lower(trim(coalesce(property.status, ''))) in ('active', 'ativo', 'available', 'disponivel', 'disponível')",
+		"current_property.autorizado_comercializacao is distinct from false",
+		"property.autorizado_comercializacao is distinct from false",
 		"not exists (",
 		"canonical.property_id = legacy.property_id",
 	} {

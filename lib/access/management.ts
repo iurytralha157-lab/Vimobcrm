@@ -75,6 +75,7 @@ export function canEditTeam(
   teamId: string,
 ) {
   return canManageAllTeams(access) || (
+    access.hasPermission("team_manage") &&
     access.isTeamLeader && access.ledTeamIds.includes(teamId)
   );
 }

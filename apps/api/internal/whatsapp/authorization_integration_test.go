@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,16 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	databaseURL := os.Getenv("WHATSAPP_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("WHATSAPP_TEST_DATABASE_URL is not set")
+	}
+	target, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host := strings.ToLower(target.Hostname()); host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		t.Fatal("authorization fixture requires a loopback database")
+	}
+	if name := strings.TrimPrefix(target.Path, "/"); name != "vimob_whatsapp_test" && name != "vimob_whatsapp_clone" {
+		t.Fatal("authorization fixture requires disposable vimob_whatsapp_test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -60,12 +71,18 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	}
 
 	userIDs := make([]string, 0, 3)
-	t.Cleanup(func() {
+	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = any($1::uuid[])`, []string{organizationID, foreignOrganizationID})
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = any($1::uuid[])`, userIDs)
-	})
+		if _, err := postgres.Pool().Exec(cleanupCtx, `
+			update public.users set organization_id = null where organization_id = any($1::uuid[]);
+			delete from public.organizations where id = any($1::uuid[]);
+			delete from public.users where id = any($2::uuid[]);
+			delete from auth.users where id = any($2::uuid[])
+		`, []string{organizationID, foreignOrganizationID}, userIDs); err != nil {
+			t.Errorf("cleanup authorization fixture: %v", err)
+		}
+	}()
 
 	createUser := func(orgID, role, emailSuffix string) string {
 		t.Helper()
@@ -85,24 +102,29 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		`, userID, email); err != nil {
 			t.Fatal(err)
 		}
+		userIDs = append(userIDs, userID)
 		if _, err := postgres.Pool().Exec(ctx, `
 			insert into public.users (id, organization_id, name, email, role, is_active)
 			values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+			on conflict (id) do update set organization_id = excluded.organization_id,
+			  name = excluded.name, email = excluded.email, role = excluded.role, is_active = true
 		`, userID, orgID, emailSuffix, email); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := postgres.Pool().Exec(ctx, `
 			insert into public.organization_members (organization_id, user_id, role, is_active)
 			values ($1::uuid, $2::uuid, $3, true)
+			on conflict (user_id, organization_id) do update set role = excluded.role,
+			  is_active = true, deleted_at = null
 		`, orgID, userID, role); err != nil {
 			t.Fatal(err)
 		}
-		userIDs = append(userIDs, userID)
 		return userID
 	}
 	brokerID := createUser(organizationID, "user", "broker")
 	otherBrokerID := createUser(organizationID, "user", "other-broker")
 	foreignBrokerID := createUser(foreignOrganizationID, "user", "foreign-broker")
+	adminID := createUser(organizationID, "admin", "admin")
 
 	var sessionID, foreignSessionID, ownLeadID, otherLeadID, thirdLeadID, claimLeadID, sessionMismatchLeadID, foreignLeadID string
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -141,24 +163,68 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	claimLeadID = createLead(organizationID, otherBrokerID, fixtureSuffix+"-claim")
 	sessionMismatchLeadID = createLead(organizationID, brokerID, fixtureSuffix+"-session-mismatch")
 	foreignLeadID = createLead(foreignOrganizationID, foreignBrokerID, fixtureSuffix+"-foreign")
+	// These rows represent historical pre-cutover evidence, including malformed
+	// old bindings. Current admission must reject equivalent new inserts. Seed
+	// only the isolated legacy rows without manufacturing capture receipts.
+	insertLegacyMessage := func(query string, arguments []any, destination ...any) error {
+		t.Helper()
+		legacyTx, err := postgres.Pool().Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer legacyTx.Rollback(ctx)
+		if _, err := legacyTx.Exec(ctx, `set local session_replication_role = replica`); err != nil {
+			return err
+		}
+		if err := legacyTx.QueryRow(ctx, query, arguments...).Scan(destination...); err != nil {
+			return err
+		}
+		legacyID, ok := destination[0].(*string)
+		if !ok {
+			return errors.New("legacy fixture requires a message ID destination")
+		}
+		if _, err := legacyTx.Exec(ctx, `
+			update public.whatsapp_messages message
+			set capture_state = 'legacy', remote_jid = coalesce(message.remote_jid, conversation.remote_jid)
+			from public.whatsapp_conversations conversation
+			where message.id = $1::uuid and conversation.id = message.conversation_id
+			  and conversation.organization_id = message.organization_id
+		`, *legacyID); err != nil {
+			return err
+		}
+		return legacyTx.Commit(ctx)
+	}
 
+	// Canonical current rows must satisfy B1's deferred active-binding invariant.
+	// Malformed pre-cutover messages remain isolated in insertLegacyMessage.
+	activateFixtureBinding := func(orgID, conversationID, leadID string) {
+		t.Helper()
+		if _, err := postgres.Pool().Exec(ctx, `
+			select public.activate_whatsapp_conversation_lead_binding($1::uuid, $2::uuid, $3::uuid, null)
+		`, orgID, conversationID, leadID); err != nil {
+			t.Fatalf("canonical fixture binding: %v", err)
+		}
+	}
 	createConversation := func(leadID, remoteJID string) string {
 		t.Helper()
 		var conversationID string
 		if err := postgres.Pool().QueryRow(ctx, `
 			insert into public.whatsapp_conversations (
-				organization_id, session_id, lead_id, remote_jid, contact_name
-			) values ($1::uuid, $2::uuid, $3::uuid, $4, $4)
+				organization_id, session_id, remote_jid, contact_name
+			) values ($1::uuid, $2::uuid, $3, $3)
 			returning id::text
-		`, organizationID, sessionID, leadID, remoteJID).Scan(&conversationID); err != nil {
+		`, organizationID, sessionID, remoteJID).Scan(&conversationID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := postgres.Pool().Exec(ctx, `
+		activateFixtureBinding(organizationID, conversationID, leadID)
+		var historicalMessageID string
+		if err := insertLegacyMessage(`
 			insert into public.whatsapp_messages (
 				organization_id, conversation_id, session_id, lead_id,
 				message_id, content, message_type, status
 			) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $5, 'text', 'received')
-		`, organizationID, conversationID, sessionID, leadID, fixtureSuffix+"-"+leadID); err != nil {
+			returning id::text
+		`, []any{organizationID, conversationID, sessionID, leadID, fixtureSuffix + "-" + leadID}, &historicalMessageID); err != nil {
 			t.Fatal(err)
 		}
 		return conversationID
@@ -171,7 +237,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		messageSequence++
 		providerMessageID := fmt.Sprintf("%s-extra-%d", fixtureSuffix, messageSequence)
 		var messageID string
-		if err := postgres.Pool().QueryRow(ctx, `
+		if err := insertLegacyMessage(`
 			insert into public.whatsapp_messages (
 				organization_id, conversation_id, session_id, lead_id,
 				message_id, provider_message_id, content, message_type,
@@ -183,7 +249,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 				'received'
 			)
 			returning id::text
-		`, organizationID, conversationID, sessionID, leadID, providerMessageID, messageType).Scan(&messageID); err != nil {
+		`, []any{organizationID, conversationID, sessionID, leadID, providerMessageID, messageType}, &messageID); err != nil {
 			t.Fatal(err)
 		}
 		return messageID
@@ -195,19 +261,20 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	var foreignConversationID, foreignMediaMessageID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
-			organization_id, session_id, lead_id, remote_jid, contact_name
-		) values ($1::uuid, $2::uuid, $3::uuid, $4, $4)
+			organization_id, session_id, remote_jid, contact_name
+		) values ($1::uuid, $2::uuid, $3, $3)
 		returning id::text
-	`, foreignOrganizationID, foreignSessionID, foreignLeadID, fixtureSuffix+"-foreign@s.whatsapp.net").Scan(&foreignConversationID); err != nil {
+	`, foreignOrganizationID, foreignSessionID, fixtureSuffix+"-foreign@s.whatsapp.net").Scan(&foreignConversationID); err != nil {
 		t.Fatal(err)
 	}
+	activateFixtureBinding(foreignOrganizationID, foreignConversationID, foreignLeadID)
 	foreignMediaPath := fmt.Sprintf(
 		"orgs/%s/sessions/%s/incoming/%s-foreign.jpg",
 		foreignOrganizationID,
 		foreignSessionID,
 		fixtureSuffix,
 	)
-	if err := postgres.Pool().QueryRow(ctx, `
+	if err := insertLegacyMessage(`
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, lead_id,
 			message_id, content, message_type, media_status,
@@ -217,8 +284,8 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 			$5, 'foreign media', 'image', 'ready', $6, 'received'
 		)
 		returning id::text
-	`, foreignOrganizationID, foreignConversationID, foreignSessionID, foreignLeadID,
-		fixtureSuffix+"-foreign-media", foreignMediaPath).Scan(&foreignMediaMessageID); err != nil {
+	`, []any{foreignOrganizationID, foreignConversationID, foreignSessionID, foreignLeadID,
+		fixtureSuffix + "-foreign-media", foreignMediaPath}, &foreignMediaMessageID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,6 +328,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		MemberRole:     "user",
 		Permissions:    []string{permissions.LeadViewOwn},
 	}
+	admin := tenant.Context{OrganizationID: organizationID, UserID: adminID, MemberRole: "admin"}
 
 	t.Run("media rejects a cross-organization message id without signing", func(t *testing.T) {
 		before := signingRequests.Load()
@@ -296,11 +364,11 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("own lead history: %v", err)
 	}
-	if len(access.Messages) != 2 {
-		t.Fatalf("own history = %#v, want the explicit own-lead and legacy null-lead messages", access.Messages)
+	if len(access.Messages) != 1 {
+		t.Fatalf("own history = %#v, want only the explicitly attributed own-lead message", access.Messages)
 	}
 	for _, message := range access.Messages {
-		if message.ConversationID != ownConversationID || message.ID == mismatchedOwnConversationMessageID {
+		if message.ConversationID != ownConversationID || message.ID == mismatchedOwnConversationMessageID || message.ID == nullLeadMessageID {
 			t.Fatalf("own history leaked a mismatched lead message: %#v", access.Messages)
 		}
 	}
@@ -308,20 +376,13 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("own conversation messages: %v", err)
 	}
-	if len(conversationPage.Messages) != 2 {
-		t.Fatalf("own conversation messages = %#v, want own/null lead rows only", conversationPage.Messages)
+	if len(conversationPage.Messages) != 1 {
+		t.Fatalf("own conversation messages = %#v, want only exact lead attribution", conversationPage.Messages)
 	}
-	seenNullLeadMessage := false
 	for _, message := range conversationPage.Messages {
-		if message.ID == mismatchedOwnConversationMessageID {
-			t.Fatalf("conversation history leaked mismatched lead message %s", message.ID)
+		if message.ID == mismatchedOwnConversationMessageID || message.ID == nullLeadMessageID {
+			t.Fatalf("conversation history leaked unmatched lead message %s", message.ID)
 		}
-		if message.ID == nullLeadMessageID {
-			seenNullLeadMessage = true
-		}
-	}
-	if !seenNullLeadMessage {
-		t.Fatal("conversation history lost its legacy null-lead message")
 	}
 	visibleConversations, err := repo.ListConversations(ctx, broker, ConversationListFilter{Limit: 50})
 	if err != nil {
@@ -344,13 +405,18 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	var relinkedConversationID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
-		  organization_id, session_id, lead_id, remote_jid, contact_name,
-		  last_message, last_message_at, unread_count
-		) values (
-		  $1::uuid, $2::uuid, $3::uuid, $4, 'CURRENT OTHER LEAD SECRET',
-		  'CURRENT OTHER MESSAGE SECRET', now(), 99
-		) returning id::text
-	`, organizationID, sessionID, thirdLeadID, fixtureSuffix+"-relinked@s.whatsapp.net").Scan(&relinkedConversationID); err != nil {
+		  organization_id, session_id, remote_jid, contact_name
+		) values ($1::uuid, $2::uuid, $3, 'CURRENT OTHER LEAD SECRET')
+		returning id::text
+	`, organizationID, sessionID, fixtureSuffix+"-relinked@s.whatsapp.net").Scan(&relinkedConversationID); err != nil {
+		t.Fatal(err)
+	}
+	activateFixtureBinding(organizationID, relinkedConversationID, thirdLeadID)
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_conversations
+		set last_message = 'CURRENT OTHER MESSAGE SECRET', last_message_at = now(), unread_count = 99
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, relinkedConversationID); err != nil {
 		t.Fatal(err)
 	}
 	var relinkedHistoricalMediaID string
@@ -360,7 +426,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		sessionID,
 		fixtureSuffix,
 	)
-	if err := postgres.Pool().QueryRow(ctx, `
+	if err := insertLegacyMessage(`
 		insert into public.whatsapp_messages (
 		  organization_id, conversation_id, session_id, lead_id,
 		  message_id, content, message_type, status, remote_jid, sent_at,
@@ -371,9 +437,9 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		  'ready', $7
 		)
 		returning id::text
-	`, organizationID, relinkedConversationID, sessionID, ownLeadID,
-		fixtureSuffix+"-relinked-history", fixtureSuffix+"-historical-own@s.whatsapp.net",
-		historicalMediaPath).Scan(&relinkedHistoricalMediaID); err != nil {
+	`, []any{organizationID, relinkedConversationID, sessionID, ownLeadID,
+		fixtureSuffix + "-relinked-history", fixtureSuffix + "-historical-own@s.whatsapp.net",
+		historicalMediaPath}, &relinkedHistoricalMediaID); err != nil {
 		t.Fatal(err)
 	}
 	relinkedHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{
@@ -424,7 +490,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		sessionID,
 		fixtureSuffix,
 	)
-	if err := postgres.Pool().QueryRow(ctx, `
+	if err := insertLegacyMessage(`
 		insert into public.whatsapp_messages (
 		  organization_id, conversation_id, session_id, lead_id,
 		  message_id, content, message_type, status,
@@ -435,18 +501,12 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		  'ready', $6, now()
 		)
 		returning id::text
-	`, organizationID, relinkedConversationID, sessionID, thirdLeadID,
-		fixtureSuffix+"-formerly-third-media", formerlyThirdLeadMediaPath).Scan(&formerlyThirdLeadMediaID); err != nil {
+	`, []any{organizationID, relinkedConversationID, sessionID, thirdLeadID,
+		fixtureSuffix + "-formerly-third-media", formerlyThirdLeadMediaPath}, &formerlyThirdLeadMediaID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := postgres.Pool().Exec(ctx, `
-		update public.whatsapp_conversations
-		set lead_id = $3::uuid, updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, organizationID, relinkedConversationID, ownLeadID); err != nil {
-		t.Fatal(err)
-	}
+	activateFixtureBinding(organizationID, relinkedConversationID,
+		createLead(organizationID, brokerID, fixtureSuffix+"-current-relink"))
 
 	t.Run("media relink cannot grant access to another leads historical message", func(t *testing.T) {
 		before := signingRequests.Load()
@@ -492,8 +552,23 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if err := repo.DeleteConversation(ctx, broker, ownConversationID, ownLeadID); !errors.Is(err, ErrConversationNotFound) {
 		t.Fatalf("ordinary lead viewer delete error = %v, want conversation not found", err)
 	}
-	if err := repo.DeleteConversation(ctx, otherBroker, ownConversationID, ownLeadID); err != nil {
-		t.Fatalf("session owner could not soft-delete conversation: %v", err)
+	if err := repo.DeleteConversation(ctx, otherBroker, ownConversationID, ownLeadID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("session owner outside the lead's read scope delete = %v, want denied", err)
+	}
+	if err := repo.DeleteConversation(ctx, admin, ownConversationID, ownLeadID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("broad-history administrator operated another account without a grant: %v", err)
+	}
+	// An assigned recipient with an explicit grant may hide their operational
+	// inbox entry. Broad CRM history alone does not confer this authority.
+	if _, err := postgres.Pool().Exec(ctx, `update public.organization_members set role='admin' where organization_id=$1::uuid and user_id=$2::uuid`, organizationID, otherBrokerID); err != nil {
+		t.Fatal(err)
+	}
+	ownerAdmin := tenant.Context{OrganizationID: organizationID, UserID: otherBrokerID, MemberRole: "admin", Permissions: []string{"*"}}
+	if err := repo.GrantSessionAccess(ctx, ownerAdmin, sessionID, grantAccessInput{UserID: brokerID, CanView: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteConversation(ctx, broker, ownConversationID, ownLeadID); err != nil {
+		t.Fatalf("assigned READ-grant recipient could not soft-delete conversation: %v", err)
 	}
 	if _, err := repo.ListMessages(ctx, broker, ownConversationID, MessageFilter{Limit: 50}); !errors.Is(err, ErrConversationNotFound) {
 		t.Fatalf("soft-deleted conversation remained operational: %v", err)
@@ -502,7 +577,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("immutable lead history after soft delete: %v", err)
 	}
-	if len(deletedHistory.Messages) != 3 || len(deletedHistory.Conversations) != 2 {
+	if len(deletedHistory.Messages) != 2 || len(deletedHistory.Conversations) != 2 {
 		t.Fatalf("soft delete hid or mixed immutable history: %#v", deletedHistory)
 	}
 
@@ -525,13 +600,13 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 			t.Fatal(err)
 		}
 		var unlinkedMessageID string
-		if err := postgres.Pool().QueryRow(ctx, `
+		if err := insertLegacyMessage(`
 			insert into public.whatsapp_messages (
 			  organization_id, conversation_id, session_id, lead_id,
 			  message_id, content, message_type, status
 			) values ($1::uuid, $2::uuid, $3::uuid, null, $4, 'unlinked evidence', 'text', 'received')
 			returning id::text
-		`, organizationID, conversationID, sessionID, fixtureSuffix+"-unlinked-snapshot").Scan(&unlinkedMessageID); err != nil {
+		`, []any{organizationID, conversationID, sessionID, fixtureSuffix + "-unlinked-snapshot"}, &unlinkedMessageID); err != nil {
 			t.Fatal(err)
 		}
 
@@ -556,8 +631,15 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 			t.Fatalf("unlinked restore: %v", err)
 		}
 
-		if err := repo.LinkConversationToLead(ctx, otherBroker, conversationID, targetLeadID, unlinkedConversationLeadSnapshot); err != nil {
-			t.Fatalf("link unlinked conversation: %v", err)
+		if err := repo.LinkConversationToLead(ctx, otherBroker, conversationID, targetLeadID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrInvalidReference) {
+			t.Fatalf("legacy unlinked message without retention receipt was promoted: %v", err)
+		}
+		// Exercise a physical binding change without turning this legacy NULL
+		// message into newly retained evidence. Genuine promotion is covered by
+		// the prospective-retention fixtures.
+		if _, err := postgres.Pool().Exec(ctx, `select public.activate_whatsapp_conversation_lead_binding($1::uuid, $2::uuid, $3::uuid, null)`,
+			organizationID, conversationID, targetLeadID); err != nil {
+			t.Fatalf("fixture binding change: %v", err)
 		}
 		insertMessage(conversationID, targetLeadID, "text")
 
@@ -578,8 +660,6 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		}
 	})
 
-	admin := broker
-	admin.MemberRole = "admin"
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.leads set phone = '5511777774444' where id = $1::uuid
 	`, claimLeadID); err != nil {
@@ -594,28 +674,32 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	`, organizationID, sessionID).Scan(&quarantineID); err != nil {
 		t.Fatal(err)
 	}
-	if err := postgres.Pool().QueryRow(ctx, `
+	if err := insertLegacyMessage(`
 		insert into public.whatsapp_messages (
 		  organization_id, conversation_id, session_id, lead_id,
 		  message_id, content, message_type, status
 		) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, 'old evidence', 'text', 'received')
 		returning id::text
-	`, organizationID, quarantineID, sessionID, otherLeadID, fixtureSuffix+"-explicit-old").Scan(&explicitOldMessageID); err != nil {
+	`, []any{organizationID, quarantineID, sessionID, otherLeadID, fixtureSuffix + "-explicit-old"}, &explicitOldMessageID); err != nil {
 		t.Fatal(err)
 	}
-	if err := postgres.Pool().QueryRow(ctx, `
+	if err := insertLegacyMessage(`
 		insert into public.whatsapp_messages (
 		  organization_id, conversation_id, session_id, lead_id,
 		  message_id, content, message_type, status
 		) values ($1::uuid, $2::uuid, $3::uuid, null, $4, 'legacy null evidence', 'text', 'received')
 		returning id::text
-	`, organizationID, quarantineID, sessionID, fixtureSuffix+"-legacy-null").Scan(&legacyNullMessageID); err != nil {
+	`, []any{organizationID, quarantineID, sessionID, fixtureSuffix + "-legacy-null"}, &legacyNullMessageID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.LinkConversationToLead(ctx, admin, quarantineID, claimLeadID, unlinkedConversationLeadSnapshot); err != nil {
-		t.Fatalf("admin quarantine claim: %v", err)
+	if err := repo.LinkConversationToLead(ctx, admin, quarantineID, claimLeadID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("administrator attaching another owner's unlinked history = %v, want denied", err)
 	}
-	var explicitLeadAfter, legacyLeadAfter string
+	if err := repo.LinkConversationToLead(ctx, otherBroker, quarantineID, claimLeadID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("owner attaching legacy null history without a prospective retention receipt = %v, want denied", err)
+	}
+	var explicitLeadAfter string
+	var legacyLeadAfter *string
 	if err := postgres.Pool().QueryRow(ctx, `
 		select
 		  max(lead_id::text) filter (where id = $1::uuid),
@@ -624,8 +708,8 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	`, explicitOldMessageID, legacyNullMessageID).Scan(&explicitLeadAfter, &legacyLeadAfter); err != nil {
 		t.Fatal(err)
 	}
-	if explicitLeadAfter != otherLeadID || legacyLeadAfter != claimLeadID {
-		t.Fatalf("quarantine claim rewrote immutable evidence: explicit=%s legacy=%s", explicitLeadAfter, legacyLeadAfter)
+	if explicitLeadAfter != otherLeadID || legacyLeadAfter != nil {
+		t.Fatalf("legacy link rewrote immutable evidence: explicit=%s legacy=%v", explicitLeadAfter, legacyLeadAfter)
 	}
 	if _, err := repo.GetHistoryAccess(ctx, admin, HistoryAccessFilter{LeadID: otherLeadID}); err != nil {
 		t.Fatalf("admin should preserve organization-wide lead access: %v", err)

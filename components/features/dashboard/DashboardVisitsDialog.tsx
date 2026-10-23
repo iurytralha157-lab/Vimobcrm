@@ -15,7 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDashboardVisits } from '@/hooks/use-dashboard-visits'
-import { sourceLabels } from '@/hooks/use-dashboard-filters'
+import { getDashboardSourceLabel } from '@/lib/analytics/dashboard-source-label'
 import { useOrganizationModules } from '@/hooks/use-organization-modules'
 import { useUserPermissions } from '@/hooks/use-user-permissions'
 import type { DashboardAPIFilters } from '@/lib/api/dashboard'
@@ -24,8 +24,11 @@ import type { DashboardVisit, DashboardVisits } from '@/lib/validation/dashboard
 type DashboardVisitsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCloseAutoFocus?: (event: Event) => void
+  onNavigate?: () => void
   filters?: DashboardAPIFilters
   periodLabel: string
+  accessDenied?: boolean
 }
 
 function formatDate(value: string | null, timezone: string, includeTime = true) {
@@ -78,14 +81,15 @@ function VisitPerson({ label, name, avatarUrl }: { label: string; name: string; 
   )
 }
 
-function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead }: {
+function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead, onNavigate }: {
   visit: DashboardVisit
   timezone: string
   canOpenAgenda: boolean
   canOpenLead: boolean
+  onNavigate?: () => void
 }) {
   const leadName = visit.lead_name || 'Lead sem nome'
-  const source = sourceLabels[visit.source] || visit.source || 'Origem não informada'
+  const source = getDashboardSourceLabel(visit.source)
   const startLabel = formatDate(visit.start_time, timezone)
   const createdLabel = formatDate(visit.created_at, timezone)
 
@@ -123,6 +127,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead }: {
           {canOpenAgenda ? (
             <Link
               href={`/agenda?event=${encodeURIComponent(visit.id)}`}
+              onNavigate={onNavigate}
               className="inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
               aria-label={`Abrir compromisso de ${leadName} na Agenda`}
             >
@@ -132,6 +137,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead }: {
           {canOpenLead ? (
             <Link
               href={`/crm/pipelines?lead=${encodeURIComponent(visit.lead_id)}`}
+              onNavigate={onNavigate}
               className="inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-[6px] border border-[var(--app-border)] px-2.5 text-[11px] font-light text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
               aria-label={`Ver card do lead ${leadName}`}
             >
@@ -144,13 +150,14 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead }: {
   )
 }
 
-function VisitList({ visits, timezone, empty, note, canOpenAgenda, canOpenLead }: {
+function VisitList({ visits, timezone, empty, note, canOpenAgenda, canOpenLead, onNavigate }: {
   visits: DashboardVisit[]
   timezone: string
   empty: string
   note?: string
   canOpenAgenda: boolean
   canOpenLead: boolean
+  onNavigate?: () => void
 }) {
   return (
     <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-2.5 sm:p-3" aria-label="Compromissos de visitas e reuniões">
@@ -163,7 +170,7 @@ function VisitList({ visits, timezone, empty, note, canOpenAgenda, canOpenLead }
         <p className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] text-[var(--app-text-secondary)]">{empty}</p>
       ) : (
         <ul className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">
-          {visits.map((visit) => <VisitRow key={visit.id} visit={visit} timezone={timezone} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} />)}
+          {visits.map((visit) => <VisitRow key={visit.id} visit={visit} timezone={timezone} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} onNavigate={onNavigate} />)}
         </ul>
       )}
     </section>
@@ -215,7 +222,7 @@ function Ranking({ data }: { data: DashboardVisits }) {
             {data.sources.map((source) => (
               <li key={source.source} className="rounded-[8px] bg-[var(--app-surface-solid)] p-2.5">
                 <div className="flex items-center justify-between gap-2 text-[12px]">
-                  <span className="min-w-0 truncate text-[var(--app-text-primary)]">{sourceLabels[source.source] || source.source}</span>
+                  <span className="min-w-0 truncate text-[var(--app-text-primary)]">{getDashboardSourceLabel(source.source, '')}</span>
                   <span className="tabular-nums text-[var(--app-text-primary)]">{source.count}</span>
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--app-surface-hover)]">
@@ -231,8 +238,8 @@ function Ranking({ data }: { data: DashboardVisits }) {
   )
 }
 
-export function DashboardVisitsDialog({ open, onOpenChange, filters }: DashboardVisitsDialogProps) {
-  const { data, isPending, isError, refetch } = useDashboardVisits(filters, open)
+export function DashboardVisitsDialog({ open, onOpenChange, onCloseAutoFocus, onNavigate, filters, accessDenied = false }: DashboardVisitsDialogProps) {
+  const { data, isPending, isError, refetch } = useDashboardVisits(filters, open && !accessDenied)
   const { hasModule } = useOrganizationModules()
   const { hasPermission } = useUserPermissions()
   const canOpenAgenda = hasModule('agenda') && hasPermission('schedule_view')
@@ -240,7 +247,7 @@ export function DashboardVisitsDialog({ open, onOpenChange, filters }: Dashboard
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-describedby={undefined} className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(680px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4">
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus} aria-describedby={undefined} className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(680px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4">
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
           <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
@@ -252,7 +259,7 @@ export function DashboardVisitsDialog({ open, onOpenChange, filters }: Dashboard
 
         <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
           <div className="space-y-2.5 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
-            {isError ? (
+            {accessDenied || isError ? (
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-[12px] text-[var(--app-text-secondary)]">
                 <p>Não foi possível carregar as visitas deste período.</p>
                 <Button type="button" variant="ghost" size="sm" onClick={() => void refetch()} className="mt-2 gap-1.5 text-primary">
@@ -288,13 +295,13 @@ export function DashboardVisitsDialog({ open, onOpenChange, filters }: Dashboard
                     </TabsList>
                   </div>
                   <TabsContent value="all" className="mt-0">
-                    <VisitList visits={data.visits} timezone={data.reportTimezone} empty="Nenhuma visita ou reunião marcada neste período." note={data.visitsTruncated ? 'Mostrando as 100 marcações mais recentes. O total acima inclui todas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} />
+                    <VisitList visits={data.visits} timezone={data.reportTimezone} empty="Nenhuma visita ou reunião marcada neste período." note={data.visitsTruncated ? 'Mostrando as 100 marcações mais recentes. O total acima inclui todas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} onNavigate={onNavigate} />
                   </TabsContent>
                   <TabsContent value="upcoming" className="mt-0">
-                    <VisitList visits={data.upcomingVisits} timezone={data.reportTimezone} empty="Nenhuma visita futura entre as marcadas neste período." note={data.upcoming > data.upcomingVisits.length ? 'Mostrando as 20 visitas futuras mais próximas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} />
+                    <VisitList visits={data.upcomingVisits} timezone={data.reportTimezone} empty="Nenhuma visita futura entre as marcadas neste período." note={data.upcoming > data.upcomingVisits.length ? 'Mostrando as 20 visitas futuras mais próximas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} onNavigate={onNavigate} />
                   </TabsContent>
                   <TabsContent value="overdue" className="mt-0">
-                    <VisitList visits={data.overdueVisits} timezone={data.reportTimezone} empty="Nenhuma visita atrasada entre as marcadas neste período." note={data.overdue > data.overdueVisits.length ? 'Mostrando as 20 visitas atrasadas mais antigas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} />
+                    <VisitList visits={data.overdueVisits} timezone={data.reportTimezone} empty="Nenhuma visita atrasada entre as marcadas neste período." note={data.overdue > data.overdueVisits.length ? 'Mostrando as 20 visitas atrasadas mais antigas.' : undefined} canOpenAgenda={canOpenAgenda} canOpenLead={canOpenLead} onNavigate={onNavigate} />
                   </TabsContent>
                   <TabsContent value="ranking" className="mt-0"><Ranking data={data} /></TabsContent>
                 </Tabs>

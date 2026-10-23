@@ -36,6 +36,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { MarketingPeriodNotice } from "@/components/shared/filters/MarketingPeriodNotice";
 import {
   flattenMetaCreatives,
   getMetaCreativeDestination,
@@ -56,6 +57,7 @@ import { selectAttributedMetaEntities } from "./meta-campaign-dashboard-model";
 
 interface MetaCampaignDashboardProps {
   filters: CampaignInsightsFilters;
+  filtersReady?: boolean;
 }
 
 type RealCampaign = CampaignAggregated & {
@@ -330,8 +332,9 @@ function CampaignAccordion({ campaign, showPaidMetrics }: { campaign: MetaCampai
   );
 }
 
-export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
-  const { data, isLoading, isError, refetch } = useCampaignInsights(filters);
+export function MetaCampaignDashboard({ filters, filtersReady = true }: MetaCampaignDashboardProps) {
+  const { data, isLoading: queryLoading, isError, refetch, periodError } = useCampaignInsights(filters, { enabled: filtersReady });
+  const isLoading = !filtersReady || queryLoading;
   const showPaidMetrics = !filters.pageId;
 
   const snapshot = useMemo(() => {
@@ -370,6 +373,8 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
       hookRate: impressions > 0 ? weightedHook / impressions : 0,
     };
   }, [snapshot]);
+
+  if (periodError) return <MarketingPeriodNotice message={periodError} />;
 
   if (isLoading) {
     return (

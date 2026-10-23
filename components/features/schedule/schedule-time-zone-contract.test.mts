@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { buildScheduleAllDayInterval } from "../../../lib/schedule-event-draft";
 
 function read(relativePath: string) {
   return readFileSync(resolve(process.cwd(), relativePath), "utf8");
@@ -19,7 +20,10 @@ test("Agenda creation and rescheduling use the organization timezone", () => {
   assert.match(eventSheet, /scheduleCivilDateKeyToLocalDate\(/);
   assert.match(eventSheet, /formatScheduleZonedTime\(/);
   assert.match(eventSheet, /timeZone=\{scheduleTimeZone\}/);
-  assert.match(outcomeDialog, /getScheduleCivilDayRange\(/);
+  assert.deepEqual(buildScheduleAllDayInterval("2026-03-08", "America/New_York"), {
+    startTime: "2026-03-08T05:00:00.000Z",
+    endTime: "2026-03-09T03:59:59.999Z",
+  });
   assert.match(outcomeDialog, /scheduleCivilDateTimeToDate\(/);
 });
 
@@ -28,7 +32,7 @@ test("EventSheet waits for capabilities without resetting an active draft", () =
 
   assert.match(
     eventSheet,
-    /scheduleCapabilitiesQuery\.isSuccess\s*&&\s*Boolean\(scheduleCapabilities\?\.timeZone\)/,
+    /scheduleCapabilitiesQuery\.isSuccess\s*&&\s*Boolean\(scheduleCapabilities\?\.timeZone(?:\?\.trim\(\))?\)/,
   );
   assert.match(
     eventSheet,
@@ -36,7 +40,7 @@ test("EventSheet waits for capabilities without resetting an active draft", () =
   );
   assert.match(
     eventSheet,
-    /if \(!canManageSchedule \|\| isMasked \|\| !draftReady\) return/,
+    /if \(!canManageSchedule \|\| isMasked \|\| !draftReady\b/,
   );
   assert.match(eventSheet, /const draftLocked = locked \|\| !draftReady/);
   assert.doesNotMatch(eventSheet, /scheduleInstantToLocalDateProxy/);
@@ -101,8 +105,8 @@ test("calendar and list group, position and label by organization timezone", () 
     /const CALENDAR_HOURS = Array\.from\(\{ length: 24 \}/,
   );
   assert.doesNotMatch(calendar, /eachHourOfInterval/);
-  assert.match(calendar, /onQuickCreate\?\.\(pivotDate, halfHourStart\)/);
-  assert.match(calendar, /onQuickCreate\?\.\(day, halfHourStart\)/);
+  // Dispatch of the civil date/clock from day and week slots is exercised with
+  // real keyboard actions in schedule-ui-runtime.test.mjs, rather than a literal callback shape.
   assert.match(calendar, /layoutScheduleCalendarSegments\(/);
   assert.match(calendar, /disabled=\{[\s\S]*?scheduleCivilDateTimeToDate\(/);
   assert.match(

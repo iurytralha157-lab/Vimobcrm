@@ -32,7 +32,7 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 	if canViewOwn {
 		canViewOwnSQL = "true"
 	}
-	return `(
+	return `coalesce(private.queue_pool_read_access(` + alias + `.organization_id, ` + alias + `.id, ` + userIDPlaceholder + `::uuid), (
 		` + canViewAllPlaceholder + `::boolean
 		or (` + canViewOwnSQL + ` and ` + alias + `.assigned_user_id = ` + userIDPlaceholder + `::uuid)
 		or (
@@ -48,6 +48,12 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 						  on team.id = leader.team_id
 						 and team.organization_id = leader.organization_id
 						 and coalesce(team.is_active, true) = true
+						join public.organization_members leader_membership
+						  on leader_membership.organization_id = leader.organization_id
+						 and leader_membership.user_id = leader.user_id
+						 and leader_membership.is_active = true
+						 and leader_membership.deleted_at is null
+						 and leader_membership.membership_generation = leader.membership_generation
 						where leader.organization_id = ` + alias + `.organization_id
 						  and leader.user_id = ` + userIDPlaceholder + `::uuid
 						  and leader.team_id::text = to_jsonb(` + alias + `)->>'team_id'
@@ -64,6 +70,12 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 						  on team.id = leader.team_id
 						 and team.organization_id = leader.organization_id
 						 and coalesce(team.is_active, true) = true
+						join public.organization_members leader_membership
+						  on leader_membership.organization_id = leader.organization_id
+						 and leader_membership.user_id = leader.user_id
+						 and leader_membership.is_active = true
+						 and leader_membership.deleted_at is null
+						 and leader_membership.membership_generation = leader.membership_generation
 						join public.team_members member
 						  on member.organization_id = leader.organization_id
 						 and member.team_id = leader.team_id
@@ -76,6 +88,7 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 						 and broker_membership.user_id = member.user_id
 						 and coalesce(broker_membership.is_active, false) = true
 						 and broker_membership.deleted_at is null
+						 and broker_membership.membership_generation = member.membership_generation
 						where leader.organization_id = ` + alias + `.organization_id
 						  and leader.user_id = ` + userIDPlaceholder + `::uuid
 						  and leader.is_active = true
@@ -85,5 +98,5 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 				)
 			)
 		)
-	)`
+	))`
 }

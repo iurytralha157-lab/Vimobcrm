@@ -176,6 +176,8 @@ func TestSessionStatusQueryRevalidatesTenantActivityAndLeadership(t *testing.T) 
 		"member.user_id = any($6::uuid[])",
 		"coalesce(leader.is_leader, false) = true",
 		"member.user_id = ws.owner_user_id",
+		"leader_membership.membership_generation = leader.membership_generation",
+		"member_membership.membership_generation = member.membership_generation",
 		"ws.provider in ('evolution', 'evolution_go')",
 	} {
 		if !strings.Contains(spec.SQL, required) {

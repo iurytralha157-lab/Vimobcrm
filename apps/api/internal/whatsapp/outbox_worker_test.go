@@ -39,12 +39,16 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 		"binding.active_to is null",
 		"binding.stale = false",
 		"attendance.binding_id = binding.id",
+		"attendance.id::text = message.metadata->>'attendance_entry_id'",
 		"session.owner_user_id = attendance.user_id",
 		"session.provider = 'evolution_go'",
 		"coalesce(session.is_active, true) = true",
 		"coalesce(session.status, '') not in ('deleted', 'disabled')",
 		"coalesce(actor.is_active, false) = true",
-		"coalesce(member.is_active, true) = true",
+		"coalesce(member.is_active, false) = true",
+		"member.deleted_at is null",
+		"private.whatsapp_actor_can_read_lead(message.organization_id, message.lead_id, attendance.user_id)",
+		"message.sender_user_id = attendance.user_id",
 	} {
 		if !strings.Contains(attendanceGate, token) {
 			t.Fatalf("outbox attendance gate is missing %q", token)
@@ -52,6 +56,26 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 	}
 	if !strings.Contains(source[guard:providerStart], "return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)") {
 		t.Fatal("failed attendance must stop before provider delivery")
+	}
+}
+
+func TestOutboxAttendanceSeparatesHumanSenderAndAutomation(t *testing.T) {
+	query := whatsappOutboxAttendanceSQL()
+	for _, required := range []string{
+		"conversation.lead_id = message.lead_id",
+		"binding.lead_id = message.lead_id",
+		"attendance.binding_id = binding.id",
+		"message.sender_user_id = attendance.user_id",
+		"access.id::text = message.metadata->>'session_access_grant_id'",
+		"lead.assigned_user_id = attendance.user_id",
+		"owner_member.role)) in ('owner', 'admin')",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("outbox gate lacks %q", required)
+		}
+	}
+	if strings.Contains(query, "'manager'") || strings.Contains(query, "access.grant_scope = 'team'") {
+		t.Fatal("outbox gate permits sharing by a manager or team leader")
 	}
 }
 
@@ -114,7 +138,7 @@ func TestOutboxWorkerDefaultsDrainImmediateTextWithBoundedConcurrency(t *testing
 	}
 }
 
-func TestOutboxClaimSkipsDeferredAndProcessingPredecessors(t *testing.T) {
+func TestOutboxClaimSerializesConversationStartsAcrossLanes(t *testing.T) {
 	query := strings.ToLower(strings.Join(strings.Fields(claimWhatsAppOutboxQuery), " "))
 	for _, required := range []string{
 		"'00000000-0000-0000-0000-000000000000'::uuid",
@@ -150,10 +174,13 @@ func TestOutboxClaimSkipsDeferredAndProcessingPredecessors(t *testing.T) {
 		t.Fatal("outbox claim must expose separate FIFO-head and due-candidate stages")
 	}
 	if !strings.Contains(query[headStart:candidateStart], "queued.next_attempt_at <= now()") {
-		t.Fatal("lane head must skip a deferred retry so a newer ready message can advance")
+		t.Fatal("candidate must be due while the cross-lane predecessor fence preserves its head")
 	}
-	if strings.Contains(query, "active.status = 'processing'") || strings.Contains(query, "older_media") || strings.Contains(query, "older_fast") {
-		t.Fatal("a processing or cross-lane predecessor must not block another ready message")
+	for _, required := range []string{"active.conversation_id=queued.conversation_id", "active.status='processing'",
+		"older.status in ('pending','retry')", "(older.created_at,older.id)<(queued.created_at,queued.id)"} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("cross-lane conversation start fence missing %q", required)
+		}
 	}
 }
 
@@ -197,6 +224,7 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 	}
 	for _, token := range []string{
 		whatsappOutboxQueuedLanePredicateToken,
+		whatsappOutboxOrderPredicateToken,
 	} {
 		if strings.Contains(anyQuery, token) {
 			t.Fatalf("compatibility claim leaked internal SQL token %q", token)
@@ -209,7 +237,6 @@ func TestOutboxWorkerSelectsLiteralLaneClaimsForPartialIndexes(t *testing.T) {
 			"params.lane = case",
 			"params.lane <>",
 			whatsappOutboxQueuedLanePredicateToken,
-			"active.status = 'processing'",
 			"from public.whatsapp_outbox older_media",
 			"from public.whatsapp_outbox older_fast",
 		} {

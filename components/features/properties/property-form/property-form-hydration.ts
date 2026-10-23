@@ -1,8 +1,13 @@
+import type { PropertyFormData } from "@/components/features/properties/property-form/property-form-model";
+
 const PROPERTY_MEDIA_REBASE_FIELDS = new Set([
   "updated_at",
   "imagem_principal",
   "image_urls",
   "fotos",
+  "site_publication",
+  "anunciar",
+  "published_on_site",
 ]);
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -33,7 +38,6 @@ function valuesEqual(left: unknown, right: unknown): boolean {
   }
   return false;
 }
-
 export function arePropertySnapshotsEqualOutsideMedia(
   previous: Record<string, unknown> | null,
   next: Record<string, unknown>,
@@ -41,10 +45,30 @@ export function arePropertySnapshotsEqualOutsideMedia(
   if (!previous) return false;
   const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
   return [...keys].every(
-    (key) =>
-      PROPERTY_MEDIA_REBASE_FIELDS.has(key) ||
-      valuesEqual(previous[key], next[key]),
+    (key) => {
+      if (PROPERTY_MEDIA_REBASE_FIELDS.has(key)) return true;
+      if (key === "metadata") {
+        const withoutMediaMetadata = (value: unknown) => {
+          if (value == null) return {};
+          if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+          const rest = { ...(value as Record<string, unknown>) };
+          delete rest.hidden_site_image_urls;
+          return rest;
+        };
+        return valuesEqual(withoutMediaMetadata(previous[key]), withoutMediaMetadata(next[key]));
+      }
+      return valuesEqual(previous[key], next[key]);
+    },
   );
+}
+
+export function rebasePropertyFormMedia(previous: PropertyFormData, server: PropertyFormData): PropertyFormData {
+  return {
+    ...previous,
+    imagem_principal: server.imagem_principal,
+    fotos: server.fotos,
+    hidden_site_image_urls: server.hidden_site_image_urls,
+  };
 }
 
 export function resolvePropertyFormRefetch(input: {

@@ -13,12 +13,13 @@ const (
 )
 
 var (
-	ErrInvalidInput           = errors.New("invalid user input")
-	ErrUserNotFound           = errors.New("user not found")
-	ErrUserConflict           = errors.New("user conflict")
-	ErrAuthAdminNotConfigured = errors.New("auth admin is not configured")
-	ErrAuthAdminOperation     = errors.New("auth admin operation failed")
-	ErrInvitationRequired     = errors.New("user creation requires invitation")
+	ErrInvalidInput              = errors.New("invalid user input")
+	ErrUserNotFound              = errors.New("user not found")
+	ErrUserConflict              = errors.New("user conflict")
+	ErrUserTeamMembershipChanged = errors.New("user team membership changed during removal")
+	ErrAuthAdminNotConfigured    = errors.New("auth admin is not configured")
+	ErrAuthAdminOperation        = errors.New("auth admin operation failed")
+	ErrInvitationRequired        = errors.New("user creation requires invitation")
 )
 
 type Summary struct {
@@ -32,16 +33,17 @@ type Envelope[T any] struct {
 }
 
 type User struct {
-	ID             string  `json:"id"`
-	OrganizationID *string `json:"organization_id"`
-	Name           string  `json:"name"`
-	Email          string  `json:"email"`
-	Role           string  `json:"role"`
-	AvatarURL      *string `json:"avatar_url"`
-	IsActive       bool    `json:"is_active"`
-	Whatsapp       *string `json:"whatsapp"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	ID                 string  `json:"id"`
+	OrganizationID     *string `json:"organization_id"`
+	HomeOrganizationID *string `json:"home_organization_id,omitempty"`
+	Name               string  `json:"name"`
+	Email              string  `json:"email"`
+	Role               string  `json:"role"`
+	AvatarURL          *string `json:"avatar_url"`
+	IsActive           bool    `json:"is_active"`
+	Whatsapp           *string `json:"whatsapp"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
 type UserOrganization struct {
@@ -118,9 +120,13 @@ type DeleteUserInput struct {
 }
 
 type DeleteUserImpact struct {
-	Leads            int64 `json:"leads"`
-	Properties       int64 `json:"properties"`
-	WhatsAppSessions int64 `json:"whatsapp_sessions"`
+	Leads               int64 `json:"leads"`
+	Properties          int64 `json:"properties"`
+	WhatsAppSessions    int64 `json:"whatsapp_sessions"`
+	Teams               int64 `json:"teams"`
+	CustomRoles         int64 `json:"custom_roles"`
+	PermissionOverrides int64 `json:"permission_overrides"`
+	RoundRobinEntries   int64 `json:"round_robin_entries"`
 }
 
 type DeleteUserResult struct {

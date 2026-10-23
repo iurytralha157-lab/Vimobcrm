@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { aiAPI } from "@/lib/api/ai";
 
 export function useAIMetrics() {
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({

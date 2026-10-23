@@ -190,7 +190,7 @@ func (row roundRobinSelectionRow) Scan(dest ...any) error {
 	return nil
 }
 
-func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) {
+func TestSelectRoundRobinMemberUsesConfirmedQueueAndLeadScopedRotation(t *testing.T) {
 	queryer := &roundRobinSelectionQueryer{
 		t: t,
 		rows: []pgx.Row{
@@ -206,8 +206,7 @@ func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) 
 		context.Background(),
 		queryer,
 		"44444444-4444-4444-8444-444444444444",
-		"55555555-5555-4555-8555-555555555555",
-		"",
+		leadSnapshot{ID: "55555555-5555-4555-8555-555555555555", PipelineID: "66666666-6666-4666-8666-666666666666"},
 	)
 	if err != nil {
 		t.Fatalf("select round-robin member: %v", err)
@@ -232,11 +231,11 @@ func TestSelectRoundRobinMemberLocksQueueBeforeSelectingCandidate(t *testing.T) 
 	if !strings.Contains(queueQuery, "from public.round_robins") {
 		t.Fatal("first query must resolve the round-robin queue")
 	}
-	if !strings.Contains(queueQuery, "for update") {
-		t.Fatal("round-robin queue must be locked before candidate selection")
+	if !strings.Contains(queueQuery, "latest_assignment_queue") || !strings.Contains(queueQuery, "known_queue") {
+		t.Fatal("manual redistribution must retain confirmed queue affinity")
 	}
-	if !strings.Contains(strings.ToLower(queryer.queries[1]), "with entries as") {
-		t.Fatal("candidate selection must happen only after the queue lock")
+	if !strings.Contains(strings.ToLower(queryer.queries[1]), "preview_round_robin_redistribution_candidate") || queryer.args[1][1] != "55555555-5555-4555-8555-555555555555" {
+		t.Fatal("candidate selection must use the durable lead-scoped rotation")
 	}
 }
 
@@ -250,8 +249,7 @@ func TestSelectRoundRobinMemberDoesNotSelectCandidateWithoutQueue(t *testing.T) 
 		context.Background(),
 		queryer,
 		"44444444-4444-4444-8444-444444444444",
-		"",
-		"",
+		leadSnapshot{ID: "55555555-5555-4555-8555-555555555555"},
 	)
 	if err != nil {
 		t.Fatalf("select round-robin member: %v", err)
@@ -265,7 +263,7 @@ func TestSelectRoundRobinMemberDoesNotSelectCandidateWithoutQueue(t *testing.T) 
 	if len(queryer.queries) != 1 {
 		t.Fatalf("query count = %d, want 1", len(queryer.queries))
 	}
-	if !strings.Contains(strings.ToLower(queryer.queries[0]), "for update") {
-		t.Fatal("queue lookup must retain the transactional lock contract")
+	if !strings.Contains(strings.ToLower(queryer.queries[0]), "operating_schedule") {
+		t.Fatal("legacy lookup must exclude managed queue calendars")
 	}
 }

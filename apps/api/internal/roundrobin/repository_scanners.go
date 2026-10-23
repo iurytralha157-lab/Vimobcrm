@@ -31,6 +31,7 @@ func scanRoundRobin(row scanner) (RoundRobin, error) {
 		&creatorName,
 		&creatorEmail,
 		&item.LeadsDistributed,
+		&item.Revision,
 	); err != nil {
 		return RoundRobin{}, err
 	}
@@ -82,6 +83,7 @@ func scanRule(row scanner) (Rule, error) {
 		&rule.IsActive,
 		&rule.CreatedAt,
 		&rule.UpdatedAt,
+		&rule.QueueRevision,
 	); err != nil {
 		return Rule{}, err
 	}
@@ -107,6 +109,7 @@ func scanMember(row scanner) (Member, error) {
 		&userEmail,
 		&avatarURL,
 		&member.LeadsCount,
+		&member.QueueRevision,
 	); err != nil {
 		return Member{}, err
 	}

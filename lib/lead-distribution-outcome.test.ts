@@ -11,6 +11,11 @@ import {
 test('preserva os resultados de distribuicao retornados pelo backend', () => {
   for (const outcome of [
     'assigned',
+    'pooled',
+    'queue_closed',
+    'queue_waiting',
+    'queue_limit_reached',
+    'queue_protected',
     'already_assigned',
     'no_matching_queue',
     'no_available_members',
@@ -37,7 +42,12 @@ test('agrupa contatos criados que ainda precisam de atribuicao', () => {
   countImportDistributionOutcome(summary, 'no_matching_queue');
   countImportDistributionOutcome(summary, 'no_available_members');
   countImportDistributionOutcome(summary, 'unknown');
+  countImportDistributionOutcome(summary, 'queue_closed');
+  countImportDistributionOutcome(summary, 'queue_waiting');
+  countImportDistributionOutcome(summary, 'queue_limit_reached');
+  countImportDistributionOutcome(summary, 'queue_protected');
 
   assert.equal(summary.assigned, 1);
-  assert.equal(countPendingDistribution(summary), 3);
+  assert.equal(countPendingDistribution(summary), 6);
+  assert.equal(summary.queue_protected, 1);
 });

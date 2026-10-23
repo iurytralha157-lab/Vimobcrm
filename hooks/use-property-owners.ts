@@ -1,6 +1,6 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { useAuth } from '@/contexts/AuthContext'
+import { usePropertyMutation } from '@/hooks/properties/use-property-mutation'
 import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyOwnersAPI, type PropertyOwner, type PropertyOwnerInput, type PropertyOwnerPage, type PropertyOwnerUpdateInput } from '@/lib/api/property-owners'
 import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
@@ -46,84 +46,81 @@ export function usePropertyOwnersPage(
 
 export function useCreatePropertyOwner() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async (owner: PropertyOwnerInput) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async (owner: PropertyOwnerInput, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      const { data } = await propertyOwnersAPI.createOwner(organizationId, owner)
+      const { data } = await propertyOwnersAPI.createOwner(organizationId, owner, scope.requestIntent)
       return data
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-owners'] })
-      toast.success('Proprietario cadastrado!')
+      if (scope.isCurrent()) toast.success('Proprietario cadastrado!')
     },
-    onError: (error) => {
-      toast.error('Erro ao cadastrar proprietario: ' + getErrorMessage(error))
+    onError: (error, _input, scope) => {
+      if (scope.isCurrent()) toast.error('Erro ao cadastrar proprietario: ' + getErrorMessage(error))
     },
   })
 }
 
 export function useUpdatePropertyOwner() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async ({ id, ...owner }: PropertyOwnerUpdateInput & { id: string }) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async ({ id, ...owner }: PropertyOwnerUpdateInput & { id: string }, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      const { data } = await propertyOwnersAPI.updateOwner(organizationId, id, owner)
+      const { data } = await propertyOwnersAPI.updateOwner(organizationId, id, owner, scope.requestIntent)
       return data
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-owners'] })
       queryClient.invalidateQueries({ queryKey: ['properties'] })
       queryClient.invalidateQueries({ queryKey: ['properties-infinite'] })
-      toast.success('Proprietario atualizado!')
+      if (scope.isCurrent()) toast.success('Proprietario atualizado!')
     },
-    onError: async (error) => {
+    onError: async (error, _input, scope) => {
       if (isPropertyWorkspaceConflict(error)) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['property-owners'] }),
           queryClient.invalidateQueries({ queryKey: ['properties'] }),
           queryClient.invalidateQueries({ queryKey: ['properties-infinite'] }),
         ])
-        toast.error('Este proprietário foi alterado por outra pessoa. Feche e reabra a edição para revisar a versão mais recente.')
+        if (scope.isCurrent()) toast.error('Este proprietário foi alterado por outra pessoa. Feche e reabra a edição para revisar a versão mais recente.')
         return
       }
-      toast.error('Erro ao atualizar proprietario: ' + getErrorMessage(error))
+      if (scope.isCurrent()) toast.error('Erro ao atualizar proprietario: ' + getErrorMessage(error))
     },
   })
 }
 
 export function useDeactivatePropertyOwner() {
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const organizationId = useOrganizationId()
 
-  return useMutation({
-    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }) => {
-      if (!user?.id) throw new Error('Usuário não autenticado')
+  return usePropertyMutation({
+    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }, scope) => {
+      const organizationId = scope.organizationId
+      if (!scope.actorId) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyOwnersAPI.deactivateOwner(organizationId, id, expected_updated_at)
+      await propertyOwnersAPI.deactivateOwner(organizationId, id, expected_updated_at, scope.requestIntent)
     },
-    onSuccess: () => {
+    onSuccess: (_data, _input, scope) => {
       queryClient.invalidateQueries({ queryKey: ['property-owners'] })
-      toast.success('Proprietario desativado!')
+      if (scope.isCurrent()) toast.success('Proprietario desativado!')
     },
-    onError: async (error) => {
+    onError: async (error, _input, scope) => {
       await queryClient.invalidateQueries({ queryKey: ['property-owners'] })
       if (isPropertyWorkspaceConflict(error)) {
-        toast.error('Este proprietário foi alterado por outra pessoa. Atualize a lista antes de tentar novamente.')
+        if (scope.isCurrent()) toast.error('Este proprietário foi alterado por outra pessoa. Atualize a lista antes de tentar novamente.')
         return
       }
-      toast.error('Erro ao desativar proprietario: ' + getErrorMessage(error))
+      if (scope.isCurrent()) toast.error('Erro ao desativar proprietario: ' + getErrorMessage(error))
     },
   })
 }

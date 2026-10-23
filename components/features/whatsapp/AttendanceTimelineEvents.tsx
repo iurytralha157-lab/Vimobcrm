@@ -1,6 +1,7 @@
 import { LogIn } from "lucide-react";
 
 import type { WhatsAppAttendanceEntry } from "@/lib/api/whatsapp";
+import { formatWhatsAppPersonName } from "@/lib/whatsapp-person-name";
 
 type AttendanceTimelineEventsProps = {
   entries?: WhatsAppAttendanceEntry[];
@@ -29,7 +30,7 @@ export function AttendanceTimelineEvents({ entries = [] }: AttendanceTimelineEve
             <div className="inline-flex max-w-full items-center gap-1.5 rounded-[6px] bg-primary/8 px-2.5 py-1 text-[10px] leading-4 text-[var(--app-text-secondary)]">
               <LogIn className="h-3 w-3 shrink-0 text-primary" aria-hidden="true" />
               <span className="truncate">
-                <strong className="font-medium text-[var(--app-text-primary)]">{entry.userName}</strong>
+                <strong className="font-medium text-[var(--app-text-primary)]">{formatWhatsAppPersonName(entry.userName)}</strong>
                 {entry.markerKind === "started" ? " iniciou uma conversa" : " entrou no atendimento"}
               </span>
               <time className="shrink-0 text-[var(--app-text-tertiary)]" dateTime={entry.markerAt}>

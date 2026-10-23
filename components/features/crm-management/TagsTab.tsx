@@ -1,4 +1,9 @@
+"use client";
+
 import {
+  useEffect,
+  useRef,
+  useReducer,
   useMemo,
   useState,
   type FormEvent,
@@ -51,42 +56,63 @@ import {
   useCreateTag,
   useUpdateTag,
   useDeleteTag,
+  useTagUsage,
 } from "@/hooks/use-tags";
 import { searchTextIncludes } from "@/lib/search-text";
-import { DEFAULT_TAG_COLOR, TAG_COLOR_OPTIONS } from "@/config/tag-colors";
+import { TAG_COLOR_OPTIONS } from "@/config/tag-colors";
 import { getTagColorStyle } from "@/lib/tag-color";
-
-type EditableTag = {
-  id: string;
-  name: string;
-  color: string;
-  description?: string | null;
-};
+import { useAuth } from "@/contexts/AuthContext";
+import { getPublicErrorMessage } from "@/lib/api/vimob-error";
+import { canConfirmTagDeletion, TAG_USAGE_LABELS } from "@/lib/tags/management";
+import { createTagFormState, tagFormReducer, type EditableTag } from "@/lib/tags/tag-form-state";
 
 export function TagsTab() {
+  const { activeOrganization } = useAuth();
+  // Changing organization discards dialogs and their object identifiers together.
+  return <TagsManagement key={activeOrganization.organizationId || 'none'} />;
+}
+
+function TagsManagement() {
   const {
     data: tags = [],
     isLoading,
     isError,
     isFetching,
     refetch,
-  } = useTags();
+  } = useTags({ reconcileCounts: true });
   const createTag = useCreateTag();
   const updateTag = useUpdateTag();
   const deleteTag = useDeleteTag();
+  const mounted = useRef(false);
+  const operation = useRef(false);
+  const editSession = useRef(0);
+  const deleteSession = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingTag, setEditingTag] = useState<EditableTag | null>(null);
-  const [formData, setFormData] = useState<{
-    name: string;
-    color: string;
-    description?: string;
-  }>({ name: "", color: DEFAULT_TAG_COLOR });
+  const [formState, dispatchForm] = useReducer(tagFormReducer, undefined, createTagFormState);
+  const { open: dialogOpen, editingTag, values: formData, error: formError } = formState;
+  const setDialogOpen = (open: boolean) => {
+    editSession.current += 1;
+    dispatchForm({ type: 'visibility', open });
+  };
+  const setFormData = (values: typeof formData) => dispatchForm({ type: 'values', values });
+  const setFormError = (error: string | null) => dispatchForm({ type: 'error', error });
   const [searchTerm, setSearchTerm] = useState("");
-  const [tagToDelete, setTagToDelete] = useState<{
+  const [tagToDelete, setDeleteTarget] = useState<{
     id: string;
     name: string;
+    updated_at: string;
   } | null>(null);
+  const setTagToDelete = (tag: typeof tagToDelete) => {
+    deleteSession.current += 1;
+    setDeleteTarget(tag);
+  };
+  const tagUsage = useTagUsage(tagToDelete?.id);
+  const isSaving = createTag.isPending || updateTag.isPending;
+  const canDelete = !tagUsage.isFetching && !tagUsage.isError && canConfirmTagDeletion(tagUsage.data, tagToDelete?.updated_at || '');
 
   const filteredTags = useMemo(() => {
     if (!searchTerm) return tags;
@@ -94,50 +120,57 @@ export function TagsTab() {
   }, [tags, searchTerm]);
 
   const resetForm = () => {
-    setEditingTag(null);
-    setFormData({ name: "", color: DEFAULT_TAG_COLOR });
+    editSession.current += 1;
+    dispatchForm({ type: 'reset' });
   };
 
   const handleDialogChange = (open: boolean) => {
+    if (operation.current || isSaving) return;
     setDialogOpen(open);
     if (!open) resetForm();
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (operation.current) return;
+    operation.current = true;
+    setFormError(null);
 
     try {
       if (editingTag) {
-        await updateTag.mutateAsync({ id: editingTag.id, ...formData });
+        await updateTag.mutateAsync({ id: editingTag.id, ...formData, expected_updated_at: editingTag.updated_at });
       } else {
         await createTag.mutateAsync(formData);
       }
 
+      if (!mounted.current) return;
       setDialogOpen(false);
       resetForm();
-    } catch {
+    } catch (error) {
+      if (mounted.current) setFormError(getPublicErrorMessage(error));
       // The mutation owns the toast. Keep the form open so the user can retry.
+    } finally {
+      operation.current = false;
     }
   };
 
   const openEdit = (tag: EditableTag) => {
-    setEditingTag(tag);
-    setFormData({
-      name: tag.name,
-      color: tag.color,
-      description: tag.description ?? undefined,
-    });
-    setDialogOpen(true);
+    editSession.current += 1;
+    dispatchForm({ type: 'edit', tag });
   };
 
   const handleDelete = async (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    if (!tagToDelete) return;
+    if (!tagToDelete || !canDelete || operation.current) return;
+    operation.current = true;
     try {
-      await deleteTag.mutateAsync(tagToDelete.id);
-      setTagToDelete(null);
+      await deleteTag.mutateAsync({ id: tagToDelete.id, expectedUpdatedAt: tagToDelete.updated_at });
+      if (mounted.current) setTagToDelete(null);
     } catch {
+      if (mounted.current) void tagUsage.refetch();
       // The mutation owns the toast. Keep confirmation open so deletion can be retried.
+    } finally {
+      operation.current = false;
     }
   };
 
@@ -158,6 +191,7 @@ export function TagsTab() {
         <Dialog open={dialogOpen} onOpenChange={handleDialogChange}>
           <DialogTrigger asChild>
             <Button
+              onClick={resetForm}
               aria-label="Nova tag"
               title="Nova tag"
               className="h-8 w-8 shrink-0 gap-1.5 rounded-[6px] bg-primary/50 p-0 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary sm:w-auto sm:px-2.5"
@@ -166,7 +200,7 @@ export function TagsTab() {
               <span className="hidden sm:inline">Nova tag</span>
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-h-[90dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
+          <DialogContent data-management-editor className="max-h-[90dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
             <DialogHeader>
               <DialogTitle className="text-[14px] font-normal">
                 {editingTag ? "Editar tag" : "Nova tag"}
@@ -178,7 +212,21 @@ export function TagsTab() {
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSubmit} className="mt-3 space-y-4">
+            <form onSubmit={handleSubmit} className="mt-3 space-y-4" aria-busy={isSaving}>
+              {formError && (
+                <div role="alert" className="space-y-2 text-[12px] text-destructive">
+                  <p>{formError}</p>
+                  {editingTag && <Button type="button" variant="secondary" disabled={isSaving || isFetching}
+                    onClick={async () => {
+                      const session = editSession.current;
+                      const tagId = editingTag.id;
+                      const result = await refetch();
+                      if (!mounted.current || editSession.current !== session || result.isError) return;
+                      const currentTag = result.data?.find((tag) => tag.id === tagId);
+                      if (currentTag) openEdit(currentTag);
+                    }}>Recarregar dados da tag</Button>}
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label htmlFor="tag-name" className="text-[12px] font-light">
                   Nome
@@ -192,6 +240,7 @@ export function TagsTab() {
                   placeholder="Ex: Quente, Investidor..."
                   maxLength={80}
                   required
+                  disabled={isSaving}
                   className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 />
               </div>
@@ -203,6 +252,7 @@ export function TagsTab() {
                     <button
                       key={color}
                       type="button"
+                      disabled={isSaving}
                       title={name}
                       aria-label={`Usar a cor ${name}`}
                       aria-pressed={formData.color === color}
@@ -223,7 +273,8 @@ export function TagsTab() {
                   type="button"
                   variant="secondary"
                   className="h-9 w-[40%] rounded-[6px] border-0 text-[12px] font-light shadow-none"
-                  onClick={() => setDialogOpen(false)}
+                  disabled={isSaving}
+                  onClick={() => handleDialogChange(false)}
                 >
                   Cancelar
                 </Button>
@@ -331,7 +382,7 @@ export function TagsTab() {
                         style={getTagColorStyle(tag.color)}
                       />
                       <span className="sr-only">Cor {tag.color}</span>
-                      <span className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
+                      <span title={tag.name} className="truncate text-[13px] font-light text-[var(--app-text-primary)]">
                         {tag.name}
                       </span>
                     </div>
@@ -358,7 +409,7 @@ export function TagsTab() {
                         className="h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] shadow-none hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
                         aria-label={`Excluir tag ${tag.name}`}
                         onClick={() =>
-                          setTagToDelete({ id: tag.id, name: tag.name })
+                          setTagToDelete({ id: tag.id, name: tag.name, updated_at: tag.updated_at })
                         }
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -383,25 +434,45 @@ export function TagsTab() {
 
       <AlertDialog
         open={!!tagToDelete}
-        onOpenChange={(open) => !open && setTagToDelete(null)}
+        onOpenChange={(open) => !open && !operation.current && !deleteTag.isPending && setTagToDelete(null)}
       >
-        <AlertDialogContent className="w-[calc(100vw-24px)] rounded-[8px] border-0 sm:max-w-md">
+        <AlertDialogContent data-management-editor className="max-h-[90dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 sm:max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[14px] font-normal">
               Excluir tag?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
-              A tag &quot;{tagToDelete?.name}&quot; será removida. Os leads
+              Ao excluir a tag &quot;{tagToDelete?.name}&quot;, os leads
               permanecem cadastrados, mas perdem essa classificação.
             </AlertDialogDescription>
+            {tagUsage.isFetching && <p role="status" className="text-[12px]">Verificando onde esta tag é usada...</p>}
+            {tagUsage.isError && <div role="alert" className="space-y-2 text-[12px] text-destructive">
+              <p>Não foi possível verificar os vínculos. Tente novamente antes de excluir.</p>
+              <Button type="button" variant="secondary" onClick={() => void tagUsage.refetch()}>Tentar novamente</Button>
+            </div>}
+            {tagUsage.data && !tagUsage.isFetching && !tagUsage.isError && <div className="space-y-2 text-[12px]">
+              <p>{tagUsage.data.lead_count} lead(s) com esta tag.</p>
+              {tagUsage.data.updated_at !== tagToDelete?.updated_at && <div role="alert" className="space-y-2 text-destructive">
+                <p>Esta tag mudou. Atualize a lista e confira os dados antes de excluir.</p>
+                <Button type="button" variant="secondary" disabled={isFetching} onClick={async () => {
+                  const session = deleteSession.current;
+                  const result = await refetch();
+                  if (mounted.current && deleteSession.current === session && !result.isError) setTagToDelete(null);
+                }}>Atualizar lista</Button>
+              </div>}
+              {tagUsage.data.usages.length > 0 && <>
+                <p role="alert">Remova ou substitua a tag nestas configurações antes de excluir:</p>
+                <ul className="list-inside list-disc">{tagUsage.data.usages.map((usage) => <li key={usage.kind}>{TAG_USAGE_LABELS[usage.kind] || 'Configurações'}: {usage.count}</li>)}</ul>
+              </>}
+            </div>}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="h-9 rounded-[6px] text-[12px] font-light">
+            <AlertDialogCancel disabled={deleteTag.isPending} className="h-9 rounded-[6px] text-[12px] font-light">
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
               className="h-9 rounded-[6px] bg-destructive text-[12px] font-light text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteTag.isPending}
+              disabled={deleteTag.isPending || !canDelete}
               onClick={(event) => void handleDelete(event)}
             >
               {deleteTag.isPending && (

@@ -1,16 +1,20 @@
-import { useDeferredValue, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useRef, useState, useLayoutEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LostReasonDialog } from "@/components/features/leads/LostReasonDialog";
-import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
+import { PropertyPickerDialog, type PropertyPickerProperty } from "@/components/features/properties/PropertyPickerDialog";
 import { CompactScheduleEventsList } from "@/components/features/schedule/CompactScheduleEventsList";
 import { EventSheet } from "@/components/features/schedule/EventSheet";
 import { CopyLeadPhoneButton } from "@/components/features/leads/CopyLeadPhoneButton";
+import { QueuePoolClaimButton } from "@/components/features/leads";
+import { ConversationLeadTagBar } from "@/components/features/whatsapp/conversations/ConversationLeadTagBar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { WhatsAppAvatarImage as AvatarImage } from "@/components/features/whatsapp/WhatsAppAvatarImage";
+import { getWhatsAppAvatarCandidates } from "@/lib/whatsapp-avatar";
 import {
   Select,
   SelectContent,
@@ -52,7 +56,6 @@ import {
   Mail,
   Paperclip,
   Phone,
-  Plus,
   RefreshCw,
   User,
   UserPlus,
@@ -60,15 +63,18 @@ import {
 } from "lucide-react";
 import { formatPhoneForDisplay, normalizePhoneToE164 } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
+import { formatWhatsAppPersonName } from "@/lib/whatsapp-person-name";
 import { commandSearchFilter } from "@/lib/search-text";
-import { getTagColorStyle } from "@/lib/tag-color";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import type { WhatsAppConversationLinkPreview } from "@/lib/api/whatsapp";
+import { ConfirmConversationLeadLinkDialog } from "./ConfirmConversationLeadLinkDialog";
 import { useConversationLeadDetail } from "@/hooks/use-conversation-lead-detail";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 import { useTags } from "@/hooks/use-tags";
-import { useLeads, useUpdateLead } from "@/hooks/use-leads";
+import { useLead, useLeads, useUpdateLead } from "@/hooks/use-leads";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
-import { useProperties } from "@/hooks/use-properties";
+import { useProperties, useProperty } from "@/hooks/use-properties";
 import { useUsers } from "@/hooks/use-users";
 import {
   useLeadAttachments,
@@ -85,14 +91,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { leadsAPI } from "@/lib/api/leads";
+import { VimobAPIError } from "@/lib/api/vimob-client";
+import { captureLeadRequestIntent } from "@/lib/lead-request-intent";
+import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
+import { canOperateLeadFromFreshRead } from "@/lib/lead-operation-capability";
 import type { ConversationLeadDetail } from "@/lib/api/conversation-lead-detail";
 import { notifyLeadRealtimeChange } from "@/contexts/LeadRealtimeBus";
+import { getConversationAssigneeLabel, getConversationPropertyLabel } from "@/components/features/whatsapp/conversation-lead-panel-model";
 
 interface ConversationLeadPanelProps {
   leadId: string;
   onClose: () => void;
   className?: string;
   contactPicture?: string | null;
+  contactPictureFallback?: string | null;
+  canReassignLead?: boolean;
+  onReassignLead?: () => void;
 }
 
 const DEAL_STATUS_OPTIONS = [
@@ -133,7 +147,7 @@ function InfoLine({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-w-0 items-start justify-between gap-3 text-xs">
       <span className="shrink-0 text-[var(--app-text-tertiary)]">{label}</span>
-      <span className="flex min-w-0 flex-1 justify-end break-words text-right font-medium text-[var(--app-text-primary)]">
+      <span className="flex min-w-0 flex-1 justify-end [overflow-wrap:anywhere] text-right font-light text-[var(--app-text-primary)]">
         {value}
       </span>
     </div>
@@ -217,7 +231,7 @@ function CampaignTrackingHover({
     return (
       <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
         <span className="text-[var(--app-text-tertiary)]">{label}</span>
-        <span className="break-words text-left font-medium text-[var(--app-text-primary)]">
+        <span className="break-words text-left font-light text-[var(--app-text-primary)]">
           {text}
         </span>
       </div>
@@ -324,35 +338,46 @@ function formatSource(source?: string | null) {
   return SOURCE_LABELS[source.toLowerCase()] || source;
 }
 
-function formatPropertyLabel(
-  property?: { code?: string | null; title?: string | null } | null,
-) {
-  if (!property) return "Nenhum";
-
-  const code = property.code || "";
-  const title = property.title || "Sem título";
-  const full = code ? `${code} - ${title}` : title;
-
-  return full.length > code.length + 13
-    ? `${full.slice(0, code.length + 13)}...`
-    : full;
-}
-
 function getAttachmentLabel(attachment: LeadAttachment) {
   return attachment.file_name || "Documento";
 }
 
-export function ConversationLeadPanel({
+export function ConversationLeadPanel(props: ConversationLeadPanelProps) {
+  const scope = useWhatsAppQueryScope();
+  const { profile } = useAuth();
+  return <ConversationLeadPanelContent key={JSON.stringify([scope.organizationId, scope.userId, scope.accessScope, props.leadId, profile?.organization_id])} {...props} />;
+}
+
+function ConversationLeadPanelContent({
   leadId,
   onClose,
   className,
   contactPicture,
+  contactPictureFallback,
 }: ConversationLeadPanelProps) {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const mountedRef = useRef(true);
+  useLayoutEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const { activeOrganization, profile, organization, user, session } = useAuth();
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
-  const canOperateLead = hasPermission("lead_operate");
+  const membershipMatches = Boolean(profile?.organization_id && profile.organization_id === activeOrganization.organizationId);
+  // conversation-detail is a presentation DTO. Only the canonical fresh GET
+  // supplies the current queue-pool state and per-lead operation capability.
+  const leadAccessQuery = useLead(leadId, { freshOnMount: true });
+  const accessLead = membershipMatches && leadAccessQuery.data?.id === leadId &&
+    leadAccessQuery.data.organization_id === activeOrganization.organizationId ? leadAccessQuery.data : null;
+  const hasFreshLeadAccess = Boolean(accessLead && leadAccessQuery.isSuccess &&
+    leadAccessQuery.isFetchedAfterMount && !leadAccessQuery.isFetching);
+  // Reuse the canonical lead read this panel already needs. Keep its confirmed
+  // photo during a same-context refresh, but never across denial or identity changes.
+  const leadAvatarCandidates = getWhatsAppAvatarCandidates(
+    leadAccessQuery.isSuccess && leadAccessQuery.isFetchedAfterMount ? accessLead?.whatsapp_avatar_url : null,
+    contactPicture, contactPictureFallback,
+  );
+  const poolReadOnly = Boolean(accessLead?.queue_pool);
+  const canOperateLead = Boolean(accessLead && !poolReadOnly &&
+    canOperateLeadFromFreshRead(membershipMatches && hasPermission("lead_operate"), leadAccessQuery));
   const hasPropertiesModule = hasModule("properties");
   const hasScheduleModule = hasModule("agenda");
   const canViewProperties =
@@ -363,25 +388,39 @@ export function ConversationLeadPanel({
     hasScheduleModule && canOperateLead && hasPermission("schedule_manage");
   const organizationId = activeOrganization.organizationId || undefined;
   const {
-    data: lead,
+    data: leadDetail,
     isLoading,
     isError: leadFailed,
     refetch: refetchLead,
   } = useConversationLeadDetail(leadId);
-  const { data: allTags } = useTags();
-  const { data: properties = [] } = useProperties(
+  const lead = leadDetail && (accessLead ? { ...leadDetail, assigned_user_id: accessLead.assigned_user_id,
+    updated_at: accessLead.updated_at, deal_status: accessLead.deal_status } : leadDetail);
+  const selectedPropertyId = lead?.interest_property_id || lead?.property_id || null;
+  const propertyQuery = useProperty(canViewProperties ? selectedPropertyId : null);
+  const persistedProperty = propertyQuery.data;
+  const [pickedProperty, setPickedProperty] = useState<{
+    organizationId: string;
+    leadId: string;
+    property: PropertyPickerProperty;
+  } | null>(null);
+  const { data: allTags = [], isLoading: loadingTagCatalog, isFetching: fetchingTagCatalog,
+    isError: tagCatalogFailed, refetch: refetchTagCatalog } = useTags({ catalog: true, enabled: canOperateLead });
+  const propertiesQuery = useProperties(
     undefined,
     {},
     { enabled: canViewProperties },
   );
-  const { data: users = [] } = useUsers();
+  const properties = propertiesQuery.data || [];
+  const usersQuery = useUsers();
+  const users = usersQuery.data || [];
   const {
     data: attachments = [],
     isLoading: attachmentsLoading,
     isError: attachmentsFailed,
     refetch: refetchAttachments,
   } = useLeadAttachments(leadId);
-  const { data: scheduleEvents = [] } = useScheduleEvents({
+  const { data: scheduleEvents = [], isLoading: scheduleEventsLoading,
+    isError: scheduleEventsFailed, refetch: refetchScheduleEvents } = useScheduleEvents({
     leadId,
     enabled: canViewSchedule,
   });
@@ -389,13 +428,17 @@ export function ConversationLeadPanel({
   const updateLead = useUpdateLead();
   const addTag = useAddLeadTag();
   const removeTag = useRemoveLeadTag();
+  const tagMutationPending = addTag.isPending || removeTag.isPending;
   const dealStatusChange = useDealStatusChange();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [assigneePopoverOpen, setAssigneePopoverOpen] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
+  // Keep transfer ownership local; extract this legacy panel's contact actions into conversations separately.
+  const assignmentInFlightRef = useRef(false);
   const [isUploading, setIsUploading] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [documentsExpandedFor, setDocumentsExpandedFor] = useState<string | null>(null);
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
   const [editingScheduleEvent, setEditingScheduleEvent] =
@@ -406,11 +449,11 @@ export function ConversationLeadPanel({
   if (isLoading) {
     return (
       <div
-        className={cn("flex items-center justify-center", className)}
+        className={cn("flex h-full min-h-0 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]", className)}
         role="status"
         aria-live="polite"
       >
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none text-muted-foreground" />
         <span className="sr-only">Carregando dados do lead</span>
       </div>
     );
@@ -457,16 +500,22 @@ export function ConversationLeadPanel({
   const availableTagsToAdd = (allTags || []).filter(
     (tag) => !leadTagIds.includes(tag.id),
   );
-  const selectedPropertyId =
-    lead.interest_property_id || lead.property_id || null;
-  const selectedProperty = properties.find(
-    (property) => property.id === selectedPropertyId,
+  const selectedProperty = persistedProperty || (
+    pickedProperty && pickedProperty.organizationId === organizationId &&
+    pickedProperty.leadId === lead.id &&
+    pickedProperty.property.id === selectedPropertyId
+      ? pickedProperty.property
+      : properties.find((property) => property.id === selectedPropertyId)
   );
   const currentAssignee = users.find(
     (user) => user.id === lead.assigned_user_id,
   );
-  const assigneeName =
-    currentAssignee?.name || currentAssignee?.email || "Sem responsável";
+  const assigneeName = getConversationAssigneeLabel(lead.assigned_user_id, currentAssignee, usersQuery);
+  const propertyLabel = getConversationPropertyLabel(selectedPropertyId, selectedProperty, {
+    canView: canViewProperties, isLoading: propertyQuery.isLoading || propertiesQuery.isLoading,
+    isError: propertyQuery.isError || propertiesQuery.isError,
+  });
+  const leadDisplayName = formatWhatsAppPersonName(lead.name) || "Lead";
   const canAssignAnyLead = canOperateLead;
   const canAssignCurrentLead = canOperateLead;
   const dealStatus = lead.deal_status || "open";
@@ -484,7 +533,7 @@ export function ConversationLeadPanel({
     sourceLabel
   );
   const contactRows = [
-    { label: "Nome", value: lead.name },
+    { label: "Nome", value: leadDisplayName },
     {
       label: "Telefone",
       value: lead.phone ? formatPhoneForDisplay(lead.phone) : null,
@@ -500,6 +549,7 @@ export function ConversationLeadPanel({
   ].filter((row) => Boolean(row.value));
 
   const refreshLeadData = () => {
+    if (!mountedRef.current) return;
     void queryClient.invalidateQueries({
       queryKey: ["conversation-lead-detail"],
     });
@@ -547,11 +597,13 @@ export function ConversationLeadPanel({
       leadName: lead.name || "Lead",
       lostReason: reason,
     });
+    if (!mountedRef.current) return;
     refreshLeadData();
     setLostReasonDialogOpen(false);
   };
 
   const handleAssignUser = async (userId: string | null) => {
+    if (!mountedRef.current || assignmentInFlightRef.current) return;
     if (userId === lead.assigned_user_id) {
       setAssigneePopoverOpen(false);
       return;
@@ -567,6 +619,14 @@ export function ConversationLeadPanel({
       return;
     }
 
+    const expectedUpdatedAt = lead.updated_at;
+    if (!expectedUpdatedAt) {
+      toast.error("Atualize este lead antes de trocar o responsável.");
+      refreshLeadData();
+      return;
+    }
+    const requestIntent = captureLeadRequestIntent(user?.id, getGlobalSignOutSessionId(session));
+    assignmentInFlightRef.current = true;
     setIsAssigning(true);
     setAssigneePopoverOpen(false);
 
@@ -575,8 +635,11 @@ export function ConversationLeadPanel({
         lead.id,
         userId,
         organizationId,
+        requestIntent,
+        expectedUpdatedAt,
       );
       if (error) throw error;
+      if (!mountedRef.current) return;
       refreshLeadData();
       if (organizationId) {
         notifyLeadRealtimeChange({
@@ -587,19 +650,23 @@ export function ConversationLeadPanel({
       }
       toast.success("Responsável atualizado");
     } catch (error) {
+      if (!mountedRef.current) return;
+      if (error instanceof VimobAPIError && error.code === "lead_changed") {
+        refreshLeadData();
+        setAssigneePopoverOpen(true);
+        toast.error("Este lead foi atualizado em outra sessão. Confira o responsável atual e selecione novamente.");
+        return;
+      }
       const message =
         error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao atualizar responsável: ${message}`);
     } finally {
-      setIsAssigning(false);
+      assignmentInFlightRef.current = false;
+      if (mountedRef.current) setIsAssigning(false);
     }
   };
 
-  const handlePropertySelect = async (property: {
-    id: string;
-    preco?: number | null;
-    commission_percentage?: number | null;
-  }) => {
+  const handlePropertySelect = async (property: PropertyPickerProperty) => {
     if (!canOperateLead || !canViewProperties) return;
     const nextUpdate: {
       id: string;
@@ -622,6 +689,8 @@ export function ConversationLeadPanel({
     }
 
     await updateLead.mutateAsync(nextUpdate);
+    if (!mountedRef.current) return;
+    if (organizationId) setPickedProperty({ organizationId, leadId: lead.id, property });
     refreshLeadData();
   };
 
@@ -636,27 +705,34 @@ export function ConversationLeadPanel({
 
     try {
       await uploadAttachment.mutateAsync({ leadId: lead.id, file });
+      if (!mountedRef.current) return;
       toast.success("Documento enviado com sucesso!");
     } catch (error) {
+      if (!mountedRef.current) return;
       const message =
         error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao enviar: ${message}`);
     } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (mountedRef.current) {
+        setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
     }
   };
 
   const handleSaveFeedback = async () => {
     if (!canOperateLead) return;
-    const savedFeedback = feedback.trim();
+    const submittedFeedback = feedback;
+    const savedFeedback = submittedFeedback.trim();
     if (!savedFeedback) return;
 
     try {
       await updateLead.mutateAsync({ id: lead.id, feedback: savedFeedback });
-      setFeedback("");
+      if (!mountedRef.current) return;
+      setFeedback(current => current === submittedFeedback ? "" : current);
       toast.success("Feedback registrado com sucesso!");
     } catch (error) {
+      if (!mountedRef.current) return;
       const message =
         error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao registrar feedback: ${message}`);
@@ -693,30 +769,32 @@ export function ConversationLeadPanel({
           type="button"
           variant="ghost"
           size="icon"
-          className="absolute right-2 top-2 h-7 w-7 rounded-[6px]"
+          className="absolute right-2 top-2 h-7 w-7 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)]"
           onClick={onClose}
+          data-conversation-panel-close
           aria-label="Fechar painel do lead"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
-        <div className="flex items-start gap-2.5">
+        <div data-conversation-lead-identity className="flex items-start gap-2.5 pr-7">
           <Avatar className="h-12 w-12 shrink-0 border-0">
             <AvatarImage
-              src={contactPicture || undefined}
-              alt={lead.name || "Lead"}
+              src={leadAvatarCandidates[0]}
+              fallbackSources={leadAvatarCandidates.slice(1)}
+              alt={leadDisplayName}
             />
-            <AvatarFallback className="bg-primary/50 text-[14px] font-normal text-primary-foreground">
+            <AvatarFallback className="bg-primary text-[14px] font-normal text-primary-foreground">
               {lead.name?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
             </AvatarFallback>
           </Avatar>
 
           <div className="min-w-0 flex-1 overflow-hidden">
-            <h2 className="truncate text-[14px] font-normal leading-tight">
-              {lead.name || "Lead"}
+            <h2 className="truncate leading-tight" style={{ fontSize: "var(--app-font-size-card-title)", fontWeight: "var(--app-font-weight-body)" }}>
+              {leadDisplayName}
             </h2>
             {lead.phone && (
               <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                <p className="truncate text-xs text-[var(--app-text-tertiary)]">
+                <p className="truncate text-[11px] font-light text-[var(--app-text-tertiary)]">
                   {formatPhoneForDisplay(lead.phone)}
                 </p>
                 <CopyLeadPhoneButton
@@ -726,124 +804,24 @@ export function ConversationLeadPanel({
               </div>
             )}
 
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {leadTags.slice(0, 3).map((leadTag) => (
-                <Badge
-                  key={leadTag.tag.id}
-                  className="flex h-5 max-w-full items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px]"
-                  style={getTagColorStyle(leadTag.tag.color)}
-                  title={leadTag.tag.name || "Tag"}
-                  aria-label={`Tag ${leadTag.tag.name || "Tag"}`}
-                >
-                  <span className="max-w-[130px] truncate">
-                    {leadTag.tag.name || "Tag"}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={!canOperateLead}
-                    className="rounded-[3px] p-0.5 hover:bg-[var(--app-surface-hover)] disabled:hidden"
-                    onClick={() =>
-                      removeTag.mutate({ leadId, tagId: leadTag.tag.id })
-                    }
-                    aria-label={`Remover tag ${leadTag.tag.name || "Tag"}`}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </Badge>
-              ))}
-              {leadTags.length > 3 && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px]"
-                      aria-label={`Ver mais ${leadTags.length - 3} tags`}
-                    >
-                      +{leadTags.length - 3}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-2" align="start">
-                    <p className="mb-1 px-1 text-[10px] font-medium text-muted-foreground">
-                      Todas as tags
-                    </p>
-                    <div className="max-h-56 space-y-1 overflow-y-auto">
-                      {leadTags.map((leadTag) => (
-                        <div
-                          key={leadTag.tag.id}
-                          className="flex min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs"
-                        >
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={getTagColorStyle(leadTag.tag.color)}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 break-words">
-                            {leadTag.tag.name || "Tag"}
-                          </span>
-                          {canOperateLead && (
-                            <button
-                              type="button"
-                              className="shrink-0 rounded-[4px] p-1 hover:bg-[var(--app-surface-hover)]"
-                              onClick={() =>
-                                removeTag.mutate({
-                                  leadId,
-                                  tagId: leadTag.tag.id,
-                                })
-                              }
-                              aria-label={`Remover tag ${leadTag.tag.name || "Tag"}`}
-                            >
-                              <X className="h-3 w-3" aria-hidden="true" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
-              {canOperateLead && availableTagsToAdd.length > 0 && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px]"
-                    >
-                      <Plus className="mr-1 h-3 w-3" />
-                      Tag
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-1" align="start">
-                    <div className="max-h-64 overflow-y-auto">
-                      {availableTagsToAdd.map((tag) => (
-                        <button
-                          key={tag.id}
-                          type="button"
-                          className="flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs hover:bg-accent"
-                          onClick={() =>
-                            addTag.mutate({ leadId, tagId: tag.id })
-                          }
-                        >
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={getTagColorStyle(tag.color)}
-                          />
-                          <span className="truncate">{tag.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
-            </div>
           </div>
         </div>
 
+        <ConversationLeadTagBar tags={leadTags} availableTags={availableTagsToAdd} canManage={canOperateLead}
+          busy={tagMutationPending} loading={Boolean(loadingTagCatalog || fetchingTagCatalog)} failed={tagCatalogFailed}
+          onRetry={() => void refetchTagCatalog()}
+          onAdd={(tagId) => { if (canOperateLead && !tagMutationPending) addTag.mutate({ leadId, tagId }); }}
+          onRemove={(tagId) => { if (canOperateLead && !tagMutationPending) removeTag.mutate({ leadId, tagId }); }} />
+
+        {!hasFreshLeadAccess && <div role="status" className="mt-2 text-[11px] text-muted-foreground">
+          {leadAccessQuery.isError ? "Não foi possível confirmar seu acesso ao lead." : "Atualizando acesso ao lead..."}
+          {leadAccessQuery.isError && <Button type="button" size="sm" variant="ghost" className="ml-1 h-7 px-2 text-[11px]"
+            onClick={() => void leadAccessQuery.refetch()}>Tentar novamente</Button>}
+        </div>}
+
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <Popover
+          {poolReadOnly && accessLead ? <QueuePoolClaimButton lead={accessLead} compact
+            disabled={!hasFreshLeadAccess || !hasPermission("lead_operate")} /> : <Popover
             open={assigneePopoverOpen}
             onOpenChange={setAssigneePopoverOpen}
           >
@@ -852,12 +830,12 @@ export function ConversationLeadPanel({
                 type="button"
                 variant="ghost"
                 disabled={!canAssignCurrentLead || isAssigning}
-                className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs text-[var(--app-text-secondary)]"
+                className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)]"
               >
                 <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{assigneeName}</span>
                 {isAssigning ? (
-                  <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
                 ) : (
                   <ChevronDown className="ml-auto h-3.5 w-3.5" />
                 )}
@@ -874,17 +852,17 @@ export function ConversationLeadPanel({
               >
                 <CommandInput
                   placeholder="Buscar responsável..."
-                  className="h-10 border-none focus:ring-0"
+                  className="h-8 border-none text-[12px] font-light focus:ring-0"
                 />
                 <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
-                  <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
+                  <CommandEmpty className="py-3 text-center text-[12px] font-light text-muted-foreground">
                     Nenhum encontrado.
                   </CommandEmpty>
                   <CommandGroup>
                     {canAssignAnyLead && (
                       <CommandItem
                         onSelect={() => void handleAssignUser(null)}
-                        className="cursor-pointer rounded-[6px] px-3 py-2"
+                        className="cursor-pointer rounded-[6px] px-3 py-2 text-[12px] font-light"
                       >
                         Sem responsável
                       </CommandItem>
@@ -893,17 +871,17 @@ export function ConversationLeadPanel({
                       <CommandItem
                         key={user.id}
                         onSelect={() => void handleAssignUser(user.id)}
-                        className="cursor-pointer rounded-[6px] px-3 py-2"
+                        className="cursor-pointer rounded-[6px] px-3 py-2 text-[12px] font-light"
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           <Avatar className="h-7 w-7">
-                            <AvatarImage src={user.avatar_url || undefined} />
+                            <AvatarImage src={user.avatar_url || undefined} alt={formatWhatsAppPersonName(user.name) || user.email} />
                             <AvatarFallback className="text-[10px]">
                               {(user.name || user.email || "U")[0]}
                             </AvatarFallback>
                           </Avatar>
                           <span className="truncate">
-                            {user.name || user.email}
+                            {formatWhatsAppPersonName(user.name) || user.email}
                           </span>
                         </div>
                       </CommandItem>
@@ -912,7 +890,7 @@ export function ConversationLeadPanel({
                 </CommandList>
               </Command>
             </PopoverContent>
-          </Popover>
+          </Popover>}
 
           <Select
             value={dealStatus}
@@ -921,7 +899,7 @@ export function ConversationLeadPanel({
           >
             <SelectTrigger
               className={cn(
-                "h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium",
+                "h-8 w-[92px] gap-1 rounded-[6px] px-2 text-[11px] font-light",
                 getDealStatusTriggerClass(dealStatus),
               )}
             >
@@ -948,13 +926,13 @@ export function ConversationLeadPanel({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!phoneHref}
+            disabled={!canOperateLead || !phoneHref}
             onClick={() => {
-              if (phoneHref) window.location.href = `tel:${phoneHref}`;
+              if (canOperateLead && phoneHref) window.location.href = `tel:${phoneHref}`;
             }}
-            className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+            className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] hover:bg-primary/10 hover:text-primary"
             aria-label={
-              lead.phone ? `Ligar para ${lead.name}` : "Telefone indisponível"
+              lead.phone ? `Ligar para ${leadDisplayName}` : "Telefone indisponível"
             }
           >
             <Phone className="h-3.5 w-3.5" aria-hidden="true" />
@@ -963,14 +941,14 @@ export function ConversationLeadPanel({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!lead.email}
+            disabled={!canOperateLead || !lead.email}
             onClick={() => {
-              if (lead.email) window.location.href = `mailto:${lead.email}`;
+              if (canOperateLead && lead.email) window.location.href = `mailto:${lead.email}`;
             }}
             className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
             aria-label={
               lead.email
-                ? `Enviar e-mail para ${lead.name}`
+                ? `Enviar e-mail para ${leadDisplayName}`
                 : "E-mail indisponível"
             }
           >
@@ -979,7 +957,7 @@ export function ConversationLeadPanel({
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 min-w-0 flex-1">
+      <ScrollArea className="min-h-0 min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:block! [&>[data-radix-scroll-area-viewport]>div]:min-w-0! [&>[data-radix-scroll-area-viewport]>div]:w-full">
         <div className="min-w-0 space-y-3 p-3 pb-4">
           <section className={panelSectionClassName}>
             <div className="mb-3 flex items-center justify-between">
@@ -989,7 +967,7 @@ export function ConversationLeadPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
+                className="lead-detail-subtle-action h-7 rounded-[6px] px-2 text-[10px] font-light"
                 asChild
               >
                 <Link href={`/crm/pipelines?lead=${lead.id}`}>
@@ -1017,12 +995,12 @@ export function ConversationLeadPanel({
                   type="button"
                   variant="ghost"
                   disabled={!canOperateLead || !canViewProperties}
-                  className="h-10 w-full min-w-0 justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                  className="h-8 w-full min-w-0 justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">
-                      {formatPropertyLabel(selectedProperty)}
+                      {propertyLabel}
                     </span>
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1031,23 +1009,26 @@ export function ConversationLeadPanel({
             />
           )}
 
-          <section className={panelSectionClassName}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
-                Documentação
-              </h3>
+          <section className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
+            <div className="flex h-8 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]">
+                <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
+                  Documentação
+                </h3>
+              </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
+                className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light"
                 disabled={
                   !canOperateLead || isUploading || uploadAttachment.isPending
                 }
                 onClick={() => fileInputRef.current?.click()}
               >
                 {isUploading || uploadAttachment.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
                 ) : (
                   <Paperclip className="h-3 w-3" />
                 )}
@@ -1063,18 +1044,18 @@ export function ConversationLeadPanel({
 
             {attachmentsLoading ? (
               <div
-                className="flex items-center gap-2 py-2 text-xs text-[var(--app-text-tertiary)]"
+                className="flex items-center gap-2 pb-3 pt-2 text-xs text-[var(--app-text-tertiary)]"
                 role="status"
               >
                 <Loader2
-                  className="h-3.5 w-3.5 animate-spin"
+                  className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
                 Carregando documentos...
               </div>
             ) : attachmentsFailed ? (
               <div
-                className="rounded-[6px] bg-destructive/8 p-2 text-xs"
+                className="mb-3 mt-2 rounded-[6px] bg-destructive/8 p-2 text-xs"
                 role="alert"
               >
                 <p>Não foi possível carregar os documentos.</p>
@@ -1090,8 +1071,8 @@ export function ConversationLeadPanel({
                 </Button>
               </div>
             ) : attachments.length > 0 ? (
-              <div className="space-y-2">
-                {attachments.slice(0, 4).map((attachment) =>
+              <div className="space-y-2 pb-3 pt-2">
+                {(documentsExpandedFor === leadId ? attachments : attachments.slice(0, 4)).map((attachment) =>
                   (() => {
                     const attachmentURL = safeExternalURL(attachment.file_url);
                     const attachmentLabel = getAttachmentLabel(attachment);
@@ -1124,16 +1105,14 @@ export function ConversationLeadPanel({
                   })(),
                 )}
                 {attachments.length > 4 && (
-                  <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]">
-                    +{attachments.length - 4} documento(s)
-                  </p>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 rounded-[6px] px-2 text-[11px] font-light"
+                    aria-expanded={documentsExpandedFor === leadId}
+                    onClick={() => setDocumentsExpandedFor(current => current === leadId ? null : leadId)}>
+                    {documentsExpandedFor === leadId ? "Mostrar menos documentos" : `Ver todos os ${attachments.length} documentos`}
+                  </Button>
                 )}
               </div>
-            ) : (
-              <p className="py-1 text-xs text-[var(--app-text-tertiary)]">
-                Nenhum documento anexado.
-              </p>
-            )}
+            ) : null}
           </section>
 
           {hasScheduleModule && canViewSchedule && (
@@ -1147,37 +1126,45 @@ export function ConversationLeadPanel({
                     Agenda
                   </h3>
                   <p className="text-[10px] text-[var(--app-text-tertiary)]">
-                    {scheduleEvents.length} compromisso(s)
+                    {scheduleEventsLoading && scheduleEvents.length === 0 ? "Carregando agenda..."
+                      : scheduleEventsFailed && scheduleEvents.length === 0 ? "Agenda indisponível"
+                        : `${scheduleEvents.length} compromisso(s)`}
                   </p>
                 </div>
                 <Button
                   size="sm"
                   disabled={!canManageSchedule}
-                  className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
+                  className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] border-0 bg-primary/50 px-2.5 text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
                   onClick={handleOpenScheduleForm}
                 >
                   <Calendar className="h-3.5 w-3.5" />
                   Agendar
                 </Button>
               </div>
-              <CompactScheduleEventsList
+              {scheduleEventsFailed && <div role="status" className="mt-2 text-[11px] text-muted-foreground">
+                Não foi possível atualizar a agenda.
+                <Button type="button" variant="ghost" size="sm" className="ml-1 h-7 rounded-[6px] px-2 text-[11px] font-light"
+                  onClick={() => void refetchScheduleEvents()}>Tentar novamente</Button>
+              </div>}
+              {scheduleEvents.length > 0 && <CompactScheduleEventsList
                 events={scheduleEvents}
                 locale={ptBR}
-                emptyLabel="Nenhum compromisso agendado"
                 onEditEvent={
                   canManageSchedule ? handleEditScheduleEvent : undefined
                 }
-              />
+              />}
             </section>
           )}
 
           <section className={panelSectionClassName}>
             <Textarea
               placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
+              aria-label="Feedback do atendimento do lead"
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
               disabled={!canOperateLead}
-              className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
+              rows={2}
+              className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
             />
             <div className="mt-2 flex justify-end">
               <Button
@@ -1224,10 +1211,14 @@ interface ConversationUnregisteredPanelProps {
   contactName?: string | null;
   contactPhone?: string | null;
   contactPicture?: string | null;
+  contactPictureFallback?: string | null;
   isGroup?: boolean;
+  currentLeadId?: string;
+  currentLeadName?: string;
   onCreateLead?: () => void;
   canLinkLead?: boolean;
-  onLinkLead?: (leadId: string) => Promise<void>;
+  onPreviewLinkLead?: (leadId: string) => Promise<WhatsAppConversationLinkPreview>;
+  onLinkLead?: (leadId: string, preview: WhatsAppConversationLinkPreview) => Promise<void>;
   isLinkingLead?: boolean;
   onClose?: () => void;
   className?: string;
@@ -1237,9 +1228,13 @@ export function ConversationUnregisteredPanel({
   contactName,
   contactPhone,
   contactPicture,
+  contactPictureFallback,
   isGroup,
+  currentLeadId,
+  currentLeadName,
   onCreateLead,
   canLinkLead = false,
+  onPreviewLinkLead,
   onLinkLead,
   isLinkingLead = false,
   onClose,
@@ -1247,7 +1242,11 @@ export function ConversationUnregisteredPanel({
 }: ConversationUnregisteredPanelProps) {
   const [leadPickerOpen, setLeadPickerOpen] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
-  const [pendingLeadId, setPendingLeadId] = useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = useState<{ id: string; name: string } | null>(null);
+  const [linkPreview, setLinkPreview] = useState<WhatsAppConversationLinkPreview | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const previewRequestRef = useRef(0);
   const deferredLeadSearch = useDeferredValue(leadSearch.trim());
   const defaultLeadSearch = (contactPhone || "").replace(/\D/g, "");
   const {
@@ -1265,21 +1264,56 @@ export function ConversationUnregisteredPanel({
   );
   const displayName =
     contactName && contactName !== contactPhone
-      ? contactName
+      ? isGroup ? contactName : formatWhatsAppPersonName(contactName)
       : formatPhoneForDisplay(contactPhone || "") || "Contato";
+  const availableCandidateLeads = candidateLeads.filter((candidate) => candidate.id !== currentLeadId);
 
-  const handleLinkLead = async (leadId: string) => {
-    if (!onLinkLead || isLinkingLead) return;
-    setPendingLeadId(leadId);
+  const loadLinkPreview = async (leadId: string) => {
+    const requestId = ++previewRequestRef.current;
+    setIsPreviewLoading(true);
+    setPreviewFailed(false);
+    setLinkPreview(null);
     try {
-      await onLinkLead(leadId);
+      if (!onPreviewLinkLead) throw new Error("Prévia de vínculo indisponível");
+      const preview = await onPreviewLinkLead(leadId);
+      if (requestId !== previewRequestRef.current) return;
+      if (preview.leadId !== leadId) throw new Error("Lead da prévia não corresponde ao selecionado");
+      setLinkPreview(preview);
+    } catch {
+      if (requestId === previewRequestRef.current) setPreviewFailed(true);
+    } finally {
+      if (requestId === previewRequestRef.current) setIsPreviewLoading(false);
+    }
+  };
+
+  const handleSelectLead = (leadId: string, leadName: string) => {
+    if (!onLinkLead || isLinkingLead) return;
+    setSelectedLead({ id: leadId, name: leadName });
+    setLeadPickerOpen(false);
+    void loadLinkPreview(leadId);
+  };
+
+  const handleLinkLead = async () => {
+    if (!onLinkLead || !selectedLead || !linkPreview || isLinkingLead || previewFailed) return;
+    if (linkPreview.leadId !== selectedLead.id) return;
+    try {
+      await onLinkLead(selectedLead.id, linkPreview);
+      previewRequestRef.current += 1;
+      setSelectedLead(null);
+      setLinkPreview(null);
       setLeadPickerOpen(false);
       setLeadSearch("");
     } catch {
-      // The caller owns user-facing feedback and keeps the picker open for retry.
-    } finally {
-      setPendingLeadId(null);
+      // The caller owns user-facing feedback and keeps confirmation open for retry.
     }
+  };
+
+  const handleLinkDialogOpenChange = (open: boolean) => {
+    if (open || isLinkingLead) return;
+    previewRequestRef.current += 1;
+    setSelectedLead(null);
+    setLinkPreview(null);
+    setPreviewFailed(false);
   };
 
   return (
@@ -1295,15 +1329,16 @@ export function ConversationUnregisteredPanel({
             type="button"
             variant="ghost"
             size="icon"
-            className="absolute right-2 top-2 h-7 w-7 rounded-[6px]"
+            className="absolute right-2 top-2 h-7 w-7 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)]"
             onClick={onClose}
+            data-conversation-panel-close
             aria-label="Fechar painel do contato"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         )}
         <Avatar className="h-14 w-14 border-0">
-          <AvatarImage src={contactPicture || undefined} alt={displayName} />
+          <AvatarImage src={contactPicture || undefined} fallbackSrc={contactPictureFallback} alt={displayName} />
           <AvatarFallback className="bg-[var(--app-surface-soft)] text-base font-medium text-[var(--app-text-secondary)]">
             {isGroup ? (
               <User className="h-5 w-5" />
@@ -1312,7 +1347,7 @@ export function ConversationUnregisteredPanel({
             )}
           </AvatarFallback>
         </Avatar>
-        <h2 className="mt-3 max-w-full truncate text-sm font-medium">
+        <h2 className="mt-3 max-w-full truncate" style={{ fontSize: "var(--app-font-size-card-title)", fontWeight: "var(--app-font-weight-body)" }}>
           {displayName}
         </h2>
         {contactPhone && (
@@ -1321,18 +1356,19 @@ export function ConversationUnregisteredPanel({
           </p>
         )}
         <Badge className="mt-3 rounded-[5px] border-0 bg-amber-500/14 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
-          Não cadastrado
+          {currentLeadId ? `Vinculado a ${formatWhatsAppPersonName(currentLeadName) || "um lead"}` : "Não cadastrado"}
         </Badge>
       </div>
 
       <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5 text-center">
         <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4">
           <p className="text-sm font-medium text-[var(--app-text-primary)]">
-            Vincular esta conversa a um lead
+            {currentLeadId ? "Mudar o vínculo desta conversa" : "Vincular esta conversa a um lead"}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-[var(--app-text-tertiary)]">
-            Use um lead existente com o mesmo WhatsApp ou cadastre um novo para
-            acompanhar etapa, responsável e histórico comercial.
+            {currentLeadId
+              ? "Escolha outro lead com o mesmo WhatsApp. O histórico já atribuído ao lead atual permanecerá nele."
+              : "Use um lead existente com o mesmo WhatsApp ou cadastre um novo para acompanhar etapa, responsável e histórico comercial."}
           </p>
         </div>
 
@@ -1345,17 +1381,17 @@ export function ConversationUnregisteredPanel({
                   variant="outline"
                   className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3"
                   disabled={isLinkingLead}
-                  aria-label={`Vincular ${displayName} a um lead existente`}
+                  aria-label={`${currentLeadId ? "Mudar vínculo de" : "Vincular"} ${displayName} a um lead existente`}
                 >
                   {isLinkingLead ? (
                     <Loader2
-                      className="h-3.5 w-3.5 animate-spin"
+                      className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
                       aria-hidden="true"
                     />
                   ) : (
                     <User className="h-3.5 w-3.5" aria-hidden="true" />
                   )}
-                  Vincular existente
+                  {currentLeadId ? "Escolher outro lead" : "Vincular existente"}
                 </Button>
               </PopoverTrigger>
               <PopoverContent
@@ -1365,13 +1401,14 @@ export function ConversationUnregisteredPanel({
               >
                 <Command
                   shouldFilter={false}
-                  className="border-none bg-transparent"
+                  className="border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2"
                 >
                   <CommandInput
                     value={leadSearch}
                     onValueChange={setLeadSearch}
                     placeholder="Buscar por nome ou WhatsApp..."
                     aria-label="Buscar lead existente"
+                    className="h-8 py-0 text-[12px] font-light"
                   />
                   <p className="px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
                     A vinculação só será concluída se o WhatsApp do lead
@@ -1384,7 +1421,7 @@ export function ConversationUnregisteredPanel({
                         role="status"
                       >
                         <Loader2
-                          className="h-4 w-4 animate-spin"
+                          className="h-4 w-4 animate-spin motion-reduce:animate-none"
                           aria-hidden="true"
                         />
                         Buscando leads...
@@ -1396,21 +1433,21 @@ export function ConversationUnregisteredPanel({
                       >
                         Não foi possível buscar os leads.
                       </div>
-                    ) : candidateLeads.length === 0 ? (
+                    ) : availableCandidateLeads.length === 0 ? (
                       <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
                     ) : (
                       <CommandGroup heading="Leads encontrados">
-                        {candidateLeads.map((candidate) => (
+                        {availableCandidateLeads.map((candidate) => (
                           <CommandItem
                             key={candidate.id}
                             value={candidate.id}
                             disabled={isLinkingLead}
-                            onSelect={() => void handleLinkLead(candidate.id)}
+                            onSelect={() => handleSelectLead(candidate.id, candidate.name || "Lead sem nome")}
                             className="cursor-pointer rounded-[6px] px-3 py-2"
                           >
                             <div className="min-w-0 flex-1 text-left">
                               <p className="truncate text-xs font-medium">
-                                {candidate.name || "Lead sem nome"}
+                                {formatWhatsAppPersonName(candidate.name) || "Lead sem nome"}
                               </p>
                               <p className="truncate text-[10px] text-muted-foreground">
                                 {candidate.phone
@@ -1418,12 +1455,6 @@ export function ConversationUnregisteredPanel({
                                   : "Sem WhatsApp cadastrado"}
                               </p>
                             </div>
-                            {pendingLeadId === candidate.id && (
-                              <Loader2
-                                className="h-3.5 w-3.5 animate-spin"
-                                aria-label="Vinculando lead"
-                              />
-                            )}
                           </CommandItem>
                         ))}
                       </CommandGroup>
@@ -1445,6 +1476,20 @@ export function ConversationUnregisteredPanel({
           )}
         </div>
       </div>
+      <ConfirmConversationLeadLinkDialog
+        open={Boolean(selectedLead)}
+        mode="existing"
+        leadName={selectedLead?.name}
+        preview={linkPreview}
+        isLoading={isPreviewLoading}
+        isConfirming={isLinkingLead}
+        hasError={previewFailed}
+        onOpenChange={handleLinkDialogOpenChange}
+        onRetry={() => {
+          if (selectedLead) void loadLinkPreview(selectedLead.id);
+        }}
+        onConfirm={() => void handleLinkLead()}
+      />
     </aside>
   );
 }

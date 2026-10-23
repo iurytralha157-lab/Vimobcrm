@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
 import {
   mkdir,
   open,
@@ -106,20 +105,6 @@ function isPlainObject(value) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-async function sha256File(filePath) {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
-  return hash.digest("hex");
-}
-
-async function readJson(filePath, code = "JSON_INVALID") {
-  try {
-    return JSON.parse(await readFile(filePath, "utf8"));
-  } catch {
-    fail(code);
-  }
 }
 
 function asPositiveInteger(value, code) {

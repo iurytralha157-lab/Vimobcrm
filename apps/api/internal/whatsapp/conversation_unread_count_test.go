@@ -39,6 +39,9 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 		t.Fatal("valid explicit session scope must not be empty")
 	}
 	joined := strings.Join(where, " and ")
+	// Operator whitespace is irrelevant to the scope. Keep the exact tenant,
+	// conversation and capture predicates enforced across SQL formatting.
+	normalizedScope := strings.ReplaceAll(joined, " = ", "=")
 	for _, clause := range []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
@@ -51,7 +54,7 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 		"wm.capture_state is distinct from 'suppressed'",
 		"regexp_replace(coalesce(wc.contact_phone, ''), '\\D', '', 'g') like $8",
 	} {
-		if !strings.Contains(joined, clause) {
+		if !strings.Contains(normalizedScope, strings.ReplaceAll(clause, " = ", "=")) {
 			t.Fatalf("canonical unread scope is missing %q:\n%s", clause, joined)
 		}
 	}
@@ -63,36 +66,40 @@ func TestConversationUnreadCountUsesCanonicalInboxScope(t *testing.T) {
 	}
 }
 
-func TestOperationalInboxRequiresOwnedOrGrantedAssignedNumberForNonAdmin(t *testing.T) {
+func TestOperationalInboxUsesAssignedSharedLeadsAndKeepsUnlinkedOwnerOnly(t *testing.T) {
 	_, where, empty, err := conversationFilterSQL(tenant.Context{
 		OrganizationID: unreadCountOrganizationID,
 		UserID:         unreadCountUserID,
-		MemberRole:     "manager",
-		Permissions:    []string{"lead_view_all"},
+		MemberRole:     "user",
+		Permissions:    []string{"lead_view_team"},
 	}, ConversationListFilter{})
 	if err != nil || empty {
 		t.Fatalf("inbox filter = empty:%v error:%v", empty, err)
 	}
 	joined := strings.Join(where, " and ")
 	for _, required := range []string{
+		"wc.organization_id = $1::uuid",
+		"wc.lead_id is not null",
+		"leader.user_id = $2::uuid",
+		"member.user_id = l.assigned_user_id",
+		"wc.lead_id is null",
 		"ws.owner_user_id = $2::uuid",
+		"wc.created_at > now() - interval '7 days'",
+		"wc.retired_at is null",
 		"l.assigned_user_id = $2::uuid",
+		"whatsapp_session_access",
 		"access.session_id = ws.id",
-		"access.can_view = true",
-		"access.can_read = true",
-		"wc.lead_id is not null and false",
 	} {
 		if !strings.Contains(joined, required) {
-			t.Fatalf("inbox missing shared-session boundary %q", required)
+			t.Fatalf("inbox missing lead or unlinked owner scope %q", required)
 		}
 	}
-	if strings.Contains(conversationVisibilitySQL(true), "sessionGrantExistsSQL") ||
-		strings.Contains(conversationVisibilitySQL(true), "whatsapp_session_access") {
-		t.Fatal("direct lead history visibility must not depend on a session grant")
+	if strings.Contains(conversationVisibilitySQL(true), "whatsapp_session_access") {
+		t.Fatal("canonical lead history must not require an operational session grant")
 	}
 }
 
-func TestAdminInboxCanReadOtherNumbersOnlyForLeads(t *testing.T) {
+func TestAdminInboxKeepsOtherNumbersUnlinkedPrivate(t *testing.T) {
 	_, where, empty, err := conversationFilterSQL(tenant.Context{
 		OrganizationID: unreadCountOrganizationID,
 		UserID:         unreadCountUserID,
@@ -102,7 +109,7 @@ func TestAdminInboxCanReadOtherNumbersOnlyForLeads(t *testing.T) {
 		t.Fatalf("admin inbox filter = empty:%v error:%v", empty, err)
 	}
 	joined := strings.Join(where, " and ")
-	if !strings.Contains(joined, "wc.lead_id is not null and true") ||
+	if !strings.Contains(joined, "wc.lead_id is not null") ||
 		!strings.Contains(joined, "wc.lead_id is null") ||
 		!strings.Contains(joined, "ws.owner_user_id = $2::uuid") {
 		t.Fatalf("admin lead inbox must keep unlinked conversations owner-only: %s", joined)

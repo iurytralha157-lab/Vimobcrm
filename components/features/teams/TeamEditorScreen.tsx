@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Camera,
   Check,
   Clock3,
@@ -23,6 +24,14 @@ import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormWizardLayout } from "@/components/shared/forms/FormWizardLayout";
+import { FormWizardDiscardDialog } from "@/components/shared/forms/FormWizardDiscardDialog";
+import {
+  FORM_WIZARD_DIALOG_CLASS_NAME,
+  FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME,
+  FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME,
+} from "@/config/form-wizard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -38,26 +47,46 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTeamMembersAvailability } from "@/hooks/use-member-availability";
 import { useOrganizationPresenceList } from "@/hooks/presence";
-import { useCreateTeam, useTeam, useUpdateTeam } from "@/hooks/use-teams";
+import {
+  useCreateTeam,
+  useTeam,
+  useTeamEditorSnapshot,
+  useReloadTeamEditor,
+  useUpdateTeam,
+} from "@/hooks/use-teams";
 import { useUserAccessScope } from "@/hooks/use-user-access-scope";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useUsers } from "@/hooks/use-users";
-import { teamsAPI } from "@/lib/api/teams";
+import {
+  teamsAPI,
+  type MemberAvailability,
+  type Team,
+  type CreateTeamInput,
+} from "@/lib/api/teams";
+import { VimobAPIError } from "@/lib/api/vimob-client";
+import { createUUID } from "@/lib/client-id";
 import { getInitials } from "@/lib/user-display";
 import { cn } from "@/lib/utils";
+import { getVisibleTeamMemberIds, sameTeamMemberIds } from "@/lib/teams/team-editor-snapshot";
+import { clearTeamCreateIntent, readTeamCreateIntent, saveTeamCreateIntent, teamCreateIntentKey, teamCreationErrorConfirmsNoResult, type StoredTeamCreateIntent, type TeamCreateIntent } from "@/lib/teams/team-create-intent";
 
 import {
   DAYS_OF_WEEK,
-  TIME_OPTIONS,
+  availabilityTimeOptions,
+  availabilityWeekReviewReason,
   availabilityToWeek,
   createDefaultAvailabilityWeek,
-  hasCompleteAvailabilityWeek,
   isValidAvailabilityWeek,
   toAvailabilityInput,
   type DaySchedule,
+  type AvailabilityWeekReviewReason,
 } from "./availability-week";
+import { isAvailabilityClock } from "@/lib/teams/availability-clock";
+import type { VimobAPIRequestIntent } from "@/lib/api/vimob-client";
+import { assertManagementRequestIntent, captureManagementRequestIntent } from "@/lib/api/management-request";
 import { TeamChangeHistory } from "./TeamChangeHistory";
 import { TeamOperationalOverview } from "./TeamOperationalOverview";
+import { TeamCreationPreview } from "@/components/features/teams/TeamCreationPreview";
 
 type TeamEditorScreenProps =
   { mode: "create"; teamId?: never } | { mode: "edit"; teamId: string };
@@ -67,11 +96,22 @@ interface MemberSelection {
   isLeader: boolean;
 }
 
-type ScheduleWarning = "missing" | "incomplete";
+type ScheduleWarning = AvailabilityWeekReviewReason;
 
 const MANAGEMENT_TEAMS_URL = "/crm/management?tab=teams";
-const TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-[600px] 2xl:h-full 2xl:min-h-0";
+const TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-[min(600px,62dvh)] min-h-[360px]";
 const TEAM_EDITOR_LOADING_PANEL_HEIGHT_CLASS = "h-[600px]";
+const TEAM_EDITOR_STEPS = [
+  { id: "identity", label: "Identificação", icon: Camera },
+  { id: "members", label: "Membros e liderança", icon: Users },
+  { id: "schedule", label: "Escala de atendimento", icon: Clock3 },
+  { id: "review", label: "Revisão", icon: Check },
+];
+type TeamEditorStep = "identity" | "members" | "schedule" | "review";
+
+function clearConfirmedCreation(attempt: TeamCreateIntent) {
+  try { clearTeamCreateIntent(window.sessionStorage, attempt.organizationId, attempt.userId); } catch { /* A confirmed response must not become an error because storage was disabled. */ }
+}
 
 function buildEditorFingerprint({
   name,
@@ -106,25 +146,46 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const teamId = isEditing ? props.teamId : null;
   const title = isEditing ? "Editar equipe" : "Nova equipe";
   const router = useRouter();
+  const wizardId = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const initializedRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
+  const creationAttemptRef = useRef<TeamCreateIntent | null>(null);
 
-  const { activeOrganization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
+  const userId = profile?.id || null;
+  const userIdRef = useRef(userId);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
+  const organizationRef = useRef(organizationId);
+  useEffect(() => { organizationRef.current = organizationId; }, [organizationId]);
+  const currentTeamIdRef = useRef(teamId);
+  const mountedRef = useRef(true);
+  const submitOperationRef = useRef<AbortController | null>(null);
+  const reloadOperationRef = useRef<AbortController | null>(null);
+  useEffect(() => { currentTeamIdRef.current = teamId; }, [teamId]);
+  useEffect(() => { mountedRef.current = true; return () => {
+    mountedRef.current = false;
+    submitOperationRef.current?.abort();
+    reloadOperationRef.current?.abort();
+  }; }, []);
   const access = useUserAccessScope();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const canManageAllTeams =
     access.isAdmin || (!access.isTeamLeader && hasPermission("team_manage"));
+  const canCheckCreationRecovery = !isEditing && Boolean(organizationId && userId) && hasPermission("team_manage");
   const canAccessEditor = isEditing
     ? canManageAllTeams ||
-      (access.isTeamLeader && access.ledTeamIds.includes(props.teamId))
-    : canManageAllTeams;
+      (hasPermission("team_manage") && access.isTeamLeader && access.ledTeamIds.includes(props.teamId))
+    : canManageAllTeams || canCheckCreationRecovery;
 
-  const teamQuery = useTeam(teamId, {
+  const editorSnapshotQuery = useTeamEditorSnapshot(teamId, {
     enabled: isEditing && canAccessEditor,
   });
-  const usersQuery = useUsers({ enabled: canAccessEditor });
+  const teamQuery = useTeam(teamId, {
+    enabled: isEditing && canAccessEditor && editorSnapshotQuery.isSuccess,
+  });
+  const usersQuery = useUsers({ enabled: canAccessEditor && (isEditing || canManageAllTeams) });
   const team = teamQuery.data;
   const teamMemberIds = useMemo(
     () => team?.members?.map((member) => member.id) || [],
@@ -133,6 +194,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const availabilityQuery = useTeamMembersAvailability(teamMemberIds);
   const createTeam = useCreateTeam();
   const updateTeam = useUpdateTeam();
+  const reloadTeamEditor = useReloadTeamEditor();
 
   const [name, setName] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -152,9 +214,17 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const [activeScheduleUserId, setActiveScheduleUserId] = useState<
     string | null
   >(null);
+  const [activeStep, setActiveStep] = useState<TeamEditorStep>("identity");
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
+  const [saveConflict, setSaveConflict] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [savedFingerprint, setSavedFingerprint] = useState<string | null>(null);
+  const [baseRevision, setBaseRevision] = useState<number | null>(null);
+  const [baseMemberIds, setBaseMemberIds] = useState<string[] | null>(null);
+  const [pendingCreation, setPendingCreation] = useState(false);
+  const [recoverableCreation, setRecoverableCreation] = useState<StoredTeamCreateIntent | { status: "storage_unavailable" } | null>(null);
 
   const activeUsers = useMemo(
     () =>
@@ -198,12 +268,72 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     };
   }, [logoFile]);
 
+  const hydrateTeamEditor = useCallback((
+    currentTeam: Team,
+    availability: MemberAvailability[],
+  ) => {
+    submitInFlightRef.current = false;
+    setIsSubmitting(false);
+    setIsReloading(false);
+    const weeks: Record<string, DaySchedule[]> = {};
+    const warnings: Record<string, ScheduleWarning> = {};
+    for (const member of currentTeam.members || []) {
+      const saved = availability.filter(
+        (entry) => entry.team_member_id === member.id,
+      );
+      weeks[member.user_id] = availabilityToWeek(saved);
+      const reviewReason = availabilityWeekReviewReason(saved);
+      if (reviewReason) warnings[member.user_id] = reviewReason;
+    }
+    const members = (currentTeam.members || []).map((member) => ({
+      userId: member.user_id,
+      isLeader: member.is_leader || false,
+    }));
+
+    setName(currentTeam.name);
+    setLogoUrl(currentTeam.logo_url || null);
+    setLogoFile(null);
+    setLogoPreview(null);
+    setIsActive(currentTeam.is_active !== false);
+    setSelectedMembers(members);
+    setWeeksByUserId(weeks);
+    setWarningByUserId(warnings);
+    setConfirmedWarnings(new Set());
+    setActiveScheduleUserId(currentTeam.members?.[0]?.user_id || null);
+    setSavedFingerprint(
+      buildEditorFingerprint({
+        name: currentTeam.name,
+        logoUrl: currentTeam.logo_url || null,
+        isActive: currentTeam.is_active !== false,
+        members,
+        weeksByUserId: weeks,
+      }),
+    );
+    setBaseRevision(currentTeam.revision);
+    setBaseMemberIds(getVisibleTeamMemberIds(currentTeam));
+    setSaveConflict(false);
+    setIsInitialized(true);
+  }, []);
+
   useEffect(() => {
     if (!canAccessEditor) return;
     if (!isEditing) {
-      const key = `create:${organizationId || "pending"}`;
+      const key = `create:${organizationId || "pending"}:${userId || "pending"}`;
       if (initializedRef.current === key) return;
       initializedRef.current = key;
+      creationAttemptRef.current = null;
+      setPendingCreation(false);
+      try {
+        // Synchronize the external session-storage snapshot only when this
+        // principal's create scope opens; React state is not its source.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setRecoverableCreation(organizationId && userId ? readTeamCreateIntent(window.sessionStorage, organizationId, userId) : null);
+      }
+      catch { setRecoverableCreation({ status: "storage_unavailable" }); }
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
+      setIsReloading(false);
+      setActiveStep("identity");
       setName("");
       setLogoUrl(null);
       setLogoFile(null);
@@ -213,6 +343,9 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       setWarningByUserId({});
       setConfirmedWarnings(new Set());
       setActiveScheduleUserId(null);
+      setBaseRevision(null);
+      setBaseMemberIds(null);
+      setSaveConflict(false);
       setSavedFingerprint(
         buildEditorFingerprint({
           name: "",
@@ -226,70 +359,29 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       return;
     }
 
-    if (
-      !team ||
-      (teamMemberIds.length > 0 &&
-        (availabilityQuery.isLoading ||
-          (availabilityQuery.isError && availabilityQuery.data === undefined)))
-    ) {
-      return;
-    }
-    const key = `edit:${team.id}`;
+    const snapshot = editorSnapshotQuery.data;
+    if (!snapshot || editorSnapshotQuery.isFetching) return;
+    const key = `edit:${organizationId}:${snapshot.team.id}`;
     if (initializedRef.current === key) return;
-
-    const weeks: Record<string, DaySchedule[]> = {};
-    const warnings: Record<string, ScheduleWarning> = {};
-    for (const member of team.members || []) {
-      const saved = (availabilityQuery.data || []).filter(
-        (entry) => entry.team_member_id === member.id,
-      );
-      weeks[member.user_id] = availabilityToWeek(saved);
-      if (saved.length === 0) warnings[member.user_id] = "missing";
-      else if (!hasCompleteAvailabilityWeek(saved)) {
-        warnings[member.user_id] = "incomplete";
-      }
-    }
-
-    const members = (team.members || []).map((member) => ({
-      userId: member.user_id,
-      isLeader: member.is_leader || false,
-    }));
-
     initializedRef.current = key;
-    setName(team.name);
-    setLogoUrl(team.logo_url || null);
-    setLogoFile(null);
-    setIsActive(team.is_active !== false);
-    setSelectedMembers(members);
-    setWeeksByUserId(weeks);
-    setWarningByUserId(warnings);
-    setConfirmedWarnings(new Set());
-    setActiveScheduleUserId(team.members?.[0]?.user_id || null);
-    setSavedFingerprint(
-      buildEditorFingerprint({
-        name: team.name,
-        logoUrl: team.logo_url || null,
-        isActive: team.is_active !== false,
-        members,
-        weeksByUserId: weeks,
-      }),
-    );
-    setIsInitialized(true);
+    hydrateTeamEditor(snapshot.team, snapshot.availability);
   }, [
-    availabilityQuery.data,
-    availabilityQuery.isError,
-    availabilityQuery.isLoading,
     canAccessEditor,
+    editorSnapshotQuery.data,
+    editorSnapshotQuery.isFetching,
+    hydrateTeamEditor,
     isEditing,
     organizationId,
-    team,
-    teamMemberIds.length,
+    userId,
   ]);
 
   const isLoading =
     permissionsLoading ||
     access.isLoading ||
+    (canCheckCreationRecovery && !isInitialized) ||
     (canAccessEditor && usersQuery.isLoading) ||
+    (isEditing && editorSnapshotQuery.isLoading) ||
+    (isEditing && !isInitialized && editorSnapshotQuery.isFetching) ||
     (isEditing && teamQuery.isLoading) ||
     (isEditing && teamMemberIds.length > 0 && availabilityQuery.isLoading);
   const accessScopeError =
@@ -297,11 +389,13 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       ? access.error
       : null;
   const queryError =
+    (editorSnapshotQuery.data === undefined ? editorSnapshotQuery.error : null) ||
     (teamQuery.data === undefined ? teamQuery.error : null) ||
     (usersQuery.data === undefined ? usersQuery.error : null) ||
     (availabilityQuery.data === undefined ? availabilityQuery.error : null);
   const hasStaleEditorData = Boolean(
     (access.isError && (access.hasTenantTeamScope || canManageAllTeams)) ||
+    (editorSnapshotQuery.isError && editorSnapshotQuery.data !== undefined) ||
     (teamQuery.isError && teamQuery.data !== undefined) ||
     (usersQuery.isError && usersQuery.data !== undefined) ||
     (availabilityQuery.isError && availabilityQuery.data !== undefined),
@@ -344,13 +438,80 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     Object.keys(warningByUserId).some(
       (userId) => selectedUserIds.has(userId) && confirmedWarnings.has(userId),
     );
-  const canSubmit =
+  const hasRevisionConflict =
+    saveConflict ||
+    Boolean(
+      isEditing &&
+        team &&
+        baseRevision !== null &&
+        (team.revision !== baseRevision ||
+          (baseMemberIds !== null &&
+            !sameTeamMemberIds(getVisibleTeamMemberIds(team), baseMemberIds))),
+    );
+  const canSubmit = !recoverableCreation && ((pendingCreation && canAccessEditor && !isSubmitting && !isReloading) || (
     isInitialized &&
+    (isEditing || canManageAllTeams) &&
+    (!isEditing || (baseRevision !== null && baseMemberIds !== null)) &&
     Boolean(name.trim()) &&
     allWeeksValid &&
     unresolvedWarnings.length === 0 &&
     hasUnsavedChanges &&
-    !isSubmitting;
+    !hasRevisionConflict &&
+    !hasStaleEditorData &&
+    !isSubmitting &&
+    !isReloading));
+
+  const closeEditor = () => {
+    if (isSubmitting || isReloading) return;
+    if (pendingCreation || recoverableCreation) { router.push(MANAGEMENT_TEAMS_URL); return; }
+    if (isInitialized && hasUnsavedChanges) {
+      setDiscardOpen(true);
+      return;
+    }
+    router.push(MANAGEMENT_TEAMS_URL);
+  };
+  const restoreCreationAttempt = () => {
+    if (recoverableCreation?.status !== "ready") return;
+    const attempt = recoverableCreation.intent;
+    if (attempt.organizationId !== organizationId || attempt.userId !== userId) return;
+    const members = (attempt.input.members || []).map((member) => ({ userId: member.userId, isLeader: member.isLeader || false }));
+    setName(attempt.input.name);
+    setLogoUrl(attempt.input.logo_url || null);
+    setLogoFile(null);
+    setLogoPreview(null);
+    setIsActive(attempt.input.is_active !== false);
+    setSelectedMembers(members);
+    setWeeksByUserId(Object.fromEntries((attempt.input.members || []).map((member) => [member.userId, availabilityToWeek(member.availability || [])])));
+    setWarningByUserId({});
+    setConfirmedWarnings(new Set());
+    setActiveScheduleUserId(members[0]?.userId || null);
+    creationAttemptRef.current = attempt;
+    setPendingCreation(true);
+    setRecoverableCreation(null);
+    setActiveStep("review");
+  };
+  const acknowledgeExpiredCreation = () => {
+    if (recoverableCreation?.status !== "review_required" || !organizationId || !userId) return;
+    try {
+      const key = teamCreateIntentKey(organizationId, userId)!;
+      window.sessionStorage.removeItem(key);
+      if (window.sessionStorage.getItem(key) !== null) throw new Error("Storage did not clear the prior attempt");
+      setRecoverableCreation(null);
+    } catch { toast.error("O armazenamento da sessão continua indisponível."); }
+  };
+  const activeStepIndex = TEAM_EDITOR_STEPS.findIndex((step) => step.id === activeStep);
+  const advanceStep = () => {
+    if (activeStep === "identity" && !name.trim()) {
+      toast.error("Preencha o nome da equipe.");
+      return;
+    }
+    if (activeStep === "schedule" && (!allWeeksValid || unresolvedWarnings.length > 0)) {
+      toast.error("Revise os sete dias da escala de cada membro e confirme as escalas sinalizadas.");
+      return;
+    }
+    const nextStep = TEAM_EDITOR_STEPS[activeStepIndex + 1];
+    if (nextStep) setActiveStep(nextStep.id as TeamEditorStep);
+  };
 
   const toggleMember = (userId: string) => {
     const savedMember = savedMemberByUserId.get(userId);
@@ -438,7 +599,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     });
   };
 
-  const uploadLogo = async () => {
+  const uploadLogo = async (intent: VimobAPIRequestIntent) => {
     if (!canManageAllTeams || !logoFile) return logoUrl;
     const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (!allowedTypes.includes(logoFile.type)) {
@@ -447,13 +608,45 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     if (logoFile.size > 5 * 1024 * 1024) {
       throw new Error("A logo deve ter no máximo 5 MB.");
     }
-    return teamsAPI.uploadLogo(logoFile, organizationId);
+    return teamsAPI.uploadLogo(logoFile, organizationId, intent);
+  };
+
+  const handleLoadCurrentVersion = async () => {
+    if (!isEditing || !team || isReloading) return;
+    setIsReloading(true);
+    const controller = new AbortController();
+    reloadOperationRef.current = controller;
+    const intent = captureManagementRequestIntent(controller.signal);
+    try {
+      const current = await reloadTeamEditor(team.id, intent);
+      controller.signal.throwIfAborted();
+      assertManagementRequestIntent(intent);
+      if (!mountedRef.current || organizationRef.current !== organizationId || currentTeamIdRef.current !== teamId) return;
+      if (!current) throw new Error("Não foi possível carregar a versão atual da equipe.");
+      initializedRef.current = `edit:${organizationId}:${current.team.id}`;
+      hydrateTeamEditor(current.team, current.availability);
+      void usersQuery.refetch();
+    } catch (error) {
+      if (!mountedRef.current || organizationRef.current !== organizationId || currentTeamIdRef.current !== teamId || controller.signal.aborted) return;
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível carregar a versão atual da equipe.",
+      );
+    } finally {
+      if (reloadOperationRef.current === controller) reloadOperationRef.current = null;
+      if (mountedRef.current && organizationRef.current === organizationId && currentTeamIdRef.current === teamId) setIsReloading(false);
+    }
   };
 
   const handleSubmit = async () => {
+    if (!organizationId) return;
+    if (!isEditing && !userId) return;
     if (submitInFlightRef.current) return;
     if (!canSubmit) {
-      if (unresolvedWarnings.length > 0) {
+      if (hasRevisionConflict) {
+        toast.error("Carregue a versão atual da equipe antes de salvar.");
+      } else if (unresolvedWarnings.length > 0) {
         toast.error(
           "Confirme a regularização das escalas antigas antes de salvar.",
         );
@@ -465,11 +658,48 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
 
     submitInFlightRef.current = true;
     setIsSubmitting(true);
+    const submittedOrganizationId = organizationId;
+    const submittedUserId = userId;
+    const controller = new AbortController();
+    submitOperationRef.current = controller;
+    const intent = captureManagementRequestIntent(controller.signal);
+    const assertCurrentIntent = () => { controller.signal.throwIfAborted(); assertManagementRequestIntent(intent); };
+    const isCreationReplay = !isEditing && Boolean(creationAttemptRef.current);
+    const isCurrentSubmission = () => mountedRef.current && organizationRef.current === submittedOrganizationId && userIdRef.current === submittedUserId && currentTeamIdRef.current === teamId;
     try {
-      const finalLogoUrl = await uploadLogo();
+      if (!isEditing && creationAttemptRef.current) {
+        const attempt = creationAttemptRef.current;
+        await createTeam.mutateAsync({ ...attempt, intent });
+        assertCurrentIntent();
+        clearConfirmedCreation(attempt);
+        if (isCurrentSubmission()) {
+          creationAttemptRef.current = null;
+          setPendingCreation(false);
+          router.push(MANAGEMENT_TEAMS_URL);
+        }
+        return;
+      }
+      if (isEditing && logoFile && baseRevision !== null && baseMemberIds !== null) {
+        const fresh = await teamQuery.refetch();
+        assertCurrentIntent();
+        if (!isCurrentSubmission()) return;
+        if (fresh.isError) throw fresh.error;
+        if (
+          !fresh.data ||
+          fresh.data.revision !== baseRevision ||
+          !sameTeamMemberIds(getVisibleTeamMemberIds(fresh.data), baseMemberIds)
+        ) {
+          setSaveConflict(true);
+          toast.error("A equipe mudou em outra sessão. Suas alterações foram preservadas.");
+          return;
+        }
+      }
+      assertCurrentIntent();
+      const finalLogoUrl = await uploadLogo(intent);
+      assertCurrentIntent();
+      if (!isCurrentSubmission()) return;
       if (logoFile && finalLogoUrl) {
-        // Keep a successfully uploaded asset in the form if the team mutation
-        // fails, so retrying does not create another orphaned object.
+        // Keep a successful upload for retry after a transient mutation error.
         setLogoUrl(finalLogoUrl);
         setLogoFile(null);
         setLogoPreview(null);
@@ -485,9 +715,16 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
         availability: toAvailabilityInput(weeksByUserId[member.userId]),
       }));
 
-      if (isEditing && team) {
+      if (isEditing) {
+        if (!team || baseRevision === null || baseMemberIds === null) {
+          throw new Error("Não foi possível confirmar a versão atual da equipe.");
+        }
         const updatedTeam = await updateTeam.mutateAsync({
+          organizationId,
+          intent,
           id: team.id,
+          expected_revision: baseRevision,
+          expected_member_ids: baseMemberIds,
           members,
           preserveLeadership: !canManageAllTeams,
           ...(canManageAllTeams
@@ -498,6 +735,8 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               }
             : {}),
         });
+        assertCurrentIntent();
+        if (!isCurrentSubmission()) return;
         const savedLogoUrl = updatedTeam.logo_url || finalLogoUrl || null;
         setSavedFingerprint(
           buildEditorFingerprint({
@@ -509,44 +748,80 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
           }),
         );
         setSelectedMembers(validMembers);
+        setBaseRevision(updatedTeam.revision);
+        setBaseMemberIds(getVisibleTeamMemberIds(updatedTeam));
+        setSaveConflict(false);
         setLogoUrl(savedLogoUrl);
         setLogoFile(null);
         setLogoPreview(null);
         setWarningByUserId({});
         setConfirmedWarnings(new Set());
       } else {
-        const createdTeam = await createTeam.mutateAsync({
+        const input: CreateTeamInput = {
           name: name.trim(),
           logo_url: finalLogoUrl || null,
           is_active: true,
           members,
-        });
-        router.replace(`/crm/management/teams/${createdTeam.id}/edit`);
+        };
+        const attempt: TeamCreateIntent = { input, idempotencyKey: createUUID(), organizationId, userId: userId! };
+        if (!saveTeamCreateIntent(window.sessionStorage, attempt)) throw new Error("Não foi possível preservar a tentativa neste navegador. Libere o armazenamento da sessão antes de criar a equipe.");
+        creationAttemptRef.current = attempt;
+        setPendingCreation(true);
+        await createTeam.mutateAsync({ ...attempt, intent });
+        assertCurrentIntent();
+        clearConfirmedCreation(attempt);
+        if (isCurrentSubmission()) {
+          creationAttemptRef.current = null;
+          setPendingCreation(false);
+          router.push(MANAGEMENT_TEAMS_URL);
+        }
       }
     } catch (error) {
+      if (!isCurrentSubmission() || controller.signal.aborted) return;
+      // Validation/authorization errors confirm no creation. Timeout/network/
+      // server errors retain the original payload and key for a safe replay.
+      if (!isEditing && error instanceof VimobAPIError && teamCreationErrorConfirmsNoResult(error, isCreationReplay)) {
+        if (creationAttemptRef.current) clearConfirmedCreation(creationAttemptRef.current);
+        creationAttemptRef.current = null;
+        setPendingCreation(false);
+      }
       console.error("Error saving team editor:", error);
+      if (
+        error instanceof VimobAPIError &&
+        error.code === "team_revision_conflict"
+      ) {
+        setSaveConflict(true);
+        void teamQuery.refetch();
+        toast.error("A equipe mudou em outra sessão. Suas alterações foram preservadas.");
+        return;
+      }
       toast.error(
         error instanceof Error
           ? error.message
           : "Não foi possível salvar a equipe.",
       );
     } finally {
-      submitInFlightRef.current = false;
-      setIsSubmitting(false);
+      if (submitOperationRef.current === controller) submitOperationRef.current = null;
+      if (isCurrentSubmission()) {
+        submitInFlightRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 
+  const discardDialog = (<FormWizardDiscardDialog open={discardOpen} onOpenChange={setDiscardOpen} busy={isSubmitting || isReloading} onConfirm={() => router.push(MANAGEMENT_TEAMS_URL)} />);
+
   if (isLoading) {
     return (
-      <AppLayout title={title}>
+      <TeamEditorDialog title={title} onClose={closeEditor} busy={isSubmitting || isReloading} discardDialog={discardDialog}>
         <TeamEditorLoading isEditing={isEditing} />
-      </AppLayout>
+      </TeamEditorDialog>
     );
   }
 
   if (accessScopeError) {
     return (
-      <AppLayout title={title}>
+      <TeamEditorDialog title={title} onClose={closeEditor} busy={isSubmitting || isReloading} discardDialog={discardDialog}>
         <EditorMessage
           icon={AlertTriangle}
           title="Não foi possível validar seu acesso"
@@ -562,13 +837,13 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             </Button>
           }
         />
-      </AppLayout>
+      </TeamEditorDialog>
     );
   }
 
-  if (!canAccessEditor) {
+  if (!canAccessEditor || (!isEditing && !canManageAllTeams && !recoverableCreation && !pendingCreation)) {
     return (
-      <AppLayout title={title}>
+      <TeamEditorDialog title={title} onClose={closeEditor} busy={isSubmitting || isReloading} discardDialog={discardDialog}>
         <EditorMessage
           icon={ShieldX}
           title="Acesso não disponível"
@@ -578,13 +853,13 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               : "Somente administradores ou perfis com gestão de equipes podem criar uma equipe."
           }
         />
-      </AppLayout>
+      </TeamEditorDialog>
     );
   }
 
   if (queryError || (isEditing && !team)) {
     return (
-      <AppLayout title={title}>
+      <TeamEditorDialog title={title} onClose={closeEditor} busy={isSubmitting || isReloading} discardDialog={discardDialog}>
         <EditorMessage
           icon={AlertTriangle}
           title={
@@ -597,9 +872,10 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             <Button
               type="button"
               onClick={() => {
-                teamQuery.refetch();
+                if (isEditing) {
+                  void editorSnapshotQuery.refetch();
+                }
                 usersQuery.refetch();
-                availabilityQuery.refetch();
                 void access.refetch();
               }}
               className="h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
@@ -609,60 +885,196 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             </Button>
           }
         />
-      </AppLayout>
+      </TeamEditorDialog>
     );
   }
 
+  const draftPreview = (
+    <TeamCreationPreview
+      name={name}
+      logoUrl={logoPreview || logoUrl}
+      members={selectedMembers.flatMap((member) => {
+        const user = activeUsers.find((candidate) => candidate.id === member.userId);
+        return user ? [{
+          id: user.id,
+          name: user.name || "Usuário",
+          avatarUrl: user.avatar_url,
+          isLeader: member.isLeader,
+          week: weeksByUserId[member.userId] || [],
+        }] : [];
+      })}
+    />
+  );
+
   return (
-    <AppLayout title={title} disableMainScroll>
-      <div
-        data-tour="management-team-editor"
-        className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light 2xl:pb-0"
-      >
-        <div className="flex shrink-0 items-center">
-          <Button
-            asChild
-            variant="ghost"
-            className="h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+    <TeamEditorDialog title={title} onClose={closeEditor} busy={isSubmitting || isReloading} discardDialog={discardDialog}>
+      <FormWizardLayout
+        steps={TEAM_EDITOR_STEPS.map((step) => ({
+          ...step,
+          disabled: isSubmitting || isReloading,
+          buttonId: `${wizardId}-${step.id}-tab`,
+          panelId: `${wizardId}-${step.id}-panel`,
+          tourId: `management-team-step-${step.id}`,
+        }))}
+        activeStep={activeStep}
+        onStepChange={(step) => {
+          if (!isSubmitting && !isReloading && TEAM_EDITOR_STEPS.some((entry) => entry.id === step)) {
+            setActiveStep(step as TeamEditorStep);
+          }
+        }}
+        aside={isEditing && team ? <TeamChangeHistory teamId={team.id} /> : draftPreview}
+        asideTitle={isEditing ? undefined : "Prévia da equipe"}
+        asideContentClassName={isEditing ? "flex min-h-[360px] flex-col" : undefined}
+        footer={(
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <p
+            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
+            aria-live="polite"
           >
-            <Link href={MANAGEMENT_TEAMS_URL}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-              Voltar para Gestão
-            </Link>
-          </Button>
+            {isSubmitting
+              ? isEditing
+                ? "Salvando alterações..."
+                : "Criando equipe..."
+              : hasRevisionConflict
+                ? "A equipe mudou. Carregue a versão atual antes de salvar."
+              : canSubmit
+                ? "Tudo pronto para salvar."
+                : isEditing && !hasUnsavedChanges
+                  ? "Nenhuma alteração para salvar."
+                  : unresolvedWarnings.length > 0
+                    ? "Revise e confirme as escalas sinalizadas."
+                    : "Preencha o nome e mantenha uma escala válida para cada membro."}
+          </p>
+          <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+            <Button
+              type="button"
+              className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}
+              onClick={activeStepIndex > 0
+                ? () => setActiveStep(TEAM_EDITOR_STEPS[activeStepIndex - 1].id as TeamEditorStep)
+                : closeEditor}
+              disabled={isSubmitting || isReloading}
+            >
+              {activeStepIndex > 0 ? <><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Voltar</> : "Cancelar"}
+            </Button>
+            {activeStep !== "review" ? (
+              <Button type="button" onClick={advanceStep} disabled={isSubmitting || isReloading} className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}>
+                Avançar <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+              </Button>
+            ) : (
+            <Button
+              type="button"
+              data-tour="management-team-save"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              aria-busy={isSubmitting}
+              className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
+            >
+              {isSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : isEditing ? (
+                <Save className="mr-2 h-4 w-4" />
+              ) : (
+                <Check className="mr-2 h-4 w-4" />
+              )}
+              {isSubmitting
+                ? isEditing
+                  ? "Salvando..."
+                  : "Criando..."
+                : isEditing
+                  ? "Salvar alterações"
+                  : "Criar equipe"}
+            </Button>
+            )}
+          </div>
         </div>
-
-        {isEditing && team && (
-          <TeamOperationalOverview
-            team={team}
-            availability={availabilityQuery.data || []}
-            activeUserIds={usersQuery.isSuccess ? activeUserIds : undefined}
-          />
         )}
-
+      >
+        <div
+          data-tour="management-team-editor"
+          id={`${wizardId}-${activeStep}-panel`}
+          role="tabpanel"
+          aria-labelledby={`${wizardId}-${activeStep}-tab`}
+          tabIndex={0}
+          className="space-y-4 text-[12px] font-light focus-visible:outline-none"
+        >
+          {pendingCreation && !isEditing && !isSubmitting && (
+            <p role="status" className="rounded-[8px] bg-amber-500/10 p-3 text-[11px] text-amber-700 dark:text-amber-300">
+              A resposta da criação não foi confirmada. Os dados foram preservados. Repetir usa a mesma tentativa e recupera a equipe, sem criar uma cópia.
+            </p>
+          )}
+          {recoverableCreation && !isEditing && (
+            <div role="status" className="space-y-2 rounded-[8px] bg-amber-500/10 p-3 text-[11px] text-amber-700 dark:text-amber-300">
+              <p>{recoverableCreation.status === "ready"
+                ? "Uma criação anterior está sem resposta confirmada. Recupere os dados para revisar e repetir a mesma tentativa."
+                : recoverableCreation.status === "storage_unavailable"
+                  ? "Não foi possível conferir as tentativas salvas neste navegador. Libere o armazenamento da sessão e atualize a página antes de criar outra equipe."
+                  : "A tentativa anterior expirou ou não pôde ser recuperada. Confira o resultado na lista de equipes antes de continuar."}</p>
+              <div className="flex flex-wrap gap-2">
+                {recoverableCreation.status === "ready" && <Button type="button" onClick={restoreCreationAttempt} className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}>Recuperar tentativa</Button>}
+                <Button type="button" asChild className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}><Link href={MANAGEMENT_TEAMS_URL}>Ver equipes</Link></Button>
+                {recoverableCreation.status === "review_required" && canManageAllTeams && <Button type="button" onClick={acknowledgeExpiredCreation} className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}>Conferi a lista e quero iniciar uma nova criação</Button>}
+              </div>
+            </div>
+          )}
+          {isEditing && team && (
+            <details className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+              <summary className="cursor-pointer text-[12px] font-normal">Indicadores da equipe</summary>
+              <div className="mt-3">
+                <TeamOperationalOverview team={team} availability={availabilityQuery.data || []} activeUserIds={usersQuery.isSuccess ? activeUserIds : undefined} />
+              </div>
+            </details>
+          )}
         {hasStaleEditorData && (
           <div
             role="status"
             className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-[8px] bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300"
           >
-            <span>Alguns dados podem estar desatualizados.</span>
+            <span>Alguns dados podem estar desatualizados. A verificação preserva suas alterações.</span>
             <Button
               type="button"
               variant="ghost"
               onClick={() => {
-                teamQuery.refetch();
+                if (isEditing) {
+                  void editorSnapshotQuery.refetch();
+                }
                 usersQuery.refetch();
-                availabilityQuery.refetch();
                 void access.refetch();
               }}
               className="h-7 rounded-[5px] px-2 text-[10px] font-light"
             >
               <RefreshCw className="mr-1.5 h-3 w-3" />
-              Atualizar
+              Verificar dados atuais
             </Button>
           </div>
         )}
 
+        {isEditing && hasRevisionConflict && (
+          <div
+            role="alert"
+            className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-[8px] bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300"
+          >
+            <span>
+              Esta equipe foi alterada em outra sessão. Suas alterações estão
+              preservadas. Recarregue a versão atual antes de salvar.
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => void handleLoadCurrentVersion()}
+              disabled={isReloading}
+              className="h-7 rounded-[5px] px-2 text-[10px] font-light"
+            >
+              {isReloading ? (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3 w-3" />
+              )}
+              Descartar alterações e carregar versão atual
+            </Button>
+          </div>
+        )}
+          <fieldset disabled={isSubmitting || isReloading || pendingCreation || Boolean(recoverableCreation) || (!isEditing && !canManageAllTeams)} className="min-w-0 space-y-4 border-0 p-0">
+          {activeStep === "identity" && (
         <section
           data-tour="management-team-identity"
           className="shrink-0 rounded-[8px] bg-[var(--app-surface-solid)] p-2.5 sm:p-3"
@@ -722,14 +1134,8 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             )}
           </div>
         </section>
-
-        <div
-          className={cn(
-            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(300px,0.42fr)_minmax(0,0.58fr)] 2xl:min-h-[360px] 2xl:max-h-[600px] 2xl:flex-1",
-            isEditing &&
-              "2xl:grid-cols-[minmax(340px,420px)_minmax(400px,1fr)_minmax(260px,320px)]",
           )}
-        >
+          {activeStep === "members" && (
           <section
             data-tour="management-team-members"
             data-team-panel="members"
@@ -809,7 +1215,10 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                     <button
                       type="button"
                       className="group/schedule flex min-w-0 flex-1 items-center gap-2 rounded-[5px] px-1.5 py-1 text-left transition-colors hover:bg-[var(--app-surface-solid)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
-                      onClick={() => setActiveScheduleUserId(user.id)}
+                      onClick={() => {
+                        setActiveScheduleUserId(user.id);
+                        setActiveStep("schedule");
+                      }}
                       aria-pressed={isFocused}
                       aria-label={`Ver escala de ${user.name || "usuário"}`}
                     >
@@ -877,7 +1286,8 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               })}
             </div>
           </section>
-
+          )}
+          {activeStep === "schedule" && (
           <section
             data-tour="management-team-schedule"
             data-team-panel="schedule"
@@ -923,7 +1333,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                     <div className="flex min-w-0 items-center gap-2">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
                       <p className="text-[11px] font-normal">
-                        Revise esta escala antes de salvar.
+                        {warningByUserId[activeScheduleUser.id] === "invalid" ? "Corrija os horários pendentes e confirme esta escala." : "Revise esta escala antes de salvar."}
                       </p>
                     </div>
                     <label className="flex cursor-pointer items-center gap-2 rounded-[5px] bg-amber-500/10 px-2 py-1 text-[10px]">
@@ -1085,77 +1495,52 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               </div>
             )}
           </section>
-
-          {isEditing && team && (
-            <div
-              className={cn(
-                TEAM_EDITOR_PANEL_HEIGHT_CLASS,
-                "min-w-0 w-full lg:col-span-2 2xl:col-span-1",
-              )}
-            >
-              <TeamChangeHistory teamId={team.id} />
-            </div>
           )}
-        </div>
-
-        {!allWeeksValid && selectedMembers.length > 0 && (
-          <div className="shrink-0 rounded-[6px] bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
-            Há uma escala inválida. Mantenha ao menos um dia ativo, confira os
-            sete dias e use horários inicial e final diferentes.
-          </div>
-        )}
-
-        <div className="sticky bottom-0 z-20 mx-auto flex w-full max-w-[680px] shrink-0 flex-col gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between">
-          <p
-            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
-            aria-live="polite"
-          >
-            {isSubmitting
-              ? isEditing
-                ? "Salvando alterações..."
-                : "Criando equipe..."
-              : canSubmit
-                ? "Tudo pronto para salvar."
-                : isEditing && !hasUnsavedChanges
-                  ? "Nenhuma alteração para salvar."
-                  : unresolvedWarnings.length > 0
-                    ? "Revise e confirme as escalas sinalizadas."
-                    : "Preencha o nome e mantenha uma escala válida para cada membro."}
-          </p>
-          <div className="grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 sm:w-[330px]">
-            <Button
-              asChild
-              type="button"
-              className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
-            >
-              <Link href={MANAGEMENT_TEAMS_URL}>Cancelar</Link>
-            </Button>
-            <Button
-              type="button"
-              data-tour="management-team-save"
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              aria-busy={isSubmitting}
-              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : isEditing ? (
-                <Save className="mr-2 h-4 w-4" />
-              ) : (
-                <Check className="mr-2 h-4 w-4" />
+          {activeStep === "review" && (
+            <section className="space-y-4">
+              <h2 className="text-[14px] font-normal">Revise a equipe</h2>
+              {draftPreview}
+              {!allWeeksValid && selectedMembers.length > 0 && (
+                <p role="alert" className="rounded-[6px] bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+                  Há uma escala inválida. Mantenha ao menos um dia ativo, confira os sete dias e use horários inicial e final diferentes.
+                </p>
               )}
-              {isSubmitting
-                ? isEditing
-                  ? "Salvando..."
-                  : "Criando..."
-                : isEditing
-                  ? "Salvar alterações"
-                  : "Criar equipe"}
-            </Button>
-          </div>
+              {unresolvedWarnings.length > 0 && (
+                <p role="alert" className="text-[11px] text-[var(--app-text-secondary)]">Revise e confirme as escalas sinalizadas antes de salvar.</p>
+              )}
+            </section>
+          )}
+          </fieldset>
         </div>
-      </div>
+      </FormWizardLayout>
+    </TeamEditorDialog>
+  );
+}
+
+function TeamEditorDialog({ title, onClose, busy, children, discardDialog }: {
+  title: string;
+  onClose: () => void;
+  busy: boolean;
+  children: ReactNode;
+  discardDialog: ReactNode;
+}) {
+  return (
+    <AppLayout title={title} disableMainScroll>
+      <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+        <DialogContent
+          data-management-editor
+          className={FORM_WIZARD_DIALOG_CLASS_NAME}
+          aria-describedby={undefined}
+          onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader className="shrink-0 border-b border-[var(--app-border)] px-5 py-4 text-left">
+            <DialogTitle className="pr-8 text-[15px] font-normal">{title}</DialogTitle>
+          </DialogHeader>
+          {children}
+          {discardDialog}
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }
@@ -1170,15 +1555,15 @@ function TimeSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
+    <Select value={isAvailabilityClock(value) ? value : undefined} onValueChange={onChange}>
       <SelectTrigger
         aria-label={label}
         className="h-8 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 text-[11px] font-light shadow-none"
       >
-        <SelectValue />
+        <SelectValue placeholder="Revisar horário" />
       </SelectTrigger>
       <SelectContent className="max-h-[260px] rounded-[8px] border-0 p-1">
-        {TIME_OPTIONS.map((time) => (
+        {availabilityTimeOptions(value).map((time) => (
           <SelectItem
             key={time}
             value={time}

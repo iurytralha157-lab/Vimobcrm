@@ -22,6 +22,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -32,16 +33,18 @@ type GamificationRecorder interface {
 }
 
 type Repository struct {
-	db                   *dbpkg.Postgres
-	storage              storageClient
-	evolutionGoAPIURL    string
-	evolutionGoAPIKey    string
-	notificationEmail    notificationEmailClient
-	notificationPush     *notificationPushClient
-	notificationStats    *notificationDispatchCounters
-	gamificationRecorder GamificationRecorder
-	whatsAppAvatarURLs   *boundedWhatsAppAvatarSignedURLCache
-	whatsAppAvatarSlots  chan struct{}
+	redistributionCursors *redistributionBatchCursors
+	queueRuntimePublisher realtime.Publisher
+	db                    *dbpkg.Postgres
+	storage               storageClient
+	evolutionGoAPIURL     string
+	evolutionGoAPIKey     string
+	notificationEmail     notificationEmailClient
+	notificationPush      *notificationPushClient
+	notificationStats     *notificationDispatchCounters
+	gamificationRecorder  GamificationRecorder
+	whatsAppAvatarURLs    *boundedWhatsAppAvatarSignedURLCache
+	whatsAppAvatarSlots   chan struct{}
 }
 
 type scanner interface {
@@ -75,6 +78,8 @@ type moveStageDestination struct {
 
 type CreateResult struct {
 	Lead                Lead
+	ReceiptOnly         bool
+	Replayed            bool
 	Reentry             bool
 	AssignedUserName    string
 	DistributionOutcome CreateDistributionOutcome
@@ -87,11 +92,12 @@ type roundRobinSelection struct {
 }
 
 type existingLeadMatch struct {
-	ID               string
-	TeamID           string
-	Phone            string
-	AssignedUserID   string
-	AssignedUserName string
+	ID                  string
+	TeamID              string
+	Phone               string
+	AssignedUserID      string
+	AssignedUserName    string
+	QueuePoolReadAccess *bool
 }
 
 const leadIntakeMaxAttempts = 3
@@ -215,6 +221,10 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if err := rows.Err(); err != nil {
 		return ListResponse{}, err
 	}
+	rows.Close()
+	if err := hydrateQueuePoolLeads(ctx, repo.db.Pool(), tenantContext, leads); err != nil {
+		return ListResponse{}, err
+	}
 	repo.hydrateLeadAvatars(ctx, tenantContext.OrganizationID, leads)
 
 	return ListResponse{
@@ -240,7 +250,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 	}
 	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 	query := `
-		select ` + leadSelectFields(propertyVisibility) + `
+		select ` + leadSelectFields(propertyVisibility) + `, ` + leadDetailTagsSQL + `
 		from public.leads l
 		left join public.stages s on s.id = l.stage_id
 		left join public.users u on u.id = l.assigned_user_id
@@ -249,11 +259,16 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 		  and l.id = $5::uuid
 		limit 1`
 
-	lead, err := scanLead(repo.db.Pool().QueryRow(ctx, query, args...))
+	var tags LeadTags
+	lead, err := scanLead(leadDetailTagsRow{row: repo.db.Pool().QueryRow(ctx, query, args...), tags: &tags})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrLeadNotFound
 	}
 	if err != nil {
+		return Lead{}, err
+	}
+	lead.Tags = &tags
+	if err := hydrateQueuePoolLead(ctx, repo.db.Pool(), tenantContext, &lead); err != nil {
 		return Lead{}, err
 	}
 	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &lead)
@@ -262,74 +277,58 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 }
 
 func (repo Repository) GetSensitiveProfile(ctx context.Context, tenantContext tenant.Context, leadID string) (SensitiveLeadProfile, error) {
-	leadID, ok := normalizeUUID(leadID)
-	if !ok {
-		return SensitiveLeadProfile{}, ErrLeadNotFound
-	}
-
-	lead, err := repo.Get(ctx, tenantContext, leadID)
-	if err != nil {
-		return SensitiveLeadProfile{}, err
-	}
-	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
-		AssignedUserID: lead.AssignedUserID,
-		TeamID:         lead.TeamID,
-	}) {
-		return SensitiveLeadProfile{}, tenant.ErrOrganizationAccessDenied
-	}
-
-	var cpf, rg pgtype.Text
-	err = repo.db.Pool().QueryRow(ctx, `
-		select
-			nullif(metadata #>> '{profile,cpf}', ''),
-			nullif(metadata #>> '{profile,rg}', '')
-		from public.leads
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		limit 1
-	`, tenantContext.OrganizationID, leadID).Scan(&cpf, &rg)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SensitiveLeadProfile{}, ErrLeadNotFound
-	}
-	if err != nil {
-		return SensitiveLeadProfile{}, err
-	}
-
-	return SensitiveLeadProfile{CPF: textValue(cpf), RG: textValue(rg)}, nil
+	return loadSensitiveLeadProfile(ctx, repo.db.Pool(), tenantContext, leadID)
 }
 
-func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (CreateResult, error) {
+func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput, importRequests ...*leadImportRequest) (CreateResult, error) {
 	if !canCreateLeadInput(tenantContext, input) {
+		return CreateResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	if input.ConversationID != nil && !canBindWhatsAppConversationDuringLeadCreation(tenantContext) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
 	}
 	if !canUseRequestedRoundRobin(tenantContext, input) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	if err := normalizeLeadCreateFinancialInput(&input); err != nil {
+		return CreateResult{}, err
+	}
+	var importRequest *leadImportRequest
+	if len(importRequests) > 0 {
+		importRequest = importRequests[0]
+	}
+	if input.ImportRequestKey != nil && importRequest == nil {
+		return repo.createImportedLeadIdempotently(ctx, tenantContext, input)
 	}
 	var err error
 	input, err = applyCreateAssignmentPolicy(tenantContext, input)
 	if err != nil {
 		return CreateResult{}, err
 	}
+	// A keyed request already owns its connection and receipt lock. Reuse it
+	// for every preflight read; acquiring the pool again would deadlock a
+	// one-connection pool or concurrent batches that exhaust the pool.
+	readQueryer := repo.leadCreationReadQueryer(importRequest)
 
-	resolvedDestination, err := repo.resolveDestination(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.PipelineID, input.StageID)
+	resolvedDestination, err := repo.resolveDestination(ctx, readQueryer, tenantContext.OrganizationID, input.PipelineID, input.StageID)
 	if err != nil {
 		return CreateResult{}, err
 	}
 
-	if err := repo.validateAssignedUser(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.AssignedUserID); err != nil {
+	if err := repo.validateAssignedUser(ctx, readQueryer, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
 		return CreateResult{}, err
 	}
-	if err := repo.validateLeadTeam(ctx, repo.db.Pool(), tenantContext, input.TeamID); err != nil {
+	if err := repo.validateLeadTeam(ctx, readQueryer, tenantContext, input.TeamID); err != nil {
 		return CreateResult{}, err
 	}
-	if err := repo.validateRequestedRoundRobin(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+	if err := repo.validateRequestedRoundRobin(ctx, readQueryer, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return CreateResult{}, err
 	}
 	var lastIdentityError error
 	for attempt := 0; attempt < leadIntakeMaxAttempts; attempt++ {
 		intakeDestination, resolveErr := repo.resolveLeadIntakeDestination(
 			ctx,
-			repo.db.Pool(),
+			readQueryer,
 			tenantContext.OrganizationID,
 			input,
 			resolvedDestination,
@@ -338,16 +337,16 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			return CreateResult{}, resolveErr
 		}
 		intakeScopeKey := distribution.IntakeScopeKey(intakeDestination.RoundRobinID)
-		legacyIdentity, lookupErr := legacyLeadPhoneUniquenessActive(ctx, repo.db.Pool())
+		legacyIdentity, lookupErr := legacyLeadPhoneUniquenessActive(ctx, readQueryer)
 		if lookupErr != nil {
 			return CreateResult{}, lookupErr
 		}
 
 		var existingLead *existingLeadMatch
 		if legacyIdentity {
-			existingLead, lookupErr = repo.findExistingLeadByPhoneLegacy(ctx, tenantContext.OrganizationID, input.Phone)
+			existingLead, lookupErr = repo.findExistingLeadByPhoneLegacy(ctx, tenantContext.OrganizationID, input.Phone, readQueryer)
 		} else {
-			existingLead, lookupErr = repo.findExistingLeadByPhone(ctx, tenantContext.OrganizationID, input.Phone, intakeScopeKey)
+			existingLead, lookupErr = repo.findExistingLeadByPhone(ctx, tenantContext.OrganizationID, input.Phone, intakeScopeKey, readQueryer)
 		}
 		if lookupErr != nil {
 			return CreateResult{}, lookupErr
@@ -355,14 +354,17 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 
 		var result CreateResult
 		if existingLead != nil {
-			result, err = repo.registerReentry(ctx, tenantContext, input, resolvedDestination, intakeDestination, *existingLead)
+			result, err = repo.registerReentry(ctx, tenantContext, input, resolvedDestination, intakeDestination, *existingLead, importRequest)
 		} else {
-			result, err = repo.createNewLead(ctx, tenantContext, input, resolvedDestination, intakeDestination)
+			result, err = repo.createNewLead(ctx, tenantContext, input, resolvedDestination, intakeDestination, importRequest)
 		}
 		if err == nil {
 			return result, nil
 		}
 		if !errors.Is(err, errLeadIntakeRetry) && !isLeadPhoneUniqueViolation(err) {
+			return CreateResult{}, err
+		}
+		if importRequest != nil {
 			return CreateResult{}, err
 		}
 		lastIdentityError = err
@@ -378,6 +380,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
 		return Lead{}, ErrLeadNotFound
+	}
+	if err := normalizeLeadUpdateFinancialInput(&input, leadFinancialWireMaxLength); err != nil {
+		return Lead{}, err
 	}
 
 	pool := repo.db.Pool()
@@ -429,6 +434,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
+	if isQueuePoolSnapshot(current) {
+		return Lead{}, ErrQueuePoolConflict
+	}
 
 	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID, current.TeamID)
 	if err != nil {
@@ -439,11 +447,21 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if !canEdit && !canOperationalPatch {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validateLeadUpdateRevision(current, input); err != nil {
+		return Lead{}, err
+	}
+	if err := validateLeadUpdateDestination(current, input); err != nil {
+		return Lead{}, err
+	}
 
 	if err := repo.applyDestinationDealStatus(ctx, tx, tenantContext.OrganizationID, current, &input); err != nil {
 		return Lead{}, err
 	}
 	if err := validateLostReasonContract(current, input); err != nil {
+		return Lead{}, err
+	}
+	propertyInterestsChange, err := normalizeLeadPropertyInterests(current, &input)
+	if err != nil {
 		return Lead{}, err
 	}
 	if current.DealStatus == "won" && leadPropertyLinkChanged(current, input) {
@@ -453,6 +471,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 	if err := repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext, current, &input); err != nil {
+		return Lead{}, err
+	}
+	financialReviewRequired, err := leadTransitionRequiresFinancialReview(ctx, tx, tenantContext.OrganizationID, current, input)
+	if err != nil {
 		return Lead{}, err
 	}
 
@@ -492,6 +514,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if input.AssignedUserID.Set {
 		if !canAssignLeads(tenantContext) {
 			return Lead{}, tenant.ErrOrganizationAccessDenied
+		}
+		if err := prepareManualQueueTransfer(ctx, tx, tenantContext, current.ID, input.AssignedUserID.Value); err != nil {
+			return Lead{}, err
 		}
 		if input.AssignedUserID.Value != nil {
 			if err := repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID.Value); err != nil {
@@ -642,6 +667,13 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 
 	sideEffectsStartedAt := time.Now()
 	oldAuditData, newAuditData := changedLeadAuditData(current.Data, input.auditData())
+	if propertyInterestsChange != nil {
+		// Preserve exact IDs privately, with the same operation identity as the
+		// public count-only activity. History redaction must not expose this list.
+		oldAuditData["interest_property_ids"] = propertyInterestsChange.Before
+		newAuditData["interest_property_ids"] = propertyInterestsChange.After
+		newAuditData["operation_id"] = propertyInterestsChange.OperationID
+	}
 	if len(newAuditData) > 0 {
 		_, err = tx.Exec(ctx, `
 			insert into public.audit_logs (
@@ -689,10 +721,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertLeadUpdateActivities(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
+	if err := repo.insertLeadPropertyInterestsActivity(ctx, tx, tenantContext, current.ID, propertyInterestsChange); err != nil {
+		return Lead{}, err
+	}
 	if err := repo.enqueueDealWonNotifications(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
 	sideEffectsDuration = time.Since(sideEffectsStartedAt)
+
+	if err := validatePersistedLeadUpdateDestination(ctx, tx, tenantContext.OrganizationID, updatedID, input); err != nil {
+		return Lead{}, err
+	}
 
 	finalReadStartedAt := time.Now()
 	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext, updatedID)
@@ -700,6 +739,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
+	updatedLead.FinancialReviewRequired = financialReviewRequired
 
 	commitStartedAt := time.Now()
 	if err := tx.Commit(ctx); err != nil {
@@ -709,7 +749,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	commitDuration = time.Since(commitStartedAt)
 
 	repo.dispatchDealStatusSideEffects(tenantContext, current, input)
-	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
+	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &updatedLead)
 
 	return updatedLead, nil
 }
@@ -738,203 +778,21 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 	if !ok {
 		return moveStageResult{}, ErrLeadNotFound
 	}
-
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return moveStageResult{}, err
 	}
 	defer tx.Rollback(ctx)
-
-	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, leadID)
+	transition, err := repo.moveStageTx(ctx, tx, tenantContext, leadID, input, nil)
 	if err != nil {
 		return moveStageResult{}, err
 	}
-
-	if !canOperateLeadSnapshot(tenantContext, current) {
-		return moveStageResult{}, tenant.ErrOrganizationAccessDenied
-	}
-	if input.ExpectedStageID.Set {
-		expectedStageID := ""
-		if input.ExpectedStageID.Value != nil {
-			expectedStageID = *input.ExpectedStageID.Value
-		}
-		if current.StageID != expectedStageID {
-			return moveStageResult{}, ErrLeadStageChanged
-		}
-	}
-
-	resolvedDestination, err := repo.resolveMoveStageDestination(ctx, tx, tenantContext.OrganizationID, input.StageID)
-	if err != nil {
-		return moveStageResult{}, err
-	}
-	if resolvedDestination.PipelineID == nil || resolvedDestination.StageID == nil {
-		return moveStageResult{}, ErrInvalidReference
-	}
-
-	stageChanged := current.StageID != *resolvedDestination.StageID
-	effectiveStatus := ""
-	if stageChanged {
-		effectiveStatus, err = repo.resolveMoveStageDealStatus(ctx, tx, tenantContext.OrganizationID, *resolvedDestination.StageID, resolvedDestination.IsWon, resolvedDestination.IsLost)
-		if err != nil {
-			return moveStageResult{}, err
-		}
-		effectiveStatus = effectiveMoveStageDealStatus(current.DealStatus, effectiveStatus)
-	}
-	predictedStatusInput := moveStagePredictedStatusInput(effectiveStatus, input.LostReason)
-	if err := validateLostReasonContract(current, predictedStatusInput); err != nil {
-		return moveStageResult{}, err
-	}
-	wonPropertyReservation, err := repo.lockWonLeadPropertyForUpdate(ctx, tx, tenantContext, current, predictedStatusInput)
-	if err != nil {
-		return moveStageResult{}, err
-	}
-
-	boardOrderAt := input.BoardOrderAt
-	if boardOrderAt == nil {
-		// Compatibility with clients deployed before boardOrderAt existed: their
-		// stageEnteredAt value represented card order, not the real stage clock.
-		boardOrderAt = input.StageEnteredAt
-	}
-
-	var updatedID string
-	var persistedStageEnteredAt *time.Time
-	var persistedBoardOrderAt time.Time
-	if stageChanged {
-		var stageEnteredAt time.Time
-		err = tx.QueryRow(ctx, `
-			update public.leads
-			set stage_id = $3::uuid,
-			    pipeline_id = $4::uuid,
-			    stage_entered_at = now(),
-			    board_order_at = coalesce($5::timestamptz, now()),
-			    is_own_resource = coalesce($6::boolean, is_own_resource),
-			    deal_status = coalesce($7::text, deal_status),
-			    lost_reason = case
-			      when $7::text = 'lost' then coalesce($8::text, lost_reason)
-			      when $7::text in ('open', 'won') then null
-			      else lost_reason
-			    end,
-			    won_at = case
-			      when $7::text = 'won' then coalesce(won_at, now())
-			      when $7::text in ('open', 'lost') then null
-			      else won_at
-			    end,
-			    lost_at = case
-			      when $7::text = 'lost' then coalesce(lost_at, now())
-			      when $7::text in ('open', 'won') then null
-			      else lost_at
-			    end,
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			returning id::text, stage_entered_at, board_order_at
-		`, tenantContext.OrganizationID, leadID, *resolvedDestination.StageID, *resolvedDestination.PipelineID, nullableTime(boardOrderAt), nullableBool(input.IsOwnResource), nullableString(effectiveStatus), nullable(input.LostReason)).Scan(&updatedID, &stageEnteredAt, &persistedBoardOrderAt)
-		persistedStageEnteredAt = &stageEnteredAt
-	} else {
-		err = tx.QueryRow(ctx, `
-			update public.leads
-			set board_order_at = coalesce($3::timestamptz, board_order_at, stage_entered_at, created_at)
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			returning id::text, board_order_at
-		`, tenantContext.OrganizationID, leadID, nullableTime(boardOrderAt)).Scan(&updatedID, &persistedBoardOrderAt)
-	}
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return moveStageResult{}, ErrLeadNotFound
-		}
-		return moveStageResult{}, err
-	}
-
-	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext, updatedID)
-	if err != nil {
-		return moveStageResult{}, err
-	}
-	statusInput := moveStageActualStatusInput(current, updatedLead)
-	if err := validateLostReasonContract(current, statusInput); err != nil {
-		return moveStageResult{}, err
-	}
-
-	if _, err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, statusInput, wonPropertyReservation); err != nil {
-		return moveStageResult{}, err
-	}
-	if err := repo.releaseReopenedLeadProperty(ctx, tx, tenantContext, current, statusInput); err != nil {
-		return moveStageResult{}, err
-	}
-	if err := repo.insertDealStatusActivities(ctx, tx, tenantContext, current, statusInput); err != nil {
-		return moveStageResult{}, err
-	}
-	if err := repo.enqueueDealWonNotifications(ctx, tx, tenantContext, current, statusInput); err != nil {
-		return moveStageResult{}, err
-	}
-
-	auditAction := "reorder_lead"
-	newData := map[string]any{
-		"stage_id":       *resolvedDestination.StageID,
-		"board_order_at": persistedBoardOrderAt,
-		"origin":         "vimob_api",
-	}
-	if stageChanged {
-		auditAction = "move_stage"
-		newData["pipeline_id"] = *resolvedDestination.PipelineID
-		newData["is_own_resource"] = nullableBool(input.IsOwnResource)
-		newData["stage_entered_at"] = persistedStageEnteredAt
-	}
-	if statusInput.DealStatus.Set && statusInput.DealStatus.Value != nil {
-		newData["deal_status"] = *statusInput.DealStatus.Value
-	}
-	if statusInput.LostReason.Set {
-		newData["lost_reason"] = nullablePatchString(statusInput.LostReason)
-	}
-
-	if _, err := tx.Exec(ctx, `
-		insert into public.audit_logs (
-			organization_id,
-			user_id,
-			action,
-			entity_type,
-			entity_id,
-			old_data,
-			new_data
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3::text,
-			'lead',
-			$4::uuid,
-			$5::jsonb,
-			$6::jsonb
-		)
-	`, tenantContext.OrganizationID, tenantContext.UserID, auditAction, updatedID, jsonb(map[string]any{
-		"pipeline_id": nullableString(current.PipelineID),
-		"stage_id":    nullableString(current.StageID),
-		"deal_status": current.DealStatus,
-		"lost_reason": nullableString(current.LostReason),
-	}), jsonb(newData)); err != nil {
-		return moveStageResult{}, err
-	}
-
-	if stageChanged {
-		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, updatedID, tenantContext.UserID, "stage_change", fmt.Sprintf(`Lead "%s" movido de etapa`, current.Name), map[string]any{
-			"from_stage_id": nullableString(current.StageID),
-			"to_stage_id":   *resolvedDestination.StageID,
-			"from_stage":    nullableString(current.StageName),
-			"to_stage":      nullable(resolvedDestination.StageName),
-			"from_pipeline": nullableString(current.PipelineID),
-			"to_pipeline":   *resolvedDestination.PipelineID,
-		}); err != nil {
-			return moveStageResult{}, err
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return moveStageResult{}, err
 	}
-	repo.dispatchDealStatusSideEffects(tenantContext, current, statusInput)
-	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
-
-	return moveStageResult{Lead: updatedLead, StageChanged: stageChanged}, nil
+	repo.dispatchDealStatusSideEffects(tenantContext, transition.Before, transition.StatusInput)
+	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &transition.Result.Lead)
+	return transition.Result, nil
 }
 
 func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context, leadID string, input assignInput) (Lead, error) {
@@ -953,15 +811,24 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
+	if isQueuePoolSnapshot(current) {
+		return Lead{}, ErrQueuePoolConflict
+	}
 
 	if !canOperateLeadSnapshot(tenantContext, current) {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
+	}
+	if err := validateLeadAssignmentRevision(current, input); err != nil {
+		return Lead{}, err
 	}
 
 	if input.AssignedUserID != nil {
 		if err := repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
 			return Lead{}, err
 		}
+	}
+	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, current.TeamID, input.AssignedUserID); err != nil {
+		return Lead{}, err
 	}
 
 	if err := repo.transferLeadAssignee(ctx, tx, tenantContext, current, input.AssignedUserID, "manual_transfer"); err != nil {
@@ -976,7 +843,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
-	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
+	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &updatedLead)
 
 	return updatedLead, nil
 }
@@ -997,12 +864,25 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	if err != nil {
 		return RoundRobinResult{}, err
 	}
+	if isQueuePoolSnapshot(current) {
+		return RoundRobinResult{}, ErrQueuePoolConflict
+	}
 
 	if !canOperateLeadSnapshot(tenantContext, current) {
 		return RoundRobinResult{}, tenant.ErrOrganizationAccessDenied
 	}
 	if isManagedWhatsAppMessageDistributionLead(current.Data) {
 		return RoundRobinResult{}, fmt.Errorf("%w: managed WhatsApp message distribution does not support generic round-robin redistribution", ErrInvalidInput)
+	}
+	if expectedUnassigned && current.AssignedUserID != "" {
+		return RoundRobinResult{Success: false, LeadID: current.ID, AssignedUserID: current.AssignedUserID, Error: "already_assigned"}, nil
+	}
+	managedResult, managed, err := managedQueueManualRedistribution(ctx, tx, tenantContext, current)
+	if err != nil {
+		return RoundRobinResult{}, err
+	}
+	if managed {
+		return managedResult, tx.Commit(ctx)
 	}
 
 	result := RoundRobinResult{
@@ -1064,7 +944,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		return result, tx.Commit(ctx)
 	}
 
-	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current.PipelineID, current.TeamID)
+	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current)
 	if err != nil {
 		return RoundRobinResult{}, err
 	}
@@ -1226,7 +1106,14 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	// touching rows that reference the lead. Keep deletion in the same order so
 	// a lead lock can never wait on a conversation whose owner is waiting on the
 	// lead's foreign-key row lock.
-	if err := lockLeadWhatsAppConversations(ctx, tx, tenantContext.OrganizationID, leadID); err != nil {
+	lockedConversations, err := lockLeadWhatsAppConversations(ctx, tx, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return err
+	}
+	// Recovery owns outbox rows before inserting notification FK references to
+	// the lead. Acquire/cancel those rows before the exclusive lead lock, so
+	// recovery can finish its KEY SHARE without a lead -> outbox cycle.
+	if err := prepareLeadWhatsAppDeletion(ctx, tx, tenantContext.OrganizationID, leadID, lockedConversations); err != nil {
 		return err
 	}
 
@@ -1234,14 +1121,17 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return err
 	}
+	if isQueuePoolSnapshot(current) {
+		return ErrQueuePoolConflict
+	}
 	if !authorization.CanDeleteLead(tenantContext, authorization.LeadResource{AssignedUserID: current.AssignedUserID, TeamID: current.TeamID}) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
-	// A conversation may have become linked after the first scan and before the
-	// lead lock. FOR UPDATE on the lead now prevents another FK reference from
-	// becoming valid; this ordered rescan closes that visibility window.
-	if err := lockLeadWhatsAppConversations(ctx, tx, tenantContext.OrganizationID, leadID); err != nil {
+	// FOR UPDATE now prevents new FK references. If a new route committed in the
+	// visibility window, roll back and ask the caller to refresh; never wait for
+	// its conversation/work locks while owning the exclusive lead lock.
+	if _, err := lockLeadWhatsAppConversations(ctx, tx, tenantContext.OrganizationID, leadID, lockedConversations); err != nil {
 		return err
 	}
 
@@ -1313,6 +1203,7 @@ func (repo Repository) getLeadDeleteAuthorizationResource(ctx context.Context, t
 		from public.leads l
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
+		  and private.queue_pool_read_access(l.organization_id,l.id,null) is null
 		limit 1
 	`, organizationID, leadID).Scan(&assignedUserID, &teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1327,27 +1218,44 @@ func (repo Repository) getLeadDeleteAuthorizationResource(ctx context.Context, t
 	}, nil
 }
 
-func lockLeadWhatsAppConversations(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) error {
+func lockLeadWhatsAppConversations(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, previouslyLocked ...[]string) ([]string, error) {
+	lockClause := "for no key update of wc"
+	allowed := map[string]bool{}
+	if len(previouslyLocked) > 0 {
+		lockClause = ""
+		for _, id := range previouslyLocked[0] {
+			allowed[id] = true
+		}
+	}
 	rows, err := tx.Query(ctx, `
 		select wc.id::text
 		from public.whatsapp_conversations wc
 		where wc.organization_id = $1::uuid
-		  and wc.lead_id = $2::uuid
+		  and (wc.lead_id = $2::uuid or exists (
+		    select 1 from public.whatsapp_messages message join public.whatsapp_outbox queued
+		    on queued.message_id=message.id and queued.organization_id=message.organization_id and queued.conversation_id=message.conversation_id
+		    where message.organization_id=wc.organization_id and message.conversation_id=wc.id and message.lead_id=$2::uuid
+		      and (queued.status in ('pending','retry','processing') or queued.last_error in ('provider_delivery_started','provider_accepted_finalization_pending','provider_delivery_outcome_unknown'))
+		  ))
 		order by wc.id
-		for no key update of wc
-	`, organizationID, leadID)
+		`+lockClause, organizationID, leadID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
+	ids := []string{}
 	for rows.Next() {
 		var conversationID string
 		if err := rows.Scan(&conversationID); err != nil {
-			return err
+			return nil, err
 		}
+		if len(previouslyLocked) > 0 && !allowed[conversationID] {
+			return nil, ErrConversationBindingChanged
+		}
+		ids = append(ids, conversationID)
 	}
-	return rows.Err()
+	return ids, rows.Err()
 }
 
 func (repo Repository) AddTag(ctx context.Context, tenantContext tenant.Context, leadID string, input tagInput) error {
@@ -1371,7 +1279,7 @@ func (repo Repository) AddTag(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return err
 	}
-	if !canEdit {
+	if !canEdit || isQueuePoolSnapshot(current) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -1451,7 +1359,7 @@ func (repo Repository) RemoveTag(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return err
 	}
-	if !canEdit {
+	if !canEdit || isQueuePoolSnapshot(current) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -1491,13 +1399,16 @@ func (repo Repository) RemoveTag(ctx context.Context, tenantContext tenant.Conte
 	return tx.Commit(ctx)
 }
 
-func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, expectedIntakeDestination distribution.IntakeDestination) (CreateResult, error) {
-	tx, err := repo.db.Pool().Begin(ctx)
+func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, expectedIntakeDestination distribution.IntakeDestination, importRequest *leadImportRequest) (CreateResult, error) {
+	tx, err := repo.beginLeadImportTransaction(ctx, importRequest)
 	if err != nil {
 		return CreateResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
+	if err := distribution.LockIntakePipelineDestination(ctx, tx, tenantContext.OrganizationID, resolvedDestination.PipelineID, resolvedDestination.StageID); err != nil {
+		return CreateResult{}, err
+	}
 	intakeDestination, err := repo.resolveLeadIntakeDestination(ctx, tx, tenantContext.OrganizationID, input, resolvedDestination)
 	if err != nil {
 		return CreateResult{}, err
@@ -1508,7 +1419,10 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 	automaticRouting := input.RoundRobinID == nil && shouldAutoDistribute(input)
 	input.RoundRobinID = intakeDestination.RoundRobinID
 	if automaticRouting {
-		input.TagIDs = append([]string(nil), intakeDestination.TagIDs...)
+		input.TagIDs, err = leadIntakeTagIDs(input, intakeDestination.TagIDs)
+		if err != nil {
+			return CreateResult{}, err
+		}
 	}
 	intakeScopeKey := distribution.IntakeScopeKey(input.RoundRobinID)
 	if err := lockLeadIntakeIdentity(ctx, tx, tenantContext.OrganizationID, input.Phone, intakeScopeKey); err != nil {
@@ -1527,6 +1441,15 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 	}
 
 	if err := repo.validateCreatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
+		return CreateResult{}, err
+	}
+
+	creation, err := prepareLeadCreationOutcome(ctx, tx, tenantContext, input)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
+	if err := lockLeadCreationProperty(ctx, tx, tenantContext, input, creation); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -1577,7 +1500,8 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				feedback,
 				metadata,
 				intake_scope_key,
-				origin_round_robin_id
+				origin_round_robin_id,
+				id
 			)
 			values (
 				$1::uuid,
@@ -1617,7 +1541,8 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				$29,
 				$30::jsonb,
 				$31,
-				$32::uuid
+				$32::uuid,
+				$33::uuid
 			)
 			returning id::text, name, phone, source
 		),
@@ -1658,7 +1583,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		nullable(input.Message),
 		nullable(input.PropertyCode),
 		nullable(input.InterestValue),
-		input.DealStatus,
+		creation.InitialStatus,
 		nullable(input.LostReason),
 		nullableBool(input.IsOwnResource),
 		nullable(input.Cargo),
@@ -1677,6 +1602,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		jsonb(leadMetadata),
 		intakeScopeKey,
 		nullable(input.RoundRobinID),
+		creation.LeadID,
 	).Scan(&leadID)
 	if err != nil {
 		return CreateResult{}, err
@@ -1694,6 +1620,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		input.Phone,
 		input.ConversationID,
 		input.ExpectedPreviousLeadID,
+		input.ConfirmHistoryLink,
 	); err != nil {
 		return CreateResult{}, err
 	}
@@ -1730,6 +1657,11 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 
+	outcomeTransition, err := repo.finishLeadCreationOutcome(ctx, tx, tenantContext, input, creation)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
 	if input.AssignedUserID != nil {
 		if err := repo.insertNotification(ctx, tx, tenantContext.OrganizationID, *input.AssignedUserID, leadID, "Novo lead recebido", fmt.Sprintf("%s foi atribuido a voce", input.Name), "new_lead_received", map[string]any{
 			"lead_name":  input.Name,
@@ -1740,25 +1672,33 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return CreateResult{}, err
-	}
-
-	lead, err := repo.Get(ctx, tenantContext, leadID)
+	lead, err := commitLeadImportCreation(ctx, tx, tenantContext, leadID, importRequest, false, distributionOutcome)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	if outcomeTransition.Input.DealStatus.Set {
+		repo.dispatchDealStatusSideEffects(tenantContext, outcomeTransition.Before, outcomeTransition.Input)
+	}
+	if authorization.CanViewLead(tenantContext, authorization.LeadResource{AssignedUserID: lead.AssignedUserID, TeamID: lead.TeamID}) {
+		repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &lead)
 	}
 
 	return CreateResult{Lead: lead, DistributionOutcome: distributionOutcome}, nil
 }
 
-func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, expectedIntakeDestination distribution.IntakeDestination, existingLead existingLeadMatch) (CreateResult, error) {
-	tx, err := repo.db.Pool().Begin(ctx)
+func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, expectedIntakeDestination distribution.IntakeDestination, existingLead existingLeadMatch, importRequest *leadImportRequest) (CreateResult, error) {
+	if err := repo.authorizeLeadReentry(ctx, repo.leadCreationReadQueryer(importRequest), tenantContext, input, existingLead); err != nil {
+		return CreateResult{}, err
+	}
+	tx, err := repo.beginLeadImportTransaction(ctx, importRequest)
 	if err != nil {
 		return CreateResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
+	if err := distribution.LockIntakePipelineDestination(ctx, tx, tenantContext.OrganizationID, resolvedDestination.PipelineID, resolvedDestination.StageID); err != nil {
+		return CreateResult{}, err
+	}
 	intakeDestination, err := repo.resolveLeadIntakeDestination(ctx, tx, tenantContext.OrganizationID, input, resolvedDestination)
 	if err != nil {
 		return CreateResult{}, err
@@ -1769,7 +1709,10 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 	automaticRouting := input.RoundRobinID == nil && shouldAutoDistribute(input)
 	input.RoundRobinID = intakeDestination.RoundRobinID
 	if automaticRouting {
-		input.TagIDs = append([]string(nil), intakeDestination.TagIDs...)
+		input.TagIDs, err = leadIntakeTagIDs(input, intakeDestination.TagIDs)
+		if err != nil {
+			return CreateResult{}, err
+		}
 	}
 	intakeScopeKey := distribution.IntakeScopeKey(input.RoundRobinID)
 	if err := lockLeadIntakeIdentity(ctx, tx, tenantContext.OrganizationID, input.Phone, intakeScopeKey); err != nil {
@@ -1789,6 +1732,8 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		input.Phone,
 		input.ConversationID,
 		input.ExpectedPreviousLeadID,
+		input.ConfirmHistoryLink,
+		func() error { return repo.authorizeLeadReentry(ctx, tx, tenantContext, input, existingLead) },
 	); err != nil {
 		return CreateResult{}, err
 	}
@@ -1804,12 +1749,8 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, errLeadIntakeRetry
 	}
 	existingLead = *currentLead
-	canViewExisting := authorization.CanUseLeadForMutation(tenantContext, authorization.LeadResource{
-		AssignedUserID: existingLead.AssignedUserID,
-		TeamID:         existingLead.TeamID,
-	})
-	if !canViewExisting {
-		return CreateResult{}, ErrLeadAlreadyExists
+	if err := repo.authorizeLeadReentry(ctx, tx, tenantContext, input, existingLead); err != nil {
+		return CreateResult{}, err
 	}
 
 	if err := repo.validateCreatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
@@ -1821,37 +1762,64 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, err
 	}
 
-	_, err = tx.Exec(ctx, `
-		update public.leads
-		set name = $3,
-		    email = $4,
-		    message = $5,
-		    source = coalesce(source, $6),
-		    property_code = coalesce($7, property_code),
-		    pipeline_id = coalesce($8::uuid, pipeline_id),
-		    stage_entered_at = case
-		      when $9::uuid is null or stage_id is not distinct from $9::uuid then stage_entered_at
-		      else now()
-		    end,
-		    board_order_at = now(),
-		    stage_id = coalesce($9::uuid, stage_id),
-		    property_id = coalesce($10::uuid, property_id),
-		    interest_property_id = coalesce($10::uuid, interest_property_id),
-		    valor_interesse = coalesce($11::numeric, valor_interesse),
-		    deal_status = $12,
-		    lost_reason = case when $12 = 'lost' then $13 else null end,
-		    lost_at = case when $12 = 'lost' then coalesce(lost_at, now()) else null end,
-		    won_at = case when $12 = 'won' then coalesce(won_at, now()) else null end,
-		    last_entry_at = now(),
-		    reentry_count = coalesce(reentry_count, 0) + 1,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, existingLead.ID, input.Name, nullable(input.Email), nullable(input.Message), input.Source, nullable(input.PropertyCode), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), nullable(input.PropertyID), nullable(input.InterestValue), input.DealStatus, nullable(input.LostReason))
+	requestedImportData := map[string]any{
+		"pipeline_id":     nullable(resolvedDestination.PipelineID),
+		"stage_id":        nullable(resolvedDestination.StageID),
+		"property_id":     nullable(input.PropertyID),
+		"property_code":   nullable(input.PropertyCode),
+		"deal_status":     input.DealStatus,
+		"lost_reason":     nullable(input.LostReason),
+		"valor_interesse": nullable(input.InterestValue),
+	}
+	// Create defaults describe new contacts. A duplicate must not move an
+	// existing deal or bypass its financial/reservation workflow.
+	preservedState, snapshotErr := loadImportReentryState(ctx, tx, tenantContext.OrganizationID, existingLead.ID)
+	if snapshotErr != nil {
+		return CreateResult{}, snapshotErr
+	}
+	resolvedDestination = destination{
+		PipelineID: preservedState.PipelineID,
+		StageID:    preservedState.StageID,
+		StageName:  preservedState.StageName,
+	}
+	input.DealStatus = preservedState.DealStatus
+	input.LostReason = preservedState.LostReason
+	input.PropertyID = preservedState.PropertyID
+	input.PropertyCode = preservedState.PropertyCode
+	input.InterestValue = preservedState.InterestValue
+	err = applyConservativeLeadReentry(ctx, tx, tenantContext.OrganizationID, existingLead.ID, input)
 	if err != nil {
 		return CreateResult{}, err
 	}
+	if !input.ImportMode {
+		// Preserve the established manual-return ordering without moving stages
+		// or reopening the existing commercial outcome.
+		if _, err := tx.Exec(ctx, `update public.leads set board_order_at = now()
+			where organization_id = $1::uuid and id = $2::uuid`, tenantContext.OrganizationID, existingLead.ID); err != nil {
+			return CreateResult{}, err
+		}
+	}
 
+	entryMetadata := map[string]any{
+		"new_data": map[string]any{
+			"name":          input.Name,
+			"email":         nullable(input.Email),
+			"message":       nullable(input.Message),
+			"property_code": nullable(input.PropertyCode),
+			"deal_status":   input.DealStatus,
+		},
+		"origin":                "vimob_api",
+		"intake_scope_key":      intakeScopeKey,
+		"origin_round_robin_id": nullable(input.RoundRobinID),
+	}
+	if err := repo.insertLeadTags(ctx, tx, tenantContext.OrganizationID, existingLead.ID, input.TagIDs); err != nil {
+		return CreateResult{}, err
+	}
+	entryMetadata["state_preserved"] = true
+	entryMetadata["requested_data"] = requestedImportData
+	if input.ImportMode {
+		entryMetadata["import_state_preserved"] = true
+	}
 	var entryID string
 	err = tx.QueryRow(ctx, `
 		insert into public.lead_entry_events (
@@ -1885,18 +1853,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 			$8::jsonb
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, existingLead.ID, input.Source, nullable(input.PropertyID), nullable(input.InterestValue), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), jsonb(map[string]any{
-		"new_data": map[string]any{
-			"name":          input.Name,
-			"email":         nullable(input.Email),
-			"message":       nullable(input.Message),
-			"property_code": nullable(input.PropertyCode),
-			"deal_status":   input.DealStatus,
-		},
-		"origin":                "vimob_api",
-		"intake_scope_key":      intakeScopeKey,
-		"origin_round_robin_id": nullable(input.RoundRobinID),
-	})).Scan(&entryID)
+	`, tenantContext.OrganizationID, existingLead.ID, input.Source, nullable(input.PropertyID), nullable(input.InterestValue), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), jsonb(entryMetadata)).Scan(&entryID)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -1906,7 +1863,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 	redistributionPending := false
 	assignedUserID := existingLead.AssignedUserID
 	assignedUserName := existingLead.AssignedUserName
-	if input.RoundRobinID != nil {
+	if input.RoundRobinID != nil && !input.ImportMode && manualReentryAllowsRedistribution(input) {
 		reentryBehavior = intakeDestination.ReentryBehavior
 		if reentryBehavior == "redistribute" {
 			distributionSource := input.Source
@@ -1952,6 +1909,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		reentryContent = fmt.Sprintf("Nova entrada manual registrada por %s. Lead mantido com %s; redistribuicao pendente (%s).", actorName, assignedUserName, distributionOutcome)
 	}
 	if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, existingLead.ID, tenantContext.UserID, "lead_reentry", reentryContent, map[string]any{
+		"entry_event_id":         entryID,
 		"entry_type":             "manual_reentry",
 		"source":                 input.Source,
 		"actor_id":               tenantContext.UserID,
@@ -2001,13 +1959,15 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := distribution.ValidatePersistedIntakeDestination(ctx, tx, tenantContext.OrganizationID, existingLead.ID); err != nil {
 		return CreateResult{}, err
 	}
-
-	lead, err := repo.Get(ctx, tenantContext, existingLead.ID)
+	lead, err := commitLeadImportCreation(ctx, tx, tenantContext, existingLead.ID, importRequest, true, distributionOutcome)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	if authorization.CanViewLead(tenantContext, authorization.LeadResource{AssignedUserID: lead.AssignedUserID, TeamID: lead.TeamID}) {
+		repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &lead)
 	}
 
 	return CreateResult{
@@ -2091,7 +2051,7 @@ func (repo Repository) resolveDestination(ctx context.Context, queryer leadTeamQ
 			return destination{PipelineID: &resolvedPipelineID, StageID: &resolvedStageID.String, StageName: textPointer(resolvedStageName)}, nil
 		}
 
-		return destination{PipelineID: &resolvedPipelineID}, nil
+		return destination{}, distribution.ErrIntakeDestinationUnavailable
 	}
 
 	var resolvedPipelineID pgtype.Text
@@ -2140,6 +2100,9 @@ func (repo Repository) resolveDestination(ctx context.Context, queryer leadTeamQ
 	if resolvedStageName.Valid && strings.TrimSpace(resolvedStageName.String) != "" {
 		out.StageName = &resolvedStageName.String
 	}
+	if out.PipelineID != nil && out.StageID == nil {
+		return destination{}, distribution.ErrIntakeDestinationUnavailable
+	}
 
 	return out, nil
 }
@@ -2172,7 +2135,7 @@ func (repo Repository) resolveMoveStageDestination(ctx context.Context, tx pgx.T
 		&resolved.IsLost,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return moveStageDestination{}, ErrInvalidReference
+		return moveStageDestination{}, ErrMoveStageDestinationUnavailable
 	}
 	if err != nil {
 		return moveStageDestination{}, err
@@ -2212,7 +2175,7 @@ func (repo Repository) resolveMoveStageDealStatus(ctx context.Context, tx pgx.Tx
 			return "", err
 		}
 		if automationStatus != "" && automationStatus != status {
-			return "", fmt.Errorf("%w: destination stage has conflicting deal status automations", ErrInvalidReference)
+			return "", ErrMoveStageConfigurationConflict
 		}
 		automationStatus = status
 	}
@@ -2221,7 +2184,7 @@ func (repo Repository) resolveMoveStageDealStatus(ctx context.Context, tx pgx.Tx
 	}
 
 	if stageStatus != "" && automationStatus != "" && stageStatus != automationStatus {
-		return "", fmt.Errorf("%w: destination stage terminal status conflicts with its automation", ErrInvalidReference)
+		return "", ErrMoveStageConfigurationConflict
 	}
 	if automationStatus != "" {
 		return automationStatus, nil
@@ -2231,7 +2194,7 @@ func (repo Repository) resolveMoveStageDealStatus(ctx context.Context, tx pgx.Tx
 
 func terminalStageDealStatus(isWon bool, isLost bool) (string, error) {
 	if isWon && isLost {
-		return "", fmt.Errorf("%w: destination stage cannot be both won and lost", ErrInvalidReference)
+		return "", ErrMoveStageConfigurationConflict
 	}
 	if isWon {
 		return "won", nil
@@ -2435,149 +2398,12 @@ func sameLeadIntakeDestination(left distribution.IntakeDestination, right distri
 	return left.ReentryBehavior == right.ReentryBehavior
 }
 
-func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, requiredTeamID string) (roundRobinSelection, string, error) {
-	var roundRobinID string
-	// Keep the selected queue locked until the caller commits its assignment,
-	// log and position update. The next request then recalculates from fresh logs.
-	err := tx.QueryRow(ctx, `
-		select id::text
-		from public.round_robins
-		where organization_id = $1::uuid
-		  and is_active = true
-		  and (pipeline_id is null or pipeline_id = $2::uuid)
-		order by pipeline_id is null, created_at asc
-		limit 1
-		for update
-	`, organizationID, nullableString(pipelineID)).Scan(&roundRobinID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return roundRobinSelection{}, "no_queue", nil
-	}
-	if err != nil {
-		return roundRobinSelection{}, "", err
-	}
-
-	var selection roundRobinSelection
-	selection.RoundRobinID = roundRobinID
-
-	err = tx.QueryRow(ctx, `
-		with entries as (
-			select
-				rrm.id,
-				rrm.round_robin_id,
-				rrm.organization_id,
-				rrm.user_id,
-				rrm.team_id,
-				coalesce(rrm.position, 0) as position,
-				rrm.created_at,
-				coalesce(entry_logs.total, 0) as entry_total
-			from public.round_robin_members rrm
-			join public.round_robins rr
-			  on rr.id = rrm.round_robin_id
-			 and rr.organization_id = rrm.organization_id
-			left join lateral (
-			  select count(*)::bigint as total
-			  from public.round_robin_logs rrl
-			  where rrl.organization_id = rrm.organization_id
-			    and rrl.round_robin_id = rrm.round_robin_id
-			    and (
-			      rrl.metadata->>'member_id' = rrm.id::text
-			      or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
-			    )
-			) entry_logs on true
-			where rrm.organization_id = $1::uuid
-			  and rrm.round_robin_id = $2::uuid
-			  and coalesce(rrm.is_active, true) = true
-		),
-		candidates as (
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				entries.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			left join public.teams direct_team
-			  on direct_team.id = entries.team_id
-			 and direct_team.organization_id = entries.organization_id
-			 and coalesce(direct_team.is_active, true) = true
-			left join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and tm.user_id = entries.user_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is not null
-			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
-
-			union all
-
-			select
-				entries.id,
-				entries.round_robin_id,
-				entries.organization_id,
-				tm.user_id,
-				entries.position,
-				entries.created_at,
-				entries.entry_total,
-				tm.id as team_member_id,
-				tm.created_at as team_member_created_at
-			from entries
-			join public.teams t
-			  on t.id = entries.team_id
-			 and t.organization_id = entries.organization_id
-			 and coalesce(t.is_active, true) = true
-			join public.team_members tm
-			  on tm.organization_id = entries.organization_id
-			 and tm.team_id = entries.team_id
-			 and coalesce(tm.is_active, true) = true
-			where entries.user_id is null
-			  and entries.team_id is not null
-		)
-		select candidates.id::text, candidates.user_id::text
-		from candidates
-		join public.organization_members om
-		  on om.organization_id = candidates.organization_id
-		 and om.user_id = candidates.user_id
-		 and om.is_active = true
-		join public.users u
-		  on u.id = candidates.user_id
-		 and u.is_active = true
-		left join lateral (
-		  select count(*)::bigint as total
-		  from public.round_robin_logs rrl
-		  where rrl.organization_id = candidates.organization_id
-		    and rrl.round_robin_id = candidates.round_robin_id
-		    and rrl.assigned_user_id = candidates.user_id
-		) user_logs on true
-		where (
-		    nullif($3, '')::uuid is null
-		    or exists (
-		      select 1
-		      from public.team_members required_member
-		      where required_member.organization_id = candidates.organization_id
-		        and required_member.team_id = nullif($3, '')::uuid
-		        and required_member.user_id = candidates.user_id
-		        and coalesce(required_member.is_active, true) = true
-		    )
-		  )
-		  and `+distribution.RoundRobinAvailabilityPredicateSQL+`
-		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
-		limit 1
-	`, organizationID, roundRobinID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return roundRobinSelection{}, "no_member", nil
-	}
-	if err != nil {
-		return roundRobinSelection{}, "", err
-	}
-
-	return selection, "", nil
-}
-
 func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
+	if tenantContext.UserID != "" && reason != "auto_redistribution" {
+		if err := prepareManualQueueTransfer(ctx, tx, tenantContext, current.ID, assignedUserID); err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `
 		update public.leads
 		set assigned_user_id = $3::uuid,
@@ -2654,6 +2480,12 @@ func (repo Repository) validateRoundRobinAssigneeTeam(ctx context.Context, query
 		select exists (
 			select 1
 			from public.team_members tm
+			join public.organization_members om
+			  on om.organization_id = tm.organization_id
+			 and om.user_id = tm.user_id
+			 and om.is_active = true
+			 and om.deleted_at is null
+			 and om.membership_generation = tm.membership_generation
 			where tm.organization_id = $1::uuid
 			  and tm.team_id = $2::uuid
 			  and tm.user_id = $3::uuid
@@ -2664,7 +2496,7 @@ func (repo Repository) validateRoundRobinAssigneeTeam(ctx context.Context, query
 		return err
 	}
 	if !isActiveMember {
-		return ErrInvalidReference
+		return ErrLeadAssigneeTeamMismatch
 	}
 
 	return nil
@@ -2817,9 +2649,14 @@ func (repo Repository) validateUpdatePropertyReferences(ctx context.Context, tx 
 		}
 	}
 	if input.InterestPropertyIDs.Set {
+		currentInterests := leadInterestPropertyIDs(current)
 		for _, value := range input.InterestPropertyIDs.Value {
 			propertyID := value
-			if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+			currentID := ""
+			if containsLeadPropertyID(currentInterests, propertyID) {
+				currentID = propertyID
+			}
+			if err := validate(currentID, &propertyID); err != nil {
 				return err
 			}
 		}
@@ -2887,6 +2724,11 @@ func (repo Repository) getLeadSnapshotWithLock(ctx context.Context, tx pgx.Tx, o
 	if err := json.Unmarshal(rawData, &snapshot.Data); err != nil {
 		return leadSnapshot{}, err
 	}
+	poolAccess, err := queuePoolAccessAfterLeadLock(ctx, tx, organizationID, leadID, nil)
+	if err != nil {
+		return leadSnapshot{}, err
+	}
+	snapshot.Data["__queue_pool_private"] = poolAccess != nil
 
 	return snapshot, nil
 }
@@ -2911,6 +2753,11 @@ func changedLeadAuditData(current map[string]any, requested map[string]any) (map
 }
 
 func currentLeadAuditValue(current map[string]any, key string) any {
+	if key == "interest_property_ids" {
+		propertyID, _ := current["property_id"].(string)
+		interestPropertyID, _ := current["interest_property_id"].(string)
+		return leadInterestPropertyIDs(leadSnapshot{Data: current, PropertyID: propertyID, InterestPropertyID: interestPropertyID})
+	}
 	profileKey := ""
 	switch key {
 	case "person_type":
@@ -2950,6 +2797,9 @@ func protectedAuditValue(value any) any {
 }
 
 func leadAuditValuesEqual(key string, left any, right any) bool {
+	if key == "interest_property_ids" {
+		return sameLeadPropertyIDs(leadPropertyIDsFromValue(left), leadPropertyIDsFromValue(right))
+	}
 	if key == "trabalha" || key == "procura_financiamento" || key == "is_own_resource" {
 		return leadAuditBoolValue(left) == leadAuditBoolValue(right)
 	}
@@ -2987,6 +2837,9 @@ func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, tenant
 	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrLeadNotFound
+	}
+	if err == nil {
+		err = hydrateQueuePoolLead(ctx, tx, tenantContext, &lead)
 	}
 	return lead, err
 }
@@ -3115,7 +2968,7 @@ func mergeStageDrivenDealStatus(input *updateInput, destinationStatus string) er
 	return nil
 }
 
-func (repo Repository) findExistingLeadByPhone(ctx context.Context, organizationID string, phone *string, intakeScopeKey string) (*existingLeadMatch, error) {
+func (repo Repository) findExistingLeadByPhone(ctx context.Context, organizationID string, phone *string, intakeScopeKey string, readQueryers ...leadTeamQueryer) (*existingLeadMatch, error) {
 	if phone == nil {
 		return nil, nil
 	}
@@ -3126,7 +2979,8 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 
 	var match existingLeadMatch
 	var teamID, phoneValue, assignedUserID, assignedUserName pgtype.Text
-	err := repo.db.Pool().QueryRow(ctx, `
+	queryer := repo.leadPhoneLookupQueryer(readQueryers)
+	err := queryer.QueryRow(ctx, `
 		select
 			l.id::text,
 			nullif(to_jsonb(l)->>'team_id', ''),
@@ -3160,14 +3014,15 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 	return &match, nil
 }
 
-func (repo Repository) findExistingLeadByPhoneLegacy(ctx context.Context, organizationID string, phone *string) (*existingLeadMatch, error) {
+func (repo Repository) findExistingLeadByPhoneLegacy(ctx context.Context, organizationID string, phone *string, readQueryers ...leadTeamQueryer) (*existingLeadMatch, error) {
 	if phone == nil || normalizePhone(*phone) == "" {
 		return nil, nil
 	}
 
 	var match existingLeadMatch
 	var teamID, phoneValue, assignedUserID, assignedUserName pgtype.Text
-	err := repo.db.Pool().QueryRow(ctx, `
+	queryer := repo.leadPhoneLookupQueryer(readQueryers)
+	err := queryer.QueryRow(ctx, `
 		select
 			l.id::text,
 			nullif(to_jsonb(l)->>'team_id', ''),
@@ -3367,10 +3222,10 @@ func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context
 		}
 	}
 
-	return nil
+	return normalizeLeadUpdateFinancialInput(input, 0)
 }
 
-func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput, provenance ...map[string]any) error {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value == current.DealStatus {
 		return nil
 	}
@@ -3412,6 +3267,11 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 	}
 	if newStatus == "lost" && lostReason != "" {
 		metadata["lost_reason"] = lostReason
+	}
+	for _, values := range provenance {
+		for key, value := range values {
+			metadata[key] = value
+		}
 	}
 
 	if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "status_change", content, metadata); err != nil {
@@ -3677,7 +3537,7 @@ func (repo Repository) lockWonLeadPropertyForUpdate(
 			return nil, err
 		}
 		if !belongsToOrganization {
-			return nil, ErrInvalidReference
+			return nil, ErrLeadLinkedPropertyInvalid
 		}
 	} else if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
 		return nil, err
@@ -3984,7 +3844,7 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 		for update
 	`, tenantContext.OrganizationID, propertyID, activeWonLeadReservationEventIDKey).Scan(&title, &code, &currentStatus, &reservationEventID, &publishedOnSite, &announce)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrInvalidReference
+		return ErrLeadLinkedPropertyInvalid
 	}
 	if err != nil {
 		return err
@@ -4389,6 +4249,7 @@ func (repo Repository) listDealWonNotificationRecipientsWithQueryer(ctx context.
 			join public.users u on u.id = om.user_id
 			where om.organization_id = $1::uuid
 			  and coalesce(om.is_active, false) = true
+			  and om.deleted_at is null
 			  and coalesce(u.is_active, false) = true
 			  and om.role in ('owner', 'admin', 'manager')
 		),
@@ -4399,11 +4260,23 @@ func (repo Repository) listDealWonNotificationRecipientsWithQueryer(ctx context.
 			  on member.user_id = base.assigned_user_id
 			 and member.organization_id = $1::uuid
 			 and coalesce(member.is_active, true) = true
+			join public.organization_members member_organization
+			  on member_organization.organization_id = member.organization_id
+			 and member_organization.user_id = member.user_id
+			 and member_organization.is_active = true
+			 and member_organization.deleted_at is null
+			 and member_organization.membership_generation = member.membership_generation
 			join public.team_members leader
 			  on leader.team_id = member.team_id
 			 and leader.organization_id = member.organization_id
 			 and coalesce(leader.is_active, true) = true
 			 and coalesce(leader.is_leader, false) = true
+			join public.organization_members leader_organization
+			  on leader_organization.organization_id = leader.organization_id
+			 and leader_organization.user_id = leader.user_id
+			 and leader_organization.is_active = true
+			 and leader_organization.deleted_at is null
+			 and leader_organization.membership_generation = leader.membership_generation
 		)
 		select distinct user_id::text
 		from (
@@ -4483,121 +4356,56 @@ func (repo Repository) linkWhatsAppConversations(
 	phone *string,
 	conversationID *string,
 	expectedPreviousLeadID *string,
+	confirmHistoryLink bool,
+	beforeBinding ...func() error,
 ) error {
-	if conversationID != nil {
-		if expectedPreviousLeadID == nil {
-			return fmt.Errorf("%w: expectedPreviousLeadId is required with conversationId", ErrInvalidInput)
-		}
-		if err := repo.authorizeWhatsAppConversationLeadBinding(ctx, tx, tenantContext, *conversationID, leadID, false); err != nil {
+	// A lead arriving by phone alone has no consent to claim a previously
+	// observed WhatsApp history. The inbound processor opens a new epoch for
+	// future lead messages; only the exact user-confirmed conversation binds.
+	_ = phone
+	if conversationID == nil {
+		return nil
+	}
+	if !confirmHistoryLink || expectedPreviousLeadID == nil {
+		return fmt.Errorf("%w: explicit conversation history confirmation is required", ErrInvalidInput)
+	}
+	if err := repo.authorizeWhatsAppConversationLeadBinding(ctx, tx, tenantContext, *conversationID, leadID, false); err != nil {
+		return err
+	}
+	// Authorization above locks conversation then target lead. Reentry must
+	// check the fresh pool state here, before changing any history binding.
+	for _, authorize := range beforeBinding {
+		if err := authorize(); err != nil {
 			return err
 		}
-		return activateWhatsAppConversationLeadBinding(
-			ctx,
-			tx,
-			tenantContext.OrganizationID,
-			*conversationID,
-			leadID,
-			*expectedPreviousLeadID,
-		)
 	}
-
-	if phone == nil {
-		return nil
-	}
-
-	if normalizePhone(*phone) == "" {
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-		select pg_advisory_xact_lock(
-			hashtextextended('whatsapp-conversation-phone:' || $1 || ':' || normalize_phone($2), 0)
-		)
-	`, tenantContext.OrganizationID, *phone); err != nil {
-		return err
-	}
-
-	var leadCandidateCount int
-	var soleLeadID pgtype.Text
-	if err := tx.QueryRow(ctx, `
-		select count(*)::integer, min(id::text)
-		from public.leads
+	var unlinkedRetentionV1 bool
+	var currentLeadID pgtype.Text
+	err := tx.QueryRow(ctx, `
+		select unlinked_retention_v1, lead_id::text
+		from public.whatsapp_conversations
 		where organization_id = $1::uuid
-		  and phone is not null
-		  and normalize_phone(phone) is not null
-		  and normalize_phone(phone) <> ''
-		  and normalize_phone(phone) = normalize_phone($2)
-	`, tenantContext.OrganizationID, *phone).Scan(&leadCandidateCount, &soleLeadID); err != nil {
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, *conversationID).Scan(&unlinkedRetentionV1, &currentLeadID)
+	if err != nil {
 		return err
 	}
-	if leadCandidateCount != 1 || !soleLeadID.Valid || soleLeadID.String != leadID {
-		return nil
+	if (currentLeadID.Valid && currentLeadID.String != *expectedPreviousLeadID) ||
+		(!currentLeadID.Valid && *expectedPreviousLeadID != "unlinked") {
+		return ErrConversationBindingChanged
 	}
-
-	var alreadyLinked bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.whatsapp_conversations
-			where organization_id = $1::uuid
-			  and lead_id = $2::uuid
-			  and deleted_at is null
-			  and is_group is not true
+	if !currentLeadID.Valid && !unlinkedRetentionV1 {
+		return ErrInvalidReference
+	}
+	if unlinkedRetentionV1 && !currentLeadID.Valid {
+		return confirmWhatsAppUnlinkedHistoryBinding(
+			ctx, tx, tenantContext.OrganizationID, *conversationID, leadID, tenantContext.UserID, "manual_lead_create",
 		)
-	`, tenantContext.OrganizationID, leadID).Scan(&alreadyLinked); err != nil {
-		return err
 	}
-	if alreadyLinked {
-		return nil
-	}
-
-	var conversationCandidateCount int
-	var soleConversationID pgtype.Text
-	if err := tx.QueryRow(ctx, `
-		select count(*)::integer, min(wc.id::text)
-		from public.whatsapp_conversations wc
-		join public.whatsapp_sessions ws
-		  on ws.id = wc.session_id
-		 and ws.organization_id = wc.organization_id
-		where wc.organization_id = $1::uuid
-		  and wc.lead_id is null
-		  and wc.deleted_at is null
-		  and wc.is_group is not true
-		  and ws.provider = 'evolution_go'
-		  and coalesce(ws.is_active, true) = true
-		  and coalesce(ws.status, '') <> 'deleted'
-		  and (
-		    (
-		      wc.contact_phone is not null
-		      and normalize_phone(wc.contact_phone) = normalize_phone($2)
-		    )
-		    or (
-		      lower(wc.remote_jid) ~ '^[0-9]+(:[0-9]+)?@(s[.]whatsapp[.]net|c[.]us)$'
-		      and normalize_phone(split_part(split_part(wc.remote_jid, '@', 1), ':', 1)) = normalize_phone($2)
-		    )
-		  )
-	`, tenantContext.OrganizationID, *phone).Scan(&conversationCandidateCount, &soleConversationID); err != nil {
-		return err
-	}
-	if conversationCandidateCount != 1 || !soleConversationID.Valid {
-		return nil
-	}
-	if err := repo.authorizeWhatsAppConversationLeadBinding(ctx, tx, tenantContext, soleConversationID.String, leadID, true); err != nil {
-		if errors.Is(err, ErrInvalidReference) {
-			return nil
-		}
-		return err
-	}
-
 	return activateWhatsAppConversationLeadBinding(
-		ctx,
-		tx,
-		tenantContext.OrganizationID,
-		soleConversationID.String,
-		leadID,
-		"unlinked",
+		ctx, tx, tenantContext.OrganizationID, *conversationID, leadID, *expectedPreviousLeadID,
 	)
 }
-
 func (repo Repository) authorizeWhatsAppConversationLeadBinding(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -4663,7 +4471,9 @@ func (repo Repository) authorizeWhatsAppConversationLeadBinding(
 		if err != nil {
 			return err
 		}
-	} else if (strings.TrimSpace(tenantContext.UserID) == "" || textValue(sessionOwnerID) != tenantContext.UserID) && !canManageWhatsAppLeadBinding(tenantContext) {
+	} else if strings.TrimSpace(tenantContext.UserID) == "" || textValue(sessionOwnerID) != tenantContext.UserID {
+		// Unlinked history has no lead grant to inherit. It belongs to the
+		// connected session owner even when another user manages the org.
 		return ErrInvalidReference
 	}
 
@@ -4751,12 +4561,6 @@ func directWhatsAppPhoneIdentity(value string, allowBare bool) string {
 	return normalized
 }
 
-func canManageWhatsAppLeadBinding(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission(permissions.WhatsAppManage)
-}
-
 func activateWhatsAppConversationLeadBinding(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -4795,6 +4599,57 @@ func activateWhatsAppConversationLeadBinding(
 	}
 	if !result.Success || result.Stale || !result.IsCurrent ||
 		result.ActiveLeadID != leadID || strings.TrimSpace(result.BindingID) == "" {
+		return ErrConversationBindingChanged
+	}
+	return nil
+}
+
+func confirmWhatsAppUnlinkedHistoryBinding(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	conversationID string,
+	leadID string,
+	actorUserID string,
+	action string,
+) error {
+	var raw []byte
+	err := tx.QueryRow(ctx, `
+		select public.confirm_whatsapp_unlinked_history_binding(
+		  p_organization_id => $1::uuid,
+		  p_conversation_id => $2::uuid,
+		  p_lead_id => $3::uuid,
+		  p_expected_previous_lead_id => null,
+		  p_actor_user_id => $4::uuid,
+		  p_action => $5
+		)
+	`, organizationID, conversationID, leadID, actorUserID, action).Scan(&raw)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "40001", "23514":
+				return ErrConversationBindingChanged
+			case "23503":
+				return ErrInvalidReference
+			case "42501":
+				return tenant.ErrOrganizationAccessDenied
+			}
+		}
+		return err
+	}
+	var result struct {
+		Success        bool   `json:"success"`
+		ConversationID string `json:"conversation_id"`
+		LeadID         string `json:"lead_id"`
+		BindingMode    string `json:"binding_mode"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("decode WhatsApp history binding: %w", err)
+	}
+	if !result.Success || result.ConversationID != conversationID ||
+		result.LeadID != leadID ||
+		(result.BindingMode != "active" && result.BindingMode != "history_only") {
 		return ErrConversationBindingChanged
 	}
 	return nil
@@ -5425,6 +5280,12 @@ func canCreateLeadInput(tenantContext tenant.Context, input createInput) bool {
 	return canCreateLeads(tenantContext)
 }
 
+func canBindWhatsAppConversationDuringLeadCreation(tenantContext tenant.Context) bool {
+	return tenantContext.HasModule("whatsapp") &&
+		tenantContext.HasPermission(permissions.WhatsAppOperate) &&
+		tenantContext.HasPermission(permissions.LeadOperate)
+}
+
 func canUseRequestedRoundRobin(tenantContext tenant.Context, input createInput) bool {
 	return input.RoundRobinID == nil || tenantContext.HasPermission(permissions.DistributionManage)
 }
@@ -5481,6 +5342,9 @@ func canMoveLead(tenantContext tenant.Context, assignedUserID string) bool {
 }
 
 func canOperateLeadSnapshot(tenantContext tenant.Context, current leadSnapshot) bool {
+	if isQueuePoolSnapshot(current) {
+		return false
+	}
 	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{
 		AssignedUserID: current.AssignedUserID,
 		TeamID:         current.TeamID,

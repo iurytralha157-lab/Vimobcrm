@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { financialAPI } from '@/lib/api/financial';
-import { subMonths, format } from 'date-fns';
+import { format } from 'date-fns';
+import { previousDREPeriod } from '@/lib/financial/dre-period';
 
 interface DREAccountGroup {
   id: string;
@@ -75,7 +76,7 @@ interface UseDREParams {
 }
 
 export function useDRE({ startDate, endDate, regime, compareWithPrevious = false }: UseDREParams) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -83,9 +84,7 @@ export function useDRE({ startDate, endDate, regime, compareWithPrevious = false
     queryFn: async (): Promise<DREData> => {
       if (!organizationId) throw new Error('Organização não encontrada.');
 
-      const monthsDiff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
-      const prevStart = subMonths(startDate, monthsDiff || 1);
-      const prevEnd = subMonths(endDate, monthsDiff || 1);
+      const { start: prevStart, end: prevEnd } = previousDREPeriod(startDate, endDate);
       const dreInput = await financialAPI.dreInput<DREInputData>({
         startDate: format(startDate, 'yyyy-MM-dd'),
         endDate: format(endDate, 'yyyy-MM-dd'),
@@ -199,7 +198,7 @@ export function useDRE({ startDate, endDate, regime, compareWithPrevious = false
 }
 
 export function useDREGroups() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -210,7 +209,7 @@ export function useDREGroups() {
 }
 
 export function useDREMappings() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -221,7 +220,7 @@ export function useDREMappings() {
 }
 
 export function useInitializeDREGroups() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   const initializeGroups = async () => {

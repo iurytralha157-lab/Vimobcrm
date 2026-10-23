@@ -56,7 +56,6 @@ const ACCEPTED_OWNER_MAPPINGS = new Set([
   "PROPOSED_ALIAS",
 ]);
 const ACCEPTED_DEAL_STATUSES = new Set(["open", "won", "lost"]);
-const ACCEPTED_ACTIONS = new Set(["CREATE", "NOOP", "DRIFT", "CONFLICT"]);
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);

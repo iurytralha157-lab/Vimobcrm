@@ -8,12 +8,14 @@ import {
   ListFilter,
   PencilLine,
   Power,
+  RefreshCw,
   UserMinus,
   UserPlus,
   UsersRound,
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -23,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useRoundRobinHistory } from "@/hooks/use-round-robins";
 import type { RoundRobinHistoryEvent } from "@/lib/api/round-robins";
+import { distributionQueueHistoryChanges } from "@/lib/round-robin-history";
 
 type HistoryFilter = "all" | "queue" | "rules" | "members";
 
@@ -130,14 +133,18 @@ export function DistributionQueueChangeHistory({
   queueId: string;
 }) {
   const historyQuery = useRoundRobinHistory(queueId);
-  const events = historyQuery.data || [];
+  const events = useMemo(() => {
+    const unique = new Map<string, RoundRobinHistoryEvent>();
+    for (const page of historyQuery.data?.pages || []) for (const event of page) if (!unique.has(event.id)) unique.set(event.id, event);
+    return Array.from(unique.values());
+  }, [historyQuery.data]);
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const visibleEvents = useMemo(
     () =>
-      (historyQuery.data || []).filter((event) =>
+      events.filter((event) =>
         matchesHistoryFilter(event, filter),
       ),
-    [filter, historyQuery.data],
+    [filter, events],
   );
 
   return (
@@ -154,7 +161,7 @@ export function DistributionQueueChangeHistory({
             Histórico de alterações
           </h2>
           <p className="text-[10px] text-[var(--app-text-tertiary)]">
-            {visibleEvents.length} de {events.length} eventos
+            {visibleEvents.length} de {events.length} eventos carregados
           </p>
         </div>
       </div>
@@ -190,6 +197,15 @@ export function DistributionQueueChangeHistory({
         </SelectContent>
       </Select>
 
+      {historyQuery.isError && events.length > 0 && (
+        <div className="mb-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[10px] text-[var(--app-text-secondary)]" role="status">
+          {historyQuery.isFetchNextPageError ? "Não foi possível carregar mais eventos. O histórico já carregado foi mantido." : "Não foi possível atualizar agora. Exibindo o último histórico carregado."}
+          <Button type="button" variant="ghost" disabled={historyQuery.isFetching} className="mt-1 h-7 text-[10px]" onClick={() => void (historyQuery.isFetchNextPageError ? historyQuery.fetchNextPage() : historyQuery.refetch())}>
+            <RefreshCw className="mr-1 h-3 w-3" /> Tentar novamente
+          </Button>
+        </div>
+      )}
+
       <div
         data-distribution-history-scroll
         className="scrollbar-thin -mr-2 min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
@@ -207,6 +223,7 @@ export function DistributionQueueChangeHistory({
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-4 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
             O histórico está indisponível no momento. A edição da fila continua
             disponível.
+            <Button type="button" variant="ghost" disabled={historyQuery.isFetching} className="mt-2 h-8 text-[11px]" onClick={() => void historyQuery.refetch()}>Tentar novamente</Button>
           </div>
         ) : events.length === 0 ? (
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-4 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
@@ -214,19 +231,10 @@ export function DistributionQueueChangeHistory({
           </div>
         ) : visibleEvents.length === 0 ? (
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-4 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
-            Nenhuma alteração corresponde ao filtro selecionado.
+            Nenhuma alteração carregada corresponde ao filtro selecionado.
           </div>
         ) : (
           <>
-            {historyQuery.isRefetchError && (
-              <p
-                className="mb-1 rounded-[6px] bg-amber-500/10 px-2 py-1.5 text-[10px] leading-4 text-amber-700 dark:text-amber-300"
-                role="status"
-              >
-                Não foi possível atualizar agora. Exibindo o último histórico
-                carregado.
-              </p>
-            )}
             <ol
               className="space-y-1"
               aria-label="Alterações recentes da distribuição"
@@ -234,6 +242,7 @@ export function DistributionQueueChangeHistory({
               {visibleEvents.map((event) => {
                 const Icon = eventIcon(event);
                 const time = eventTime(event.created_at);
+                const changes = distributionQueueHistoryChanges(event);
                 return (
                   <li
                     key={event.id}
@@ -246,6 +255,16 @@ export function DistributionQueueChangeHistory({
                       <p className="text-[11px] leading-4 text-[var(--app-text-primary)]">
                         {eventDescription(event)}
                       </p>
+                      {changes.length > 0 && (
+                        <dl className="mt-1 space-y-1 text-[10px] leading-4 text-[var(--app-text-secondary)]">
+                          {changes.map((change) => (
+                            <div key={change.key} className="break-words">
+                              <dt className="font-medium">{change.label}</dt>
+                              <dd><span className="text-[var(--app-text-tertiary)]">Antes: {change.before}</span><br />Depois: {change.after}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                       <p
                         className="mt-0.5 truncate text-[9px] text-[var(--app-text-tertiary)]"
                         title={time.absolute}
@@ -259,6 +278,11 @@ export function DistributionQueueChangeHistory({
               })}
             </ol>
           </>
+        )}
+        {historyQuery.hasNextPage && (
+          <Button type="button" variant="ghost" disabled={historyQuery.isFetching} className="mt-2 h-8 w-full text-[11px]" onClick={() => void historyQuery.fetchNextPage()}>
+            {historyQuery.isFetchingNextPage ? "Carregando eventos…" : "Carregar mais eventos"}
+          </Button>
         )}
       </div>
     </section>

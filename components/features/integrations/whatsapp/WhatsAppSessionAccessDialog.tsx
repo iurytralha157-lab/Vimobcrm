@@ -61,6 +61,7 @@ export function WhatsAppSessionAccessDialog({
 
   const availableUsers = useMemo(() => {
     const recipients = eligibleWhatsAppAccessRecipients(usersQuery.data || [], {
+      organizationId: session?.organization_id,
       currentUserId: actor.userId,
       memberRole: actor.memberRole,
       isSuperAdmin: actor.isSuperAdmin,
@@ -69,7 +70,7 @@ export function WhatsAppSessionAccessDialog({
     });
     const grantedIds = new Set((accessQuery.data || []).map((access) => access.user_id));
     return recipients.filter((user) => !grantedIds.has(user.id));
-  }, [accessQuery.data, actor, usersQuery.data]);
+  }, [accessQuery.data, actor, session?.organization_id, usersQuery.data]);
 
   const handleGrant = async () => {
     if (!session || !canManageAccess || !selectedUserId

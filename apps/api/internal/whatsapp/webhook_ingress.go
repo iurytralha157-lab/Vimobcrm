@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -53,6 +54,20 @@ const evolutionWebhookSchemaCompatibilityQuery = `
 		and exists (
 			select 1
 			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and attname = 'edge_execution_id'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and to_regprocedure(
+			'public.reserve_whatsapp_webhook_edge_execution(uuid,uuid,uuid,text)'
+		) is not null
+		and to_regprocedure(
+			'public.cancel_whatsapp_webhook_edge_execution(uuid,uuid,uuid,uuid)'
+		) is not null
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
 			where attrelid = to_regclass('public.whatsapp_webhook_routing_snapshots')
 			  and attname = 'processing_epoch'
 			  and attnum > 0
@@ -74,6 +89,12 @@ const evolutionWebhookSchemaCompatibilityQuery = `
 		)
 		and to_regclass('private.whatsapp_webhook_session_cutovers') is not null
 		and to_regclass('private.whatsapp_webhook_ignored_events') is not null
+		and to_regprocedure(
+			'private.whatsapp_conversation_contact_pn_evidence(uuid,uuid,uuid)'
+		) is not null
+		and to_regprocedure(
+			'public.record_whatsapp_webhook_contact_pn_quarantine(uuid,uuid,uuid,uuid,text)'
+		) is not null
 		and to_regprocedure(
 			'private.activate_whatsapp_webhook_session_cutover(uuid,uuid)'
 		) is not null
@@ -156,6 +177,7 @@ type evolutionWebhookEnvelope struct {
 	InstanceToken       string
 	WebhookHeaderTokens []string
 	EventKey            string
+	rawBodyEventKey     string
 	Payload             []byte
 	ReceivedAt          time.Time
 }
@@ -286,12 +308,71 @@ func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body [
 	// Preserve the provider payload hash used by the existing deduplication
 	// contract while keeping the persisted payload free of credentials.
 	envelope.EventKey = evolutionWebhookEventKey(envelope.SessionID, body)
+	envelope.rawBodyEventKey = envelope.EventKey
 	sanitizedPayload, err := sanitizeEvolutionWebhookPayload(payload)
 	if err != nil {
 		return evolutionWebhookEnvelope{}, fmt.Errorf("%w: webhook payload could not be sanitized", ErrInvalidInput)
 	}
 	envelope.Payload = sanitizedPayload
 	return envelope, nil
+}
+
+type evolutionWebhookQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// lookupEvolutionWebhookRetainedTombstoneReplay is shared by the early replay
+// path and the inbox conflict path. The caller must first prove that eventKey
+// hashes this session's exact callback bytes. A provider message ID alone is
+// never sufficient to acknowledge a redacted delivery.
+func lookupEvolutionWebhookRetainedTombstoneReplay(
+	ctx context.Context,
+	querier evolutionWebhookQueryRower,
+	session evolutionWebhookSession,
+	eventKey string,
+	eventType string,
+) (evolutionWebhookReceipt, bool, error) {
+	var receipt evolutionWebhookReceipt
+	err := querier.QueryRow(ctx, `
+		select inbox.id::text, inbox.session_id::text, inbox.event_type, inbox.status
+		from public.whatsapp_webhook_inbox as inbox
+		where inbox.organization_id = $1::uuid
+		  and inbox.session_id = $2::uuid
+		  and inbox.event_key = $3
+		  and inbox.provider = 'evolution_go'
+		  and inbox.event_type = $4
+		  and inbox.status in ('processed', 'dead')
+		  and (
+		    inbox.payload = '{"__vimob_retention":"expired_unlinked_v1"}'::jsonb
+		    or (
+		      inbox.payload #>> '{__vimob_retention,kind}' = 'partial_expired_unlinked_v1'
+		      and inbox.payload #>> '{__vimob_retention,redacted_count}' ~ '^[1-9][0-9]{0,5}$'
+		      and pg_catalog.jsonb_typeof(inbox.payload #> '{data,messages}') = 'array'
+		      and pg_catalog.jsonb_typeof(
+		        inbox.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+		      ) = 'array'
+		    )
+		  )
+		  and exists (
+		    select 1 from public.whatsapp_webhook_routing_snapshots as snapshot
+		    where snapshot.organization_id = inbox.organization_id
+		      and snapshot.session_id = inbox.session_id
+		      and snapshot.inbox_event_key = inbox.event_key
+		      and snapshot.snapshot->>'unlinked_capture_policy' = 'v1'
+		      and snapshot.snapshot->>'state' = 'unlinked'
+		  )
+		limit 1
+	`, session.OrganizationID, session.ID, eventKey, eventType).Scan(
+		&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return evolutionWebhookReceipt{}, false, nil
+	}
+	if err != nil {
+		return evolutionWebhookReceipt{}, false, err
+	}
+	receipt.Duplicate = true
+	return receipt, true, nil
 }
 
 func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evolutionWebhookEnvelope) (evolutionWebhookReceipt, error) {
@@ -309,6 +390,15 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	eventKey := strings.TrimSpace(envelope.EventKey)
 	if eventKey == "" {
 		eventKey = evolutionWebhookEventKey(session.ID, envelope.Payload)
+	}
+	// Keep the proof over the original signed callback bytes. Group filtering
+	// may later narrow the durable payload while retaining this original key.
+	terminalTombstoneKeyMatches := eventKey == evolutionWebhookEventKey(session.ID, envelope.Payload)
+	// Payload credentials are removed before AcceptEvolutionWebhook sees the
+	// body. Preserve the parser's hash of the exact original callback so a
+	// retained tombstone can still recognize an authenticated replay.
+	if envelope.rawBodyEventKey != "" && eventKey == envelope.rawBodyEventKey {
+		terminalTombstoneKeyMatches = true
 	}
 	envelope.EventKey = eventKey
 	if evolutionWebhookIsHistorySyncControl(pendingEvolutionWebhook{
@@ -431,6 +521,22 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if len(parts) == 0 {
 		return evolutionWebhookReceipt{}, webhookIngressStage("prepare_durable", fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts"))
 	}
+	firstEventType := parts[0].EventType
+	// Retention removes the original message content but keeps a terminal inbox
+	// tombstone and immutable routing snapshot. Recognize an authenticated exact
+	// callback replay before the legacy managed-intake lookup compares that
+	// redacted content with the callback and reports a false provider collision.
+	if terminalTombstoneKeyMatches {
+		retained, found, err := lookupEvolutionWebhookRetainedTombstoneReplay(
+			ctx, repo.db.Pool(), session, eventKey, firstEventType,
+		)
+		if err != nil {
+			return evolutionWebhookReceipt{}, webhookIngressStage("retained_replay_lookup", err)
+		}
+		if found {
+			return retained, nil
+		}
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -442,8 +548,28 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err != nil {
 		return evolutionWebhookReceipt{}, webhookIngressStage("processing_epoch", err)
 	}
-	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch)
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled)
 	if err != nil {
+		// The terminal retention scrub can commit between the read-only early
+		// replay probe and this transaction. A managed lookup then sees redacted
+		// message content and reports a provider collision. Release the failed
+		// transaction before rechecking the exact tombstone in a fresh snapshot.
+		var collision *pgconn.PgError
+		if terminalTombstoneKeyMatches && errors.As(err, &collision) &&
+			collision.Code == "23505" && collision.Message == "managed_whatsapp_provider_message_collision" {
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+				return evolutionWebhookReceipt{}, webhookIngressStage("routing_snapshot_rollback", errors.Join(err, rollbackErr))
+			}
+			retained, found, lookupErr := lookupEvolutionWebhookRetainedTombstoneReplay(
+				ctx, repo.db.Pool(), session, eventKey, firstEventType,
+			)
+			if lookupErr != nil {
+				return evolutionWebhookReceipt{}, webhookIngressStage("retained_replay_lookup", lookupErr)
+			}
+			if found {
+				return retained, nil
+			}
+		}
 		return evolutionWebhookReceipt{}, webhookIngressStage("routing_snapshot", fmt.Errorf("capture Evolution webhook routing provenance: %w", err))
 	}
 
@@ -499,6 +625,9 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if errors.Is(err, pgx.ErrNoRows) {
 		receipt.Duplicate = true
 		var exactRoutingReplay bool
+		// Once retention has replaced a completed inbox body with a minimal
+		// tombstone, the raw callback's session-scoped SHA-256 event key is the
+		// remaining exact-replay proof. Derived batch parts retain this first key.
 		err = tx.QueryRow(ctx, `
 			select
 			  id::text,
@@ -527,7 +656,14 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			&exactRoutingReplay,
 		)
 		if err == nil && !exactRoutingReplay {
-			return evolutionWebhookReceipt{}, webhookIngressStage("replay_conflict", errors.New("persist Evolution webhook: event key routing provenance conflict"))
+			if terminalTombstoneKeyMatches {
+				_, exactRoutingReplay, err = lookupEvolutionWebhookRetainedTombstoneReplay(
+					ctx, tx, session, eventKey, first.EventType,
+				)
+			}
+			if err == nil && !exactRoutingReplay {
+				return evolutionWebhookReceipt{}, webhookIngressStage("replay_conflict", errors.New("persist Evolution webhook: event key routing provenance conflict"))
+			}
 		}
 	}
 	if err != nil {
@@ -690,23 +826,36 @@ type evolutionWebhookMessageListLocation struct {
 // derived keys. This preserves fast ACK and callback-level deduplication while
 // letting a current text use the live lane independently from history/media.
 func prepareEvolutionWebhookDurableParts(envelope evolutionWebhookEnvelope) ([]evolutionWebhookDurablePart, error) {
-	payloadParts, split, err := splitEvolutionWebhookMessageBatch(envelope.Payload)
+	payloadParts, receiptEffects, err := splitEvolutionWebhookReceiptEffects(envelope)
 	if err != nil {
 		return nil, err
 	}
-	if !split {
-		payloadParts = [][]byte{envelope.Payload}
+	if !receiptEffects {
+		var split bool
+		payloadParts, split, err = splitEvolutionWebhookMessageBatch(envelope.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if !split {
+			payloadParts = [][]byte{envelope.Payload}
+		}
 	}
 
 	parts := make([]evolutionWebhookDurablePart, 0, len(payloadParts))
 	for index, payloadPart := range payloadParts {
-		annotatedPayload, err := annotateEvolutionWebhookRouting(payloadPart)
-		if err != nil {
-			return nil, fmt.Errorf("annotate Evolution webhook batch part %d: %w", index, err)
+		annotatedPayload := payloadPart
+		if !receiptEffects {
+			annotatedPayload, err = annotateEvolutionWebhookRouting(payloadPart)
+			if err != nil {
+				return nil, fmt.Errorf("annotate Evolution webhook batch part %d: %w", index, err)
+			}
 		}
 		partEnvelope := envelope
 		partEnvelope.Payload = annotatedPayload
 		lane, occurredAt := evolutionWebhookProcessingLane(partEnvelope)
+		if receiptEffects && occurredAt != nil && evolutionWebhookOccurredInLiveWindow(envelope.ReceivedAt, *occurredAt) {
+			lane = evolutionWebhookLaneLive
+		}
 		partKey := envelope.EventKey
 		if index > 0 {
 			partKey = evolutionWebhookBatchPartEventKey(envelope.EventKey, index, payloadPart)
@@ -820,6 +969,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 	session evolutionWebhookSession,
 	parts []evolutionWebhookDurablePart,
 	processingEpoch int,
+	postFormGuardEnabled bool,
 ) ([]evolutionWebhookDurablePart, error) {
 	result := make([]evolutionWebhookDurablePart, len(parts))
 	copy(result, parts)
@@ -832,7 +982,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 		if err != nil {
 			return nil, err
 		}
-		messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(decoded))
+		messages := withoutNativeEvolutionEncryptedEditControls(withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(decoded)))
 		messages = withoutNativeEvolutionGroupMessages(messages)
 		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
 		schedulingRoutingKey := strings.TrimSpace(stringFromAny(metadata["routing_key"]))
@@ -842,6 +992,21 @@ func attachEvolutionWebhookRoutingSnapshots(
 		snapshots := make([]map[string]any, 0, len(messages))
 		partEpoch := processingEpoch
 		for _, message := range messages {
+			message = nativeIngressMessageWithPostFormGuard(message, postFormGuardEnabled)
+			if message.IdentityPNConflict {
+				// Keep the signed callback durable, but never freeze a destination,
+				// predecessor or intake rule for contradictory contact evidence.
+				if _, err := tx.Exec(ctx, `insert into private.whatsapp_webhook_ignored_events
+					(organization_id,session_id,event_key,reason) values($1::uuid,$2::uuid,$3,$4)
+					on conflict(organization_id,session_id,event_key) do nothing`,
+					session.OrganizationID, session.ID, result[index].EventKey, whatsappPNConflictReason); err != nil {
+					return nil, err
+				}
+				if stringFromAny(metadata["identity_quarantine_reason"]) != whatsappPNRouteConflictReason {
+					metadata["identity_quarantine_reason"] = whatsappPNConflictReason
+				}
+				continue
+			}
 			if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
 				return nil, errors.New("direct WhatsApp provider message is missing an immutable provider id")
 			}
@@ -852,6 +1017,8 @@ func attachEvolutionWebhookRoutingSnapshots(
 				if err != nil {
 					return nil, err
 				}
+				message.legacyContextualIntake = rule.ManagedProviderEventPending || rule.ManagedProviderEventHandled
+				message = nativeIngressMessageWithPostFormGuard(message, postFormGuardEnabled)
 				if err := lockNativeManagedInboundRuleForSnapshot(
 					ctx,
 					tx,
@@ -863,7 +1030,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 				}
 			}
 			canonicalIntakeProof := ""
-			if message.IsCTWAAd && !rule.ManagedMessageDistribution &&
+			if nativeCTWAIntakeEligible(message) && !rule.ManagedMessageDistribution &&
 				strings.TrimSpace(rule.ManagedProviderEventLeadID) == "" {
 				confirmationMethod := nativeCTWAAdConfirmationMethod(message)
 				if confirmationMethod == "" {
@@ -898,20 +1065,9 @@ func attachEvolutionWebhookRoutingSnapshots(
 				canonicalIntakeProof = nativeCanonicalIntakeProofV1 + confirmationMethod
 			}
 
-			contextKind := "organic"
-			contextProof := ""
-			if rule.ManagedMessageDistribution {
-				contextKind = "contextual_intake"
-				contextProof = "managed_rule"
-			} else if strings.TrimSpace(rule.ManagedProviderEventLeadID) != "" {
-				contextKind = "contextual_intake"
-				contextProof = "provider_event_ledger"
-			} else if message.IsCTWAAd {
-				contextKind = "contextual_intake"
-				contextProof = canonicalIntakeProof
-				if contextProof == "" {
-					return nil, errors.New("click-to-WhatsApp intake is missing canonical provider proof")
-				}
+			contextKind, contextProof, contextErr := nativeEvolutionIngressContext(message, rule, canonicalIntakeProof)
+			if contextErr != nil {
+				return nil, contextErr
 			}
 
 			aliases := uniqueStrings(append([]string{message.RemoteJID}, message.RemoteAliases...)...)
@@ -931,7 +1087,14 @@ func attachEvolutionWebhookRoutingSnapshots(
 				!message.UnsupportedMessage &&
 				routingKey != evolutionWebhookSessionRoute
 			var snapshotJSON string
-			err = tx.QueryRow(ctx, `
+			// A contradictory stored LID mapping must quarantine only this part.
+			// Savepoint rollback removes any work/locks of the failed freeze while
+			// retaining already admitted valid siblings in the outer transaction.
+			freezeTx, err := tx.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			err = freezeTx.QueryRow(ctx, `
 				select private.capture_whatsapp_webhook_routing_snapshot_v2(
 				  $1::uuid,
 				  $2::uuid,
@@ -973,6 +1136,27 @@ func attachEvolutionWebhookRoutingSnapshots(
 				processingEpoch,
 			).Scan(&snapshotJSON)
 			if err != nil {
+				if rollbackErr := freezeTx.Rollback(ctx); rollbackErr != nil {
+					return nil, errors.Join(err, rollbackErr)
+				}
+				if !isWhatsAppContactPNConflictError(err) {
+					return nil, err
+				}
+				if _, err := tx.Exec(ctx, `insert into private.whatsapp_webhook_ignored_events
+					(organization_id,session_id,event_key,reason) values($1::uuid,$2::uuid,$3,$4)
+					on conflict(organization_id,session_id,event_key) do update set reason=excluded.reason`,
+					session.OrganizationID, session.ID, result[index].EventKey, whatsappPNRouteConflictReason); err != nil {
+					return nil, err
+				}
+				metadata["identity_quarantine_reason"] = whatsappPNRouteConflictReason
+				var ids []string
+				if existing, ok := metadata["identity_quarantined_provider_message_ids"].([]string); ok {
+					ids = existing
+				}
+				metadata["identity_quarantined_provider_message_ids"] = uniqueStrings(append(ids, message.ProviderMessageID)...)
+				continue
+			}
+			if err := freezeTx.Commit(ctx); err != nil {
 				return nil, err
 			}
 			var snapshot map[string]any
@@ -1112,7 +1296,7 @@ func lockNativeManagedInboundRuleForSnapshot(
 }
 
 func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
-	messages := withoutNativeEvolutionGroupMessages(extractNativeEvolutionMessages(payload))
+	messages := withoutNativeEvolutionEncryptedEditControls(withoutNativeEvolutionGroupMessages(extractNativeEvolutionMessages(payload)))
 	if len(messages) == 0 {
 		return evolutionWebhookStatusRoutingKey(payload)
 	}
@@ -1264,7 +1448,7 @@ func evolutionWebhookProcessingLane(envelope evolutionWebhookEnvelope) (string, 
 	if err != nil {
 		return evolutionWebhookLaneBacklog, nil
 	}
-	messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(payload))
+	messages := withoutNativeEvolutionEncryptedEditControls(withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(payload)))
 	messages = withoutNativeEvolutionGroupMessages(messages)
 	if len(messages) == 0 {
 		statuses := extractNativeEvolutionStatuses(payload)
@@ -1729,7 +1913,7 @@ func removeEvolutionWebhookPayloadCredentials(value any) {
 		for key, nested := range typed {
 			normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
 			switch normalized {
-			case "instancetoken", "webhooktoken", "apikey", "accesstoken", "authorization", "signature", "vimobingress":
+			case "instancetoken", "webhooktoken", "apikey", "accesstoken", "authorization", "signature", "vimobingress", "vimobretention":
 				delete(typed, key)
 				continue
 			}

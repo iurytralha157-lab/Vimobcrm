@@ -90,7 +90,7 @@ test('provider ambiguity never returns to pending and legacy ambiguity is termin
   assert.match(source, /const providerStatus = data\?\.status \?\? response\.status[\s\S]*isAmbiguousProviderFailure\(providerStatus\)/)
 })
 
-test('provider request uses the existing outbox key deterministically through the private proxy', async () => {
+test('archived sender preserves correlation while the canonical proxy cannot dispatch', async () => {
   const [source, goProvider, edgeProxy] = await Promise.all([
     readRepositoryFile('supabase/functions/message-sender/index.ts'),
     readRepositoryFile('apps/api/internal/whatsapp/evolution_go.go'),
@@ -104,10 +104,8 @@ test('provider request uses the existing outbox key deterministically through th
   assert.equal(source.match(/\bid: stableProviderRequestId/g)?.length, 2)
   assert.match(goProvider, /"id":\s+firstPresentAny\(body\["id"\], body\["messageId"\], body\["clientMessageId"\]\)/)
 
-  const proxyCommonStart = edgeProxy.indexOf('function sendCommonBody')
-  const proxyCommonEnd = edgeProxy.indexOf('function sendTextBody', proxyCommonStart)
-  const proxyCommon = edgeProxy.slice(proxyCommonStart, proxyCommonEnd)
-  assert.match(proxyCommon, /id:\s*providerMessageId\(body, allowProviderMessageId\)/)
+  assert.match(edgeProxy, /serveRetiredWhatsAppFunction\("evolution-go-proxy"\)/)
+  assert.doesNotMatch(edgeProxy, /fetch\s*\(|Deno\.env|createClient/)
   assert.match(source, /makeDispatchingLeaseMarker\([\s\S]*stableProviderRequestId/)
 })
 

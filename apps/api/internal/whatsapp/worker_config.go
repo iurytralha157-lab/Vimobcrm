@@ -23,52 +23,54 @@ const (
 )
 
 type WorkerConfig struct {
-	AIWorkerEnabled               bool
-	AIWorkerInterval              time.Duration
-	AIFollowUpWorkerEnabled       bool
-	AIFollowUpWorkerInterval      time.Duration
-	OutboxWorkerEnabled           bool
-	OutboxWorkerInterval          time.Duration
-	OutboxWorkerBatch             int
-	OutboxWorkerConcurrency       int
-	WebhookWorkerEnabled          bool
-	WebhookWorkerInterval         time.Duration
-	WebhookWorkerBatch            int
-	WebhookWorkerConcurrency      int
-	MediaWorkerEnabled            bool
-	MediaWorkerInterval           time.Duration
-	MediaWorkerLease              time.Duration
-	MediaWorkerConcurrency        int
-	SessionSupervisorEnabled      bool
-	SessionSupervisorInitialDelay time.Duration
-	SessionSupervisorInterval     time.Duration
-	SessionSupervisorBatch        int
-	SessionSupervisorRecoveryIDs  []string
+	AIWorkerEnabled                bool
+	AIWorkerInterval               time.Duration
+	AIFollowUpWorkerEnabled        bool
+	AIFollowUpWorkerInterval       time.Duration
+	OutboxWorkerEnabled            bool
+	OutboxWorkerInterval           time.Duration
+	OutboxWorkerBatch              int
+	OutboxWorkerConcurrency        int
+	WebhookWorkerEnabled           bool
+	WebhookWorkerInterval          time.Duration
+	WebhookWorkerBatch             int
+	WebhookWorkerConcurrency       int
+	MediaWorkerEnabled             bool
+	MediaWorkerInterval            time.Duration
+	MediaWorkerLease               time.Duration
+	MediaWorkerConcurrency         int
+	UnlinkedRetentionWorkerEnabled bool
+	SessionSupervisorEnabled       bool
+	SessionSupervisorInitialDelay  time.Duration
+	SessionSupervisorInterval      time.Duration
+	SessionSupervisorBatch         int
+	SessionSupervisorRecoveryIDs   []string
 }
 
 func DefaultWorkerConfig() WorkerConfig {
 	return WorkerConfig{
-		AIWorkerEnabled:               true,
-		AIWorkerInterval:              defaultAIWorkerInterval,
-		AIFollowUpWorkerEnabled:       true,
-		AIFollowUpWorkerInterval:      defaultAIFollowUpWorkerInterval,
-		OutboxWorkerEnabled:           true,
-		OutboxWorkerInterval:          defaultWhatsAppOutboxWorkerInterval,
-		OutboxWorkerBatch:             defaultWhatsAppOutboxWorkerBatch,
-		OutboxWorkerConcurrency:       defaultWhatsAppOutboxWorkerConcurrency,
-		WebhookWorkerEnabled:          true,
-		WebhookWorkerInterval:         defaultWhatsAppWebhookWorkerInterval,
-		WebhookWorkerBatch:            defaultWhatsAppWebhookWorkerBatch,
-		WebhookWorkerConcurrency:      defaultWhatsAppWebhookWorkerConcurrency,
-		MediaWorkerEnabled:            false,
-		MediaWorkerInterval:           defaultWhatsAppMediaWorkerInterval,
-		MediaWorkerLease:              defaultWhatsAppMediaWorkerLease,
-		MediaWorkerConcurrency:        defaultWhatsAppMediaWorkerConcurrency,
-		SessionSupervisorEnabled:      true,
-		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
-		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
-		SessionSupervisorBatch:        defaultWhatsAppSessionSupervisorBatch,
-		SessionSupervisorRecoveryIDs:  nil,
+		AIWorkerEnabled:                true,
+		AIWorkerInterval:               defaultAIWorkerInterval,
+		AIFollowUpWorkerEnabled:        true,
+		AIFollowUpWorkerInterval:       defaultAIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:            true,
+		OutboxWorkerInterval:           defaultWhatsAppOutboxWorkerInterval,
+		OutboxWorkerBatch:              defaultWhatsAppOutboxWorkerBatch,
+		OutboxWorkerConcurrency:        defaultWhatsAppOutboxWorkerConcurrency,
+		WebhookWorkerEnabled:           true,
+		WebhookWorkerInterval:          defaultWhatsAppWebhookWorkerInterval,
+		WebhookWorkerBatch:             defaultWhatsAppWebhookWorkerBatch,
+		WebhookWorkerConcurrency:       defaultWhatsAppWebhookWorkerConcurrency,
+		MediaWorkerEnabled:             false,
+		MediaWorkerInterval:            defaultWhatsAppMediaWorkerInterval,
+		MediaWorkerLease:               defaultWhatsAppMediaWorkerLease,
+		MediaWorkerConcurrency:         defaultWhatsAppMediaWorkerConcurrency,
+		UnlinkedRetentionWorkerEnabled: false,
+		SessionSupervisorEnabled:       true,
+		SessionSupervisorInitialDelay:  defaultWhatsAppSessionSupervisorInitialDelay,
+		SessionSupervisorInterval:      defaultWhatsAppSessionSupervisorInterval,
+		SessionSupervisorBatch:         defaultWhatsAppSessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:   nil,
 	}
 }
 

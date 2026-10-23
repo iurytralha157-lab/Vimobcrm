@@ -3,15 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import type { DashboardTopBrokersResponse } from '@/lib/api/dashboard';
 
-interface Broker {
-  id: string;
-  name: string;
-  avatar_url: string | null;
-  closedLeads: number;
-  salesValue: number;
-  totalCommissions: number;
-}
+type Broker = DashboardTopBrokersResponse['brokers'][number];
 
 interface TopBrokersWidgetProps {
   brokers: Broker[];
@@ -149,7 +143,7 @@ export function TopBrokersWidget({ brokers, isLoading, isFallbackMode }: TopBrok
                   <span className="text-xs font-medium text-primary block">
                     {formatCurrency(broker.salesValue)}
                   </span>
-                  {broker.totalCommissions > 0 && (
+                  {broker.totalCommissions !== null && broker.totalCommissions > 0 && (
                     <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
                       Com: {formatCurrency(broker.totalCommissions)}
                     </span>

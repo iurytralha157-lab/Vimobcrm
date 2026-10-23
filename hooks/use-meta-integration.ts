@@ -26,7 +26,7 @@ function invokeMeta<T>(body: Record<string, unknown>, organizationId?: string | 
 }
 
 export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -41,7 +41,7 @@ export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
 }
 
 export function useMetaGetAuthUrl() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -60,7 +60,7 @@ export function useMetaGetAuthUrl() {
 
 export function useMetaConnectPage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -94,7 +94,7 @@ export function useMetaConnectPage() {
 
 export function useMetaUpdatePage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -131,7 +131,7 @@ export function useMetaUpdatePage() {
 
 export function useMetaDisconnectPage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -152,7 +152,7 @@ export function useMetaDisconnectPage() {
 
 export function useMetaTogglePage() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -173,7 +173,7 @@ export function useMetaTogglePage() {
 
 export function useMetaUpdateAdAccounts() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -195,7 +195,7 @@ export function useMetaUpdateAdAccounts() {
 
 export function useMetaConversionFeedback() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
@@ -233,7 +233,7 @@ export function useMetaAdAccounts(
   pageId?: string | null,
   options: { enabled: boolean } = { enabled: false },
 ) {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -253,7 +253,7 @@ export function useMetaAdAccounts(
 }
 
 export function useMetaOAuthFlowResult() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({

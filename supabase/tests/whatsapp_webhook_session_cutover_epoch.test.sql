@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(37);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -153,18 +153,69 @@ update public.whatsapp_webhook_inbox
 set status = 'pending', locked_at = null, locked_by = null
 where event_key = 'cutover-event-old';
 
+select throws_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000001'
+  )$$,
+  '55000', 'whatsapp_cutover_legacy_pending',
+  'activation refuses an epoch-zero pending event'
+);
+
+update public.whatsapp_webhook_inbox
+set status = 'retry'
+where event_key = 'cutover-event-old';
+
+select throws_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000001'
+  )$$,
+  '55000', 'whatsapp_cutover_legacy_pending',
+  'activation refuses an epoch-zero retry event'
+);
+
+update public.whatsapp_webhook_inbox
+set status = 'processed', processed_at = now()
+where event_key = 'cutover-event-old';
+
+select throws_ok(
+  $$insert into public.whatsapp_webhook_inbox(organization_id,session_id,event_key,event_type,payload,processing_lane,processing_epoch,status)
+    values('e1200000-0000-4000-8000-000000000001','e1500000-0000-4000-8000-000000000001',
+      'cutover-capable-without-snapshot','message','{"__vimob_ingress":{"epoch_capable":true}}'::jsonb,'live',0,'pending')$$,
+  '23514',null,'epoch capability never substitutes for a canonical routing snapshot'
+);
+select is((select count(*)::integer from public.whatsapp_webhook_inbox where event_key='cutover-capable-without-snapshot'),0,
+ 'rejected snapshotless replay leaves no inbox row');
+
 select lives_ok(
   $$select private.activate_whatsapp_webhook_session_cutover(
     'e1200000-0000-4000-8000-000000000001',
     'e1500000-0000-4000-8000-000000000001'
   )$$,
-  'activation succeeds after the old execution is no longer active'
+  'activation succeeds after the old delivery is terminal'
 );
 
 select is(
   (select active_epoch from private.whatsapp_webhook_session_cutovers
    where session_id = 'e1500000-0000-4000-8000-000000000001'),
   1, 'the cutover is stored for this session only'
+);
+
+select throws_ok(
+  $$select private.activate_whatsapp_webhook_session_cutover(
+    'e1200000-0000-4000-8000-000000000001',
+    'e1500000-0000-4000-8000-000000000003'
+  )$$,
+  '55000', 'whatsapp_cutover_legacy_pending',
+  'inactive sessions also retain pending legacy work until it is resolved'
+);
+
+update public.whatsapp_webhook_inbox
+set status = 'processed', processed_at = now()
+where session_id in (
+  'e1500000-0000-4000-8000-000000000003',
+  'e1500000-0000-4000-8000-000000000004'
 );
 
 select lives_ok(
@@ -226,8 +277,8 @@ select is(
    where inbox.event_key in (
      'cutover-retained-cutover-inactive',
      'cutover-retained-cutover-disabled'
-   ) and inbox.processing_epoch = 0 and inbox.status = 'pending'),
-  2::bigint, 'reactivation does not change retained epoch-zero inbox rows'
+    ) and inbox.processing_epoch = 0 and inbox.status = 'processed'),
+  2::bigint, 'reactivation does not change terminal epoch-zero inbox rows'
 );
 
 select is(
@@ -291,7 +342,7 @@ select throws_ok(
     set status = 'processing', locked_at = now(), locked_by = 'cutover-test'
     where event_key = 'cutover-event-old'$$,
   '55000', 'whatsapp_inbox_epoch_retained',
-  'an old worker cannot claim the retained event after activation'
+  'an old worker cannot reopen a terminal event after activation'
 );
 
 select is(
@@ -311,7 +362,7 @@ select lives_ok(
   $$update public.whatsapp_webhook_inbox
     set status = 'processing', locked_at = now(), locked_by = 'vimob-api-evolution-webhook-epoch1-test'
     where event_key = 'cutover-event-new'$$,
-  'a new same-route event is claimable while the old is pending'
+  'a new same-route event is claimable after the old is terminal'
 );
 
 select is(
@@ -341,7 +392,8 @@ select lives_ok(
       'e1200000-0000-4000-8000-000000000001',
       'e1500000-0000-4000-8000-000000000001',
       'cutover-capable-held', 'message',
-      '{"__vimob_ingress":{"epoch_capable":true}}'::jsonb,
+      (select jsonb_set(payload,'{__vimob_ingress,epoch_capable}','true'::jsonb)
+       from public.whatsapp_webhook_inbox where event_key='cutover-event-old'),
       'live', 0, 'pending'
     )$$,
   'an epoch-aware replica may retain a replayed old event'
@@ -354,7 +406,8 @@ select lives_ok(
     ) values (
       'e1200000-0000-4000-8000-000000000001',
       'e1500000-0000-4000-8000-000000000001',
-      'cutover-event-old', 'message', '{}'::jsonb,
+      'cutover-event-old', 'message',
+      (select payload from public.whatsapp_webhook_inbox where event_key='cutover-event-old'),
       'live', 0, 'pending'
     ) on conflict (event_key) do nothing$$,
   'an old duplicate reaches ON CONFLICT without a trigger error'

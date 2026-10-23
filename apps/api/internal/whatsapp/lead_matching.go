@@ -123,30 +123,6 @@ func ensureAccessibleLeadMatchesIdentity(
 	return err
 }
 
-func (repo Repository) resolveConversationLead(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Conversation, error) {
-	if conversation.LeadID != nil || conversation.IsGroup {
-		return conversation, nil
-	}
-
-	identity := newWhatsAppContactIdentity(pointerValue(conversation.ContactPhone), conversation.RemoteJID, conversation.IsGroup)
-	match, err := repo.findLeadByPhone(ctx, tenantContext, identity.LeadMatchValues()...)
-	if err != nil || match == nil {
-		return conversation, err
-	}
-
-	if err := repo.attachConversationToLead(ctx, tenantContext.OrganizationID, conversation.ID, match.ID); err != nil {
-		return conversation, err
-	}
-
-	if refreshed, err := repo.GetConversation(ctx, tenantContext, conversation.ID); err == nil {
-		return refreshed, nil
-	}
-
-	conversation.LeadID = &match.ID
-	conversation.Lead = match.toLeadLite()
-	return conversation, nil
-}
-
 func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant.Context, values ...string) (*leadPhoneMatch, error) {
 	candidates := phoneMatchCandidates(values...)
 	if len(candidates) == 0 {
@@ -223,18 +199,6 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 	match.AssigneeAvatar = textPtr(assigneeAvatar)
 
 	return &match, nil
-}
-
-func (repo Repository) attachConversationToLead(ctx context.Context, organizationID string, conversationID string, leadID string) error {
-	_, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
-		ctx,
-		repo.db.Pool(),
-		organizationID,
-		conversationID,
-		leadID,
-		unlinkedConversationLeadSnapshot,
-	)
-	return err
 }
 
 type repositoryWhatsAppConversationLeadBinding struct {

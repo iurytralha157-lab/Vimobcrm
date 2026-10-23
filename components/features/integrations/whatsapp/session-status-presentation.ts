@@ -14,11 +14,26 @@ export type WhatsAppStatusPresentation = {
   tone: WhatsAppStatusTone;
 };
 
+export const WHATSAPP_SESSION_ACTION_CLASS_NAME =
+  "border-0 bg-primary/50 font-light text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50";
+export const WHATSAPP_SESSION_STATUS_SIZE_CLASS_NAME =
+  "inline-flex h-8 w-[136px] shrink-0 items-center justify-center px-3 py-0 text-[12px] font-medium leading-none";
+
+const statusBadgeToneClassName: Record<WhatsAppStatusTone, string> = {
+  connected: "bg-emerald-600",
+  waiting: "bg-amber-500",
+  disconnected: "bg-red-500",
+  unknown: "bg-slate-500",
+};
+
 export function getWhatsAppStatusPresentation(
   rawStatus: string,
 ): WhatsAppStatusPresentation {
   const status = rawStatus.trim().toLowerCase();
 
+  if (status === "error") {
+    return { label: "Erro", tone: "disconnected" };
+  }
   if (["connected", "open", "online", "ready"].includes(status)) {
     return { label: "Conectado", tone: "connected" };
   }
@@ -42,6 +57,11 @@ export function getWhatsAppStatusPresentation(
   }
 
   return { label: "Status pendente", tone: "unknown" };
+}
+
+export function getWhatsAppStatusBadgeClassName(rawStatus: string) {
+  const { tone } = getWhatsAppStatusPresentation(rawStatus);
+  return `rounded-[6px] border-0 text-white shadow-none ${statusBadgeToneClassName[tone]}`;
 }
 
 export function getWhatsAppStatusScopeCopy(scope: WhatsAppSessionStatusScope) {

@@ -11,6 +11,7 @@ export interface PipelineQueryKeyFilters {
   searchQuery?: string | null;
   filterPage?: string | null;
   filterCampaign?: string | null;
+  filterCampaigns?: string[];
   filterAdSet?: string | null;
   filterAd?: string | null;
   filterSource?: string | null;
@@ -53,7 +54,8 @@ export function stageWithLeadsQueryKey(params: {
     filters?.dateRange?.to?.toISOString(),
     normalizePipelineQueryTagIds(filters?.filterTags),
     normalizePipelineQueryFilter(filters?.filterDealStatus),
-    normalizePipelineQueryFilter(filters?.searchQuery),
+    // "all" is a selector sentinel, but remains literal text in a search.
+    filters?.searchQuery || undefined,
     normalizePipelineQueryFilter(filters?.filterCampaign),
     normalizePipelineQueryFilter(filters?.filterAdSet),
     normalizePipelineQueryFilter(filters?.filterAd),
@@ -64,5 +66,6 @@ export function stageWithLeadsQueryKey(params: {
     normalizePipelineQueryFilter(filters?.teamId),
     normalizePipelineQueryFilter(filters?.filterPage),
     filters?.visibilityScopeKey,
+    filters?.filterCampaigns?.length ? JSON.stringify([...new Set(filters.filterCampaigns)].sort()) : undefined,
   ] as const;
 }

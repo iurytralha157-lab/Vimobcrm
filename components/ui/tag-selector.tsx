@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Plus, X, Check, Loader2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { searchTextEquals, searchTextIncludes } from '@/lib/search-text';

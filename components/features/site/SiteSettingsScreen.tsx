@@ -13,6 +13,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormWizardLayout } from "@/components/shared/forms/FormWizardLayout";
+import { FormWizardDiscardDialog } from "@/components/shared/forms/FormWizardDiscardDialog";
+import { SiteFormPreview } from "@/components/features/site/SiteFormPreview";
+import { useSiteMenuItems } from "@/hooks/use-site-menu";
+import { useSiteSearchFilters } from "@/hooks/use-site-search-filters";
+import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from "@/config/form-wizard";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -202,6 +209,8 @@ export default function SiteSettings() {
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
   const updateFooterLogo = useUpdateSiteFooterLogo();
+  const { data: menuItems = [] } = useSiteMenuItems();
+  const { data: searchFilters = [] } = useSiteSearchFilters();
   const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin =
@@ -267,7 +276,9 @@ export default function SiteSettings() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const hydratedSiteRef = useRef<string | null>(null);
+  const savedFormDataRef = useRef<string | null>(null);
   const siteActiveTab = normalizeSiteTab(searchParams.get('tab'));
   const generalView = normalizeGeneralView(searchParams.get('view'));
   const setSiteActiveTab = (value: string) => {
@@ -295,7 +306,7 @@ export default function SiteSettings() {
     let isActive = true;
     queueMicrotask(() => {
       if (!isActive) return;
-      setFormData({
+      const hydratedFormData: SiteFormData = {
         is_active: site.is_active,
         maintenance_mode: site.maintenance_mode,
         maintenance_message: site.maintenance_message || '',
@@ -348,7 +359,9 @@ export default function SiteSettings() {
         hero_title: site.hero_title || '',
         hero_subtitle: site.hero_subtitle || '',
         show_about_on_home: site.show_about_on_home ?? false,
-      });
+      };
+      savedFormDataRef.current = JSON.stringify(hydratedFormData);
+      setFormData(hydratedFormData);
     });
 
     return () => {
@@ -376,6 +389,7 @@ export default function SiteSettings() {
       } else {
         await createSite.mutateAsync(dataToSave);
       }
+      savedFormDataRef.current = JSON.stringify(formData);
       return true;
     } catch (error: unknown) {
       // If error is about unknown columns, retry without those fields (migration not yet applied)
@@ -427,6 +441,18 @@ export default function SiteSettings() {
 
   const handleConfirmUnpublish = async () => {
     if (await saveSite()) setUnpublishDialogOpen(false);
+  };
+
+  const editorBusy = isSaving || createSite.isPending || updateSite.isPending || updateFooterLogo.isPending;
+  const currentSectionIndex = siteSections.findIndex((section) => section.value === siteActiveTab);
+  const closeEditor = () => router.push('/settings');
+  const requestCloseEditor = () => {
+    if (editorBusy) return;
+    if (savedFormDataRef.current !== null && savedFormDataRef.current !== JSON.stringify(formData)) {
+      setDiscardDialogOpen(true);
+      return;
+    }
+    closeEditor();
   };
 
 
@@ -487,6 +513,28 @@ export default function SiteSettings() {
 
   return (
     <AppLayout title="Configurações do Site">
+      <Dialog open onOpenChange={(open) => { if (!open) requestCloseEditor(); }}>
+        <DialogContent className={FORM_WIZARD_DIALOG_CLASS_NAME} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { if (editorBusy) event.preventDefault(); }}>
+          <DialogHeader className="shrink-0 px-6 pb-3 pt-5">
+            <DialogTitle className="flex items-center gap-2 pr-8 text-[14px] font-normal text-[var(--app-text-primary)]"><Globe className="h-4 w-4" aria-hidden="true" />{site ? 'Editar site' : 'Novo site'}</DialogTitle>
+            <DialogDescription className="sr-only">Configure os dados, a aparência e os canais do site imobiliário.</DialogDescription>
+          </DialogHeader>
+          <FormWizardLayout
+            navTourId="site-settings-menu"
+            steps={siteSections.map((section) => ({ id: section.value, label: section.label, icon: section.icon, tourId: `site-tab-${section.value}`, buttonId: `site-tab-${section.value}`, panelId: `site-panel-${section.value}`, disabled: !site || editorBusy }))}
+            activeStep={siteActiveTab}
+            onStepChange={setSiteActiveTab}
+            asideTitle={<div className="flex items-center justify-between gap-2"><span>Prévia do site</span>{previewUrl ? <Button asChild variant="ghost" className="h-7 w-7 rounded-[6px] p-0 text-[var(--app-text-secondary)]"><a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer" aria-label="Abrir site publicado"><ExternalLink className="h-3.5 w-3.5" /></a></Button> : <Button data-tour="site-preview" type="button" variant="ghost" disabled className="h-7 w-7 rounded-[6px] p-0" aria-label="Site ainda não publicado"><ExternalLink className="h-3.5 w-3.5" /></Button>}</div>}
+            aside={<SiteFormPreview values={formData} site={site} menuItems={menuItems} searchFilters={searchFilters} />}
+            footer={<>
+              <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={editorBusy} onClick={requestCloseEditor}>Fechar</Button>
+              {site && <>
+                <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={editorBusy || currentSectionIndex <= 0} onClick={() => setSiteActiveTab(siteSections[currentSectionIndex - 1].value)}>Voltar</Button>
+                {currentSectionIndex < siteSections.length - 1 && <Button type="button" className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME} disabled={editorBusy} onClick={() => setSiteActiveTab(siteSections[currentSectionIndex + 1].value)}>Avançar</Button>}
+                {isAdmin && <Button data-tour="site-save-button" type="button" className={currentSectionIndex === siteSections.length - 1 ? FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME : FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={editorBusy} onClick={handleSave}>{isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Salvar alterações</Button>}
+              </>}
+            </>}
+          >
       <div className="space-y-6">
         {!site && (
           <Card data-tour="site-create-card" className="app-card mb-6">
@@ -510,92 +558,9 @@ export default function SiteSettings() {
         )}
 
         {site && (
-          <Tabs data-tour="site-settings" value={siteActiveTab} onValueChange={setSiteActiveTab} className="flex min-h-0 flex-col gap-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <nav data-tour="site-settings-menu" className="app-card app-scrollbar flex w-full min-w-0 flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5 lg:w-fit lg:max-w-[calc(100%-288px)]">
-                <div className="flex flex-nowrap gap-1.5">
-                  {siteSections.map((section) => {
-                    const Icon = section.icon;
-                    const isActive = siteActiveTab === section.value;
-
-                    return (
-                      <button
-                        key={section.value}
-                        data-tour={`site-tab-${section.value}`}
-                        type="button"
-                        title={`${section.label} - ${section.description}`}
-                        onClick={() => setSiteActiveTab(section.value)}
-                        className={cn(
-                          "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] transition-colors",
-                          isActive
-                            ? "bg-primary text-primary-foreground"
-                            : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
-                        )}
-                      >
-                        <span className={cn(
-                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
-                          isActive ? "bg-primary-foreground/15" : "bg-[var(--app-surface-soft)]"
-                        )}>
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <span className="sr-only">
-                          <span className="block text-sm font-medium">{section.label}</span>
-                          <span className={cn(
-                            "mt-0.5 line-clamp-2 block text-xs leading-snug",
-                            isActive ? "text-primary-foreground/75" : "text-muted-foreground"
-                          )}>
-                            {section.description}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-              </nav>
-
-              <div className="flex shrink-0 items-center gap-2">
-                {previewUrl ? (
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
-                  >
-                    <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Preview
-                    </a>
-                  </Button>
-                ) : (
-                  <Button
-                    data-tour="site-preview"
-                    type="button"
-                    variant="ghost"
-                    disabled
-                    title="Publique o site e defina um slug para liberar a pré-visualização."
-                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4"
-                  >
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Preview
-                  </Button>
-                )}
-                {isAdmin && (
-                  <Button
-                    data-tour="site-save-button"
-                    type="button"
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="h-11 min-w-0 rounded-[6px] px-4"
-                  >
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Salvar alterações
-                  </Button>
-                )}
-              </div>
-            </div>
-
+          <Tabs data-tour="site-settings" value={siteActiveTab} onValueChange={setSiteActiveTab} className="w-full">
             <div className="min-w-0 space-y-6">
-            <TabsContent data-tour="site-general-settings" value="general" className="mt-0">
+            <TabsContent id="site-panel-general" aria-labelledby="site-tab-general" data-tour="site-general-settings" value="general" className="mt-0">
               {generalView === 'domain-guide' ? (
                 <DomainConnectionGuide
                   site={site}
@@ -638,7 +603,7 @@ export default function SiteSettings() {
               )}
             </TabsContent>
 
-            <TabsContent data-tour="site-appearance-settings" value="appearance" className="mt-0">
+            <TabsContent id="site-panel-appearance" aria-labelledby="site-tab-appearance" data-tour="site-appearance-settings" value="appearance" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Aparência</CardTitle>
@@ -981,7 +946,7 @@ export default function SiteSettings() {
               </Card>
             </TabsContent>
 
-            <TabsContent data-tour="site-contact-settings" value="contact" className="mt-0">
+            <TabsContent id="site-panel-contact" aria-labelledby="site-tab-contact" data-tour="site-contact-settings" value="contact" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Contato</CardTitle>
@@ -1057,7 +1022,7 @@ export default function SiteSettings() {
               </Card>
             </TabsContent>
 
-            <TabsContent data-tour="site-social-settings" value="social" className="mt-0">
+            <TabsContent id="site-panel-social" aria-labelledby="site-tab-social" data-tour="site-social-settings" value="social" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Social</CardTitle>
@@ -1108,7 +1073,7 @@ export default function SiteSettings() {
               </Card>
             </TabsContent>
 
-            <TabsContent data-tour="site-seo-settings" value="seo" className="mt-0">
+            <TabsContent id="site-panel-seo" aria-labelledby="site-tab-seo" data-tour="site-seo-settings" value="seo" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">SEO</CardTitle>
@@ -1238,7 +1203,7 @@ export default function SiteSettings() {
               </Card>
             </TabsContent>
 
-            <TabsContent data-tour="site-menu-settings" value="menu" className="mt-0">
+            <TabsContent id="site-panel-menu" aria-labelledby="site-tab-menu" data-tour="site-menu-settings" value="menu" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Menu</CardTitle>
@@ -1250,7 +1215,7 @@ export default function SiteSettings() {
               </Card>
             </TabsContent>
 
-            <TabsContent data-tour="site-about-settings" value="about" className="mt-0">
+            <TabsContent id="site-panel-about" aria-labelledby="site-tab-about" data-tour="site-about-settings" value="about" className="mt-0">
               <AboutTab
                 formData={formData}
                 setFormData={setFormData}
@@ -1267,6 +1232,10 @@ export default function SiteSettings() {
           </Tabs>
         )}
       </div>
+          </FormWizardLayout>
+        </DialogContent>
+      </Dialog>
+      <FormWizardDiscardDialog open={discardDialogOpen} onOpenChange={setDiscardDialogOpen} onConfirm={closeEditor} busy={editorBusy} />
       <AlertDialog
         open={unpublishDialogOpen}
         onOpenChange={(open) => {

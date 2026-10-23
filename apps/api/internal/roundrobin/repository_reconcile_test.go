@@ -163,6 +163,28 @@ func TestPlanRuleReconciliationEditsInPlaceAndRejectsForeignID(t *testing.T) {
 	}
 }
 
+func TestReferenceValidationPreservesLegacyReorderingButChecksActivationAndMatcherChanges(t *testing.T) {
+	const ruleID = "11111111-1111-4111-8111-111111111111"
+	saved := persistedRuleState{ID: ruleID, MatchType: "legacy_custom", MatchValue: "retained", Match: map[string]any{"custom": true}, Priority: 4, IsActive: false}
+	reordered := ruleInput{ID: ruleID, MatchType: saved.MatchType, MatchValue: saved.MatchValue, Match: saved.Match, Priority: 6, IsActive: false, PrioritySet: true}
+	plan, err := planRuleReconciliation([]persistedRuleState{saved}, []ruleInput{reordered})
+	if err != nil || len(plan.Updates) != 1 {
+		t.Fatalf("priority change must be planned: %#v, %v", plan, err)
+	}
+	if len(rulesRequiringReferenceValidation([]persistedRuleState{saved}, plan)) != 0 {
+		t.Fatal("reordering must not reject an unchanged legacy matcher")
+	}
+	plan.Updates[0].Rule.IsActive = true
+	if len(rulesRequiringReferenceValidation([]persistedRuleState{saved}, plan)) != 1 {
+		t.Fatal("reactivating a rule must check its references")
+	}
+	plan.Updates[0].Rule.IsActive = false
+	plan.Updates[0].Rule.MatchValue = "changed"
+	if len(rulesRequiringReferenceValidation([]persistedRuleState{saved}, plan)) != 1 {
+		t.Fatal("changing a matcher must check its references")
+	}
+}
+
 func TestPlanRuleReconciliationFallsBackToExactSemanticsWithoutID(t *testing.T) {
 	const ruleID = "11111111-1111-4111-8111-111111111111"
 	plan, err := planRuleReconciliation([]persistedRuleState{{

@@ -1,5 +1,6 @@
 import type { HistoryMetadata, LeadHistoryFormatters } from './types';
 import { metadataNumber, metadataString } from './metadata';
+import { getAgendaHistoryPresentation } from './agenda-history';
 
 
 export function sourceLabel(source?: string | null): string | null {
@@ -23,7 +24,7 @@ export function sourceLabel(source?: string | null): string | null {
     outros: 'Outros',
     outro: 'Outro',
   };
-  return labels[source] || source;
+  return Object.hasOwn(labels, source) ? labels[source] : source;
 }
 
 // Types that only exist in activities (never in timeline) - no deduplication needed
@@ -42,6 +43,7 @@ export const ACTIVITY_ONLY_TYPES = new Set([
   'commission_updated',
   'property_selected',
   'property_linked',
+  'property_interests_changed',
   'document_attached',
   'attachment_created',
   'proposal_sent',
@@ -49,6 +51,9 @@ export const ACTIVITY_ONLY_TYPES = new Set([
   'agenda_rescheduled',
   'agenda_completed',
   'agenda_cancelled',
+  'agenda_no_show',
+  'agenda_commented',
+  'agenda_updated',
   'visit_scheduled',
   'visit_made',
   'visit_confirmed',
@@ -77,14 +82,16 @@ export const TIMELINE_AUTHORITY_TYPES = new Set([
 ]);
 
 export function buildLabel(type: string, metadata: HistoryMetadata): string {
+  const agenda = getAgendaHistoryPresentation(type, metadata);
+  if (agenda) return agenda.label;
   switch (type) {
     case 'lead_created': {
-      const src = metadata?.source_label || metadata?.source;
+      const src = metadataString(metadata?.source_label) || metadataString(metadata?.source);
       if (!src) return 'Lead criado';
       if (src === 'meta_ads' || src === 'Meta Ads') return 'Lead criado via Meta Ads';
       if (src === 'whatsapp' || src === 'WhatsApp') return 'Lead criado via WhatsApp';
       if (src === 'webhook' || src === 'Webhook' || src === 'generic_webhook') {
-        const name = metadata?.form_name || metadata?.webhook_name;
+        const name = metadataString(metadata?.form_name) || metadataString(metadata?.webhook_name);
         return name ? `Lead criado via "${name}"` : 'Lead criado via Webhook';
       }
       if (src === 'website' || src === 'Site') return 'Lead criado via Site';
@@ -92,8 +99,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       return `Lead criado via ${src}`;
     }
     case 'lead_assigned': {
-      const queueName = metadata?.distribution_queue_name || metadata?.queue_name;
-      const assignedName = metadata?.assigned_user_name;
+      const queueName = metadataString(metadata?.distribution_queue_name) || metadataString(metadata?.queue_name);
+      const assignedName = metadataString(metadata?.assigned_user_name);
       if (queueName && assignedName) return `Distribuído via "${queueName}" → ${assignedName}`;
       if (queueName) return `Distribuído via "${queueName}"`;
       if (metadata?.destination === 'admin_fallback') return 'Atribuído ao administrador (sem fila ativa)';
@@ -103,8 +110,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     }
     case 'stage_changed':
     case 'stage_change': {
-      const from = metadata?.old_stage_name || metadata?.from_stage;
-      const to = metadata?.new_stage_name || metadata?.to_stage;
+      const from = metadataString(metadata?.old_stage_name) || metadataString(metadata?.from_stage);
+      const to = metadataString(metadata?.new_stage_name) || metadataString(metadata?.to_stage);
       if (!from || from === 'Desconhecido' || from === 'Unknown') {
         return `Iniciado no estágio ${to || 'Base'}`;
       }
@@ -122,10 +129,14 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     case 'note_created':
     case 'note':
       return 'Nota adicionada';
-    case 'tag_added':
-      return metadata?.tag_name ? `Tag "${metadata.tag_name}" adicionada` : 'Tag adicionada';
-    case 'tag_removed':
-      return metadata?.tag_name ? `Tag "${metadata.tag_name}" removida` : 'Tag removida';
+    case 'tag_added': {
+      const name = metadataString(metadata?.tag_name);
+      return name ? `Tag "${name}" adicionada` : 'Tag adicionada';
+    }
+    case 'tag_removed': {
+      const name = metadataString(metadata?.tag_name);
+      return name ? `Tag "${name}" removida` : 'Tag removida';
+    }
     case 'sla_warning':
       return 'SLA em alerta';
     case 'sla_overdue':
@@ -144,6 +155,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       if (code || title) return `Imovel selecionado: ${code || title}`;
       return 'Imovel selecionado';
     }
+    case 'property_interests_changed':
+      return 'Imóveis de interesse atualizados';
     case 'document_attached':
     case 'attachment_created': {
       const fileName =
@@ -164,7 +177,7 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     case 'meta_creative':
       return 'Criativo Meta';
     case 'automation_message': {
-      const ch = metadata?.channel || 'whatsapp';
+      const ch = metadataString(metadata?.channel) || 'whatsapp';
       return `Mensagem automática (${ch === 'whatsapp' ? 'WhatsApp' : ch})`;
     }
     case 'task_completed':
@@ -172,12 +185,13 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     case 'contact_updated':
       return 'Contato atualizado';
     case 'assignee_changed': {
-      if (metadata?.distribution_queue_name && metadata?.to_user_name) {
+      const queueName = metadataString(metadata?.distribution_queue_name);
+      const targetName = metadataString(metadata?.to_user_name);
+      if (queueName && targetName) {
         const prefix = metadata?.is_initial_distribution === false ? 'Redistribuído' : 'Distribuído';
-        return `${prefix} por "${metadata.distribution_queue_name}" → ${metadata.to_user_name}`;
+        return `${prefix} por "${queueName}" → ${targetName}`;
       }
       const actorName = metadataString(metadata?.transferred_by_name);
-      const targetName = metadataString(metadata?.to_user_name);
       if (!metadata?.to_user_id && !targetName) {
         return actorName ? `Responsável removido por ${actorName}` : 'Responsável removido';
       }
@@ -187,7 +201,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     }
     case 'lead_reentry': {
       if (metadata?.entry_type === 'manual_reentry') return 'Lead reentrou';
-      if (metadata?.webhook_name) return `Lead reentrou via webhook "${metadata.webhook_name}"`;
+      const webhookName = metadataString(metadata?.webhook_name);
+      if (webhookName) return `Lead reentrou via webhook "${webhookName}"`;
       if (metadata?.source === 'whatsapp') return 'Lead reentrou via WhatsApp';
       return `Lead reentrou via ${sourceLabel(metadataString(metadata?.source)) || 'sistema'}`;
     }
@@ -198,7 +213,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
         metadataString(metadata?.old_status);
       const to = metadataString(metadata?.to_status);
       const statusMap: Record<string, string> = { open: 'Aberto', won: 'Ganho', lost: 'Perdido' };
-      if (from && to) return `Status: ${statusMap[from] || from} → ${statusMap[to] || to}`;
+      const statusName = (value: string) => Object.hasOwn(statusMap, value) ? statusMap[value] : value;
+      if (from && to) return `Status: ${statusName(from)} → ${statusName(to)}`;
       return 'Status alterado';
     }
     case 'commission_created':
@@ -217,32 +233,16 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
       return 'Imovel reservado';
     case 'whatsapp':
       return 'Mensagem WhatsApp';
-    case 'assignment':
-      return metadata?.to_user_name ? `Atribuído a ${metadata.to_user_name}` : 'Lead atribuído';
+    case 'assignment': {
+      const targetName = metadataString(metadata?.to_user_name);
+      return targetName ? `Atribuído a ${targetName}` : 'Lead atribuído';
+    }
     case 'automation_stage_move':
       return 'Movido por automação';
     case 'automation_tag_added':
       return 'Tag adicionada por automação';
     case 'proposal_sent':
       return 'Proposta registrada';
-    case 'agenda_created':
-      return 'Atividade agendada';
-    case 'agenda_rescheduled':
-      return 'Atividade remarcada';
-    case 'agenda_completed':
-      return 'Atividade concluida';
-    case 'agenda_cancelled':
-      return 'Atividade cancelada';
-    case 'visit_scheduled':
-      return 'Visita agendada';
-    case 'visit_made':
-    case 'visit_confirmed':
-      return 'Visita realizada';
-    case 'meeting_scheduled':
-      return 'Reunião agendada';
-    case 'meeting_made':
-    case 'meeting_held':
-      return 'Reunião realizada';
     default: {
       if (metadata?.is_automation) return 'Ação automática registrada';
       const translations: Record<string, string> = {
@@ -254,12 +254,8 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
         'assignment_changed': 'Responsável alterado',
         'lead_stage_changed': 'Etapa alterada',
         'lost_lead_recovered': 'Lead recuperado',
-        'agenda_created': 'Atividade agendada',
-        'agenda_rescheduled': 'Atividade remarcada',
-        'agenda_completed': 'Atividade concluída',
-        'agenda_cancelled': 'Atividade cancelada'
       };
-      return translations[type] || 'Atividade registrada';
+      return Object.hasOwn(translations, type) ? translations[type] : 'Atividade registrada';
     }
   }
 }
@@ -269,11 +265,13 @@ export function buildContent(
   metadata: HistoryMetadata,
   formatters: LeadHistoryFormatters,
 ): string | undefined {
+  const agenda = getAgendaHistoryPresentation(type, metadata, { timeZone: formatters.timeZone });
+  if (agenda) return agenda.content;
   switch (type) {
     case 'first_response': {
-      const secs = metadata?.response_seconds;
-      if (secs !== undefined && secs !== null) {
-        return `${metadata?.is_automation ? 'Resposta automática' : 'Primeiro contato'}: ${formatters.formatResponseTime(Number(secs))}`;
+      const secs = metadataNumber(metadata?.response_seconds);
+      if (secs !== null) {
+        return `${metadata?.is_automation ? 'Resposta automática' : 'Primeiro contato'}: ${formatters.formatResponseTime(secs)}`;
       }
       return undefined;
     }
@@ -295,25 +293,20 @@ export function buildContent(
       if (price) details.push(formatters.formatCurrency(price));
       return details.join(' | ') || undefined;
     }
+    case 'property_interests_changed': {
+      const added = metadataNumber(metadata?.added_count);
+      const removed = metadataNumber(metadata?.removed_count);
+      const current = metadataNumber(metadata?.current_count);
+      const counts = [
+        added !== null && Number.isInteger(added) && added > 0 ? `${added} ${added === 1 ? 'imóvel adicionado' : 'imóveis adicionados'}` : null,
+        removed !== null && Number.isInteger(removed) && removed > 0 ? `${removed} ${removed === 1 ? 'imóvel removido' : 'imóveis removidos'}` : null,
+        current !== null && Number.isInteger(current) && current >= 0 ? `Total: ${current}` : null,
+      ];
+      return counts.filter(Boolean).join(' · ') || undefined;
+    }
     case 'document_attached':
     case 'attachment_created':
       return metadataString(metadata?.file_name) || metadataString(metadata?.attachment_name) || undefined;
-    case 'agenda_created':
-    case 'agenda_rescheduled':
-    case 'agenda_completed':
-    case 'agenda_cancelled':
-    case 'visit_scheduled':
-    case 'visit_confirmed':
-    case 'meeting_scheduled':
-    case 'meeting_held': {
-      const title = metadataString(metadata?.title) || metadataString(metadata?.event_title);
-      const startsAt =
-        metadataString(metadata?.starts_at) ||
-        metadataString(metadata?.start_at) ||
-        metadataString(metadata?.start_time) ||
-        metadataString(metadata?.scheduled_at);
-      return [title, startsAt].filter(Boolean).join(' | ') || undefined;
-    }
     default:
       return undefined;
   }

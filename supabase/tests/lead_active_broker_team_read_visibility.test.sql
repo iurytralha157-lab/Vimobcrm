@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(42);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -348,6 +348,118 @@ select is(
   6::bigint,
   'legacy lead_edit_all still implies organization-wide lead read access'
 );
+select ok(
+  private.user_has_permission('lead_edit_all', (select auth.uid())),
+  'active legacy role still grants its permission in the selected organization'
+);
+
+reset role;
+update public.organization_roles
+set is_active = false
+where id = 'f1050000-0000-4000-8000-000000000001';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select ok(
+  not private.user_has_permission('lead_edit_all', (select auth.uid())),
+  'inactive legacy role no longer grants lead_edit_all'
+);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'inactive legacy role no longer expands lead reads'
+);
+select is(
+  (select count(*) from public.lead_attachments where file_name = 'broker-a.txt'),
+  0::bigint,
+  'inactive legacy role cannot read attachments through the lead policy'
+);
+
+reset role;
+update public.organization_roles
+set is_active = true
+where id = 'f1050000-0000-4000-8000-000000000001';
+update public.user_organization_roles
+set is_active = false
+where role_id = 'f1050000-0000-4000-8000-000000000001';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select ok(
+  not private.user_has_permission('lead_edit_all', (select auth.uid())),
+  'inactive legacy assignment no longer grants lead_edit_all'
+);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'inactive legacy assignment no longer expands lead reads'
+);
+select is(
+  (select count(*) from public.lead_attachments where file_name = 'broker-a.txt'),
+  0::bigint,
+  'inactive legacy assignment cannot read attachments through the lead policy'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select ok(
+  not private.user_has_permission_in_organization(
+    'lead_edit_all',
+    'f1020000-0000-4000-8000-000000000006'::uuid,
+    'f1010000-0000-4000-8000-000000000002'::uuid
+  ),
+  'a role in organization A cannot supply the legacy grant in organization B'
+);
+update public.user_organization_roles
+set is_active = true
+where role_id = 'f1050000-0000-4000-8000-000000000001';
+insert into public.user_permission_overrides (
+  organization_id, user_id, permission_key, allowed
+)
+values (
+  'f1010000-0000-4000-8000-000000000001',
+  'f1020000-0000-4000-8000-000000000006',
+  'lead_view_all', false
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'explicit lead_view_all denial defeats an active legacy custom role'
+);
+select is(
+  (select count(*) from public.lead_attachments where file_name = 'broker-a.txt'),
+  0::bigint,
+  'explicit lead_view_all denial also protects attachments'
+);
+
+reset role;
+update public.organization_members
+set role = 'manager'
+where organization_id = 'f1010000-0000-4000-8000-000000000001'
+  and user_id = 'f1020000-0000-4000-8000-000000000006';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000006', true);
+select is(
+  (select count(*) from public.leads where organization_id = 'f1010000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'explicit lead_view_all denial defeats the manager default'
+);
+select is(
+  (select count(*) from public.lead_attachments where file_name = 'broker-a.txt'),
+  0::bigint,
+  'manager denial also protects attachments'
+);
+
+reset role;
+update public.organization_members
+set role = 'user'
+where organization_id = 'f1010000-0000-4000-8000-000000000001'
+  and user_id = 'f1020000-0000-4000-8000-000000000006';
+delete from public.user_permission_overrides
+where organization_id = 'f1010000-0000-4000-8000-000000000001'
+  and user_id = 'f1020000-0000-4000-8000-000000000006'
+  and permission_key = 'lead_view_all';
+set local role authenticated;
 
 select set_config('request.jwt.claim.sub', 'f1020000-0000-4000-8000-000000000001', true);
 select is(

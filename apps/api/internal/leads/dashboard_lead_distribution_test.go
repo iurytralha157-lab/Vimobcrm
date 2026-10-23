@@ -112,6 +112,7 @@ func TestDashboardLeadDistributionUsesCurrentActiveMembershipAndIncludesZeroTeam
 		"'Sem responsável'", "coalesce(c.lead_count, 0)",
 		"u.id = any($9::uuid[])", "l.created_at >= $5",
 		"om.organization_id = $1::uuid and om.user_id = u.id",
+		"tm.membership_generation = om.membership_generation",
 	} {
 		if !strings.Contains(userQuery, fragment) {
 			t.Fatalf("broker distribution query is missing %q: %s", fragment, userQuery)
@@ -121,6 +122,7 @@ func TestDashboardLeadDistributionUsesCurrentActiveMembershipAndIncludesZeroTeam
 		"from public.leads l", "join public.team_members tm",
 		"tm.user_id = f.assigned_user_id", "coalesce(tm.is_active, true) = true",
 		"coalesce(u.is_active, false) = true", "om.deleted_at is null",
+		"om.membership_generation = tm.membership_generation",
 		"t.is_active = true", "t.id = any($7::uuid[])",
 		"t.id::text = $8::text",
 		"count(distinct f.id)", "left join counts c", "coalesce(c.lead_count, 0)",

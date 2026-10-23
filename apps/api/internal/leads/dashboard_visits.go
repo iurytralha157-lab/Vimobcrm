@@ -12,9 +12,10 @@ import (
 const dashboardVisitListLimit = 100
 const dashboardVisitAlertListLimit = 20
 
-// $3 is the active user in buildDashboardLeadWhere; the formatted placeholder
-// is the organization admin flag appended by buildDashboardScheduledVisitsWhere. Keep this scope
-// aligned with scheduleDashboardDetailScopeSQL in the Agenda domain.
+// $3 is the active user and $4 is the scoped lead-team read permission from
+// buildDashboardLeadWhere. The formatted placeholder is the organization admin
+// flag. Agenda retains its own ScheduleView permission; both domains require
+// current active people and teams before granting access through leadership.
 const dashboardVisitEventVisibilitySQL = `(
 	coalesce(se.visibility, 'default') = 'public'
 	or $%[1]d::boolean
@@ -27,13 +28,34 @@ const dashboardVisitEventVisibilitySQL = `(
 	)
 	or (
 		coalesce(se.visibility, 'default') <> 'private'
+		and $4::boolean
 		and exists (
 			select 1
 			from public.team_members visit_leader
+			join public.teams visit_team
+			  on visit_team.id = visit_leader.team_id
+			 and visit_team.organization_id = visit_leader.organization_id
+			 and coalesce(visit_team.is_active, false) = true
 			join public.team_members visit_member
 			  on visit_member.organization_id = visit_leader.organization_id
 			 and visit_member.team_id = visit_leader.team_id
 			 and coalesce(visit_member.is_active, true) = true
+			join public.organization_members visit_leader_membership
+			  on visit_leader_membership.organization_id = visit_leader.organization_id
+			 and visit_leader_membership.user_id = visit_leader.user_id
+			 and visit_leader_membership.membership_generation = visit_leader.membership_generation
+			 and visit_leader_membership.is_active = true
+			 and visit_leader_membership.deleted_at is null
+			join public.organization_members visit_member_membership
+			  on visit_member_membership.organization_id = visit_member.organization_id
+			 and visit_member_membership.user_id = visit_member.user_id
+			 and visit_member_membership.membership_generation = visit_member.membership_generation
+			 and visit_member_membership.is_active = true
+			 and visit_member_membership.deleted_at is null
+			join public.users visit_leader_user
+			  on visit_leader_user.id = visit_leader.user_id and coalesce(visit_leader_user.is_active, false) = true
+			join public.users visit_member_user
+			  on visit_member_user.id = visit_member.user_id and coalesce(visit_member_user.is_active, false) = true
 			where visit_leader.organization_id = se.organization_id
 			  and visit_leader.user_id = $3::uuid
 			  and coalesce(visit_leader.is_active, true) = true
@@ -102,9 +124,25 @@ type DashboardVisits struct {
 // time to leads.created_at. This also preserves Dashboard's visibility,
 // attribution, team and pipeline filters for every detail and aggregate.
 func (repo Repository) GetDashboardVisits(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardVisits, error) {
-	where, args, err := repo.buildDashboardScheduledVisitsWhere(tenantContext, filter)
+	query, args, err := repo.buildDashboardVisitsQuery(tenantContext, filter)
 	if err != nil {
 		return DashboardVisits{}, err
+	}
+	var raw []byte
+	if err := repo.db.Pool().QueryRow(ctx, query, args...).Scan(&raw); err != nil {
+		return DashboardVisits{}, err
+	}
+	var result DashboardVisits
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return DashboardVisits{}, fmt.Errorf("decode dashboard visits: %w", err)
+	}
+	return result, nil
+}
+
+func (repo Repository) buildDashboardVisitsQuery(tenantContext tenant.Context, filter DashboardFilter) (string, []any, error) {
+	where, args, err := repo.buildDashboardScheduledVisitsWhere(tenantContext, filter)
+	if err != nil {
+		return "", nil, err
 	}
 
 	args = append(args, dashboardVisitListLimit, dashboardVisitAlertListLimit)
@@ -135,7 +173,7 @@ func (repo Repository) GetDashboardVisits(ctx context.Context, tenantContext ten
 				se.end_time,
 				l.id::text as lead_id,
 				left(coalesce(nullif(btrim(l.name), ''), 'Lead sem nome'), 300) as lead_name,
-				left(coalesce(nullif(btrim(l.source), ''), 'Sem origem'), 180) as source,
+				case when nullif(btrim(l.source), '') is null then 'Sem origem' else l.source end as source,
 				se.created_by::text as created_by_id,
 				left(coalesce(nullif(btrim(creator.name), ''), 'Não identificado'), 300) as created_by_name,
 				left(creator.avatar_url, 2048) as created_by_avatar,
@@ -223,13 +261,5 @@ func (repo Repository) GetDashboardVisits(ctx context.Context, tenantContext ten
 		)::text
 		from totals cross join bounds`
 
-	var raw []byte
-	if err := repo.db.Pool().QueryRow(ctx, query, args...).Scan(&raw); err != nil {
-		return DashboardVisits{}, err
-	}
-	var result DashboardVisits
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return DashboardVisits{}, fmt.Errorf("decode dashboard visits: %w", err)
-	}
-	return result, nil
+	return query, args, nil
 }

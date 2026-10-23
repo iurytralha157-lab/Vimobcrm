@@ -296,6 +296,29 @@ func (repo Repository) hydrateLeadAvatar(ctx context.Context, authorizedOrganiza
 	}})
 }
 
+// Mutation responses must not wait on Storage after the transaction commits.
+// Reads still refresh signatures; a mutation may reuse only an unexpired,
+// tenant/lead-validated cache entry and never a legacy provider URL.
+func (repo Repository) hydrateMutationLeadAvatar(authorizedOrganizationID string, lead *Lead) {
+	if lead == nil {
+		return
+	}
+	lead.WhatsAppAvatarURL = nil
+	organizationID, ok := normalizeUUID(authorizedOrganizationID)
+	leadOrganizationID, leadOrganizationOK := normalizeUUID(lead.OrganizationID)
+	if !ok || !leadOrganizationOK || organizationID != leadOrganizationID || lead.WhatsAppAvatarStoragePath == nil {
+		return
+	}
+	objectPath := *lead.WhatsAppAvatarStoragePath
+	if !whatsAppAvatarStoragePathBelongsToLead(objectPath, organizationID, lead.ID) {
+		return
+	}
+	if cached, found := repo.whatsAppAvatarURLs.load(objectPath); found && cached.url != "" {
+		urlCopy := cached.url
+		lead.WhatsAppAvatarURL = &urlCopy
+	}
+}
+
 func (repo Repository) hydrateLeadAvatars(ctx context.Context, authorizedOrganizationID string, leads []Lead) {
 	records := make([]whatsAppAvatarReadModel, 0, len(leads))
 	for index := range leads {

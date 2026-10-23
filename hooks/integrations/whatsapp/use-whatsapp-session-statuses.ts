@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { useWhatsAppIntentMutation } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
 type UseWhatsAppSessionStatusesOptions = {
@@ -20,7 +21,7 @@ export function useWhatsAppSessionStatuses(
       scope.organizationId,
       scope.userId,
     ],
-    queryFn: () => whatsappAPI.getSessionStatuses(scope.organizationId),
+    queryFn: ({ signal }) => whatsappAPI.getSessionStatuses(scope.organizationId, { expectedUserId: scope.userId, signal }),
     enabled:
       options.enabled !== false &&
       Boolean(scope.organizationId) &&
@@ -38,12 +39,12 @@ export function useVerifyWhatsAppSessionStatus() {
   const scope = useWhatsAppQueryScope();
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (sessionId: string) => {
+  return useWhatsAppIntentMutation({
+    mutationFn: async (sessionId: string, intent) => {
       if (!scope.organizationId) {
         throw new Error("Selecione uma organização para verificar a conexão.");
       }
-      return whatsappAPI.getConnectionStatus(sessionId, scope.organizationId);
+      return whatsappAPI.getConnectionStatus(sessionId, intent.scope.organizationId, intent);
     },
     onSettled: () =>
       queryClient.invalidateQueries({

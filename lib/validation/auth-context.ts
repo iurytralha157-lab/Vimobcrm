@@ -149,6 +149,14 @@ export const apiMeResponseSchema = z
 
 export type MeResponse = z.infer<typeof apiMeResponseSchema>
 
+export const accountStatusSchema = z.object({
+  profileExists: z.boolean(),
+  globallyActive: z.boolean(),
+  isSuperAdmin: z.boolean(),
+})
+
+export type AccountStatus = z.infer<typeof accountStatusSchema>
+
 export const apiMeProfileResponseSchema = apiMeResponseSchema.extend({
   profile: userProfileSchema,
   organization: organizationSchema.nullable(),

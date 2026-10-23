@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { whatsappAPI, type WhatsAppConversation } from "@/lib/api/whatsapp";
 import { WHATSAPP_UNLINKED_LEAD_SNAPSHOT } from "@/lib/whatsapp-message-input";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { WHATSAPP_MESSAGES_RECONCILE_EVENT, type WhatsAppMessagesReconcileEventDetail } from "@/lib/whatsapp-query-cache";
 
 type MentionLookupContext = {
   groupJid?: string | null;
@@ -13,46 +15,13 @@ type LookupContext = MentionLookupContext & {
   organizationId?: string | null;
   userId?: string | null;
   accessScope?: string | null;
+  queryClient: QueryClient;
+  signal?: AbortSignal;
 };
 
-type CacheValue = string | null;
 type GroupParticipant = string | Record<string, unknown>;
-type CacheSubscriber = () => void;
-
-const cache = new Map<string, CacheValue>();
-const subscribersByCacheKey = new Map<string, Set<CacheSubscriber>>();
-const conversationsCache = new Map<string, Promise<WhatsAppConversation[]>>();
-
-function subscribeToCacheKeys(keys: readonly string[], subscriber: CacheSubscriber): () => void {
-  const uniqueKeys = new Set(keys);
-  if (uniqueKeys.size === 0) return () => undefined;
-
-  uniqueKeys.forEach((key) => {
-    const subscribers = subscribersByCacheKey.get(key) || new Set<CacheSubscriber>();
-    subscribers.add(subscriber);
-    subscribersByCacheKey.set(key, subscribers);
-  });
-
-  return () => {
-    uniqueKeys.forEach((key) => {
-      const subscribers = subscribersByCacheKey.get(key);
-      if (!subscribers) return;
-
-      subscribers.delete(subscriber);
-      if (subscribers.size === 0) subscribersByCacheKey.delete(key);
-    });
-  };
-}
-
-function notifyCacheKeys(keys: readonly string[]) {
-  const subscribersToNotify = new Set<CacheSubscriber>();
-  new Set(keys).forEach((key) => {
-    subscribersByCacheKey.get(key)?.forEach((subscriber) => {
-      subscribersToNotify.add(subscriber);
-    });
-  });
-  subscribersToNotify.forEach((subscriber) => subscriber());
-}
+const MENTION_NAME_STALE_MS = 60_000;
+const MENTION_FALLBACK_STALE_MS = 10_000;
 
 function normalize(raw: string): string {
   return raw.replace(/\D/g, "");
@@ -166,23 +135,16 @@ async function fetchConversations(context?: LookupContext): Promise<WhatsAppConv
     context.accessScope,
     context.sessionId || "all",
   ]);
-  if (!conversationsCache.has(key)) {
-    conversationsCache.set(
-      key,
-      whatsappAPI.getConversations({
+  return context.queryClient.fetchQuery({
+    queryKey: ["whatsapp-mention-conversations", context.organizationId, context.userId, context.accessScope, key],
+    staleTime: MENTION_NAME_STALE_MS,
+    gcTime: 5 * MENTION_NAME_STALE_MS,
+    queryFn: ({ signal }) => whatsappAPI.getConversations({
         organizationId: context.organizationId,
         sessionId: context.sessionId || undefined,
         filters: { showArchived: true },
-      }),
-    );
-  }
-
-  try {
-    return await conversationsCache.get(key)!;
-  } catch {
-    conversationsCache.delete(key);
-    return [];
-  }
+      }, { expectedUserId: context.userId, signal }),
+  });
 }
 
 async function findGroupConversation(context?: LookupContext): Promise<WhatsAppConversation | null> {
@@ -201,7 +163,7 @@ async function fetchMessageSenderName(digits: string, context?: LookupContext): 
       organizationId: context?.organizationId,
       limit: 200,
 	  expectedLeadId: conversation.lead_id || WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
-    });
+    }, { expectedUserId: context?.userId, signal: context?.signal });
     const digitVariants = new Set(buildDigitVariants(digits));
     const jidVariants = new Set(buildJidVariants(digits));
     const message = page.messages
@@ -215,6 +177,7 @@ async function fetchMessageSenderName(digits: string, context?: LookupContext): 
 
     return isUsefulName(message?.sender_name, digits) ? message!.sender_name : null;
   } catch {
+    context?.signal?.throwIfAborted();
     return null;
   }
 }
@@ -260,7 +223,8 @@ async function fetchGroupParticipantName(digits: string, context?: LookupContext
   if (!context?.groupJid || !context?.sessionId || !context.organizationId) return null;
 
   try {
-    const groups = await whatsappAPI.getGroups(context.sessionId, context.organizationId);
+    const groups = await whatsappAPI.getGroups(context.sessionId, context.organizationId,
+      { expectedUserId: context.userId, signal: context.signal });
     const group = groups.find((item) => item.group_jid === context.groupJid);
     const participants = Array.isArray(group?.participants) ? (group.participants as GroupParticipant[]) : [];
     const participant = findParticipant(participants, digits);
@@ -282,6 +246,7 @@ async function fetchGroupParticipantName(digits: string, context?: LookupContext
       return (await fetchKnownContactName(phoneDigits, context)) || formatPhone(phoneDigits);
     }
   } catch {
+    context.signal?.throwIfAborted();
     return null;
   }
 
@@ -300,7 +265,7 @@ async function fetchName(digits: string, context?: LookupContext): Promise<strin
 
 export function useMentionNames(rawDigitsList: string[], context?: MentionLookupContext): Record<string, string> {
   const queryScope = useWhatsAppQueryScope();
-  const [, force] = useState(0);
+  const queryClient = useQueryClient();
   const rawDigitsKey = rawDigitsList.join(",");
   const contextGroupJid = context?.groupJid;
   const contextSessionId = context?.sessionId;
@@ -322,49 +287,48 @@ export function useMentionNames(rawDigitsList: string[], context?: MentionLookup
           organizationId,
           userId,
           accessScope,
+          queryClient,
         }
         : undefined
     ),
-    [accessScope, contextGroupJid, contextLeadId, contextSessionId, organizationId, userId],
+    [accessScope, contextGroupJid, contextLeadId, contextSessionId, organizationId, queryClient, userId],
   );
-  const subscriptionKeys = useMemo(
-    () => normalizedDigits.map((digits) => cacheKey(digits, lookupContext)),
-    [lookupContext, normalizedDigits],
-  );
+  const names = useQueries({ queries: normalizedDigits.map((digits) => ({
+    queryKey: ["whatsapp-mention-names", organizationId, userId, accessScope, cacheKey(digits, lookupContext)],
+    enabled: Boolean(organizationId && userId && accessScope),
+    queryFn: ({ signal }: { signal: AbortSignal }) => fetchName(digits, lookupContext && { ...lookupContext, signal }),
+    staleTime: MENTION_FALLBACK_STALE_MS,
+    gcTime: 5 * MENTION_NAME_STALE_MS,
+    retry: 1,
+    refetchInterval: (query: { state: { data?: string } }) => query.state.data && query.state.data !== formatPhone(digits)
+      ? MENTION_NAME_STALE_MS : MENTION_FALLBACK_STALE_MS,
+    refetchIntervalInBackground: false,
+  })) });
 
   useEffect(() => {
-    if (subscriptionKeys.length === 0) return;
-    return subscribeToCacheKeys(subscriptionKeys, () => force((n) => n + 1));
-  }, [subscriptionKeys]);
-
-  useEffect(() => {
-    const toFetch = normalizedDigits.filter((digits) => !cache.has(cacheKey(digits, lookupContext)));
-    if (toFetch.length === 0) return;
-
-    toFetch.forEach((digits) => cache.set(cacheKey(digits, lookupContext), null));
-    void Promise.all(
-      toFetch.map(async (digits) => {
-        const key = cacheKey(digits, lookupContext);
-        let name = formatPhone(digits);
-        try {
-          name = await fetchName(digits, lookupContext);
-        } catch {
-          // Mantém o fallback já exibido e conclui a entrada para não prender o cache em loading.
-        }
-
-        const changed = cache.get(key) !== name;
-        cache.set(key, name);
-        return changed ? key : null;
-      }),
-    ).then((changedKeys) => {
-      notifyCacheKeys(changedKeys.filter((key): key is string => Boolean(key)));
-    });
-  }, [lookupContext, normalizedDigits]);
+    if (!normalizedDigits.length || !organizationId || !userId) return;
+    const reconcile = (event: Event) => {
+      const detail = (event as CustomEvent<WhatsAppMessagesReconcileEventDetail>).detail;
+      if (detail?.scope && (detail.scope.organizationId !== organizationId || detail.scope.userId !== userId
+        || detail.scope.accessScope !== accessScope)) return;
+      if (detail?.leadIds?.length && contextLeadId && !detail.leadIds.includes(contextLeadId)) return;
+      const prefixes = ["whatsapp-mention-conversations", "whatsapp-mention-names"];
+      // Revocation removes displayed names before refetching current authorization.
+      void Promise.all(prefixes.map(async (prefix) => {
+        const queryKey = [prefix, organizationId, userId, accessScope];
+        await queryClient.cancelQueries({ queryKey });
+        if (detail?.authorizationChanged) await queryClient.resetQueries({ queryKey });
+        else await queryClient.invalidateQueries({ queryKey });
+      }));
+    };
+    window.addEventListener(WHATSAPP_MESSAGES_RECONCILE_EVENT, reconcile);
+    return () => window.removeEventListener(WHATSAPP_MESSAGES_RECONCILE_EVENT, reconcile);
+  }, [accessScope, contextLeadId, normalizedDigits.length, organizationId, queryClient, userId]);
 
   const result: Record<string, string> = {};
   for (const raw of rawDigitsList) {
     const digits = normalize(raw);
-    const value = cache.get(cacheKey(digits, lookupContext));
+    const value = names[normalizedDigits.indexOf(digits)]?.data;
     result[raw] = value && typeof value === "string" ? value : formatPhone(digits);
   }
   return result;

@@ -9,10 +9,10 @@ import { getTechnicalErrorMessage } from "@/lib/api/vimob-error";
 
 export default function Error({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error("[app/error]", error);
@@ -54,7 +54,7 @@ export default function Error({
           </p>
         ) : null}
 
-        <Button className="mt-6 w-full" onClick={() => unstable_retry()}>
+        <Button className="mt-6 w-full" onClick={() => retry()}>
           <RefreshCcw className="h-4 w-4" aria-hidden="true" />
           Tentar novamente
         </Button>

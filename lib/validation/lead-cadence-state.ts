@@ -52,6 +52,7 @@ export const leadCadenceStateSchema = z.object({
   deal_status: z.string().trim().min(1),
   stage_id: uuidSchema,
   stage_name: z.string().trim().min(1),
+  time_zone: z.string().trim().min(1).max(100).optional(),
   stage_cycle_id: uuidSchema.nullish(),
   stage_entered_at: timestampSchema.nullish(),
   cadence_enabled: z.boolean(),

@@ -159,8 +159,9 @@ rewriting no provedor SMTP para não alterar o link de recuperação.
 Faça um canário com uma conta dedicada antes de liberar produção:
 
 1. Solicitar uma única recuperação em `https://app.vimobcrm.com.br/login`.
-2. Confirmar remetente/domínio, assunto, logo, faixa e botão laranja no e-mail
-   recebido, todo o texto em português e ausência das frases de fallback
+2. Confirmar remetente/domínio, assunto, logo compacto, layout claro sem
+   cartão e botão laranja no e-mail recebido, todo o texto em português e
+   ausência das frases de fallback
    `Reset Your Password`, `Follow this link` e `enter the code`, inclusive nos
    logs do Auth.
 3. Inspecionar o destino do botão: ele deve começar em
@@ -170,6 +171,39 @@ Faça um canário com uma conta dedicada antes de liberar produção:
    anterior deve falhar e a reutilização do link deve ser recusada.
 5. Só então executar os canários restantes de Auth. Se qualquer etapa falhar,
    interromper o cutover e manter a origem ativa.
+
+### Auth: sessões e limites de tentativas
+
+O código local da API consulta `auth.sessions` antes de trocar senha ou trocar
+organização. Uma sessão revogada recebe 401;
+se a consulta falhar, a operação recebe 503. Isso depende de o papel usado por
+`DATABASE_URL` ter acesso de leitura a `auth.sessions`. Confirme esse privilégio
+na stack de destino e faça um canário com sessão revogada antes de publicar a
+API. O guard não se aplica a acessos diretos ao Data API do Supabase; as
+políticas RLS continuam sendo a proteção dessas rotas.
+
+O Auth do Supabase possui [limites para `/auth/v1/token`, envio de e-mail e
+verificação](https://supabase.com/docs/guides/auth/rate-limits). O repositório oferece o overlay **opcional**
+`docker-compose.vimob-auth-rate-limits.yml`, com valores obrigatórios em
+`auth-email.env.example`. Nenhum valor foi escolhido para a stack ativa: a
+topologia do gateway, o cabeçalho de IP confiável e o volume normal por IP ainda
+precisam de readback. Antes de incluir esse overlay:
+
+1. Confirme que o gateway remove o cabeçalho vindo do cliente e grava nele o IP
+   verificado. `GOTRUE_RATE_LIMIT_HEADER` não pode confiar em um
+   `X-Forwarded-For` encaminhado sem limpeza.
+2. Meça o tráfego de login, refresh e recuperação, inclusive usuários atrás do
+   mesmo NAT, para definir limites sem bloquear acessos legítimos.
+3. Valide a composição com `docker compose config --quiet`, sem imprimir a
+   configuração inteira com segredos. Faça readback apenas dos quatro nomes de
+   variável do overlay, sem valores de SMTP ou chaves.
+4. Em ambiente isolado, teste 429 após o limite, resposta pública genérica na
+   recuperação para e-mail existente e inexistente, login normal após a janela e
+   revogação global de sessões. Repita com conta dedicada em canário antes de
+   considerar o ajuste ativo em produção.
+
+Este checkout local não comprova os limites nem os privilégios da stack que
+está executando o CRM.
 
 ### Convites provisórios: ordem obrigatória do rollout
 

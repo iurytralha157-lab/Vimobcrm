@@ -1,11 +1,13 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCreateStageAutomation, useUpdateStageAutomation, AutomationType, AUTOMATION_TYPE_LABELS, AUTOMATION_TYPE_DESCRIPTIONS, StageAutomation, type CreateAutomationData } from "@/hooks/use-stage-automations";
+import { useCreateStageAutomation, useUpdateStageAutomation, useStageAutomations, AutomationType, AUTOMATION_TYPE_LABELS, AUTOMATION_TYPE_DESCRIPTIONS, DEAL_STATUS_LABELS, StageAutomation, type CreateAutomationData } from "@/hooks/use-stage-automations";
 import { useOrganizationUsers } from "@/hooks/use-users";
 import { Loader2, Info, User, Trophy, XCircle, Circle } from "lucide-react";
+import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
+import { useStageInactivityAutomation } from '@/hooks/use-stage-inactivity-automation';
 
 interface AutomationFormProps {
   stageId: string;
@@ -13,39 +15,77 @@ interface AutomationFormProps {
   automation?: StageAutomation | null;
   onSuccess?: () => void;
   onCancel?: () => void;
+  terminalStatus?: 'won' | 'lost' | null;
+  onEditorStateChange?: (state: { isDirty: boolean; isSaving: boolean }) => void;
 }
 
-export function AutomationForm({ stageId, automation, onSuccess, onCancel }: AutomationFormProps) {
-  const [automationType, setAutomationType] = useState<AutomationType>('alert_on_inactivity');
-  const [triggerDays, setTriggerDays] = useState<number>(7);
-  const [alertMessage, setAlertMessage] = useState<string>('');
-  const [targetUserId, setTargetUserId] = useState<string>('');
-  const [dealStatus, setDealStatus] = useState<'open' | 'won' | 'lost'>('won');
+export function AutomationForm(props: AutomationFormProps) {
+  const inactivityMutation = useStageInactivityAutomation(props.stageId);
+  return <AutomationFormEditor key={`${inactivityMutation.scopeKey}:${props.stageId}:${props.automation?.id || 'new'}`} {...props} inactivityMutation={inactivityMutation} />;
+}
 
-  const { data: users } = useOrganizationUsers();
+function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, terminalStatus, onEditorStateChange, inactivityMutation }: AutomationFormProps & { inactivityMutation: ReturnType<typeof useStageInactivityAutomation> }) {
+  // Every automation type keeps the editor's original revision until explicit review.
+  const [automationSnapshot, setAutomationSnapshot] = useState(automation);
+  const config = automationSnapshot?.action_config as Record<string, unknown> | null;
+  const [automationType, setAutomationType] = useState<AutomationType>((automationSnapshot?.automation_type as AutomationType) || 'alert_on_inactivity');
+  const [triggerDays, setTriggerDays] = useState<number>(automationSnapshot?.trigger_days || 7);
+  const [alertMessage, setAlertMessage] = useState<string>(automationSnapshot?.alert_message || '');
+  const [targetUserId, setTargetUserId] = useState<string>((config?.target_user_id as string) || '');
+  const [dealStatus, setDealStatus] = useState<'open' | 'won' | 'lost'>((config?.deal_status as 'open' | 'won' | 'lost') || terminalStatus || 'won');
+  const [formError, setFormError] = useState<string | null>(null);
+  const saveInFlight = useRef(false);
+  const mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [needsVersionRefresh, setNeedsVersionRefresh] = useState(false);
+  const [versionReview, setVersionReview] = useState<StageAutomation | null>(null);
+  const [isRefreshingVersion, setIsRefreshingVersion] = useState(false);
+  const fingerprint = JSON.stringify([automationType, triggerDays, alertMessage, targetUserId, dealStatus]);
+  const [initialFingerprint] = useState(fingerprint);
+  const isDirty = fingerprint !== initialFingerprint;
+
+  const usersQuery = useOrganizationUsers();
+  const { data: users } = usersQuery;
+  const automationsQuery = useStageAutomations(stageId);
   const createAutomation = useCreateStageAutomation();
   const updateAutomation = useUpdateStageAutomation();
 
-  const isEditing = !!automation;
-  const isLoading = createAutomation.isPending || updateAutomation.isPending;
+  const isEditing = !!automationSnapshot;
+  const isLoading = createAutomation.isPending || updateAutomation.isPending || inactivityMutation.isPending || isRefreshingVersion;
 
 
-  useEffect(() => {
-    if (automation) {
-      // Parse action_config for new fields
-      const config = automation.action_config as Record<string, unknown> || {};
-      queueMicrotask(() => {
-        setAutomationType(automation.automation_type as AutomationType);
-        setTriggerDays(automation.trigger_days || 7);
-        setAlertMessage(automation.alert_message || '');
-        setTargetUserId((config.target_user_id as string) || '');
-        setDealStatus((config.deal_status as 'open' | 'won' | 'lost') || 'won');
-      });
-    }
-  }, [automation]);
+  useEffect(() => { onEditorStateChange?.({ isDirty, isSaving: isLoading }); }, [isDirty, isLoading, onEditorStateChange]);
+  const hasOtherAssignee = automationsQuery.data?.some((item) => item.id !== automationSnapshot?.id && item.is_active === true && item.automation_type === 'change_assignee_on_enter') ?? false;
+  const assigneeConflict = automationType === 'change_assignee_on_enter' && automationSnapshot?.is_active !== false && hasOtherAssignee;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isCurrent = createAutomation.captureScopeGuard();
+    if (!mounted.current || !isCurrent()) return;
+    if (isLoading || saveInFlight.current) return;
+    if (needsVersionRefresh) { setFormError('Atualize a versão da regra antes de salvar. Seu rascunho será mantido.'); return; }
+    if (isEditing && !automationSnapshot?.updated_at) {
+      setNeedsVersionRefresh(true);
+      setFormError('Não foi possível confirmar a versão desta regra. Carregue a versão atual para revisar; seu rascunho foi mantido.');
+      return;
+    }
+    if (automationType === 'alert_on_inactivity' && (!Number.isInteger(triggerDays) || triggerDays < 1 || triggerDays > 3650)) {
+      setFormError('Informe um prazo entre 1 e 3650 dias.');
+      return;
+    }
+    if (automationType === 'alert_on_inactivity' && alertMessage.trim().length > 1000) {
+      setFormError('A mensagem do alerta deve ter até 1000 caracteres.');
+      return;
+    }
+    if (automationType === 'change_assignee_on_enter' && !targetUserId) {
+      setFormError('Selecione um responsável antes de salvar.');
+      return;
+    }
+    if (assigneeConflict) { setFormError('Desative a outra automação ativa de responsável antes de salvar esta.'); return; }
+    if (automationType === 'change_deal_status_on_enter' && terminalStatus && dealStatus !== terminalStatus) {
+      setFormError('Escolha o status de Ganho ou Perdido correspondente à configuração desta coluna.');
+      return;
+    }
 
     const data: CreateAutomationData = {
       stage_id: stageId,
@@ -59,26 +99,75 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
       target_user_id: automationType === 'change_assignee_on_enter' ? targetUserId : undefined,
     };
 
-    if (isEditing && automation) {
-      await updateAutomation.mutateAsync({ id: automation.id, ...data });
-    } else {
-      await createAutomation.mutateAsync(data);
+    saveInFlight.current = true;
+    onEditorStateChange?.({ isDirty, isSaving: true });
+    setFormError(null);
+    let saved = false;
+    try {
+      if (automationType === 'alert_on_inactivity') {
+        const input = { trigger_days: triggerDays, alert_message: alertMessage, clock: 'last_interaction' as const, start_mode: 'activation' as const };
+        if (isEditing && automationSnapshot) {
+          if (!automationSnapshot.updated_at) throw new Error('Atualize a versão da regra antes de salvar.');
+          await inactivityMutation.mutateAsync({
+            id: automationSnapshot.id,
+            input: { ...input, is_enabled: automationSnapshot.inactivity_policy?.is_enabled === true, expected_updated_at: automationSnapshot.updated_at, expected_policy_revision: automationSnapshot.inactivity_policy?.revision ?? 0 },
+            runtimeAvailable: automationSnapshot.inactivity_runtime_available === true || automationSnapshot.inactivity_policy?.runtime_available === true,
+          });
+        } else await inactivityMutation.mutateAsync({ input: { ...input, stage_id: stageId, is_enabled: false } });
+      }
+      else if (isEditing && automationSnapshot?.updated_at) await updateAutomation.mutateAsync({ id: automationSnapshot.id, ...data, expected_updated_at: automationSnapshot.updated_at });
+      else await createAutomation.mutateAsync(data);
+      if (!mounted.current || !isCurrent()) return;
+      saved = true;
+      onSuccess?.();
+    } catch (error) {
+      if (!mounted.current || !isCurrent()) return;
+      const conflict = typeof error === 'object' && error !== null && 'status' in error && error.status === 409 &&
+        (automationType === 'alert_on_inactivity' || ('code' in error && error.code === 'stage_automation_changed'));
+      if (conflict) setNeedsVersionRefresh(true);
+      setFormError(conflict
+        ? 'Esta regra foi atualizada em outra sessão. Seu rascunho foi preservado. Carregue a versão atual e revise antes de salvar novamente.'
+        : getStructuredErrorMessage(error) || 'Não foi possível salvar a automação. Seu rascunho foi preservado.');
+    } finally {
+      if (mounted.current && isCurrent()) {
+        saveInFlight.current = false;
+        onEditorStateChange?.({ isDirty: saved ? false : isDirty, isSaving: false });
+      }
     }
+  };
 
-    onSuccess?.();
+  const refreshAutomationVersion = async () => {
+    const isCurrent = createAutomation.captureScopeGuard();
+    if (!mounted.current || !isCurrent()) return;
+    if (isLoading || saveInFlight.current || !automationSnapshot) return;
+    setIsRefreshingVersion(true);
+    try {
+      const result = await automationsQuery.refetch();
+      if (!mounted.current || !isCurrent()) return;
+      if (result.error) throw result.error;
+      const latest = result.data?.find((item) => item.id === automationSnapshot.id && item.stage_id === stageId);
+      if (!latest?.updated_at || (latest.automation_type === 'alert_on_inactivity') !== (automationSnapshot.automation_type === 'alert_on_inactivity')) throw new Error('Esta regra foi removida ou mudou de configuração. Reabra a lista de automações.');
+      setAutomationSnapshot(latest);
+      setVersionReview(latest);
+      setNeedsVersionRefresh(false);
+      setFormError(null);
+    } catch (error) {
+      if (mounted.current && isCurrent()) setFormError(getStructuredErrorMessage(error) || 'Não foi possível atualizar a versão. Seu rascunho foi preservado.');
+    } finally { if (mounted.current && isCurrent()) setIsRefreshingVersion(false); }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" aria-busy={isLoading}>
+      <fieldset disabled={isLoading} className="space-y-4">
       <div className="space-y-2">
-        <Label>Tipo de Automação</Label>
-        <Select value={automationType} onValueChange={(v) => setAutomationType(v as AutomationType)}>
-          <SelectTrigger>
+        <Label htmlFor="stage-automation-type">Tipo de Automação</Label>
+        <Select value={automationType} onValueChange={(v) => setAutomationType(v as AutomationType)} disabled={isEditing && automationSnapshot?.automation_type === 'alert_on_inactivity'}>
+          <SelectTrigger id="stage-automation-type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {(Object.keys(AUTOMATION_TYPE_LABELS) as AutomationType[]).map(type => (
-              <SelectItem key={type} value={type}>
+              <SelectItem key={type} value={type} disabled={isEditing && type === 'alert_on_inactivity' && automationSnapshot?.automation_type !== 'alert_on_inactivity'}>
                 {AUTOMATION_TYPE_LABELS[type]}
               </SelectItem>
             ))}
@@ -93,27 +182,32 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
       {/* Trigger Days - for inactivity alert */}
       {automationType === 'alert_on_inactivity' && (
         <div className="space-y-2">
-          <Label>Dias de Inatividade</Label>
+          <Label htmlFor="stage-automation-days">Dias de Inatividade</Label>
           <Input
             type="number"
+            id="stage-automation-days"
             min={1}
-            max={365}
+            max={3650}
             value={triggerDays}
             onChange={(e) => setTriggerDays(parseInt(e.target.value) || 1)}
           />
           <p className="text-xs text-muted-foreground">
-            Número de dias sem atividade para disparar a Automação
+            Conta a última interação humana a partir da ativação. Interações automáticas não reiniciam o prazo. Leads antigos não geram alertas imediatos.
           </p>
+          <p className="text-xs text-muted-foreground">{isEditing ? 'Configurar a regra não envia alertas. Ative ou desative pela lista de automações.' : 'A regra será criada desativada. Depois de configurar, ative pela lista de automações.'}</p>
+          {isEditing && automationSnapshot?.inactivity_runtime_available !== true && automationSnapshot?.inactivity_policy?.runtime_available !== true && <p role="status" className="text-xs text-muted-foreground">Os alertas de inatividade estão indisponíveis neste ambiente. Uma regra desativada pode ser configurada quando o serviço estiver preparado.</p>}
         </div>
       )}
       {/* Alert Message */}
       {automationType === 'alert_on_inactivity' && (
         <div className="space-y-2">
-          <Label>Mensagem do Alerta</Label>
+          <Label htmlFor="stage-automation-message">Mensagem do Alerta</Label>
           <Input
             value={alertMessage}
+            id="stage-automation-message"
             onChange={(e) => setAlertMessage(e.target.value)}
             placeholder="Lead está há X dias sem atendimento"
+            maxLength={1000}
           />
         </div>
       )}
@@ -121,12 +215,12 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
       {/* Target User - for change assignee automation */}
       {automationType === 'change_assignee_on_enter' && (
         <div className="space-y-2">
-          <Label className="flex items-center gap-2">
+          <Label htmlFor="stage-automation-assignee" className="flex items-center gap-2">
             <User className="h-4 w-4" />
             Novo Responsável
           </Label>
-          <Select value={targetUserId} onValueChange={setTargetUserId}>
-            <SelectTrigger>
+          <Select value={targetUserId} onValueChange={setTargetUserId} disabled={usersQuery.isPending || usersQuery.isError}>
+            <SelectTrigger id="stage-automation-assignee">
               <SelectValue placeholder="Selecione o Responsável" />
             </SelectTrigger>
             <SelectContent>
@@ -138,33 +232,36 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            O lead será atribuído automaticamente a este usuário ao entrar no estágio
+            O lead será atribuído a este usuário ao entrar na coluna. Apenas uma automação de responsável pode ficar ativa por coluna. Reabrir na mesma coluna não repete esta ação.
           </p>
+          {usersQuery.isPending && <p role="status" className="text-xs">Carregando responsáveis...</p>}
+          {usersQuery.isError && <div role="alert" className="text-xs"><p>Não foi possível carregar os responsáveis.</p><Button type="button" variant="outline" onClick={() => void usersQuery.refetch()}>Tentar novamente</Button></div>}
+          {assigneeConflict && <p role="alert" className="text-xs text-destructive">Já existe outra automação ativa de responsável nesta coluna. Desative-a antes de salvar esta.</p>}
         </div>
       )}
 
       {/* Deal Status - for change status automation */}
       {automationType === 'change_deal_status_on_enter' && (
         <div className="space-y-2">
-          <Label>Novo Status do Deal</Label>
+          <Label htmlFor="stage-automation-status">Novo Status do Deal</Label>
           <Select value={dealStatus} onValueChange={(v) => setDealStatus(v as 'open' | 'won' | 'lost')}>
-            <SelectTrigger>
+            <SelectTrigger id="stage-automation-status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="open">
+              <SelectItem value="open" disabled={Boolean(terminalStatus)}>
                 <div className="flex items-center gap-2">
                   <Circle className="h-4 w-4 text-blue-500" />
                   Aberto
                 </div>
               </SelectItem>
-              <SelectItem value="won">
+              <SelectItem value="won" disabled={terminalStatus === 'lost'}>
                 <div className="flex items-center gap-2">
                   <Trophy className="h-4 w-4 text-green-500" />
                   Ganho
                 </div>
               </SelectItem>
-              <SelectItem value="lost">
+              <SelectItem value="lost" disabled={terminalStatus === 'won'}>
                 <div className="flex items-center gap-2">
                   <XCircle className="h-4 w-4 text-red-500" />
                   Perdido
@@ -173,18 +270,29 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            O status do deal será alterado automaticamente ao entrar neste estágio
+            O status será alterado ao entrar nesta coluna. Reabrir sem mudar de coluna não repete esta ação.{terminalStatus ? ' Esta coluna possui resultado final fixo; a automação deve respeitá-lo.' : ''}
           </p>
         </div>
       )}
 
+      </fieldset>
+      {formError && <p role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-xs text-destructive">{formError}</p>}
+      {needsVersionRefresh && <Button type="button" variant="outline" onClick={() => void refreshAutomationVersion()} disabled={isLoading}>Carregar versão atual e revisar rascunho</Button>}
+      {versionReview && !needsVersionRefresh && <p role="status" className="rounded-[6px] bg-muted p-3 text-xs">
+        Versão atual carregada: {AUTOMATION_TYPE_LABELS[versionReview.automation_type as AutomationType] || versionReview.automation_type} ({versionReview.is_active ? 'ativa' : 'desativada'}).
+        {' '}{versionReview.automation_type === 'change_assignee_on_enter'
+          ? `Responsável: ${users?.find(user => user.id === versionReview.action_config?.target_user_id)?.name || 'Usuário não disponível'}.`
+          : versionReview.automation_type === 'change_deal_status_on_enter' ? `Status: ${DEAL_STATUS_LABELS[String(versionReview.action_config?.deal_status || 'open')] || 'Não definido'}.`
+          : `Prazo: ${versionReview.trigger_days} dias. Mensagem: ${versionReview.alert_message || 'Sem mensagem'}.`}
+        {' '}Seu rascunho foi mantido. Confira as diferenças antes de salvar.
+      </p>}
       <div className="flex gap-2 pt-4">
         {onCancel && (
-          <Button type="button" variant="outline" className="w-[40%] rounded-[6px]" onClick={onCancel}>
+          <Button type="button" variant="outline" className="w-[40%] rounded-[6px]" onClick={onCancel} disabled={isLoading}>
             Cancelar
           </Button>
         )}
-        <Button type="submit" disabled={isLoading} className={`rounded-[6px] ${onCancel ? 'w-[60%]' : 'w-full'}`}>
+        <Button type="submit" disabled={isLoading || needsVersionRefresh || assigneeConflict || (automationType === 'change_assignee_on_enter' && (usersQuery.isPending || usersQuery.isError))} className={`rounded-[6px] ${onCancel ? 'w-[60%]' : 'w-full'}`}>
           {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {isEditing ? 'Salvar' : 'Criar Automação'}
         </Button>

@@ -3,6 +3,7 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useCallback,
@@ -10,17 +11,14 @@ import {
   type SetStateAction,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { ImageUploader } from "@/components/features/properties/ImageUploader";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tabs } from "@/components/ui/tabs";
+import { FormWizardLayout } from "@/components/shared/forms/FormWizardLayout";
+import { FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from "@/config/form-wizard";
+import { PropertyHistoryDialog } from "@/components/features/properties/PropertyHistoryDialog";
 import {
   Loader2,
   Save,
@@ -35,6 +33,8 @@ import {
   Lock,
   Tag,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   useProperty,
@@ -86,18 +86,38 @@ import {
 } from "@/lib/api/property-media";
 import { propertyWorkspaceAPI } from "@/lib/api/property-workspace";
 import { propertiesAPI } from "@/lib/api/properties";
-import { requestAutomaticSitePublication } from "@/lib/api/property-auto-publication";
+import { requestAutomaticSitePublication, captureAutomaticSitePublicationAction, INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION, type AutomaticSitePublicationAction } from "@/lib/api/property-auto-publication";
 import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { releaseStagedPropertyPhotos } from "@/lib/property-media-draft";
-import { propertyUpdateInputSchema } from "@/lib/validation";
+import { propertyUpdateInputSchema, propertyCreateInputSchema } from "@/lib/validation";
+import { VimobAPIError } from "@/lib/api/vimob-error";
+import { getVimobAPIAccessTokenSessionId } from "@/lib/api/vimob-client";
+import { getClientRateLimitMessage } from "@/lib/client-action-rate-limit";
+import {
+  readPropertyCreationIntent,
+  preparePropertyCreationIntent,
+  forgetPropertyCreationIntent,
+  propertyCreationRejectionCanReset,
+  preserveConfirmedPropertyCreation,
+  type PropertyCreationIntent,
+} from "@/lib/properties/property-creation-intent";
+import { PropertyFormSubmission } from "@/lib/properties/property-form-submission";
+import { readConfirmedPropertyReceipt, verifyConfirmedPropertyRecovery, type ConfirmedPropertyReceipt } from "@/lib/properties/property-creation-recovery";
+import { usePropertyCepLookup } from "@/hooks/properties/use-property-cep-lookup";
+import { usePropertyFormScope } from "@/hooks/properties/use-property-form-scope";
+import { useTenantQueryAccessSignature } from "@/hooks/shared/use-tenant-query-access-signature";
+import { selectPropertyOwner } from "@/components/features/properties/property-form/property-owner-selection";
+import { propertySchemaIssuesToForm } from "@/components/features/properties/property-form/property-form-schema-issues";
+import { propertyEditDraftKey, propertyEditDraftAccessSignature, savePropertyEditDraft, recoverPropertyEditDraft, clearPropertyEditDraft, getPropertyEditDraftStorage, hasPropertyEditDraft } from "@/components/features/properties/property-form/property-edit-draft";
+import { PROPERTY_DRAFT_STORAGE_WARNING } from "@/components/features/properties/property-form/property-creation-draft";
+import { capturePropertyFormAction, type PropertyFormAction } from "@/components/features/properties/property-form/property-form-session";
 import {
   DEFAULT_DEAL_OPTIONS,
   DEFAULT_PURPOSE_OPTIONS,
   appendUniqueOption,
   buildPropertyMutationInput,
   clearDraft,
-  formatCep,
   getPropertyFormRules,
   getPropertyPublicationValidationIssues,
   getPropertyValidationIssues,
@@ -109,9 +129,11 @@ import {
   parseCurrencyInput,
   propertyDraftKey,
   readDraft,
+  readDraftState,
   saveDraft,
   type PropertyFormData,
   type PropertyOwnership,
+  type ValidationIssue,
 } from "./property-form/property-form-model";
 import { propertyToFormData } from "./property-form/property-form-mapping";
 import {
@@ -120,18 +142,21 @@ import {
 } from "./property-form/property-cep-location";
 import {
   selectLocationCity,
+  selectLocationCondominium,
   selectLocationNeighborhood,
   setManualLocationField,
 } from "./property-form/property-location-selection";
 import {
   arePropertySnapshotsEqualOutsideMedia,
   resolvePropertyFormRefetch,
+  rebasePropertyFormMedia,
 } from "./property-form/property-form-hydration";
 import {
   catalogLocationIdForMutation,
   catalogLocationsOnly,
 } from "./property-locations/model";
-import { propertyFormTabTriggerClass } from "./property-form/PropertyFormFields";
+import { PropertyFormDialog } from "@/components/features/properties/property-form/PropertyFormDialog";
+import { PropertyFormAside } from "@/components/features/properties/property-form/PropertyFormAside";
 import { usePropertyFormNavigationGuard } from "@/hooks/properties/use-property-form-navigation-guard";
 import {
   PropertyFormSectionsProvider,
@@ -155,38 +180,7 @@ type PropertyFormTab = {
   icon: typeof User;
 };
 
-type CreatedPropertyForMediaRetry = {
-  id: string;
-  organizationId: string;
-};
-
-const propertyIdPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function readCreatedPropertyForMediaRetry(
-  key: string,
-): CreatedPropertyForMediaRetry | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const value: unknown = JSON.parse(raw);
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !("id" in value) ||
-      !("organizationId" in value) ||
-      typeof value.id !== "string" ||
-      typeof value.organizationId !== "string" ||
-      !propertyIdPattern.test(value.id) ||
-      !propertyIdPattern.test(value.organizationId)
-    ) {
-      return null;
-    }
-    return { id: value.id, organizationId: value.organizationId };
-  } catch {
-    return null;
-  }
-}
+type CreatedPropertyForMediaRetry = ConfirmedPropertyReceipt;
 
 export default function PropertyForm() {
   const router = useRouter();
@@ -210,6 +204,13 @@ export default function PropertyForm() {
     user?.id ?? profile?.id,
   );
   const mediaRecoveryKey = `${draftKey}:created-property`;
+  const creationIntentKey = `${draftKey}:creation-intent`;
+  const editDraftKey = propertyEditDraftKey(activeOrganization.organizationId, user?.id, propertyId);
+  const accessSignature = useTenantQueryAccessSignature();
+  const { scope: formScope, isCurrent: isFormScopeCurrent } = usePropertyFormScope({
+    actorId: user?.id, organizationId: activeOrganization.organizationId,
+    resourceId: propertyId ?? "new", accessSignature,
+  });
 
   const [formData, setFormDataState] = useState<PropertyFormData>(() => {
     if (!propertyId && typeof window !== "undefined") {
@@ -222,8 +223,20 @@ export default function PropertyForm() {
     return initialFormData;
   });
   const propertyFormDirtyRef = useRef(false);
+  const submission = useRef(new PropertyFormSubmission());
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPreparingPhotos, setIsPreparingPhotos] = useState(false);
+  const [schemaValidationIssues, setSchemaValidationIssues] = useState<ValidationIssue[]>([]);
+  const [pendingCreation, setPendingCreation] = useState<PropertyCreationIntent | null>(null);
+  const [creationRecoveryError, setCreationRecoveryError] = useState<string | null>(null);
+  const [draftStorageWarning, setDraftStorageWarning] = useState<string | null>(null);
+  const [confirmedRecoveryError, setConfirmedRecoveryError] = useState<string | null>(null);
+  const [isCheckingCreatedProperty, setIsCheckingCreatedProperty] = useState(false);
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [hasConcurrencyConflict, setHasConcurrencyConflict] = useState(false);
+  const [editDraftRestored, setEditDraftRestored] = useState(false);
+  const [isRecoveringEditDraft, setIsRecoveringEditDraft] = useState(() => isEditing && hasPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey));
   const hydratedPropertyIdRef = useRef<string | null>(null);
   const hydratedPropertyUpdatedAtRef = useRef<string | null>(null);
   const hydratedPropertySnapshotRef = useRef<Record<string, unknown> | null>(
@@ -232,27 +245,29 @@ export default function PropertyForm() {
   const markPropertyFormPristine = useCallback(() => {
     propertyFormDirtyRef.current = false;
     setHasUnsavedChanges(false);
-  }, []);
+    setEditDraftRestored(false);
+    setIsRecoveringEditDraft(false);
+    clearPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey);
+  }, [editDraftKey]);
   const confirmFormNavigation = usePropertyFormNavigationGuard({
     enabled: hasUnsavedChanges,
     onConfirmDiscard: markPropertyFormPristine,
   });
   const setFormData = useCallback<Dispatch<SetStateAction<PropertyFormData>>>(
     (nextFormData) => {
+      if (!submission.current.canEdit() || pendingCreation || creationRecoveryError || confirmedRecoveryError || isCheckingCreatedProperty || isRecoveringEditDraft) return;
       propertyFormDirtyRef.current = true;
       setHasUnsavedChanges(true);
+      setSchemaValidationIssues([]);
       setFormDataState(nextFormData);
     },
-    [],
+    [pendingCreation, creationRecoveryError, confirmedRecoveryError, isCheckingCreatedProperty, isRecoveringEditDraft],
   );
   const [hasDraft, setHasDraft] = useState(
-    () =>
-      !propertyId &&
-      typeof window !== "undefined" &&
-      !!localStorage.getItem(draftKey),
+    () => !propertyId && typeof window !== "undefined" && Boolean(readDraft(draftKey)),
   );
   const [activeTab, setActiveTab] = useState("owner");
-  const propertyTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [hasTriedSubmit, setHasTriedSubmit] = useState(false);
   const [isPersistingMedia, setIsPersistingMedia] = useState(false);
   const [createdPropertyId, setCreatedPropertyId] = useState<string | null>(null);
@@ -261,12 +276,64 @@ export default function PropertyForm() {
   const createdPropertyForMediaRetryRef =
     useRef<CreatedPropertyForMediaRetry | null>(null);
   const createdPropertyMediaCompleteRef = useRef(false);
-  const submitInFlightRef = useRef(false);
   const stagedPhotoURLsRef = useRef<string[]>([]);
   const [purposeOptions, setPurposeOptions] = useState(DEFAULT_PURPOSE_OPTIONS);
 
+  const checkConfirmedProperty = useCallback(async (receipt: CreatedPropertyForMediaRetry, action?: PropertyFormAction) => {
+    const formAction = action ?? capturePropertyFormAction(() => isFormScopeCurrent(formScope), getVimobAPIAccessTokenSessionId);
+    const assertCurrentScope = () => {
+      formAction.assertCurrent();
+      if (receipt.organizationId !== formScope.organizationId || receipt.actorId !== formScope.actorId) throw new Error("A sessão do cadastro mudou. Reabra o imóvel antes de continuar.");
+    };
+    assertCurrentScope();
+    const result = await verifyConfirmedPropertyRecovery(receipt, async () => {
+      const { data } = await propertiesAPI.getProperty(receipt.id, receipt.organizationId, {
+        creationRecovery: true, expectedUserId: formScope.actorId, expectedSessionId: formAction.expectedSessionId, onRequestStart: assertCurrentScope,
+      });
+      return data;
+    });
+    assertCurrentScope();
+    if (result === "removed") {
+      // An ordinary 404/403 never reaches here. Keep the draft, and require a
+      // separate explicit save before a new creation intent can be sent.
+      localStorage.removeItem(mediaRecoveryKey);
+      forgetPropertyCreationIntent(localStorage, creationIntentKey);
+      createdPropertyForMediaRetryRef.current = null;
+      createdPropertyMediaCompleteRef.current = false;
+      setCreatedPropertyId(null);
+      setPendingCreation(null);
+      setMediaUploadFailure(null);
+      toast.info("O cadastro anterior foi excluído. O rascunho foi preservado; revise os dados antes de salvar um novo imóvel.", { duration: 8000 });
+    }
+    setConfirmedRecoveryError(null);
+    return result;
+  }, [creationIntentKey, formScope, isFormScopeCurrent, mediaRecoveryKey]);
+
   useEffect(() => {
-    propertyTabRefs.current[activeTab]?.scrollIntoView({
+    // Memory belongs to this mount/scope. Durable receipts remain in their
+    // original actor/tenant keys and will be checked by the recovery effect.
+    createdPropertyForMediaRetryRef.current = null;
+    createdPropertyMediaCompleteRef.current = false;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        setPendingCreation(isEditing ? null : readPropertyCreationIntent(localStorage, creationIntentKey));
+        setCreationRecoveryError(null);
+      } catch (error) {
+        setCreationRecoveryError(getErrorMessage(error));
+      }
+      setIsPreparingPhotos(false);
+      setIsCheckingCreatedProperty(false);
+      setConfirmedRecoveryError(null);
+      setCreatedPropertyId(null);
+      setMediaUploadFailure(null);
+    });
+    return () => { cancelled = true; };
+  }, [creationIntentKey, formScope, isEditing]);
+
+  useEffect(() => {
+    document.getElementById(`property-tab-${activeTab}`)?.scrollIntoView({
       block: "nearest",
       inline: "nearest",
     });
@@ -300,18 +367,6 @@ export default function PropertyForm() {
     useState(false);
   const [newCondominiumConciergeType, setNewCondominiumConciergeType] =
     useState("");
-  const [isCepLoading, setIsCepLoading] = useState(false);
-  const lastCepLookupRef = useRef("");
-  const cepLookupAbortRef = useRef<AbortController | null>(null);
-  const cepLookupSequenceRef = useRef(0);
-
-  useEffect(
-    () => () => {
-      cepLookupSequenceRef.current += 1;
-      cepLookupAbortRef.current?.abort();
-    },
-    [],
-  );
 
   useEffect(() => {
     if (
@@ -324,17 +379,13 @@ export default function PropertyForm() {
     }
 
     let isActive = true;
-    let draft: PropertyFormData | null = null;
-    try {
-      draft = readDraft(draftKey);
-    } catch {
-      draft = null;
-    }
+    const { draft, warning } = readDraftState(draftKey);
 
     queueMicrotask(() => {
       if (!isActive || createdPropertyForMediaRetryRef.current) return;
       setFormDataState(draft ?? initialFormData);
       setHasDraft(!!draft);
+      setDraftStorageWarning(warning);
     });
 
     return () => {
@@ -350,32 +401,55 @@ export default function PropertyForm() {
     ) {
       return;
     }
-    const pending = readCreatedPropertyForMediaRetry(mediaRecoveryKey);
-    if (!pending || pending.organizationId !== activeOrganization.organizationId) {
+    // Editing is confirmed by its normal scoped read and can be allowed
+    // without the management permission required to prove deletion.
+    if (isEditing) return;
+    let pending: CreatedPropertyForMediaRetry | null;
+    try {
+      pending = readConfirmedPropertyReceipt(localStorage, mediaRecoveryKey, formScope);
+    } catch (error) {
+      queueMicrotask(() => {
+        if (isFormScopeCurrent(formScope)) setConfirmedRecoveryError(getErrorMessage(error));
+      });
       return;
     }
-    if (isEditing) {
-      if (propertyId === pending.id) {
-        try {
-          localStorage.removeItem(mediaRecoveryKey);
-        } catch {
-          // Browser storage may be unavailable; editing still uses this ID.
-        }
-      }
+    if (!pending || pending.organizationId !== activeOrganization.organizationId) {
       return;
     }
     // A reload loses the File objects. Resume on the existing property's edit
     // page so another click can never create a duplicate property.
-    if (createdPropertyForMediaRetryRef.current?.id !== pending.id) {
-      router.replace(`/properties/${pending.id}/edit`);
-    }
+    if (!isEditing && createdPropertyForMediaRetryRef.current?.id === pending.id) return;
+    let cancelled = false;
+    const recoveryAction = capturePropertyFormAction(() => isFormScopeCurrent(formScope), getVimobAPIAccessTokenSessionId);
+    queueMicrotask(async () => {
+      if (cancelled || !recoveryAction.isCurrent()) return;
+      setIsCheckingCreatedProperty(true);
+      try {
+        const result = await checkConfirmedProperty(pending, recoveryAction);
+        if (cancelled || !recoveryAction.isCurrent()) return;
+        if (result === "existing") {
+          router.replace(`/properties/${pending.id}/edit`);
+        }
+      } catch (error) {
+        if (!cancelled && recoveryAction.isCurrent()) {
+          setConfirmedRecoveryError("Não foi possível confirmar o cadastro anterior. " + getErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled && isFormScopeCurrent(formScope)) setIsCheckingCreatedProperty(false);
+      }
+    });
+    return () => { cancelled = true; };
   }, [
     activeOrganization.organizationId,
+    checkConfirmedProperty,
+    formScope,
     isEditing,
+    isFormScopeCurrent,
     mediaRecoveryKey,
     profile?.id,
     propertyId,
     router,
+    recoveryAttempt,
     user?.id,
   ]);
 
@@ -407,6 +481,20 @@ export default function PropertyForm() {
   );
   const { data: condominiums = [] } = usePropertyCondominiums();
   const { data: users = [] } = useUsers();
+  useEffect(() => {
+    if (!isEditing || !property || property.id !== propertyId
+      || property.organization_id !== formScope.organizationId || !isFormScopeCurrent(formScope)) return;
+    try {
+      const receipt = readConfirmedPropertyReceipt(localStorage, mediaRecoveryKey, formScope);
+      if (receipt?.id === property.id) {
+        localStorage.removeItem(mediaRecoveryKey);
+        forgetPropertyCreationIntent(localStorage, creationIntentKey);
+      }
+    } catch {
+      // Editing this confirmed existing ID is safe even when browser storage
+      // cannot be cleared. A later create still checks the durable marker.
+    }
+  }, [creationIntentKey, formScope, isEditing, isFormScopeCurrent, mediaRecoveryKey, property, propertyId]);
   const createPropertyType = useCreatePropertyType();
   const createProperty = useCreateProperty({ showSuccessToast: false });
   const updateProperty = useUpdateProperty({ showSuccessToast: false });
@@ -451,15 +539,67 @@ export default function PropertyForm() {
   const canEdit =
     !isEditing ||
     (isPropertyAccessReady && propertyOwnership?.can_edit === true);
+  const propertyModuleEnabled = Boolean(tenantContext?.enabledModules.some(module => module.trim().toLowerCase() === "properties"));
+  const isPropertyDraftAccessReady = isPropertyAccessReady && activeOrganization.status === "ready" && tenantContext?.userId === user?.id;
+  const editDraftAccessSignature = propertyEditDraftAccessSignature({
+    permissions: tenantContext?.permissions,
+    moduleEnabled: propertyModuleEnabled,
+    canEdit, canManage: canManagePropertyCatalogs, canAssign: canAssignProperty, canEditOwnerDetails,
+    editPolicy: organization?.property_edit_policy,
+    ownerContactVisibility: organization?.property_owner_contact_visibility,
+  });
+  const editDraftScope = useMemo(() => ({
+    actorId: user?.id ?? "", organizationId: activeOrganization.organizationId ?? "",
+    propertyId: propertyId ?? "", accessSignature: editDraftAccessSignature,
+  }), [user?.id, activeOrganization.organizationId, propertyId, editDraftAccessSignature]);
+  const editDraftCapabilities = useQuery({
+    queryKey: ["property-edit-draft-capabilities", editDraftScope.organizationId, propertyId, accessSignature],
+    enabled: isRecoveringEditDraft && isPropertyDraftAccessReady && canEdit && propertyModuleEnabled && propertyQuery.isFetchedAfterMount,
+    queryFn: async () => {
+      const response = await propertyWorkspaceAPI.getWorkspace(editDraftScope.organizationId, editDraftScope.propertyId, {
+        expectedUserId: formScope.actorId,
+        canContinue: () => isFormScopeCurrent(formScope),
+      });
+      if (response.data.property.id !== editDraftScope.propertyId || response.data.property.organization_id !== editDraftScope.organizationId) throw new Error("O acesso ao imóvel mudou.");
+      return response.meta;
+    },
+    staleTime: 0, gcTime: 0, retry: false, refetchOnMount: "always",
+  });
+
+  const { lookupCep, invalidateCepLookup, isCepLoading } = usePropertyCepLookup({
+    scopeKey: `${draftKey}:${propertyId ?? "new"}`,
+    onAddress: (cep, address) => {
+      if (!isFormScopeCurrent(formScope)) return;
+      const matchedCity = catalogCities.find((city) =>
+        normalize(city.name) === normalize(address.localidade)
+        && city.uf?.toUpperCase() === address.uf.toUpperCase(),
+      );
+      const matchedNeighborhood = matchedCity ? catalogNeighborhoods.find((neighborhood) =>
+        normalize(neighborhood.name) === normalize(address.bairro)
+        && neighborhood.city_id === matchedCity.id,
+      ) : undefined;
+      setFormData((previous) => onlyCepDigits(previous.cep) === cep
+        ? applyCepAddressToLocation(previous, address, {
+            cityId: matchedCity?.id, neighborhoodId: matchedNeighborhood?.id,
+          })
+        : previous);
+    },
+  });
 
   const set = <K extends keyof PropertyFormData>(
     field: K,
     value: PropertyFormData[K],
   ) => {
+    if (field === "endereco") {
+      if (!submission.current.canEdit()) return;
+      invalidateCepLookup();
+    }
     if (
       field === "cep" || field === "uf" || field === "cidade" ||
       field === "bairro" || field === "city_id" || field === "neighborhood_id"
     ) {
+      if (!submission.current.canEdit()) return;
+      invalidateCepLookup();
       setFormData((prev) => setManualLocationField(prev, field, String(value)));
       return;
     }
@@ -467,146 +607,27 @@ export default function PropertyForm() {
   };
 
   const applyCity = (city: PropertyCity | null) => {
+    if (!submission.current.canEdit() || isCheckingCreatedProperty) return;
+    invalidateCepLookup();
     if (city) setFormData((prev) => selectLocationCity(prev, city));
   };
 
   const applyNeighborhood = (neighborhood: PropertyNeighborhood | null) => {
+    if (!submission.current.canEdit()) return;
+    invalidateCepLookup();
     if (neighborhood) {
       setFormData((prev) => selectLocationNeighborhood(prev, neighborhood));
     }
   };
 
   const applyCondominium = (condominium: PropertyCondominium | null) => {
-    setFormData((prev) => {
-      const cityChanged = Boolean(condominium?.city?.id && condominium.city.id !== prev.city_id);
-      return {
-        ...prev,
-        condominium_id: condominium?.id || "",
-        city_id: condominium?.city?.id || prev.city_id,
-        neighborhood_id: condominium?.neighborhood?.id || (cityChanged ? "" : prev.neighborhood_id),
-        cidade: condominium?.city?.name || prev.cidade,
-        uf: condominium?.city?.uf || prev.uf,
-        bairro: condominium?.neighborhood?.name || (cityChanged ? "" : prev.bairro),
-        endereco: condominium?.address || (cityChanged ? "" : prev.endereco),
-        cep: condominium?.cep ? formatCep(condominium.cep) : cityChanged ? "" : prev.cep,
-        condominio:
-          condominium?.default_condominium_fee != null
-            ? String(Math.round(Number(condominium.default_condominium_fee)))
-            : prev.condominio,
-      };
-    });
+    if (!submission.current.canEdit()) return;
+    invalidateCepLookup();
+    setFormData((prev) => selectLocationCondominium(prev, condominium));
   };
 
   const applyOwner = (owner: PropertyOwner | null) => {
-    setFormData((prev) => ({
-      ...prev,
-      owner_id: owner?.id || "",
-      owner_name: owner?.name || prev.owner_name,
-      owner_phone_residential:
-        owner?.phone_residential || prev.owner_phone_residential,
-      owner_phone_commercial:
-        owner?.phone_commercial || prev.owner_phone_commercial,
-      owner_cellphone: owner?.cellphone || prev.owner_cellphone,
-      owner_email: owner?.email || prev.owner_email,
-      owner_media_source: owner?.media_source || prev.owner_media_source,
-      owner_notify_email: owner?.notify_email ?? prev.owner_notify_email,
-    }));
-  };
-
-  const lookupCep = async (rawCep: string, force = false) => {
-    const cep = onlyCepDigits(rawCep);
-    if (cep.length !== 8) {
-      cepLookupSequenceRef.current += 1;
-      cepLookupAbortRef.current?.abort();
-      cepLookupAbortRef.current = null;
-      lastCepLookupRef.current = "";
-      setIsCepLoading(false);
-      return;
-    }
-    if (!force && lastCepLookupRef.current === cep) return;
-
-    cepLookupAbortRef.current?.abort();
-    const controller = new AbortController();
-    const requestSequence = cepLookupSequenceRef.current + 1;
-    cepLookupSequenceRef.current = requestSequence;
-    cepLookupAbortRef.current = controller;
-    lastCepLookupRef.current = cep;
-    setIsCepLoading(true);
-    try {
-      const res = await fetch(`/api/properties/cep?cep=${cep}`, {
-        signal: controller.signal,
-      });
-      if (res.status === 404) {
-        if (
-          !controller.signal.aborted &&
-          requestSequence === cepLookupSequenceRef.current
-        ) {
-          lastCepLookupRef.current = "";
-          toast.error("CEP não encontrado.");
-        }
-        return;
-      }
-      if (!res.ok) throw new Error("cep_lookup_failed");
-
-      const data = (await res.json()) as {
-        logradouro?: string;
-        bairro?: string;
-        localidade?: string;
-        uf?: string;
-      };
-
-      if (
-        controller.signal.aborted ||
-        requestSequence !== cepLookupSequenceRef.current
-      ) {
-        return;
-      }
-
-      const matchedCity = cities.find(
-        (city) =>
-          normalize(city.name) === normalize(data.localidade || "") &&
-          (!data.uf ||
-            !city.uf ||
-            city.uf.toUpperCase() === data.uf.toUpperCase()),
-      );
-      const matchedNeighborhood = matchedCity
-        ? neighborhoods.find(
-            (neighborhood) =>
-              normalize(neighborhood.name) === normalize(data.bairro || "") &&
-              neighborhood.city_id === matchedCity.id,
-          )
-        : undefined;
-      if (!data.localidade || !data.uf) throw new Error("cep_incomplete_location");
-      setFormData((prev) =>
-        applyCepAddressToLocation(
-          prev,
-          {
-            logradouro: data.logradouro || "",
-            bairro: data.bairro || "",
-            localidade: data.localidade || "",
-            uf: data.uf || "",
-          },
-          { cityId: matchedCity?.id, neighborhoodId: matchedNeighborhood?.id },
-        ),
-      );
-      if (!data.bairro) {
-        toast.info("O CEP não informou um bairro. Preencha o bairro manualmente.");
-      }
-    } catch {
-      if (
-        controller.signal.aborted ||
-        requestSequence !== cepLookupSequenceRef.current
-      ) {
-        return;
-      }
-      lastCepLookupRef.current = "";
-      toast.error("Não foi possível preencher o endereço pelo CEP agora.");
-    } finally {
-      if (requestSequence === cepLookupSequenceRef.current) {
-        cepLookupAbortRef.current = null;
-        setIsCepLoading(false);
-      }
-    }
+    setFormData((previous) => selectPropertyOwner(previous, owner));
   };
 
   useEffect(() => {
@@ -675,11 +696,14 @@ export default function PropertyForm() {
 
   // Auto-save draft for new properties
   useEffect(() => {
-    if (!isEditing && !createdPropertyId) {
-      const timer = setTimeout(() => saveDraft(draftKey, formData), 2000);
+    if (!isEditing && !createdPropertyId && hasUnsavedChanges) {
+      const timer = setTimeout(() => {
+        const saved = saveDraft(draftKey, formData);
+        setDraftStorageWarning(saved ? null : PROPERTY_DRAFT_STORAGE_WARNING);
+      }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [createdPropertyId, draftKey, formData, isEditing]);
+  }, [createdPropertyId, draftKey, formData, hasUnsavedChanges, isEditing]);
 
   useEffect(() => {
     if (!isEditing) {
@@ -690,6 +714,16 @@ export default function PropertyForm() {
       return;
     }
     if (!property) return;
+    if (!isPropertyDraftAccessReady || property.id !== propertyId || property.organization_id !== formScope.organizationId) return;
+    // Cached query data alone cannot authorize restoring a previous mount's edit.
+    if (hasPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey) && !propertyQuery.isFetchedAfterMount) {
+      if (!propertyQuery.isFetching) void refetchProperty();
+      return;
+    }
+    if (hasPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey) && canEdit && propertyModuleEnabled
+      && (editDraftCapabilities.isError || !editDraftCapabilities.isFetchedAfterMount || !editDraftCapabilities.data)) return;
+    // Keep the recovered CAS base until the user explicitly reloads a conflict.
+    if (hasConcurrencyConflict && propertyFormDirtyRef.current && hydratedPropertyIdRef.current === property.id) return;
     const nextPropertySnapshot = property as unknown as Record<string, unknown>;
     const refetchDecision = resolvePropertyFormRefetch({
       hydratedPropertyId: hydratedPropertyIdRef.current,
@@ -703,29 +737,70 @@ export default function PropertyForm() {
       ),
     });
     if (refetchDecision.action === "preserve-and-rebase") {
-      hydratedPropertyUpdatedAtRef.current = refetchDecision.expectedUpdatedAt;
-      hydratedPropertySnapshotRef.current = nextPropertySnapshot;
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        hydratedPropertyUpdatedAtRef.current = refetchDecision.expectedUpdatedAt;
+        hydratedPropertySnapshotRef.current = nextPropertySnapshot;
+        setFormDataState((previous) => rebasePropertyFormMedia(previous, propertyToFormData(property)));
+      });
+      return () => { cancelled = true; };
     }
     if (refetchDecision.action === "preserve") {
       return;
     }
 
-    const nextFormData = propertyToFormData(property);
+    const serverFormData = propertyToFormData(property);
+    const recoveredDraft = editDraftKey && hydratedPropertyIdRef.current !== property.id
+      ? recoverPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey, editDraftScope, {
+        canEdit: canEdit && propertyModuleEnabled,
+        canManage: editDraftCapabilities.data?.can_manage === true,
+        canEditOwnerDetails: editDraftCapabilities.data?.can_view_owner_contacts === true,
+        updatedAt: property.updated_at, formData: serverFormData,
+      })
+      : null;
+    const nextFormData = recoveredDraft?.formData ?? serverFormData;
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
       hydratedPropertyIdRef.current = property.id;
-      hydratedPropertyUpdatedAtRef.current = refetchDecision.expectedUpdatedAt;
+      hydratedPropertyUpdatedAtRef.current = recoveredDraft?.expectedUpdatedAt ?? refetchDecision.expectedUpdatedAt;
       hydratedPropertySnapshotRef.current = nextPropertySnapshot;
-      markPropertyFormPristine();
-      setHasConcurrencyConflict(false);
+      if (recoveredDraft) {
+        propertyFormDirtyRef.current = true;
+        setHasUnsavedChanges(true);
+        setEditDraftRestored(true);
+      } else markPropertyFormPristine();
+      setHasConcurrencyConflict(recoveredDraft?.hasConflict ?? false);
+      setIsRecoveringEditDraft(false);
       setFormDataState(nextFormData);
     });
     return () => {
       cancelled = true;
     };
-  }, [property, isEditing, markPropertyFormPristine]);
+  }, [property, isEditing, markPropertyFormPristine, isPropertyDraftAccessReady, propertyId, formScope.organizationId, hasConcurrencyConflict, editDraftKey, editDraftScope, canEdit, propertyModuleEnabled, propertyQuery.isFetchedAfterMount, propertyQuery.isFetching, refetchProperty, editDraftCapabilities.data, editDraftCapabilities.isError, editDraftCapabilities.isFetchedAfterMount]);
+
+  useLayoutEffect(() => {
+    if (!isEditing || !editDraftKey || !property || !isPropertyDraftAccessReady
+      || property.id !== propertyId || property.organization_id !== editDraftScope.organizationId) return;
+    if (!canEdit || !propertyModuleEnabled) {
+      clearPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey);
+      queueMicrotask(() => { if (isFormScopeCurrent(formScope)) setIsRecoveringEditDraft(false); });
+      return;
+    }
+    if (propertyFormDirtyRef.current && hydratedPropertyIdRef.current === property.id && hydratedPropertyUpdatedAtRef.current) {
+      savePropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey, editDraftScope, hydratedPropertyUpdatedAtRef.current, formData);
+    }
+  }, [isEditing, editDraftKey, property, isPropertyDraftAccessReady, propertyId, editDraftScope, canEdit, propertyModuleEnabled, formData, formScope, isFormScopeCurrent]);
+
+  useEffect(() => {
+    if (!isEditing || !editDraftKey || activeOrganization.status !== "ready" || tenantContext?.userId !== user?.id) return;
+    const canReadProperties = canManagePropertyCatalogs || tenantContext?.permissions.some(permission => permission === "*" || permission === "property_view");
+    if (!propertyModuleEnabled || !canReadProperties || (propertyLoadError instanceof VimobAPIError && [403, 404].includes(propertyLoadError.status))) {
+      clearPropertyEditDraft(getPropertyEditDraftStorage(), editDraftKey);
+      queueMicrotask(() => { if (isFormScopeCurrent(formScope)) setIsRecoveringEditDraft(false); });
+    }
+  }, [isEditing, editDraftKey, activeOrganization.status, tenantContext?.userId, tenantContext?.permissions, user?.id, propertyModuleEnabled, canManagePropertyCatalogs, propertyLoadError, formScope, isFormScopeCurrent]);
 
   const {
     isLand,
@@ -750,10 +825,10 @@ export default function PropertyForm() {
     (condominium) => condominium.id === formData.condominium_id,
   );
   const primaryValuesGridClass = cn(
-    "grid grid-cols-1 gap-3 md:grid-cols-2",
+    "grid min-w-0 grid-cols-1 gap-3 @[480px]:grid-cols-2",
     isSale && isRental
-      ? "lg:grid-cols-[minmax(140px,1fr)_minmax(140px,1fr)_minmax(180px,1.15fr)_minmax(160px,1fr)_minmax(150px,.95fr)]"
-      : "lg:grid-cols-[minmax(190px,1fr)_minmax(220px,1.18fr)_minmax(200px,1.05fr)_minmax(180px,.95fr)]",
+      ? "@[960px]:grid-cols-5"
+      : "@[760px]:grid-cols-4",
   );
   const statusOptions = [
     { value: "ativo", label: "Ativo" },
@@ -769,7 +844,7 @@ export default function PropertyForm() {
     canEditOwnerDetails,
   });
   const publicationValidationIssues = getPropertyPublicationValidationIssues(formData, { isEditing });
-  const visibleValidationIssues = hasTriedSubmit ? validationIssues : [];
+  const visibleValidationIssues = hasTriedSubmit ? [...validationIssues, ...schemaValidationIssues] : [];
 
   const focusValidationIssue = (issue: (typeof validationIssues)[number]) => {
     setActiveTab(issue.tab);
@@ -777,29 +852,52 @@ export default function PropertyForm() {
       window.requestAnimationFrame(() => {
         const target = issue.fieldId
           ? document.getElementById(issue.fieldId)
-          : propertyTabRefs.current[issue.tab];
+          : document.getElementById(`property-tab-${issue.tab}`);
         target?.focus();
       });
     });
   };
 
-  const navigateAfterSave = (savedPropertyId: string) => {
+  const navigateAfterSave = (savedPropertyId: string, formAction: PropertyFormAction) => {
+    if (!formAction.isCurrent()) return;
     router.push(`/properties/${savedPropertyId}?tab=publication`);
+  };
+
+  const handleCancel = () => {
+    if (isSaving || createProperty.isPending || updateProperty.isPending || isPersistingMedia) return;
+    if (!confirmFormNavigation()) return;
+    releaseStagedPropertyPhotos([
+      formData.imagem_principal,
+      ...formData.fotos,
+    ]);
+    if (!pendingCreation && !creationRecoveryError) clearDraft(draftKey, { isEditing });
+    router.push("/properties");
   };
 
   const confirmSavedPropertyPublication = async (
     organizationId: string,
     savedPropertyId: string,
+    action: AutomaticSitePublicationAction,
+    formAction: PropertyFormAction,
   ) => {
+    if (!formAction.isCurrent() || organizationId !== formScope.organizationId) return;
     setPublicationSaveFeedback(null);
     try {
-      const outcome = await requestAutomaticSitePublication(organizationId, savedPropertyId);
+      const outcome = await requestAutomaticSitePublication(organizationId, savedPropertyId, undefined, undefined, {
+        expectedUserId: formScope.actorId,
+        expectedSessionId: formAction.expectedSessionId,
+        canContinue: formAction.isCurrent,
+        action,
+      });
+      if (!formAction.isCurrent()) return;
       await Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ["property-publications", organizationId] }),
         queryClient.invalidateQueries({ queryKey: ["properties"] }),
         queryClient.invalidateQueries({ queryKey: ["properties-infinite"] }),
       ]);
+      if (!formAction.isCurrent()) return;
       if (outcome.kind === "blocked") {
+        if (!formAction.isCurrent()) return;
         const reason = outcome.reasons.slice(0, 3).join(" ");
         const message = `Imóvel salvo; esta versão não foi enviada ao Site. ${reason}`;
         setPublicationSaveFeedback(message);
@@ -823,16 +921,19 @@ export default function PropertyForm() {
       }
     } catch {
       const message = "Imóvel salvo, mas não foi possível confirmar a solicitação de publicação. Confira o estado na Central.";
+      if (!formAction.isCurrent()) return;
       setPublicationSaveFeedback(message);
       toast.error(message, { duration: 8000 });
     }
-    navigateAfterSave(savedPropertyId);
+    navigateAfterSave(savedPropertyId, formAction);
   };
 
   const persistCreatedPropertyMedia = async (
     created: CreatedPropertyForMediaRetry,
     isRetry: boolean,
+    formAction: PropertyFormAction,
   ) => {
+    if (!formAction.isCurrent() || created.organizationId !== formScope.organizationId) return;
     setIsPersistingMedia(true);
     try {
       if (!created.organizationId) {
@@ -846,7 +947,9 @@ export default function PropertyForm() {
         const current = await propertyWorkspaceAPI.getWorkspace(
           created.organizationId,
           created.id,
+          { expectedUserId: formScope.actorId, expectedSessionId: formAction.expectedSessionId, canContinue: formAction.isCurrent },
         );
+        if (!formAction.isCurrent()) return;
         if (current.data.assets.some((asset) => asset.asset_type === "photo")) {
           const message =
             "O imóvel já possui fotos gravadas. Confira a ficha em outra aba e remova as fotos parciais antes de reenviar esta seleção.";
@@ -859,7 +962,12 @@ export default function PropertyForm() {
         mainImage: formData.imagem_principal,
         galleryImages: formData.fotos,
         hiddenSiteImages: formData.hidden_site_image_urls,
+      }, {
+        expectedUserId: formScope.actorId,
+        expectedSessionId: formAction.expectedSessionId,
+        canContinue: formAction.isCurrent,
       });
+      if (!formAction.isCurrent()) return;
       await Promise.allSettled([
         queryClient.invalidateQueries({
           queryKey: ["property-workspace", created.organizationId],
@@ -867,6 +975,7 @@ export default function PropertyForm() {
         queryClient.invalidateQueries({ queryKey: ["properties"] }),
         queryClient.invalidateQueries({ queryKey: ["properties-infinite"] }),
       ]);
+      if (!formAction.isCurrent()) return;
       createdPropertyMediaCompleteRef.current = true;
       setMediaUploadFailure(null);
       markPropertyFormPristine();
@@ -878,6 +987,7 @@ export default function PropertyForm() {
         // is unavailable.
       }
       try {
+        forgetPropertyCreationIntent(localStorage, creationIntentKey);
         localStorage.removeItem(mediaRecoveryKey);
       } catch {
         // The saved property and photos remain authoritative if browser storage
@@ -885,10 +995,13 @@ export default function PropertyForm() {
       }
       try {
         const { matches } = await readBackPropertyLocation(formData, async () => {
-          const { data } = await propertiesAPI.getProperty(created.id, created.organizationId);
+          const { data } = await propertiesAPI.getProperty(created.id, created.organizationId, {
+            expectedUserId: formScope.actorId, expectedSessionId: formAction.expectedSessionId, onRequestStart: formAction.assertCurrent,
+          });
           return data;
         });
         if (!matches) {
+          if (!formAction.isCurrent()) return;
           const message = "Imóvel e fotos salvos, mas bairro, cidade ou UF não permaneceram gravados. Corrija o endereço antes de publicar.";
           setPublicationSaveFeedback(message);
           toast.error(message, { duration: 8000 });
@@ -897,13 +1010,15 @@ export default function PropertyForm() {
         }
       } catch {
         const message = "Imóvel e fotos salvos, mas não foi possível confirmar o endereço. A publicação não foi solicitada.";
+        if (!formAction.isCurrent()) return;
         setPublicationSaveFeedback(message);
         toast.error(message, { duration: 8000 });
-        navigateAfterSave(created.id);
+        navigateAfterSave(created.id, formAction);
         return;
       }
-      await confirmSavedPropertyPublication(created.organizationId, created.id);
+      await confirmSavedPropertyPublication(created.organizationId, created.id, INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION, formAction);
     } catch (error: unknown) {
+      if (!formAction.isCurrent()) return;
       const rollbackIncomplete =
         error instanceof PropertyMediaPersistenceError && error.rollbackIncomplete;
       const message =
@@ -923,32 +1038,55 @@ export default function PropertyForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submitInFlightRef.current) return;
+    if (!isFormScopeCurrent(formScope) || !formScope.actorId) return;
+    // Pin the originating session before recovery/publication preflight yields.
+    // A new explicit retry captures its own session; no session is persisted.
+    const formAction = capturePropertyFormAction(() => isFormScopeCurrent(formScope), getVimobAPIAccessTokenSessionId);
+    if (!formAction.isCurrent()) {
+      toast.error("A sessão do formulário mudou. Reabra o cadastro antes de salvar.");
+      return;
+    }
+    if (isRecoveringEditDraft) return;
+    if (!submission.current.canEdit()) return;
     if (isCepLoading) {
       toast.error("Aguarde a consulta do CEP antes de salvar o imóvel.");
       return;
     }
-    submitInFlightRef.current = true;
+    if (isPreparingPhotos) {
+      toast.info("Aguarde a preparação das fotos antes de salvar.");
+      return;
+    }
+    const submissionSequence = submission.current.begin();
+    if (submissionSequence === null) return;
+    setIsSaving(true);
     try {
       const createdForRetry = createdPropertyForMediaRetryRef.current;
       if (!isEditing && createdForRetry) {
+        if (await checkConfirmedProperty(createdForRetry, formAction) === "removed") return;
+        if (!formAction.isCurrent()) return;
         if (createdPropertyMediaCompleteRef.current) {
-          await confirmSavedPropertyPublication(createdForRetry.organizationId, createdForRetry.id);
+          await confirmSavedPropertyPublication(createdForRetry.organizationId, createdForRetry.id, INITIAL_AUTOMATIC_SITE_PUBLICATION_ACTION, formAction);
           return;
         }
-        await persistCreatedPropertyMedia(createdForRetry, true);
+        await persistCreatedPropertyMedia(createdForRetry, true, formAction);
         return;
       }
       if (!isEditing) {
-        const recovered = readCreatedPropertyForMediaRetry(mediaRecoveryKey);
+        const recovered = readConfirmedPropertyReceipt(localStorage, mediaRecoveryKey, formScope);
         if (recovered && recovered.organizationId === activeOrganizationId) {
+          if (await checkConfirmedProperty(recovered, formAction) === "removed") return;
+          if (!formAction.isCurrent()) return;
           router.replace(`/properties/${recovered.id}/edit`);
           return;
         }
       }
       setHasTriedSubmit(true);
 
-      if (validationIssues.length > 0) {
+      if (creationRecoveryError) {
+        toast.error(creationRecoveryError);
+        return;
+      }
+      if (!pendingCreation && validationIssues.length > 0) {
         const firstIssue = validationIssues[0];
         focusValidationIssue(firstIssue);
         toast.error(
@@ -990,16 +1128,42 @@ export default function PropertyForm() {
             );
             return;
           }
-          const updateInput = propertyUpdateInputSchema.parse({
+          const parsedUpdate = propertyUpdateInputSchema.safeParse({
             ...propertyData,
             title: propertyData.title ?? undefined,
             expected_updated_at: expectedUpdatedAt,
           });
+          if (!parsedUpdate.success) {
+            const issues = propertySchemaIssuesToForm(parsedUpdate.error.issues);
+            setSchemaValidationIssues(issues);
+            if (issues[0]) focusValidationIssue(issues[0]);
+            toast.error(`Revise os valores informados: ${issues.map((issue) => issue.label).join(", ")}.`);
+            return;
+          }
+          const updateInput = parsedUpdate.data;
+          let publicationAction: AutomaticSitePublicationAction;
+          try {
+            publicationAction = await captureAutomaticSitePublicationAction(activeOrganizationId, propertyId, undefined, {
+              expectedUserId: formScope.actorId,
+              expectedSessionId: formAction.expectedSessionId,
+              canContinue: formAction.isCurrent,
+            });
+          } catch {
+            if (formAction.isCurrent()) toast.error("Não foi possível confirmar a publicação antes de salvar. Suas alterações continuam neste formulário; tente novamente.");
+            return;
+          }
+          if (!formAction.isCurrent()) return;
           const patchedProperty = await updateProperty.mutateAsync({
             id: propertyId,
             ...updateInput,
             expected_updated_at: expectedUpdatedAt,
+            requestIntent: {
+              expectedUserId: formScope.actorId,
+              expectedSessionId: formAction.expectedSessionId,
+              onRequestStart: formAction.assertCurrent,
+            },
           });
+          if (!formAction.isCurrent()) return;
           hydratedPropertyUpdatedAtRef.current = patchedProperty.updated_at;
           hydratedPropertySnapshotRef.current =
             patchedProperty as unknown as Record<string, unknown>;
@@ -1011,10 +1175,13 @@ export default function PropertyForm() {
                 const { data } = await propertiesAPI.getProperty(
                   propertyId,
                   activeOrganizationId,
+                  { expectedUserId: formScope.actorId, expectedSessionId: formAction.expectedSessionId, onRequestStart: formAction.assertCurrent },
                 );
                 return data;
               }));
+            if (!formAction.isCurrent()) return;
           } catch {
+            if (!formAction.isCurrent()) return;
             toast.error(
               "A alteração foi enviada, mas não foi possível confirmar o endereço gravado. Mantenha esta edição aberta e confira antes de publicar.",
             );
@@ -1032,45 +1199,110 @@ export default function PropertyForm() {
           markPropertyFormPristine();
           setHasConcurrencyConflict(false);
           try {
-            clearDraft(draftKey);
+            clearDraft(draftKey, { isEditing });
           } catch {
             // Browser storage is optional after the saved property was confirmed.
           }
-          await confirmSavedPropertyPublication(activeOrganizationId, propertyId);
+          await confirmSavedPropertyPublication(activeOrganizationId, propertyId, publicationAction, formAction);
           return;
         } else {
-          const createdProperty = await createProperty.mutateAsync(propertyData);
+          const parsedCreate = propertyCreateInputSchema.safeParse(propertyData);
+          if (!pendingCreation && !parsedCreate.success) {
+            const issues = propertySchemaIssuesToForm(parsedCreate.error.issues);
+            setSchemaValidationIssues(issues);
+            if (issues[0]) focusValidationIssue(issues[0]);
+            toast.error(`Revise os valores informados: ${issues.map((issue) => issue.label).join(", ")}.`);
+            return;
+          }
+          let intent: PropertyCreationIntent;
+          let wasRetry = Boolean(pendingCreation);
+          try {
+            const persistedIntent = readPropertyCreationIntent(localStorage, creationIntentKey);
+            wasRetry = wasRetry || Boolean(persistedIntent);
+            if (pendingCreation || persistedIntent) {
+              intent = pendingCreation || persistedIntent!;
+            } else if (parsedCreate.success) {
+              intent = preparePropertyCreationIntent(localStorage, creationIntentKey, parsedCreate.data);
+            } else {
+              return;
+            }
+          } catch {
+            const message = "Não foi possível preservar a confirmação do cadastro neste navegador. Confira a carteira antes de tentar novamente.";
+            setCreationRecoveryError(message);
+            toast.error(message);
+            return;
+          }
+          setPendingCreation(intent);
+          let createdProperty;
+          try {
+            createdProperty = await createProperty.mutateAsync({
+              ...intent.body, idempotencyKey: intent.key,
+              requestIntent: {
+                expectedUserId: formScope.actorId,
+                expectedSessionId: formAction.expectedSessionId,
+                onRequestStart: formAction.assertCurrent,
+              },
+            });
+          } catch (error) {
+            if (!formAction.isCurrent()) return;
+            // A definitive rejected request can be corrected. A timeout/network
+            // failure keeps the exact intent frozen for a safe retry or reload.
+            if (propertyCreationRejectionCanReset({
+              wasRetry,
+              clientRejected: Boolean(getClientRateLimitMessage(error)),
+              status: error instanceof VimobAPIError ? error.status : undefined,
+              code: error instanceof VimobAPIError ? error.code : undefined,
+            })) {
+              try {
+                forgetPropertyCreationIntent(localStorage, creationIntentKey);
+                setPendingCreation(null);
+              } catch {
+                setCreationRecoveryError("O cadastro foi recusado, mas a confirmação local não pôde ser liberada. Confira a carteira antes de tentar novamente.");
+              }
+            }
+            throw error;
+          }
+          if (!formAction.isCurrent()) return;
           const organizationId =
             createdProperty.organization_id || activeOrganizationId;
           const createdForMedia = {
             id: createdProperty.id,
             organizationId: organizationId || "",
+            actorId: formScope.actorId,
           };
           createdPropertyForMediaRetryRef.current = createdForMedia;
           setCreatedPropertyId(createdProperty.id);
+          setPendingCreation(null);
           propertyFormDirtyRef.current = true;
           setHasUnsavedChanges(true);
           try {
             if (organizationId) {
-              localStorage.setItem(
-                mediaRecoveryKey,
-                JSON.stringify(createdForMedia),
-              );
+              preserveConfirmedPropertyCreation(localStorage, creationIntentKey, mediaRecoveryKey, createdForMedia);
             }
           } catch {
-            // The in-memory retry remains available in this tab.
+            // The immutable creation intent is still durable if saving the ID failed.
           }
-          await persistCreatedPropertyMedia(createdForMedia, false);
+          if (!formData.imagem_principal && formData.fotos.length === 0) {
+            toast.info("Cadastro confirmado. Continue pela edição do imóvel.");
+            router.replace(`/properties/${createdProperty.id}/edit`);
+            return;
+          }
+          await persistCreatedPropertyMedia(createdForMedia, wasRetry, formAction);
           return;
         }
       } catch (error) {
+        if (!formAction.isCurrent()) return;
         if (isPropertyWorkspaceConflict(error)) {
           setHasConcurrencyConflict(true);
         }
-        // Other errors are handled by the mutation hook.
+        // Transport errors are reported by the mutation hook; validation above
+        // is reported here because no request has been sent yet.
       }
+    } catch (error) {
+      if (formAction.isCurrent()) toast.error(getErrorMessage(error));
     } finally {
-      submitInFlightRef.current = false;
+      submission.current.finish(submissionSequence);
+      setIsSaving(false);
     }
   };
 
@@ -1112,11 +1344,18 @@ export default function PropertyForm() {
   };
 
   const handleImagesChange = (images: string[], mainImage: string) => {
+    if (!isFormScopeCurrent(formScope)) {
+      releaseStagedPropertyPhotos([mainImage, ...images]);
+      return;
+    }
     setFormData((prev) => ({
       ...prev,
       fotos: images,
       imagem_principal: mainImage,
     }));
+  };
+  const handlePreparingPhotosChange = (preparing: boolean) => {
+    if (isFormScopeCurrent(formScope)) setIsPreparingPhotos(preparing);
   };
 
   const handleAddPurpose = () => {
@@ -1372,6 +1611,10 @@ export default function PropertyForm() {
 
   const sectionContext: PropertyFormSectionsContextValue = {
     formData,
+    isSaving: isSaving || isCheckingCreatedProperty || isRecoveringEditDraft || Boolean(pendingCreation) || Boolean(creationRecoveryError) || Boolean(confirmedRecoveryError),
+    onPreparingPhotosChange: handlePreparingPhotosChange,
+    canContinuePhotos: () => isFormScopeCurrent(formScope),
+    isPreparingPhotos,
     set,
     user,
     profile,
@@ -1456,68 +1699,51 @@ export default function PropertyForm() {
     createProximity,
     handleImagesChange,
   };
-  if (mediaUploadFailure && createdPropertyId) {
-    return (
-      <AppLayout title="Fotos pendentes">
-        <form
-          onSubmit={handleSubmit}
-          className="mx-auto flex w-full max-w-4xl flex-col gap-4"
-        >
-          <div role="alert" className="app-card space-y-2 p-4">
-            <h1 className="text-base font-medium">Imóvel cadastrado; fotos pendentes</h1>
-            <p className="text-sm text-muted-foreground">{mediaUploadFailure}</p>
-            <p className="text-sm text-muted-foreground">
-              Os dados do imóvel já foram gravados. A próxima tentativa enviará
-              somente as fotos para o mesmo imóvel. Mantenha esta aba aberta para
-              preservar os arquivos selecionados. Se recarregar a página, abra a
-              edição do imóvel e selecione os arquivos novamente.
-            </p>
-          </div>
-          <div className="app-card space-y-4 p-4">
-            <ImageUploader
-              images={formData.fotos}
-              mainImage={formData.imagem_principal}
-              onImagesChange={handleImagesChange}
-              hiddenSiteImages={formData.hidden_site_image_urls}
-              onHiddenSiteImagesChange={(images) =>
-                set("hidden_site_image_urls", images)
-              }
-            />
+  const isBusy = isSaving || isCheckingCreatedProperty || isRecoveringEditDraft || createProperty.isPending || updateProperty.isPending || isPersistingMedia;
+  const activeStepIndex = tabs.findIndex((tab) => tab.value === activeTab);
+  const isLastStep = activeStepIndex === tabs.length - 1;
+  const handleNextStep = () => {
+    const issue = validationIssues.find((item) => item.tab === activeTab);
+    if (issue) {
+      setHasTriedSubmit(true);
+      focusValidationIssue(issue);
+      toast.error(`Preencha: ${issue.label}`);
+      return;
+    }
+    const nextStep = tabs[activeStepIndex + 1];
+    if (nextStep) setActiveTab(nextStep.value);
+  };
+  const formFeedback = (
+    <>
+        {isRecoveringEditDraft && (editDraftCapabilities.isError ? (
+          <div role="alert" className="app-card-soft space-y-2 p-3 text-sm">
+            <p>Não foi possível confirmar o acesso para recuperar sua edição. Ela continua preservada neste navegador.</p>
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={isPersistingMedia}>
-                {isPersistingMedia && <Loader2 className="animate-spin" />}
-                Reenviar fotos
-              </Button>
-              <Button asChild variant="outline">
-                <a
-                  href={`/properties/${createdPropertyId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Conferir ficha em outra aba
-                </a>
-              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={editDraftCapabilities.isFetching} onClick={() => void editDraftCapabilities.refetch()}>Tentar recuperar</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => router.push("/properties")}>Abrir carteira</Button>
             </div>
           </div>
-        </form>
-      </AppLayout>
-    );
-  }
-  return (
-    <AppLayout
-      title={isEditing ? "Editar Imóvel" : "Novo Imóvel"}
-      disableMainScroll
-    >
-      <form
-        data-tour="property-form"
-        onSubmit={handleSubmit}
-        aria-describedby={
-          visibleValidationIssues.length > 0
-            ? "property-form-validation-summary"
-            : undefined
-        }
-        className="property-form-surface h-full min-h-0 flex flex-col gap-3 text-[12px] font-light animate-in [&_.app-card]:rounded-[8px] [&_.app-card-soft]:rounded-[6px] [&_button]:text-[12px] [&_button]:font-light [&_input]:rounded-[6px] [&_input]:text-[12px] [&_input]:font-light [&_label]:text-[12px] [&_label]:font-light [&_textarea]:rounded-[6px] [&_textarea]:text-[12px] [&_textarea]:font-light [&_[role=combobox]]:rounded-[6px] [&_[role=combobox]]:text-[12px] [&_[role=combobox]]:font-light"
-      >
+        ) : <p role="status" className="text-xs text-muted-foreground">Confirmando acesso para recuperar sua edição…</p>)}
+        {editDraftRestored && <p role="status" className="text-xs text-muted-foreground">Sua edição não salva foi recuperada neste navegador. Revise antes de salvar.</p>}
+        {!isEditing && draftStorageWarning && <p role="status" className="app-card-soft p-3 text-sm text-muted-foreground">{draftStorageWarning}</p>}
+        {confirmedRecoveryError && (
+          <div role="alert" className="app-card-soft space-y-2 border-0 p-3 text-sm">
+            <p>{confirmedRecoveryError}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={() => setRecoveryAttempt(value => value + 1)}>Conferir novamente</Button>
+              <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={() => router.push("/properties")}>Abrir carteira</Button>
+            </div>
+          </div>
+        )}
+        {!isEditing && (pendingCreation || creationRecoveryError) && (
+          <div role="alert" data-testid="property-create-recovery" className="app-card-soft space-y-2 border-0 p-3 text-sm">
+            <p className="font-medium">{creationRecoveryError ? "Confira o cadastro pendente" : "Aguardando confirmação do cadastro"}</p>
+            <p className="text-muted-foreground">
+              {creationRecoveryError || "Os dados enviados estão preservados. Use Confirmar cadastro para recuperar o mesmo imóvel; você poderá editar os campos depois da confirmação."}
+            </p>
+            <Button type="button" variant="outline" size="sm" disabled={isSaving} onClick={() => router.push("/properties")}>Abrir carteira</Button>
+          </div>
+        )}
         {((isEditing && property) || (hasDraft && !isEditing)) && (
           <div className="text-sm text-muted-foreground flex-shrink-0 flex items-center gap-2">
             {isEditing && property && (
@@ -1622,106 +1848,112 @@ export default function PropertyForm() {
           </div>
         )}
 
-        <Tabs
-          value={activeTab}
-          onValueChange={setActiveTab}
-          className="flex-1 min-h-0 flex flex-col gap-3"
+    </>
+  );
+  if (mediaUploadFailure && createdPropertyId) {
+    return (
+      <PropertyFormDialog title="Fotos pendentes" onClose={handleCancel} busy={isBusy}>
+        <form
+          onSubmit={handleSubmit}
+          className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-4 overflow-y-auto p-6"
         >
-          <div className="flex min-w-0 flex-shrink-0 flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="app-responsive-tab-list property-form-tabs-icon-only min-w-0 w-full lg:flex-1">
-              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                <TabsList
-                  data-tour="property-form-tabs"
-                  data-responsive-tab-scroll
-                  aria-label="Etapas do formulário do imóvel"
-                  className="inline-flex h-9 w-full justify-start overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 text-[var(--app-text-secondary)] shadow-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                >
-                  {tabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const tabHasIssue = visibleValidationIssues.some(
-                      (issue) => issue.tab === tab.value,
-                    );
-
-                    return (
-                      <Tooltip key={tab.value}>
-                        <TooltipTrigger asChild>
-                          <TabsTrigger
-                            ref={(node) => {
-                              propertyTabRefs.current[tab.value] = node;
-                            }}
-                            value={tab.value}
-                            id={`property-tab-${tab.value}`}
-                            type="button"
-                            data-responsive-tab
-                            data-tour={`property-tab-${tab.value}`}
-                            aria-label={tab.label}
-                            className={propertyFormTabTriggerClass}
-                          >
-                            <Icon aria-hidden="true" className="h-4 w-4" />
-                            {tabHasIssue && (
-                              <span
-                                data-responsive-tab-badge
-                                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
-                              />
-                            )}
-                          </TabsTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="bottom"
-                          className="text-xs"
-                          data-testid={`property-tab-tooltip-${tab.value}`}
-                        >
-                          {tab.label}
-                        </TooltipContent>
-                      </Tooltip>
-                    );
-                  })}
-                </TabsList>
-              </TooltipProvider>
-            </div>
-            <div className="grid w-full flex-shrink-0 grid-cols-2 items-center gap-2 sm:flex sm:justify-end lg:ml-auto lg:w-auto">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={createProperty.isPending || isPersistingMedia}
-                className="h-9 min-w-0 whitespace-nowrap rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-foreground shadow-none hover:bg-[var(--app-surface-hover)]"
-                onClick={() => {
-                  if (!confirmFormNavigation()) return;
-                  releaseStagedPropertyPhotos([
-                    formData.imagem_principal,
-                    ...formData.fotos,
-                  ]);
-                  clearDraft(draftKey);
-                  router.push("/properties");
-                }}
-              >
-                Cancelar
+          <div role="alert" className="app-card space-y-2 p-4">
+            <h1 className="text-base font-medium">Imóvel cadastrado; fotos pendentes</h1>
+            <p className="text-sm text-muted-foreground">{mediaUploadFailure}</p>
+            <p className="text-sm text-muted-foreground">
+              Os dados do imóvel já foram gravados. A próxima tentativa enviará
+              somente as fotos para o mesmo imóvel. Mantenha esta aba aberta para
+              preservar os arquivos selecionados. Se recarregar a página, abra a
+              edição do imóvel e selecione os arquivos novamente.
+            </p>
+          </div>
+          <div className="app-card space-y-4 p-4">
+            <ImageUploader
+              key={`${formScope.actorId}:${formScope.organizationId}:${formScope.resourceId}:${formScope.accessSignature}`}
+              disabled={isBusy}
+              onPreparingChange={handlePreparingPhotosChange}
+              canContinue={() => isFormScopeCurrent(formScope)}
+              images={formData.fotos}
+              mainImage={formData.imagem_principal}
+              onImagesChange={handleImagesChange}
+              hiddenSiteImages={formData.hidden_site_image_urls}
+              onHiddenSiteImagesChange={(images) =>
+                set("hidden_site_image_urls", images)
+              }
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME} disabled={isBusy || isPreparingPhotos}>
+                {isPersistingMedia && <Loader2 className="animate-spin" />}
+                Reenviar fotos
               </Button>
-              <Button
-                data-tour="property-save-button"
-                type="submit"
-                className="h-9 min-w-0 whitespace-nowrap rounded-[6px] bg-primary px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
-                disabled={
-                  createProperty.isPending ||
-                  updateProperty.isPending ||
-                  isPersistingMedia ||
-                  isCepLoading ||
-                  hasConcurrencyConflict ||
-                  !canEdit
-                }
-              >
-                {(createProperty.isPending ||
-                  updateProperty.isPending ||
-                  isPersistingMedia) && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                <Save className="mr-2 h-4 w-4" />
-                {isEditing ? "Salvar" : "Cadastrar"}
+              <Button asChild variant="outline">
+                <a
+                  href={`/properties/${createdPropertyId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Conferir ficha em outra aba
+                </a>
               </Button>
             </div>
           </div>
-          <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
-            <PropertyFormSectionsProvider value={sectionContext}>
+        </form>
+      </PropertyFormDialog>
+    );
+  }
+  return (
+    <PropertyFormDialog
+      title={isEditing ? "Editar Imóvel" : "Novo Imóvel"}
+      onClose={handleCancel}
+      busy={isBusy}
+    >
+      <form
+        data-tour="property-form"
+        onSubmit={handleSubmit}
+        aria-describedby={
+          visibleValidationIssues.length > 0
+            ? "property-form-validation-summary"
+            : undefined
+        }
+        className="property-form-surface min-h-0 flex flex-1 flex-col gap-3 text-[12px] font-light [&_.app-card]:rounded-[8px] [&_.app-card-soft]:rounded-[6px] [&_button]:text-[12px] [&_button]:font-light [&_input]:rounded-[6px] [&_input]:text-[12px] [&_input]:font-light [&_label]:text-[12px] [&_label]:font-light [&_textarea]:rounded-[6px] [&_textarea]:text-[12px] [&_textarea]:font-light [&_[role=combobox]]:rounded-[6px] [&_[role=combobox]]:text-[12px] [&_[role=combobox]]:font-light"
+      >
+        <Tabs
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <FormWizardLayout
+            steps={tabs.map((tab) => ({ id: tab.value, label: tab.label, icon: tab.icon, buttonId: `property-tab-${tab.value}`, panelId: `property-panel-${tab.value}`, tourId: `property-tab-${tab.value}` }))}
+            navTourId="property-form-tabs"
+            activeStep={activeTab}
+            onStepChange={setActiveTab}
+            contentClassName="@container space-y-4"
+            asideTitle={isEditing ? "Histórico do imóvel" : "Prévia pública"}
+            aside={
+              <PropertyFormAside property={isEditing ? property : null} formData={formData} onOpenHistory={() => setHistoryOpen(true)} />
+            }
+            footer={
+              <>
+                <Button type="button" variant="ghost" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={isBusy} onClick={handleCancel}>Cancelar</Button>
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                  <Button type="button" variant="ghost" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={isBusy || activeStepIndex <= 0} onClick={() => setActiveTab(tabs[activeStepIndex - 1].value)}>
+                    <ChevronLeft className="mr-1 h-4 w-4" aria-hidden="true" />Voltar
+                  </Button>
+                  {!isLastStep && (
+                    <Button type="button" className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME} disabled={isBusy || isCepLoading} onClick={handleNextStep}>
+                      Avançar<ChevronRight className="ml-1 h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  )}
+                  <Button data-tour="property-save-button" type="submit" className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME} disabled={isBusy || isCepLoading || isPreparingPhotos || hasConcurrencyConflict || Boolean(creationRecoveryError) || !canEdit}>
+                    {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    {isEditing ? "Salvar" : pendingCreation ? "Confirmar cadastro" : "Cadastrar"}
+                  </Button>
+                </div>
+              </>
+            }
+          >
+            {formFeedback}
+            <PropertyFormSectionsProvider key={`${formScope.actorId}:${formScope.organizationId}:${formScope.resourceId}:${formScope.accessSignature}`} value={sectionContext}>
               <OwnerSection />
               <StructureSection />
               <LocationSection />
@@ -1733,9 +1965,16 @@ export default function PropertyForm() {
               {showManagerOnlySections && <CommissionsSection />}
               {showManagerOnlySections && <ConfidentialSection />}
             </PropertyFormSectionsProvider>
-          </div>
+            <details className="app-card-soft p-3 sm:hidden">
+              <summary className="cursor-pointer text-[12px] font-normal">{isEditing ? "Histórico do imóvel" : "Prévia pública"}</summary>
+              <div className="mt-3">
+                <PropertyFormAside property={isEditing ? property : null} formData={formData} onOpenHistory={() => setHistoryOpen(true)} />
+              </div>
+            </details>
+          </FormWizardLayout>
         </Tabs>
       </form>
-    </AppLayout>
+      {isEditing && property && <PropertyHistoryDialog property={property} open={historyOpen} onOpenChange={setHistoryOpen} />}
+    </PropertyFormDialog>
   );
 }

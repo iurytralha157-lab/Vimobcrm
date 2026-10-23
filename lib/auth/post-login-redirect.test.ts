@@ -13,6 +13,7 @@ import {
 } from './post-login-redirect';
 import {
   initializeSignedInUserContext,
+  shouldRevalidateMembership,
   runAuthOperationWithTimeout,
   runBestEffortAuthOperation,
   shouldForceOrganizationSelectionForAuthEvent,
@@ -169,6 +170,32 @@ test('resolve perfil antes das organizacoes para impedir desvio da selecao multi
   );
 
   assert.deepEqual(order, ['profile', 'organizations']);
+});
+
+test('revalidação de vínculo evita foco duplicado e não roda durante troca ou saída', () => {
+  const ready = {
+    active: true,
+    hasUser: true,
+    authInitialized: true,
+    organizationsLoaded: true,
+    isInitializingOrganization: false,
+    isLoggingOut: false,
+    inFlight: false,
+    onRecoveryRoute: false,
+    fromFocus: true,
+    now: 60_000,
+    lastRefreshAt: 0,
+    focusIntervalMs: 30_000,
+  };
+
+  assert.equal(shouldRevalidateMembership(ready), true);
+  assert.equal(shouldRevalidateMembership({ ...ready, now: 10_000 }), false);
+  assert.equal(shouldRevalidateMembership({ ...ready, now: 10_000, fromFocus: false }), true);
+  assert.equal(shouldRevalidateMembership({ ...ready, inFlight: true }), false);
+  assert.equal(shouldRevalidateMembership({ ...ready, isInitializingOrganization: true }), false);
+  assert.equal(shouldRevalidateMembership({ ...ready, isLoggingOut: true }), false);
+  assert.equal(shouldRevalidateMembership({ ...ready, organizationsLoaded: false }), false);
+  assert.equal(shouldRevalidateMembership({ ...ready, onRecoveryRoute: true }), false);
 });
 
 test('login retorna ao convite canonico antes de exigir uma organizacao', () => {

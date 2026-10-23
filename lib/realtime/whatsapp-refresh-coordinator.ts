@@ -10,6 +10,60 @@ export type WhatsAppRealtimeRefreshRequest<TScope> = {
   leadIds?: readonly string[];
 };
 
+// A newly joined private channel can briefly precede the Realtime replication
+// slot. Recheck the canonical API for one minute so an early missed hint does
+// not leave the open inbox waiting for its regular 90 s / 5 min fallback.
+export const WHATSAPP_INBOX_CATCH_UP_DELAYS_MS = [0, 1_000, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000] as const;
+const WHATSAPP_INBOX_BASELINE_DELAYS_MS = [0, 1_000] as const;
+
+type CatchUpTimer = ReturnType<typeof setTimeout>;
+
+export function createWhatsAppInboxSubscriptionCatchUp(
+  refresh: () => void,
+  timers: {
+    set: (callback: () => void, delayMs: number) => CatchUpTimer;
+    clear: (timer: CatchUpTimer) => void;
+  } = {
+    // Browser timer methods require Window as their receiver. Wrapping the
+    // calls avoids invoking a detached native method through this object.
+    set: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
+    clear: (timer) => globalThis.clearTimeout(timer),
+  },
+) {
+  let pending: CatchUpTimer[] = [];
+  let disposed = false;
+
+  const stop = () => {
+    pending.forEach((timer) => timers.clear(timer));
+    pending = [];
+  };
+
+  return {
+    start(activeInbox = false) {
+      if (disposed) return;
+      stop();
+      const delays = activeInbox
+        ? WHATSAPP_INBOX_CATCH_UP_DELAYS_MS
+        : WHATSAPP_INBOX_BASELINE_DELAYS_MS;
+      // Schedule independently before the first read. A transient failed read
+      // cannot cancel the later reconciliation attempts.
+      pending = delays.slice(1).map((delayMs) =>
+        timers.set(refresh, delayMs),
+      );
+      refresh();
+    },
+    hint() {
+      // A valid broadcast is only a wake-up, not proof the following GET
+      // succeeded. Keep the bounded catch-up sequence for transient failures.
+      if (!disposed) refresh();
+    },
+    dispose() {
+      disposed = true;
+      stop();
+    },
+  };
+}
+
 export type WhatsAppRealtimeRefreshBatch<TScope> = {
   scopeKey: string;
   scope: TScope;

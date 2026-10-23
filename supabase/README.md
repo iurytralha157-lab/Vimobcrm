@@ -63,6 +63,15 @@ Uma alteração no lock torna a mudança visível na revisão, mas não prova qu
 ledger local ou remoto esteja reconciliado. `migration list`, reset descartável,
 pgTAP e o roteiro de produção continuam obrigatórios.
 
+Para uma instalação local nova, a cadeia literal contém precondições de dados
+e cutovers históricos que não existem em banco vazio. A baseline formal local
+em [`reconciliation/local-bootstrap/README.md`](reconciliation/local-bootstrap/README.md)
+preserva o histórico e seus hashes, verifica equivalência de schema/permissões
+e usa ledger próprio: `baseline-equivalent` é distinto de `forward-executed`.
+Valide suas fontes com `node scripts/supabase/verify-local-schema-baseline.mjs`
+antes do restore local. Essa alternativa não repara o ledger remoto e não
+declara execução literal das migrations históricas.
+
 Para o analytics do site, siga também o roteiro de rollout migration-first em
 [`docs/runbooks/site-analytics-release.md`](../docs/runbooks/site-analytics-release.md).
 

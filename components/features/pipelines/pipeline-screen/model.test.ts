@@ -97,6 +97,20 @@ test('preserva filtro permissivo e fallback de erro atuais', () => {
   assert.equal(getPipelineErrorMessage({ detail: 'Falhou' }), 'Erro desconhecido');
 });
 
+test('continuacao controla o botao mesmo quando a contagem inicial envelheceu', () => {
+  const leads = Array.from({ length: 12 }, (_, index) => ({ id: `lead-${index}` }) as PipelineLead);
+  assert.equal(buildStageCountMetaMap([stage({ leads, total_lead_count: 13, has_more: false })]).get('stage-1')?.canLoadMore, false);
+  assert.equal(buildStageCountMetaMap([stage({ leads, total_lead_count: 13, has_more: true })]).get('stage-1')?.canLoadMore, true);
+  assert.equal(buildStageCountMetaMap([stage({ leads, total_lead_count: 12, has_more: true })]).get('stage-1')?.canLoadMore, true);
+  assert.deepEqual(buildStageCountMetaMap([stage({ leads, total_lead_count: 8, has_more: true })]).get('stage-1'), {
+    total: 12, visible: 12, remaining: 0, canLoadMore: true,
+  });
+  assert.deepEqual(buildStageCountMetaMap([stage({ leads, total_lead_count: 13, has_more: true,
+    pagination_count_is_estimate: true })]).get('stage-1'), {
+    total: 13, visible: 12, remaining: 1, canLoadMore: true, isCountEstimate: true,
+  });
+});
+
 test('preve perda por etapa ou automacao antes da persistencia', () => {
   assert.equal(getOptimisticDealStatusForStage(stage({ is_lost: true })), 'lost');
   assert.equal(getOptimisticAutomationDealStatusForStage([{

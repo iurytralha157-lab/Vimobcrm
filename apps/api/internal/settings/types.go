@@ -8,24 +8,26 @@ import (
 )
 
 var (
-	ErrInvalidInput             = errors.New("invalid settings input")
-	ErrPushVAPIDMismatch        = errors.New("push VAPID key mismatch")
-	ErrAPIKeyNotFound           = errors.New("api key not found")
-	ErrStorageNotConfigured     = errors.New("settings storage is not configured")
-	ErrStorageOperation         = errors.New("settings storage operation failed")
-	ErrAuthNotConfigured        = errors.New("settings auth admin is not configured")
-	ErrAuthOperation            = errors.New("settings auth admin operation failed")
-	ErrEmailOperation           = errors.New("settings email notification failed")
-	ErrPermissionStorage        = errors.New("user permission storage is not available")
-	ErrCheckoutInProgress       = errors.New("a billing checkout is already in progress")
-	ErrPlanChangeInProgress     = errors.New("another managed billing plan change is already in progress")
-	ErrPlanChangeRequiresActive = errors.New("the current provider subscription must be active before changing plans")
-	ErrAsaasNotConfigured       = errors.New("Asaas subscription management is not configured")
-	ErrAsaasOperation           = errors.New("Asaas subscription update failed")
-	ErrAsaasAmbiguous           = errors.New("Asaas subscription update outcome is ambiguous")
-	ErrPaymentNotFound          = errors.New("billing payment was not found")
-	ErrPaymentProviderMismatch  = errors.New("billing payment provider identity mismatch")
-	ErrPropertySettingsConflict = errors.New("property settings were updated concurrently")
+	ErrInvalidInput                             = errors.New("invalid settings input")
+	ErrPushVAPIDMismatch                        = errors.New("push VAPID key mismatch")
+	ErrAPIKeyNotFound                           = errors.New("api key not found")
+	ErrStorageNotConfigured                     = errors.New("settings storage is not configured")
+	ErrStorageOperation                         = errors.New("settings storage operation failed")
+	ErrAuthNotConfigured                        = errors.New("settings auth admin is not configured")
+	ErrAuthOperation                            = errors.New("settings auth admin operation failed")
+	ErrPasswordSessionRevocationUnconfirmed     = errors.New("password session revocation outcome is unconfirmed")
+	ErrPasswordUpdateAfterRevocationUnconfirmed = errors.New("password update outcome is unconfirmed after session revocation")
+	ErrEmailOperation                           = errors.New("settings email notification failed")
+	ErrPermissionStorage                        = errors.New("user permission storage is not available")
+	ErrCheckoutInProgress                       = errors.New("a billing checkout is already in progress")
+	ErrPlanChangeInProgress                     = errors.New("another managed billing plan change is already in progress")
+	ErrPlanChangeRequiresActive                 = errors.New("the current provider subscription must be active before changing plans")
+	ErrAsaasNotConfigured                       = errors.New("Asaas subscription management is not configured")
+	ErrAsaasOperation                           = errors.New("Asaas subscription update failed")
+	ErrAsaasAmbiguous                           = errors.New("Asaas subscription update outcome is ambiguous")
+	ErrPaymentNotFound                          = errors.New("billing payment was not found")
+	ErrPaymentProviderMismatch                  = errors.New("billing payment provider identity mismatch")
+	ErrPropertySettingsConflict                 = errors.New("property settings were updated concurrently")
 )
 
 type UserPermissionItem struct {
@@ -183,6 +185,7 @@ type ChangePasswordResult struct {
 	Allowed               bool   `json:"allowed"`
 	Message               string `json:"message"`
 	EmailNotificationSent bool   `json:"emailNotificationSent"`
+	SessionsRevoked       bool   `json:"sessionsRevoked"`
 }
 
 type PasswordChangeEvent struct {

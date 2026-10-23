@@ -253,6 +253,8 @@ export default function Commissions() {
     pending: 'pending',
     approved: 'approved',
     paid: 'paid',
+    cancelled: 'cancelled',
+    all: undefined,
     rules: undefined,
   };
 
@@ -593,11 +595,13 @@ export default function Commissions() {
                 <Settings2 aria-hidden="true" className="h-4 w-4 shrink-0" />
                 <span className="app-responsive-tab-label">Regras</span>
               </TabsTrigger>
+              <TabsTrigger value="cancelled" data-responsive-tab aria-label="Canceladas" className="shrink-0 gap-2 text-xs sm:text-sm"><XCircle className="h-4 w-4" aria-hidden="true" /><span className="app-responsive-tab-label">Canceladas</span></TabsTrigger>
+              <TabsTrigger value="all" data-responsive-tab aria-label="Todas as comissões" className="shrink-0 text-xs sm:text-sm"><span className="app-responsive-tab-label">Todas</span></TabsTrigger>
             </TabsList>
           </div>
 
           {/* Commissions Tabs */}
-          {["forecast", "pending", "approved", "paid"].map((tab) => (
+          {["forecast", "pending", "approved", "paid", "cancelled", "all"].map((tab) => (
             <TabsContent key={tab} value={tab}>
               <Card className="app-card">
                 <CardHeader className="p-3 sm:p-4 md:p-6 pb-2 sm:pb-3 md:pb-4">

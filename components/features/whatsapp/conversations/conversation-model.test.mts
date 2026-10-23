@@ -53,12 +53,12 @@ test("combina filtros de lead e resposta pendente sem mutar a origem", () => {
     lead: { id: "lead-1", name: "Maria" },
     unread_count: 1,
   });
-  const answeredLead = conversation({
-    id: "answered-lead",
+  const readPendingLead = conversation({
+    id: "read-pending-lead",
     lead_id: "lead-2",
     lead: { id: "lead-2", name: "Pedro" },
   });
-  const source = [withoutLead, withLead, answeredLead];
+  const source = [withoutLead, withLead, readPendingLead];
 
   assert.deepEqual(
     filterWhatsAppConversations(source, {
@@ -66,9 +66,9 @@ test("combina filtros de lead e resposta pendente sem mutar a origem", () => {
       withoutLeadOnly: false,
       pendingReplyOnly: true,
     }).map((item: ScreenConversation) => item.id),
-    ["with-lead"],
+    ["with-lead", "read-pending-lead"],
   );
-  assert.deepEqual(source.map(({ id }) => id), ["without-lead", "with-lead", "answered-lead"]);
+  assert.deepEqual(source.map(({ id }) => id), ["without-lead", "with-lead", "read-pending-lead"]);
 });
 
 test("adapta conversa Meta ao contrato visual da lista", () => {

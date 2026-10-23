@@ -2,6 +2,11 @@
 
 Gerado automaticamente a partir de `apps/api/internal/app/routes.go`.
 
+Snapshot de 541 rotas; as linhas de auditoria e dos históricos de lead/equipe
+foram atualizadas manualmente para o ajuste local de 2026-10-09. A rota de
+histórico de distribuição já existe no código, mas não neste snapshot. O catálogo completo precisa
+ser regenerado após a consolidação das demais mudanças simultâneas nas rotas.
+
 Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler responsável, a camada de acesso registrada e a linha de origem. A indicação “sem middleware na rota” não significa necessariamente acesso irrestrito: webhooks e rotas internas podem validar assinatura, segredo ou token dentro do próprio handler.
 
 ## Resumo
@@ -142,8 +147,8 @@ Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler 
 
 | # | Método | Rota | Operação | Handler | Proteção registrada | Linha |
 | ---: | --- | --- | --- | --- | --- | ---: |
-| 9 | GET | `/v1/audit-logs` | `List` | `auditHandler.List` | Usuário autenticado | 192 |
-| 10 | POST | `/v1/audit-logs` | `Create` | `auditHandler.Create` | Usuário autenticado | 193 |
+| 9 | GET | `/v1/audit-logs` | `List` | `auditHandler.List` | Sessão ativa; proprietário, administrador ou SuperAdmin | 222 |
+| 10 | POST | `/v1/audit-logs` | `RejectClientCreate` | `auditHandler.RejectClientCreate` | Sessão ativa; escrita genérica retirada (410) | 223 |
 
 ### Analytics — 15
 
@@ -283,7 +288,7 @@ Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler 
 | 406 | POST | `/v1/leads` | `Create` | `leadsHandler.Create` | Organização ativa | 593 |
 | 407 | GET | `/v1/leads/{id}/timeline` | `ListLeadTimeline` | `leadsHandler.ListLeadTimeline` | Organização ativa | 594 |
 | 408 | GET | `/v1/leads/{id}/journey` | `ListLeadJourney` | `leadsHandler.ListLeadJourney` | Organização ativa | 595 |
-| 409 | GET | `/v1/leads/{id}/history-raw` | `ShowLeadHistoryRaw` | `leadsHandler.ShowLeadHistoryRaw` | Organização ativa | 596 |
+| 409 | GET | `/v1/leads/{id}/history-raw` | `ShowLeadHistoryRaw` | `leadsHandler.ShowLeadHistoryRaw` | Sessão ativa + organização | 670 |
 | 410 | GET | `/v1/leads/{id}/conversation-detail` | `ShowConversationDetail` | `leadsHandler.ShowConversationDetail` | Organização ativa | 597 |
 | 411 | GET | `/v1/leads/{id}/sensitive-profile` | `ShowSensitiveProfile` | `leadsHandler.ShowSensitiveProfile` | Organização + permissão LeadOperate | 598 |
 | 412 | GET | `/v1/leads/{id}` | `Show` | `leadsHandler.Show` | Organização ativa | 599 |
@@ -928,7 +933,7 @@ Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler 
 | ---: | --- | --- | --- | --- | --- | ---: |
 | 480 | GET | `/v1/teams` | `List` | `teamsHandler.List` | Organização + permissão TeamView | 667 |
 | 481 | GET | `/v1/teams/{id}` | `Get` | `teamsHandler.Get` | Organização + permissão TeamView | 668 |
-| 482 | GET | `/v1/teams/{id}/history` | `ListHistory` | `teamsHandler.ListHistory` | Organização + permissão TeamView | 669 |
+| 482 | GET | `/v1/teams/{id}/history` | `ListHistory` | `teamsHandler.ListHistory` | Sessão ativa + organização + permissão TeamView | 744 |
 | 483 | GET | `/v1/teams/{teamId}/distribution-stats` | `GetTeamDistributionStats` | `roundRobinHandler.GetTeamDistributionStats` | Organização + permissão TeamView | 670 |
 | 484 | POST | `/v1/teams` | `Create` | `teamsHandler.Create` | Organização + permissão TeamManage | 671 |
 | 485 | PATCH | `/v1/teams/{id}` | `Update` | `teamsHandler.Update` | Organização + permissão TeamManage | 672 |

@@ -27,13 +27,13 @@ func TestDashboardEntriesCountOneInitialPerVisibleCardAndOnlyCountableReentries(
 	for _, required := range []string{
 		"l.id as lead_id, false as is_reentry", // exactly one synthetic initial per visible card
 		"e.entry_type = 'initial'",
-		"order by e.occurred_at, e.created_at, e.id",
-		"limit 1", // a duplicate historical initial cannot add to the total
+		"order by e.lead_id, e.occurred_at, e.created_at, e.id",
+		"select distinct on (e.lead_id)", // a duplicate historical initial cannot add to the total
 		"select e.id::text as entry_id",
 		"e.entry_type = 'reentry' and e.is_countable = true",
 		"count(*) filter (where not entry.is_reentry)",
 		"count(*) filter (where entry.is_reentry)",
-		"left join lateral (", // only one historical initial can join each card
+		"left join initial_entries initial", // only one historical initial can join each card
 	} {
 		if !strings.Contains(query, required) {
 			t.Errorf("entry count query is missing %q", required)
@@ -209,8 +209,8 @@ func TestDashboardInitialAttributionUsesEarliestLedgerFactWithoutMutableFallback
 		"nullif(initial.adset_id, '') as adset_id",
 		"nullif(initial.ad_id, '') as ad_id",
 		"e.entry_type = 'initial'",
-		"order by e.occurred_at, e.created_at, e.id",
-		"limit 1",
+		"order by e.lead_id, e.occurred_at, e.created_at, e.id",
+		"select distinct on (e.lead_id)",
 	} {
 		if !strings.Contains(initial, required) {
 			t.Errorf("first-arrival branch is missing %q", required)

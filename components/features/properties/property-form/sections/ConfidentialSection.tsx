@@ -12,11 +12,13 @@ import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
 export function ConfidentialSection() {
   const {
+    isSaving,
     formData, set
   } = usePropertyFormSections();
 
   return (
-  <TabsContent value="confidential">
+  <TabsContent value="confidential" id="property-panel-confidential" aria-labelledby="property-tab-confidential" className="@container">
+    <fieldset disabled={isSaving} className="min-w-0 border-0 p-0">
     <Card
       data-tour="property-confidential-section"
       className="app-card"
@@ -27,7 +29,7 @@ export function ConfidentialSection() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-tax-code">Código IPTU</Label>
             <Input
@@ -49,7 +51,7 @@ export function ConfidentialSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-electricity-code">Código da Rede de Eletricidade</Label>
             <Input
@@ -71,7 +73,7 @@ export function ConfidentialSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 @[480px]:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="property-documentation-status">Status/Descritivo</Label>
             <Input
@@ -117,6 +119,7 @@ export function ConfidentialSection() {
         </div>
       </CardContent>
     </Card>
+      </fieldset>
   </TabsContent>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useDashboardQuery } from "@/hooks/dashboard/use-dashboard-query";
 import { useRouter } from "next/navigation";
 import {
   type LucideIcon,
@@ -40,6 +40,7 @@ import {
 import { SalesFunnelWithPipeline } from "@/components/features/dashboard/SalesFunnelWithPipeline";
 import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolutionChart";
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
+import { DASHBOARD_SOURCE_SLICE_LIMIT } from "@/components/features/dashboard/lead-sources-model";
 import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
 import { CampaignLeadsChart } from "@/components/features/dashboard/CampaignLeadsChart";
 import { TopCreativesCard } from "@/components/features/dashboard/TopCreativesCard";
@@ -49,6 +50,7 @@ import { DashboardVisitsDialog } from "@/components/features/dashboard/Dashboard
 import {
   getDashboardStatsFailureState,
   getDashboardStatsErrorDescription,
+  shouldDisplayCachedDashboardStats,
 } from "@/components/features/dashboard/dashboard-stats-error";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,6 +71,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 // Hooks e Contextos
 import { useSharedFilters } from "@/hooks/use-shared-filters";
+import { MAX_DASHBOARD_SOURCE_FILTER_LENGTH } from "@/lib/validation/dashboard-filter-text";
+import { useFilters } from "@/contexts/FilterContext";
 import {
   type EnhancedDashboardStats,
   useDashboardLeadDistribution,
@@ -79,21 +83,25 @@ import {
   useDashboardQueryScope,
 } from "@/hooks/use-dashboard-stats";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { usePipelines } from "@/hooks/use-stages";
+import { useDashboardPipelineOptions } from "@/hooks/dashboard/use-dashboard-pipeline-options";
+import { useDashboardDialogFocus } from "@/hooks/dashboard/use-dashboard-dialog-focus";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import {
   datePresetOptions,
-  sourceLabels,
 } from "@/hooks/use-dashboard-filters";
+import { findDashboardSourceLabel, getDashboardSourceLabel } from "@/lib/analytics/dashboard-source-label";
 import {
   getDashboardExtraCounts,
   getDashboardFiltersQueryKey,
   type DashboardAPIFilters,
 } from "@/lib/api/dashboard";
 import { DASHBOARD_CHART_COLORS } from "@/config/dashboard-chart-colors";
+import { DASHBOARD_LAYOUT } from "@/config/dashboard-layout";
+import { MAX_SHARED_REPORT_RANGE_DAYS } from "@/lib/filters/date-range-limits";
+import { FilterPeriodNotice } from "@/components/shared/filters/FilterPeriodNotice";
 
 const DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS = 1000 * 60 * 10;
-const DASHBOARD_DESKTOP_BREAKPOINT_PX = 1024;
+const DASHBOARD_DESKTOP_BREAKPOINT_PX = DASHBOARD_LAYOUT.desktopBreakpointPx;
 const DIALOG_CHART_INITIAL_DIMENSION = { width: 180, height: 180 };
 
 type KPIFormat = "number" | "currency" | "percent" | "time";
@@ -115,7 +123,7 @@ type DashboardKPI = {
   iconColor?: string;
   iconBgColor?: string;
   hideIconOnDesktop?: boolean;
-  onClick?: () => void;
+  onClick?: (trigger: HTMLElement) => void;
   interactive?: boolean;
   compact?: boolean;
   tourTarget: string;
@@ -145,6 +153,9 @@ function useIsDashboardDesktop() {
 // COMPONENTE PRINCIPAL
 // ==========================================
 export default function Dashboard() {
+  const loadStartedAt = useRef<number | null>(null);
+  const hasRecordedInitialLoad = useRef(false);
+  useEffect(() => { loadStartedAt.current = performance.now(); }, []);
   const isMobile = useIsMobile();
   const isDashboardDesktop = useIsDashboardDesktop();
   const router = useRouter();
@@ -163,17 +174,13 @@ export default function Dashboard() {
   const activeOrganizationId = dashboardQueryScope.organizationId;
   const entryFilterMode = entryFilterCapability.organizationId === activeOrganizationId
     && entryFilterCapability.enabled;
-  const { data: pipelines = [] } = usePipelines();
-  const [pipelineSelection, setPipelineSelection] = useState<{
-    organizationId: string | undefined;
-    pipelineId: string | null;
-  }>({ organizationId: undefined, pipelineId: null });
-  const pipelineId = pipelineSelection.organizationId === activeOrganizationId
-    ? pipelineSelection.pipelineId
-    : null;
-  const setPipelineId = (nextPipelineId: string | null) => {
-    setPipelineSelection({ organizationId: activeOrganizationId, pipelineId: nextPipelineId });
-  };
+  const {
+    pipelines,
+    isError: hasPipelinesError,
+    isFetching: isFetchingPipelines,
+    refresh: refreshPipelineOptions,
+  } = useDashboardPipelineOptions(dashboardQueryScope);
+  const { pipelineId, setPipelineId } = useFilters();
 
   const {
     filters,
@@ -226,14 +233,18 @@ export default function Dashboard() {
     refetchTags,
     refetchTeams,
     isFiltersHydrated,
+    periodError,
   } = useSharedFilters({
+    cacheTrustScope: dashboardQueryScope,
     loadDynamicOptions: shouldLoadFilterOptions,
     pipelineId,
     dateMode: "origin",
     entryMode: entryFilterMode,
     multiCampaigns: true,
+    dateRangeMaxDays: MAX_SHARED_REPORT_RANGE_DAYS,
   });
   const dashboardDateRange = filters.dateRange;
+  const canQueryDashboard = isFiltersHydrated && !periodError;
 
   const dashboardFilters = useMemo<DashboardAPIFilters>(
     () => ({
@@ -258,35 +269,44 @@ export default function Dashboard() {
     data: stats,
     isLoading: statsLoading,
     isError: statsError,
+    isAccessBlocked: statsAccessBlocked,
     isFetching: statsFetching,
     error: statsQueryError,
     refetch: refetchStats,
   } = useEnhancedDashboardStats(dashboardFilters, {
-    enabled: isFiltersHydrated,
+    enabled: canQueryDashboard,
   });
   useEffect(() => {
     if (!activeOrganizationId || !stats || statsError) return;
     const enabled = stats.entryBreakdownAvailable === true;
-    setEntryFilterCapability((current) => current.organizationId === activeOrganizationId && current.enabled === enabled
-      ? current
-      : { organizationId: activeOrganizationId, enabled });
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setEntryFilterCapability((current) => current.organizationId === activeOrganizationId && current.enabled === enabled
+        ? current
+        : { organizationId: activeOrganizationId, enabled });
+    });
+    return () => { isActive = false; };
   }, [activeOrganizationId, stats, statsError]);
   const shouldLoadDealDetails =
-    isFiltersHydrated && (lostDialogOpen || wonDialogOpen);
+    canQueryDashboard && (lostDialogOpen || wonDialogOpen);
   const {
     data: detailedStats,
     isLoading: dealDetailsLoading,
     isError: dealDetailsError,
+    isAccessBlocked: detailsAccessBlocked,
+    error: dealDetailsQueryError,
     refetch: refetchDealDetails,
   } = useEnhancedDashboardStats(dashboardFilters, {
     enabled: shouldLoadDealDetails,
     includeDetails: true,
   });
-  const { data: evolutionData = [], isLoading: evolutionLoading, isError: evolutionError, refetch: refetchEvolution } =
-    useDealsEvolutionData(dashboardFilters, { enabled: isFiltersHydrated });
+  const { data: evolutionResponseData, isLoading: evolutionLoading, isError: evolutionError, refetch: refetchEvolution } =
+    useDealsEvolutionData(dashboardFilters, { enabled: canQueryDashboard });
+  const evolutionData = evolutionResponseData ?? [];
   const { data: sourcesData = [], isLoading: sourcesLoading, isError: sourcesError, refetch: refetchSources } =
     useLeadSourcesData(dashboardFilters, undefined, {
-      enabled: isFiltersHydrated && (stats !== undefined || statsError),
+      enabled: canQueryDashboard && (stats !== undefined || statsError),
       countEntries: stats?.entryBreakdownAvailable === true,
     });
   const {
@@ -295,7 +315,7 @@ export default function Dashboard() {
     isError: leadDistributionError,
     refetch: refetchLeadDistribution,
   } = useDashboardLeadDistribution(dashboardFilters, {
-    enabled: isFiltersHydrated,
+    enabled: canQueryDashboard,
   });
   // The distribution already includes every eligible active team, even those
   // with no leads. Keep the saved chart selection intact while the page-wide
@@ -315,7 +335,7 @@ export default function Dashboard() {
     isError: firstContactError,
     refetch: refetchFirstContact,
   } = useDashboardFirstContact(dashboardFilters, {
-    enabled: isFiltersHydrated && firstContactDialogOpen,
+    enabled: canQueryDashboard && firstContactDialogOpen,
   });
   const hasOrganization = Boolean(activeOrganizationId);
 
@@ -323,10 +343,11 @@ export default function Dashboard() {
     data: extraCounts,
     isLoading: extraCountsLoading,
     isError: extraCountsError,
+    isAccessBlocked: extraCountsAccessBlocked,
     isFetching: extraCountsFetching,
     error: extraCountsQueryError,
     refetch: refetchExtraCounts,
-  } = useQuery({
+  } = useDashboardQuery({
     queryKey: [
       "dashboard-extra-counts",
       activeOrganizationId,
@@ -340,52 +361,91 @@ export default function Dashboard() {
         filters: dashboardFilters,
         signal,
       }),
-    enabled: dashboardQueryScope.isReady && isFiltersHydrated,
+    enabled: dashboardQueryScope.isReady && canQueryDashboard,
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
-  });
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+  }, dashboardQueryScope);
 
   const canShowPreviousExtraCounts = getDashboardStatsFailureState(
     extraCounts !== undefined,
     extraCountsError,
     extraCountsQueryError,
   ) === "stale";
-  const propertyCount = extraCountsError && !canShowPreviousExtraCounts ? "—" : extraCounts?.propertyCount ?? 0;
-  const siteVisits = extraCountsError && !canShowPreviousExtraCounts ? "—" : extraCounts?.siteVisits ?? 0;
-  const scheduledVisitsCount = extraCountsError && !canShowPreviousExtraCounts ? "—" : extraCounts?.scheduledVisits ?? 0;
+  const propertyCount = extraCountsAccessBlocked || (extraCountsError && !canShowPreviousExtraCounts) ? "—" : extraCounts?.propertyCount ?? 0;
+  const siteVisits = extraCountsAccessBlocked || (extraCountsError && !canShowPreviousExtraCounts) ? "—" : extraCounts?.siteVisits ?? 0;
+  const scheduledVisitsCount = extraCountsAccessBlocked || (extraCountsError && !canShowPreviousExtraCounts) ? "—" : extraCounts?.scheduledVisits ?? 0;
   const kpisLoading =
     !hasOrganization || !isFiltersHydrated || statsLoading || extraCountsLoading;
-  const statsFailureState = getDashboardStatsFailureState(
+  const statsFailureState = statsAccessBlocked ? "unavailable" : getDashboardStatsFailureState(
     stats !== undefined,
     statsError,
     statsQueryError,
   );
   const kpisError = statsFailureState === "unavailable";
   const kpisStale = statsFailureState === "stale";
+  const dashboardAccessDenied = statsAccessBlocked || (statsError && !shouldDisplayCachedDashboardStats(statsQueryError));
+  const dialogFocusScope = dashboardQueryScope.isReady && !dashboardAccessDenied
+    ? dashboardQueryScope.accessSignature
+    : null;
+  const leadsDialogFocus = useDashboardDialogFocus(dialogFocusScope);
+  const lostDialogFocus = useDashboardDialogFocus(dialogFocusScope);
+  const wonDialogFocus = useDashboardDialogFocus(dialogFocusScope);
+  const firstContactDialogFocus = useDashboardDialogFocus(dialogFocusScope);
+  const visitsDialogFocus = useDashboardDialogFocus(dialogFocusScope);
+  const openLeadEntriesDialog = (trigger: HTMLElement) => {
+    leadsDialogFocus.captureTrigger(trigger);
+    setLeadEntriesDialogOpen(true);
+  };
+  const openLostDialog = (trigger: HTMLElement) => {
+    lostDialogFocus.captureTrigger(trigger);
+    setLostDialogOpen(true);
+  };
+  const openWonDialog = (trigger: HTMLElement) => {
+    wonDialogFocus.captureTrigger(trigger);
+    setWonDialogOpen(true);
+  };
+  const openFirstContactDialog = (trigger: HTMLElement) => {
+    firstContactDialogFocus.captureTrigger(trigger);
+    setFirstContactDialogOpen(true);
+  };
+  const openVisitsDialog = (trigger: HTMLElement) => {
+    visitsDialogFocus.captureTrigger(trigger);
+    setVisitsDialogOpen(true);
+  };
   const statsErrorDescription = getDashboardStatsErrorDescription(statsQueryError);
   const evolutionDataLoading =
     !hasOrganization || !isFiltersHydrated || evolutionLoading;
   const sourcesDataLoading =
-    !hasOrganization || !isFiltersHydrated || sourcesLoading;
+    !hasOrganization || !isFiltersHydrated || statsLoading || sourcesLoading;
 
   useEffect(() => {
     if (
       hasOrganization &&
+      dashboardQueryScope.isReady &&
       isFiltersHydrated &&
+      stats !== undefined &&
+      evolutionResponseData !== undefined &&
+      !statsError &&
+      !evolutionError &&
+      loadStartedAt.current !== null &&
+      !hasRecordedInitialLoad.current &&
       !statsLoading &&
       !evolutionLoading
     ) {
       performanceTracker.addMetric(
-        "Dashboard Full Load",
-        performance.now(),
+        "Dashboard Stats and Evolution Load",
+        performance.now() - loadStartedAt.current,
         "ms",
       );
+      hasRecordedInitialLoad.current = true;
     }
-  }, [hasOrganization, isFiltersHydrated, statsLoading, evolutionLoading]);
+  }, [dashboardQueryScope.isReady, hasOrganization, isFiltersHydrated, stats, statsError, evolutionResponseData, evolutionError, statsLoading, evolutionLoading]);
 
   const funnelComponent = (
     <SalesFunnelWithPipeline
       filters={dashboardFilters}
-      enabled={isFiltersHydrated}
+      enabled={canQueryDashboard}
       pipelineId={pipelineId}
       onPipelineChange={setPipelineId}
     />
@@ -438,11 +498,14 @@ export default function Dashboard() {
     setPipelineId(null);
   };
   const retryDynamicOptions = () => {
+    refreshPipelineOptions();
     void refetchLeadMetaFilters();
     void refetchTags();
     if (dashboardQueryScope.canViewLeadDistribution) void refetchTeams();
   };
-  const dialogData = detailedStats || kpiData;
+  const detailsFailureState = detailsAccessBlocked ? "unavailable" : getDashboardStatsFailureState(detailedStats !== undefined, dealDetailsError, dealDetailsQueryError);
+  const dialogDataUnavailable = kpisError || detailsFailureState === "unavailable";
+  const dialogData = detailsFailureState === "unavailable" ? kpiData : detailedStats || kpiData;
   const showDealDetailsLoading =
     shouldLoadDealDetails && !dealDetailsError && !detailedStats;
   const selectedBrokerId = userId && userId !== "all" && userId !== "unassigned"
@@ -467,7 +530,8 @@ export default function Dashboard() {
           )}
           data-tour="dashboard-filters"
         >
-          <SharedFilters
+          {!dashboardAccessDenied ? <SharedFilters
+            cacheTrustScope={dashboardQueryScope}
             datePreset={datePreset}
             onDatePresetChange={setDatePreset}
             onClearDatePreset={clearDateFilter}
@@ -484,6 +548,8 @@ export default function Dashboard() {
             pipelines={pipelines}
             source={source}
             onSourceChange={setSource}
+            sourceFilterMaxLength={MAX_DASHBOARD_SOURCE_FILTER_LENGTH}
+            dateRangeMaxDays={MAX_SHARED_REPORT_RANGE_DAYS}
             pageId={pageId}
             onPageChange={(id) => {
               setPageId(id);
@@ -519,27 +585,31 @@ export default function Dashboard() {
             isLoadingAds={isLoadingAds}
             isLoadingTags={isLoadingTags}
             hasTagsError={hasTagsError}
-            hasDynamicOptionsError={hasDynamicOptionsError}
-            isRetryingDynamicOptions={isRetryingDynamicOptions}
+            hasDynamicOptionsError={hasDynamicOptionsError || hasPipelinesError}
+            isRetryingDynamicOptions={isRetryingDynamicOptions || isFetchingPipelines}
             onRetryDynamicOptions={retryDynamicOptions}
             loadDynamicOptions={shouldLoadFilterOptions}
             onFiltersOpenChange={(open) => {
               if (!open) return;
               setShouldLoadFilterOptions(true);
+              refreshPipelineOptions();
               if (hasLeadMetaFiltersError) void refetchLeadMetaFilters();
               if (hasTagsError) void refetchTags();
               if (hasTeamOptionsError) void refetchTeams();
             }}
             tourPrefix="dashboard"
-            triggerClassName="bg-[var(--app-surface-soft)] text-[10px] font-light hover:bg-[var(--app-surface-hover)]"
-          />
+          /> : null}
         </div>
 
-        {isDashboardDesktop === null ? (
+        {periodError ? (
+          <FilterPeriodNotice message={periodError} onClear={clearDateFilter} />
+        ) : dashboardAccessDenied ? (
+          <DashboardDataError message={statsErrorDescription} onRetry={retryKpis} isRetrying={statsFetching} />
+        ) : isDashboardDesktop === null ? (
           <div className="min-h-[420px] flex-1 rounded-[8px] bg-[var(--app-surface-soft)]" />
         ) : isDashboardDesktop ? (
           <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
-            <div className="grid h-[calc(100dvh-9rem)] min-h-[620px] shrink-0 grid-cols-12 gap-3">
+            <div className={DASHBOARD_LAYOUT.desktopFirstRow}>
               <div className="col-span-8 flex min-h-0 flex-col gap-3">
                 <div className="shrink-0">
                   {kpisError ? (
@@ -553,15 +623,15 @@ export default function Dashboard() {
                       siteVisits={siteVisits}
                       scheduledVisits={scheduledVisitsCount}
                       layout="top"
-                      onLeadsClick={dashboardQueryScope.isReady && isFiltersHydrated ? () => setLeadEntriesDialogOpen(true) : undefined}
-                      onLostClick={() => setLostDialogOpen(true)}
-                      onWonClick={() => setWonDialogOpen(true)}
-                      onVisitsClick={() => setVisitsDialogOpen(true)}
-                      onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
+                      onLeadsClick={dashboardQueryScope.isReady && isFiltersHydrated ? openLeadEntriesDialog : undefined}
+                      onLostClick={openLostDialog}
+                      onWonClick={openWonDialog}
+                      onVisitsClick={openVisitsDialog}
+                      onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? openFirstContactDialog : undefined}
                     />
                   )}
                   {kpisStale ? <DashboardStatsStaleNotice onRetry={retryKpis} isRetrying={statsFetching} /> : null}
-                  {extraCountsError ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} hasPreviousData={canShowPreviousExtraCounts} isRetrying={extraCountsFetching} /> : null}
+                  {extraCountsError || extraCountsAccessBlocked ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} hasPreviousData={canShowPreviousExtraCounts} isRetrying={extraCountsFetching} /> : null}
                 </div>
 
                 {dashboardQueryScope.canViewLeadDistribution && !showSelectedBrokerEvolutionFirst ? (
@@ -669,19 +739,19 @@ export default function Dashboard() {
                   scheduledVisits={scheduledVisitsCount}
                   propertyCount={propertyCount}
                   siteVisits={siteVisits}
-                  onLeadsClick={dashboardQueryScope.isReady && isFiltersHydrated ? () => setLeadEntriesDialogOpen(true) : undefined}
-                  onLostClick={() => setLostDialogOpen(true)}
-                  onWonClick={() => setWonDialogOpen(true)}
-                  onVisitsClick={() => setVisitsDialogOpen(true)}
-                  onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
+                  onLeadsClick={dashboardQueryScope.isReady && isFiltersHydrated ? openLeadEntriesDialog : undefined}
+                  onLostClick={openLostDialog}
+                  onWonClick={openWonDialog}
+                  onVisitsClick={openVisitsDialog}
+                  onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? openFirstContactDialog : undefined}
                 />
               )}
               {kpisStale ? <DashboardStatsStaleNotice onRetry={retryKpis} isRetrying={statsFetching} /> : null}
-              {extraCountsError ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} hasPreviousData={canShowPreviousExtraCounts} isRetrying={extraCountsFetching} /> : null}
+              {extraCountsError || extraCountsAccessBlocked ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} hasPreviousData={canShowPreviousExtraCounts} isRetrying={extraCountsFetching} /> : null}
             </section>
 
             {!dashboardQueryScope.canViewLeadDistribution || showSelectedBrokerEvolutionFirst ? (
-              <div data-tour="dashboard-evolution" className="h-[390px]">
+              <div data-tour="dashboard-evolution" className={DASHBOARD_LAYOUT.mobileEvolution}>
                 <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
               </div>
             ) : null}
@@ -720,12 +790,12 @@ export default function Dashboard() {
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="funnel" className="mt-3">
-                  <div data-tour="dashboard-funnel" className="h-[390px]">
+                  <div data-tour="dashboard-funnel" className={DASHBOARD_LAYOUT.mobileFunnel}>
                     {funnelComponent}
                   </div>
                 </TabsContent>
                 <TabsContent value="sources" className="mt-3">
-                  <div data-tour="dashboard-sources" className="h-[430px]">
+                  <div data-tour="dashboard-sources" className={DASHBOARD_LAYOUT.mobileSources}>
                     <LeadSourcesChart
                       data={sourcesData}
                       countEntries={stats?.entryBreakdownAvailable === true}
@@ -743,7 +813,7 @@ export default function Dashboard() {
             {dashboardQueryScope.canViewLeadDistribution ? (
               <>
                 {showSelectedBrokerEvolutionFirst ? (
-                  <div className="h-[390px]">
+                  <div className={DASHBOARD_LAYOUT.mobileEvolution}>
                     <LeadDistributionSection
                       display="users"
                       selectedTeamId={teamId}
@@ -760,7 +830,7 @@ export default function Dashboard() {
                     />
                   </div>
                 ) : (
-                  <div data-tour="dashboard-evolution" className="h-[390px]">
+                  <div data-tour="dashboard-evolution" className={DASHBOARD_LAYOUT.mobileEvolution}>
                     <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
                   </div>
                 )}
@@ -793,19 +863,25 @@ export default function Dashboard() {
       <DashboardLeadEntriesDialog
         open={leadEntriesDialogOpen}
         onOpenChange={setLeadEntriesDialogOpen}
+        onCloseAutoFocus={leadsDialogFocus.onCloseAutoFocus}
+        onNavigate={leadsDialogFocus.skipRestore}
         filters={dashboardFilters}
-        available={dashboardQueryScope.isReady && isFiltersHydrated && stats?.entryBreakdownAvailable === true}
+        available={dashboardQueryScope.isReady && isFiltersHydrated && statsFailureState !== "unavailable" && stats?.entryBreakdownAvailable === true}
+        availabilityError={kpisError ? statsErrorDescription : undefined}
         onRetryAvailability={() => void refetchStats()}
       />
 
       <LostDealsDialog
         open={lostDialogOpen}
         onOpenChange={setLostDialogOpen}
+        onCloseAutoFocus={lostDialogFocus.onCloseAutoFocus}
         data={dialogData}
         detailsLoading={showDealDetailsLoading || dealDetailsLoading}
         detailsError={dealDetailsError}
+        dataUnavailable={dialogDataUnavailable}
         onRetryDetails={() => void refetchDealDetails()}
         onViewLead={(leadId) => {
+          lostDialogFocus.skipRestore();
           setLostDialogOpen(false);
           router.push(`/crm/pipelines?lead=${leadId}`);
         }}
@@ -814,11 +890,14 @@ export default function Dashboard() {
       <WonDealsDialog
         open={wonDialogOpen}
         onOpenChange={setWonDialogOpen}
+        onCloseAutoFocus={wonDialogFocus.onCloseAutoFocus}
         data={dialogData}
         detailsLoading={showDealDetailsLoading || dealDetailsLoading}
         detailsError={dealDetailsError}
+        dataUnavailable={dialogDataUnavailable}
         onRetryDetails={() => void refetchDealDetails()}
         onViewLead={(leadId) => {
+          wonDialogFocus.skipRestore();
           setWonDialogOpen(false);
           router.push(`/crm/pipelines?lead=${leadId}`);
         }}
@@ -827,17 +906,21 @@ export default function Dashboard() {
       <FirstContactDialog
         open={firstContactDialogOpen}
         onOpenChange={setFirstContactDialogOpen}
+        onCloseAutoFocus={firstContactDialogFocus.onCloseAutoFocus}
         filters={dashboardFilters}
         data={firstContactData}
         isLoading={firstContactLoading}
-        isError={firstContactError}
+        isError={firstContactError || dashboardAccessDenied}
         onRetry={() => void refetchFirstContact()}
       />
       <DashboardVisitsDialog
         open={visitsDialogOpen}
         onOpenChange={setVisitsDialogOpen}
+        onCloseAutoFocus={visitsDialogFocus.onCloseAutoFocus}
+        onNavigate={visitsDialogFocus.skipRestore}
         filters={dashboardFilters}
         periodLabel={periodLabel}
+        accessDenied={dashboardAccessDenied}
       />
     </AppLayout>
   );
@@ -909,11 +992,11 @@ interface KPICardsGridProps {
   siteVisits?: number | string;
   scheduledVisits?: number | string;
   layout?: "top" | "side";
-  onLeadsClick?: () => void;
-  onLostClick?: () => void;
-  onWonClick?: () => void;
-  onFirstContactClick?: () => void;
-  onVisitsClick?: () => void;
+  onLeadsClick?: (trigger: HTMLElement) => void;
+  onLostClick?: (trigger: HTMLElement) => void;
+  onWonClick?: (trigger: HTMLElement) => void;
+  onFirstContactClick?: (trigger: HTMLElement) => void;
+  onVisitsClick?: (trigger: HTMLElement) => void;
 }
 
 function KPICardsGrid({
@@ -1037,7 +1120,7 @@ function KPICardsGrid({
       title: "Visitas",
       value: scheduledVisits ?? 0,
       icon: CalendarCheck,
-      tooltip: `Visitas e reuniões marcadas no período - ${periodLabel}. A data usada é a do agendamento, independente da entrada do lead.`,
+      tooltip: `Visitas e reuniões criadas no período - ${periodLabel}. O filtro usa a data de criação da marcação, independente do dia da visita e da entrada do lead.`,
       format: "number",
       color: "visits",
       onClick: onVisitsClick,
@@ -1048,7 +1131,7 @@ function KPICardsGrid({
       title: "VGV",
       value: data.totalSalesValue,
       icon: DollarSign,
-      tooltip: `Valor em vendas - ${periodLabel}`,
+      tooltip: `VGV estimado dos cards ganhos captados no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`,
       format: "currency",
       color: "vgv",
       hideIconOnDesktop: true,
@@ -1108,7 +1191,7 @@ function KPICardsGrid({
       if (!kpi.onClick) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        kpi.onClick();
+        kpi.onClick(event.currentTarget);
       }
     };
 
@@ -1127,27 +1210,27 @@ function KPICardsGrid({
                 )}
                 role={kpi.interactive ? "button" : undefined}
                 tabIndex={kpi.interactive ? 0 : undefined}
-                onClick={kpi.onClick}
+                onClick={(event) => kpi.onClick?.(event.currentTarget)}
                 onKeyDown={handleKeyDown}
               >
                 <CardContent
                   className={cn(
-                    "relative h-full p-3 sm:p-4",
+                    "relative h-full p-3 min-[1441px]:p-4",
                     kpi.compact
-                      ? "min-h-[78px] sm:min-h-[82px]"
-                      : "min-h-[96px]",
+                      ? "min-h-[74px] min-[1441px]:min-h-[82px]"
+                      : "min-h-[84px] min-[1441px]:min-h-[96px]",
                   )}
                 >
                   <div className="min-w-0">
-                    <p className="mb-1 truncate pr-9 text-[12px] font-light leading-tight text-[var(--app-text-tertiary)] sm:pr-11">
+                    <p className="mb-1 truncate pr-7 text-[11px] font-light leading-tight text-[var(--app-text-tertiary)] min-[1441px]:pr-11 min-[1441px]:text-[12px]" title={kpi.title}>
                       {kpi.title}
                     </p>
                     <p
                       className={cn(
                         "font-normal leading-tight text-[var(--app-text-primary)]",
                         isCurrency
-                          ? "text-sm sm:text-lg xl:text-xl break-words"
-                          : "text-lg sm:text-2xl truncate",
+                          ? "text-lg min-[1441px]:text-xl break-words"
+                          : "text-xl min-[1441px]:text-2xl break-all",
                       )}
                       style={getDashboardKPIValueStyle(kpi.color)}
                     >
@@ -1181,7 +1264,7 @@ function KPICardsGrid({
                     {kpi.rate !== undefined && (
                       <div
                         className={cn(
-                          "mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight",
+                          "mt-1 max-w-full text-[10px] font-light leading-tight",
                           rateColorClass,
                         )}
                       >
@@ -1192,7 +1275,7 @@ function KPICardsGrid({
                     {showIcon && (
                       <div
                         className={cn(
-                          "absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors sm:right-4 sm:top-4",
+                          "absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors min-[1441px]:right-4 min-[1441px]:top-4 min-[1441px]:h-8 min-[1441px]:w-8",
                           kpi.interactive && "group-hover:bg-primary",
                         )}
                       >
@@ -1347,8 +1430,8 @@ function getSourceLabel(source: string | null | undefined): string {
   const labelKey = normalizedSource.toLowerCase();
 
   return (
-    sourceLabels[labelKey] ||
-    sourceLabels[normalizedSource] ||
+    findDashboardSourceLabel(labelKey) ||
+    findDashboardSourceLabel(normalizedSource) ||
     normalizedSource ||
     "Origem não informada"
   );
@@ -1382,17 +1465,25 @@ function buildWonSourceBuckets(
 
   const percentageBase = totalWon > 0 ? totalWon : wonDeals.length;
 
-  return Array.from(groupedSources.values())
+  const sortedSources = Array.from(groupedSources.values())
     .sort(
       (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"),
-    )
-    .map((bucket, index) => ({
-      ...bucket,
-      percentage:
-        percentageBase > 0 ? (bucket.count / percentageBase) * 100 : 0,
-      color:
-        DASHBOARD_CHART_COLORS[(index + 3) % DASHBOARD_CHART_COLORS.length],
-    }));
+    );
+  const chartSources = sortedSources.slice(0, DASHBOARD_SOURCE_SLICE_LIMIT).map((bucket) => ({ ...bucket, key: `source:${bucket.key}` }));
+  if (sortedSources.length > DASHBOARD_SOURCE_SLICE_LIMIT) {
+    chartSources.push({
+      key: "aggregate:remaining-sources",
+      label: "Outras origens",
+      count: sortedSources.slice(DASHBOARD_SOURCE_SLICE_LIMIT).reduce((sum, bucket) => sum + bucket.count, 0),
+    });
+  }
+  return chartSources.map((bucket, index) => ({
+    ...bucket,
+    percentage:
+      percentageBase > 0 ? (bucket.count / percentageBase) * 100 : 0,
+    color:
+      DASHBOARD_CHART_COLORS[(index + 3) % DASHBOARD_CHART_COLORS.length],
+  }));
 }
 
 function DashboardExtraCountsError({
@@ -1479,17 +1570,21 @@ function DashboardDealDetailsState({
 function LostDealsDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   data,
   detailsLoading,
   detailsError,
+  dataUnavailable,
   onRetryDetails,
   onViewLead,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   data: EnhancedDashboardStats;
   detailsLoading: boolean;
   detailsError: boolean;
+  dataUnavailable: boolean;
   onRetryDetails: () => void;
   onViewLead: (leadId: string) => void;
 }) {
@@ -1509,6 +1604,7 @@ function LostDealsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tour="dashboard-lost-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
         aria-describedby={undefined}
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
@@ -1523,13 +1619,14 @@ function LostDealsDialog({
 
         <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
           <div className="space-y-3 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
+            {dataUnavailable ? <DashboardDealDetailsState hasError={true} onRetry={onRetryDetails} /> : <>
             <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
               <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
                 <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                   Perdidos
                 </p>
                 <p className="mt-1 text-[20px] font-normal leading-tight tabular-nums text-destructive">
-                  {totalLost}
+                          {totalLost.toLocaleString("pt-BR")}
                 </p>
               </div>
               <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
@@ -1651,7 +1748,7 @@ function LostDealsDialog({
                         </div>
                         <div className="flex min-w-[76px] shrink-0 flex-col items-end gap-0.5 sm:min-w-[118px] sm:flex-row sm:items-center sm:justify-end sm:gap-3">
                           <span className="font-normal tabular-nums">
-                            {bucket.count}
+                            {bucket.count.toLocaleString("pt-BR")}
                           </span>
                           <span
                             className="font-normal tabular-nums"
@@ -1699,10 +1796,8 @@ function LostDealsDialog({
                         <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">
                           {deal.name}
                         </p>
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-                          {sourceLabels[deal.source || ""] ||
-                            deal.source ||
-                            "Origem não informada"}
+                        <p className="break-all text-[11px] font-light text-[var(--app-text-tertiary)]">
+                          {getDashboardSourceLabel(deal.source)}
                         </p>
                       </div>
                       <div className="col-span-2 min-w-0 md:col-span-1">
@@ -1761,6 +1856,7 @@ function LostDealsDialog({
                 </div>
               )}
             </div>
+            </>}
           </div>
         </ScrollArea>
       </DialogContent>
@@ -1771,17 +1867,21 @@ function LostDealsDialog({
 function WonDealsDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   data,
   detailsLoading,
   detailsError,
+  dataUnavailable,
   onRetryDetails,
   onViewLead,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   data: EnhancedDashboardStats;
   detailsLoading: boolean;
   detailsError: boolean;
+  dataUnavailable: boolean;
   onRetryDetails: () => void;
   onViewLead: (leadId: string) => void;
 }) {
@@ -1800,6 +1900,7 @@ function WonDealsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tour="dashboard-won-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
         aria-describedby={undefined}
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
@@ -1814,6 +1915,7 @@ function WonDealsDialog({
 
         <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
           <div className="space-y-3 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
+            {dataUnavailable ? <DashboardDealDetailsState hasError={true} onRetry={onRetryDetails} /> : <>
             <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
               <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
                 <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
@@ -1842,7 +1944,7 @@ function WonDealsDialog({
                 <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                   VGV dos ganhos
                 </p>
-                <p className="mt-1 truncate text-[18px] font-normal leading-tight tabular-nums text-[var(--lead-status-won-fg)]">
+                <p className="mt-1 break-all text-[18px] font-normal leading-tight tabular-nums text-[var(--lead-status-won-fg)]">
                   {formatCurrency(totalVgv)}
                 </p>
               </div>
@@ -1850,7 +1952,7 @@ function WonDealsDialog({
                 <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                   Ticket médio
                 </p>
-                <p className="mt-1 truncate text-[18px] font-normal leading-tight tabular-nums">
+                <p className="mt-1 break-all text-[18px] font-normal leading-tight tabular-nums">
                   {formatCurrency(averageTicket)}
                 </p>
               </div>
@@ -2029,10 +2131,8 @@ function WonDealsDialog({
                         <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">
                           {deal.name}
                         </p>
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-                          {sourceLabels[deal.source || ""] ||
-                            deal.source ||
-                            "Origem não informada"}
+                        <p className="break-all text-[11px] font-light text-[var(--app-text-tertiary)]">
+                          {getDashboardSourceLabel(deal.source)}
                         </p>
                       </div>
                       <div className="col-span-2 min-w-0 md:col-span-1 md:flex md:justify-center">
@@ -2088,6 +2188,7 @@ function WonDealsDialog({
                 </div>
               )}
             </div>
+            </>}
           </div>
         </ScrollArea>
       </DialogContent>

@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 export type { OrganizationSite }
 
 export function useOrganizationSite() {
-  const { activeOrganization, organization, profile } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
 
   return useQuery({
@@ -22,7 +22,7 @@ export function useOrganizationSite() {
 
 export function useCreateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { activeOrganization, organization, profile } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
 
   return useMutation({
@@ -45,7 +45,7 @@ export function useCreateOrganizationSite() {
 
 export function useUpdateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { activeOrganization, organization, profile } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
 
   return useMutation({
@@ -92,7 +92,7 @@ export function useUpdateSiteFooterLogo() {
 
 export function useUploadSiteAsset() {
   const queryClient = useQueryClient()
-  const { activeOrganization, organization, profile } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
 
   return useMutation({

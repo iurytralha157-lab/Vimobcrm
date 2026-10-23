@@ -1,5 +1,6 @@
-import { vimobAPIRequest } from './vimob-client'
-import { apiPipelineSLAListResponseSchema, apiPipelineSLAResponseSchema, apiStageAutomationListResponseSchema, apiStageAutomationResponseSchema, apiStageOperationalListResponseSchema, apiStageOperationalResponseSchema, entityIdSchema, parseDomainInput, pipelineSLAInputSchema, stageAutomationInputSchema, stageOperationalConfigInputSchema, validateDomainResponse } from '@/lib/validation'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { stageInactivityCreateInputSchema, stageInactivityUpdateInputSchema, stageInactivityMutationResponseSchema, type StageInactivityCreateInput, type StageInactivityUpdateInput, type StageInactivityPolicy } from '@/lib/validation/stage-inactivity'
+import { apiPipelineSLAListResponseSchema, apiPipelineSLAResponseSchema, apiStageAutomationListResponseSchema, apiStageAutomationResponseSchema, apiStageOperationalListResponseSchema, apiStageOperationalResponseSchema, entityIdSchema, parseDomainInput, pipelineSLAInputSchema, stageAutomationInputSchema, stageAutomationUpdateInputSchema, stageAutomationStatusInputSchema, stageAutomationDeleteInputSchema, stageOperationalConfigInputSchema, validateDomainResponse } from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -22,6 +23,8 @@ export interface StageAutomationRow {
   is_active: boolean | null
   created_at: string | null
   updated_at: string | null
+  inactivity_policy?: StageInactivityPolicy | null
+  inactivity_runtime_available?: boolean
 }
 
 export type StageAutomationInput = {
@@ -36,6 +39,8 @@ export type StageAutomationInput = {
   action_config?: Record<string, unknown> | null
   is_active?: boolean
 }
+
+export type StageAutomationUpdateInput = StageAutomationInput & { expected_updated_at: string }
 
 export interface StageOperationalConfigRow {
   id?: string
@@ -83,6 +88,27 @@ export interface PipelineSLASettingsInput {
 }
 
 export const stageConfigAPI = {
+  async createStageInactivityAutomation(input: StageInactivityCreateInput, organizationId: string, intent: VimobAPIRequestIntent) {
+    const body = parseDomainInput(stageInactivityCreateInputSchema, input, 'stage-config.inactivity.create')
+    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>('/v1/stage-inactivity-automations', {
+      ...intent, method: 'POST', organizationId, body, retry: false,
+    })
+    validateDomainResponse(stageInactivityMutationResponseSchema, response, 'stage-config.inactivity.create.policy')
+    validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.inactivity.create')
+    return response.data
+  },
+
+  async updateStageInactivityAutomation(id: string, input: StageInactivityUpdateInput, organizationId: string, intent: VimobAPIRequestIntent) {
+    const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.inactivity.update.id')
+    const body = parseDomainInput(stageInactivityUpdateInputSchema, input, 'stage-config.inactivity.update')
+    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${automationId}/inactivity`, {
+      ...intent, method: 'PUT', organizationId, body, retry: false,
+    })
+    validateDomainResponse(stageInactivityMutationResponseSchema, response, 'stage-config.inactivity.update.policy')
+    validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.inactivity.update')
+    return response.data
+  },
+
   async listStageAutomations(params: { stageId?: string; organizationId?: string | null } = {}) {
     const stageId = params.stageId ? parseDomainInput(entityIdSchema, params.stageId, 'stage-config.automations.list.stage-id') : undefined
     const response = await vimobAPIRequest<Envelope<StageAutomationRow[]>>('/v1/stage-automations', {
@@ -93,10 +119,10 @@ export const stageConfigAPI = {
     return response.data
   },
 
-  async createStageAutomation(input: StageAutomationInput, organizationId?: string | null) {
+  async createStageAutomation(input: StageAutomationInput, organizationId?: string | null, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(stageAutomationInputSchema, input, 'stage-config.automations.create')
     const response = await vimobAPIRequest<Envelope<StageAutomationRow>>('/v1/stage-automations', {
-      method: 'POST',
+      ...intent, method: 'POST', retry: false,
       organizationId,
       body,
     })
@@ -104,11 +130,11 @@ export const stageConfigAPI = {
     return response.data
   },
 
-  async updateStageAutomation(id: string, input: StageAutomationInput, organizationId?: string | null) {
+  async updateStageAutomation(id: string, input: StageAutomationUpdateInput, organizationId?: string | null, intent?: VimobAPIRequestIntent) {
     const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.update.id')
-    const body = parseDomainInput(stageAutomationInputSchema, input, 'stage-config.automations.update')
+    const body = parseDomainInput(stageAutomationUpdateInputSchema, input, 'stage-config.automations.update')
     const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${automationId}`, {
-      method: 'PATCH',
+      ...intent, method: 'PATCH', retry: false,
       organizationId,
       body,
     })
@@ -116,20 +142,21 @@ export const stageConfigAPI = {
     return response.data
   },
 
-  async deleteStageAutomation(id: string, organizationId?: string | null) {
+  async deleteStageAutomation(id: string, expectedUpdatedAt: string, organizationId?: string | null, intent?: VimobAPIRequestIntent) {
     const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.delete.id')
+    const body = parseDomainInput(stageAutomationDeleteInputSchema, { expected_updated_at: expectedUpdatedAt }, 'stage-config.automations.delete')
     await vimobAPIRequest<null>(`/v1/stage-automations/${automationId}`, {
-      method: 'DELETE',
-      organizationId,
+      ...intent, method: 'DELETE', organizationId, body, retry: false,
     })
   },
 
-  async toggleStageAutomation(id: string, isActive: boolean, organizationId?: string | null) {
+  async toggleStageAutomation(id: string, isActive: boolean, expectedUpdatedAt: string, organizationId?: string | null, intent?: VimobAPIRequestIntent) {
     const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.toggle.id')
+    const body = parseDomainInput(stageAutomationStatusInputSchema, { is_active: isActive, expected_updated_at: expectedUpdatedAt }, 'stage-config.automations.toggle')
     const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${automationId}/status`, {
-      method: 'PATCH',
+      ...intent, method: 'PATCH', retry: false,
       organizationId,
-      body: { is_active: isActive },
+      body,
     })
     validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.automations.toggle')
     return response.data

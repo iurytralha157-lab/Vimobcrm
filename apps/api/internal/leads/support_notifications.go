@@ -96,6 +96,10 @@ type notificationRecipient struct {
 }
 
 func (repo Repository) ListNotifications(ctx context.Context, tenantContext tenant.Context, userID string, cursor *NotificationCursor, limit int) ([]Notification, *NotificationCursor, error) {
+	return repo.ListNotificationsFiltered(ctx, tenantContext, userID, cursor, limit, NotificationListFilters{})
+}
+
+func (repo Repository) ListNotificationsFiltered(ctx context.Context, tenantContext tenant.Context, userID string, cursor *NotificationCursor, limit int, filter NotificationListFilters) ([]Notification, *NotificationCursor, error) {
 	if userID == "" {
 		userID = tenantContext.UserID
 	}
@@ -114,6 +118,8 @@ func (repo Repository) ListNotifications(ctx context.Context, tenantContext tena
 		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
 		from public.notifications
 		where organization_id = $1::uuid and user_id = $2::uuid
+		  and (not $8::boolean or coalesce(is_read,false) = false)
+		  and (cardinality($9::text[]) = 0 or (`+notificationCategorySQL+`) = any($9::text[]))
 		  and `+billingNotificationVisibilitySQL("$1", "$4")+`
 		  and (
 		    not $5::boolean
@@ -121,7 +127,7 @@ func (repo Repository) ListNotifications(ctx context.Context, tenantContext tena
 		  )
 		order by created_at desc, id desc
 		limit $3
-	`, tenantContext.OrganizationID, userID, limit+1, tenantContext.UserID, hasCursor, cursorCreatedAt, cursorID)
+	`, tenantContext.OrganizationID, userID, limit+1, tenantContext.UserID, hasCursor, cursorCreatedAt, cursorID, filter.UnreadOnly, append([]string{}, filter.Categories...))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -208,12 +214,14 @@ func (repo Repository) MarkAllNotificationsRead(ctx context.Context, tenantConte
 
 func billingNotificationVisibilitySQL(organizationParameter string, userParameter string) string {
 	return `(
+		(lead_id is null or coalesce(private.queue_pool_read_access(` + organizationParameter + `::uuid,lead_id,` + userParameter + `::uuid),true))
+		and (
 		` + billingNotificationAuthorizationSQL(organizationParameter, userParameter) + `
 		or (
 			lower(coalesce(type, '')) <> 'billing'
 			and left(lower(coalesce(metadata ->> 'event_key', '')), 8) <> 'billing_'
 		)
-	)`
+	))`
 }
 
 func redactNotificationMetadataForAPI(metadata map[string]any) map[string]any {

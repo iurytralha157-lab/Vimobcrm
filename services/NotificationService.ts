@@ -1,4 +1,5 @@
 import { notificationsAPI, type DispatchNotificationResult } from '@/lib/api/notifications';
+import type { VimobAPIRequestIntent } from '@/lib/api/vimob-client';
 
 export type NotificationChannel = 'whatsapp' | 'system' | 'email' | 'push';
 
@@ -61,7 +62,7 @@ class NotificationService {
     dedupeKey,
     isTest,
     channels,
-  }: SendNotificationParams): Promise<DispatchNotificationResult> {
+  }: SendNotificationParams, intent?: VimobAPIRequestIntent): Promise<DispatchNotificationResult> {
     const finalEventKey = eventKey || templateSlug;
     if (!finalEventKey) {
       return { success: false, queued: false, error: 'eventKey or templateSlug is required' };
@@ -80,7 +81,7 @@ class NotificationService {
         dedupeKey,
         isTest,
         channels,
-      });
+      }, intent);
 
       if (data.error) {
         const message = describeNotificationError(data.error);

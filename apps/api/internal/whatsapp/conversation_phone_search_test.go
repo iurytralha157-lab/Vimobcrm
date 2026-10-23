@@ -80,10 +80,10 @@ func TestConversationFilterPhoneSearchKeepsUserInputParameterized(t *testing.T) 
 	if strings.Contains(joined, search) {
 		t.Fatalf("raw search input was interpolated into SQL: %s", joined)
 	}
-	if len(args) != 6 || args[4] != "%+55 (11) 99999-0000%' or true --%" || args[5] != "%5511999990000%" {
+	if len(args) != 5 || args[4] != "%+55 (11) 99999-0000\\%' or true --%" {
 		t.Fatalf("search arguments were not parameterized as expected: %#v", args)
 	}
-	if strings.Count(joined, "like $6") != 2 {
-		t.Fatalf("contact_phone and remote_jid must reuse the same phone parameter: %s", joined)
+	if strings.Count(joined, "like $5") != 3 || strings.Contains(joined, "regexp_replace(coalesce(wc.contact_phone") || strings.Contains(joined, "split_part(split_part(wc.remote_jid") {
+		t.Fatalf("mixed text/injection must remain parameterized text without a phone fallback: %s", joined)
 	}
 }

@@ -17,6 +17,7 @@ type nativeEvolutionMessage struct {
 	ProviderMessageIDSynthetic         bool
 	RemoteJID                          string
 	RemoteAliases                      []string
+	IdentityPNConflict                 bool
 	ContactPhone                       string
 	ContactName                        string
 	SenderJID                          string
@@ -30,6 +31,10 @@ type nativeEvolutionMessage struct {
 	MediaURL                           string
 	MediaBase64                        string
 	MediaMimeType                      string
+	MediaFilename                      string
+	Location                           *MessageLocation
+	Contacts                           []MessageContact
+	QuotedMessageID                    string
 	MediaStoragePath                   string
 	MediaSize                          int64
 	MediaStatus                        string
@@ -41,6 +46,7 @@ type nativeEvolutionMessage struct {
 	IsDeletion                         bool
 	HasCampaignSignal                  bool
 	IsCTWAAd                           bool
+	legacyContextualIntake             bool
 	CTWAConfirmationMethod             string
 	CampaignSourceType                 string
 	CampaignSourceID                   string
@@ -198,6 +204,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		identityPhone = ""
 	}
 	identity := newWhatsAppContactIdentity(identityPhone, remoteCandidate, groupHint)
+	identityConflict := !identity.IsGroup && nativeContactPNConflict(raw, info, key, fromMe)
 	if identity.RemoteJID == "" {
 		return nativeEvolutionMessage{}, false
 	}
@@ -216,12 +223,14 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 	}
 
 	mediaType, mediaBlock := nativeMediaBlock(messageNode, raw, info)
+	presentation := parseNativeMessagePresentation(messageNode, raw, mediaBlock)
 	content := firstNonEmpty(
 		firstString(messageNode, "conversation"),
 		firstString(messageNode, "Conversation"),
 		firstString(messageNode, "extendedTextMessage.text", "ExtendedTextMessage.Text"),
 		firstString(mediaBlock, "caption", "Caption"),
 		firstString(raw, "text", "body", "content", "caption", "buttonText", "button_text", "buttonId", "button_id"),
+		nativeStructuredMessageContent(messageNode),
 	)
 	if mediaType == "" {
 		mediaType = "text"
@@ -319,7 +328,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 
 	aliases := identity.RemoteAliases()
 	aliases = append(aliases, remoteCandidate)
-	if !identity.IsGroup {
+	if !identity.IsGroup && !identityConflict {
 		aliases = append(aliases, phoneCandidate)
 	}
 	// A group participant must never become an alias of the group chat. For an
@@ -355,6 +364,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		ProviderMessageIDSynthetic:         providerIDSynthetic,
 		RemoteJID:                          identity.RemoteJID,
 		RemoteAliases:                      aliases,
+		IdentityPNConflict:                 identityConflict,
 		ContactPhone:                       identity.ContactPhone,
 		ContactName:                        firstNonEmpty(contactName, identity.ContactPhone),
 		SenderJID:                          senderJID,
@@ -368,6 +378,10 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		MediaURL:                           mediaURL,
 		MediaBase64:                        mediaBase64,
 		MediaMimeType:                      mediaMimeType,
+		MediaFilename:                      presentation.filename,
+		Location:                           presentation.location,
+		Contacts:                           presentation.contacts,
+		QuotedMessageID:                    presentation.quoteRef,
 		MediaSize:                          nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
 		ReactionTargetID:                   reactionTarget,
 		ReactionEmoji:                      reactionEmoji,

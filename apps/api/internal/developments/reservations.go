@@ -35,8 +35,9 @@ type reservationLeadQueryer interface {
 }
 
 type reservationLeadScope struct {
-	AssignedUserID string
-	TeamID         string
+	AssignedUserID      string
+	TeamID              string
+	QueuePoolReadAccess *bool
 }
 
 func loadReservationLeadScope(
@@ -44,6 +45,7 @@ func loadReservationLeadScope(
 	queryer reservationLeadQueryer,
 	organizationID string,
 	leadID string,
+	actorID string,
 ) (reservationLeadScope, error) {
 	var scope reservationLeadScope
 	err := queryer.QueryRow(ctx, `
@@ -56,13 +58,20 @@ func loadReservationLeadScope(
 		limit 1
 		for share of lead
 	`, organizationID, leadID).Scan(&scope.AssignedUserID, &scope.TeamID)
+	if err == nil {
+		// Read the private runtime only after the lead lock was acquired. A
+		// function evaluated by the waiting SELECT may retain its old snapshot.
+		err = queryer.QueryRow(ctx, `select private.queue_pool_read_access($1::uuid,$2::uuid,$3::uuid)`,
+			organizationID, leadID, actorID).Scan(&scope.QueuePoolReadAccess)
+	}
 	return scope, err
 }
 
 func canViewReservationLead(tenantContext tenant.Context, scope reservationLeadScope) bool {
 	return authorization.CanViewLead(tenantContext, authorization.LeadResource{
-		AssignedUserID: scope.AssignedUserID,
-		TeamID:         scope.TeamID,
+		AssignedUserID:      scope.AssignedUserID,
+		TeamID:              scope.TeamID,
+		QueuePoolReadAccess: scope.QueuePoolReadAccess,
 	})
 }
 
@@ -73,8 +82,9 @@ func canOperateReservation(
 ) bool {
 	return canManage(tenantContext) &&
 		(reservation.LeadID == nil || authorization.CanUseLeadForMutation(tenantContext, authorization.LeadResource{
-			AssignedUserID: scope.AssignedUserID,
-			TeamID:         scope.TeamID,
+			AssignedUserID:      scope.AssignedUserID,
+			TeamID:              scope.TeamID,
+			QueuePoolReadAccess: scope.QueuePoolReadAccess,
 		}))
 }
 
@@ -101,6 +111,7 @@ func applyReservationLeadVisibility(
 		queryer,
 		tenantContext.OrganizationID,
 		*reservation.LeadID,
+		tenantContext.UserID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		reservation.LeadID = nil
@@ -114,12 +125,15 @@ func applyReservationLeadVisibility(
 	return nil
 }
 
-func requireReservationLeadVisibility(
+func requireReservationLeadMutation(
 	ctx context.Context,
 	queryer reservationLeadQueryer,
 	tenantContext tenant.Context,
 	reservation Reservation,
 ) error {
+	if !canManage(tenantContext) {
+		return tenant.ErrOrganizationAccessDenied
+	}
 	if reservation.LeadID == nil {
 		return nil
 	}
@@ -128,8 +142,9 @@ func requireReservationLeadVisibility(
 		queryer,
 		tenantContext.OrganizationID,
 		*reservation.LeadID,
+		tenantContext.UserID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !canViewReservationLead(tenantContext, scope)) {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !canOperateReservation(tenantContext, scope, reservation)) {
 		// Match an unknown reservation so a cross-scope lead relationship is
 		// never disclosed through mutation behavior.
 		return ErrNotFound
@@ -172,6 +187,7 @@ func (repo Repository) ListReservations(
 			repo.db.Pool(),
 			organizationID,
 			filter.LeadID,
+			tenantContext.UserID,
 		)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !canViewReservationLead(tenantContext, leadScope)) {
 			// A missing and a non-visible lead intentionally have the same result.
@@ -343,7 +359,7 @@ func (repo Repository) CreateReservation(
 		tenantContext.OrganizationID,
 		idempotencyKey,
 	); err == nil {
-		if err := requireReservationLeadVisibility(ctx, tx, tenantContext, existing); err != nil {
+		if err := requireReservationLeadMutation(ctx, tx, tenantContext, existing); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return CreateReservationResult{}, fmt.Errorf("%w: lead_id is invalid", ErrInvalidInput)
 			}
@@ -361,22 +377,21 @@ func (repo Repository) CreateReservation(
 	}
 
 	if input.LeadID != nil {
-		leadScope, err := loadReservationLeadScope(
-			ctx,
-			tx,
-			tenantContext.OrganizationID,
-			*input.LeadID,
-		)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return CreateReservationResult{}, err
-		}
-		if errors.Is(err, pgx.ErrNoRows) || !canViewReservationLead(tenantContext, leadScope) {
+		if err := requireReservationLeadMutation(ctx, tx, tenantContext, Reservation{LeadID: input.LeadID}); err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				return CreateReservationResult{}, err
+			}
 			// Do not disclose whether the lead exists outside the caller's
 			// canonical own/team/all visibility scope.
 			return CreateReservationResult{}, fmt.Errorf("%w: lead_id is invalid", ErrInvalidInput)
 		}
 	}
 
+	// Keep the development -> price table -> unit lock order shared with
+	// maintenance and price activation; reserve different units concurrently.
+	if err := lockDevelopmentInventoryRead(ctx, tx, tenantContext.OrganizationID, developmentID); err != nil {
+		return CreateReservationResult{}, err
+	}
 	var priceTableID, currency string
 	var listPrice float64
 	var paymentSnapshot []byte
@@ -387,6 +402,8 @@ func (repo Repository) CreateReservation(
 			unit_price.list_price::float8,
 			unit_price.payment_terms
 		from public.property_development_price_tables as price_table
+		join public.property_developments development
+		  on development.organization_id = price_table.organization_id and development.id = price_table.development_id
 		join public.property_development_unit_prices as unit_price
 		  on unit_price.organization_id = price_table.organization_id
 		 and unit_price.development_id = price_table.development_id
@@ -394,6 +411,8 @@ func (repo Repository) CreateReservation(
 		where price_table.organization_id = $1::uuid
 		  and price_table.development_id = $2::uuid
 		  and price_table.status = 'active'
+		  and development.status not in ('cancelled', 'archived', 'suspended')
+		  and development.commercial_status not in ('closed', 'sold_out')
 		  and unit_price.unit_id = $3::uuid
 		order by price_table.version desc
 		limit 1
@@ -431,6 +450,10 @@ func (repo Repository) CreateReservation(
 	}
 	if unitStatus != "available" && unitStatus != "negotiation" {
 		return CreateReservationResult{}, fmt.Errorf("%w: unit is not available for reservation", ErrConflict)
+	}
+
+	if err := requireUnitStructureOpen(ctx, tx, tenantContext.OrganizationID, developmentID, unitID); err != nil {
+		return CreateReservationResult{}, err
 	}
 
 	metadata := map[string]any{
@@ -559,11 +582,8 @@ func (repo Repository) ExtendReservation(
 		return Reservation{}, err
 	}
 	defer tx.Rollback(ctx)
-	current, err := lockReservationTx(ctx, tx, tenantContext.OrganizationID, developmentID, reservationID)
+	current, err := lockReservationForMutationTx(ctx, tx, tenantContext, developmentID, reservationID)
 	if err != nil {
-		return Reservation{}, err
-	}
-	if err := requireReservationLeadVisibility(ctx, tx, tenantContext, current); err != nil {
 		return Reservation{}, err
 	}
 	if err := ensureActiveReservationDeadline(current, input.ExpectedUpdatedAt); err != nil {
@@ -630,11 +650,8 @@ func (repo Repository) transitionReservation(
 		return Reservation{}, err
 	}
 	defer tx.Rollback(ctx)
-	current, err := lockReservationTx(ctx, tx, tenantContext.OrganizationID, developmentID, reservationID)
+	current, err := lockReservationForMutationTx(ctx, tx, tenantContext, developmentID, reservationID)
 	if err != nil {
-		return Reservation{}, err
-	}
-	if err := requireReservationLeadVisibility(ctx, tx, tenantContext, current); err != nil {
 		return Reservation{}, err
 	}
 	if err := ensureActiveReservationDeadline(current, expectedUpdatedAt); err != nil {

@@ -282,7 +282,15 @@ func TestManagedDeadWebhookRequeuesThroughWorkerBeforeQueueDelete(t *testing.T) 
 
 	roundRobinRepo := roundrobin.NewRepository(postgres)
 	admin := tenant.Context{OrganizationID: organizationID, UserID: userID, MemberRole: "admin"}
-	if err := roundRobinRepo.Delete(ctx, admin, queueID); !errors.Is(err, roundrobin.ErrPendingWhatsAppIntake) {
+	deleteCurrentQueue := func() error {
+		var revision int64
+		if err := pool.QueryRow(ctx, `select revision from public.round_robins
+			where organization_id=$1::uuid and id=$2::uuid`, organizationID, queueID).Scan(&revision); err != nil {
+			t.Fatalf("read current queue revision: %v", err)
+		}
+		return roundRobinRepo.Delete(ctx, admin, queueID, &revision)
+	}
+	if err := deleteCurrentQueue(); !errors.Is(err, roundrobin.ErrPendingWhatsAppIntake) {
 		t.Fatalf("delete with unresolved dead delivery = %v, want ErrPendingWhatsAppIntake", err)
 	}
 
@@ -363,7 +371,7 @@ func TestManagedDeadWebhookRequeuesThroughWorkerBeforeQueueDelete(t *testing.T) 
 		t.Fatalf("processed managed recovery = status:%s outcomes:%d entries:%d, want processed/1/1", status, outcomeCount, leadEntryCount)
 	}
 
-	if err := roundRobinRepo.Delete(ctx, admin, queueID); err != nil {
+	if err := deleteCurrentQueue(); err != nil {
 		t.Fatalf("delete queue after real managed outcome: %v", err)
 	}
 	var tombstoned bool

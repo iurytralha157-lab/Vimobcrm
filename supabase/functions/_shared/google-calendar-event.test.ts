@@ -24,8 +24,12 @@ import {
   decideGooglePullForLocalEvent,
   GOOGLE_CALENDAR_CONFLICT_MESSAGE,
   GoogleCalendarConflictError,
+  conditionalGoogleWriteHeaders,
 } from "./google-calendar-conflict";
 import { resolveGoogleCalendarConnectGate } from "./google-calendar-pilot";
+import { assertGoogleCalendarOAuthReady, googleCalendarFetchWithDeadline, googleCalendarRetryPolicy, googleCalendarRetryAfter,
+  googleCalendarErrorStatus,
+  GoogleCalendarLeaseLostError, GoogleCalendarRetryableError, GoogleCalendarVersionChangedError, GoogleCalendarConnectionChangedError } from "./google-calendar-delivery";
 
 type GoogleCalendarUrlBuilder = (path: string) => string;
 type GoogleCalendarContractHelpers = {
@@ -124,7 +128,22 @@ function loadIsolatedGoogleFunction<T>(
   relativePath: string,
   functionName: string,
   dependencies: Record<string, unknown>,
+  internal = false,
 ): T {
+  if (!internal) {
+    const pure = { conditionalGoogleWriteHeaders, assertGoogleCalendarOAuthReady, googleCalendarRetryPolicy,
+      googleCalendarRetryAfter, googleCalendarErrorStatus,
+      GoogleCalendarLeaseLostError, GoogleCalendarRetryableError, GoogleCalendarVersionChangedError,
+      googleCalendarFetchWithDeadline: dependencies.fetch || googleCalendarFetchWithDeadline };
+    const support = { ...pure, ...dependencies };
+    dependencies = {
+      ...pure,
+      assertGoogleCalendarJobLease: loadIsolatedGoogleFunction(relativePath, "assertGoogleCalendarJobLease", support, true),
+      assertScheduleSnapshotCurrent: loadIsolatedGoogleFunction(relativePath, "assertScheduleSnapshotCurrent", support, true),
+      finishGoogleCalendarJob: loadIsolatedGoogleFunction(relativePath, "finishGoogleCalendarJob", support, true),
+      ...dependencies,
+    };
+  }
   const modulePath = resolve(process.cwd(), relativePath);
   const source = readFileSync(modulePath, "utf8");
   const sourceFile = ts.createSourceFile(modulePath, source, ts.ScriptTarget.ES2020, true, ts.ScriptKind.TS);
@@ -151,6 +170,7 @@ function loadIsolatedGoogleHandler<T>(
   relativePath: string,
   dependencies: Record<string, unknown>,
 ): T {
+  dependencies = { GoogleCalendarConnectionChangedError, ...dependencies };
   const modulePath = resolve(process.cwd(), relativePath);
   const source = readFileSync(modulePath, "utf8");
   const sourceFile = ts.createSourceFile(modulePath, source, ts.ScriptTarget.ES2020, true, ts.ScriptKind.TS);
@@ -380,7 +400,7 @@ test("Vimob overwrites a Google edit on its verified linked event", async () => 
     trustedJobOrganizationId: organizationId,
   }), { synced: true, google_event_id: link.google_event_id });
   assert.deepEqual(requests.map(({ init }) => init.method || "GET"), ["GET", "PATCH"]);
-  assert.equal(requests[1].init.headers, undefined);
+  assert.deepEqual(requests[1].init.headers, { "If-Match": '"version-2"' });
   assert.match(requests[1].path, /sendUpdates=none$/);
   assert.deepEqual(JSON.parse(String(requests[1].init.body)).attendees, []);
   assert.equal(linkUpdated, true);
@@ -632,7 +652,7 @@ test("outbound worker claims verified jobs without a user allowlist", async () =
   assert.deepEqual(await run(20), { processed: 0, results: [] });
   assert.equal(calls.length, 1);
   const claimArgs = calls[0];
-  assert.equal(claimArgs.name, "google_calendar_claim_outbound_sync_jobs");
+  assert.equal(claimArgs.name, "google_calendar_claim_outbound_sync_jobs_v2");
   assert.deepEqual(Object.keys(claimArgs).sort(), ["name", "p_limit", "p_worker"]);
   assert.equal(claimArgs.p_limit, 20);
 });
@@ -646,23 +666,18 @@ test("deferred deletion returns to the queue without consuming a retry", async (
     "executeSyncJob",
     {
       processSyncJob: async () => ({ deferred: true, reason: "UPSERT_STILL_RUNNING" }),
-      addSeconds: () => "2026-10-06T10:00:10.000Z",
-      supabase: { from: () => ({
-        update: (row: Record<string, unknown>) => {
-          updates.push(row);
-          return { eq: async () => ({ error: null }) };
-        },
-      }) },
+      supabase: { rpc: async (name: string, args: Record<string, unknown>) => {
+        if (name === "google_calendar_finish_outbound_job") updates.push(args);
+        return { data: true, error: null };
+      } },
     },
   );
-  const result = await execute({ id: "delete-job-a", attempts: 4, max_attempts: 5 });
+  const result = await execute({ id: "delete-job-a", locked_by: "worker-a", attempts: 4, max_attempts: 5 });
   assert.equal(result.deferred, true);
   assert.equal(result.ok, true);
   assert.deepEqual(updates, [{
-    status: "queued",
-    next_run_at: "2026-10-06T10:00:10.000Z",
-    locked_at: null,
-    locked_by: null,
+    p_job_id: "delete-job-a", p_worker: "worker-a", p_status: "queued", p_error: null,
+    p_delay_seconds: 10, p_consume_attempt: false, p_is_conflict: false,
   }]);
 });
 
@@ -734,7 +749,7 @@ test("linkless hard delete removes only the matching deterministic Vimob event",
     fallbackConnectionId: connection.id,
   }), { deleted: 1 });
   assert.deepEqual(requests.map((item) => item.method), ["GET", "DELETE"]);
-  assert.equal(requests[1].headers, undefined);
+  assert.deepEqual(requests[1].headers, { "If-Match": '"current"' });
   assert.match(requests[0].path, new RegExp(buildVimobGoogleEventId(eventId)));
 });
 
@@ -807,18 +822,16 @@ test("hard delete removes a verified linked event after a Google-side edit", asy
     fallbackConnectionId: connection.id,
   }), { deleted: 1 });
   assert.deepEqual(requests.map(({ method }) => method), ["GET", "DELETE", "GET"]);
-  assert.equal(requests[1].headers, undefined);
+  assert.deepEqual(requests[1].headers, { "If-Match": '"google-edited-version"' });
   assert.match(requests[1].path, /sendUpdates=none$/);
   assert.equal(successfulWrites, 1);
 });
 
-test("a successful send keeps connection errors until all failed outbound jobs clear", async () => {
+test("account status aggregation sends identity and time to SQL, never a stale error snapshot", async () => {
   const connection = {
     id: "connection-a", organization_id: "organization-a", user_id: "owner-a",
   };
-  let unresolved = true;
-  const writes: Array<Record<string, unknown>> = [];
-  const filters: Array<[string, unknown]> = [];
+  const calls: Array<Record<string, unknown>> = [];
   const markSynced = loadIsolatedGoogleFunction<(
     connection: Record<string, unknown>,
   ) => Promise<void>>(
@@ -826,45 +839,26 @@ test("a successful send keeps connection errors until all failed outbound jobs c
     "markConnectionOutboundSynced",
     {
       supabase: {
-        from: (table: string) => {
-          const query = {
-            select: () => query,
-            eq: (field: string, value: unknown) => { filters.push([field, value]); return query; },
-            in: (field: string, value: unknown) => { filters.push([field, value]); return query; },
-            contains: (field: string, value: unknown) => { filters.push([field, value]); return query; },
-            order: () => query,
-            limit: () => query,
-            maybeSingle: async () => ({ data: unresolved ? { id: "failed-delete-a", last_error: "Delete Google falhou" } : null, error: null }),
-            update: (row: Record<string, unknown>) => { writes.push({ table, ...row }); return query; },
-            is: () => query,
-            then: (resolve: (value: unknown) => void) => resolve({ error: null }),
-          };
-          return query;
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          calls.push({ name, ...args });
+          return { data: true, error: null };
         },
       },
       console: { error: () => undefined },
     },
   );
   await markSynced(connection);
-  assert.equal(writes[0].table, "google_calendar_tokens");
-  assert.equal(typeof writes[0].last_synced_at, "string");
-  assert.equal(writes[0].sync_status, "error");
-  assert.equal(writes[0].last_error, "Delete Google falhou");
-  assert.deepEqual(filters.slice(0, 4), [
-    ["organization_id", connection.organization_id],
-    ["action", ["push_upsert", "push_delete"]],
-    ["status", ["failed", "dead"]],
-    ["payload", { owner_user_id: connection.user_id }],
-  ]);
-  unresolved = false;
-  await markSynced(connection);
-  assert.equal(writes[1].sync_status, "connected");
-  assert.equal(writes[1].last_error, null);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    name: "google_calendar_refresh_outbound_connection_status", p_connection_id: connection.id,
+    p_organization_id: connection.organization_id, p_owner_user_id: connection.user_id,
+    p_synced_at: calls[0].p_synced_at,
+  });
+  assert.equal(typeof calls[0].p_synced_at, "string");
 });
 
-test("a failure recorded during successful status update leaves the card in error", async () => {
-  let reads = 0;
-  const writes: Array<Record<string, unknown>> = [];
+test("an unavailable atomic account aggregator does not report a completed success", async () => {
+  const failure = new Error("synthetic RPC unavailable");
   const markSynced = loadIsolatedGoogleFunction<(
     connection: Record<string, unknown>,
   ) => Promise<void>>(
@@ -872,32 +866,12 @@ test("a failure recorded during successful status update leaves the card in erro
     "markConnectionOutboundSynced",
     {
       supabase: {
-        from: () => {
-          const query = {
-            select: () => query,
-            eq: () => query,
-            in: () => query,
-            contains: () => query,
-            order: () => query,
-            limit: () => query,
-            maybeSingle: async () => ({
-              data: ++reads === 1 ? null : { id: "failed-delete-a", last_error: "Remocao falhou" },
-              error: null,
-            }),
-            update: (row: Record<string, unknown>) => { writes.push(row); return query; },
-            is: () => query,
-            then: (resolve: (value: unknown) => void) => resolve({ error: null }),
-          };
-          return query;
-        },
+        rpc: async () => ({ data: null, error: failure }),
       },
       console: { error: () => undefined },
     },
   );
-  await markSynced({ id: "connection-a", organization_id: "organization-a", user_id: "owner-a" });
-  assert.equal(reads, 2);
-  assert.deepEqual(writes.map((row) => row.sync_status), ["connected", "error"]);
-  assert.equal(writes[1].last_error, "Remocao falhou");
+  await assert.rejects(markSynced({ id: "connection-a", organization_id: "organization-a", user_id: "owner-a" }), failure);
 });
 
 test("keeps Vimob reminder choices explicit in Google Calendar", () => {
@@ -1575,10 +1549,21 @@ test("disconnect waits for outbound work before revoking a Google token", async 
           };
           return query;
         },
-        rpc: async () => { revoked += 1; return { error: null }; },
+        rpc: async (name: string) => {
+          if (name === "google_calendar_begin_disconnect") return { data: !pending, error: null };
+          if (name === "google_calendar_disconnect_connection") revoked += 1;
+          return { data: true, error: null };
+        },
       },
-      stopGoogleWatches: async () => { stopped += 1; },
-      readTokenSecret: async () => null,
+      getConnectionById: async () => ({ id: "connection-a", user_id: "owner-a", organization_id: "organization-a",
+        credential_revision: 2, disconnecting_at: "2026-10-12T12:00:00Z" }),
+      stopGoogleWatches: async (freshConnection: Record<string, unknown>) => {
+        assert.equal(freshConnection.credential_revision, 2);
+        assert.equal(freshConnection.vimob_disconnect, true);
+        stopped += 1;
+      },
+      readTokenSecret: async () => ({ refresh_token: "synthetic-token" }),
+      googleCalendarFetchWithDeadline: async () => new Response(null, { status: 200 }),
     },
   );
   const connection = { id: "connection-a", user_id: "owner-a", organization_id: "organization-a" };
@@ -1639,6 +1624,7 @@ test("manual inbound sync is disabled while existing outbound push remains avail
   const organizationB = "e0b1c2d3-e4f5-6789-abcd-ef0123456789";
   let pulled = 0;
   let pushed = 0;
+  let enqueued = 0;
   const handler = loadIsolatedGoogleHandler<(req: Request) => Promise<Response>>(
     "supabase/functions/google-calendar-sync/index.ts",
     {
@@ -1654,11 +1640,15 @@ test("manual inbound sync is disabled while existing outbound push remains avail
         const query = {
           select: () => query,
           eq: () => query,
-          maybeSingle: async () => ({ data: { organization_id: organizationB, user_id: userB }, error: null }),
+          update: () => query,
+          then: (resolve: (value: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve),
+          maybeSingle: async () => ({ data: { id: "event-b", organization_id: organizationB, user_id: userB }, error: null }),
         };
         return query;
       } },
       pushScheduleEventToGoogle: async () => { pushed += 1; return { synced: true }; },
+      canManageScheduleEvent: async () => true,
+      enqueueSyncJob: async () => { enqueued += 1; return { id: "job-b" }; },
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
       errorMessage: (error: unknown) => String(error),
     },
@@ -1672,8 +1662,9 @@ test("manual inbound sync is disabled while existing outbound push remains avail
   assert.equal((await inbound.json()).code, "INBOUND_SYNC_DISABLED");
   assert.equal(pulled, 0);
   const outbound = await invoke("push_upsert");
-  assert.equal(outbound.status, 200);
-  assert.equal(pushed, 1);
+  assert.equal(outbound.status, 202);
+  assert.equal(pushed, 0);
+  assert.equal(enqueued, 1);
 });
 
 test("direct outbound push rejects an event outside the requested organization", async () => {
@@ -1735,7 +1726,7 @@ test("direct delete cannot remove Google while the Vimob event still exists", as
   }
 });
 
-test("invalid_grant marks a connection for reconnection without replacing its Vault token", async () => {
+test("invalid_grant leaves connection status to fenced finish and preserves its Vault token", async () => {
   const updates: Array<Record<string, unknown>> = [];
   let tokenWrites = 0;
   const refresh = loadIsolatedGoogleFunction<(
@@ -1768,10 +1759,7 @@ test("invalid_grant marks a connection for reconnection without replacing its Va
     /Reconecte sua conta/,
   );
   assert.equal(tokenWrites, 0);
-  assert.deepEqual(updates, [{
-    sync_status: "error",
-    last_error: "Autorizacao Google expirada ou revogada. Reconecte sua conta.",
-  }]);
+  assert.deepEqual(updates, []);
 });
 
 test("keeps legacy private Vimob identities without accepting malformed ids", () => {
@@ -1875,7 +1863,8 @@ test("guards every user-triggered Google Agenda mutation with schedule_manage", 
     "utf8",
   );
   const guardCalls = syncSource.match(/requireUserScheduleManage\(auth\.profile\)/g) || [];
-  assert.equal(guardCalls.length, 2);
+  assert.equal(guardCalls.length, 1);
+  assert.match(syncSource, /\["sync_event", "push_upsert"\]\.includes\(requestedAction\) \? "enqueue_event"/);
   assert.match(syncSource, /action === "push_delete"[\s\S]*?DELETE_THROUGH_VIMOB_ONLY/);
   assert.match(syncSource, /GoogleScheduleCapabilityError/);
   assert.match(syncSource, /capability\.status/);
@@ -2001,7 +1990,8 @@ test("retires the insecure endpoint and keeps only outbound sync reachable", () 
   assert.match(sharedSource, /google_sync_status: "conflict"/);
   assert.match(sharedSource, /durableLinkIds/);
   assert.match(syncSource, /enqueue_due_pulls/);
-  assert.match(syncSource, /executeSyncJob/);
+  assert.doesNotMatch(syncSource, /executeSyncJob|pushScheduleEventToGoogle|locked_by:/);
+  assert.match(syncSource, /queued: true \}, 202/);
   assert.match(syncSource, /google_sync_status: "pending"/);
   assert.match(syncSource, /DELETE_THROUGH_VIMOB_ONLY/);
   assert.match(clientSource, /organizationId: requireOrganizationId\(organizationId\)/);

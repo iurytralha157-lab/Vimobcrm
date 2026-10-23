@@ -50,6 +50,10 @@ de tenant e cache. Nunca reaproveite um ID durante `resolving`.
 - Estado local: `useState` ou `useReducer`.
 - Estado compartilhado de interface: contexto proprietário somente quando mais
   de um ramo realmente o consome.
+- Ao sair, a revogação global deve ser confirmada antes de encerrar a sessão local. Se a
+  sessão já estiver inválida, `/login?logout=unverified` avisa que não foi
+  possível confirmar o encerramento das outras sessões; erro transitório
+  mantém a sessão atual para permitir nova tentativa.
 
 Não crie store paralelo para autenticação.
 

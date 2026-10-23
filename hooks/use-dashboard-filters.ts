@@ -28,6 +28,8 @@ export interface DashboardFilters {
   source: string | null;
   pageId?: string | null;
   campaignId: string | null;
+  campaignIds?: string[];
+  pipelineId?: string | null;
   adSetId: string | null;
   adId: string | null;
   tagIds: string[];
@@ -52,22 +54,7 @@ export const datePresetOptions: DatePresetOption[] = [
   { value: "custom", label: "Personalizado" },
 ];
 
-export const sourceLabels: Record<string, string> = {
-  meta: "Meta Ads",
-  facebook: "Meta Ads",
-  instagram: "Meta Ads",
-  google: "Google Ads",
-  google_ads: "Google Ads",
-  site: "Site",
-  website: "Site",
-  landing_page: "Landing Page",
-  whatsapp: "WhatsApp",
-  manual: "Manual",
-  webhook: "API / Integração",
-  api: "API",
-  indicacao: "Indicação",
-  import: "Importação",
-};
+export { sourceLabels } from "@/lib/analytics/dashboard-source-label";
 
 export function getDateRangeFromPreset(preset: DatePreset): { from: Date; to: Date } {
   const now = new Date();

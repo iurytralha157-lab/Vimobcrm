@@ -6,12 +6,22 @@ import {
   apiScheduleDashboardResponseSchema,
   scheduleDashboardEventsQuerySchema,
   scheduleDashboardQuerySchema,
+  scheduleDashboardDataQualitySchema,
 } from "./schedule-dashboard";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const EVENT_ID = "00000000-0000-4000-8000-000000000002";
 const LEAD_ID = "00000000-0000-4000-8000-000000000003";
 const PROPERTY_ID = "00000000-0000-4000-8000-000000000004";
+
+test("historical coverage stays optional for older replicas and distinguishes unknown dates outside the period", () => {
+  const response = createDashboardResponse();
+  assert.equal(apiScheduleDashboardResponseSchema.parse(response).data.data_quality, undefined);
+  const quality = { period_events: 20, missing_created_by: 5, missing_lead_source_snapshot: 8, completed_without_performer: 2, completed_without_result_time: 1, unknown_result_time_in_scope: 75 };
+  assert.deepEqual(apiScheduleDashboardResponseSchema.parse({ data: { ...response.data, data_quality: quality } }).data.data_quality, quality);
+  assert.equal(scheduleDashboardDataQualitySchema.safeParse({ ...quality, missing_created_by: -1 }).success, false);
+  assert.equal(scheduleDashboardDataQualitySchema.safeParse({ ...quality, completed_without_performer: 21 }).success, false);
+});
 
 function createDashboardResponse() {
   return {

@@ -1,0 +1,218 @@
+.board {
+  min-width: 0;
+}
+
+.columns {
+  gap: var(--pipeline-column-gap, 12px);
+}
+
+.column {
+  width: var(--pipeline-column-width, 288px);
+}
+
+.mobileColumn {
+  width: 100%;
+  min-width: 0;
+}
+
+.header {
+  padding-block: var(--pipeline-header-padding, 5px);
+}
+
+.heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.leadList {
+  gap: var(--pipeline-card-gap, 6px);
+  padding: var(--pipeline-list-padding, 8px);
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+}
+
+.leadList::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.leadCard {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: var(--pipeline-card-padding, 12px);
+  padding-block: calc(var(--pipeline-card-padding, 12px) - 2px);
+}
+
+.leadCard :global([data-lead-card-part~='label']) {
+  max-width: 100%;
+  height: 20px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.leadCard :global([data-lead-card-part~='tag']) {
+  display: block;
+  height: 16px;
+  padding-inline: 4px;
+  font-size: 9px;
+  font-weight: 300;
+  line-height: 16px;
+}
+
+.leadCard :global([data-lead-card-part~='label']:not([data-lead-card-part~='tag'])) {
+  height: 16px;
+  padding-inline: 4px;
+  font-size: 10px;
+  font-weight: 300;
+  line-height: 16px;
+}
+
+.leadCard :global([data-lead-card-part~='source']) {
+  margin-top: 0;
+}
+
+.leadCard :global([data-lead-card-part~='name']) {
+  font-size: 13px;
+}
+
+.leadCard :global([data-lead-card-part~='source-label']) {
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.leadCard :global([data-lead-card-part~='caption']) {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.leadCard :global([data-lead-card-part~='value']) {
+  font-size: 10px;
+}
+
+.leadCard :global([data-lead-card-part~='tag-count']) {
+  font-size: 10px;
+}
+
+.leadCard :global([data-lead-card-part~='elapsed']) {
+  font-size: 10px;
+}
+
+.leadCard :global([data-lead-card-part~='divider']) {
+  margin-block: 4px;
+  margin-inline: calc(-1 * var(--pipeline-card-padding, 12px));
+}
+
+.leadCard :global([data-lead-card-part~='actions']) {
+  gap: 4px;
+}
+
+.leadCard :global([data-lead-card-part~='actions']) button {
+  font-size: 12px;
+}
+
+.leadCard :global([data-lead-card-part~='assignment']) {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.createColumn {
+  min-height: 0;
+}
+
+/* A sibling of the scroller/DnD tree: only the two touch targets catch input. */
+.mobileNavigation {
+  position: fixed;
+  top: 50vh;
+  top: 50dvh;
+  left: max(var(--pipeline-mobile-navigation-edge-inset), env(safe-area-inset-left, 0px));
+  right: max(var(--pipeline-mobile-navigation-edge-inset), env(safe-area-inset-right, 0px));
+  z-index: var(--pipeline-mobile-navigation-stack-level);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.mobileNavigationButton {
+  display: flex;
+  width: var(--pipeline-mobile-navigation-touch-size);
+  height: var(--pipeline-mobile-navigation-touch-size);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+
+.mobileNavigationButton:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.mobileNavigationButton:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.mobileNavigationSurface {
+  display: flex;
+  width: var(--pipeline-mobile-navigation-surface-size);
+  height: var(--pipeline-mobile-navigation-surface-size);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .leadCard :global([data-lead-card-part~='actions']) button {
+    height: 32px;
+    min-height: 32px;
+  }
+
+  .leadCard :global([data-lead-card-part~='quick-action']),
+  .leadCard :global([data-lead-card-part~='owner']) {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@media (min-width: 768px) {
+  .leadCard :global([data-lead-card-part~='actions']) button {
+    min-height: 28px;
+  }
+
+  .leadCard :global([data-lead-card-part~='quick-action']) {
+    width: 28px;
+    height: 28px;
+  }
+
+  .leadCard :global([data-lead-card-part~='owner']) {
+    width: 28px;
+    height: 28px;
+  }
+
+  .leadCard :global([data-lead-card-part~='elapsed']) {
+    margin-left: auto;
+  }
+}

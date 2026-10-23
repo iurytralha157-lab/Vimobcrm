@@ -10,6 +10,7 @@ var (
 	ErrInvitationUserAlreadyMember     = errors.New("invitation user already belongs to organization")
 	ErrInvitationAlreadyPending        = errors.New("invitation already pending for organization and email")
 	ErrInvitationInProgress            = errors.New("invitation operation already in progress")
+	ErrInvitationAccountInactive       = errors.New("invitation account is inactive")
 	ErrPasswordRecoveryEmailFailed     = errors.New("password recovery email failed")
 	ErrOrganizationDeleteConfirm       = errors.New("organization deletion confirmation does not match")
 	ErrOrganizationExternalCleanup     = errors.New("organization external cleanup failed")
@@ -47,8 +48,8 @@ type OrganizationUpdateRequest struct {
 }
 
 type OrganizationAccessRequest struct {
-	OrganizationUpdates OrganizationUpdateRequest `json:"organizationUpdates"`
-	Modules             []string                  `json:"modules"`
+	OrganizationUpdates *OrganizationUpdateRequest `json:"organizationUpdates"`
+	Modules             []string                   `json:"modules"`
 }
 
 type OrganizationDeleteRequest struct {

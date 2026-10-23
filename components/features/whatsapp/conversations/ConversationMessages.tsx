@@ -1,8 +1,10 @@
 import { useMemo, useState, type RefObject, type UIEventHandler } from "react";
-import { ArrowDown, Loader2, MessageSquare } from "lucide-react";
+import { Loader2, MessageSquare } from "lucide-react";
 
 import { DateSeparator, shouldShowDateSeparator } from "@/components/features/whatsapp/DateSeparator";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
+import { ScrollToLatestButton } from "@/components/features/whatsapp/ScrollToLatestButton";
+import { LoadOlderMessagesButton } from "@/components/features/whatsapp/LoadOlderMessagesButton";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { AttendanceTimelineEvents } from "@/components/features/whatsapp/AttendanceTimelineEvents";
 import { Button } from "@/components/ui/button";
@@ -10,8 +12,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import type { WhatsAppAttendanceEntry } from "@/lib/api/whatsapp";
 import { canReactToWhatsAppMessage, type GroupedWhatsAppReaction } from "@/lib/whatsapp-reactions";
+import type { WhatsAppSenderAvatar } from "@/lib/whatsapp-avatar";
 import { cn } from "@/lib/utils";
+import { sortWhatsAppTimelineItems } from "@/lib/whatsapp-message-order";
+import { getWhatsAppMessageGrouping, isWhatsAppMessageBlockStart } from "@/lib/whatsapp-message-grouping";
+import type { MessageMediaGalleryItem } from "@/components/features/whatsapp/message-bubble/media-gallery-model";
 
+import { canQuoteWhatsAppMessage } from "@/components/features/whatsapp/conversations/message-actions";
 import {
   getConversationAvatarUrl,
   type ConversationPlatform,
@@ -24,24 +31,40 @@ type ConversationMessagesProps = {
   activePlatform: ConversationPlatform;
   conversation: ScreenConversation;
   messages: DisplayMessage[];
+  senderAvatars?: ReadonlyMap<string, WhatsAppSenderAvatar>;
+  viewerUserId?: string | null;
+  viewerAvatarUrl?: string | null;
+  viewerAvatarName?: string | null;
   isLoading: boolean;
   isFetching: boolean;
   isError: boolean;
   onRetryMessages: () => void;
   hasOlderMessages: boolean;
   isLoadingOlder: boolean;
+  olderMessagesFailed?: boolean;
   onLoadOlderMessages: () => void;
   messagesEndRef: RefObject<HTMLDivElement | null>;
   onScrollCapture?: UIEventHandler<HTMLDivElement>;
+  onScrollToLatest?: () => void;
+  atBottom?: boolean;
   canOperateWhatsApp: boolean;
   canOperateLeads: boolean;
   selectedLeadId: string | null;
   onRetryMedia: (messageId: string) => Promise<void>;
-  onRefreshStoredMediaURL: (messageId: string) => Promise<void>;
   reactionsByMessageId: Map<string, GroupedWhatsAppReaction[]>;
   onReact: (message: WhatsAppMessage, emoji: string) => Promise<unknown>;
   reactingMessageId?: string | null;
   attendanceEntries?: WhatsAppAttendanceEntry[];
+  onReply?: (message: WhatsAppMessage) => void;
+  onRecoverText?: (message: WhatsAppMessage) => void;
+  onCheckSend?: (message: WhatsAppMessage) => Promise<unknown>;
+  onOpenLead?: () => void;
+  onDiscardLocal?: (message: WhatsAppMessage) => void;
+  mediaGallery?: readonly MessageMediaGalleryItem[];
+  mediaGalleryScopeKey?: string;
+  onNavigateQuoted?: (message: WhatsAppMessage, id: string) => Promise<void> | void;
+  firstUnreadMessageId?: string | null;
+  unreadCount?: number;
 };
 
 type ConversationTimelineItem =
@@ -53,32 +76,49 @@ export function ConversationMessages({
   activePlatform,
   conversation,
   messages,
+  senderAvatars,
+  viewerUserId,
+  viewerAvatarUrl,
+  viewerAvatarName,
   isLoading,
   isFetching,
   isError,
   onRetryMessages,
   hasOlderMessages,
   isLoadingOlder,
+  olderMessagesFailed = false,
   onLoadOlderMessages,
   messagesEndRef,
   onScrollCapture,
+  onScrollToLatest,
+  atBottom,
   canOperateWhatsApp,
   canOperateLeads,
   selectedLeadId,
   onRetryMedia,
-  onRefreshStoredMediaURL,
   reactionsByMessageId,
   onReact,
   reactingMessageId,
   attendanceEntries = [],
+  onReply,
+  onRecoverText,
+  onCheckSend,
+  onOpenLead,
+  onDiscardLocal,
+  mediaGallery,
+  mediaGalleryScopeKey,
+  onNavigateQuoted,
+  firstUnreadMessageId,
+  unreadCount = 0,
 }: ConversationMessagesProps) {
   const isMobile = layout === "mobile";
   const [scrollState, setScrollState] = useState({
     conversationId: conversation.id,
     awayFromBottom: false,
   });
-  const showScrollToLatest = scrollState.conversationId === conversation.id
-    && scrollState.awayFromBottom;
+  const showScrollToLatest = atBottom === undefined
+    ? scrollState.conversationId === conversation.id && scrollState.awayFromBottom
+    : !atBottom;
   const timelineItems = useMemo<ConversationTimelineItem[]>(() => {
     const messageItems: ConversationTimelineItem[] = messages.map((message) => ({
       kind: "message",
@@ -88,7 +128,7 @@ export function ConversationMessages({
     }));
     if (activePlatform !== "whatsapp") return messageItems;
 
-    return [
+    return sortWhatsAppTimelineItems([
       ...messageItems,
       ...attendanceEntries.map((entry): ConversationTimelineItem => ({
         kind: "attendance",
@@ -96,9 +136,7 @@ export function ConversationMessages({
         timestamp: entry.markerAt ?? entry.joinedAt,
         entry,
       })),
-    ].sort((left, right) => (
-      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
-    ));
+    ]);
   }, [activePlatform, attendanceEntries, messages]);
 
   const handleScrollCapture: UIEventHandler<HTMLDivElement> = (event) => {
@@ -115,37 +153,27 @@ export function ConversationMessages({
 
   const handleScrollToLatest = () => {
     setScrollState({ conversationId: conversation.id, awayFromBottom: false });
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (onScrollToLatest) onScrollToLatest();
+    else messagesEndRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
   };
 
   return (
     <div
       {...(!isMobile ? { "data-tour": "conversations-messages" } : {})}
-      className="relative flex-1 overflow-hidden min-h-0"
+      className="relative min-h-0 flex-1 overflow-hidden bg-[var(--app-surface-soft)]"
     >
-      <ScrollArea className="h-full" onScrollCapture={handleScrollCapture}>
-        <div className={cn(
-          "space-y-2",
-          isMobile
-            ? "p-3 bg-[var(--app-background)] min-h-full"
-            : "bg-[var(--app-surface-soft)] p-4",
+      <ScrollArea className="h-full [&_[data-radix-scroll-area-viewport]>div]:block! [&_[data-radix-scroll-area-viewport]>div]:min-w-0! [&_[data-radix-scroll-area-viewport]>div]:w-full" onScrollCapture={handleScrollCapture}>
+        <div role="log" data-whatsapp-message-log aria-live="polite" aria-relevant="additions" className={cn(
+          "min-h-full", isMobile ? "p-3" : "p-4",
         )}>
           {activePlatform === "whatsapp" && hasOlderMessages && (
-            <div className="flex justify-center py-2">
-              <Button
-                type="button"
-                data-load-older-messages
-                variant="default"
-                size="sm"
-                className="h-8 rounded-[6px] bg-primary px-3 text-[11px] font-medium text-primary-foreground shadow-none hover:bg-primary/90 hover:text-primary-foreground"
+            <div className="flex flex-col items-center justify-center gap-1.5 py-2">
+              <LoadOlderMessagesButton
                 onClick={onLoadOlderMessages}
-                disabled={isLoadingOlder}
-              >
-                {isLoadingOlder ? (
-                  <Loader2 className={isMobile ? "w-3 h-3 animate-spin mr-2" : "mr-2 h-3 w-3 animate-spin"} />
-                ) : null}
-                Carregar mensagens anteriores
-              </Button>
+                loading={isLoadingOlder}
+                error={olderMessagesFailed}
+              />
+              {olderMessagesFailed && <p className="text-center text-[11px] text-destructive" role="alert">Não foi possível carregar mensagens anteriores. O histórico atual foi mantido.</p>}
             </div>
           )}
           {isError && timelineItems.length > 0 && (
@@ -154,9 +182,9 @@ export function ConversationMessages({
               <Button size="sm" variant="ghost" onClick={onRetryMessages}>Tentar novamente</Button>
             </div>
           )}
-          {isLoading || (isFetching && messages.length === 0) ? (
+          {(isLoading || isFetching) && messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-12" role="status" aria-live="polite">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              <Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
             </div>
           ) : isError && timelineItems.length === 0 ? (
@@ -175,10 +203,16 @@ export function ConversationMessages({
             </div>
           ) : timelineItems.map((item, index) => {
             const previousItem = index > 0 ? timelineItems[index - 1] : null;
+            const nextItem = timelineItems[index + 1];
+            const grouping = item.kind === 'message'
+              ? getWhatsAppMessageGrouping(previousItem?.kind === 'message' && item.message.id !== firstUnreadMessageId ? previousItem.message : null,
+                item.message, nextItem?.kind === 'message' && nextItem.message.id !== firstUnreadMessageId ? nextItem.message : null)
+              : 'single';
             const showSeparator = shouldShowDateSeparator(item.timestamp, previousItem?.timestamp || null);
             return (
-              <div key={item.id}>
+              <div key={item.id} className={isWhatsAppMessageBlockStart(grouping) ? 'mt-2 first:mt-0' : 'mt-0.5'}>
                 {showSeparator && <DateSeparator date={new Date(item.timestamp)} />}
+                {item.kind === 'message' && item.message.id === firstUnreadMessageId && <div role="separator" aria-label="Mensagens não lidas" className="my-3 rounded-[6px] bg-[var(--app-surface-muted)] px-3 py-1.5 text-center text-xs font-light text-muted-foreground">Mensagens não lidas</div>}
                 {item.kind === "attendance" ? (
                   <AttendanceTimelineEvents entries={[item.entry]} />
                 ) : (
@@ -188,26 +222,46 @@ export function ConversationMessages({
                       messageType={item.message.message_type}
                       mediaUrl={item.message.media_url}
                       mediaMimeType={item.message.media_mime_type}
+                      mediaFilename={item.message.media_filename}
+                      mediaSize={item.message.media_size}
+                      mediaGallery={mediaGallery}
+                      mediaGalleryScopeKey={mediaGalleryScopeKey}
+                      onNavigateQuoted={onNavigateQuoted ? id => onNavigateQuoted(item.message as WhatsAppMessage, id) : undefined}
+                      grouping={grouping}
+                      showSenderName={conversation.is_group && isWhatsAppMessageBlockStart(grouping)}
+                      contacts={item.message.contacts}
+                      location={item.message.location}
+                      quotedMessage={item.message.quoted_message}
+                      canAttachToLead={canOperateLeads}
+                      onReply={onReply && canQuoteWhatsAppMessage(item.message as WhatsAppMessage)
+                        ? () => onReply(item.message as WhatsAppMessage) : undefined}
+                      onRecoverText={onRecoverText && item.message.content ? () => onRecoverText(item.message as WhatsAppMessage) : undefined}
+                      onCheckSend={onCheckSend && item.message.from_me ? () => onCheckSend(item.message as WhatsAppMessage) : undefined}
+                      onOpenLead={canOperateLeads ? onOpenLead : undefined}
+                      onDiscardLocal={item.message.metadata?.local_delivery_state === "failed" && onDiscardLocal ? () => onDiscardLocal(item.message as WhatsAppMessage) : undefined}
                       mediaStatus={item.message.media_status ?? null}
                       mediaError={item.message.media_error ?? null}
                       storedMedia={Boolean(item.message.media_storage_path)}
-                      mediaURLLoading={Boolean(item.message.media_storage_path)
-                        && item.message.media_status === "ready"
-                        && !item.message.media_url}
                       fromMe={item.message.from_me}
-                      status={item.message.status ?? "sent"}
+                      status={item.message.status ?? ""}
                       sentAt={item.message.sent_at}
                       deliveryErrorCode={item.message.delivery_error_code ?? null}
+                      deliveryErrorReason={item.message.delivery_error_reason}
                       deliveryFailedAt={item.message.delivery_failed_at ?? null}
                       senderName={item.message.sender_name ?? null}
+                      senderUserId={item.message.sender_user_id}
+                      senderAvatarUrl={senderAvatars?.get(item.message.sender_user_id?.trim().toLowerCase() || "")?.url}
+                      senderAvatarUserId={senderAvatars?.get(item.message.sender_user_id?.trim().toLowerCase() || "")?.userId}
+                      viewerUserId={viewerUserId}
+                      viewerAvatarUrl={viewerAvatarUrl}
+                      viewerAvatarName={viewerAvatarName}
                       isGroup={conversation.is_group}
-                      onRetryMedia={item.message.media_storage_path
-                        ? () => onRefreshStoredMediaURL(item.message.id)
-                        : canOperateWhatsApp ? () => onRetryMedia(item.message.id) : undefined}
+                      onRetryMedia={!item.message.media_storage_path && canOperateWhatsApp ? () => onRetryMedia(item.message.id) : undefined}
                       messageId={item.message.id}
-                      leadId={canOperateLeads ? selectedLeadId || "" : ""}
+                      leadId={selectedLeadId || ""}
                       leadName={conversation.lead?.name || conversation.contact_name || "Contato"}
                       contactAvatarUrl={getConversationAvatarUrl(conversation)}
+                      contactAvatarFallbackUrl={conversation.contact_picture}
                       conversationRemoteJid={conversation.remote_jid}
                       conversationSessionId={conversation.session_id}
                       reactionPickerPosition="outside"
@@ -232,17 +286,7 @@ export function ConversationMessages({
         </div>
       </ScrollArea>
       {showScrollToLatest && (
-        <Button
-          type="button"
-          data-scroll-to-latest
-          size="icon"
-          aria-label="Ir para mensagens mais recentes"
-          title="Ir para mensagens mais recentes"
-          className="absolute bottom-3 right-4 z-20 h-8 w-8 rounded-full bg-primary text-primary-foreground shadow-[0_4px_12px_rgba(0,0,0,0.14)] hover:bg-primary/90 hover:text-primary-foreground"
-          onClick={handleScrollToLatest}
-        >
-          <ArrowDown className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        <ScrollToLatestButton onClick={handleScrollToLatest} unreadCount={unreadCount} />
       )}
     </div>
   );

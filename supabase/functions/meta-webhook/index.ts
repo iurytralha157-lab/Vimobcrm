@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { createHmac } from "https://deno.land/std@0.168.0/node/crypto.ts";
 
 const corsHeaders = {
@@ -14,6 +14,36 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
 const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 
+type MetaChangeValue = {
+  leadgen_id?: string;
+  form_id?: string;
+  from?: { id?: string; username?: string; name?: string };
+  text?: string;
+  message?: string;
+  id?: string;
+  comment_id?: string;
+};
+type MetaMessagingItem = {
+  sender: { id: string };
+  recipient: { id: string };
+  message?: {
+    text?: string;
+    mid?: string;
+    attachments?: Array<{ payload?: { url?: string }; type?: string }>;
+  };
+  timestamp: number | string;
+};
+type MetaWebhookPayload = {
+  object?: string;
+  entry?: Array<{
+    id: string;
+    messaging?: MetaMessagingItem[];
+    changes?: Array<{ field: string; value: MetaChangeValue }>;
+  }>;
+  raw?: string;
+};
+type LeadTarget = { pipeline_id?: string | null; stage_id?: string | null; round_robin_id?: string | null };
+
 // Verify Meta webhook signature (HMAC-SHA256)
 function verifySignature(payload: string, signature: string): boolean {
   if (!signature || !META_APP_SECRET) return false;
@@ -23,15 +53,15 @@ function verifySignature(payload: string, signature: string): boolean {
 
 // Persist a raw webhook event (best-effort). Returns event id or null.
 async function persistEvent(
-  supabase: any,
-  payload: any,
+  supabase: SupabaseClient,
+  payload: MetaWebhookPayload | null,
   rawText: string,
   signatureValid: boolean,
 ): Promise<string | null> {
   try {
     // Best-effort extraction of identifiers (first entry / first change)
-    const firstEntry = payload?.entry?.[0] || {};
-    const firstChange = firstEntry?.changes?.[0]?.value || {};
+    const firstEntry = payload?.entry?.[0];
+    const firstChange = firstEntry?.changes?.[0]?.value;
     const row = {
       object: payload?.object ?? null,
       page_id: firstEntry?.id ?? null,
@@ -59,7 +89,7 @@ async function persistEvent(
 }
 
 async function updateEvent(
-  supabase: any,
+  supabase: SupabaseClient,
   eventId: string | null,
   patch: Record<string, unknown>,
 ) {
@@ -72,9 +102,9 @@ async function updateEvent(
 }
 
 async function resolveLeadTarget(
-  supabase: any,
-  formConfig: any,
-  integration: any,
+  supabase: SupabaseClient,
+  formConfig: LeadTarget,
+  integration: LeadTarget,
 ): Promise<{ pipelineId: string | null; stageId: string | null }> {
   let pipelineId = formConfig.pipeline_id || integration.pipeline_id || null;
   let stageId = formConfig.stage_id || integration.stage_id || null;
@@ -93,7 +123,7 @@ async function resolveLeadTarget(
   return { pipelineId, stageId };
 }
 
-async function handleMessaging(supabase: any, messagingItem: any, pageId: string, platform: string) {
+async function handleMessaging(supabase: SupabaseClient, messagingItem: MetaMessagingItem, pageId: string, platform: string) {
   const senderId = messagingItem.sender.id;
   const recipientId = messagingItem.recipient.id;
   const message = messagingItem.message;
@@ -180,7 +210,7 @@ async function handleMessaging(supabase: any, messagingItem: any, pageId: string
   }).eq("id", conversation.id);
 }
 
-async function handleComment(supabase: any, pageId: string, changeValue: any, platform: string) {
+async function handleComment(supabase: SupabaseClient, pageId: string, changeValue: MetaChangeValue, platform: string) {
   const senderId = changeValue.from?.id;
   const senderName = changeValue.from?.username || changeValue.from?.name;
   const messageText = changeValue.text || changeValue.message;
@@ -242,9 +272,9 @@ async function handleComment(supabase: any, pageId: string, changeValue: any, pl
 
 // Process a single leadgen change. Returns final status.
 async function processLeadgen(
-  supabase: any,
+  supabase: SupabaseClient,
   pageId: string,
-  changeValue: any,
+  changeValue: MetaChangeValue,
 ): Promise<{ status: string; error?: string; organization_id?: string }> {
   const leadgenId = changeValue?.leadgen_id;
   const formId = changeValue?.form_id;
@@ -374,7 +404,7 @@ async function processLeadgen(
     }
 
     let name = "Lead Facebook", email = "", phone = "", message = "", cargo = "", empresa = "", cidade = "", bairro = "";
-    const customFields: any = {};
+    const customFields: Record<string, unknown> = {};
 
     for (const field of leadData.field_data || []) {
       const value = field.values?.[0] || "";
@@ -413,7 +443,7 @@ async function processLeadgen(
 
     if (leadError) {
       // Pode ser violação do índice único (corrida) — tratar como duplicate, não como falha
-      if ((leadError as any).code === "23505") {
+      if (leadError.code === "23505") {
         lastResult = {
           status: "duplicate",
           error: "unique_violation_meta_lead_id",
@@ -501,8 +531,8 @@ serve(async (req) => {
   const signature = req.headers.get("X-Hub-Signature-256") || "";
   const sigValid = verifySignature(rawBody, signature);
 
-  let body: any = null;
-  try { body = JSON.parse(rawBody); } catch { body = null; }
+  let body: MetaWebhookPayload | null = null;
+  try { body = JSON.parse(rawBody) as MetaWebhookPayload; } catch { body = null; }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 

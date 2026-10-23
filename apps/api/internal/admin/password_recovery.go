@@ -6,10 +6,52 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+type passwordRecoverySender func(context.Context, string) error
+
+type passwordRecoveryRequestRecorder func(context.Context, string, string) error
+
+func requestAdminPasswordRecovery(
+	ctx context.Context,
+	email string,
+	requestedBy string,
+	targetUserID string,
+	send passwordRecoverySender,
+	record passwordRecoveryRequestRecorder,
+	logger *slog.Logger,
+) error {
+	if err := send(ctx, email); err != nil {
+		return err
+	}
+	if err := record(ctx, requestedBy, targetUserID); err != nil {
+		// Auth already accepted the recovery request. An audit failure cannot
+		// truthfully turn that accepted request into a failed response.
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.ErrorContext(ctx, "password recovery request accepted but audit persistence failed", "error", err)
+	}
+	return nil
+}
+
+func (repo Repository) recordPasswordRecoveryRequest(ctx context.Context, requestedBy, targetUserID string) error {
+	_, err := repo.db.Pool().Exec(ctx, `
+		insert into public.audit_logs (user_id, action, entity_type, entity_id, metadata)
+		values (
+			$1::uuid,
+			'password_recovery_requested',
+			'user',
+			$2,
+			jsonb_build_object('channel', 'email', 'provider_result', 'accepted')
+		)
+	`, requestedBy, targetUserID)
+	return err
+}
 
 func (repo Repository) sendAuthPasswordRecovery(ctx context.Context, email string) error {
 	if repo.projectURL == "" || repo.apiKey == "" || repo.appURL == "" {

@@ -20,12 +20,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { AccountTab } from "@/components/features/settings/AccountTab";
 import { TeamTab } from "@/components/features/settings/TeamTab";
+import { RolesTab } from "@/components/features/settings/RolesTab";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { SubscriptionTab } from "@/components/features/settings/SubscriptionTab";
 import { IntegrationsTab } from "@/components/features/settings/IntegrationsTab";
 import { NotificationsTab } from "@/components/features/settings/NotificationsTab";
 import { isBillingAccessBlocked } from "@/lib/billing-access";
 import { canManageOrganization as canManageOrganizationAccess } from "@/lib/access/organization";
+import { isTenantContextForOrganization } from "@/lib/access/tenant-navigation";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import {
   isSettingsLegacyIntegrationTab,
@@ -40,7 +42,7 @@ export default function Settings() {
     profile,
     isSuperAdmin,
     organization,
-    userOrganizations,
+    tenantContext,
     loading,
     organizationsLoaded,
   } = useAuth();
@@ -63,9 +65,9 @@ export default function Settings() {
   const isBillingBlocked =
     !isSuperAdmin && isBillingAccessBlocked(organization);
   const activeOrganizationId = activeOrganization.organizationId;
-  const activeMemberRole = userOrganizations.find(
-    (org) => org.organization_id === activeOrganizationId,
-  )?.member_role;
+  const activeMemberRole = isTenantContextForOrganization(activeOrganizationId, tenantContext)
+    ? tenantContext?.memberRole
+    : undefined;
   const canManageOrganization = canManageOrganizationAccess({
     isSuperAdmin,
     memberRole: activeMemberRole,
@@ -74,6 +76,7 @@ export default function Settings() {
     canManageOrganization ||
     hasPermission("users_manage") ||
     hasPermission("permissions_manage");
+  const canManageRoles = canManageOrganization || hasPermission("permissions_manage");
   const canManageIntegrations =
     canManageOrganization || hasPermission("settings_integrations");
   const canManageWhatsApp =
@@ -374,7 +377,12 @@ export default function Settings() {
 
           {accessReady && canAccessUsers && (
             <TabsContent value="team">
-              <TeamTab search={userSearch} />
+              <div className="space-y-6">
+                <TeamTab search={userSearch} />
+                {canManageRoles && activeOrganizationId && (
+                  <RolesTab key={activeOrganizationId} />
+                )}
+              </div>
             </TabsContent>
           )}
 

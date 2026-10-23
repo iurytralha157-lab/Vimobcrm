@@ -200,7 +200,7 @@ const enqueueScheduleGoogleRecurringCreatesSQL = `
 	marked_events as (
 		update public.schedule_events event
 		set google_sync_status = case
-				when exists (select 1 from active_owner_connection) then 'pending'
+				when exists (select 1 from upsert_jobs job where job.schedule_event_id = event.id) then 'pending'
 				else 'not_connected'
 			end,
 			google_sync_error = null,

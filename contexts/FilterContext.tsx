@@ -1,11 +1,15 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filters';
+import { useRelativeDateClock } from '@/hooks/shared/use-relative-date-clock';
+import { sharedFilterSnapshotSchema, type SharedFilterSnapshot } from '@/lib/validation/shared-filter-presets';
+import { filterTextSchema } from '@/lib/validation/filter-text';
 
 type NullableFilter = string | null;
 
 const MAX_FILTER_TAGS = 50;
 const MAX_FILTER_CAMPAIGNS = 50;
+const attributionTextSchema = filterTextSchema(255, 1);
 const DATE_PRESET_VALUES = new Set<DatePreset>([
   'today',
   'yesterday',
@@ -18,10 +22,11 @@ const DATE_PRESET_VALUES = new Set<DatePreset>([
   'custom',
 ]);
 
-interface PersistedFilterState {
+interface FilterStateSnapshot {
   version: 2;
   datePreset: DatePreset | null;
   customDateRange: { from: string; to: string } | null;
+  pipelineId: NullableFilter;
   teamId: NullableFilter;
   userId: NullableFilter;
   source: NullableFilter;
@@ -31,20 +36,22 @@ interface PersistedFilterState {
   adSetId: NullableFilter;
   adId: NullableFilter;
   tagIds: string[];
-  /** Legacy persisted key kept only for session-state migration. */
-  tagId?: NullableFilter;
   dealStatus: NullableFilter;
   searchQuery: string;
 }
 
 interface FilterContextType {
   isHydrated: boolean;
+  /** Full filter applications reset drafts even when their applied value is unchanged. */
+  filterApplicationRevision: number;
   datePreset: DatePreset | null;
   customDateRange: { from: Date; to: Date } | null;
   setDatePreset: (preset: DatePreset | null) => void;
   setCustomDateRange: (range: { from: Date; to: Date } | null) => void;
   clearDateFilter: () => void;
   activeDateRange: { from: Date; to: Date } | null;
+  pipelineId: NullableFilter;
+  setPipelineId: (pipelineId: NullableFilter) => void;
   teamId: NullableFilter;
   setTeamId: (teamId: NullableFilter) => void;
   userId: NullableFilter;
@@ -68,14 +75,17 @@ interface FilterContextType {
   searchQuery: string;
   setSearchQuery: (searchQuery: string) => void;
   clearFilters: () => void;
+  getFilterSnapshot: () => SharedFilterSnapshot;
+  restoreFilterSnapshot: (snapshot: unknown) => boolean;
 }
 
 const FilterContext = createContext<FilterContextType | undefined>(undefined);
 
-const DEFAULT_FILTER_STATE: PersistedFilterState = {
+const DEFAULT_FILTER_STATE: FilterStateSnapshot = {
   version: 2,
   datePreset: null,
   customDateRange: null,
+  pipelineId: null,
   teamId: null,
   userId: null,
   source: null,
@@ -94,10 +104,9 @@ function normalizeNullable(value: unknown): NullableFilter {
 }
 
 function normalizePageId(value: unknown): NullableFilter {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  return normalized && normalized !== 'all' && normalized.length <= 255
-    ? normalized
+  const parsed = attributionTextSchema.safeParse(value);
+  return parsed.success && parsed.data !== 'all'
+    ? parsed.data
     : null;
 }
 
@@ -140,7 +149,7 @@ function normalizeCampaignIds(value: unknown, legacyValue?: unknown) {
     candidates
       .filter((candidate): candidate is string => typeof candidate === 'string')
       .map((candidate) => candidate.trim())
-      .filter((candidate) => candidate !== '' && candidate.toLowerCase() !== 'all' && candidate.length <= 255),
+      .filter((candidate) => candidate.toLowerCase() !== 'all' && attributionTextSchema.safeParse(candidate).success),
   )).slice(0, MAX_FILTER_CAMPAIGNS);
 }
 
@@ -148,46 +157,29 @@ function serializeRange(range: { from: Date; to: Date } | null) {
   return range ? { from: range.from.toISOString(), to: range.to.toISOString() } : null;
 }
 
-function parsePersistedState(raw: string | null): PersistedFilterState {
-  if (!raw) return DEFAULT_FILTER_STATE;
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<PersistedFilterState>;
-    const parsedDatePreset =
-      parsed.version === DEFAULT_FILTER_STATE.version
-        ? normalizeDatePreset(parsed.datePreset)
-        : null;
-    const hasValidCustomRange = Boolean(parseCustomDateRange(parsed.customDateRange ?? null));
-    const datePreset =
-      parsedDatePreset === 'custom' && !hasValidCustomRange
-        ? DEFAULT_FILTER_STATE.datePreset
-        : parsedDatePreset;
-    const campaignIds = normalizeCampaignIds(parsed.campaignIds, parsed.campaignId);
-    const adSetId = campaignIds.length === 1 ? normalizeNullable(parsed.adSetId) : null;
-    return {
-      ...DEFAULT_FILTER_STATE,
-      datePreset,
-      customDateRange:
-        datePreset === 'custom' ? parsed.customDateRange ?? null : null,
-      teamId: normalizeNullable(parsed.teamId),
-      userId: normalizeNullable(parsed.userId),
-      source: normalizeNullable(parsed.source),
-      pageId: normalizePageId(parsed.pageId),
-      campaignId: campaignIds.length === 1 ? campaignIds[0] : null,
-      campaignIds,
-      adSetId,
-      adId: adSetId ? normalizeNullable(parsed.adId) : null,
-      tagIds: normalizeTagIds(parsed.tagIds, parsed.tagId),
-      dealStatus: normalizeNullable(parsed.dealStatus),
-      searchQuery: normalizeSearch(parsed.searchQuery),
-    };
-  } catch (error) {
-    console.error('Error parsing saved filters', error);
-    return DEFAULT_FILTER_STATE;
-  }
+function normalizeFilterSnapshot(parsed: SharedFilterSnapshot): FilterStateSnapshot {
+  const campaignIds = normalizeCampaignIds(parsed.campaignIds, parsed.campaignId);
+  const adSetId = campaignIds.length === 1 ? normalizeNullable(parsed.adSetId) : null;
+  return {
+    ...DEFAULT_FILTER_STATE,
+    datePreset: normalizeDatePreset(parsed.datePreset),
+    customDateRange: parsed.datePreset === 'custom' ? parsed.customDateRange : null,
+    pipelineId: normalizeNullable(parsed.pipelineId),
+    teamId: normalizeNullable(parsed.teamId),
+    userId: normalizeNullable(parsed.userId),
+    source: normalizeNullable(parsed.source),
+    pageId: normalizePageId(parsed.pageId),
+    campaignId: campaignIds.length === 1 ? campaignIds[0] : null,
+    campaignIds,
+    adSetId,
+    adId: adSetId ? normalizeNullable(parsed.adId) : null,
+    tagIds: normalizeTagIds(parsed.tagIds),
+    dealStatus: normalizeNullable(parsed.dealStatus),
+    searchQuery: normalizeSearch(parsed.searchQuery),
+  };
 }
 
-function parseCustomDateRange(range: PersistedFilterState['customDateRange']) {
+function parseCustomDateRange(range: FilterStateSnapshot['customDateRange']) {
   if (!range) return null;
   const from = new Date(range.from);
   const to = new Date(range.to);
@@ -203,13 +195,23 @@ function parseCustomDateRange(range: PersistedFilterState['customDateRange']) {
 
 export function FilterProvider({ children }: { children: React.ReactNode }) {
   const { activeOrganization, user } = useAuth();
-  const storageKey = useMemo(() => {
-    if (!user?.id || !activeOrganization.organizationId) return null;
-    return `vimob_period_filter_${user.id}_${activeOrganization.organizationId}`;
-  }, [user?.id, activeOrganization.organizationId]);
+  const scopeKey = user?.id && activeOrganization.organizationId
+    ? JSON.stringify([user.id, activeOrganization.organizationId])
+    : null;
 
+  // A new identity gets empty state before any child can observe the old filters.
+  // Navigation within the same provider keeps only the current in-memory state.
+  return (
+    <InMemoryFilterProvider key={scopeKey ?? 'unavailable'} isReady={scopeKey !== null}>
+      {children}
+    </InMemoryFilterProvider>
+  );
+}
+
+function InMemoryFilterProvider({ children, isReady }: { children: React.ReactNode; isReady: boolean }) {
   const [datePreset, setDatePresetInternal] = useState<DatePreset | null>(DEFAULT_FILTER_STATE.datePreset);
   const [customDateRange, setCustomDateRangeInternal] = useState<{ from: Date; to: Date } | null>(null);
+  const [pipelineId, setPipelineIdInternal] = useState<NullableFilter>(null);
   const [teamId, setTeamIdInternal] = useState<NullableFilter>(null);
   const [userId, setUserIdInternal] = useState<NullableFilter>(null);
   const [source, setSourceInternal] = useState<NullableFilter>(null);
@@ -221,25 +223,11 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [tagIds, setTagIdsInternal] = useState<string[]>([]);
   const [dealStatus, setDealStatusInternal] = useState<NullableFilter>(null);
   const [searchQuery, setSearchQueryInternal] = useState('');
-  const [hydratedStorageKey, setHydratedStorageKey] = useState<string | null | undefined>(undefined);
-
-  const persist = useCallback(
-    (patch: Partial<PersistedFilterState>) => {
-      if (!storageKey) return;
-
-      try {
-        const current = parsePersistedState(sessionStorage.getItem(storageKey));
-        sessionStorage.setItem(storageKey, JSON.stringify({ ...current, ...patch }));
-      } catch {
-        // Restricted browser contexts can make sessionStorage unavailable.
-      }
-    },
-    [storageKey],
-  );
-
-  const applyState = useCallback((nextState: PersistedFilterState) => {
+  const [filterApplicationRevision, setFilterApplicationRevision] = useState(0);
+  const applyState = useCallback((nextState: FilterStateSnapshot) => {
     setDatePresetInternal(nextState.datePreset);
     setCustomDateRangeInternal(parseCustomDateRange(nextState.customDateRange));
+    setPipelineIdInternal(nextState.pipelineId);
     setTeamIdInternal(nextState.teamId);
     setUserIdInternal(nextState.userId);
     setSourceInternal(nextState.source);
@@ -251,39 +239,15 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setTagIdsInternal(nextState.tagIds);
     setDealStatusInternal(nextState.dealStatus);
     setSearchQueryInternal(nextState.searchQuery);
+    setFilterApplicationRevision((revision) => revision + 1);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      if (!storageKey) {
-        applyState(DEFAULT_FILTER_STATE);
-        setHydratedStorageKey(null);
-        return;
-      }
-
-      try {
-        applyState(parsePersistedState(sessionStorage.getItem(storageKey)));
-      } catch {
-        applyState(DEFAULT_FILTER_STATE);
-      }
-      setHydratedStorageKey(storageKey);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applyState, storageKey]);
 
   const setDatePreset = useCallback(
     (preset: DatePreset | null) => {
       setDatePresetInternal(preset);
       setCustomDateRangeInternal(null);
-      persist({ datePreset: preset, customDateRange: null });
     },
-    [persist],
+    [],
   );
 
   const setCustomDateRange = useCallback(
@@ -291,45 +255,52 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setCustomDateRangeInternal(range);
       if (range) {
         setDatePresetInternal('custom');
-        persist({ datePreset: 'custom', customDateRange: serializeRange(range) });
         return;
       }
-      persist({ customDateRange: null });
     },
-    [persist],
+    [],
   );
 
   const setTeamId = useCallback(
     (value: NullableFilter) => {
       setTeamIdInternal(value);
-      persist({ teamId: value });
+      setUserIdInternal(null);
     },
-    [persist],
+    [],
+  );
+
+  const setPipelineId = useCallback(
+    (value: NullableFilter) => {
+      const normalized = normalizeNullable(value);
+      setPipelineIdInternal(normalized === 'all' ? null : normalized);
+    },
+    [],
   );
 
   const setUserId = useCallback(
     (value: NullableFilter) => {
       setUserIdInternal(value);
-      persist({ userId: value });
     },
-    [persist],
+    [],
   );
 
   const setSource = useCallback(
     (value: NullableFilter) => {
       setSourceInternal(value);
-      persist({ source: value });
     },
-    [persist],
+    [],
   );
 
   const setPageId = useCallback(
     (value: NullableFilter) => {
       const normalized = normalizePageId(value);
       setPageIdInternal(normalized);
-      persist({ pageId: normalized });
+      setCampaignIdInternal(null);
+      setCampaignIdsInternal([]);
+      setAdSetIdInternal(null);
+      setAdIdInternal(null);
     },
-    [persist],
+    [],
   );
 
   const setCampaignId = useCallback(
@@ -337,9 +308,10 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       const normalized = normalizeCampaignIds(undefined, value);
       setCampaignIdInternal(normalized[0] ?? null);
       setCampaignIdsInternal(normalized);
-      persist({ campaignId: normalized[0] ?? null, campaignIds: normalized });
+      setAdSetIdInternal(null);
+      setAdIdInternal(null);
     },
-    [persist],
+    [],
   );
 
   const setCampaignIds = useCallback(
@@ -350,85 +322,94 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setCampaignIdsInternal(normalized);
       setAdSetIdInternal(null);
       setAdIdInternal(null);
-      persist({ campaignId: legacyCampaignId, campaignIds: normalized, adSetId: null, adId: null });
     },
-    [persist],
+    [],
   );
 
   const setAdSetId = useCallback(
     (value: NullableFilter) => {
       setAdSetIdInternal(value);
-      persist({ adSetId: value });
+      setAdIdInternal(null);
     },
-    [persist],
+    [],
   );
 
   const setAdId = useCallback(
     (value: NullableFilter) => {
       setAdIdInternal(value);
-      persist({ adId: value });
     },
-    [persist],
+    [],
   );
 
   const setTagIds = useCallback(
     (value: string[]) => {
       const normalized = normalizeTagIds(value);
       setTagIdsInternal(normalized);
-      persist({ tagIds: normalized, tagId: null });
     },
-    [persist],
+    [],
   );
 
   const setDealStatus = useCallback(
     (value: NullableFilter) => {
       setDealStatusInternal(value);
-      persist({ dealStatus: value });
     },
-    [persist],
+    [],
   );
 
   const setSearchQuery = useCallback(
     (value: string) => {
       setSearchQueryInternal(value);
-      persist({ searchQuery: value });
     },
-    [persist],
+    [],
   );
 
   const clearFilters = useCallback(() => {
     applyState(DEFAULT_FILTER_STATE);
-    if (storageKey) {
-      try {
-        sessionStorage.setItem(storageKey, JSON.stringify(DEFAULT_FILTER_STATE));
-      } catch {
-        // State is still cleared in memory when persistence is unavailable.
-      }
-    }
-  }, [applyState, storageKey]);
+  }, [applyState]);
 
   const clearDateFilter = useCallback(() => {
     setDatePreset(null);
   }, [setDatePreset]);
 
+  const getFilterSnapshot = useCallback(() => sharedFilterSnapshotSchema.parse({
+    version: 2, datePreset, customDateRange: serializeRange(customDateRange), pipelineId,
+    teamId, userId, source, pageId, campaignId, campaignIds, adSetId, adId, tagIds, dealStatus, searchQuery,
+  }), [datePreset, customDateRange, pipelineId, teamId, userId, source, pageId, campaignId, campaignIds, adSetId, adId, tagIds, dealStatus, searchQuery]);
+
+  // Atomic application within this mounted scope; never saved or restored from browser storage.
+  const restoreFilterSnapshot = useCallback((snapshot: unknown) => {
+    if (!isReady) return false;
+    const result = sharedFilterSnapshotSchema.safeParse(snapshot);
+    if (!result.success) return false;
+    const nextState = normalizeFilterSnapshot(result.data);
+    applyState(nextState);
+    return true;
+  }, [applyState, isReady]);
+
+  const relativeDateClock = useRelativeDateClock(Boolean(datePreset && datePreset !== 'custom'));
   const activeDateRange = useMemo(() => {
+    // The clock invalidates this memo after midnight or a suspended tab resumes.
+    void relativeDateClock;
     if (!datePreset) return null;
     if (datePreset === 'custom' && customDateRange) {
       return customDateRange;
     }
     if (datePreset === 'custom') return null;
     return getDateRangeFromPreset(datePreset);
-  }, [datePreset, customDateRange]);
+  }, [datePreset, customDateRange, relativeDateClock]);
 
   const value = useMemo(
     () => ({
-      isHydrated: hydratedStorageKey === storageKey,
+      isHydrated: isReady,
+      filterApplicationRevision,
       datePreset,
       customDateRange,
       setDatePreset,
       setCustomDateRange,
       clearDateFilter,
       activeDateRange,
+      pipelineId,
+      setPipelineId,
       teamId,
       setTeamId,
       userId,
@@ -452,6 +433,8 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       searchQuery,
       setSearchQuery,
       clearFilters,
+      getFilterSnapshot,
+      restoreFilterSnapshot,
     }),
     [
       activeDateRange,
@@ -461,11 +444,15 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       campaignIds,
       clearDateFilter,
       clearFilters,
+      getFilterSnapshot,
+      restoreFilterSnapshot,
       customDateRange,
       datePreset,
       dealStatus,
-      hydratedStorageKey,
+      filterApplicationRevision,
+      isReady,
       pageId,
+      pipelineId,
       searchQuery,
       setAdId,
       setAdSetId,
@@ -476,6 +463,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setDealStatus,
       setSearchQuery,
       setPageId,
+      setPipelineId,
       setSource,
       setTagIds,
       setTeamId,
@@ -484,7 +472,6 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       tagIds,
       teamId,
       userId,
-      storageKey,
     ],
   );
 

@@ -1,9 +1,7 @@
 import { vimobAPIRequest } from './vimob-client'
 import {
   apiAuditLogListResponseSchema,
-  auditLogCreateInputSchema,
   auditLogListInputSchema,
-  okResponseSchema,
   parseDomainInput,
   validateDomainResponse,
 } from '@/lib/validation'
@@ -36,16 +34,6 @@ export type AuditLogFilters = {
   endDate?: string
 }
 
-export type AuditLogCreateInput = {
-  action: string
-  entity_type: string
-  entity_id?: string
-  old_data?: Record<string, unknown>
-  new_data?: Record<string, unknown>
-  organization_id?: string
-  user_agent?: string
-}
-
 export async function listAuditLogs(params: {
   filters?: AuditLogFilters
   page?: number
@@ -71,18 +59,6 @@ export async function listAuditLogs(params: {
   })
 }
 
-export async function createAuditLog(input: AuditLogCreateInput, organizationId?: string | null) {
-  const body = parseDomainInput(auditLogCreateInputSchema, input, 'audit.create')
-  const response = await vimobAPIRequest<{ ok: boolean }>('/v1/audit-logs', {
-    method: 'POST',
-    organizationId: organizationId || body.organization_id,
-    body,
-    skipTelemetry: true,
-  })
-  validateDomainResponse(okResponseSchema, response, 'audit.create')
-}
-
 export const auditAPI = {
   list: listAuditLogs,
-  create: createAuditLog,
 }

@@ -318,8 +318,8 @@ func TestLinkedRescheduleHistoryCannotChangeEventType(t *testing.T) {
 	if err := validateEventOutcomeTransition(
 		eventSnapshot{EventType: "visit", Status: "scheduled"},
 		updateInput{EventType: patchString{Set: true, Value: &task}},
-	); err != nil {
-		t.Fatalf("unlinked open appointment should preserve normal type editing: %v", err)
+	); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("appointment cannot lose its history protections through a type change: %v", err)
 	}
 }
 

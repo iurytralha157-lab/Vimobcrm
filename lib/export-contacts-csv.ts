@@ -6,16 +6,19 @@ export function escapeContactExportCSVCell(
 ) {
   const text = value == null ? '' : String(value);
 
-  if (preserveAsText && text) {
+  const dangerousText = typeof value === 'string' && /^\s*[=+\-@]/.test(text);
+  const numericText = /^\s*[+\-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+\-]?\d+)?\s*$/.test(text);
+  if (text && (dangerousText || preserveAsText)) {
+    // Excel constant string literals support at most 255 characters.
+    if (text.length > 255 && (dangerousText || numericText)) {
+      throw new Error('Um texto exige proteção como literal, mas ultrapassa 255 caracteres no CSV do Excel. Escolha Excel (.xlsx) ou remova essa coluna. Nenhum conteúdo foi cortado e nenhum arquivo foi gerado.');
+    }
+    if (text.length > 255) return `"${text.replace(/"/g, '""')}"`;
     const excelTextFormula = `="${text.replace(/"/g, '""')}"`;
     return `"${excelTextFormula.replace(/"/g, '""')}"`;
   }
 
-  const safeText =
-    typeof value === 'string' && /^\s*[=+\-@]/.test(text)
-      ? `'${text}`
-      : text;
-  return `"${safeText.replace(/"/g, '""')}"`;
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 export function buildContactExportCSV(

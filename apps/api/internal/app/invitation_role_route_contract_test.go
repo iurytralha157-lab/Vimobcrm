@@ -11,9 +11,9 @@ func TestInvitationRolePatchRouteRequiresUsersManage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read app routes: %v", err)
 	}
-	required := `mux.Handle("PATCH /v1/invitations/{id}", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.UpdateInvitationRole)))`
+	required := `mux.Handle("PATCH /v1/invitations/{id}", withActivePermission(permissions.UsersManage, http.HandlerFunc(adminHandler.UpdateInvitationRole)))`
 	if !strings.Contains(string(source), required) {
-		t.Fatal("invitation role PATCH must be registered behind users_manage")
+		t.Fatal("invitation role PATCH must be registered behind a live session and users_manage")
 	}
 }
 

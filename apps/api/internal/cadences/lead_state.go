@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -17,6 +18,7 @@ type LeadCadenceState struct {
 	DealStatus     string                      `json:"deal_status"`
 	StageID        string                      `json:"stage_id"`
 	StageName      string                      `json:"stage_name"`
+	TimeZone       string                      `json:"time_zone"`
 	StageCycleID   *string                     `json:"stage_cycle_id,omitempty"`
 	StageEnteredAt *time.Time                  `json:"stage_entered_at,omitempty"`
 	CadenceEnabled bool                        `json:"cadence_enabled"`
@@ -66,14 +68,26 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 	if !ok {
 		return LeadCadenceState{}, ErrInvalidInput
 	}
+	if !leadscope.CanRead(tenantContext) {
+		return LeadCadenceState{}, tenant.ErrOrganizationAccessDenied
+	}
+	// State, queue audience and task details must come from one read snapshot.
+	// A later pool transition must not mix newly private task data into a state
+	// that was authorized before that transition.
+	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return LeadCadenceState{}, err
+	}
+	defer tx.Rollback(ctx)
 
 	var state LeadCadenceState
 	var assignedUserID, teamID pgtype.Text
+	var queuePoolReadAccess *bool
 	var stageCycleID pgtype.Text
 	var stageEnteredAt pgtype.Timestamptz
 	var enrollmentID, templateID, templateName, enrollmentStatus pgtype.Text
 	var enrollmentStartedAt, enrollmentCompletedAt pgtype.Timestamptz
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		select
 			l.id::text,
 			coalesce(l.deal_status, 'open'),
@@ -100,7 +114,16 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 			),
 			ce.status,
 			ce.started_at,
-			ce.completed_at
+			ce.completed_at,
+			private.queue_pool_read_access(l.organization_id, l.id, $3::uuid),
+			coalesce((
+				select timezone_name.name
+				from public.organization_attention_settings organization_settings
+				join pg_catalog.pg_timezone_names timezone_name
+				  on timezone_name.name = nullif(btrim(organization_settings.timezone), '')
+				where organization_settings.organization_id = l.organization_id
+				limit 1
+			), 'America/Sao_Paulo')
 		from public.leads l
 		join public.stages s
 		  on s.organization_id = l.organization_id and s.id = l.stage_id
@@ -134,7 +157,7 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 		left join public.cadence_templates ct
 		  on ct.organization_id = ce.organization_id and ct.id = ce.cadence_template_id
 		where l.organization_id = $1::uuid and l.id = $2::uuid
-	`, tenantContext.OrganizationID, leadID).Scan(
+	`, tenantContext.OrganizationID, leadID, tenantContext.UserID).Scan(
 		&state.LeadID,
 		&state.DealStatus,
 		&state.StageID,
@@ -150,6 +173,8 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 		&enrollmentStatus,
 		&enrollmentStartedAt,
 		&enrollmentCompletedAt,
+		&queuePoolReadAccess,
+		&state.TimeZone,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadCadenceState{}, ErrCadenceNotFound
@@ -157,9 +182,13 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 	if err != nil {
 		return LeadCadenceState{}, err
 	}
+	if queuePoolReadAccess != nil && !*queuePoolReadAccess {
+		return LeadCadenceState{}, ErrCadenceNotFound
+	}
 	if !authorization.CanViewLead(tenantContext, authorization.LeadResource{
-		AssignedUserID: textValue(assignedUserID),
-		TeamID:         textValue(teamID),
+		AssignedUserID:      textValue(assignedUserID),
+		TeamID:              textValue(teamID),
+		QueuePoolReadAccess: queuePoolReadAccess,
 	}) {
 		return LeadCadenceState{}, tenant.ErrOrganizationAccessDenied
 	}
@@ -176,15 +205,22 @@ func (repo Repository) GetLeadCadenceState(ctx context.Context, tenantContext te
 			StartedAt:    enrollmentStartedAt.Time,
 			CompletedAt:  pgTimePointer(enrollmentCompletedAt),
 		}
-		if err := repo.loadLeadCadenceTasks(ctx, tenantContext.OrganizationID, state.Enrollment.ID, &state); err != nil {
+		if err := loadLeadCadenceTasks(ctx, tx, tenantContext.OrganizationID, state.Enrollment.ID, &state); err != nil {
 			return LeadCadenceState{}, err
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadCadenceState{}, err
 	}
 	return state, nil
 }
 
-func (repo Repository) loadLeadCadenceTasks(ctx context.Context, organizationID, enrollmentID string, state *LeadCadenceState) error {
-	rows, err := repo.db.Pool().Query(ctx, `
+type cadenceStateQueryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func loadLeadCadenceTasks(ctx context.Context, queryer cadenceStateQueryer, organizationID, enrollmentID string, state *LeadCadenceState) error {
+	rows, err := queryer.Query(ctx, `
 		select
 			lt.id::text,
 			coalesce(

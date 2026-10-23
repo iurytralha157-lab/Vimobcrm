@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { format, type Locale } from 'date-fns';
-import type { EventType, ScheduleEvent } from '@/hooks/use-schedule-events';
+import type { ScheduleEvent } from '@/hooks/use-schedule-events';
 export { getErrorObjectMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import type {
   CadenceTaskType,
@@ -73,30 +73,12 @@ export function getDealStatusTriggerClass(status?: string | null) {
   return '!border-0 !bg-[var(--app-surface-soft)] !text-[var(--app-text-primary)] !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-[var(--app-surface-hover)] data-[state=open]:!bg-[var(--app-surface-hover)] focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-[var(--app-border-strong)] focus-visible:!ring-offset-0';
 }
 
-export function getScheduleEventType(value?: string | null): EventType {
-  return value === 'email' ||
-    value === 'meeting' ||
-    value === 'task' ||
-    value === 'message' ||
-    value === 'visit'
-    ? value
-    : 'call';
-}
-
 export function getScheduleStatusLabel(status?: string | null, isLate = false) {
   if (status === 'completed') return 'Concluído';
   if (status === 'cancelled' || status === 'canceled') return 'Cancelado';
   if (status === 'no_show') return 'Não compareceu';
   if (isLate) return 'Atrasado';
   return 'Em aberto';
-}
-
-export function getScheduleStatusClass(status?: string | null, isLate = false) {
-  if (status === 'completed') return 'bg-emerald-500/12 text-emerald-500';
-  if (status === 'cancelled' || status === 'canceled') return 'bg-red-500/12 text-red-500';
-  if (status === 'no_show') return 'bg-amber-500/12 text-amber-500';
-  if (isLate) return 'bg-red-500/12 text-red-500';
-  return 'bg-primary/12 text-primary';
 }
 
 export function getScheduleDateLabel(event: ScheduleEvent, locale: Locale) {

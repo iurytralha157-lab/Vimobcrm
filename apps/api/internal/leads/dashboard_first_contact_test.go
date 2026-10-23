@@ -195,6 +195,7 @@ func TestDashboardFirstContactKeepsEverySharedFilterAndScopesThePerson(t *testin
 	for _, fragment := range []string{
 		"visible_cohort", "from touched t", "l.first_response_at is not null",
 		"public.team_members tm", "tm.user_id = b.user_id", "tm.user_id = c.first_response_actor_user_id",
+		"om.membership_generation = tm.membership_generation",
 	} {
 		if !strings.Contains(metrics, fragment) {
 			t.Errorf("metric did not scope %q: %s", fragment, metrics)
@@ -203,6 +204,7 @@ func TestDashboardFirstContactKeepsEverySharedFilterAndScopesThePerson(t *testin
 	for _, fragment := range []string{
 		"tm.user_id = e.from_user_id", "tm.user_id = e.to_user_id",
 		"tm.user_id = b.user_id", "coalesce(tm.is_active, true) = true",
+		"om.membership_generation = tm.membership_generation",
 	} {
 		if !strings.Contains(redistributions, fragment) {
 			t.Errorf("redistribution did not scope %q: %s", fragment, redistributions)

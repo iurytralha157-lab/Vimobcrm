@@ -82,7 +82,7 @@ test("identity alias resolution quarantines conflicting cards and canonical iden
   assert.match(source, /quarantineReason: "whatsapp_identity_alias_ambiguous"/);
   assert.match(source, /conversationBindingSnapshot\.leadResolutionQuarantineReason/);
   assert.match(source, /__whatsapp_identity_alias_quarantine_reason/);
-  assert.match(source, /if \(!existing && !leadResolutionQuarantineReason && !message\.isGroup/);
+  assert.match(source, /if \(!existing && !intakeSplitRemoteJid && !leadResolutionQuarantineReason && !message\.isGroup/);
 });
 
 test("fresh identity routing ignores soft-deleted conversations", () => {
@@ -192,17 +192,185 @@ test("CTWA initial card joins attendance before its first message is classified"
   const resolver = source.slice(start, end);
   const persisted = resolver.indexOf("const persistedState = persistedWhatsAppMessageCaptureState(storedMessage)");
   const binding = resolver.indexOf("const { data: activeBinding");
-  const inbox = resolver.indexOf("const { data: inbox");
+  const inbox = resolver.indexOf("const { data: inbox", binding);
   const bootstrap = resolver.indexOf('"auto_enter_whatsapp_ctwa_attendance"');
   const attendance = resolver.indexOf('const attendanceScope = () => supabase');
   assert.ok(persisted > 0 && persisted < binding && binding < inbox && inbox < bootstrap && bootstrap < attendance);
   assert.match(resolver, /initialProviderEventId === `\$\{session\.id\}:\$\{message\.messageId\}`/);
-  assert.match(resolver, /isConfirmedClickToWhatsAppAd\(message\)/);
+  assert.match(resolver, /isEligibleClickToWhatsAppLeadIntake\(message\)/);
   assert.match(resolver, /!message\.fromMe[\s\S]*?!message\.isGroup[\s\S]*?!message\.providerMessageIdSynthetic/);
   assert.match(resolver, /ingress\.contextKind === "contextual_intake"/);
   assert.match(resolver, /p_binding_id: bindingId/);
   assert.match(resolver, /p_ingress_sequence: ingress\.ingressSequence/);
   assert.match(resolver, /p_provider_occurred_at: providerOccurredAt/);
+});
+
+test("organic leadless ingress remains visible without crossing the lead attendance gate", () => {
+  const parser = source.slice(
+    source.indexOf("function ingressRoutingSnapshotForMessage("),
+    source.indexOf("function orderMessagesByIngressRoutingSnapshot("),
+  );
+  assert.match(parser, /row\.unlinked_capture_policy/);
+  assert.match(parser, /row\.expired_unlinked_conversation_id/);
+  assert.match(parser, /row\.expired_unlinked_remote_jid/);
+  assert.match(parser, /row\.intake_unlinked_conversation_id/);
+  assert.match(parser, /row\.intake_unlinked_remote_jid/);
+  assert.match(parser, /row\.captured_at/);
+  const resolver = source.slice(
+    source.indexOf("async function resolveWhatsAppAttendanceCapture("),
+    source.indexOf("async function findStoredMessage("),
+  );
+  const persisted = resolver.indexOf("const persistedState = persistedWhatsAppMessageCaptureState(storedMessage)");
+  const ephemeral = resolver.indexOf('"resolve_whatsapp_unlinked_history_capture"');
+  const leadGate = resolver.indexOf("if (!eventBindingIsCurrent || !eventLeadId || !conversation?.id)");
+  assert.ok(persisted > 0 && ephemeral > persisted && leadGate > ephemeral);
+  assert.match(resolver, /ingress\?\.state === "unlinked"/);
+  assert.match(resolver, /ingress\.unlinkedCapturePolicy === "v1"/);
+  assert.match(resolver, /hasOrdinaryWhatsAppCaptureContext\(message, ingress\)/);
+  const organicPolicy = source.slice(
+    source.indexOf("function hasOrdinaryWhatsAppCaptureContext("),
+    source.indexOf("function whatsappAttributionUtmSource("),
+  );
+  assert.match(organicPolicy, /ingress\.contextKind !== "organic"\) return false/);
+  assert.match(organicPolicy, /!ingress\.contextProof\) return !isConfirmedClickToWhatsAppAd\(message\)/);
+  assert.match(organicPolicy, /ingress\.contextProof === "post_form_followup_v1"[\s\S]*?isConfirmedClickToWhatsAppAd\(message\)[\s\S]*?isPostFormFollowUpWithoutLeadIntake\(message\)/);
+  assert.match(resolver, /!ingress\.eventLeadId[\s\S]*?!ingress\.currentLeadId[\s\S]*?!ingress\.activeBindingId/);
+  assert.match(resolver, /!managedOutbound[\s\S]*?!message\?\.isGroup/);
+  assert.match(resolver, /Date\.parse\(providerOccurredAt\) <= Date\.parse\(inboxCreatedAt\)/);
+  assert.match(resolver, /p_conversation_id: conversation\.id[\s\S]*?p_provider_message_id: message\.messageId[\s\S]*?p_inbox_event_key: ingress\.inboxEventKey/);
+  assert.match(resolver, /captureState === "promoted_unlinked"[\s\S]*?historyLeadId/);
+  assert.match(resolver, /organicBoundObservation[\s\S]*?ingress\.state === "bound"[\s\S]*?!managedOutbound/);
+
+  const managedOrigin = source.slice(
+    source.indexOf("async function whatsappOutboundHasManagedOrigin("),
+    source.indexOf("async function resolveWhatsAppAttendanceCapture("),
+  );
+  assert.match(managedOrigin, /\.from\("whatsapp_outbox"\)/);
+  assert.match(managedOrigin, /\.from\("outbox_messages"\)[\s\S]*?\.eq\("conversation_id", conversation\.id\)/);
+  assert.match(managedOrigin, /\["sent_message_id", "client_message_id"\]/);
+
+  const insert = source.slice(
+    source.indexOf("async function insertMessage("),
+    source.indexOf("async function completeStoredMessageEffects("),
+  );
+  assert.match(insert, /existingCaptureState === "unlinked_ephemeral"[\s\S]*?return \{ inserted: false, message: existing \}/);
+  assert.match(insert, /existingCaptureState === "observed_unattended"[\s\S]*?return \{ inserted: false, message: existing \}/);
+  assert.match(insert, /content: captureSuppressed \? null : message\.content/);
+  assert.match(insert, /allowHistoricalMedia = captureState === "promoted_unlinked"/);
+  assert.match(insert, /const isMedia = !captureSuppressed/);
+
+  const handle = source.slice(source.indexOf("async function handleMessages("), source.indexOf("function statusFromProvider("));
+  assert.match(handle, /if \(shouldPersistAttribution && attachedLead\?\.id && !isReactionEvent\)/);
+  assert.match(handle, /&& eventLeadId[\s\S]*?await triggerAutoReply\(/);
+  assert.match(handle, /await updateConversationAfterMessage\(session, conversation, eventLeadId, message\)/);
+  assert.match(handle, /captureDecision\.captureState !== "unlinked_ephemeral"[\s\S]*?captureDecision\.captureState !== "observed_unattended"[\s\S]*?await logInbound\(/);
+  assert.match(handle, /captureDecision\.captureState === "captured"[\s\S]*?await triggerAutoReply\(/);
+  assert.match(handle, /promoted_unlinked"\)[\s\S]*?await completeStoredMessageEffects\(/);
+  assert.match(handle, /!storedBeforeProcessing[\s\S]*?ingressRoutingSnapshot\?\.unlinkedCapturePolicy === "v1"[\s\S]*?processed \+= 1;[\s\S]*?continue;/);
+
+  const ensure = source.slice(
+    source.indexOf("async function ensureConversation("),
+    source.indexOf("async function activateWhatsAppConversationLeadBinding("),
+  );
+  assert.match(ensure, /whatsapp_unlinked_ingress_age_exceeded/);
+  assert.match(ensure, /retire_whatsapp_unlinked_conversation_epoch/);
+  assert.match(ensure, /p_expected_conversation_id: oldConversationId/);
+  assert.match(ensure, /p_remote_jid: ingress\.expiredUnlinkedRemoteJid/);
+  assert.match(ensure, /\.is\("retired_at", null\)/);
+  const reconcile = source.slice(
+    source.indexOf("async function reconcileHandledWhatsAppMessageTransport("),
+    source.indexOf("function normalizeMessage("),
+  );
+  assert.match(reconcile, /existingCaptureState === "unlinked_ephemeral"[\s\S]*?epoch\.retired_at[\s\S]*?7 \* 24 \* 60 \* 60 \* 1000/);
+});
+
+test("lead intake retires a marked no-lead epoch before routing the new card", () => {
+  const split = source.slice(
+    source.indexOf("async function splitUnlinkedLeadIntakeEpoch("),
+    source.indexOf("function orderMessagesByIngressRoutingSnapshot("),
+  );
+  assert.match(split, /ingress\.intakeUnlinkedConversationId \|\| ingress\.conversationId/);
+  assert.match(split, /\.eq\("id", oldConversationId\)/);
+  assert.match(split, /"retire_whatsapp_unlinked_conversation_for_lead_intake"/);
+  assert.match(split, /p_provider_message_id: message\.messageId[\s\S]*?p_inbox_event_key: ingress\.inboxEventKey[\s\S]*?p_lead_id: ingress\.eventLeadId/);
+  assert.match(split, /outcome\.retired !== true[\s\S]*?outcome\.conversation_id/);
+  const handle = source.slice(source.indexOf("async function handleMessages("), source.indexOf("function statusFromProvider("));
+  const splitCall = handle.indexOf("await splitUnlinkedLeadIntakeEpoch(");
+  const leadResolution = handle.indexOf("let rule: JsonRecord | null = null;");
+  const ensure = handle.indexOf("let conversation = await ensureConversation(");
+  assert.ok(splitCall > 0 && splitCall < leadResolution && leadResolution < ensure);
+  assert.match(handle, /conversationId: null,[\s\S]*?intakeSplitRemoteJid/);
+  const ensureConversation = source.slice(
+    source.indexOf("async function ensureConversation("),
+    source.indexOf("async function activateWhatsAppConversationLeadBinding("),
+  );
+  assert.match(ensureConversation, /remoteJid = intakeSplitRemoteJid/);
+  assert.match(ensureConversation, /!intakeSplitRemoteJid\) \{[\s\S]*?findWhatsAppIdentityAlias/);
+  assert.match(ensureConversation, /\.in\("remote_jid", intakeSplitRemoteJid \? \[intakeSplitRemoteJid\] : identityAliases\)/);
+  assert.match(ensureConversation, /!intakeSplitRemoteJid && !leadResolutionQuarantineReason[\s\S]*?\.in\("contact_phone", phoneVariants\)/);
+});
+
+test("first organic lead match is observed only after the current binding and lead are proved", () => {
+  const resolver = source.slice(
+    source.indexOf("async function resolveWhatsAppAttendanceCapture("),
+    source.indexOf("async function findStoredMessage("),
+  );
+  const bindingProof = resolver.indexOf("const bindingId = optionalUuid(activeBinding?.id)");
+  const inboxTimeProof = resolver.indexOf("Date.parse(providerOccurredAt)", bindingProof);
+  const leadMatch = resolver.indexOf("const organicFirstLeadMatchObservation =");
+  assert.ok(bindingProof > 0 && inboxTimeProof > bindingProof && leadMatch > inboxTimeProof);
+  const predicate = resolver.slice(leadMatch, resolver.indexOf("  return {", leadMatch));
+  for (const required of [
+    'ingress.state === "lead_match"',
+    'ingress.targetMode === "snapshot"',
+    'ingress.unlinkedCapturePolicy === "v1"',
+    'Boolean(ingress.capturedAt)',
+    'hasOrdinaryWhatsAppCaptureContext(message, ingress)',
+    '!ingress.leadResolutionQuarantineReason',
+    '!leadResolutionQuarantineReason',
+    'ingress.eventLeadId === eventLeadId',
+    '!ingress.currentLeadId',
+    '!ingress.activeBindingId',
+    '!ingress.conversationId',
+    'optionalUuid(conversation.lead_id) === eventLeadId',
+    '!ingress.managedMessageDistribution',
+    '!ingress.managedEventPending',
+    '!ingress.managedEventHandled',
+    '!message.fromMe',
+    '!message.isGroup',
+    '!message.providerMessageIdSynthetic',
+    '!isEligibleClickToWhatsAppLeadIntake(message)',
+    'message.messageType !== "reaction"',
+    'message.messageType !== "deleted"',
+    '!managedOutbound',
+  ]) assert.ok(predicate.includes(required), `missing lead-match guard: ${required}`);
+  assert.match(resolver, /organicBoundObservation \|\| organicFirstLeadMatchObservation[\s\S]*?"observed_unattended"/);
+  assert.match(resolver, /organic_first_lead_match_without_attendance/);
+});
+
+test("external outbound insert uses the direction required by visible capture", () => {
+  const insert = source.slice(
+    source.indexOf("async function insertMessage("),
+    source.indexOf("async function completeStoredMessageEffects("),
+  );
+  assert.match(insert, /from_me: message\.fromMe,\s*direction: message\.fromMe \? "outbound" : "inbound"/);
+  assert.match(insert, /status: message\.fromMe \? "sent" : "received"/);
+  const updatePath = insert.slice(insert.indexOf("  if (existing) {"));
+  assert.doesNotMatch(updatePath, /\bdirection\s*:/);
+});
+
+test("expired unlinked deletion callbacks finish without rewriting a scrubbed message", () => {
+  const deletion = source.slice(
+    source.indexOf("async function expiredUnlinkedDeletionTarget("),
+    source.indexOf("async function updateConversationAfterMessage("),
+  );
+  assert.match(deletion, /conversation\.unlinked_retention_v1/);
+  assert.match(deletion, /conversation\.retired_at[\s\S]*?createdAt \+ 7 \* 24 \* 60 \* 60 \* 1000/);
+  const gate = deletion.indexOf("if (await expiredUnlinkedDeletionTarget(session, target)) return true;");
+  const write = deletion.indexOf('.from("whatsapp_messages")', gate);
+  assert.ok(gate > 0 && write > gate, "expired target must exit before the first write");
+  assert.match(deletion, /expiredUnlinkedDeletionWriteRejection\(suppressedDeleteError\)/);
+  assert.match(deletion, /expiredUnlinkedDeletionWriteRejection\(updateError\)/);
 });
 
 test("manual capture retains its cutoff and auto capture uses first-event provenance", () => {

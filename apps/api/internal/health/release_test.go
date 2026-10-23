@@ -151,6 +151,22 @@ func TestReadyIncludesNormalizedRelease(t *testing.T) {
 	if got := response.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("cache control = %q, want %q", got, "no-store")
 	}
+	if got := response.Header().Get("X-Vimob-Database-Read-Only"); got != "false" {
+		t.Fatalf("database read-only header = %q, want false", got)
+	}
+}
+
+func TestReadyReportsReadOnlyDatabaseMode(t *testing.T) {
+	handler := Handler{db: successfulPinger{}, timeout: time.Second}.WithDatabaseReadOnly(true)
+	response := httptest.NewRecorder()
+	handler.Ready(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("X-Vimob-Database-Read-Only"); got != "true" {
+		t.Fatalf("database read-only header = %q, want true", got)
+	}
 }
 
 func TestReadyFailureStillIdentifiesTheReleaseWithoutCaching(t *testing.T) {

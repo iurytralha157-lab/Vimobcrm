@@ -808,7 +808,7 @@ export const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="management-team-new"]',
         title: "Nova equipe",
-        body: "Este botão abre a página completa de criação, onde nome, imagem, membros e escalas são definidos antes do primeiro salvamento.",
+        body: "Este botão abre o formulário de criação por etapas, onde nome, imagem, membros e escalas são definidos antes do primeiro salvamento.",
         missingTitle: "Criação de equipe",
         missingBody:
           "A criação aparece somente para administradores ou perfis com permissão de gestão de equipes.",
@@ -822,16 +822,16 @@ export const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       },
       {
         selector: '[data-tour="management-team-edit"]',
-        title: "Página da equipe",
-        body: "Editar abre a página dedicada com indicadores, membros, escalas e histórico de alterações.",
-        missingTitle: "Página da equipe",
+        title: "Editar equipe",
+        body: "Editar abre o formulário por etapas, com indicadores da equipe e histórico de alterações.",
+        missingTitle: "Editar equipe",
         missingBody:
-          "Quando uma equipe existir, use Editar para abrir sua página completa.",
+          "Quando uma equipe existir, use Editar para abrir seu formulário.",
       },
       {
         selector: '[data-tour="management-team-member"]',
         title: "Escala por membro",
-        body: "A foto de cada membro permite consultar rapidamente sua disponibilidade; a edição completa fica na página da equipe.",
+        body: "A foto de cada membro permite consultar rapidamente sua disponibilidade; a edição completa fica no formulário da equipe.",
         missingTitle: "Escala por membro",
         missingBody: "Este atalho aparece quando a equipe possui membros.",
       },
@@ -861,26 +861,51 @@ export const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         selector: '[data-tour="distribution-queue-basic"]',
         title: "Destino e estrategia",
         body: "Informe nome, estrategia, pipeline e etapa inicial. Todo lead aceito por esta fila seguira para esse destino.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-queue-step-basic"]',
+          waitFor: '[data-tour="distribution-queue-basic"]',
+        },
       },
       {
         selector: '[data-tour="distribution-queue-rules"]',
         title: "Regras de entrada",
         body: "Defina canal, formulario, webhook, origem, tag ou outra condicao. Uma regra ja usada em outra fila nao deve ser duplicada.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-queue-step-rules"]',
+          waitFor: '[data-tour="distribution-queue-rules"]',
+        },
       },
       {
         selector: '[data-tour="distribution-queue-members"]',
         title: "Participantes",
         body: "Adicione usuarios individualmente ou equipes. Equipes permanecem dinamicas: novos membros ativos passam a participar conforme a disponibilidade configurada na propria equipe.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-queue-step-members"]',
+          waitFor: '[data-tour="distribution-queue-members"]',
+        },
       },
       {
         selector: '[data-tour="distribution-queue-redistribution"]',
         title: "Redistribuicao",
         body: "Opcionalmente, mova leads sem acao humana depois do prazo. Essa regra vale apenas para leads que entrarem pela fila apos a ativacao.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-queue-step-redistribution"]',
+          waitFor: '[data-tour="distribution-queue-redistribution"]',
+        },
       },
       {
         selector: '[data-tour="distribution-queue-save"]',
         title: "Validar e salvar",
         body: "O botao so libera quando destino, regra e participantes obrigatorios estiverem validos. Salvar nao deve alterar leads antigos.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-queue-step-review"]',
+          waitFor: '[data-tour="distribution-queue-save"]',
+        },
       },
     ],
   },

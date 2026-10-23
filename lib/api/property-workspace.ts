@@ -42,7 +42,19 @@ import {
 } from '@/lib/validation'
 import { supabase } from '@/lib/supabase/client'
 
-import { vimobAPIRequest } from './vimob-client'
+import { getVimobAPIAccessTokenUserId, getVimobAPIAccessTokenSessionId, vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
+import { assertPropertyMediaExecution, PropertyMediaScopeChangedError, type PropertyMediaExecutionOptions } from '@/lib/property-media-execution'
+
+function assertAssetExecution(execution?: PropertyMediaExecutionOptions) {
+  assertPropertyMediaExecution(execution)
+  if (execution?.expectedUserId !== undefined && (
+    !execution.expectedUserId || getVimobAPIAccessTokenUserId() !== execution.expectedUserId
+  )) throw new PropertyMediaScopeChangedError()
+  if (execution?.expectedSessionId !== undefined && (
+    !execution.expectedSessionId || getVimobAPIAccessTokenSessionId() !== execution.expectedSessionId
+  )) throw new PropertyMediaScopeChangedError()
+}
 
 export type PropertyWorkspace = PropertyWorkspacePayload
 
@@ -54,11 +66,13 @@ function createIdempotencyKey() {
 }
 
 export const propertyWorkspaceAPI = {
-  async getWorkspace(organizationId: string, propertyId: string) {
+  async getWorkspace(organizationId: string, propertyId: string, execution?: PropertyMediaExecutionOptions) {
+    assertAssetExecution(execution)
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/workspace`,
-      { organizationId },
+      { organizationId, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
+    assertAssetExecution(execution)
     return validateDomainResponse(
       apiPropertyWorkspaceResponseSchema,
       response,
@@ -71,12 +85,14 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     offerType: PropertyOfferType,
     input: PropertyOfferUpsertInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(propertyOfferUpsertInputSchema, input, 'property-workspace.offer.upsert')
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/offers/${offerType}`,
       {
         method: 'PUT',
+        ...capturePropertyMutationIntent(intent),
         organizationId,
         body,
       },
@@ -89,10 +105,11 @@ export const propertyWorkspaceAPI = {
     return parsed.data
   },
 
-  async createKey(organizationId: string, propertyId: string, input: PropertyKeyCreateInput) {
+  async createKey(organizationId: string, propertyId: string, input: PropertyKeyCreateInput, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(propertyKeyCreateInputSchema, input, 'property-workspace.key.create')
     const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/keys`, {
       method: 'POST',
+      ...capturePropertyMutationIntent(intent),
       organizationId,
       body,
     })
@@ -110,6 +127,7 @@ export const propertyWorkspaceAPI = {
     keyId: string,
     input: PropertyKeyMovementInput,
     idempotencyKey = createIdempotencyKey(),
+    intent?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(propertyKeyMovementInputSchema, input, 'property-workspace.key.move')
     const response = await vimobAPIRequest<unknown>(
@@ -119,6 +137,7 @@ export const propertyWorkspaceAPI = {
         organizationId,
         body,
         headers: { 'Idempotency-Key': idempotencyKey },
+        ...capturePropertyMutationIntent(intent),
       },
     )
     const parsed = validateDomainResponse(
@@ -133,6 +152,7 @@ export const propertyWorkspaceAPI = {
     organizationId: string,
     propertyId: string,
     input: PropertyOwnershipCreateInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(
       propertyOwnershipCreateInputSchema,
@@ -141,7 +161,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/ownerships`,
-      { method: 'POST', organizationId, body },
+      { ...capturePropertyMutationIntent(intent), method: 'POST', organizationId, body },
     )
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceOwnershipResponseSchema,
@@ -156,6 +176,7 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     ownershipId: string,
     input: PropertyOwnershipUpdateInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(
       propertyOwnershipUpdateInputSchema,
@@ -164,7 +185,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/ownerships/${ownershipId}`,
-      { method: 'PATCH', organizationId, body },
+      { ...capturePropertyMutationIntent(intent), method: 'PATCH', organizationId, body },
     )
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceOwnershipResponseSchema,
@@ -179,6 +200,7 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     ownershipId: string,
     input: PropertyOwnershipEndInput,
+    intent?: VimobAPIRequestIntent,
   ) {
     const body = parseDomainInput(
       propertyOwnershipEndInputSchema,
@@ -187,7 +209,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/ownerships/${ownershipId}/end`,
-      { method: 'POST', organizationId, body },
+      { ...capturePropertyMutationIntent(intent), method: 'POST', organizationId, body },
     )
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceOwnershipResponseSchema,
@@ -201,12 +223,16 @@ export const propertyWorkspaceAPI = {
     organizationId: string,
     propertyId: string,
     input: PropertyAssetCreateInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(propertyAssetCreateInputSchema, input, 'property-workspace.asset.create')
     const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/assets`, {
       method: 'POST',
       organizationId,
       body,
+      expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId,
+      onRequestStart: () => assertAssetExecution(execution),
     })
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceAssetResponseSchema,
@@ -220,7 +246,9 @@ export const propertyWorkspaceAPI = {
     organizationId: string,
     propertyId: string,
     input: PropertyAssetUploadIntentInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(
       propertyAssetUploadIntentInputSchema,
       input,
@@ -228,7 +256,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/upload-intents`,
-      { method: 'POST', organizationId, body },
+      { method: 'POST', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
     const parsed = validateDomainResponse(
       apiPropertyAssetUploadIntentResponseSchema,
@@ -243,14 +271,17 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     assetType: PropertyAssetUploadIntentInput['asset_type'],
     file: File,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const intentInput = parseDomainInput(propertyAssetUploadIntentInputSchema, {
       asset_type: assetType,
       file_name: file.name,
       mime_type: file.type,
       file_size_bytes: file.size,
     }, 'property-workspace.asset.upload-file')
-    const intent = await this.createAssetUploadIntent(organizationId, propertyId, intentInput)
+    const intent = await this.createAssetUploadIntent(organizationId, propertyId, intentInput, execution)
+    assertAssetExecution(execution)
     const { error } = await supabase.storage
       .from(intent.bucket)
       .uploadToSignedUrl(intent.storage_path, intent.token, file, {
@@ -260,7 +291,7 @@ export const propertyWorkspaceAPI = {
     if (error) {
       await this.discardAssetUpload(organizationId, propertyId, {
         storage_path: intent.storage_path,
-      }).catch(() => undefined)
+      }, execution).catch(() => undefined)
       throw new Error(`Falha ao enviar arquivo: ${error.message}`)
     }
 
@@ -271,7 +302,9 @@ export const propertyWorkspaceAPI = {
     organizationId: string,
     propertyId: string,
     input: PropertyAssetUploadDiscardInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(
       propertyAssetUploadDiscardInputSchema,
       input,
@@ -279,7 +312,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/upload-intents`,
-      { method: 'DELETE', organizationId, body },
+      { method: 'DELETE', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
     const parsed = validateDomainResponse(
       apiPropertyAssetUploadDiscardResponseSchema,
@@ -294,12 +327,15 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     assetId: string,
     input: PropertyAssetUpdateInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(propertyAssetUpdateInputSchema, input, 'property-workspace.asset.update')
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/${assetId}`,
-      { method: 'PATCH', organizationId, body },
+      { method: 'PATCH', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
+    assertAssetExecution(execution)
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceAssetResponseSchema,
       response,
@@ -313,11 +349,13 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     assetId: string,
     input: PropertyAssetDeleteInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(propertyAssetDeleteInputSchema, input, 'property-workspace.asset.delete')
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/${assetId}`,
-      { method: 'DELETE', organizationId, body },
+      { method: 'DELETE', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceAssetDeleteResponseSchema,
@@ -331,13 +369,18 @@ export const propertyWorkspaceAPI = {
     organizationId: string,
     propertyId: string,
     input: PropertyAssetOrderInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(propertyAssetOrderInputSchema, input, 'property-workspace.asset.order')
     const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/assets/order`, {
       method: 'PUT',
       organizationId,
       body,
+      expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId,
+      onRequestStart: () => assertAssetExecution(execution),
     })
+    assertAssetExecution(execution)
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceAssetListResponseSchema,
       response,
@@ -351,12 +394,15 @@ export const propertyWorkspaceAPI = {
     propertyId: string,
     assetId: string,
     input: PropertyAssetPrimaryInput,
+    execution?: PropertyMediaExecutionOptions,
   ) {
+    assertAssetExecution(execution)
     const body = parseDomainInput(propertyAssetPrimaryInputSchema, input, 'property-workspace.asset.primary')
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/${assetId}/primary`,
-      { method: 'PUT', organizationId, body },
+      { method: 'PUT', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
+    assertAssetExecution(execution)
     const parsed = validateDomainResponse(
       apiPropertyWorkspaceAssetListResponseSchema,
       response,

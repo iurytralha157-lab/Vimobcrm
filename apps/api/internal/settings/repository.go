@@ -320,11 +320,13 @@ func (repo Repository) UploadOrganizationLogo(ctx context.Context, tenantContext
 	}, nil
 }
 
-func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.Context, request ChangePasswordRequest) (ChangePasswordResult, error) {
+func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.Context, authorization string, request ChangePasswordRequest) (ChangePasswordResult, error) {
 	return changePassword(
 		ctx,
 		tenantContext.UserID,
+		authorization,
 		request,
+		repo.authAdmin.revokeSessions,
 		repo.authAdmin.updatePassword,
 		repo.recordPasswordChangeEvent,
 		repo.sendPasswordChangedNotification,
@@ -334,6 +336,8 @@ func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.
 
 type passwordUpdateFunc func(context.Context, string, string) error
 
+type passwordSessionRevoker func(context.Context, string, string) error
+
 type passwordChangeEventRecorder func(context.Context, string, string) error
 
 type passwordChangedNotifier func(context.Context, string) bool
@@ -341,7 +345,9 @@ type passwordChangedNotifier func(context.Context, string) bool
 func changePassword(
 	ctx context.Context,
 	userID string,
+	authorization string,
 	request ChangePasswordRequest,
+	revokeSessions passwordSessionRevoker,
 	updatePassword passwordUpdateFunc,
 	recordEvent passwordChangeEventRecorder,
 	notify passwordChangedNotifier,
@@ -357,8 +363,16 @@ func changePassword(
 		return ChangePasswordResult{}, ErrInvalidInput
 	}
 
+	scope := "others"
+	if source == "recovery" {
+		scope = "global"
+	}
+	if err := revokeSessions(ctx, authorization, scope); err != nil {
+		return ChangePasswordResult{}, errors.Join(ErrPasswordSessionRevocationUnconfirmed, err)
+	}
+
 	if err := updatePassword(ctx, userID, password); err != nil {
-		return ChangePasswordResult{}, err
+		return ChangePasswordResult{}, errors.Join(ErrPasswordUpdateAfterRevocationUnconfirmed, err)
 	}
 
 	if err := recordEvent(ctx, userID, source); err != nil {
@@ -380,6 +394,7 @@ func changePassword(
 		Allowed:               true,
 		Message:               "Senha alterada com sucesso!",
 		EmailNotificationSent: emailSent,
+		SessionsRevoked:       true,
 	}, nil
 }
 
@@ -437,6 +452,7 @@ func (repo Repository) PasswordStatus(ctx context.Context, tenantContext tenant.
 		select changed_at::text, source
 		from public.password_change_events
 		where user_id = $1::uuid
+		  and (metadata ->> 'reset_source') is distinct from 'superadmin'
 		order by changed_at desc
 		limit 1
 	`, tenantContext.UserID).Scan(&event.ChangedAt, &event.Source)
@@ -631,94 +647,7 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	if err != nil {
 		return PushTokenResult{}, err
 	}
-	if err := repo.deactivatePushEndpointForOtherUsers(
-		ctx,
-		tenantContext.UserID,
-		endpoint,
-		token,
-	); err != nil {
-		return PushTokenResult{}, err
-	}
-	if request.SyncOnly != nil && *request.SyncOnly {
-		dead, err := repo.hasInactivePushToken(ctx, tenantContext.UserID, endpoint)
-		if isUndefinedTableError(err) {
-			return PushTokenResult{OK: true, Active: false}, nil
-		}
-		if isUndefinedColumnError(err) {
-			dead = false
-		} else if err != nil {
-			return PushTokenResult{}, err
-		}
-		if dead {
-			return PushTokenResult{OK: true, Active: false, RequiresResubscribe: true}, nil
-		}
-	}
-
-	result, err := repo.db.Pool().Exec(ctx, `
-		update public.push_tokens
-		set organization_id = $1::uuid,
-		    token = $4,
-		    platform = $5,
-		    device_info = $6::jsonb,
-		    p256dh = $7,
-		    auth = $8,
-		    user_agent = $9,
-		    is_active = true,
-		    updated_at = now()
-	where user_id = $2::uuid
-	  and endpoint = $3
-	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, token, platform, string(deviceInfo), cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
-	if isUndefinedTableError(err) {
-		return PushTokenResult{OK: true, Active: false}, nil
-	}
-	if isUndefinedColumnError(err) {
-		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
-	}
-	if err != nil {
-		return PushTokenResult{}, err
-	}
-	if result.RowsAffected() > 0 {
-		return PushTokenResult{OK: true, Active: true}, nil
-	}
-
-	_, err = repo.db.Pool().Exec(ctx, `
-		insert into public.push_tokens (
-			organization_id,
-			user_id,
-			token,
-			platform,
-			device_info,
-			endpoint,
-			p256dh,
-			auth,
-			user_agent,
-			is_active
-		)
-		values ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6, $7, $8, $9, true)
-	`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo), endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
-	if isUniqueViolation(err) {
-		_, err = repo.db.Pool().Exec(ctx, `
-			update public.push_tokens
-			set organization_id = $1::uuid,
-			    token = $4,
-			    platform = $5,
-			    device_info = $6::jsonb,
-			    p256dh = $7,
-			    auth = $8,
-			    user_agent = $9,
-			    is_active = true,
-			    updated_at = now()
-			where user_id = $2::uuid
-			  and endpoint = $3
-		`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, token, platform, string(deviceInfo), cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
-	}
-	if isUndefinedColumnError(err) {
-		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
-	}
-	if err != nil {
-		return PushTokenResult{}, err
-	}
-	return PushTokenResult{OK: true, Active: true}, nil
+	return repo.savePushTokenAtomically(ctx, tenantContext, request, endpoint, token, platform, deviceInfo)
 }
 
 func (repo Repository) ListPushDevices(ctx context.Context, tenantContext tenant.Context) ([]PushDevice, error) {
@@ -738,9 +667,9 @@ func (repo Repository) ListPushDevices(ctx context.Context, tenantContext tenant
 		       coalesce(failure_count, 0),
 		       coalesce(updated_at, created_at, now())
 		from public.push_tokens
-		where organization_id = $1::uuid and user_id = $2::uuid
+		where user_id = $1::uuid
 		order by coalesce(is_active, true) desc, updated_at desc nulls last, created_at desc
-	`, tenantContext.OrganizationID, tenantContext.UserID)
+	`, tenantContext.UserID)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
 		return []PushDevice{}, nil
 	}
@@ -831,32 +760,7 @@ func (repo Repository) DeactivatePushToken(ctx context.Context, tenantContext te
 	if tenantContext.UserID == "" {
 		return ErrInvalidInput
 	}
-
-	endpoint := cleanStringPointer(request.Endpoint)
-	var err error
-	if endpoint == nil {
-		_, err = repo.db.Pool().Exec(ctx, `
-			update public.push_tokens
-			set is_active = false,
-			    updated_at = now()
-			where user_id = $1::uuid
-		`, tenantContext.UserID)
-	} else {
-		_, err = repo.db.Pool().Exec(ctx, `
-			update public.push_tokens
-			set is_active = false,
-			    updated_at = now()
-			where user_id = $1::uuid
-			  and endpoint = $2
-		`, tenantContext.UserID, *endpoint)
-	}
-	if isUndefinedTableError(err) {
-		return nil
-	}
-	if isUndefinedColumnError(err) {
-		return repo.deactivateLegacyPushToken(ctx, tenantContext.UserID, endpoint)
-	}
-	return err
+	return repo.deactivatePushTokenSession(ctx, tenantContext, request)
 }
 
 func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext tenant.Context, endpoint string, request PushTokenRequest) (PushTokenResult, error) {

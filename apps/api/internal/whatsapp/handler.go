@@ -563,6 +563,7 @@ func (handler Handler) ShowConversation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	handler.repo.hydrateConversationAvatar(r.Context(), tenantContext.OrganizationID, &conversation)
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[Conversation]{Data: conversation})
 }
 
@@ -578,6 +579,7 @@ func (handler Handler) ShowConversationSnapshot(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	handler.repo.hydrateConversationAvatar(r.Context(), tenantContext.OrganizationID, &conversation)
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[Conversation]{Data: conversation})
 }
 
@@ -621,6 +623,20 @@ func (handler Handler) GetMessageMediaURL(w http.ResponseWriter, r *http.Request
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[MessageMediaURL]{Data: media})
+}
+
+func (handler Handler) GetSendStatus(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	response, err := handler.repo.GetSendStatus(r.Context(), tenantContext, r.PathValue("id"),
+		r.URL.Query().Get("clientMessageId"), r.URL.Query().Get("expectedLeadId"))
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
 func (handler Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
@@ -787,18 +803,35 @@ func (handler Handler) LinkConversationToLead(w http.ResponseWriter, r *http.Req
 		writeWhatsAppError(w, r, err)
 		return
 	}
-	if err := handler.repo.LinkConversationToLead(
-		r.Context(),
-		tenantContext,
-		r.PathValue("id"),
-		leadID,
-		expectedPreviousLeadID,
-	); err != nil {
-		writeWhatsAppError(w, r, err)
+	var result ConversationLeadLinkResult
+	var linkErr error
+	if request.OwnSessionOnly {
+		linkErr = handler.repo.LinkOwnedConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID, expectedPreviousLeadID, &result)
+	} else {
+		linkErr = handler.repo.LinkConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID, expectedPreviousLeadID, &result)
+	}
+	if linkErr != nil {
+		writeWhatsAppError(w, r, linkErr)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": result})
+}
+
+func (handler Handler) GetConversationLeadLinkPreview(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	preview, err := handler.repo.GetConversationLeadLinkPreview(
+		r.Context(), tenantContext, r.PathValue("id"),
+		r.URL.Query().Get("leadId"), r.URL.Query().Get("expectedPreviousLeadId"),
+	)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": preview})
 }
 
 func (handler Handler) RetryMediaDownload(w http.ResponseWriter, r *http.Request) {
@@ -1081,7 +1114,25 @@ func decodeWhatsAppJSON(w http.ResponseWriter, r *http.Request, target any, maxB
 }
 
 func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
+	var phoneConfirmation *phoneChangeConfirmationError
+	if errors.As(err, &phoneConfirmation) {
+		httpserver.WriteJSON(w, http.StatusConflict, struct {
+			Error httpserver.APIError     `json:"error"`
+			Data  PhoneChangeConfirmation `json:"data"`
+		}{httpserver.APIError{Code: "whatsapp_phone_change_confirmation_required", Message: "Confirme a troca de telefone para abrir uma nova conversa e preservar o histórico anterior.", RequestID: httpserver.RequestIDFromContext(r.Context())}, phoneConfirmation.PhoneChangeConfirmation})
+		return
+	}
 	switch {
+	case errors.Is(err, ErrQueuePoolClaimRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "queue_pool_changed", "Assuma o lead no bolsão antes de iniciar o atendimento ou enviar mensagens.")
+	case errors.Is(err, ErrConversationSendInFlight):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_send_in_flight", "Aguarde a confirmação do envio em andamento antes de trocar o telefone desta conversa.")
+	case errors.Is(err, ErrMessageCursorRebaseRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_message_cursor_rebase_required", "WhatsApp message history changed. Reload the latest page.")
+	case errors.Is(err, ErrReactionTargetUnconfirmed):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_reaction_target_unconfirmed", "Confirme o envio da mensagem antes de reagir.")
+	case errors.Is(err, ErrQuoteTargetUnavailable):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_quote_target_unavailable", "A mensagem citada não está disponível neste atendimento.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_whatsapp_input", err.Error())
 	case errors.Is(err, ErrInvalidReference):
@@ -1092,6 +1143,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_conversation_not_found", "WhatsApp conversation was not found.")
 	case errors.Is(err, ErrConversationBindingChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
+	case errors.Is(err, ErrConversationHistoryLinkRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_history_link_required", "Confirme o vínculo do histórico desta conversa antes de iniciar o atendimento.")
 	case errors.Is(err, ErrAttendanceRequired):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Confirme o início do atendimento antes de enviar mensagens por este WhatsApp.")
 	case errors.Is(err, ErrSessionAccessRevoked):

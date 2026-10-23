@@ -19,6 +19,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import { buildPropertyAssetCommonInput } from '@/lib/property-media-asset-input'
 import { validatePropertyPhotoFile } from '@/lib/property-media-draft'
+import { preparePropertyPhoto, PROPERTY_PHOTO_PICKER_ACCEPT } from '@/lib/property-photo-preparation'
+import formFieldStyles from '../property-form/property-form-fields.module.css'
 import type {
   PropertyAssetCreateInput,
   PropertyAssetUpdateInput,
@@ -71,6 +73,7 @@ export function PropertyAssetDialog({
   const [documentCategory, setDocumentCategory] = useState(asset?.document_category ?? '')
   const [expiresAt, setExpiresAt] = useState(asset?.expires_at ?? '')
   const [localError, setLocalError] = useState<string | null>(null)
+  const [preparingFile, setPreparingFile] = useState(false)
 
   const supportsFile = assetType === 'photo' || assetType === 'floor_plan' || assetType === 'document'
   const storedAsset = Boolean(asset?.storage_path)
@@ -104,6 +107,7 @@ export function PropertyAssetDialog({
     // This dialog lives inside the property editor's React tree. A portal does
     // not stop submit bubbling to the editor's outer form.
     event.stopPropagation()
+    if (pending || preparingFile) return
     setLocalError(null)
 
     if (!editing && sourceMode === 'file') {
@@ -166,7 +170,7 @@ export function PropertyAssetDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto rounded-[8px] sm:max-w-[640px]">
+      <DialogContent className={`max-h-[90vh] overflow-y-auto rounded-[8px] sm:max-w-[640px] ${formFieldStyles.surface}`}>
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{editing ? 'Editar mídia ou documento' : 'Adicionar mídia ou documento'}</DialogTitle>
@@ -175,7 +179,7 @@ export function PropertyAssetDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-5 py-5">
+          <fieldset disabled={pending || preparingFile} className="grid min-w-0 gap-5 border-0 py-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="asset-type">Tipo</Label>
@@ -239,15 +243,27 @@ export function PropertyAssetDialog({
                 <Input
                   id="asset-file"
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                  onChange={(event) => {
-                    const nextFile = event.target.files?.[0] ?? null
-                    setFile(nextFile)
-                    setLocalError(nextFile ? validateFile(nextFile) : null)
+                  accept={assetType === 'document' ? 'application/pdf' : PROPERTY_PHOTO_PICKER_ACCEPT}
+                  onChange={async (event) => {
+                    const selectedFile = event.target.files?.[0] ?? null
+                    setFile(null)
+                    setLocalError(null)
+                    if (!selectedFile) return
+                    setPreparingFile(true)
+                    try {
+                      const nextFile = assetType === 'document' ? selectedFile : await preparePropertyPhoto(selectedFile)
+                      const fileError = validateFile(nextFile)
+                      if (fileError) setLocalError(fileError)
+                      else setFile(nextFile)
+                    } catch (error) {
+                      setLocalError(getErrorMessage(error))
+                    } finally {
+                      setPreparingFile(false)
+                    }
                   }}
                   required
                 />
-                <p className="text-xs text-muted-foreground">JPEG, PNG, WebP, GIF ou PDF, com até 10 MB.</p>
+                <p className="text-xs text-muted-foreground">{preparingFile ? 'Preparando imagem…' : assetType === 'document' ? 'PDF com até 10 MB.' : 'Fotos até 30 MB. A imagem é reduzida antes do envio; animações precisam ter até 10 MB e 2048 pixels.'}</p>
               </div>
             )}
 
@@ -287,12 +303,12 @@ export function PropertyAssetDialog({
             )}
 
             {localError && <p role="alert" className="text-sm text-destructive">{localError}</p>}
-          </div>
+          </fieldset>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>Cancelar</Button>
-            <Button type="submit" disabled={pending || Boolean(localError)}>
-              {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Button type="submit" disabled={pending || preparingFile}>
+              {(pending || preparingFile) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {editing ? 'Salvar alterações' : 'Adicionar ativo'}
             </Button>
           </DialogFooter>

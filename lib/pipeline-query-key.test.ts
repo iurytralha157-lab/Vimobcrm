@@ -3,6 +3,15 @@ import test from 'node:test';
 
 import { stageWithLeadsQueryKey } from './pipeline-query-key';
 
+test('literal all search never shares the unrestricted selector cache', () => {
+  const base = { organizationId: 'org', pipelineId: 'pipeline' };
+  const unrestricted = stageWithLeadsQueryKey(base);
+  const search = stageWithLeadsQueryKey({ ...base, filters: { searchQuery: 'all' } });
+  assert.notDeepEqual(search, unrestricted);
+  assert.equal(search[8], 'all');
+  assert.deepEqual(stageWithLeadsQueryKey({ ...base, filters: { filterCampaign: 'all', filterSource: 'all' } }), unrestricted);
+});
+
 test('normaliza filtros vazios para uma unica chave canonica da pipeline', () => {
   const base = {
     organizationId: 'org-1',

@@ -1,4 +1,7 @@
 import {
+  GoogleCalendarConnectionChangedError,
+} from "../_shared/google-calendar-delivery.ts";
+import {
   authenticateUser,
   buildGoogleAuthUrl,
   consumeOAuthState,
@@ -211,6 +214,9 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("google-calendar-oauth error", error);
     const message = errorMessage(error);
+    if (error instanceof GoogleCalendarConnectionChangedError) {
+      return jsonResponse({ success: false, error: message, code: "GOOGLE_CALENDAR_CONNECTION_CHANGED" }, 409);
+    }
     if (error instanceof GoogleCalendarDisconnectPendingError) {
       return jsonResponse({ success: false, error: message, code: "GOOGLE_CALENDAR_SYNC_PENDING" }, 409);
     }

@@ -7,7 +7,8 @@ import type { AdminSection } from "@/components/features/admin/admin-navigation"
 import { AiAgentsContent } from "@/components/features/admin/AiAgentsContent";
 import { VimobLoader } from "@/components/shared/loading";
 import { Badge } from "@/components/ui/badge";
-import { normalizeSearchText } from "@/lib/search-text";
+import { Button } from "@/components/ui/button";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
 import { AdminWarning, KpiCard } from "@/components/features/admin/AdminPrimitives";
 import { AdminToolbar } from "@/components/features/admin/AdminToolbar";
@@ -15,9 +16,8 @@ import {
   formatNumber,
   GenericRowsPreview,
   getErrorMessage,
-  normalizeText,
 } from "@/components/features/admin/admin-display";
-import { countAdminTable, useAdminRows, useSafeAdminQuery } from "@/components/features/admin/admin-queries";
+import { countAdminTable, useAdminRowsPaginated, useSafeAdminQuery } from "@/components/features/admin/admin-queries";
 
 const LEGACY_TABLES = [
   { name: "organizations", label: "Organizações", critical: true },
@@ -98,12 +98,10 @@ function GenericTable({
   tableConfig: { table: string; title: string; fields: string[]; empty: string };
 }) {
   const [search, setSearch] = useState("");
-  const query = useAdminRows(tableConfig.table, 120);
-  const rows = query.data?.data || [];
-  const errorMessage = query.data?.errorMessage;
-  const filteredRows = rows.filter((row) =>
-    tableConfig.fields.some((field) => normalizeText(row[field]).includes(normalizeSearchText(search))),
-  );
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const query = useAdminRowsPaginated(tableConfig.table, debouncedSearch);
+  const filteredRows = query.data?.pages.flatMap((page) => page.data) || [];
+  const errorMessage = query.error ? getErrorMessage(query.error) : null;
 
   return (
     <div className="space-y-4">
@@ -116,6 +114,11 @@ function GenericTable({
       ) : null}
       {!query.isPending && !errorMessage ? (
         <GenericRowsPreview title={tableConfig.title} rows={filteredRows} fields={tableConfig.fields} empty={tableConfig.empty} />
+      ) : null}
+      {query.hasNextPage ? (
+        <Button type="button" variant="outline" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
+          {query.isFetchingNextPage ? 'Carregando...' : 'Carregar mais resultados'}
+        </Button>
       ) : null}
     </div>
   );

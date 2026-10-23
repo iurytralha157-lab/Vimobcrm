@@ -196,6 +196,79 @@ func TestSafeRequestPathRedactsGrupoOLXTokenWithoutMuxPattern(t *testing.T) {
 	}
 }
 
+func TestLogRequestsRedactsInvitationTokens(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		method  string
+		pattern string
+	}{
+		{name: "public preview", method: http.MethodGet, pattern: "/v1/public/invitations/{token}"},
+		{name: "public acceptance", method: http.MethodPost, pattern: "/v1/public/invitations/{token}/accept"},
+		{name: "authenticated acceptance", method: http.MethodPost, pattern: "/v1/invitations/{token}/accept"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&output, nil))
+			mux := http.NewServeMux()
+			mux.HandleFunc(test.method+" "+test.pattern, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+			secret := "synthetic-invitation-token-must-not-leak"
+			requestPath := strings.Replace(test.pattern, "{token}", secret, 1)
+			request := httptest.NewRequest(test.method, "https://api.example.test"+requestPath+"?ignored=also-secret", nil)
+			LogRequests(logger)(mux).ServeHTTP(httptest.NewRecorder(), request)
+
+			logged := output.String()
+			if strings.Contains(logged, secret) || strings.Contains(logged, "also-secret") {
+				t.Fatalf("request log leaked invitation credential: %s", logged)
+			}
+			if !strings.Contains(logged, `"path":"`+test.pattern+`"`) {
+				t.Fatalf("request log path = %s, want route template %q", logged, test.pattern)
+			}
+		})
+	}
+}
+
+func TestLogRequestsRedactsInvitationTokensOnUnmatchedPaths(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "public preview without mux route",
+			path: "/v1/public/invitations/synthetic-invitation-token-must-not-leak",
+			want: "/v1/public/invitations/{token}",
+		},
+		{
+			name: "public acceptance with unmatched suffix",
+			path: "/v1/public/invitations/synthetic-invitation-token-must-not-leak/accept/extra",
+			want: "/v1/public/invitations/{token}/accept/extra",
+		},
+		{
+			name: "authenticated acceptance without mux route",
+			path: "/v1/invitations/synthetic-invitation-token-must-not-leak/accept",
+			want: "/v1/invitations/{token}/accept",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&output, nil))
+			request := httptest.NewRequest(http.MethodGet, "https://api.example.test"+test.path, nil)
+			mux := http.NewServeMux()
+			LogRequests(logger)(mux).ServeHTTP(httptest.NewRecorder(), request)
+
+			logged := output.String()
+			if strings.Contains(logged, "synthetic-invitation-token-must-not-leak") {
+				t.Fatalf("unmatched request log leaked invitation credential: %s", logged)
+			}
+			if !strings.Contains(logged, `"path":"`+test.want+`"`) {
+				t.Fatalf("request log path = %s, want %q", logged, test.want)
+			}
+		})
+	}
+}
+
 func TestCORSAllowsIdempotencyKey(t *testing.T) {
 	handler := CORS([]string{"https://crm.example.test"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

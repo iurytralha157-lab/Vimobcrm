@@ -54,6 +54,16 @@ type DashboardReport struct {
 	OverdueByOwner   []DashboardOverdueOwner     `json:"overdue_by_owner"`
 	PerformerRanking []DashboardPerformerRanking `json:"performer_ranking"`
 	TopPerformers    []DashboardTopPerformer     `json:"top_performers"`
+	DataQuality      *DashboardDataQuality       `json:"data_quality,omitempty"`
+}
+
+type DashboardDataQuality struct {
+	PeriodEvents               int64 `json:"period_events"`
+	MissingCreatedBy           int64 `json:"missing_created_by"`
+	MissingLeadSourceSnapshot  int64 `json:"missing_lead_source_snapshot"`
+	CompletedWithoutPerformer  int64 `json:"completed_without_performer"`
+	CompletedWithoutResultTime int64 `json:"completed_without_result_time"`
+	UnknownResultTimeInScope   int64 `json:"unknown_result_time_in_scope"`
 }
 
 type DashboardPeriod struct {

@@ -96,25 +96,61 @@ func TestInvitationEmailUsesCanonicalBrandShell(t *testing.T) {
 
 	for _, required := range []string{
 		`src="https://vimobcrm.com.br/images/logo-black.png"`,
-		`height:6px;background:#ff4529`,
-		`bgcolor="#d9341d"`,
-		`background:#fff0ed`,
+		`width="85"`,
+		`background:#f7f8f6`,
+		`max-width:560px`,
+		`font-family:Geist,'Segoe UI',Arial,Helvetica,sans-serif`,
+		`font-size:24px;font-weight:400`,
+		`font-size:15px;font-weight:400`,
+		`height="48" bgcolor="#ff4529"`,
+		`<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0 24px;border-collapse:collapse">`,
+		`padding:15px 20px;color:#ffffff;font-size:14px;font-weight:400`,
+		`background:#ffffff;border-radius:6px`,
+		`width="100%" style="width:100%;background:#f7f8f6`,
 		`https://app.vimobcrm.com.br/convite/token-seguro`,
 		`Você foi convidado para Imobiliária Exemplo`,
 		`organização pelo Vimob CRM`,
 		`Completar cadastro`,
+		`Se você não reconhece este convite, ignore esta mensagem. Nenhum acesso será concedido sem o aceite.`,
 		`suporte@example.com`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("invitation email brand shell is missing %q", required)
 		}
 	}
-	if strings.Contains(html, `#c9361f`) {
-		t.Fatal("invitation email must use the canonical Vimob accent")
+	for _, removed := range []string{
+		`#d9341d`,
+		`#c9361f`,
+		`box-shadow:`,
+		`border:1px solid`,
+		`height:6px`,
+		`background:#fff0ed`,
+		`%!`,
+	} {
+		if strings.Contains(html, removed) {
+			t.Fatalf("invitation email still contains obsolete styling or invalid formatting %q", removed)
+		}
 	}
 	for _, untranslated := range []string{"Voce", "organizacao", "Ola,"} {
 		if strings.Contains(html, untranslated) {
 			t.Fatalf("invitation email contains untranslated Portuguese copy %q", untranslated)
+		}
+	}
+
+	existingAccountHTML := repo.renderInvitationHTML(invitationEmailInput{
+		OrganizationName: "Imobiliária Exemplo",
+		Role:             "admin",
+		InviteURL:        "https://app.vimobcrm.com.br/convite/token-seguro",
+		ExistingAccount:  true,
+	})
+	for _, required := range []string{
+		`Use sua conta Vimob atual para aceitar o convite`,
+		`Entrar e aceitar`,
+		`acesso como <strong>administrador</strong>`,
+		`https://app.vimobcrm.com.br/convite/token-seguro`,
+	} {
+		if !strings.Contains(existingAccountHTML, required) {
+			t.Fatalf("existing-account invitation email is missing %q", required)
 		}
 	}
 }
@@ -184,6 +220,7 @@ func TestInvitationListExposesAcceptanceAndDeliveryEvidence(t *testing.T) {
 		"email_status",
 		"email_accepted_at",
 		"email_delivered_at",
+		"logs.idempotency_key = 'invitation/' || i.id::text || '/' || i.token_hash",
 		"i.used_at is null or i.used_at >= now() - interval '90 days'",
 	} {
 		if !strings.Contains(query, required) {

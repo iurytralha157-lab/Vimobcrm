@@ -186,10 +186,9 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into auth.users (
@@ -589,12 +588,26 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 		ID:             enqueueInputs[2].sessionID,
 		OrganizationID: organizationID,
 	}, enqueueInputs[2].conversationID, sparseMessage, sparseMessageRowID)
-	if enqueueErr != nil || queued {
+	if enqueueErr != nil || !queued {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("sparse fixture enqueue = queued:%v error:%v", queued, enqueueErr)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// Unknown image size is accepted by the current bounded-stream policy.
+	// The later richer delivery must enrich this same job before any I/O.
+	var sparseJobs int
+	var sparseStatus string
+	var sparseDeclaredSize int64
+	if err := postgres.Pool().QueryRow(ctx, `select count(*)::int,min(status),coalesce(max(declared_size),0)
+		from public.media_jobs where organization_id=$1::uuid and message_id=$2::uuid`,
+		organizationID, sparseMessageRowID).Scan(&sparseJobs, &sparseStatus, &sparseDeclaredSize); err != nil {
+		t.Fatal(err)
+	}
+	if sparseJobs != 1 || sparseStatus != "pending" || sparseDeclaredSize != 0 || providerCalls.Load() != 1 || storageCalls.Load() != 1 {
+		t.Fatalf("sparse metadata must retain one unprocessed job: jobs=%d status=%s size=%d provider=%d storage=%d",
+			sparseJobs, sparseStatus, sparseDeclaredSize, providerCalls.Load(), storageCalls.Load())
 	}
 
 	richMessage := sparseMessage
@@ -697,6 +710,14 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 	if enqueueErr != nil || !queued {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("corrupt provider fixture enqueue = queued:%v error:%v", queued, enqueueErr)
+	}
+	// The terminal-digest case begins at the last eligible retry. Earlier
+	// digest failures are retryable, and every attempt still forbids upload.
+	if tag, err := tx.Exec(ctx, `update public.media_jobs set attempts=max_attempts-1
+		where organization_id=$1::uuid and message_id=$2::uuid and status='pending'`,
+		organizationID, corruptMessageRowID); err != nil || tag.RowsAffected() != 1 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("could not establish final eligible digest attempt: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -815,9 +836,10 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 	}
 	var legacyBreakerOpen bool
 	if err := postgres.Pool().QueryRow(ctx, `
-		select breaker_open
-		from private.whatsapp_media_worker_state
-		where singleton = true
+		select exists (
+			select 1 from private.whatsapp_media_worker_state
+			where singleton = true and breaker_open
+		)
 	`).Scan(&legacyBreakerOpen); err != nil {
 		t.Fatal(err)
 	}
@@ -1175,7 +1197,10 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 	var legacyTransportBreakerOpen, transportSessionQuarantined bool
 	if err := postgres.Pool().QueryRow(ctx, `
 		select job.status, coalesce(job.error_code, ''),
-		       state.breaker_open,
+		       exists (
+		         select 1 from private.whatsapp_media_worker_state
+		         where singleton = true and breaker_open
+		       ),
 		       exists (
 		         select 1
 		         from private.whatsapp_media_session_quarantine as quarantine
@@ -1185,10 +1210,8 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 		           and quarantine.quarantined_until > now()
 		       )
 		from public.media_jobs as job
-		cross join private.whatsapp_media_worker_state as state
 		where job.organization_id = $1::uuid
 		  and job.message_id = $2::uuid
-		  and state.singleton = true
 	`, organizationID, transportMessageRowID).Scan(
 		&transportJobStatus,
 		&transportJobError,
@@ -1243,7 +1266,6 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 	}
 	uploadIntentPath := whatsappMediaObjectPath(uploadIntentJobShape, "image/png", "")
 	uploadIntentMessageKey := jsonb(map[string]any{
-		"provider_message_id":          uploadIntentProviderMessageID,
 		whatsappMediaUploadPathKey:     uploadIntentPath,
 		whatsappMediaUploadMIMEKey:     "image/png",
 		whatsappMediaUploadSizeKey:     len(mediaBytes),
@@ -1624,9 +1646,22 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 		4,
 		[]string{enqueueInputs[0].sessionID},
 	)
+	// Cancellation closes the interrupted finalizer asynchronously. A worker
+	// may correctly skip its still-locked message on the first bounded claim.
+	for retryDeadline := time.Now().Add(3 * time.Second); errors.Is(err, pgx.ErrNoRows) && time.Now().Before(retryDeadline); {
+		time.Sleep(20 * time.Millisecond)
+		resumedRepairJob, err = repo.claimWhatsAppMediaJobForSessions(ctx, time.Minute, 4, []string{enqueueInputs[0].sessionID})
+	}
 	if err != nil || resumedRepairJob.ID != firstRepairJobID ||
 		resumedRepairJob.StoragePath != expectedRepairPath ||
 		firstString(resumedRepairJob.MessageKey, whatsappMediaRepairPathKey) != invalidStoragePath {
+		var diagnostic string
+		_ = postgres.Pool().QueryRow(ctx, `select coalesce(jsonb_agg(jsonb_build_object(
+			'id',id,'status',status,'attempts',attempts,'max',max_attempts,'next',next_retry_at,
+			'lease',lease_expires_at,'provider',provider_started_at,'path',storage_path,
+			'key',message_key,'error',error_code))::text,'[]') from public.media_jobs
+			where organization_id=$1::uuid and (id=$2::uuid or status='processing')`, organizationID, firstRepairJobID).Scan(&diagnostic)
+		t.Logf("repair reclaim diagnostic: %s", diagnostic)
 		t.Fatalf(
 			"reclaim durable repair after worker crash = job:%q path:%q marker:%q error:%v",
 			resumedRepairJob.ID,
@@ -1772,7 +1807,7 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 			)
 			returning id::text
 		`, organizationID, sessionID, conversationID, messageID, providerMessageID,
-			jsonb(map[string]any{"provider_message_id": providerMessageID, "raw": map[string]any{}}),
+			jsonb(map[string]any{}),
 			priority,
 			hashWhatsAppMediaKey("scale-job", label, providerMessageID),
 			assetKey,
@@ -1985,10 +2020,9 @@ func TestWhatsAppMediaCompletionUsesMessageBeforeJobLockIntegration(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into auth.users (
@@ -2004,6 +2038,8 @@ func TestWhatsAppMediaCompletionUsesMessageBeforeJobLockIntegration(t *testing.T
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update set organization_id=excluded.organization_id,
+		name=excluded.name,email=excluded.email,role=excluded.role,is_active=excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}

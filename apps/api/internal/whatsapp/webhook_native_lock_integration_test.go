@@ -2,8 +2,11 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -101,10 +104,9 @@ func TestNativeTransportIdentityCollisionFailsClosedAcrossRebind(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -400,10 +402,9 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -582,6 +583,24 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 	if deletedType != "deleted" || currentLeadID != leadBID {
 		t.Fatalf("native-first state = message:%q lead:%q, want deleted/%s", deletedType, currentLeadID, leadBID)
 	}
+	// A new live mutation must use B's canonical phone route. The historical
+	// rebind above deliberately leaves A's route as historical lock evidence.
+	if _, err := postgres.Pool().Exec(ctx, `update public.whatsapp_conversations set deleted_at=now() where id=$1::uuid and organization_id=$2::uuid`, conversationID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `insert into public.whatsapp_conversations
+		(organization_id,session_id,remote_jid,contact_phone,contact_name)
+		values($1::uuid,$2::uuid,'5511999910102@s.whatsapp.net','5511999910102','Canonical B mutation') returning id::text`,
+		organizationID, sessionID).Scan(&conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `select public.activate_whatsapp_conversation_lead_binding($1::uuid,$2::uuid,$3::uuid,null);
+		update public.whatsapp_sessions set advanced_settings='{"token":"synthetic-lock-instance","webhook_token":"synthetic-lock-webhook"}'::jsonb where id=$4::uuid;
+		select private.activate_whatsapp_webhook_session_cutover($1::uuid,$4::uuid)`, organizationID, conversationID, leadBID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	repo.functions.webhookProcessorMode = webhookProcessorNative
+	repo.functions.webhookRolloutSessionIDs = []string{sessionID}
 
 	// Finalizer-first order: an outbox-row blocker lets the real finalizer retain
 	// its earlier conversation lock while the reaction reaches the same lock.
@@ -595,7 +614,7 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, false, 'inbound', 'text', 'reaction target',
-			'5511999910101@s.whatsapp.net', 'received', now(), 'captured'
+			'5511999910102@s.whatsapp.net', 'received', now(), 'captured'
 		)
 		returning id::text
 	`, organizationID, conversationID, sessionID, leadBID, suffix+"-reaction-target").Scan(&reactionTargetID); err != nil {
@@ -631,7 +650,7 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, true, 'outbound', 'text', 'pending outbound',
-			'5511999910101@s.whatsapp.net', 'queued', now()
+			'5511999910102@s.whatsapp.net', 'queued', now()
 		)
 		returning id::text
 	`, organizationID, conversationID, sessionID, leadBID, clientMessageID).Scan(&pendingMessageID); err != nil {
@@ -644,14 +663,25 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 			status, locked_at, locked_by
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			$5, '5511999910101@s.whatsapp.net', 'text',
-			'{"action":"send.text","body":{"number":"5511999910101","text":"pending outbound"}}'::jsonb,
+			$5, '5511999910102@s.whatsapp.net', 'text',
+			'{"action":"send.text","body":{"number":"5511999910102","text":"pending outbound"}}'::jsonb,
 			'processing', now(), $6
 		)
 		returning id::text, provider_message_id
 	`, organizationID, sessionID, conversationID, pendingMessageID, clientMessageID, leaseToken).Scan(&outboxID, &providerMessageID); err != nil {
 		t.Fatal(err)
 	}
+	reactionPayload, err := json.Marshal(map[string]any{"event": "messages.upsert", "instanceId": suffix, "instanceToken": "synthetic-lock-instance",
+		"data": map[string]any{"messages": []any{map[string]any{"Info": map[string]any{"ID": suffix + "-reaction-event", "Chat": "5511999910102@s.whatsapp.net", "SenderPN": "5511999910102@s.whatsapp.net", "IsFromMe": false, "Timestamp": time.Now().UTC().Format(time.RFC3339Nano)},
+			"Message": map[string]any{"reactionMessage": map[string]any{"key": map[string]any{"id": suffix + "-reaction-target", "remoteJid": "5511999910102@s.whatsapp.net"}, "text": "👍"}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reactionEnvelope, err := parseEvolutionWebhookEnvelope(url.Values{"session_id": {sessionID}, "instance_id": {suffix}}, http.Header{"X-Webhook-Token": []string{"synthetic-lock-webhook"}}, reactionPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reactionItem := claimCanonicalMutationFixture(t, ctx, postgres.Pool(), repo, reactionEnvelope)
 
 	outboxBlocker, err := postgres.Pool().Begin(ctx)
 	if err != nil {
@@ -686,26 +716,11 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 
 	reactionDone := make(chan asyncResult, 1)
 	go func() {
-		reactionTx, beginErr := postgres.Pool().Begin(ctx)
-		if beginErr != nil {
-			reactionDone <- asyncResult{err: beginErr}
-			return
-		}
-		defer reactionTx.Rollback(context.Background())
-		reactionErr := processNativeEvolutionReaction(ctx, reactionTx, session, nativeEvolutionMessage{
-			ProviderMessageID: suffix + "-reaction-event",
-			RemoteJID:         "5511999910101@s.whatsapp.net",
-			SenderJID:         "5511999910101@s.whatsapp.net",
-			ReactionTargetID:  suffix + "-reaction-target",
-			ReactionEmoji:     "👍",
-			SentAt:            time.Now().UTC(),
-		}, time.Now().UTC(), nil)
-		if reactionErr == nil {
-			reactionErr = reactionTx.Commit(ctx)
-		}
-		reactionDone <- asyncResult{err: reactionErr}
+		reactionDone <- asyncResult{err: repo.processClaimedEvolutionWebhook(ctx, reactionItem)}
 	}()
-	waitForBlockedQuery("with target_identity as materialized")
+	// Reactions now use the canonical SQL capture RPC, which still waits on
+	// the conversation fence held by the finalizer before touching the target.
+	waitForBlockedQuery("apply_whatsapp_provider_reaction")
 	if err := outboxBlocker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -769,10 +784,9 @@ func TestNativeIdentityReconcileAndLeadDeleteUseCanonicalConversationOrder(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -1031,10 +1045,9 @@ func TestIngressSnapshotRevalidatesLIDAliasAfterConversationLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, organizationID)
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from auth.users where id = $1::uuid`, userID)
+		cleanupSessionConversationLockFixture(t, postgres.Pool(), sessionConversationLockFixture{
+			organizationID: organizationID, userID: userID,
+		})
 	})
 
 	if _, err := postgres.Pool().Exec(ctx, `

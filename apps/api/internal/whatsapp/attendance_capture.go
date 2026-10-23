@@ -63,7 +63,7 @@ func nativeCTWAAutoAttendanceEligible(
 		conversation.LeadID != "" &&
 		conversation.MessageLeadID == conversation.LeadID &&
 		bindingID != "" &&
-		message.IsCTWAAd &&
+		nativeCTWAIntakeEligible(message) &&
 		!message.FromMe &&
 		!message.IsGroup &&
 		!message.ProviderMessageIDSynthetic &&

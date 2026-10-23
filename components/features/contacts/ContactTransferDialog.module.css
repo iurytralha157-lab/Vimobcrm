@@ -1,0 +1,108 @@
+.dialog:global(.vimob-dialog-content) {
+  height: min(82dvh, 760px);
+  max-width: 960px;
+}
+
+.dialog > :global(button) {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  top: 16px;
+  right: 16px;
+  border-radius: 6px;
+  padding: 8px;
+  background-color: var(--app-surface-soft);
+  opacity: 1;
+}
+
+.dialog > :global(button:hover) {
+  background-color: var(--app-surface-hover);
+}
+
+.fileStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.uploadArea:not([hidden]) {
+  display: flex;
+  min-height: 180px;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.sampleCard {
+  flex-shrink: 0;
+}
+
+@media (min-width: 768px) {
+  .fileContent {
+    padding-block: 16px;
+  }
+
+  .fileContent,
+  .filePanel,
+  .fileStage {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .filePanel,
+  .fileStage,
+  .fileStack {
+    min-height: 0;
+    flex: 1;
+  }
+}
+
+@media (min-width: 1024px) {
+  .wizard > :global(.grid) {
+    grid-template-columns: 160px minmax(0, 1fr) 260px;
+  }
+}
+
+.wizard :global([role='tab'][aria-selected='true']),
+.wizard :global([role='tab']:enabled:hover) {
+  background-color: color-mix(in oklab, var(--primary) 50%, transparent);
+  color: #fff;
+}
+
+.wizard .primaryButton {
+  color: #fff;
+}
+
+.wizard .primaryButton:enabled:hover {
+  background-color: color-mix(in oklab, var(--primary) 50%, transparent);
+  color: #fff;
+}
+
+.wizard .newsButton {
+  background-color: var(--app-surface-soft);
+  padding-inline: 12px;
+  color: var(--app-text-secondary);
+}
+
+.wizard .newsButton:hover {
+  background-color: var(--app-surface-hover);
+}
+
+.wizard :global([data-form-wizard-aside] .break-all) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.wizard .uploadArea[data-highlighted='true'],
+.wizard .uploadArea:hover {
+  background-color: color-mix(in oklab, var(--primary) 50%, transparent);
+  color: #fff;
+}
+
+.wizard .uploadArea[data-highlighted='true'] p,
+.wizard .uploadArea:hover p {
+  color: #fff;
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
+	propertiesdomain "github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 	"net/url"
 	"strconv"
 	"strings"
@@ -75,8 +76,15 @@ func redactPublicPropertyInternalValues(property map[string]any) {
 	delete(property, "valor_venda_avaliado")
 	delete(property, "valor_locacao_avaliado")
 	visibility, _ := property["public_address_visibility"].(string)
-	if !strings.EqualFold(strings.TrimSpace(visibility), "completo") {
-		delete(property, "condominio_nome")
+	visibility = propertiesdomain.NormalizePublicSnapshotAddressVisibility(visibility)
+	property["public_address_visibility"] = visibility
+	if visibility != "completo" {
+		for _, field := range []string{"pais", "endereco", "numero", "complemento", "cep", "latitude", "longitude", "condominio_nome"} {
+			delete(property, field)
+		}
+	}
+	if visibility == "minimo" {
+		delete(property, "bairro")
 	}
 }
 

@@ -544,18 +544,19 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
   );
   assert.match(leadDetailSource, /disabled=\{!canOperateLead\}/);
   assert.equal(
-    [...leadDetailSource.matchAll(/\{overlays\}/g)].length,
+    [...leadDetailSource.matchAll(/\{!detailReadState\.hideDetails && overlays\}/g)].length,
     2,
   );
-  assert.match(leadDetailSource, /const overlays = \(\s*<LeadDetailOverlays\b/);
+  assert.match(leadDetailSource, /const overlays = \(<>[\s\S]*?<LeadDetailOverlays\b/);
+  assert.match(leadDetailSource, /const overlays = \(<>[\s\S]*?\{canViewLeadSchedule && readOnlyScheduleEvent && <LeadScheduleReadDialog\b/);
   assert.match(leadDetailOverlaysSource, /hasAgendaModule && \(\s*<EventSheet\b/);
   assert.match(
     leadDetailSource,
-    /if \(isMobile \|\| isTablet\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?\{overlays\}/,
+    /if \(isMobile \|\| isTablet\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?<\/Drawer>\s*\{!detailReadState\.hideDetails && overlays\}/,
   );
   assert.match(
     leadDetailSource,
-    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?\{overlays\}/,
+    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?<\/Dialog>\s*\{!detailReadState\.hideDetails && overlays\}/,
   );
   assert.match(leadDetailSource, /data-tour="lead-detail-stages"/);
   assert.match(leadDetailSource, /data-tour="lead-detail-history"/);

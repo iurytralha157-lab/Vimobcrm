@@ -1,3 +1,5 @@
+import { getDisplayGraphemes, getDisplayInitial, normalizeDisplayName } from '@/lib/display-name'
+
 type UserDisplayValue = {
   name?: string | null
   email?: string | null
@@ -18,21 +20,17 @@ function normalizeMemberRole(role?: string | null) {
 }
 
 export function getInitials(value?: string | null, options: InitialsOptions = {}) {
-  let source = (value || options.email || '').trim()
+  let source = normalizeDisplayName(value || options.email)
   if (options.stripEmailDomain) source = source.replace(/@.*/, '')
 
   const parts = source.split(/\s+/).filter(Boolean)
   if (parts.length === 0) return options.fallback ?? ''
 
   if (parts.length === 1 && options.singleWordCharacters === 2) {
-    return parts[0].slice(0, 2).toLocaleUpperCase('pt-BR')
+    return getDisplayGraphemes(parts[0]).slice(0, 2).join('').toLocaleUpperCase('pt-BR')
   }
 
-  return parts
-    .map((part) => part.charAt(0))
-    .join('')
-    .toLocaleUpperCase('pt-BR')
-    .slice(0, 2)
+  return getDisplayGraphemes(parts.map(getDisplayInitial).join('')).slice(0, 2).join('')
 }
 
 export function getOrganizationMemberRoleLabel(role?: string | null) {

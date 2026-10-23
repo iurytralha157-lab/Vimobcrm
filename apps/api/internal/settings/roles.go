@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,22 +13,42 @@ import (
 )
 
 func (repo Repository) ListOrganizationRoles(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+	if !canManageUserPermissions(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 	return repo.queryJSONRows(ctx, `
 		select jsonb_build_object(
-			'id', id::text,
-			'organization_id', organization_id::text,
-			'name', name,
-			'description', description,
-			'color', '#6B7280',
-			'is_system', is_system,
-			'is_active', is_active,
-			'created_at', created_at,
-			'updated_at', updated_at
+			'id', role.id::text,
+			'organization_id', role.organization_id::text,
+			'name', role.name,
+			'description', role.description,
+			'color', role.color,
+			'is_system', role.is_system,
+			'is_active', role.is_active,
+			'assigned_count', (
+				select count(*)
+				from public.user_organization_roles assignment
+				join public.organization_members member
+				  on member.organization_id = assignment.organization_id
+				 and member.user_id = assignment.user_id
+				 and member.is_active = true
+				 and member.deleted_at is null
+				where assignment.organization_id = role.organization_id
+				  and assignment.role_id = role.id
+				  and assignment.is_active = true
+			),
+			'assignment_count', (
+				select count(*)
+				from public.user_organization_roles assignment
+				where assignment.organization_id = role.organization_id
+				  and assignment.role_id = role.id
+			),
+			'created_at', role.created_at,
+			'updated_at', role.updated_at
 		)
-		from public.organization_roles
-		where organization_id = $1::uuid
-		  and is_active = true
-		order by name
+		from public.organization_roles role
+		where role.organization_id = $1::uuid
+		order by role.is_active desc, role.name
 	`, tenantContext.OrganizationID)
 }
 
@@ -47,6 +68,9 @@ func (repo Repository) ListAvailablePermissions(ctx context.Context) ([]map[stri
 }
 
 func (repo Repository) ListRolePermissions(ctx context.Context, tenantContext tenant.Context, roleID string) ([]map[string]any, error) {
+	if !canManageUserPermissions(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 	roleID, ok := normalizeUUID(roleID)
 	if !ok {
 		return nil, ErrInvalidInput
@@ -66,6 +90,9 @@ func (repo Repository) ListRolePermissions(ctx context.Context, tenantContext te
 }
 
 func (repo Repository) ListUserOrganizationRoles(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+	if !canManageUserPermissions(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 	return repo.queryJSONRows(ctx, `
 		select jsonb_build_object(
 			'id', id::text,
@@ -84,11 +111,16 @@ func (repo Repository) CreateRole(ctx context.Context, tenantContext tenant.Cont
 	if !canManageUserPermissions(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
-	name := strings.TrimSpace(fmt.Sprint(payload["name"]))
-	if name == "" {
+	rawName, ok := payload["name"].(string)
+	name := strings.TrimSpace(rawName)
+	if !ok || name == "" {
 		return nil, ErrInvalidInput
 	}
 	description := nullableRoleString(payload["description"])
+	color, ok := normalizeRoleColor(payload["color"])
+	if !ok {
+		return nil, ErrInvalidInput
+	}
 	permissionKeys, ok := normalizeRolePermissionKeys(stringSlice(payload["permissions"]))
 	if !ok {
 		return nil, ErrInvalidInput
@@ -108,21 +140,22 @@ func (repo Repository) CreateRole(ctx context.Context, tenantContext tenant.Cont
 		insert into public.organization_roles (
 			organization_id,
 			name,
-			description
+			description,
+			color
 		)
-		values ($1::uuid, $2, $3)
+		values ($1::uuid, $2, $3, $4)
 		returning jsonb_build_object(
 			'id', id::text,
 			'organization_id', organization_id::text,
 			'name', name,
 			'description', description,
-			'color', '#6B7280',
+			'color', color,
 			'is_system', is_system,
 			'is_active', is_active,
 			'created_at', created_at,
 			'updated_at', updated_at
 		)
-	`, tenantContext.OrganizationID, name, description).Scan(&raw); err != nil {
+	`, tenantContext.OrganizationID, name, description, color).Scan(&raw); err != nil {
 		return nil, err
 	}
 	var role map[string]any
@@ -147,27 +180,121 @@ func (repo Repository) UpdateRole(ctx context.Context, tenantContext tenant.Cont
 	if !ok {
 		return nil, ErrInvalidInput
 	}
-	return repo.queryJSONObject(ctx, `
+	var name any
+	if rawName, present := payload["name"]; present {
+		value, valid := rawName.(string)
+		if !valid || strings.TrimSpace(value) == "" {
+			return nil, ErrInvalidInput
+		}
+		name = strings.TrimSpace(value)
+	}
+	var description any
+	_, updateDescription := payload["description"]
+	if updateDescription {
+		description = nullableRoleString(payload["description"])
+	}
+	var isActive *bool
+	if rawActive, present := payload["is_active"]; present {
+		isActive = boolPointer(rawActive)
+		if isActive == nil {
+			return nil, ErrInvalidInput
+		}
+	}
+	var color any
+	if rawColor, present := payload["color"]; present {
+		value, valid := normalizeRoleColor(rawColor)
+		if !valid {
+			return nil, ErrInvalidInput
+		}
+		color = value
+	}
+	if name == nil && !updateDescription && isActive == nil && color == nil {
+		return nil, ErrInvalidInput
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var wasActive bool
+	err = tx.QueryRow(ctx, `
+		select coalesce(is_active, false)
+		from public.organization_roles
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_system, false) = false
+		for update
+	`, tenantContext.OrganizationID, roleID).Scan(&wasActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrInvalidInput
+	}
+	if err != nil {
+		return nil, err
+	}
+	if isActive != nil && *isActive && !wasActive {
+		rows, err := tx.Query(ctx, `
+			select distinct ap.key
+			from public.organization_role_permissions role_permission
+			join public.available_permissions ap
+			  on ap.id = role_permission.permission_id
+			where role_permission.organization_id = $1::uuid
+			  and role_permission.role_id = $2::uuid
+		`, tenantContext.OrganizationID, roleID)
+		if err != nil {
+			return nil, err
+		}
+		var permissionKeys []string
+		for rows.Next() {
+			var permissionKey string
+			if err := rows.Scan(&permissionKey); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			permissionKeys = append(permissionKeys, permissionKey)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if !canDelegatePermissionKeys(tenantContext, permissionKeys) {
+			return nil, tenant.ErrOrganizationAccessDenied
+		}
+	}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `
 		update public.organization_roles
 		set
 			name = coalesce($3, name),
-			description = $4,
-			is_active = coalesce($5, is_active),
+			description = case when $4::boolean then $5 else description end,
+			is_active = coalesce($6, is_active),
+			color = coalesce($7, color),
 			updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and coalesce(is_system, false) = false
 		returning jsonb_build_object(
 			'id', id::text,
 			'organization_id', organization_id::text,
 			'name', name,
 			'description', description,
-			'color', '#6B7280',
+			'color', color,
 			'is_system', is_system,
 			'is_active', is_active,
 			'created_at', created_at,
 			'updated_at', updated_at
 		)
-	`, tenantContext.OrganizationID, roleID, nullableRoleString(payload["name"]), nullableRoleString(payload["description"]), boolPointer(payload["is_active"]))
+	`, tenantContext.OrganizationID, roleID, name, updateDescription, description, isActive, color).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var role map[string]any
+	if err := json.Unmarshal(raw, &role); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return role, nil
 }
 
 func (repo Repository) DeleteRole(ctx context.Context, tenantContext tenant.Context, roleID string) error {
@@ -182,6 +309,12 @@ func (repo Repository) DeleteRole(ctx context.Context, tenantContext tenant.Cont
 		delete from public.organization_roles
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and coalesce(is_system, false) = false
+		  and not exists (
+			select 1 from public.user_organization_roles assignment
+			where assignment.organization_id = $1::uuid
+			  and assignment.role_id = $2::uuid
+		  )
 	`, tenantContext.OrganizationID, roleID)
 	if err != nil {
 		return err
@@ -195,6 +328,9 @@ func (repo Repository) DeleteRole(ctx context.Context, tenantContext tenant.Cont
 func (repo Repository) ReplaceRolePermissions(ctx context.Context, tenantContext tenant.Context, roleID string, permissionKeys []string) error {
 	if !canManageUserPermissions(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
+	}
+	if permissionKeys == nil {
+		return ErrInvalidInput
 	}
 	return repo.replaceRolePermissions(ctx, tenantContext, roleID, permissionKeys)
 }
@@ -229,19 +365,22 @@ func (repo Repository) replaceRolePermissionsTx(
 	roleID string,
 	permissionKeys []string,
 ) error {
-	var roleExists bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.organization_roles
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			  and is_active = true
-		)
-	`, organizationID, roleID).Scan(&roleExists); err != nil {
+	var roleActive bool
+	err := tx.QueryRow(ctx, `
+		select coalesce(is_active, false)
+		from public.organization_roles
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_system, false) = false
+		for update
+	`, organizationID, roleID).Scan(&roleActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidInput
+	}
+	if err != nil {
 		return err
 	}
-	if !roleExists {
+	if !roleActive {
 		return ErrInvalidInput
 	}
 	if _, err := tx.Exec(ctx, `
@@ -309,26 +448,33 @@ func (repo Repository) AssignUserRole(ctx context.Context, tenantContext tenant.
 	if !canMutatePermissionTarget(tenantContext, userID) {
 		return tenant.ErrOrganizationAccessDenied
 	}
+	target, err := repo.getPermissionTarget(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return err
+	}
 	roleID = strings.TrimSpace(roleID)
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var targetExists bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.organization_members
-			where organization_id = $1::uuid
-			  and user_id = $2::uuid
-			  and deleted_at is null
-		)
-	`, tenantContext.OrganizationID, userID).Scan(&targetExists); err != nil {
+	var targetRole string
+	err = tx.QueryRow(ctx, `
+		select lower(coalesce(nullif(role, ''), 'user'))
+		from public.organization_members
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		  and deleted_at is null
+		for update
+	`, tenantContext.OrganizationID, userID).Scan(&targetRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidInput
+	}
+	if err != nil {
 		return err
 	}
-	if !targetExists {
-		return ErrInvalidInput
+	if targetRole == "owner" || targetRole == "admin" {
+		return tenant.ErrOrganizationAccessDenied
 	}
 
 	var normalizedRoleID string
@@ -382,6 +528,9 @@ func (repo Repository) AssignUserRole(ctx context.Context, tenantContext tenant.
 			return tenant.ErrOrganizationAccessDenied
 		}
 	}
+	if err := lockPermissionTargetForWrite(ctx, tx, tenantContext.OrganizationID, userID, target); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		delete from public.user_organization_roles
 		where organization_id = $1::uuid
@@ -413,6 +562,10 @@ func (repo Repository) AssignUserRole(ctx context.Context, tenantContext tenant.
 }
 
 func (repo Repository) HasPermission(ctx context.Context, tenantContext tenant.Context, permissionKey string) (bool, error) {
+	permissionKey = permissions.CanonicalKey(permissionKey)
+	if !permissions.IsKnown(permissionKey) {
+		return false, ErrInvalidInput
+	}
 	if tenantContext.UserID == "" {
 		return false, nil
 	}
@@ -464,6 +617,23 @@ func nullableRoleString(value any) any {
 		return nil
 	}
 	return text
+}
+
+func normalizeRoleColor(value any) (string, bool) {
+	if value == nil {
+		return "#6B7280", true
+	}
+	color, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	color = strings.ToUpper(strings.TrimSpace(color))
+	for _, allowed := range []string{"#6B7280", "#EF4444", "#F59E0B", "#10B981", "#3B82F6", "#8B5CF6", "#EC4899", "#14B8A6"} {
+		if color == allowed {
+			return color, true
+		}
+	}
+	return "", false
 }
 
 func stringSlice(value any) []string {

@@ -45,7 +45,7 @@ func newStorageClient(config StorageConfig) storageClient {
 	}
 }
 
-func (client storageClient) list(ctx context.Context, bucket string, prefix string, limit int, offset int) ([]storageObject, error) {
+func (client storageClient) list(ctx context.Context, bucket string, prefix string, limit int, offset int, search ...string) ([]storageObject, error) {
 	if client.projectURL == "" || client.apiKey == "" {
 		return nil, ErrAutomationStorageNotConfigured
 	}
@@ -56,7 +56,7 @@ func (client storageClient) list(ctx context.Context, bucket string, prefix stri
 		offset = 0
 	}
 
-	payload, _ := json.Marshal(map[string]any{
+	listOptions := map[string]any{
 		"prefix": strings.Trim(prefix, "/"),
 		"limit":  limit,
 		"offset": offset,
@@ -64,7 +64,11 @@ func (client storageClient) list(ctx context.Context, bucket string, prefix stri
 			"column": "created_at",
 			"order":  "desc",
 		},
-	})
+	}
+	if len(search) > 0 && strings.TrimSpace(search[0]) != "" {
+		listOptions["search"] = strings.TrimSpace(search[0])
+	}
+	payload, _ := json.Marshal(listOptions)
 
 	endpoint := fmt.Sprintf(
 		"%s/storage/v1/object/list/%s",

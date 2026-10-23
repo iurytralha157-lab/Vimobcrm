@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 import { apiEnvelopeSchema, nonNegativeIntegerSchema } from "./common";
+import { filterTextSchema, MAX_LEAD_SOURCE_FILTER_LENGTH } from './filter-text';
 
 const finiteNumberSchema = z.number().finite();
 const finiteIntegerSchema = z.number().int().finite();
 const nullableMetricSchema = finiteNumberSchema.nullable();
 const nullableTextSchema = z.string().trim().max(20_000).nullable();
-const providerIdSchema = z.string().trim().min(1).max(255);
+const providerIdSchema = filterTextSchema(255, 1);
 const calendarDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -26,7 +27,7 @@ function optionalQueryText(maxLength: number) {
     return !normalized || normalized.toLowerCase() === "all"
       ? undefined
       : normalized;
-  }, z.string().min(1).max(maxLength).optional());
+  }, filterTextSchema(maxLength, 1).optional());
 }
 
 function optionalQueryUUID() {
@@ -39,6 +40,18 @@ function optionalQueryUUID() {
       : normalized;
   }, z.string().uuid().optional());
 }
+
+const optionalCampaignIdsSchema = z.array(providerIdSchema).max(50)
+  .transform((ids) => [...new Set(ids)].sort()).nullish().transform((ids) => ids ?? undefined);
+
+export const metaInsightsQuerySchema = z.object({
+  dateFrom: calendarDateSchema.optional(),
+  dateTo: calendarDateSchema.optional(),
+  campaignId: optionalQueryText(255),
+  campaignIds: optionalCampaignIdsSchema,
+  adSetId: optionalQueryText(255),
+  adId: optionalQueryText(255),
+}).strict().refine((query) => (!query.dateFrom && !query.dateTo) || Boolean(query.dateFrom && query.dateTo && query.dateFrom <= query.dateTo), { path: ['dateTo'], message: 'Informe um período completo e válido' });
 
 function optionalQueryUUIDList(maxItems = 50) {
   return z.preprocess((value) => {
@@ -78,12 +91,15 @@ export const campaignInsightsQuerySchema = z
     dateFrom: calendarDateSchema,
     dateTo: calendarDateSchema,
     teamId: optionalQueryUUID(),
-    userId: optionalQueryUUID(),
-    source: optionalQueryText(120),
+    pipelineId: optionalQueryUUID(),
+    userId: z.preprocess((value) => value === null || value === undefined || value === 'all' || value === '' ? undefined : value,
+      z.union([z.string().trim().uuid(), z.literal('unassigned')]).optional()),
+    source: optionalQueryText(MAX_LEAD_SOURCE_FILTER_LENGTH),
     accountId: optionalQueryText(255),
     objective: optionalQueryText(255),
     pageId: optionalQueryText(255),
     campaignId: optionalQueryText(255),
+    campaignIds: optionalCampaignIdsSchema,
     adSetId: optionalQueryText(255),
     adId: optionalQueryText(255),
     tagIds: optionalQueryUUIDList(),

@@ -375,7 +375,7 @@ Deno.serve(async (req) => {
         if (customerRecords.length === 0) continue
 
         // Use insert with returning to track inserted rows
-        const { data: insertedData, error: customersError } = await supabase
+        const { error: customersError } = await supabase
           .from('telecom_customers')
           .insert(customerRecords)
           .select('id')

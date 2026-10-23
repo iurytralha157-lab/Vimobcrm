@@ -30,6 +30,8 @@ func TestLeadVisibilitySQLUsesRequestedAliasForOwnAndTeam(t *testing.T) {
 		"candidate.assigned_user_id is null",
 		"to_jsonb(candidate)->>'team_id'",
 		"leader.organization_id = candidate.organization_id",
+		"leader_membership.organization_id = leader.organization_id",
+		"leader_membership.membership_generation = leader.membership_generation",
 		"member.user_id = candidate.assigned_user_id",
 		"coalesce(team.is_active, true) = true",
 		"broker.is_active, false",
@@ -37,6 +39,7 @@ func TestLeadVisibilitySQLUsesRequestedAliasForOwnAndTeam(t *testing.T) {
 		"broker_membership.user_id = member.user_id",
 		"broker_membership.is_active, false",
 		"broker_membership.deleted_at is null",
+		"broker_membership.membership_generation = member.membership_generation",
 	} {
 		if !strings.Contains(clause, required) {
 			t.Fatalf("lead scope missing %q: %s", required, clause)

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,6 +34,10 @@ type ExecutionFilter struct {
 	LeadID       string
 	ActiveOnly   bool
 	Limit        int
+	Offset       int
+	Status       string
+	DateFrom     *time.Time
+	DateTo       *time.Time
 }
 
 type ExecutionStepFilter struct {
@@ -841,6 +846,29 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 	if filter.ActiveOnly {
 		where = append(where, "ae.status in ('queued', 'running', 'waiting')")
 	}
+	if filter.Offset < 0 || filter.Offset > 100000 {
+		return nil, ErrInvalidInput
+	}
+	if filter.Status != "" {
+		statuses, ok := executionStatusFilterValues(filter.Status)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		args = append(args, statuses)
+		where = append(where, "ae.status = any($"+strconv.Itoa(len(args))+"::text[])")
+	}
+	if filter.DateFrom != nil {
+		args = append(args, *filter.DateFrom)
+		where = append(where, "ae.started_at >= $"+strconv.Itoa(len(args))+"::timestamptz")
+	}
+	if filter.DateTo != nil {
+		args = append(args, *filter.DateTo)
+		where = append(where, "ae.started_at <= $"+strconv.Itoa(len(args))+"::timestamptz")
+	}
+	if filter.DateFrom != nil && filter.DateTo != nil && filter.DateTo.Before(*filter.DateFrom) {
+		return nil, ErrInvalidInput
+	}
+	args = append(args, filter.Offset)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
@@ -867,6 +895,7 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 		where `+strings.Join(where, " and ")+`
 		order by ae.started_at desc, ae.id desc
 		limit $2::integer
+		offset $`+strconv.Itoa(len(args))+`::integer
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -2001,28 +2030,6 @@ func validateOptionalOrganizationReference(ctx context.Context, tx pgx.Tx, organ
 	var exists bool
 	if err := tx.QueryRow(ctx, query, referenceID, organizationID).Scan(&exists); errors.Is(err, pgx.ErrNoRows) {
 		return invalidFlow(referenceType + " reference belongs to another organization or does not exist")
-	} else if err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateStageReference(ctx context.Context, tx pgx.Tx, organizationID, pipelineID, stageID string) error {
-	if pipelineID == "" && stageID == "" {
-		return nil
-	}
-	var exists bool
-	if err := tx.QueryRow(ctx, `
-		select true
-		from public.stages s
-		join public.pipelines p on p.id = s.pipeline_id
-		where s.id = $1::uuid
-		  and s.pipeline_id = $2::uuid
-		  and s.organization_id = $3::uuid
-		  and p.organization_id = $3::uuid
-		for key share of s, p
-	`, stageID, pipelineID, organizationID).Scan(&exists); errors.Is(err, pgx.ErrNoRows) {
-		return invalidFlow("stage and pipeline must belong to the same organization")
 	} else if err != nil {
 		return err
 	}

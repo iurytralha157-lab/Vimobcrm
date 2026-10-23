@@ -1,3 +1,5 @@
+import { useDashboardQuery } from '@/hooks/dashboard/use-dashboard-query';
+import { useQueryDataTrust } from '@/hooks/shared/use-query-data-trust';
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import {
@@ -164,7 +166,7 @@ export function useEnhancedDashboardStats(
   const filterKey = getDashboardFiltersQueryKey(filters);
   const includeDetails = options.includeDetails === true;
 
-  return useQuery({
+  return useDashboardQuery({
     queryKey: [
       "enhanced-dashboard-stats",
       organizationId,
@@ -184,7 +186,9 @@ export function useEnhancedDashboardStats(
         }),
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
-  });
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+  }, { accessSignature, isReady });
 }
 
 export function useLeadsChartData() {
@@ -229,6 +233,8 @@ export function useFunnelData(
     queryFn: ({ signal }) =>
       getDashboardFunnel({ organizationId, filters, pipelineId, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -277,6 +283,8 @@ export function useLeadSourcesData(
       }));
     },
     staleTime: DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -326,6 +334,8 @@ export function useDashboardLeadDistribution(
     queryFn: ({ signal }) =>
       getDashboardLeadDistribution({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -354,6 +364,8 @@ export function useDashboardFirstContact(
     queryFn: ({ signal }) =>
       getDashboardFirstContact({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -364,8 +376,9 @@ export function useDashboardFirstContactLeads(
 ) {
   const { organizationId, currentUserId, accessSignature, isReady, canViewLeadDistribution } = useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
-  return useInfiniteQuery({
-    queryKey: ["dashboard-first-contact-leads", organizationId, currentUserId, accessSignature, filterKey, brokerId],
+  const queryKey = ["dashboard-first-contact-leads", organizationId, currentUserId, accessSignature, filterKey, brokerId];
+  const query = useInfiniteQuery({
+    queryKey,
     enabled: isReady && canViewLeadDistribution && Boolean(brokerId) && options.enabled !== false,
     initialPageParam: 0,
     queryFn: ({ signal, pageParam }) => getDashboardFirstContactLeadPage({
@@ -380,7 +393,11 @@ export function useDashboardFirstContactLeads(
       ? pages.reduce((count, page) => count + page.items.length, 0)
       : undefined,
     staleTime: DASHBOARD_SHORT_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
+  const trust = useQueryDataTrust(queryKey, query, { accessSignature, isReady });
+  return { ...query, data: trust.canDisplayData ? query.data : undefined, isAccessBlocked: trust.isAccessBlocked };
 }
 
 export function useUpcomingTasks() {
@@ -431,6 +448,8 @@ export function useDealsEvolutionData(
         }),
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 

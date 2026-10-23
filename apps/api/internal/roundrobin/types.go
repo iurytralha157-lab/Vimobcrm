@@ -51,6 +51,8 @@ func (ConditionConflictError) Unwrap() error {
 }
 
 type RoundRobin struct {
+	EligibleUserCount *int             `json:"eligibleUserCount,omitempty"`
+	Revision          int64            `json:"revision"`
 	ID                string           `json:"id"`
 	OrganizationID    string           `json:"organizationId"`
 	Name              string           `json:"name"`
@@ -132,27 +134,29 @@ type MetaFormOption struct {
 }
 
 type Rule struct {
-	ID           string         `json:"id"`
-	RoundRobinID string         `json:"roundRobinId"`
-	MatchType    string         `json:"matchType"`
-	MatchValue   string         `json:"matchValue"`
-	Match        map[string]any `json:"match,omitempty"`
-	Priority     int            `json:"priority"`
-	IsActive     bool           `json:"isActive"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
+	QueueRevision int64          `json:"queueRevision,omitempty"`
+	ID            string         `json:"id"`
+	RoundRobinID  string         `json:"roundRobinId"`
+	MatchType     string         `json:"matchType"`
+	MatchValue    string         `json:"matchValue"`
+	Match         map[string]any `json:"match,omitempty"`
+	Priority      int            `json:"priority"`
+	IsActive      bool           `json:"isActive"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
 }
 
 type Member struct {
-	ID           string       `json:"id"`
-	RoundRobinID string       `json:"roundRobinId"`
-	UserID       string       `json:"userId,omitempty"`
-	TeamID       string       `json:"teamId,omitempty"`
-	Position     int          `json:"position"`
-	Weight       int          `json:"weight"`
-	IsActive     bool         `json:"isActive"`
-	User         *UserSummary `json:"user,omitempty"`
-	LeadsCount   int64        `json:"leadsCount"`
+	QueueRevision int64        `json:"queueRevision,omitempty"`
+	ID            string       `json:"id"`
+	RoundRobinID  string       `json:"roundRobinId"`
+	UserID        string       `json:"userId,omitempty"`
+	TeamID        string       `json:"teamId,omitempty"`
+	Position      int          `json:"position"`
+	Weight        int          `json:"weight"`
+	IsActive      bool         `json:"isActive"`
+	User          *UserSummary `json:"user,omitempty"`
+	LeadsCount    int64        `json:"leadsCount"`
 }
 
 type patchString struct {
@@ -171,6 +175,7 @@ type patchObject struct {
 }
 
 type CreateRequest struct {
+	IdempotencyKey   string           `json:"-"`
 	Name             string           `json:"name"`
 	Strategy         string           `json:"strategy,omitempty"`
 	TargetPipelineID string           `json:"targetPipelineId,omitempty"`
@@ -184,6 +189,7 @@ type CreateRequest struct {
 }
 
 type UpdateRequest struct {
+	ExpectedRevision *int64           `json:"expectedRevision"`
 	Name             patchString      `json:"name,omitempty"`
 	Strategy         patchString      `json:"strategy,omitempty"`
 	TargetPipelineID patchString      `json:"targetPipelineId,omitempty"`
@@ -200,39 +206,44 @@ type UpdateRequest struct {
 }
 
 type RuleRequest struct {
-	RoundRobinID string         `json:"roundRobinId,omitempty"`
-	MatchType    string         `json:"matchType"`
-	MatchValue   string         `json:"matchValue"`
-	Match        map[string]any `json:"match,omitempty"`
-	Priority     *int           `json:"priority,omitempty"`
-	IsActive     *bool          `json:"isActive,omitempty"`
+	ExpectedRevision *int64         `json:"expectedRevision"`
+	RoundRobinID     string         `json:"roundRobinId,omitempty"`
+	MatchType        string         `json:"matchType"`
+	MatchValue       string         `json:"matchValue"`
+	Match            map[string]any `json:"match,omitempty"`
+	Priority         *int           `json:"priority,omitempty"`
+	IsActive         *bool          `json:"isActive,omitempty"`
 }
 
 type UpdateRuleRequest struct {
-	MatchType  patchString `json:"matchType,omitempty"`
-	MatchValue patchString `json:"matchValue,omitempty"`
-	Match      patchObject `json:"match,omitempty"`
-	Priority   *int        `json:"priority,omitempty"`
-	IsActive   patchBool   `json:"isActive,omitempty"`
+	ExpectedRevision *int64      `json:"expectedRevision"`
+	MatchType        patchString `json:"matchType,omitempty"`
+	MatchValue       patchString `json:"matchValue,omitempty"`
+	Match            patchObject `json:"match,omitempty"`
+	Priority         *int        `json:"priority,omitempty"`
+	IsActive         patchBool   `json:"isActive,omitempty"`
 }
 
 type MemberRequest struct {
-	UserID   string `json:"userId,omitempty"`
-	TeamID   string `json:"teamId,omitempty"`
-	Type     string `json:"type,omitempty"`
-	EntityID string `json:"entityId,omitempty"`
-	Weight   *int   `json:"weight,omitempty"`
-	Position *int   `json:"position,omitempty"`
-	IsActive *bool  `json:"isActive,omitempty"`
+	ExpectedRevision *int64 `json:"expectedRevision"`
+	UserID           string `json:"userId,omitempty"`
+	TeamID           string `json:"teamId,omitempty"`
+	Type             string `json:"type,omitempty"`
+	EntityID         string `json:"entityId,omitempty"`
+	Weight           *int   `json:"weight,omitempty"`
+	Position         *int   `json:"position,omitempty"`
+	IsActive         *bool  `json:"isActive,omitempty"`
 }
 
 type UpdateMemberRequest struct {
-	Weight   *int      `json:"weight,omitempty"`
-	Position *int      `json:"position,omitempty"`
-	IsActive patchBool `json:"isActive,omitempty"`
+	ExpectedRevision *int64    `json:"expectedRevision"`
+	Weight           *int      `json:"weight,omitempty"`
+	Position         *int      `json:"position,omitempty"`
+	IsActive         patchBool `json:"isActive,omitempty"`
 }
 
 type ConditionInput struct {
+	Priority  *int     `json:"priority,omitempty"`
 	ID        string   `json:"id,omitempty"`
 	Type      string   `json:"type"`
 	Values    []string `json:"values"`
@@ -249,6 +260,7 @@ type RuleInput struct {
 }
 
 type MemberInput struct {
+	IsActive *bool  `json:"isActive,omitempty"`
 	ID       string `json:"id,omitempty"`
 	Type     string `json:"type,omitempty"`
 	EntityID string `json:"entityId,omitempty"`
@@ -258,6 +270,7 @@ type MemberInput struct {
 }
 
 type createInput struct {
+	IdempotencyKey   string
 	Name             string
 	Strategy         string
 	TargetPipelineID *string
@@ -270,6 +283,7 @@ type createInput struct {
 }
 
 type updateInput struct {
+	ExpectedRevision *int64
 	Name             patchString
 	Strategy         patchString
 	TargetPipelineID patchString
@@ -284,17 +298,19 @@ type updateInput struct {
 }
 
 type ruleInput struct {
-	ID          string
-	MatchType   string
-	MatchValue  string
-	Match       map[string]any
-	Priority    int
-	PrioritySet bool
-	IsActive    bool
-	IsActiveSet bool
+	MatcherUnchanged bool `json:"-"`
+	ID               string
+	MatchType        string
+	MatchValue       string
+	Match            map[string]any
+	Priority         int
+	PrioritySet      bool
+	IsActive         bool
+	IsActiveSet      bool
 }
 
 type memberInput struct {
+	IsActive  *bool
 	ID        string
 	Type      string
 	EntityID  string
@@ -305,36 +321,40 @@ type memberInput struct {
 }
 
 type ruleMutationInput struct {
-	RoundRobinID string
-	MatchType    string
-	MatchValue   string
-	Match        map[string]any
-	Priority     int
-	IsActive     bool
+	ExpectedRevision *int64
+	RoundRobinID     string
+	MatchType        string
+	MatchValue       string
+	Match            map[string]any
+	Priority         int
+	IsActive         bool
 }
 
 type updateRuleInput struct {
-	MatchType  patchString
-	MatchValue patchString
-	Match      patchObject
-	Priority   *int
-	IsActive   patchBool
+	ExpectedRevision *int64
+	MatchType        patchString
+	MatchValue       patchString
+	Match            patchObject
+	Priority         *int
+	IsActive         patchBool
 }
 
 type memberMutationInput struct {
-	UserID   *string
-	TeamID   *string
-	Type     string
-	EntityID string
-	Weight   int
-	Position *int
-	IsActive bool
+	ExpectedRevision *int64
+	UserID           *string
+	TeamID           *string
+	Type             string
+	EntityID         string
+	Weight           int
+	Position         *int
+	IsActive         bool
 }
 
 type updateMemberInput struct {
-	Weight   *int
-	Position *int
-	IsActive patchBool
+	ExpectedRevision *int64
+	Weight           *int
+	Position         *int
+	IsActive         patchBool
 }
 
 func (field *patchString) UnmarshalJSON(data []byte) error {
@@ -413,6 +433,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 	}
 
 	input := createInput{
+		IdempotencyKey:  request.IdempotencyKey,
 		Name:            name,
 		Strategy:        strategy,
 		IsActive:        isActive,
@@ -451,12 +472,16 @@ func (request CreateRequest) Validate() (createInput, error) {
 		return createInput{}, err
 	}
 	input.Members = members
+	if err := validateNewQueueCollectionSizes(input.Members, input.Rules); err != nil {
+		return createInput{}, err
+	}
 
 	return input, nil
 }
 
 func (request UpdateRequest) Validate() (updateInput, error) {
 	input := updateInput{
+		ExpectedRevision: request.ExpectedRevision,
 		Name:             validatePatchString(request.Name, 120),
 		Strategy:         validatePatchString(request.Strategy, 40),
 		TargetPipelineID: request.TargetPipelineID,
@@ -549,26 +574,31 @@ func (request RuleRequest) Validate(pathRoundRobinID string) (ruleMutationInput,
 	}
 
 	return ruleMutationInput{
-		RoundRobinID: value,
-		MatchType:    rule.MatchType,
-		MatchValue:   rule.MatchValue,
-		Match:        rule.Match,
-		Priority:     rule.Priority,
-		IsActive:     rule.IsActive,
+		ExpectedRevision: request.ExpectedRevision,
+		RoundRobinID:     value,
+		MatchType:        rule.MatchType,
+		MatchValue:       rule.MatchValue,
+		Match:            rule.Match,
+		Priority:         rule.Priority,
+		IsActive:         rule.IsActive,
 	}, nil
 }
 
 func (request UpdateRuleRequest) Validate() (updateRuleInput, error) {
 	input := updateRuleInput{
-		MatchType:  validatePatchString(request.MatchType, 80),
-		MatchValue: validatePatchString(request.MatchValue, 600),
-		Match:      request.Match,
-		Priority:   request.Priority,
-		IsActive:   request.IsActive,
+		ExpectedRevision: request.ExpectedRevision,
+		MatchType:        validatePatchString(request.MatchType, 80),
+		MatchValue:       request.MatchValue,
+		Match:            request.Match,
+		Priority:         request.Priority,
+		IsActive:         request.IsActive,
 	}
 
 	if input.MatchType.Set && (input.MatchType.Value == nil || *input.MatchType.Value == "") {
 		return updateRuleInput{}, fmt.Errorf("%w: matchType is required", ErrInvalidInput)
+	}
+	if input.Priority != nil && (*input.Priority < 0 || *input.Priority > 2147483647) {
+		return updateRuleInput{}, fmt.Errorf("%w: rule priority is invalid", ErrInvalidInput)
 	}
 
 	if !input.MatchType.Set && !input.MatchValue.Set && !input.Match.Set && input.Priority == nil && !input.IsActive.Set {
@@ -588,11 +618,12 @@ func (request MemberRequest) Validate() (memberMutationInput, error) {
 	}
 
 	input := memberMutationInput{
-		Type:     strings.TrimSpace(request.Type),
-		EntityID: strings.TrimSpace(request.EntityID),
-		Weight:   weight,
-		Position: request.Position,
-		IsActive: true,
+		ExpectedRevision: request.ExpectedRevision,
+		Type:             strings.TrimSpace(request.Type),
+		EntityID:         strings.TrimSpace(request.EntityID),
+		Weight:           weight,
+		Position:         request.Position,
+		IsActive:         true,
 	}
 	if request.IsActive != nil {
 		input.IsActive = *request.IsActive
@@ -646,8 +677,8 @@ func (request UpdateMemberRequest) Validate() (updateMemberInput, error) {
 	if request.Weight != nil && (*request.Weight < 1 || *request.Weight > 1000) {
 		return updateMemberInput{}, fmt.Errorf("%w: weight must be between 1 and 1000", ErrInvalidInput)
 	}
-	if request.Position != nil && *request.Position < 0 {
-		return updateMemberInput{}, fmt.Errorf("%w: position must be positive", ErrInvalidInput)
+	if request.Position != nil && (*request.Position < 0 || *request.Position > 2147483647) {
+		return updateMemberInput{}, fmt.Errorf("%w: position must fit a non-negative database integer", ErrInvalidInput)
 	}
 	if request.Weight == nil && request.Position == nil && !request.IsActive.Set {
 		return updateMemberInput{}, ErrNoChanges
@@ -721,13 +752,21 @@ func (condition ConditionInput) toRuleInput(index int) (ruleInput, error) {
 	}
 
 	persistedID, _ := normalizeUUID(condition.ID)
+	priority := 1000 - index
+	if condition.Priority != nil {
+		if *condition.Priority < 0 || int64(*condition.Priority) > 2147483647 {
+			return ruleInput{}, fmt.Errorf("%w: condition priority is invalid", ErrInvalidInput)
+		}
+		priority = *condition.Priority
+	}
 	return ruleInput{
-		ID:         persistedID,
-		MatchType:  matchType,
-		MatchValue: strings.Join(values, ","),
-		Match:      match,
-		Priority:   1000 - index,
-		IsActive:   true,
+		ID:          persistedID,
+		MatchType:   matchType,
+		MatchValue:  strings.Join(values, ","),
+		Match:       match,
+		Priority:    priority,
+		PrioritySet: condition.Priority != nil,
+		IsActive:    true,
 	}, nil
 }
 
@@ -737,7 +776,9 @@ func normalizeRuleInput(input RuleInput, index int) (ruleInput, error) {
 		return ruleInput{}, fmt.Errorf("%w: matchType is required", ErrInvalidInput)
 	}
 
-	matchValue := trimMax(input.MatchValue, 600)
+	// Do not truncate persisted snapshots. New or changed matchers are bounded
+	// after reconciliation proves whether their persisted semantics changed.
+	matchValue := input.MatchValue
 	isActive := true
 	if input.IsActive != nil {
 		isActive = *input.IsActive
@@ -746,13 +787,13 @@ func normalizeRuleInput(input RuleInput, index int) (ruleInput, error) {
 	if input.Priority != nil {
 		priority = *input.Priority
 	}
-	if priority < 0 {
-		priority = 0
+	if priority < 0 || priority > 2147483647 {
+		return ruleInput{}, fmt.Errorf("%w: rule priority is invalid", ErrInvalidInput)
 	}
 
 	match := normalizeObject(input.Match)
-	if len(match) == 0 && matchValue != "" {
-		match = buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+	if len(match) == 0 && matchValue != "" && input.ID == "" {
+		match = buildRuleMatch(matchType, newRuleMatcherValues(matchType, matchValue))
 	}
 	if matchType == whatsappMessageContainsConditionType && matchValue != "" {
 		sessionID, ok := whatsappSessionIDFromMatch(match)
@@ -823,6 +864,7 @@ func normalizeMemberInputs(members []MemberInput) ([]memberInput, error) {
 		}
 
 		item := memberInput{
+			IsActive:  member.IsActive,
 			ID:        persistedID,
 			Type:      memberType,
 			EntityID:  entityID,
@@ -852,7 +894,7 @@ func normalizeMemberInputs(members []MemberInput) ([]memberInput, error) {
 }
 
 func buildRuleMatch(matchType string, values []string) map[string]any {
-	switch matchType {
+	switch canonicalRuleMatchType(matchType) {
 	case "source":
 		return map[string]any{"source": values}
 	case "webhook":
@@ -868,7 +910,7 @@ func buildRuleMatch(matchType string, values []string) map[string]any {
 		if len(values) > 0 {
 			value = values[0]
 		}
-		return map[string]any{"campaign_name_contains": value}
+		return map[string]any{"campaign_name_contains": value, campaignLiteralValuesKey: values}
 	case whatsappMessageContainsConditionType:
 		value := ""
 		if len(values) > 0 {
@@ -909,8 +951,8 @@ func resolveRuleMatchPatch(current map[string]any, matchType string, matchValue 
 	if matchPatch.Set {
 		match = matchPatch.Value
 	}
-	if (!matchPatch.Set && identityChanged) || (len(match) == 0 && matchValue != "") {
-		rebuilt := buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+	if !matchPatch.Set && identityChanged {
+		rebuilt := buildRuleMatch(matchType, newRuleMatcherValues(matchType, matchValue))
 		if matchType == whatsappMessageContainsConditionType {
 			if sessionID, ok := whatsappSessionIDFromMatch(current); ok {
 				rebuilt[whatsappSessionMatchKey] = sessionID
@@ -953,6 +995,10 @@ func normalizeReentryBehavior(value string) string {
 
 func normalizeQueueSettings(value map[string]any) (map[string]any, error) {
 	settings := normalizeObject(value)
+	settings, err := normalizeOperatingSchedule(settings)
+	if err != nil {
+		return nil, err
+	}
 	if rawTagIDs, ok := settings[autoTagIDsSettingKey]; ok {
 		tagIDs, err := normalizeAutoTagIDs(rawTagIDs)
 		if err != nil {
@@ -960,7 +1006,7 @@ func normalizeQueueSettings(value map[string]any) (map[string]any, error) {
 		}
 		settings[autoTagIDsSettingKey] = tagIDs
 	}
-	settings, err := normalizeManagedWhatsAppAutoReplySettings(settings)
+	settings, err = normalizeManagedWhatsAppAutoReplySettings(settings)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,6 +1104,22 @@ func normalizeAutoTagIDs(value any) ([]string, error) {
 
 func normalizeRedistributionSettings(value map[string]any) (map[string]any, error) {
 	settings := normalizeObject(value)
+	for _, field := range []struct {
+		key              string
+		minimum, maximum int
+	}{
+		{"redistribution_timeout_minutes", 1, 10080},
+		{"redistribution_warning_minutes", 0, 10079},
+		{"redistribution_max_attempts", 0, 1000},
+	} {
+		if _, exists := settings[field.key]; !exists {
+			continue
+		}
+		number, valid := integerFromObject(settings, field.key)
+		if !valid || number < field.minimum || number > field.maximum {
+			return nil, fmt.Errorf("%w: %s must be an integer between %d and %d", ErrInvalidInput, field.key, field.minimum, field.maximum)
+		}
+	}
 	enabled := boolFromObject(settings, "enable_redistribution")
 	settings["enable_redistribution"] = enabled
 	if !enabled {
@@ -1071,6 +1133,9 @@ func normalizeRedistributionSettings(value map[string]any) (map[string]any, erro
 	warning, ok := integerFromObject(settings, "redistribution_warning_minutes")
 	if !ok {
 		warning = 5
+		if timeout <= 5 {
+			warning = 0
+		}
 	}
 	maxAttempts, ok := integerFromObject(settings, "redistribution_max_attempts")
 	if !ok {
@@ -1079,6 +1144,9 @@ func normalizeRedistributionSettings(value map[string]any) (map[string]any, erro
 
 	if timeout < 1 || timeout > 10080 {
 		return nil, fmt.Errorf("%w: redistribution timeout must be between 1 and 10080 minutes", ErrInvalidInput)
+	}
+	if timeout <= 5 && warning > 0 {
+		return nil, fmt.Errorf("%w: timeouts of five minutes or less do not allow a prior warning", ErrInvalidInput)
 	}
 	if warning < 0 || warning >= timeout {
 		return nil, fmt.Errorf("%w: redistribution warning must be lower than timeout", ErrInvalidInput)

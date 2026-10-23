@@ -64,3 +64,20 @@ func TestDashboardEntrySourceWithoutOriginIsNotManual(t *testing.T) {
 		t.Fatalf("manual entry source was changed: %#v", manual)
 	}
 }
+
+func TestDashboardLegacyWhitespaceSourceHasValidDisplayNameWithoutChangingIdentity(t *testing.T) {
+	for _, source := range []string{"", " \t\r\n", "\u00a0\u2003\u202f", "\ufeff", "\t\ufeff \ufeff\n"} {
+		for _, countEntries := range []bool{false, true} {
+			point := dashboardSourcePoint(source, 7, countEntries)
+			if point.Name != "Não informada" || point.RawSource != source || point.Value != 7 {
+				t.Fatalf("blank display label changed identity/count for source %q, entries=%t: %#v", source, countEntries, point)
+			}
+		}
+	}
+	for _, source := range []string{"manual", " \tMeta\u00a0 ", strings.Repeat("😀", 5000)} {
+		point := dashboardSourcePoint(source, 9, false)
+		if point.Name != source || point.RawSource != source || point.Value != 9 {
+			t.Fatalf("nonblank legacy source was normalized or relabeled: %#v", point)
+		}
+	}
+}

@@ -55,3 +55,4 @@ export * from "./user-summaries";
 export * from "./users";
 export * from "./webhooks";
 export * from "./whatsapp";
+export * from "./whatsapp-quick-replies";

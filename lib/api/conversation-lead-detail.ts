@@ -10,6 +10,7 @@ export type ConversationLeadDetail = {
   uf: string | null
   source: string | null
   created_at: string
+  updated_at?: string
   valor_interesse: number | null
   property_id: string | null
   interest_property_id: string | null

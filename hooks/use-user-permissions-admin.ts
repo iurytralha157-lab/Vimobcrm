@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { settingsAPI } from '@/lib/api/settings'
 
 export function useUserPermissionsAdmin(userId: string) {
-  const { activeOrganization, profile, organization } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
 
   return useQuery({
@@ -16,7 +16,7 @@ export function useUserPermissionsAdmin(userId: string) {
 }
 
 export function useReplaceUserPermissions(userId: string) {
-  const { activeOrganization, profile, organization } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
   const queryClient = useQueryClient()
 
@@ -31,7 +31,7 @@ export function useReplaceUserPermissions(userId: string) {
 }
 
 export function useResetUserPermissions(userId: string) {
-  const { activeOrganization, profile, organization } = useAuth()
+  const { activeOrganization } = useAuth()
   const organizationId = activeOrganization.organizationId
   const queryClient = useQueryClient()
 

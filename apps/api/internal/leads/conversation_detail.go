@@ -21,6 +21,7 @@ type ConversationLeadDetail struct {
 	UF                 *string                       `json:"uf"`
 	Source             *string                       `json:"source"`
 	CreatedAt          time.Time                     `json:"created_at"`
+	UpdatedAt          time.Time                     `json:"updated_at"`
 	ValorInteresse     *float64                      `json:"valor_interesse"`
 	PropertyID         *string                       `json:"property_id"`
 	InterestPropertyID *string                       `json:"interest_property_id"`
@@ -132,7 +133,8 @@ func (repo Repository) GetConversationDetail(ctx context.Context, tenantContext 
 				where lm.organization_id = l.organization_id
 				  and lm.lead_id = l.id
 				limit 1
-			)::text
+			)::text,
+			l.updated_at
 		from public.leads l
 		left join public.stages s on s.id = l.stage_id
 		left join public.pipelines p on p.id = l.pipeline_id
@@ -192,6 +194,7 @@ func scanConversationLeadDetail(row scanner) (ConversationLeadDetail, error) {
 		&pipelineName,
 		&tagsJSON,
 		&metaJSON,
+		&detail.UpdatedAt,
 	)
 	if err != nil {
 		return ConversationLeadDetail{}, err

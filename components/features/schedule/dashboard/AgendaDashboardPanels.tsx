@@ -229,15 +229,15 @@ export function AgendaTypeDistributionPanel({
   const total = chartData.reduce((sum, item) => sum + item.count, 0);
 
   return (
-    <section className="h-[440px] overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none">
+    <section className="flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[440px]">
       <PanelHeader
         icon={Tags}
         title="Distribuição por tipo"
         description="Como a agenda está sendo usada"
       />
 
-      <div className="px-4 pb-4">
-        <div className="relative mx-auto h-[190px] w-full max-w-[220px]">
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
+        <div className="relative mx-auto h-[190px] w-full max-w-[220px] shrink-0">
           {total === 0 ? (
             <span
               className="pointer-events-none absolute left-1/2 top-1/2 h-[168px] w-[168px] -translate-x-1/2 -translate-y-1/2 rounded-full border-[27px] border-[var(--app-surface-soft)]"
@@ -277,7 +277,7 @@ export function AgendaTypeDistributionPanel({
           </div>
         </div>
 
-        <div className="mt-1 grid max-h-[178px] min-w-0 grid-cols-2 gap-2 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+        <div className="mt-1 grid max-h-[178px] min-h-0 min-w-0 flex-1 auto-rows-max grid-cols-2 gap-2 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
           {chartData.map((item) => {
             const percentage = total > 0 ? (item.count / total) * 100 : 0;
 
@@ -366,16 +366,16 @@ function BreakdownListPanel({
   items: Array<{ label: string; count: number }>;
   tone: string;
 }) {
-  const visibleItems = items.filter((item) => item.count > 0).slice(0, 8);
+  const visibleItems = items.filter((item) => item.count > 0);
   const maximum = Math.max(...visibleItems.map((item) => item.count), 1);
 
   return (
-    <section className="h-[440px] overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none">
+    <section className="flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[440px]">
       <PanelHeader icon={icon} title={title} description={description} />
       {visibleItems.length === 0 ? (
         <EmptyPanelMessage>{emptyMessage}</EmptyPanelMessage>
       ) : (
-        <div className="space-y-3 px-4 pb-4 pt-2">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 pt-2">
           {visibleItems.map((item) => (
             <div key={item.label}>
               <div className="mb-1.5 flex items-center justify-between gap-3">

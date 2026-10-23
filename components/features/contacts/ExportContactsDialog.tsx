@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   FileSpreadsheet,
   FileText,
   Loader2,
   Search,
+  Columns3,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -15,13 +16,14 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { FormWizardLayout } from '@/components/shared/forms/FormWizardLayout';
+import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from '@/config/form-wizard';
+import { ContactExportPreview } from '@/components/features/contacts/ContactExportPreview';
 import {
   CONTACT_EXPORT_COLUMN_GROUPS,
   CONTACT_EXPORT_COLUMN_OPTIONS,
@@ -35,7 +37,13 @@ import {
   type ContactExportPresetKey,
 } from '@/lib/export-contacts';
 import { cn } from '@/lib/utils';
+import styles from '@/components/features/contacts/ContactTransferDialog.module.css';
 import { formatPtBRNumber } from '@/lib/utils/formatting';
+import { useAuth } from '@/contexts/AuthContext';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
+import { getVimobAPIAccessTokenSessionId, getVimobAPIAccessTokenUserId } from '@/lib/api/vimob-client';
+import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
+import { captureLeadRequestIntent } from '@/lib/lead-request-intent';
 
 type ExportContactsDialogProps = {
   open: boolean;
@@ -43,6 +51,7 @@ type ExportContactsDialogProps = {
   filters: ContactExportFilters;
   organizationId: string | null;
   totalCount: number;
+  filterValues?: Partial<Record<keyof ContactExportFilters, string>>;
   onExportingChange?: (isExporting: boolean) => void;
 };
 
@@ -102,8 +111,14 @@ export function ExportContactsDialog({
   filters,
   organizationId,
   totalCount,
+  filterValues,
   onExportingChange,
 }: ExportContactsDialogProps) {
+  const { user, session } = useAuth();
+  const sessionId = getGlobalSignOutSessionId(session);
+  const scopeKey = contactImportScopeKey(organizationId, user?.id, sessionId);
+  const [exportScope] = useState(createLeadImportScope);
+  const wizardId = useId();
   const [format, setFormat] = useState<ContactExportFormat>('xlsx');
   const [selectedColumns, setSelectedColumns] = useState<Set<ContactExportColumnKey>>(
     () => new Set(DEFAULT_CONTACT_EXPORT_COLUMN_KEYS),
@@ -114,9 +129,31 @@ export function ExportContactsDialog({
   const [progress, setProgress] = useState<ContactExportProgress | null>(null);
   const [completedCount, setCompletedCount] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState('format');
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  useLayoutEffect(() => {
+    const deactivate = exportScope.activate(open ? scopeKey : null);
+    return () => {
+      deactivate();
+      const controller = abortControllerRef.current;
+      abortControllerRef.current = null;
+      controller?.abort();
+      if (controller) {
+        setIsExporting(false);
+        setProgress(null);
+        setCompletedCount(null);
+        onExportingChange?.(false);
+      }
+    };
+  }, [exportScope, scopeKey, open, onExportingChange]);
+
   const normalizedColumnSearch = normalizeSearch(columnSearch);
+  const activePreset = CONTACT_EXPORT_PRESETS.find((preset) =>
+    preset.includeDynamicFields === includeDynamicFields
+    && preset.columnKeys.length === selectedColumns.size
+    && preset.columnKeys.every((key) => selectedColumns.has(key)),
+  );
   const groupedColumns = useMemo(
     () =>
       CONTACT_EXPORT_COLUMN_GROUPS.map((group) => ({
@@ -167,7 +204,17 @@ export function ExportContactsDialog({
   };
 
   const handleExport = async () => {
-    if (isExporting || selectedColumns.size === 0) return;
+    if (abortControllerRef.current || selectedColumns.size === 0 || !organizationId || !user?.id) return;
+    if (!sessionId || !scopeKey) {
+      setErrorMessage('Não foi possível confirmar a sessão. Entre novamente antes de exportar.');
+      return;
+    }
+    const isCurrentScope = exportScope.capture(scopeKey);
+    const shouldContinue = () => isCurrentScope()
+      && getVimobAPIAccessTokenUserId() === user.id
+      && getVimobAPIAccessTokenSessionId() === sessionId;
+    if (!shouldContinue()) return;
+    const requestIntent = captureLeadRequestIntent(user.id, sessionId);
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -186,10 +233,17 @@ export function ExportContactsDialog({
         columnKeys: [...selectedColumns],
         includeDynamicFields,
         signal: abortController.signal,
-        onProgress: setProgress,
+        requestIntent,
+        shouldContinue,
+        onProgress: (nextProgress) => {
+          if (abortControllerRef.current === abortController && shouldContinue()) setProgress(nextProgress);
+        },
       });
+      abortController.signal.throwIfAborted();
+      if (abortControllerRef.current !== abortController || !shouldContinue()) return;
       setCompletedCount(count);
     } catch (error: unknown) {
+      if (abortControllerRef.current !== abortController || !shouldContinue()) return;
       setProgress(null);
       setErrorMessage(
         isAbortError(error)
@@ -199,9 +253,11 @@ export function ExportContactsDialog({
             : 'Não foi possível exportar os contatos.',
       );
     } finally {
-      abortControllerRef.current = null;
-      setIsExporting(false);
-      onExportingChange?.(false);
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+        setIsExporting(false);
+        onExportingChange?.(false);
+      }
     }
   };
 
@@ -210,7 +266,7 @@ export function ExportContactsDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-h-[min(88vh,760px)] w-[calc(100vw-1.5rem)] max-w-[640px] gap-3 overflow-hidden p-4 sm:p-5"
+        className={cn(FORM_WIZARD_DIALOG_CLASS_NAME, styles.dialog)}
         onEscapeKeyDown={(event) => {
           if (isExporting) event.preventDefault();
         }}
@@ -218,17 +274,44 @@ export function ExportContactsDialog({
           if (isExporting) event.preventDefault();
         }}
       >
-        <DialogHeader className="space-y-1 pr-7 text-left">
-          <DialogTitle className="text-[16px] font-medium">
+        <DialogHeader className="shrink-0 space-y-1 px-6 pb-4 pr-12 pt-5 text-left">
+          <DialogTitle className="text-[14px] font-normal">
             Exportar contatos
           </DialogTitle>
-          <DialogDescription className="text-[12px] font-light leading-5">
+          <DialogDescription className="sr-only">
             Escolha o formato e somente as colunas que você precisa. Os filtros
             atuais serão mantidos.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-col gap-3">
+        <FormWizardLayout
+          className={styles.wizard}
+          newsButtonClassName={styles.newsButton}
+          steps={[
+            { id: 'format', label: 'Formato e modelo', icon: FileSpreadsheet, disabled: isExporting, buttonId: `${wizardId}-tab-format`, panelId: `${wizardId}-panel` },
+            { id: 'columns', label: 'Campos', icon: Columns3, disabled: isExporting, buttonId: `${wizardId}-tab-columns`, panelId: `${wizardId}-panel` },
+            { id: 'review', label: 'Revisão', icon: CheckCircle2, disabled: isExporting, buttonId: `${wizardId}-tab-review`, panelId: `${wizardId}-panel` },
+          ]}
+          activeStep={activeStep}
+          onStepChange={(step) => { if (!isExporting) setActiveStep(step); }}
+          asideTitle="Prévia do arquivo"
+          aside={<ContactExportPreview format={format} columnKeys={selectedColumns} includeDynamicFields={includeDynamicFields} filters={filters} totalCount={totalCount} filterValues={filterValues} modelName={activePreset?.label || 'Personalizado'} />}
+          footer={<>
+            <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}
+              onClick={() => {
+                if (isExporting) cancelExport();
+                else if (activeStep === 'format') handleOpenChange(false);
+                else setActiveStep(activeStep === 'review' ? 'columns' : 'format');
+              }}
+            >{isExporting ? 'Cancelar exportação' : activeStep === 'format' ? 'Fechar' : 'Voltar'}</Button>
+            <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}
+              disabled={isExporting || (activeStep !== 'format' && selectedColumns.size === 0) || totalCount === 0}
+              onClick={() => { if (activeStep === 'review') void handleExport(); else setActiveStep(activeStep === 'format' ? 'columns' : 'review'); }}
+            >{isExporting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}{activeStep !== 'review' ? 'Avançar' : completedCount !== null ? 'Exportar novamente' : 'Exportar'}</Button>
+          </>}
+        >
+        <div id={`${wizardId}-panel`} role="tabpanel" aria-labelledby={`${wizardId}-tab-${activeStep}`} className="flex min-h-0 flex-col gap-3">
+          <div hidden={activeStep !== 'format'} className={cn('space-y-4', activeStep !== 'format' && 'hidden')}>
           <div className="grid grid-cols-2 gap-2" aria-label="Formato do arquivo">
             <button
               type="button"
@@ -241,11 +324,11 @@ export function ExportContactsDialog({
               className={cn(
                 'flex min-h-12 items-center gap-2 rounded-[6px] border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                 format === 'xlsx'
-                  ? 'border-primary/40 bg-primary/10 text-[var(--app-text-primary)]'
-                  : 'border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
+                  ? 'border-primary/50 bg-primary/50 text-white'
+                  : 'border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/50 hover:text-white',
               )}
             >
-              <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" />
+              <FileSpreadsheet className="h-4 w-4 shrink-0 text-current" />
               <span>
                 <span className="block text-[12px] font-medium">Excel (.xlsx)</span>
                 <span className="block text-[10px] font-light">Recomendado</span>
@@ -262,11 +345,11 @@ export function ExportContactsDialog({
               className={cn(
                 'flex min-h-12 items-center gap-2 rounded-[6px] border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                 format === 'csv'
-                  ? 'border-primary/40 bg-primary/10 text-[var(--app-text-primary)]'
-                  : 'border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
+                  ? 'border-primary/50 bg-primary/50 text-white'
+                  : 'border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/50 hover:text-white',
               )}
             >
-              <FileText className="h-4 w-4 shrink-0 text-primary" />
+              <FileText className="h-4 w-4 shrink-0 text-current" />
               <span>
                 <span className="block text-[12px] font-medium">CSV (.csv)</span>
                 <span className="block text-[10px] font-light">Compatível com Excel</span>
@@ -276,7 +359,7 @@ export function ExportContactsDialog({
 
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="mr-1 text-[11px] font-light text-[var(--app-text-secondary)]">
-              Presets
+              Modelo
             </span>
             {CONTACT_EXPORT_PRESETS.map((preset) => (
               <Button
@@ -284,18 +367,25 @@ export function ExportContactsDialog({
                 type="button"
                 size="sm"
                 variant="ghost"
+                aria-pressed={activePreset?.key === preset.key}
                 disabled={isExporting}
                 onClick={() => applyPreset(preset.key)}
-                className="h-7 rounded-[6px] bg-[var(--app-surface-soft)] px-2 text-[10px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+                className={cn('h-8 rounded-[6px] px-2.5 text-[11px] font-light shadow-none', activePreset?.key === preset.key ? 'bg-primary/50 text-white hover:bg-primary/50 hover:text-white' : 'bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]')}
               >
                 {preset.label}
               </Button>
             ))}
             <span className="ml-auto text-[11px] font-light text-[var(--app-text-secondary)]">
-              {selectedColumns.size} de {CONTACT_EXPORT_COLUMN_OPTIONS.length}
+              {selectedColumns.size} campos fixos
             </span>
           </div>
 
+          </div>
+          <div hidden={activeStep !== 'columns'} className={cn('space-y-3', activeStep !== 'columns' && 'hidden')}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-[12px] font-normal">Campos do arquivo</h2>
+            <p aria-live="polite" className="rounded-[4px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)]">{selectedColumns.size} de {CONTACT_EXPORT_COLUMN_OPTIONS.length} selecionados</p>
+          </div>
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]"
@@ -305,35 +395,28 @@ export function ExportContactsDialog({
               value={columnSearch}
               disabled={isExporting}
               onChange={(event) => setColumnSearch(event.target.value)}
-              placeholder="Buscar coluna"
+              placeholder="Buscar campo"
               aria-label="Buscar coluna para exportar"
               className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-8 text-[11px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
             />
           </div>
 
-          <ScrollArea className="h-[min(36vh,300px)] rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-soft)]">
-            <div className="space-y-4 p-3">
+            <div className="space-y-2">
               {groupedColumns.map((group) => (
-                <section key={group.key} aria-labelledby={`export-group-${group.key}`}>
-                  <div className="mb-2">
-                    <h3
-                      id={`export-group-${group.key}`}
-                      className="text-[11px] font-medium text-[var(--app-text-primary)]"
-                    >
-                      {group.label}
-                    </h3>
-                    <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
-                      {group.description}
-                    </p>
-                  </div>
-                  <div className="grid gap-1.5 sm:grid-cols-2">
+                <details key={group.key} open={Boolean(normalizedColumnSearch) || group.key === 'essential'} className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
+                  <summary className="cursor-pointer text-[11px] font-normal">
+                    {group.label}
+                    <span className="ml-2 inline-block text-[10px] font-light text-[var(--app-text-secondary)]">{CONTACT_EXPORT_COLUMN_OPTIONS.filter((column) => column.group === group.key && selectedColumns.has(column.key)).length} de {CONTACT_EXPORT_COLUMN_OPTIONS.filter((column) => column.group === group.key).length} selecionados</span>
+                  </summary>
+                  <p className="mt-2 text-[10px] font-light text-[var(--app-text-tertiary)]">{normalizedColumnSearch ? `${group.columns.length} campo(s) encontrado(s)` : group.description}</p>
+                  <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
                     {group.columns.map((column) => {
                       const checkboxId = `contact-export-${column.key}`;
                       return (
                         <label
                           key={column.key}
                           htmlFor={checkboxId}
-                          className="flex min-h-8 cursor-pointer items-center gap-2 rounded-[5px] px-2 py-1 text-[11px] font-light text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+                          className={cn('flex min-h-9 min-w-0 cursor-pointer items-start gap-2 rounded-[5px] px-2.5 py-2 text-[11px] font-light transition-colors', selectedColumns.has(column.key) ? 'bg-primary/50 text-white' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]')}
                         >
                           <Checkbox
                             id={checkboxId}
@@ -342,44 +425,58 @@ export function ExportContactsDialog({
                             onCheckedChange={(checked) =>
                               toggleColumn(column.key, checked === true)
                             }
-                            className="h-3.5 w-3.5 rounded-[3px]"
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-[3px] data-[state=checked]:border-white/60 data-[state=checked]:bg-white/20 data-[state=checked]:text-white"
                           />
-                          <span className="min-w-0 truncate" title={column.label}>
+                          <span className="min-w-0 break-words [overflow-wrap:anywhere]" title={column.label}>
                             {column.label}
                           </span>
                         </label>
                       );
                     })}
                   </div>
-                </section>
+                </details>
               ))}
               {groupedColumns.length === 0 && (
                 <p className="py-6 text-center text-[11px] font-light text-[var(--app-text-secondary)]">
-                  Nenhuma coluna encontrada.
+                  Nenhum campo encontrado. A seleção foi mantida.
                 </p>
               )}
             </div>
-          </ScrollArea>
-
-          <label className="flex cursor-pointer items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2">
+          {selectedColumns.size === 0 && <p role="alert" className="text-[11px] font-light text-destructive">Selecione ao menos um campo fixo para continuar.</p>}
+          <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
+          <label className="flex cursor-pointer items-start gap-2">
             <Checkbox
               checked={includeDynamicFields}
+              aria-label="Incluir campos personalizados e metadados expandidos"
               disabled={isExporting}
               onCheckedChange={(checked) => {
                 clearRunFeedback();
                 setIncludeDynamicFields(checked === true);
               }}
-              className="mt-0.5 h-3.5 w-3.5 rounded-[3px]"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-[3px] data-[state=checked]:border-primary/50 data-[state=checked]:bg-primary/50 data-[state=checked]:text-white"
             />
             <span>
               <span className="block text-[11px] font-medium text-[var(--app-text-primary)]">
-                Incluir campos personalizados e metadados expandidos
+                Expandir campos personalizados e metadados
               </span>
               <span className="block text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">
-                Pode acrescentar muitas colunas. Use para auditorias ou backups completos.
+                {includeDynamicFields ? 'Ativado · Adiciona colunas conforme os contatos.' : 'Desativado'}
               </span>
             </span>
           </label>
+          <details className="mt-2 text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">
+            <summary className="cursor-pointer">Sobre a expansão</summary>
+            <p className="mt-2">Pode acrescentar muitas colunas ao relatório. Se exceder os limites, use as colunas JSON sem expansão ou reduza os filtros. Nenhum campo será cortado. A importação não restaura todos esses campos.</p>
+          </details>
+          </div>
+          </div>
+
+          {activeStep === 'review' && <section className="space-y-4 text-[12px] font-light" aria-label="Revisar exportação">
+            <h2 className="text-[14px] font-normal">Revisar exportação</h2>
+            <p>{formatPtBRNumber(totalCount)} contato(s) nos filtros atuais · {format === 'xlsx' ? 'Excel' : 'CSV'} · {selectedColumns.size} coluna(s) selecionada(s).</p>
+            <p className="text-[var(--app-text-secondary)]">As colunas escolhidas aparecem na prévia. Os filtros atuais e as permissões de acesso serão mantidos ao carregar os contatos.</p>
+            {includeDynamicFields && <p className="text-[var(--app-text-tertiary)]">Campos personalizados e metadados podem acrescentar colunas ao arquivo.</p>}
+          </section>}
 
           {(isExporting || completedCount !== null) && (
             <div
@@ -395,7 +492,7 @@ export function ExportContactsDialog({
                 )}
                 {progressLabel(progress, completedCount)}
               </div>
-              <Progress value={renderedProgress} className="h-1.5" />
+              <Progress value={renderedProgress} className="h-1.5" indicatorClassName="bg-primary/50" />
             </div>
           )}
 
@@ -409,30 +506,7 @@ export function ExportContactsDialog({
           )}
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between gap-2 border-t border-[var(--app-border)] pt-3 sm:space-x-0">
-          <span className="mr-auto text-[10px] font-light text-[var(--app-text-tertiary)]">
-            {formatPtBRNumber(totalCount)} contato(s) nos filtros atuais
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={isExporting ? cancelExport : () => handleOpenChange(false)}
-            className="h-8 rounded-[6px] px-2.5 text-[11px] font-light shadow-none"
-          >
-            {isExporting ? 'Cancelar exportação' : 'Fechar'}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={isExporting || selectedColumns.size === 0 || totalCount === 0}
-            onClick={() => void handleExport()}
-            className="h-8 rounded-[6px] px-3 text-[11px] font-light shadow-none"
-          >
-            {isExporting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {completedCount !== null ? 'Exportar novamente' : 'Exportar'}
-          </Button>
-        </DialogFooter>
+        </FormWizardLayout>
       </DialogContent>
     </Dialog>
   );

@@ -173,7 +173,7 @@ function normalizePhone(value?: string | null) {
 }
 
 export function AIAssistantTab() {
-  const { activeOrganization, organization, profile, isSuperAdmin } = useAuth();
+  const { activeOrganization, isSuperAdmin } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const { toast } = useToast();
   const { hasModule } = useOrganizationModules();

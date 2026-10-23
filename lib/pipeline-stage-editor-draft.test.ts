@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   resolveStageEditorDraft,
+  pinStageEditorDraft,
   updateStageEditorDraft,
 } from './pipeline-stage-editor-draft'
 
@@ -29,4 +30,16 @@ test('descarta rascunho de outro funil e usa dados atuais', () => {
   assert.deepEqual(view.stages, ['atual'])
   assert.equal(view.hasChanges, false)
   assert.equal(view.isStale, false)
+})
+
+test('digitação em andamento mantém a revisão anterior ao refetch', () => {
+  const before = [{ id: 'stage-a', name: 'Entrada', updated_at: '2026-10-16T12:00:00.123456Z' }]
+  const after = [{ ...before[0], name: 'Outro gestor', updated_at: '2026-10-16T12:00:00.123457Z' }]
+  const pinned = pinStageEditorDraft(null, 'pipeline-a', 'old', before)
+  const view = resolveStageEditorDraft(pinned, 'pipeline-a', 'new', after)
+  assert.equal(view.isStale, true)
+  assert.deepEqual(view.sourceStages, before)
+  const edited = updateStageEditorDraft(pinned, 'pipeline-a', 'new', after, [{ ...before[0], name: 'Meu rascunho' }], true)
+  assert.deepEqual(edited.sourceStages, before)
+  assert.equal(edited.sourceKey, 'old')
 })

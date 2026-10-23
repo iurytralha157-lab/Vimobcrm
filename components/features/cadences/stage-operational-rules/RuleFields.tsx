@@ -113,7 +113,7 @@ export function OptionalDurationField({
   return (
     <div className="space-y-1.5">
       <div className="flex h-5 items-center justify-between gap-2">
-        <Label htmlFor={`${id}-enabled`} className="text-[11px] font-light text-[var(--app-text-secondary)]">
+        <Label htmlFor={`${id}-enabled`} className="text-[12px] font-light text-[var(--app-text-secondary)]">
           {label}
         </Label>
         <Switch
@@ -135,7 +135,7 @@ export function OptionalDurationField({
           ariaLabel={label}
         />
       ) : (
-        <div className="flex h-9 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[11px] font-light text-[var(--app-text-tertiary)]">
+        <div className="flex h-9 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-tertiary)]">
           Sem aviso
         </div>
       )}
@@ -164,7 +164,7 @@ export function ToggleRow({
         <Label htmlFor={id} className="text-xs font-light text-[var(--app-text-primary)]">
           {title}
         </Label>
-        <p className="mt-0.5 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
+        <p className="mt-0.5 text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
           {description}
         </p>
       </div>
@@ -192,7 +192,7 @@ export function Field({
       {label && (
         <Label
           htmlFor={htmlFor}
-          className="text-[11px] font-light text-[var(--app-text-secondary)]"
+          className="text-[12px] font-light text-[var(--app-text-secondary)]"
         >
           {label}
         </Label>
@@ -259,7 +259,7 @@ export function EmptyRuleState({
       </span>
       <div>
         <p className="text-xs font-light text-[var(--app-text-primary)]">{title}</p>
-        <p className="mt-1 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
+        <p className="mt-1 text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
           {description}
         </p>
       </div>
@@ -271,7 +271,7 @@ export function LifecycleLine({ icon: Icon, text }: { icon: LucideIcon; text: st
   return (
     <div className="flex items-start gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-3 py-2.5">
       <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--app-text-secondary)]" strokeWidth={1.5} />
-      <span className="text-[11px] font-light leading-[17px] text-[var(--app-text-secondary)]">
+      <span className="text-[12px] font-light leading-[17px] text-[var(--app-text-secondary)]">
         {text}
       </span>
     </div>

@@ -28,6 +28,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatPropertyCurrency } from '@/lib/property-display-utils'
 import type { PropertyChannelPublication } from '@/lib/validation'
+import { getSitePublicationState } from './site-publication-state'
 
 type PropertyPublicationPreviewProps = {
   publication: PropertyChannelPublication
@@ -52,6 +53,10 @@ export function PropertyPublicationPreview({ publication, imageUrls }: PropertyP
   ].filter((value): value is string => Boolean(value))))
   const selectedImage = images[selectedImageIndex] || images[0]
   const publicURL = publication.public_url || preview.public_url
+  const canOpenPublication = publication.channel === 'site'
+    ? getSitePublicationState(publication, false, true).canOpenPublicSite
+    : publication.desired_state === 'published' && publication.published_version != null
+      && !publication.checks.some((check) => check.code === 'grupo_olx_status' && !check.resolved)
   const metrics = [
     { label: 'Quartos', value: preview.bedrooms, icon: BedDouble },
     { label: 'Banheiros', value: preview.bathrooms, icon: Bath },
@@ -149,7 +154,7 @@ export function PropertyPublicationPreview({ publication, imageUrls }: PropertyP
               <p className="text-xs text-muted-foreground">
                 Versão atual {publication.current_version || 'ainda não criada'}
               </p>
-              {publicURL && publication.observed_state === 'published' && (
+              {publicURL && canOpenPublication && (
                 <Button asChild size="sm">
                   <a href={publicURL} target="_blank" rel="noopener noreferrer">
                     Abrir publicação

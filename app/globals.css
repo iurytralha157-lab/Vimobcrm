@@ -528,21 +528,16 @@ body {
   box-shadow: 0 13px 34px rgb(15 23 42 / 0.06) !important;
 }
 
-.vimob-popover-content.notification-popover {
-  background: var(--app-surface-solid) !important;
-  backdrop-filter: none !important;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.08) !important;
-}
-
-.light .vimob-popover-content.notification-popover {
-  box-shadow: 0 8px 24px rgb(15 23 42 / 0.055) !important;
-}
-
 .app-shell .notification-title,
 .vimob-popover-content .notification-title {
   font-size: var(--app-font-size-card-title) !important;
   font-weight: var(--app-font-weight-title) !important;
   line-height: 1.25rem;
+}
+
+.vimob-popover-content.notification-popover .notification-title {
+  font-size: var(--app-font-size-caption) !important;
+  line-height: 1rem;
 }
 
 .vimob-dialog-content
@@ -585,9 +580,15 @@ body {
   line-height: var(--app-line-height-title);
 }
 
-.vimob-dialog-content :where(p, label, li),
+.vimob-dialog-content :where(p, label, li):not(:where(.lead-thread-panel [data-message-text] *)),
 .vimob-dialog-content :where(.text-muted-foreground) {
   font-weight: var(--app-font-weight-body) !important;
+}
+
+/* Rich message lists keep the same inherited weight and leading as app-shell chats. */
+.vimob-dialog-content .lead-thread-panel [data-message-text] :where(p, label, li) {
+  font-weight: var(--app-font-weight-body);
+  line-height: var(--app-line-height-body);
 }
 
 .vimob-dialog-content
@@ -689,8 +690,11 @@ body {
   box-shadow: 0 0 0 1px rgb(255 69 41 / 0.45) !important;
 }
 
-.vimob-dialog-content :where(button:not([role="combobox"])) {
+.vimob-dialog-content :where(button:not([role="combobox"])):not(:where(.lead-thread-panel *)) {
   border-radius: 6px;
+}
+
+.vimob-dialog-content :where(button:not([role="combobox"])) {
   font-weight: var(--app-font-weight-body);
   letter-spacing: 0 !important;
 }
@@ -1509,6 +1513,66 @@ body {
   font-weight: 300;
 }
 
+/* Management has compact typography and its own action contrast. Keep these
+   overrides scoped so other forms currently being refined retain their theme. */
+:where(.crm-management-surface, [data-management-editor]) {
+  --management-font-body: 0.75rem;
+  --management-font-caption: 0.625rem;
+  --management-font-title: 0.875rem;
+  --management-action-text: #ffffff;
+  --management-action-bg: color-mix(in srgb, var(--vimob-accent) 50%, var(--app-surface-solid));
+  --management-action-hover-bg: color-mix(in srgb, var(--vimob-accent) 70%, var(--app-surface-solid));
+  --management-accent-text: #ff745a;
+  --management-warning-text: #f4bf61;
+  --management-success-text: #79d9b0;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: var(--management-font-body);
+  font-weight: var(--app-font-weight-body);
+}
+
+.light :where(.crm-management-surface, [data-management-editor]) {
+  --management-action-text: #50170c;
+  --management-accent-text: #8c2816;
+  --management-warning-text: #6b4300;
+  --management-success-text: #11633f;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where(input, textarea, select, button[role="combobox"], label) {
+  font-size: var(--management-font-body);
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="text-[7px]"], [class~="text-[9px]"]) {
+  font-size: var(--management-font-caption) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="bg-primary/50"]) {
+  background-color: var(--management-action-bg) !important;
+  color: var(--management-action-text) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where(button[class~="bg-primary/50"]):is(:hover, :focus-visible):not(:disabled) {
+  background-color: var(--management-action-hover-bg) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="text-primary"]) {
+  color: var(--management-accent-text) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="text-warning"], [class~="text-amber-700"], [class~="dark:text-amber-300"]) {
+  color: var(--management-warning-text) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="text-success"], [class~="text-emerald-700"], [class~="dark:text-emerald-300"]) {
+  color: var(--management-success-text) !important;
+}
+
 .crm-management-surface h2,
 .crm-management-surface h3 {
   font-size: 0.875rem;
@@ -1891,10 +1955,6 @@ body {
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-text-secondary) 42%, transparent);
   background-clip: padding-box;
-}
-
-.light .lead-thread-panel [data-message-timestamp-position="bottom-right"] {
-  color: var(--app-text-secondary);
 }
 
 .lead-stage-rail {

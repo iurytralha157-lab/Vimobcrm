@@ -4,9 +4,11 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useId,
 } from "react";
 import {
   AlertCircle,
@@ -32,6 +34,8 @@ import { useCreateTag } from "@/hooks/use-tags";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { searchTextEquals, searchTextIncludes } from "@/lib/search-text";
 import { cn } from "@/lib/utils";
+import { FILTER_UI } from "@/config/filter-ui";
+import { getFilterOptionIndex } from "@/lib/filter-keyboard";
 
 const DEFAULT_MAX_SELECTED_TAGS = 50;
 const DEFAULT_TAG_COLOR = "#3B82F6";
@@ -73,6 +77,7 @@ export interface SearchableTagPickerProps {
   emptyMessage?: string;
   showUnavailableId?: boolean;
   caseSensitiveIds?: boolean;
+  layerScope?: string;
 }
 
 function normalizeTagId(value: string) {
@@ -104,6 +109,7 @@ export function SearchableTagPicker({
   emptyMessage,
   showUnavailableId = false,
   caseSensitiveIds = false,
+  layerScope,
 }: SearchableTagPickerProps) {
   const { hasPermission } = useUserPermissions();
   const createTag = useCreateTag();
@@ -111,10 +117,14 @@ export function SearchableTagPicker({
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollListRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef(new Map<string, HTMLButtonElement>());
+  const focusedOptionRef = useRef<HTMLButtonElement | null>(null);
+  const pickerId = useId();
+  const [activeTagId, setActiveTagId] = useState<string | null>(null);
   const selectionLimit = Math.max(0, Math.floor(maxSelected));
   const hasError = Boolean(error);
   const canCreate =
-    allowCreate && hasPermission("tag_manage") && !loading && !hasError;
+    allowCreate && hasPermission("tag_manage") && !loading && !hasError && !disabled;
   const normalizeOptionId = useCallback(
     (value: string) => caseSensitiveIds ? value.trim() : normalizeTagId(value),
     [caseSensitiveIds],
@@ -175,6 +185,29 @@ export function SearchableTagPicker({
   );
   const selectedCount = normalizedSelectedIds.size;
   const isAtLimit = selectedCount >= selectionLimit;
+  const keyboardTags = visibleTags.filter((tag) => !disabled && (!isAtLimit || normalizedSelectedIds.has(normalizeOptionId(tag.id))));
+  const activeOptionIndex = keyboardTags.findIndex((tag) => tag.id === activeTagId);
+  const activeVisibleIndex = visibleTags.findIndex((tag) => tag.id === activeTagId);
+  useLayoutEffect(() => {
+    const previousOption = focusedOptionRef.current;
+    if (!open || !previousOption || (previousOption.isConnected && !previousOption.disabled)) return;
+    focusedOptionRef.current = null;
+    const ownerDocument = previousOption.ownerDocument;
+    const activeElement = ownerDocument.activeElement;
+    if (ownerDocument.hasFocus() && (activeElement === ownerDocument.body || activeElement === previousOption)) {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  }, [open, visibleTags, disabled, isAtLimit]);
+  const navigateOptions = (key: string) => {
+    const nextIndex = getFilterOptionIndex(key, activeOptionIndex, keyboardTags.length);
+    if (nextIndex === null) return false;
+    const nextTag = keyboardTags[nextIndex];
+    setActiveTagId(nextTag.id);
+    const element = optionRefs.current.get(nextTag.id);
+    element?.focus({ preventScroll: true });
+    element?.scrollIntoView({ block: "nearest" });
+    return true;
+  };
   const resolvedTriggerLabel =
     triggerLabel ??
     (selectedCount === 0
@@ -184,12 +217,6 @@ export function SearchableTagPicker({
         : selectedCount === 1
           ? `1 ${itemNameSingular} selecionada`
           : `${selectedCount} ${itemNamePlural} selecionadas`);
-  useEffect(() => {
-    if (!open) return;
-    const timeoutId = window.setTimeout(() => inputRef.current?.focus(), 100);
-    return () => window.clearTimeout(timeoutId);
-  }, [open]);
-
   useEffect(() => {
     if (!open) return;
     const element = scrollListRef.current;
@@ -300,6 +327,8 @@ export function SearchableTagPicker({
         open={open}
         onOpenChange={(nextOpen) => {
           setOpen(nextOpen);
+          setActiveTagId(null);
+          if (!nextOpen) focusedOptionRef.current = null;
           if (!nextOpen) setSearch("");
         }}
       >
@@ -310,9 +339,12 @@ export function SearchableTagPicker({
             size="sm"
             disabled={disabled}
             aria-expanded={open}
+            data-filter-active={selectedCount > 0}
             aria-haspopup="listbox"
+            aria-controls={open ? `${pickerId}-list` : undefined}
+            title={typeof resolvedTriggerLabel === "string" ? resolvedTriggerLabel : undefined}
             className={cn(
-              "h-10 w-full justify-between gap-2 rounded-md px-3 text-sm font-normal",
+              "h-10 w-full justify-between gap-2 rounded-md px-3 text-[12px] font-light [&_svg]:size-3.5",
               selectedCount === 0 && "text-muted-foreground",
               triggerClassName,
             )}
@@ -330,7 +362,10 @@ export function SearchableTagPicker({
 
         <PopoverContent
           align="start"
-          className="w-[var(--radix-popover-trigger-width)] min-w-64 max-w-[calc(100vw-24px)] p-0"
+          collisionPadding={FILTER_UI.collisionPadding}
+          onOpenAutoFocus={(event) => { event.preventDefault(); inputRef.current?.focus(); }}
+          data-filter-layer={layerScope}
+          className={cn("z-[140] flex w-[var(--radix-popover-trigger-width)] min-w-64 flex-col p-0", FILTER_UI.panelViewport, "overflow-hidden")}
         >
           <div className="p-2">
             <div className="relative">
@@ -341,8 +376,15 @@ export function SearchableTagPicker({
               <Input
                 ref={inputRef}
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => { setSearch(event.target.value); setActiveTagId(null); }}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={open}
+                aria-controls={`${pickerId}-list`}
+                aria-activedescendant={activeVisibleIndex >= 0 ? `${pickerId}-option-${activeVisibleIndex}` : undefined}
                 onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                  if (navigateOptions(event.key)) { event.preventDefault(); event.stopPropagation(); return; }
                   if (
                     event.key === "Enter" &&
                     search.trim() &&
@@ -351,13 +393,16 @@ export function SearchableTagPicker({
                   ) {
                     event.preventDefault();
                     void handleCreate();
+                  } else if (event.key === "Enter" && keyboardTags.length) {
+                    event.preventDefault();
+                    toggleTag(keyboardTags[activeOptionIndex >= 0 ? activeOptionIndex : 0].id);
                   }
                 }}
                 aria-label={canCreate ? `Buscar ou criar ${itemNameSingular}` : `Buscar ${itemNameSingular}`}
                 placeholder={
                   canCreate ? `Buscar ou criar ${itemNameSingular}...` : `Buscar ${itemNameSingular}...`
                 }
-                className="h-8 py-1 pl-8 text-sm"
+                className="h-9 py-1 pl-8 text-[12px] font-light"
               />
             </div>
           </div>
@@ -378,10 +423,11 @@ export function SearchableTagPicker({
 
           <div
             ref={scrollListRef}
+            id={`${pickerId}-list`}
             role="listbox"
             aria-label={`${itemNamePlural.charAt(0).toUpperCase() + itemNamePlural.slice(1)} disponíveis`}
             aria-multiselectable="true"
-            className="max-h-48 overflow-y-auto overscroll-contain"
+            className="min-h-0 max-h-48 flex-1 overflow-y-auto overscroll-contain"
             onWheel={(event) => event.stopPropagation()}
           >
             <div className="space-y-1 p-2 pt-0">
@@ -419,20 +465,30 @@ export function SearchableTagPicker({
                 </p>
               )}
 
-              {visibleTags.map((tag) => {
+              {visibleTags.map((tag, index) => {
                 const selected = isSelected(tag.id);
                 const blockedByLimit = !selected && isAtLimit;
                 return (
                   <button
                     key={tag.id}
+                    id={`${pickerId}-option-${index}`}
+                    ref={(element) => { if (element) optionRefs.current.set(tag.id, element); else optionRefs.current.delete(tag.id); }}
                     type="button"
                     role="option"
                     aria-selected={selected}
                     aria-disabled={blockedByLimit || disabled}
-                    disabled={disabled}
+                    disabled={disabled || blockedByLimit}
+                    tabIndex={activeTagId === tag.id ? 0 : -1}
+                    onFocus={(event) => { focusedOptionRef.current = event.currentTarget; setActiveTagId(tag.id); }}
+                    onBlur={(event) => { if (event.relatedTarget) focusedOptionRef.current = null; }}
+                    onKeyDown={(event) => {
+                      if (navigateOptions(event.key)) { event.preventDefault(); event.stopPropagation(); }
+                      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleTag(tag.id); }
+                    }}
                     onClick={() => toggleTag(tag.id)}
+                    title={tag.name}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                      "flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[12px] font-light transition-colors hover:bg-accent focus-visible:outline-1 focus-visible:outline-primary",
                       blockedByLimit && "cursor-not-allowed opacity-50",
                     )}
                   >

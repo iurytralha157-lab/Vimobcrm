@@ -1,6 +1,9 @@
 package meta
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMapLeadDataCanonicalizesProviderPhones(t *testing.T) {
 	tests := map[string]struct {
@@ -118,4 +121,80 @@ func TestStringMapPreservesLegacyEmptyIgnoreOverride(t *testing.T) {
 	if value, exists := mapping["full_name"]; !exists || value != "" {
 		t.Fatalf("legacy ignore override = %q, exists=%t", value, exists)
 	}
+}
+
+func TestMapLeadDataAcceptsKnownLabelsOnConfiguredPhoneAndPreservesRawAnswers(t *testing.T) {
+	values := []string{
+		"Cel. +55 (11) 99999-9999",
+		"Tel. +55 (11) 99999-9999",
+		"Telefone: +55 (11) 99999-9999",
+		"Celular: +55 (11) 99999-9999",
+		"WhatsApp: +55 (11) 99999-9999",
+		"  cEL. +55 (11) 99999-9999  ",
+	}
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			lead := mapLeadData(metaConfiguredContactDetails(value), leadgenChange{}, metaIntegration{}, metaConfiguredContactMapping())
+			if lead.Phone == nil || *lead.Phone != "+5511999999999" {
+				t.Fatalf("configured phone = %#v, want canonical labeled contact", lead.Phone)
+			}
+			if lead.Name != "Maria Silva" || lead.Email == nil || *lead.Email != "maria@example.com" {
+				t.Fatal("contact labeling changed the configured name or email")
+			}
+			if got := lead.Custom["phone_number"]; got != "+5511988887777" {
+				t.Fatalf("provider phone configured as custom = %#v", got)
+			}
+			raw, ok := lead.RawFields["whatsapp_number"].([]string)
+			if !ok || len(raw) != 1 || raw[0] != strings.TrimSpace(value) {
+				t.Fatalf("original labeled answer was changed: %#v", lead.RawFields["whatsapp_number"])
+			}
+		})
+	}
+}
+
+func TestMapLeadDataRejectsAmbiguousLabeledPhoneWithoutUsingCustomProviderPhone(t *testing.T) {
+	values := []string{
+		"Cel. +55 (11) 99999-9999 ramal 2",
+		"Telefone: +55 (11) 99999-9999 / +55 (11) 98888-7777",
+		"WhatsApp: +55 (11) 99999-9999 ou +55 (11) 98888-7777",
+		"Cel. +55 (11) 99999-9999 para recado",
+		"Recado: +55 (11) 99999-9999",
+		"Cel +55 (11) 99999-9999",
+		"Cel. Tel. +55 (11) 99999-9999",
+		"Cel. +55 (11 99999-9999",
+		"Cel.",
+	}
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			lead := mapLeadData(metaConfiguredContactDetails(value), leadgenChange{}, metaIntegration{}, metaConfiguredContactMapping())
+			if lead.Phone != nil {
+				t.Fatalf("accepted ambiguous contact or promoted custom provider phone: %q", *lead.Phone)
+			}
+			if got := lead.Custom["phone_number"]; got != "+5511988887777" {
+				t.Fatalf("provider phone configured as custom = %#v", got)
+			}
+			raw, ok := lead.RawFields["whatsapp_number"].([]string)
+			if !ok || len(raw) != 1 || raw[0] != value {
+				t.Fatalf("rejected answer was not preserved: %#v", lead.RawFields["whatsapp_number"])
+			}
+		})
+	}
+}
+
+func metaConfiguredContactDetails(value string) map[string]any {
+	return map[string]any{"field_data": []any{
+		map[string]any{"name": "phone_number", "values": []any{"+5511988887777"}},
+		map[string]any{"name": "whatsapp_number", "values": []any{value}},
+		map[string]any{"name": "email", "values": []any{"maria@example.com"}},
+		map[string]any{"name": "nome_completo", "values": []any{"Maria Silva"}},
+	}}
+}
+
+func metaConfiguredContactMapping() metaFormConfig {
+	return metaFormConfig{FieldMapping: map[string]string{
+		"phone_number":    "custom",
+		"whatsapp_number": "phone",
+		"email":           "email",
+		"nome_completo":   "name",
+	}}
 }

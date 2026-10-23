@@ -1,0 +1,271 @@
+package whatsapp
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func TestWebhookRouteClaimLockedHeadAllowsIndependentSameSession(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	for _, lane := range []string{evolutionWebhookLaneLive, evolutionWebhookLaneBacklog} {
+		t.Run(lane, func(t *testing.T) {
+			f := newWebhookDependencyFixture(t, ctx, db, "route-lock-"+lane)
+			root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-root", providerID: "root", route: "jid:blocked", lane: lane, epoch: 1, age: 3 * time.Minute})
+			successor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-successor", providerID: "successor", route: "jid:blocked", lane: lane, epoch: 1, age: 2 * time.Minute})
+			neighbor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-neighbor", providerID: "neighbor", route: "jid:independent", lane: lane, epoch: 1, age: time.Minute})
+			blocker, err := db.Pool().Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackWebhookTx(blocker)
+			if _, err := blocker.Exec(ctx, `select id from public.whatsapp_webhook_inbox where id=$1::uuid for update`, root); err != nil {
+				t.Fatal(err)
+			}
+			items, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, lane, 1, "")
+			if err != nil || len(items) != 1 || items[0].ID != neighbor {
+				t.Fatalf("locked route hid independent same-session head: items=%#v error=%v", items, err)
+			}
+			for _, id := range []string{root, successor} {
+				assertRouteClaimState(t, ctx, db.Pool(), id, "pending", 0)
+			}
+		})
+	}
+}
+
+func TestWebhookRouteClaimNativeSharedFenceAllowsIndependentSameSession(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	for _, lanes := range []struct {
+		name, active, candidate, activeRoute string
+		canAdvance                           bool
+	}{
+		{"live_live", evolutionWebhookLaneLive, evolutionWebhookLaneLive, "jid:blocked", true},
+		{"backlog_backlog", evolutionWebhookLaneBacklog, evolutionWebhookLaneBacklog, "jid:blocked", true},
+		{"live_backlog", evolutionWebhookLaneLive, evolutionWebhookLaneBacklog, "jid:blocked", true},
+		{"backlog_live", evolutionWebhookLaneBacklog, evolutionWebhookLaneLive, "jid:blocked", true},
+		{"session_fence_live", evolutionWebhookLaneBacklog, evolutionWebhookLaneLive, "__session__", false},
+		{"session_fence_backlog", evolutionWebhookLaneLive, evolutionWebhookLaneBacklog, "__session__", false},
+	} {
+		t.Run(lanes.name, func(t *testing.T) {
+			f := newWebhookDependencyFixture(t, ctx, db, "route-native-share-"+lanes.name)
+			root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-processing", providerID: "processing", route: lanes.activeRoute, lane: lanes.active,
+				epoch: 1, age: 3 * time.Minute})
+			if _, err := db.Pool().Exec(ctx, `update public.whatsapp_webhook_inbox set status='processing',locked_by=$2,locked_at=now() where id=$1::uuid`, root, whatsappWebhookWorkerID); err != nil {
+				t.Fatal(err)
+			}
+			successor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-successor", providerID: "successor", route: "jid:blocked", lane: lanes.candidate,
+				epoch: 1, age: 2 * time.Minute})
+			neighbor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-neighbor", providerID: "neighbor", route: "jid:independent", lane: lanes.candidate,
+				epoch: 1, age: time.Minute})
+			native, err := db.Pool().Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackWebhookTx(native)
+			if _, err := native.Exec(ctx, `select id from public.whatsapp_sessions where id=$1::uuid for share;
+		select id from public.whatsapp_webhook_inbox where id=$2::uuid for update`, f.sessionID, root); err != nil {
+				t.Fatal(err)
+			}
+			items, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, lanes.candidate, 1, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lanes.canAdvance {
+				if len(items) != 1 || items[0].ID != neighbor {
+					t.Fatalf("native SHARE fence blocked independent route: items=%#v error=%v", items, err)
+				}
+			} else if len(items) != 0 {
+				t.Fatal("active session-wide effect did not fence all routes across lanes")
+			}
+			assertRouteClaimState(t, ctx, db.Pool(), successor, "pending", 0)
+		})
+	}
+}
+
+func TestWebhookRouteClaimOldNewSessionFencesRemainCompatible(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	f := newWebhookDependencyFixture(t, ctx, db, "route-rolling-fence")
+	id := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+		key: f.suffix + "-head", providerID: "head", route: "jid:head", lane: evolutionWebhookLaneLive, epoch: 1, age: time.Minute})
+	old, err := db.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackWebhookTx(old)
+	if _, err := old.Exec(ctx, `select id from public.whatsapp_sessions where id=$1::uuid for no key update`, f.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(db, nil, StorageConfig{})
+	items, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, "")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("new claimant raced old exclusive session claimant: %#v/%v", items, err)
+	}
+	rollbackWebhookTx(old)
+	current, err := db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackWebhookTx(current)
+	reserved, err := reserveEvolutionWebhookClaimSessions(ctx, current, 1, "", evolutionWebhookLaneLive)
+	if err != nil || len(reserved) != 1 || reserved[0] != f.sessionID {
+		t.Fatalf("reserve current claimant=%#v/%v", reserved, err)
+	}
+	probe, err := db.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackWebhookTx(probe)
+	var session string
+	if err := probe.QueryRow(ctx, `select id::text from public.whatsapp_sessions where id=$1::uuid for no key update skip locked`, f.sessionID).Scan(&session); err != pgx.ErrNoRows {
+		t.Fatalf("old claimant did not respect new shared claim fence: %v", err)
+	}
+	other, err := reserveEvolutionWebhookClaimSessions(ctx, probe, 1, "", evolutionWebhookLaneLive)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("new replica did not respect exact short mutex: %#v/%v", other, err)
+	}
+	assertRouteClaimState(t, ctx, db.Pool(), id, "pending", 0)
+}
+
+func TestWebhookRouteClaimFreshStatementSeesCommittedOtherLaneLease(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	f := newWebhookDependencyFixture(t, ctx, db, "route-fresh-snapshot")
+	rootKey := f.suffix + "-root"
+	root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+		key: rootKey, providerID: "root", route: "jid:dependent", lane: evolutionWebhookLaneBacklog, epoch: 1, age: 3 * time.Minute})
+	child := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+		key: f.suffix + "-child", providerID: "child", route: "jid:dependent", lane: evolutionWebhookLaneLive,
+		predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: 2 * time.Minute})
+	neighbor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+		key: f.suffix + "-neighbor", providerID: "neighbor", route: "jid:independent", lane: evolutionWebhookLaneLive,
+		epoch: 1, age: time.Minute})
+	reader, err := db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackWebhookTx(reader)
+	if _, err := reader.Exec(ctx, `select id from public.whatsapp_webhook_inbox where session_id=$1::uuid`, f.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, "")
+	if err != nil || len(claimed) != 1 || claimed[0].ID != root {
+		t.Fatalf("dependency root claim=%#v/%v", claimed, err)
+	}
+	items, err := claimEvolutionWebhooksInLaneSegment(ctx, reader, 1, "", evolutionWebhookLaneLive)
+	if err != nil || len(items) != 1 || items[0].ID != neighbor {
+		t.Fatalf("new statement did not see committed cross-lane lease: %#v/%v", items, err)
+	}
+	assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
+}
+
+func TestWebhookRouteClaimConcurrentReplicasKeepCrossLaneDependency(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	for attempt := range 8 {
+		t.Run(fmt.Sprintf("race_%d", attempt), func(t *testing.T) {
+			f := newWebhookDependencyFixture(t, ctx, db, fmt.Sprintf("route-lane-race-%d", attempt))
+			rootKey := f.suffix + "-root"
+			root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: rootKey, providerID: "root", route: "jid:dependent", lane: evolutionWebhookLaneBacklog, epoch: 1, age: 2 * time.Minute})
+			child := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-child", providerID: "child", route: "jid:dependent", lane: evolutionWebhookLaneLive,
+				predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: time.Minute})
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			results := make(chan []pendingEvolutionWebhook, 4)
+			errors := make(chan error, 4)
+			for _, lane := range []string{evolutionWebhookLaneLive, evolutionWebhookLaneBacklog, evolutionWebhookLaneLive, evolutionWebhookLaneBacklog} {
+				wg.Add(1)
+				go func(lane string) {
+					defer wg.Done()
+					<-start
+					items, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, lane, 1, "")
+					results <- items
+					errors <- err
+				}(lane)
+			}
+			close(start)
+			wg.Wait()
+			close(results)
+			close(errors)
+			for err := range errors {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			count := 0
+			for items := range results {
+				for _, item := range items {
+					if item.ID != root {
+						t.Fatalf("cross-lane worker bypassed exact dependency: %s", item.ID)
+					}
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("exact root got %d leases, want one", count)
+			}
+			assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
+		})
+	}
+}
+
+func TestWebhookRouteClaimDeferredAndDeadRoutesKeepExactBarriers(t *testing.T) {
+	ctx, db := webhookDependencyDatabase(t)
+	for _, status := range []string{"retry", "dead", "session-control"} {
+		t.Run(status, func(t *testing.T) {
+			f := newWebhookDependencyFixture(t, ctx, db, "route-barrier-"+status)
+			rootKey := f.suffix + "-root"
+			route, rootStatus := "jid:blocked", status
+			if status == "session-control" {
+				route, rootStatus = "__session__", "retry"
+			}
+			root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: rootKey, providerID: "root", route: route, lane: evolutionWebhookLaneBacklog,
+				status: rootStatus, due: time.Hour, epoch: 1, age: 3 * time.Minute})
+			child := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-child", providerID: "child", route: "jid:blocked", lane: evolutionWebhookLaneBacklog,
+				predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: 2 * time.Minute})
+			neighbor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+				key: f.suffix + "-neighbor", providerID: "neighbor", route: "jid:independent", lane: evolutionWebhookLaneBacklog,
+				epoch: 1, age: time.Minute})
+			items, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "session-control" {
+				if len(items) != 0 {
+					t.Fatal("unclassified session-wide effect was bypassed without a durable narrower contract")
+				}
+			} else if len(items) != 1 || items[0].ID != neighbor {
+				t.Fatalf("isolated deferred/dead route hid independent head: %#v", items)
+			}
+			assertRouteClaimState(t, ctx, db.Pool(), root, rootStatus, 0)
+			assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
+		})
+	}
+}
+
+type routeClaimRowReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func assertRouteClaimState(t *testing.T, ctx context.Context, db routeClaimRowReader, id, want string, wantAttempts int) {
+	t.Helper()
+	var state string
+	var attempts int
+	if err := db.QueryRow(ctx, `select status,attempts from public.whatsapp_webhook_inbox where id=$1::uuid`, id).Scan(&state, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if state != want || attempts != wantAttempts {
+		t.Fatalf("route head state=%s/%d, want %s/%d", state, attempts, want, wantAttempts)
+	}
+}

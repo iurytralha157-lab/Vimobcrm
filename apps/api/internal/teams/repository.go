@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/managementintent"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -29,6 +33,7 @@ const (
 	maxTeamNameLength    = 120
 	maxTeamLogoURLLength = 2000
 	maxTeamMembers       = 500
+	maxTeamRevision      = 9007199254740991
 )
 
 type teamScanner interface {
@@ -67,6 +72,225 @@ func (repo Repository) beginTeamMutation(ctx context.Context) (pgx.Tx, error) {
 	return repo.db.Pool().Begin(ctx)
 }
 
+// Lock the aggregate before locking or changing team_members and availability.
+// NO KEY UPDATE still serializes team writers, while letting queue inserts take
+// their FK key-share lock on this team as they hold round_robins.
+func lockTeamRevision(ctx context.Context, tx pgx.Tx, organizationID, teamID string) (int64, error) {
+	var revision int64
+	err := tx.QueryRow(ctx, `
+		select revision
+		from public.teams
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for no key update
+	`, organizationID, teamID).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrTeamNotFound
+	}
+	return revision, err
+}
+
+func bumpTeamRevision(ctx context.Context, tx pgx.Tx, organizationID, teamID string) error {
+	tag, err := tx.Exec(ctx, `
+		update public.teams
+		set revision = revision + 1,
+		    updated_at = clock_timestamp()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, organizationID, teamID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTeamNotFound
+	}
+	return nil
+}
+
+func teamIDForMember(ctx context.Context, q queryRowExecutor, organizationID, teamMemberID string) (string, error) {
+	var teamID string
+	err := q.QueryRow(ctx, `
+		select team_id::text
+		from public.team_members
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, organizationID, teamMemberID).Scan(&teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrTeamMemberNotFound
+	}
+	return teamID, err
+}
+
+// A removal and later reinvitation can hide an old team_member without
+// changing teams.revision. Lock every row that can change the visible roster,
+// including temporarily inactive users and memberships, before comparing it.
+func verifyExpectedTeamMembers(ctx context.Context, tx pgx.Tx, organizationID, teamID string, expected, requestedUserIDs []string) error {
+	if expected == nil || len(expected) > maxTeamMembers {
+		return ErrInvalidInput
+	}
+	ids, err := normalizeUUIDList(expected)
+	if err != nil || len(ids) != len(expected) {
+		return ErrInvalidInput
+	}
+	sort.Strings(ids)
+	if err := lockTeamRosterDependencies(ctx, tx, organizationID, teamID, requestedUserIDs); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `
+		select tm.id::text
+		from public.team_members tm
+		join public.users u on u.id = tm.user_id
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and coalesce(om.is_active, false) = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		  and coalesce(tm.is_active, true) = true
+		  and coalesce(u.is_active, false) = true
+		order by tm.id
+	`, organizationID, teamID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	index := 0
+	for rows.Next() {
+		var memberID string
+		if err := rows.Scan(&memberID); err != nil {
+			return err
+		}
+		if index >= len(ids) || memberID != ids[index] {
+			return ErrTeamRevisionConflict
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if index != len(ids) {
+		return ErrTeamRevisionConflict
+	}
+	return nil
+}
+
+func collectTeamUUIDs(rows pgx.Rows) ([]string, error) {
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func lockTeamRosterDependencies(ctx context.Context, tx pgx.Tx, organizationID, teamID string, requestedUserIDs []string) error {
+	rows, err := tx.Query(ctx, `
+		select distinct tm.user_id::text
+		from public.team_members tm
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+	`, organizationID, teamID)
+	if err != nil {
+		return err
+	}
+	currentUserIDs, err := collectTeamUUIDs(rows)
+	if err != nil {
+		return err
+	}
+	targetIDs := make(map[string]struct{}, len(currentUserIDs)+len(requestedUserIDs))
+	for _, id := range currentUserIDs {
+		targetIDs[id] = struct{}{}
+	}
+	for _, id := range requestedUserIDs {
+		targetIDs[id] = struct{}{}
+	}
+	userIDs := make([]string, 0, len(targetIDs))
+	for id := range targetIDs {
+		userIDs = append(userIDs, id)
+	}
+	sort.Strings(userIDs)
+	encodedIDs, err := json.Marshal(userIDs)
+	if err != nil {
+		return err
+	}
+
+	// Each statement finishes before the next one starts. The user lifecycle
+	// also locks public.users before organization_members, including when a
+	// membership row is absent during a remove/reinvite lifecycle. NO KEY UPDATE
+	// still blocks changes to user activity but permits queue FK key-share locks.
+	rows, err = tx.Query(ctx, `
+		select u.id::text
+		from public.users u
+		where u.id in (select value::uuid from jsonb_array_elements_text($1::jsonb))
+		order by u.id
+		for no key update of u
+	`, string(encodedIDs))
+	if err != nil {
+		return err
+	}
+	lockedUsers, err := collectTeamUUIDs(rows)
+	if err != nil {
+		return err
+	}
+	lockedUserSet := make(map[string]struct{}, len(lockedUsers))
+	for _, id := range lockedUsers {
+		lockedUserSet[id] = struct{}{}
+	}
+	for _, id := range requestedUserIDs {
+		if _, ok := lockedUserSet[id]; !ok {
+			return ErrInvalidInput
+		}
+	}
+
+	rows, err = tx.Query(ctx, `
+		select om.user_id::text
+		from public.organization_members om
+		where om.organization_id = $1::uuid
+		  and om.user_id in (select value::uuid from jsonb_array_elements_text($2::jsonb))
+		order by om.user_id
+		for share of om
+	`, organizationID, string(encodedIDs))
+	if err != nil {
+		return err
+	}
+	lockedMemberships, err := collectTeamUUIDs(rows)
+	if err != nil {
+		return err
+	}
+	lockedMembershipSet := make(map[string]struct{}, len(lockedMemberships))
+	for _, id := range lockedMemberships {
+		lockedMembershipSet[id] = struct{}{}
+	}
+	for _, id := range requestedUserIDs {
+		if _, ok := lockedMembershipSet[id]; !ok {
+			return ErrInvalidInput
+		}
+	}
+
+	rows, err = tx.Query(ctx, `
+		select tm.id::text
+		from public.team_members tm
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		order by tm.id
+		for share of tm
+	`, organizationID, teamID)
+	if err != nil {
+		return err
+	}
+	_, err = collectTeamUUIDs(rows)
+	return err
+}
+
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, includeInactive bool) ([]Team, error) {
 	where := []string{"t.organization_id = $1::uuid"}
 	args := []any{tenantContext.OrganizationID}
@@ -91,6 +315,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, i
 			t.name,
 			t.organization_id::text,
 			t.created_at::text,
+			t.revision,
 			t.is_active,
 			t.logo_url,
 			t.created_by::text,
@@ -138,8 +363,11 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, i
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, request CreateTeamRequest) (Team, error) {
-	if !canManageTeams(tenantContext) {
+	if !tenantContext.HasPermission(permissions.TeamManage) {
 		return Team{}, tenant.ErrOrganizationAccessDenied
+	}
+	if invalidTeamMemberFormats(request.membersProvided, request.memberIDsProvided, request.Members, request.MemberIDs) {
+		return Team{}, ErrInvalidInput
 	}
 	name, err := normalizeTeamName(request.Name)
 	if err != nil || !validTeamLogoURL(request.LogoURL) {
@@ -156,6 +384,18 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := validateMemberAvailabilityWeeks(members, true); err != nil {
 		return Team{}, err
 	}
+	if !managementintent.ValidKey(request.IdempotencyKey) {
+		return Team{}, managementintent.ErrInvalidKey
+	}
+	canonicalRequest, err := json.Marshal(struct {
+		Name     string
+		Members  []TeamMemberInput
+		LogoURL  any
+		IsActive bool
+	}{name, members, textOrNil(request.LogoURL), isActive})
+	if err != nil {
+		return Team{}, err
+	}
 
 	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
@@ -164,6 +404,32 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Team{}, err
+	}
+	reservation, err := managementintent.Lookup(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, "team", request.IdempotencyKey, canonicalRequest)
+	if err != nil {
+		return Team{}, err
+	}
+	if reservation.EntityID != "" {
+		if !canRecoverTeamCreation(tenantContext, reservation.EntityID) {
+			return Team{}, tenant.ErrOrganizationAccessDenied
+		}
+		team, err := repo.getWithQueryer(ctx, tx, tenantContext, reservation.EntityID)
+		if errors.Is(err, ErrTeamNotFound) {
+			return Team{}, managementintent.ErrResultUnavailable
+		}
+		if err != nil {
+			return Team{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Team{}, err
+		}
+		return team, nil
+	}
+	// A committed request may itself have made the creator a team leader.
+	// Recovery above is scoped to that result; a new key still needs the
+	// organization-wide creation authority, exactly as before.
+	if !canManageTeams(tenantContext) {
+		return Team{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	var teamID string
@@ -176,14 +442,22 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 
-	if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
+	if len(members) > 0 {
+		if err := lockTeamRosterDependencies(ctx, tx, tenantContext.OrganizationID, teamID, memberUserIDs(members)); err != nil {
+			return Team{}, err
+		}
+	}
+	if _, err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
 		return Team{}, err
 	}
-	if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
+	if _, err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
 		return Team{}, err
 	}
 	team, err := repo.getWithQueryer(ctx, tx, tenantContext, teamID)
 	if err != nil {
+		return Team{}, err
+	}
+	if err := managementintent.Record(ctx, tx, reservation, teamID); err != nil {
 		return Team{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -194,11 +468,21 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, teamID string, request UpdateTeamRequest) (Team, error) {
+	return repo.update(ctx, tenantContext, teamID, request, true)
+}
+
+func (repo Repository) update(ctx context.Context, tenantContext tenant.Context, teamID string, request UpdateTeamRequest, requireRevision bool) (Team, error) {
 	teamID, ok := normalizeUUID(teamID)
 	if !ok {
 		return Team{}, ErrInvalidInput
 	}
+	if invalidTeamMemberFormats(request.membersProvided, request.memberIDsProvided, request.Members, request.MemberIDs) {
+		return Team{}, ErrInvalidInput
+	}
 	if !hasTeamUpdate(request) {
+		return Team{}, ErrInvalidInput
+	}
+	if requireRevision && (request.ExpectedRevision == nil || *request.ExpectedRevision < 1 || *request.ExpectedRevision > maxTeamRevision) {
 		return Team{}, ErrInvalidInput
 	}
 	isAdminScope := canManageTeams(tenantContext)
@@ -236,20 +520,31 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Team{}, err
 	}
-	var lockedTeamID string
-	if err := tx.QueryRow(ctx, `
-		select id::text
-		from public.teams
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		for update
-	`, tenantContext.OrganizationID, teamID).Scan(&lockedTeamID); errors.Is(err, pgx.ErrNoRows) {
-		return Team{}, ErrTeamNotFound
-	} else if err != nil {
+	if hasMemberUpdate(request) {
+		if err := lockTeamQueueDomain(ctx, tx, tenantContext.OrganizationID); err != nil {
+			return Team{}, err
+		}
+	}
+	currentRevision, err := lockTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID)
+	if err != nil {
 		return Team{}, err
+	}
+	if requireRevision && currentRevision != *request.ExpectedRevision {
+		return Team{}, ErrTeamRevisionConflict
+	}
+	if hasMemberUpdate(request) {
+		if err := lockTeamQueueParents(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
+			return Team{}, err
+		}
+	}
+	if requireRevision && hasMemberUpdate(request) {
+		if err := verifyExpectedTeamMembers(ctx, tx, tenantContext.OrganizationID, teamID, request.ExpectedMemberIDs, memberUserIDs(normalizedMemberInputs)); err != nil {
+			return Team{}, err
+		}
 	}
 
 	args := []any{tenantContext.OrganizationID, teamID}
+	changed := false
 	assignments := []string{}
 	changePredicates := []string{}
 	if request.Name != nil {
@@ -270,7 +565,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	if len(assignments) > 0 {
 		assignments = append(assignments, "updated_at = now()")
-		_, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			update public.teams
 			set `+strings.Join(assignments, ", ")+`
 			where organization_id = $1::uuid
@@ -280,6 +575,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if err != nil {
 			return Team{}, err
 		}
+		changed = tag.RowsAffected() > 0
 	}
 
 	if hasMemberUpdate(request) {
@@ -306,19 +602,33 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 				memberInputs[index].IsLeader = current[memberInputs[index].UserID]
 			}
 		}
-		if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
+		membersChanged, err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs)
+		if err != nil {
 			return Team{}, err
 		}
-		if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
+		changed = changed || membersChanged
+		availabilityChanged, err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs)
+		if err != nil {
 			return Team{}, err
 		}
-		if err := syncRoundRobinWithTeam(
+		changed = changed || availabilityChanged
+		keepMemberIDs, err := currentTeamQueueKeepIDs(ctx, tx, tenantContext.OrganizationID, teamID)
+		if err != nil {
+			return Team{}, err
+		}
+		if err := syncRoundRobinWithTeamPreserving(
 			ctx,
 			tx,
 			tenantContext.OrganizationID,
 			teamID,
 			memberUserIDs(memberInputs),
+			keepMemberIDs,
 		); err != nil {
+			return Team{}, err
+		}
+	}
+	if changed {
+		if err := bumpTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
 			return Team{}, err
 		}
 	}
@@ -334,7 +644,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) UpdateStatus(ctx context.Context, tenantContext tenant.Context, teamID string, isActive bool) (Team, error) {
-	return repo.Update(ctx, tenantContext, teamID, UpdateTeamRequest{IsActive: &isActive})
+	return repo.update(ctx, tenantContext, teamID, UpdateTeamRequest{IsActive: &isActive}, false)
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, teamID string) error {
@@ -352,6 +662,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	}
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+	if _, err := lockTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
 		return err
 	}
 
@@ -419,6 +732,7 @@ func (repo Repository) getWithQueryer(
 			t.name,
 			t.organization_id::text,
 			t.created_at::text,
+			t.revision,
 			t.is_active,
 			t.logo_url,
 			t.created_by::text,
@@ -534,68 +848,85 @@ func (repo Repository) ListTeamPipelines(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) AssignPipelineToTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) (TeamPipelineRelation, error) {
+	item, _, err := repo.assignPipelineToTeam(ctx, tenantContext, request)
+	return item, err
+}
+
+func (repo Repository) assignPipelineToTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) (TeamPipelineRelation, bool, error) {
 	teamID, pipelineID, err := normalizeTeamPipelineRequest(request)
 	if err != nil {
-		return TeamPipelineRelation{}, err
+		return TeamPipelineRelation{}, false, err
 	}
 	if !canManageTeamPipeline(tenantContext, teamID) {
-		return TeamPipelineRelation{}, tenant.ErrOrganizationAccessDenied
+		return TeamPipelineRelation{}, false, tenant.ErrOrganizationAccessDenied
 	}
-	if err := repo.ensureTeamAndPipeline(ctx, tenantContext.OrganizationID, teamID, pipelineID); err != nil {
-		return TeamPipelineRelation{}, err
-	}
-
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
-		return TeamPipelineRelation{}, err
+		return TeamPipelineRelation{}, false, err
 	}
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
-		return TeamPipelineRelation{}, err
+		return TeamPipelineRelation{}, false, err
+	}
+	if err := ensureTeamAndPipelineWithQueryer(ctx, tx, tenantContext.OrganizationID, teamID, pipelineID); err != nil {
+		return TeamPipelineRelation{}, false, err
 	}
 
-	if _, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		insert into public.team_pipelines (organization_id, team_id, pipeline_id)
 		values ($1::uuid, $2::uuid, $3::uuid)
 		on conflict (team_id, pipeline_id) do nothing
-	`, tenantContext.OrganizationID, teamID, pipelineID); err != nil {
-		return TeamPipelineRelation{}, err
+	`, tenantContext.OrganizationID, teamID, pipelineID)
+	if err != nil {
+		return TeamPipelineRelation{}, false, err
+	}
+	item, err := getTeamPipelineByPairWithQueryer(ctx, tx, tenantContext.OrganizationID, teamID, pipelineID)
+	if err != nil {
+		return TeamPipelineRelation{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return TeamPipelineRelation{}, err
+		return TeamPipelineRelation{}, false, err
 	}
 
-	return repo.getTeamPipelineByPair(ctx, tenantContext.OrganizationID, teamID, pipelineID)
+	return item, tag.RowsAffected() > 0, nil
 }
 
 func (repo Repository) RemovePipelineFromTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) error {
+	_, err := repo.removePipelineFromTeam(ctx, tenantContext, request)
+	return err
+}
+
+func (repo Repository) removePipelineFromTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) (bool, error) {
 	teamID, pipelineID, err := normalizeTeamPipelineRequest(request)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !canManageTeamPipeline(tenantContext, teamID) {
-		return tenant.ErrOrganizationAccessDenied
+		return false, tenant.ErrOrganizationAccessDenied
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
-		return err
+		return false, err
 	}
 
-	_, err = tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		delete from public.team_pipelines
 		where organization_id = $1::uuid
 		  and team_id = $2::uuid
 		  and pipeline_id = $3::uuid
 	`, tenantContext.OrganizationID, teamID, pipelineID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.Context, request SetTeamLeaderRequest) error {
@@ -619,6 +950,34 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
+	if _, err := lockTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
+		return err
+	}
+	var currentIsLeader bool
+	err = tx.QueryRow(ctx, `
+		select coalesce(tm.is_leader, false)
+		from public.team_members tm
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		  and tm.user_id = $3::uuid
+		  and coalesce(tm.is_active, true) = true
+		for update of tm
+	`, tenantContext.OrganizationID, teamID, userID).Scan(&currentIsLeader)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTeamMemberNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if currentIsLeader == request.IsLeader {
+		return tx.Commit(ctx)
+	}
 
 	tag, err := tx.Exec(ctx, `
 		update public.team_members tm
@@ -628,6 +987,16 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 		where tm.organization_id = $1::uuid
 		  and tm.team_id = $2::uuid
 		  and tm.user_id = $3::uuid
+		  and coalesce(tm.is_active, true) = true
+		  and exists (
+		    select 1
+		    from public.organization_members om
+		    where om.organization_id = tm.organization_id
+		      and om.user_id = tm.user_id
+		      and om.is_active = true
+		      and om.deleted_at is null
+		      and om.membership_generation = tm.membership_generation
+		  )
 		  and exists (
 		    select 1
 		    from public.teams t
@@ -641,10 +1010,23 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 	if tag.RowsAffected() == 0 {
 		return ErrTeamMemberNotFound
 	}
+	if err := bumpTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
 func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenant.Context, teamMemberIDs []string) ([]MemberAvailability, error) {
+	if !canReadTeamAvailability(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	return listAvailabilityWithQueryer(ctx, repo.db.Pool(), tenantContext, teamMemberIDs)
+}
+
+func listAvailabilityWithQueryer(ctx context.Context, q teamReadExecutor, tenantContext tenant.Context, teamMemberIDs []string) ([]MemberAvailability, error) {
+	if !canReadTeamAvailability(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 	ids, err := normalizeUUIDList(teamMemberIDs)
 	if err != nil {
 		return nil, err
@@ -672,7 +1054,7 @@ func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenan
 		where = append(where, "tm.team_id in ("+strings.Join(placeholders, ", ")+")")
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := q.Query(ctx, `
 		select
 			ma.id::text,
 			ma.team_member_id::text,
@@ -686,7 +1068,14 @@ func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenan
 		from public.member_availability ma
 		join public.team_members tm on tm.id = ma.team_member_id
 		join public.teams t on t.id = tm.team_id
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
 		where `+strings.Join(where, " and ")+`
+		  and coalesce(tm.is_active, true) = true
 		order by ma.team_member_id asc, ma.day_of_week asc
 	`, args...)
 	if err != nil {
@@ -708,29 +1097,45 @@ func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenan
 	return items, nil
 }
 
-func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext tenant.Context, request AvailabilityRequest) (MemberAvailability, error) {
+func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext tenant.Context, request AvailabilityRequest) (AvailabilityMutationResponse, error) {
+	if !validExpectedTeamRevision(request.ExpectedRevision) {
+		return AvailabilityMutationResponse{}, ErrInvalidInput
+	}
 	input, err := normalizeAvailabilityRequest(request)
 	if err != nil {
-		return MemberAvailability{}, err
+		return AvailabilityMutationResponse{}, err
 	}
-	if err := repo.ensureCanManageAvailability(ctx, repo.db.Pool(), tenantContext, input.TeamMemberID); err != nil {
-		return MemberAvailability{}, err
-	}
-
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
-		return MemberAvailability{}, err
+		return AvailabilityMutationResponse{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
-		return MemberAvailability{}, err
+		return AvailabilityMutationResponse{}, err
+	}
+	teamID, err := teamIDForMember(ctx, tx, tenantContext.OrganizationID, input.TeamMemberID)
+	if err != nil {
+		return AvailabilityMutationResponse{}, err
+	}
+	currentRevision, err := lockTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID)
+	if err != nil {
+		if errors.Is(err, ErrTeamNotFound) {
+			return AvailabilityMutationResponse{}, ErrTeamMemberNotFound
+		}
+		return AvailabilityMutationResponse{}, err
+	}
+	if currentRevision != *request.ExpectedRevision {
+		return AvailabilityMutationResponse{}, ErrTeamRevisionConflict
+	}
+	if err := repo.ensureCanManageAvailability(ctx, tx, tenantContext, input.TeamMemberID); err != nil {
+		return AvailabilityMutationResponse{}, err
 	}
 	if err := lockTeamMemberAvailability(ctx, tx, tenantContext.OrganizationID, input.TeamMemberID); err != nil {
-		return MemberAvailability{}, err
+		return AvailabilityMutationResponse{}, err
 	}
-	item, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input)
+	item, changed, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input)
 	if err != nil {
-		return MemberAvailability{}, err
+		return AvailabilityMutationResponse{}, err
 	}
 	if !input.IsActive {
 		var hasActiveDay bool
@@ -743,58 +1148,96 @@ func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext ten
 				  and coalesce(is_active, true) = true
 			)
 		`, tenantContext.OrganizationID, input.TeamMemberID).Scan(&hasActiveDay); err != nil {
-			return MemberAvailability{}, err
+			return AvailabilityMutationResponse{}, err
 		}
 		if !hasActiveDay {
-			return MemberAvailability{}, ErrInvalidInput
+			return AvailabilityMutationResponse{}, ErrInvalidInput
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return MemberAvailability{}, err
+	if changed {
+		if err := bumpTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
+			return AvailabilityMutationResponse{}, err
+		}
 	}
-	return item, nil
+	if changed {
+		currentRevision++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AvailabilityMutationResponse{}, err
+	}
+	return AvailabilityMutationResponse{Data: item, Revision: currentRevision}, nil
 }
 
-func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext tenant.Context, teamMemberID string, requests []AvailabilityRequest) ([]MemberAvailability, error) {
+func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext tenant.Context, teamMemberID string, requests []AvailabilityRequest, expectedRevision *int64) (AvailabilitySnapshot, error) {
+	if !validExpectedTeamRevision(expectedRevision) {
+		return AvailabilitySnapshot{}, ErrInvalidInput
+	}
 	teamMemberID, ok := normalizeUUID(teamMemberID)
 	if !ok {
-		return nil, ErrInvalidInput
+		return AvailabilitySnapshot{}, ErrInvalidInput
 	}
 	normalized, err := normalizeCompleteAvailabilityWeek(teamMemberID, requests)
 	if err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
+	}
+	teamID, err := teamIDForMember(ctx, tx, tenantContext.OrganizationID, teamMemberID)
+	if err != nil {
+		return AvailabilitySnapshot{}, err
+	}
+	currentRevision, err := lockTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID)
+	if err != nil {
+		if errors.Is(err, ErrTeamNotFound) {
+			return AvailabilitySnapshot{}, ErrTeamMemberNotFound
+		}
+		return AvailabilitySnapshot{}, err
+	}
+	if currentRevision != *expectedRevision {
+		return AvailabilitySnapshot{}, ErrTeamRevisionConflict
 	}
 
 	if err := ensureTeamMemberBelongsToOrganization(ctx, tx, tenantContext.OrganizationID, teamMemberID); err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 	if err := repo.ensureCanManageAvailability(ctx, tx, tenantContext, teamMemberID); err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 	if err := lockTeamMemberAvailability(ctx, tx, tenantContext.OrganizationID, teamMemberID); err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 
+	changed := false
 	for _, input := range normalized {
-		if _, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input); err != nil {
-			return nil, err
+		_, dayChanged, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input)
+		if err != nil {
+			return AvailabilitySnapshot{}, err
 		}
+		changed = changed || dayChanged
+	}
+	if changed {
+		if err := bumpTeamRevision(ctx, tx, tenantContext.OrganizationID, teamID); err != nil {
+			return AvailabilitySnapshot{}, err
+		}
+		currentRevision++
 	}
 
+	items, err := listAvailabilityWithQueryer(ctx, tx, tenantContext, []string{teamMemberID})
+	if err != nil {
+		return AvailabilitySnapshot{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return AvailabilitySnapshot{}, err
 	}
 
-	return repo.ListAvailability(ctx, tenantContext, []string{teamMemberID})
+	return AvailabilitySnapshot{Data: items, Revision: currentRevision}, nil
 }
 
 func validateMemberAvailabilityWeeks(members []TeamMemberInput, required bool) error {
@@ -830,7 +1273,7 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 	organizationID string,
 	teamID string,
 	members []TeamMemberInput,
-) error {
+) (bool, error) {
 	userIDs := make([]string, 0, len(members))
 	for _, member := range members {
 		if member.Availability != nil {
@@ -838,7 +1281,7 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 		}
 	}
 	if len(userIDs) == 0 {
-		return nil
+		return false, nil
 	}
 
 	args := []any{organizationID, teamID}
@@ -848,40 +1291,46 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
 	}
 	rows, err := tx.Query(ctx, `
-		select id::text, user_id::text
-		from public.team_members
-		where organization_id = $1::uuid
-		  and team_id = $2::uuid
-		  and user_id in (`+strings.Join(placeholders, ", ")+`)
-		  and coalesce(is_active, true) = true
+		select tm.id::text, tm.user_id::text
+		from public.team_members tm
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		  and tm.user_id in (`+strings.Join(placeholders, ", ")+`)
+		  and coalesce(tm.is_active, true) = true
 	`, args...)
 	if err != nil {
-		return err
+		return false, err
 	}
 	memberIDByUserID := make(map[string]string, len(userIDs))
 	for rows.Next() {
 		var memberID, userID string
 		if err := rows.Scan(&memberID, &userID); err != nil {
 			rows.Close()
-			return err
+			return false, err
 		}
 		memberIDByUserID[userID] = memberID
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return false, err
 	}
 
 	inputs, err := normalizeMemberAvailabilityInputs(members, memberIDByUserID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	payload, err := json.Marshal(inputs)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	_, err = tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		insert into public.member_availability as current_availability (
 			organization_id,
 			team_member_id,
@@ -925,7 +1374,7 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 			excluded.is_active
 		)
 	`, organizationID, string(payload))
-	return err
+	return tag.RowsAffected() > 0, err
 }
 
 func normalizeMemberAvailabilityInputs(
@@ -986,6 +1435,7 @@ func membersByTeamWithQueryer(
 		 and om.user_id = tm.user_id
 		 and coalesce(om.is_active, false) = true
 		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
 		where coalesce(tm.is_active, true) = true`+teamPredicate+`
 		  and coalesce(u.is_active, false) = true
 		order by tm.created_at asc, tm.id asc
@@ -1008,9 +1458,17 @@ func membersByTeamWithQueryer(
 
 func (repo Repository) currentLeaderMap(ctx context.Context, tx pgx.Tx, teamID string) (map[string]bool, error) {
 	rows, err := tx.Query(ctx, `
-		select user_id::text, coalesce(is_leader, false)
-		from public.team_members
-		where team_id = $1::uuid
+		select tm.user_id::text, coalesce(tm.is_leader, false)
+		from public.team_members tm
+		join public.users u on u.id = tm.user_id and coalesce(u.is_active, false) = true
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.team_id = $1::uuid
+		  and coalesce(tm.is_active, true) = true
 	`, teamID)
 	if err != nil {
 		return nil, err
@@ -1036,11 +1494,17 @@ func (repo Repository) currentMemberIDSet(
 	teamID string,
 ) (map[string]struct{}, error) {
 	rows, err := tx.Query(ctx, `
-		select user_id::text
-		from public.team_members
-		where organization_id = $1::uuid
-		  and team_id = $2::uuid
-		  and coalesce(is_active, true) = true
+		select tm.user_id::text
+		from public.team_members tm
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		  and coalesce(tm.is_active, true) = true
 	`, organizationID, teamID)
 	if err != nil {
 		return nil, err
@@ -1066,12 +1530,18 @@ func lockTeamMemberAvailability(
 ) error {
 	var lockedID string
 	err := tx.QueryRow(ctx, `
-		select id::text
-		from public.team_members
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and coalesce(is_active, true) = true
-		for update
+		select tm.id::text
+		from public.team_members tm
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
+		where tm.organization_id = $1::uuid
+		  and tm.id = $2::uuid
+		  and coalesce(tm.is_active, true) = true
+		for update of tm
 	`, organizationID, teamMemberID).Scan(&lockedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrTeamMemberNotFound
@@ -1079,7 +1549,7 @@ func lockTeamMemberAvailability(
 	return err
 }
 
-func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, members []TeamMemberInput) error {
+func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, members []TeamMemberInput) (bool, error) {
 	var teamExists bool
 	if err := tx.QueryRow(ctx, `
 		select exists (
@@ -1089,29 +1559,46 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 			  and id = $2::uuid
 		)
 	`, organizationID, teamID).Scan(&teamExists); err != nil {
-		return err
+		return false, err
 	}
 	if !teamExists {
-		return ErrTeamNotFound
+		return false, ErrTeamNotFound
 	}
 
 	normalized, err := normalizeMembersStrict(members)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ids := memberUserIDs(normalized)
+	// The editor replaces only the roster it can see. A member hidden by a
+	// temporary suspension keeps the team link and its availability week.
+	const visibleMemberPredicate = `
+		coalesce(tm.is_active, true) = true
+		and exists (
+			select 1
+			from public.users u
+			join public.organization_members om
+			  on om.user_id = u.id
+			 and om.organization_id = tm.organization_id
+			where u.id = tm.user_id
+			  and coalesce(u.is_active, false) = true
+			  and coalesce(om.is_active, false) = true
+			  and om.deleted_at is null
+			  and om.membership_generation = tm.membership_generation
+		)`
 
 	if len(ids) == 0 {
-		_, err := tx.Exec(ctx, `
-			delete from public.team_members
-			where organization_id = $1::uuid
-			  and team_id = $2::uuid
+		tag, err := tx.Exec(ctx, `
+			delete from public.team_members tm
+			where tm.organization_id = $1::uuid
+			  and tm.team_id = $2::uuid
+			  and `+visibleMemberPredicate+`
 		`, organizationID, teamID)
-		return err
+		return tag.RowsAffected() > 0, err
 	}
 
 	if err := ensureUsersBelongToOrganization(ctx, tx, organizationID, ids); err != nil {
-		return err
+		return false, err
 	}
 
 	args := []any{organizationID, teamID}
@@ -1120,13 +1607,15 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 		args = append(args, id)
 		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
 	}
-	if _, err := tx.Exec(ctx, `
-		delete from public.team_members
-		where organization_id = $1::uuid
-		  and team_id = $2::uuid
-		  and user_id not in (`+strings.Join(placeholders, ", ")+`)
-	`, args...); err != nil {
-		return err
+	deleted, err := tx.Exec(ctx, `
+		delete from public.team_members tm
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		  and tm.user_id not in (`+strings.Join(placeholders, ", ")+`)
+		  and `+visibleMemberPredicate+`
+	`, args...)
+	if err != nil {
+		return false, err
 	}
 
 	type memberWriteInput struct {
@@ -1142,9 +1631,9 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.Exec(ctx, `
+	upserted, err := tx.Exec(ctx, `
 		insert into public.team_members as current_member (
 			organization_id,
 			team_id,
@@ -1163,14 +1652,16 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 		on conflict (team_id, user_id) do update
 		set is_leader = excluded.is_leader,
 		    is_active = true,
+		    membership_generation = excluded.membership_generation,
 		    updated_at = now()
 		where current_member.organization_id = excluded.organization_id
 		  and (
 			current_member.is_leader is distinct from excluded.is_leader
 			or current_member.is_active is distinct from true
+			or current_member.membership_generation is distinct from excluded.membership_generation
 		  )
 	`, organizationID, teamID, string(encoded))
-	return err
+	return deleted.RowsAffected() > 0 || upserted.RowsAffected() > 0, err
 }
 
 func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizationID string, userIDs []string) error {
@@ -1191,6 +1682,7 @@ func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizatio
 		where u.id in (`+strings.Join(placeholders, ", ")+`)
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
 	`, args...).Scan(&validCount); err != nil {
 		return err
 	}
@@ -1200,14 +1692,47 @@ func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizatio
 	return nil
 }
 
+func currentTeamQueueKeepIDs(ctx context.Context, tx pgx.Tx, organizationID, teamID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		select distinct tm.user_id::text
+		from public.team_members tm
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
+		order by tm.user_id::text
+	`, organizationID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return collectTeamUUIDs(rows)
+}
+
 func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, newMemberIDs []string) error {
+	return syncRoundRobinWithTeamPreserving(ctx, tx, organizationID, teamID, newMemberIDs, newMemberIDs)
+}
+
+func syncRoundRobinWithTeamPreserving(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, newMemberIDs, keepMemberIDs []string) error {
 	rows, err := tx.Query(ctx, `
 		select
 			rrm.id::text,
 			rrm.round_robin_id::text,
 			rrm.user_id::text,
 			coalesce(rrm.position, 0),
-			coalesce(rrm.weight, 10)
+			coalesce(rrm.weight, 10),
+			coalesce(rrm.membership_generation, 0),
+			coalesce((
+				select om.membership_generation
+				from public.organization_members om
+				where om.organization_id = rrm.organization_id
+				  and om.user_id = rrm.user_id
+			), 0),
+			coalesce(rrm.is_active, true),
+			exists (
+			  select 1 from public.round_robin_members logical
+			  where logical.organization_id = rrm.organization_id
+			    and logical.round_robin_id = rrm.round_robin_id
+			    and logical.team_id = rrm.team_id
+			    and logical.user_id is null
+			)
 		from public.round_robin_members rrm
 		join public.round_robins rr
 		  on rr.id = rrm.round_robin_id
@@ -1224,16 +1749,20 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 	defer rows.Close()
 
 	type rrMember struct {
-		ID           string
-		RoundRobinID string
-		UserID       string
-		Position     int
-		Weight       int
+		ID                string
+		RoundRobinID      string
+		UserID            string
+		Position          int
+		Weight            int
+		Generation        int64
+		CurrentGeneration int64
+		IsActive          bool
+		HasLogicalEntry   bool
 	}
 	byQueue := map[string][]rrMember{}
 	for rows.Next() {
 		var member rrMember
-		if err := rows.Scan(&member.ID, &member.RoundRobinID, &member.UserID, &member.Position, &member.Weight); err != nil {
+		if err := rows.Scan(&member.ID, &member.RoundRobinID, &member.UserID, &member.Position, &member.Weight, &member.Generation, &member.CurrentGeneration, &member.IsActive, &member.HasLogicalEntry); err != nil {
 			return err
 		}
 		byQueue[member.RoundRobinID] = append(byQueue[member.RoundRobinID], member)
@@ -1243,20 +1772,105 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 	}
 
 	nextIDs := map[string]struct{}{}
-	for _, id := range newMemberIDs {
+	for _, id := range keepMemberIDs {
 		nextIDs[id] = struct{}{}
+	}
+	insertIDs := map[string]struct{}{}
+	for _, id := range newMemberIDs {
+		insertIDs[id] = struct{}{}
 	}
 	for roundRobinID, currentMembers := range byQueue {
 		currentIDs := map[string]struct{}{}
 		maxPosition := -1
-		defaultWeight := 10
-		if len(currentMembers) > 0 {
-			defaultWeight = currentMembers[0].Weight
-		}
+		defaultWeight := currentMembers[0].Weight
+		logicalPresent := currentMembers[0].HasLogicalEntry
+		hasResultingTeamEntry := logicalPresent
+		anyActive := false
 		for _, member := range currentMembers {
 			currentIDs[member.UserID] = struct{}{}
 			if member.Position > maxPosition {
 				maxPosition = member.Position
+			}
+			if _, keep := nextIDs[member.UserID]; keep {
+				hasResultingTeamEntry = true
+			}
+			anyActive = anyActive || member.IsActive
+		}
+		// Observe actual INSERT outcomes before deleting the last legacy row.
+		// A selected user may already be a direct participant (DO NOTHING), and
+		// hidden roster members need not have a participant in this queue.
+		position := int64(maxPosition) + 1
+		initialCount := int64(-1)
+		insertedCount := int64(0)
+		if !logicalPresent {
+			for _, userID := range newMemberIDs {
+				if _, exists := currentIDs[userID]; exists {
+					continue
+				}
+				if initialCount < 0 {
+					initialCount, err = teamQueueParticipantCount(ctx, tx, organizationID, roundRobinID)
+					if err != nil {
+						return err
+					}
+				}
+				if position > maxQueueParticipantPosition {
+					// ON CONFLICT cannot protect an overflowing int4 parameter. A
+					// direct participant needs no new position or team-bound row.
+					exists, err := teamQueueUserExists(ctx, tx, organizationID, roundRobinID, userID)
+					if err != nil {
+						return err
+					}
+					if exists {
+						continue
+					}
+					return ErrTeamQueueSyncBlocked
+				}
+				tag, err := tx.Exec(ctx, `
+					insert into public.round_robin_members (organization_id, round_robin_id, team_id, user_id, weight, position, is_active)
+					values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, true)
+					on conflict (round_robin_id, user_id) do nothing
+				`, organizationID, roundRobinID, teamID, userID, defaultWeight, int(position))
+				if err != nil {
+					return err
+				}
+				if tag.RowsAffected() > 0 {
+					hasResultingTeamEntry = true
+					currentIDs[userID] = struct{}{}
+					insertedCount += tag.RowsAffected()
+					position++
+				}
+			}
+		}
+		// Preserve the binding when these effective writes would leave no team
+		// participant. A logical entry expands future roster changes directly.
+		anchorID := ""
+		if !hasResultingTeamEntry {
+			first := currentMembers[0]
+			tag, err := tx.Exec(ctx, `
+				update public.round_robin_members member
+				set user_id = null, is_active = $5, updated_at = now()
+				where member.organization_id = $1::uuid
+				  and member.round_robin_id = $2::uuid
+				  and member.team_id = $3::uuid
+				  and member.id = $4::uuid
+				  and not exists (
+				    select 1 from public.round_robin_members logical
+				    where logical.organization_id = $1::uuid
+				      and logical.round_robin_id = $2::uuid
+				      and logical.team_id = $3::uuid
+				      and logical.user_id is null
+				  )
+			`, organizationID, roundRobinID, teamID, first.ID, anyActive)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() > 0 {
+				anchorID = first.ID
+			}
+		}
+		for _, member := range currentMembers {
+			if member.ID == anchorID {
+				continue
 			}
 			if _, keep := nextIDs[member.UserID]; !keep {
 				if _, err := tx.Exec(ctx, `
@@ -1266,25 +1880,28 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 				`, organizationID, member.ID); err != nil {
 					return err
 				}
+			} else if _, selected := insertIDs[member.UserID]; selected && member.Generation != member.CurrentGeneration {
+				// An explicit re-enrollment must rebind an existing stale queue row.
+				if _, err := tx.Exec(ctx, `
+					update public.round_robin_members
+					set is_active = true
+					where organization_id = $1::uuid
+					  and id = $2::uuid
+				`, organizationID, member.ID); err != nil {
+					return err
+				}
 			}
 		}
-		position := maxPosition + 1
-		for _, userID := range newMemberIDs {
-			if _, exists := currentIDs[userID]; exists {
-				continue
-			}
-			if _, err := tx.Exec(ctx, `
-				insert into public.round_robin_members (organization_id, round_robin_id, team_id, user_id, weight, position, is_active)
-				values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, true)
-				on conflict (round_robin_id, user_id) do update
-				set weight = excluded.weight,
-				    team_id = excluded.team_id,
-				    position = excluded.position,
-				    is_active = true
-			`, organizationID, roundRobinID, teamID, userID, defaultWeight, position); err != nil {
+		if insertedCount > 0 {
+			finalCount, err := teamQueueParticipantCount(ctx, tx, organizationID, roundRobinID)
+			if err != nil {
 				return err
 			}
-			position++
+			// Legacy queues above the cap can retain or reduce their count.
+			// Only real growth beyond the cap prevents the entire team save.
+			if finalCount > distribution.MaxQueueParticipants && finalCount > initialCount {
+				return ErrTeamQueueSyncBlocked
+			}
 		}
 	}
 	return nil
@@ -1294,7 +1911,7 @@ func scanTeam(row teamScanner) (Team, error) {
 	var team Team
 	var logoURL, createdBy pgtype.Text
 	var creatorID, creatorName, creatorEmail, creatorAvatar pgtype.Text
-	err := row.Scan(&team.ID, &team.Name, &team.OrganizationID, &team.CreatedAt, &team.IsActive, &logoURL, &createdBy, &creatorID, &creatorName, &creatorEmail, &creatorAvatar)
+	err := row.Scan(&team.ID, &team.Name, &team.OrganizationID, &team.CreatedAt, &team.Revision, &team.IsActive, &logoURL, &createdBy, &creatorID, &creatorName, &creatorEmail, &creatorAvatar)
 	if err != nil {
 		return Team{}, err
 	}
@@ -1329,7 +1946,11 @@ func scanTeamMember(row teamScanner) (TeamMember, error) {
 }
 
 func (repo Repository) getTeamPipelineByPair(ctx context.Context, organizationID string, teamID string, pipelineID string) (TeamPipelineRelation, error) {
-	item, err := scanTeamPipeline(repo.db.Pool().QueryRow(ctx, `
+	return getTeamPipelineByPairWithQueryer(ctx, repo.db.Pool(), organizationID, teamID, pipelineID)
+}
+
+func getTeamPipelineByPairWithQueryer(ctx context.Context, q queryRowExecutor, organizationID string, teamID string, pipelineID string) (TeamPipelineRelation, error) {
+	item, err := scanTeamPipeline(q.QueryRow(ctx, `
 		select
 			tp.id::text,
 			tp.team_id::text,
@@ -1389,8 +2010,12 @@ func scanMemberAvailability(row teamScanner) (MemberAvailability, error) {
 }
 
 func (repo Repository) ensureTeamAndPipeline(ctx context.Context, organizationID string, teamID string, pipelineID string) error {
+	return ensureTeamAndPipelineWithQueryer(ctx, repo.db.Pool(), organizationID, teamID, pipelineID)
+}
+
+func ensureTeamAndPipelineWithQueryer(ctx context.Context, q queryRowExecutor, organizationID string, teamID string, pipelineID string) error {
 	var ok bool
-	if err := repo.db.Pool().QueryRow(ctx, `
+	if err := q.QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.teams t
@@ -1451,6 +2076,20 @@ func normalizeAvailabilityRequest(request AvailabilityRequest) (availabilityInpu
 		startTime = nil
 		endTime = nil
 	}
+	for _, clock := range []*string{startTime, endTime} {
+		if clock != nil {
+			if _, ok := parseAvailabilityClock(clock); !ok {
+				return availabilityInput{}, ErrInvalidInput
+			}
+		}
+	}
+	if isActive && !isAllDay {
+		start, startOK := parseAvailabilityClock(startTime)
+		end, endOK := parseAvailabilityClock(endTime)
+		if !startOK || !endOK || start.Equal(end) {
+			return availabilityInput{}, ErrInvalidInput
+		}
+	}
 	return availabilityInput{
 		TeamMemberID: teamMemberID,
 		DayOfWeek:    request.DayOfWeek,
@@ -1507,11 +2146,16 @@ func normalizeCompleteAvailabilityWeek(teamMemberID string, requests []Availabil
 	return normalized, nil
 }
 
+var availabilityClockPattern = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$`)
+
 func parseAvailabilityClock(value *string) (time.Time, bool) {
 	if value == nil {
 		return time.Time{}, false
 	}
 	cleaned := strings.TrimSpace(*value)
+	if !availabilityClockPattern.MatchString(cleaned) {
+		return time.Time{}, false
+	}
 	for _, layout := range []string{"15:04", "15:04:05"} {
 		parsed, err := time.Parse(layout, cleaned)
 		if err == nil {
@@ -1521,7 +2165,7 @@ func parseAvailabilityClock(value *string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecutor, organizationID string, input availabilityInput) (MemberAvailability, error) {
+func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecutor, organizationID string, input availabilityInput) (MemberAvailability, bool, error) {
 	item, err := scanMemberAvailability(q.QueryRow(ctx, `
 		insert into public.member_availability as current_availability (
 			organization_id,
@@ -1537,8 +2181,15 @@ func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecuto
 			select 1
 			from public.team_members tm
 			join public.teams t on t.id = tm.team_id
+			join public.organization_members om
+			  on om.organization_id = tm.organization_id
+			 and om.user_id = tm.user_id
+			 and om.is_active = true
+			 and om.deleted_at is null
+			 and om.membership_generation = tm.membership_generation
 			where t.organization_id = $1::uuid
 			  and tm.id = $2::uuid
+			  and coalesce(tm.is_active, true) = true
 		)
 		on conflict (team_member_id, day_of_week) do update
 		set start_time = excluded.start_time,
@@ -1568,6 +2219,7 @@ func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecuto
 			created_at::text,
 			updated_at::text
 	`, organizationID, input.TeamMemberID, input.DayOfWeek, timeOrNil(input.StartTime), timeOrNil(input.EndTime), input.IsAllDay, input.IsActive))
+	changed := err == nil
 	if errors.Is(err, pgx.ErrNoRows) {
 		item, err = scanMemberAvailability(q.QueryRow(ctx, `
 			select
@@ -1586,10 +2238,10 @@ func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecuto
 			  and day_of_week = $3
 		`, organizationID, input.TeamMemberID, input.DayOfWeek))
 		if errors.Is(err, pgx.ErrNoRows) {
-			return MemberAvailability{}, ErrTeamMemberNotFound
+			return MemberAvailability{}, false, ErrTeamMemberNotFound
 		}
 	}
-	return item, err
+	return item, changed, err
 }
 
 func ensureTeamMemberBelongsToOrganization(ctx context.Context, q queryRowExecutor, organizationID string, teamMemberID string) error {
@@ -1599,8 +2251,15 @@ func ensureTeamMemberBelongsToOrganization(ctx context.Context, q queryRowExecut
 			select 1
 			from public.team_members tm
 			join public.teams t on t.id = tm.team_id
+			join public.organization_members om
+			  on om.organization_id = tm.organization_id
+			 and om.user_id = tm.user_id
+			 and om.is_active = true
+			 and om.deleted_at is null
+			 and om.membership_generation = tm.membership_generation
 			where t.organization_id = $1::uuid
 			  and tm.id = $2::uuid
+			  and coalesce(tm.is_active, true) = true
 		)
 	`, organizationID, teamMemberID).Scan(&ok); err != nil {
 		return err
@@ -1743,12 +2402,21 @@ func (repo Repository) ensureCanManageAvailability(ctx context.Context, q queryR
 	if !tenantContext.IsTeamLeader {
 		return tenant.ErrOrganizationAccessDenied
 	}
+	if !tenantContext.HasPermission(permissions.TeamManage) {
+		return tenant.ErrOrganizationAccessDenied
+	}
 
 	var teamID string
 	err := q.QueryRow(ctx, `
 		select tm.team_id::text
 		from public.team_members tm
 		join public.teams t on t.id = tm.team_id
+		join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
+		 and om.is_active = true
+		 and om.deleted_at is null
+		 and om.membership_generation = tm.membership_generation
 		where tm.organization_id = $1::uuid
 		  and tm.id = $2::uuid
 		  and t.organization_id = $1::uuid
@@ -1776,6 +2444,10 @@ func canManageTeams(tenantContext tenant.Context) bool {
 	}
 
 	return tenantContext.HasPermission(permissions.TeamManage)
+}
+
+func canRecoverTeamCreation(tenantContext tenant.Context, teamID string) bool {
+	return canManageTeams(tenantContext) || (tenantContext.HasPermission(permissions.TeamManage) && tenantContext.LeadsTeam(teamID))
 }
 
 func canViewAllTeams(tenantContext tenant.Context) bool {
@@ -1810,6 +2482,10 @@ func canManageTeamPipeline(tenantContext tenant.Context, teamID string) bool {
 
 func canViewTeam(tenantContext tenant.Context, teamID string) bool {
 	return canViewAllTeams(tenantContext) || tenantContext.LeadsTeam(teamID)
+}
+
+func canReadTeamAvailability(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") || tenantContext.HasPermission(permissions.TeamView)
 }
 
 func textOrNil(value *string) any {

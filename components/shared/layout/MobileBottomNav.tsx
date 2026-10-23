@@ -40,7 +40,7 @@ export function MobileBottomNav() {
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
   const currentHash = useLocationHash();
-  const { activeOrganization, profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
+  const { activeOrganization, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();

@@ -31,6 +31,7 @@ var notificationDeliveryStatuses = map[string]struct{}{
 	"delivered":          {},
 	"leased":             {},
 	"permanent_failed":   {},
+	"problems":           {},
 	"queued":             {},
 	"retry_wait":         {},
 	"sending":            {},

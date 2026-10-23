@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import { Input } from '@/components/ui/input';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -162,28 +163,20 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
   const [selectedAutomationId, setSelectedAutomationId] = useState<string | undefined>(initialAutomationId);
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all');
   const [limit, setLimit] = useState(100);
-  const { data: executions, isLoading, isFetching, error, refetch } = useAutomationExecutions(selectedAutomationId, limit);
+  const [offset, setOffset] = useState(0);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const invalidRange = Boolean(dateFrom && dateTo && dateFrom > dateTo);
+  const { data: executions = [], isLoading, isFetching, error, refetch } = useAutomationExecutions(selectedAutomationId, limit, {
+    status: statusFilter === 'all' ? undefined : statusFilter,
+    offset,
+    dateFrom: dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : undefined,
+    dateTo: dateTo ? new Date(`${dateTo}T23:59:59.999`).toISOString() : undefined,
+    enabled: !invalidRange,
+  });
   const { data: automations, error: automationsError, refetch: refetchAutomations } = useAutomations();
 
-  const filteredExecutions = useMemo(() => {
-    if (!executions) return [];
-    return executions.filter((e) => {
-      const status = normalizeExecutionStatus(e.status);
-      if (statusFilter === 'running') {
-        return status === 'queued' || status === 'running' || status === 'waiting';
-      }
-      if (statusFilter === 'completed') {
-        return status === 'completed';
-      }
-      if (statusFilter === 'failed') {
-        return status === 'failed';
-      }
-      if (statusFilter === 'cancelled') {
-        return status === 'cancelled';
-      }
-      return true;
-    });
-  }, [executions, statusFilter]);
+  const filteredExecutions = executions;
 
   if (isLoading) {
     return (
@@ -220,7 +213,7 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
         <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
         <Select
           value={selectedAutomationId || '__all__'}
-          onValueChange={(v) => setSelectedAutomationId(v === '__all__' ? undefined : v)}
+          onValueChange={(v) => { setSelectedAutomationId(v === '__all__' ? undefined : v); setOffset(0); }}
         >
           <SelectTrigger className="min-w-0 flex-1 sm:w-[260px] sm:flex-none" aria-label="Filtrar por automação">
             <SelectValue placeholder="Todas as automações" />
@@ -233,30 +226,13 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
           </SelectContent>
         </Select>
         {selectedAutomationId && (
-          <Button variant="ghost" size="sm" onClick={() => setSelectedAutomationId(undefined)}>
+          <Button variant="ghost" size="sm" onClick={() => { setSelectedAutomationId(undefined); setOffset(0); }}>
             Limpar
           </Button>
         )}
       </div>
     ) : null
   );
-
-  if (!executions || executions.length === 0) {
-    return (
-      <div className="space-y-4 animate-in">
-        {filterSelect}
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="mb-4 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
-            <Clock className="h-10 w-10 text-muted-foreground" />
-          </div>
-          <h3 className="mb-2 text-[14px] font-normal">Nenhuma execução ainda</h3>
-          <p className="text-muted-foreground text-sm">
-            As execuções aparecerão aqui quando as automações forem disparadas
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   const runningExecutions = executions.filter((execution) => ['queued', 'running', 'waiting'].includes(normalizeExecutionStatus(execution.status)));
   const completedExecutions = executions.filter((execution) => normalizeExecutionStatus(execution.status) === 'completed');
@@ -269,14 +245,14 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
         {filterSelect}
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:justify-end">
-          <Select value={String(limit)} onValueChange={(value) => setLimit(Number(value))}>
+          <Select value={String(limit)} onValueChange={(value) => { setLimit(Number(value)); setOffset(0); }}>
             <SelectTrigger className="h-9 w-[150px]" aria-label="Quantidade de execuções">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="50">Últimas 50</SelectItem>
-              <SelectItem value="100">Últimas 100</SelectItem>
-              <SelectItem value="200">Últimas 200</SelectItem>
+              <SelectItem value="50">50 por página</SelectItem>
+              <SelectItem value="100">100 por página</SelectItem>
+              <SelectItem value="200">200 por página</SelectItem>
             </SelectContent>
           </Select>
 
@@ -294,7 +270,8 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
               <button
                 key={key}
                 type="button"
-                onClick={() => setStatusFilter(key)}
+                onClick={() => { setStatusFilter(key); setOffset(0); }}
+                aria-pressed={isActive}
                 className={cn(
                   "h-8 rounded-[6px] px-3 text-xs font-medium transition-all",
                   isActive
@@ -311,6 +288,12 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
       </div>
 
       {/* Stats */}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[12px]">Execuções de<Input type="date" aria-label="Início do período de execuções" value={dateFrom} max={dateTo || undefined} onChange={event => { setDateFrom(event.target.value); setOffset(0); }} className="mt-1 h-9" /></label>
+        <label className="text-[12px]">Até<Input type="date" aria-label="Fim do período de execuções" value={dateTo} min={dateFrom || undefined} onChange={event => { setDateTo(event.target.value); setOffset(0); }} className="mt-1 h-9" /></label>
+        {(dateFrom || dateTo || statusFilter !== 'all') && <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setStatusFilter('all'); setOffset(0); }}>Limpar filtros</Button>}
+        {invalidRange && <p role="alert" className="text-[12px] text-destructive">A data final deve ser igual ou posterior à inicial.</p>}
+      </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
@@ -343,7 +326,7 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
         <CardHeader>
           <CardTitle className="text-base">Histórico de Execuções</CardTitle>
           <CardDescription>
-            Até {limit} execuções mais recentes {isFetching ? '• atualizando...' : '• atualização automática enquanto houver execuções ativas'}
+            Página {Math.floor(offset / limit) + 1} · {executions.length} execuções nos filtros {isFetching ? '• atualizando...' : '• atualização automática enquanto houver execuções ativas'}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -358,11 +341,15 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
                 </div>
               ) : (
                 filteredExecutions.map((execution) => (
-                  <ExecutionTimelineItem key={execution.id} execution={execution} canManage={canManage} />
+                  <ExecutionTimelineItem key={execution.id} execution={execution} canManage={canManage && !isFetching} />
                 ))
               )}
             </div>
           </ScrollArea>
+          <div className="flex items-center justify-end gap-2 p-3">
+            <Button variant="outline" size="sm" disabled={offset === 0 || isFetching} onClick={() => setOffset(value => Math.max(0, value - limit))}>Anterior</Button>
+            <Button variant="outline" size="sm" disabled={executions.length < limit || isFetching || invalidRange || offset + limit > 100000} onClick={() => setOffset(value => value + limit)}>Próxima</Button>
+          </div>
         </CardContent>
       </Card>
     </div>

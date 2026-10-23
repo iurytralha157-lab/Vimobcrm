@@ -84,10 +84,10 @@ func TestDashboardEntryFilterOptionsCascadeFromTheSameArrival(t *testing.T) {
 	if len(campaigns) != 1 || campaigns["987654321"].Name != "987654321" {
 		t.Fatalf("numeric-only reentry campaign must remain selectable: %#v", campaigns)
 	}
-	if len(adsets) != 1 || adsets["987654321-adset-b"].CampaignID != "987654321" {
+	if len(adsets) != 1 || adsets[leadMetaFilterTupleKey("987654321", "adset-b")].CampaignID != "987654321" {
 		t.Fatalf("adset must belong to the selected page's campaign: %#v", adsets)
 	}
-	if len(ads) != 1 || ads["987654321-adset-b-ad-b"].AdsetID != "adset-b" {
+	if len(ads) != 1 || ads[leadMetaFilterTupleKey("987654321", "adset-b", "ad-b")].AdsetID != "adset-b" {
 		t.Fatalf("ad must belong to the selected page's entry: %#v", ads)
 	}
 }

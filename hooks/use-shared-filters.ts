@@ -1,5 +1,5 @@
-import { useDeferredValue, useEffect, useMemo, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useDeferredValue, useMemo } from 'react';
+import { useQueryWithDataTrust, type QueryDataTrustScope } from '@/hooks/shared/use-query-data-trust';
 import { useFilters } from '@/contexts/FilterContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { getLeadMetaFilters } from '@/lib/api/pipeline-board';
@@ -16,15 +16,19 @@ import { resolvePipelineFilterScopeState } from '@/lib/pipeline-filter-readiness
 import { isTenantContextForOrganization } from '@/lib/access/tenant-navigation';
 import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cache';
 import { buildPipelineLeadMetaFilterQueryKey } from '@/lib/pipeline-board-query';
+import { validateDateRangeLimit } from '@/lib/filters/date-range-limits';
+import { isSharedFilterOptionsAccessDenied } from '@/lib/filters/shared-filter-options';
 
 export interface SharedFilters {
   datePreset: DatePreset | null;
   dateRange: { from: Date; to: Date } | null;
+  pipelineId: string | null;
   teamId: string | null;
   userId: string | null;
   source: string | null;
   pageId: string | null;
   campaignId: string | null;
+  campaignIds: string[];
   adSetId: string | null;
   adId: string | null;
   tagIds: string[];
@@ -61,7 +65,7 @@ function uniqueAdSetOptions(items: Array<{ id?: string | null; name?: string | n
     const name = firstNonEmpty(item.name, item.id);
     const campaignId = firstNonEmpty(item.campaignId);
     if (!id || !name) return;
-    map.set(`${campaignId}:${id}`, { id, name, campaignId });
+    map.set(JSON.stringify([campaignId, id]), { id, name, campaignId });
   });
   return Array.from(map.values());
 }
@@ -76,7 +80,7 @@ function uniqueAdOptions(
     const adsetId = firstNonEmpty(item.adsetId);
     const campaignId = firstNonEmpty(item.campaignId);
     if (!id || !name) return;
-    map.set(`${campaignId}:${adsetId}:${id}`, { id, name, adsetId, campaignId });
+    map.set(JSON.stringify([campaignId, adsetId, id]), { id, name, adsetId, campaignId });
   });
   return Array.from(map.values());
 }
@@ -84,6 +88,7 @@ function uniqueAdOptions(
 const EMPTY_LEAD_META_FILTERS = { sources: [], pages: [], campaigns: [], adsets: [], ads: [] };
 
 export function useSharedFilters(options?: {
+  cacheTrustScope?: QueryDataTrustScope;
   loadDynamicOptions?: boolean;
   pipelineId?: string | null;
   dateMode?: PipelineDateMode;
@@ -91,6 +96,7 @@ export function useSharedFilters(options?: {
   entryMode?: boolean;
   scopeMetaOptionsToBoard?: boolean;
   multiCampaigns?: boolean;
+  dateRangeMaxDays?: number;
 }) {
   const { activeOrganization, user, profile, tenantContext, isSuperAdmin, impersonating } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
@@ -103,6 +109,8 @@ export function useSharedFilters(options?: {
     setCustomDateRange,
     clearDateFilter,
     activeDateRange: dateRange,
+    pipelineId: sharedPipelineId,
+    setPipelineId,
     teamId,
     setTeamId,
     userId,
@@ -137,7 +145,6 @@ export function useSharedFilters(options?: {
     () => new Set(selectedCampaignIds),
     [selectedCampaignIds],
   );
-  const campaignSelectionKey = JSON.stringify([...selectedCampaignIds].sort());
 
   const requestedDynamicOptions = options?.loadDynamicOptions ?? true;
   const hasHydratedDynamicSelection = isFiltersHydrated && Boolean(
@@ -153,7 +160,9 @@ export function useSharedFilters(options?: {
   const shouldLoadDynamicOptions =
     requestedDynamicOptions || hasHydratedDynamicSelection;
   const canUseTeamFilters = hasPermission('lead_view_all') || hasPermission('lead_view_team');
-  const pipelineId = options?.pipelineId ?? null;
+  const pipelineId = Object.prototype.hasOwnProperty.call(options ?? {}, 'pipelineId')
+    ? options?.pipelineId ?? null
+    : sharedPipelineId;
   const entryMode = options?.entryMode === true;
   const scopeMetaOptionsToBoard = options?.scopeMetaOptionsToBoard === true && !entryMode;
   const isScopedMetaOptions = entryMode || scopeMetaOptionsToBoard;
@@ -182,16 +191,15 @@ export function useSharedFilters(options?: {
   const effectiveDateRange = hasDateRangeOverride
     ? options?.dateRangeOverride ?? null
     : dateRange;
+  const periodError = options?.dateRangeMaxDays === undefined
+    ? null
+    : validateDateRangeLimit(effectiveDateRange, options.dateRangeMaxDays);
   const dateMode = resolvePipelineDateModeForRange(effectiveDateRange, options?.dateMode);
-  const previousTeamIdRef = useRef(teamId);
-  const wasFiltersHydratedRef = useRef(false);
-  const wasMetaFilterCascadeHydratedRef = useRef(false);
-  const previousPageIdRef = useRef(pageId);
-  const previousCampaignSelectionRef = useRef(campaignSelectionKey);
-  const previousAdSetIdRef = useRef(adSetId);
   const dateFromStr = effectiveDateRange?.from.toISOString();
   const dateToStr = effectiveDateRange?.to.toISOString();
   const teamsQuery = useTeams({
+    cacheTrustScope: options?.cacheTrustScope,
+    catalog: true,
     enabled:
       isFiltersHydrated &&
       !permissionsLoading &&
@@ -199,70 +207,86 @@ export function useSharedFilters(options?: {
       canUseTeamFilters,
   });
 
-  const leadMetaFiltersQuery = useQuery({
-    queryKey: buildPipelineLeadMetaFilterQueryKey({
-      organizationId,
-      pipelineId,
-      pageId,
-      dateFrom: dateFromStr,
-      dateTo: dateToStr,
-      dateMode,
-      entryMode,
-      scopeToBoard: scopeMetaOptionsToBoard,
-      accessSignature: metaAccessSignature,
-      teamId,
-      userId,
-      dealStatus,
-      tagIds,
-      searchQuery: metaSearchQuery,
-    }),
-    enabled: isFiltersHydrated && shouldLoadDynamicOptions && !!organizationId && (!entryMode || !!currentTenantContext),
-    queryFn: ({ signal }) => getLeadMetaFilters({
-      organizationId,
-      dateRange: effectiveDateRange,
-      dateMode,
-      pipelineId,
-      filterPage: pageId,
-      entryMode,
-      scopeToBoard: scopeMetaOptionsToBoard,
-      teamId,
-      userId,
-      dealStatus,
-      tagIds,
-      searchQuery: metaSearchQuery,
-      signal,
-    }),
+  const leadMetaFilterQueryKey = buildPipelineLeadMetaFilterQueryKey({
+    organizationId,
+    pipelineId,
+    pageId,
+    dateFrom: dateFromStr,
+    dateTo: dateToStr,
+    dateMode,
+    entryMode,
+    scopeToBoard: scopeMetaOptionsToBoard,
+    accessSignature: metaAccessSignature,
+    teamId,
+    userId,
+    dealStatus,
+    tagIds,
+    searchQuery: metaSearchQuery,
+  });
+  const leadMetaFiltersQuery = useQueryWithDataTrust({
+    // A report's guarded observer must not share fetch/cache policy with an
+    // unrestricted Pipeline or WhatsApp observer for the same period.
+    queryKey: options?.dateRangeMaxDays === undefined
+      ? leadMetaFilterQueryKey
+      : [...leadMetaFilterQueryKey, 'report-period-limit-days', options.dateRangeMaxDays],
+    enabled: isFiltersHydrated && !periodError && shouldLoadDynamicOptions && !!organizationId && (!entryMode || !!currentTenantContext),
+    queryFn: ({ signal }) => {
+      if (periodError) throw new Error(periodError);
+      return getLeadMetaFilters({
+        organizationId,
+        dateRange: effectiveDateRange,
+        dateMode,
+        pipelineId,
+        filterPage: pageId,
+        entryMode,
+        scopeToBoard: scopeMetaOptionsToBoard,
+        teamId,
+        userId,
+        dealStatus,
+        tagIds,
+        searchQuery: metaSearchQuery,
+        signal,
+      });
+    },
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
-    retry: shouldRetryPipelineQuery,
+    refetchOnMount: true,
+    retry: (failureCount, error) => !periodError && shouldRetryPipelineQuery(failureCount, error),
     retryDelay: 800,
     placeholderData: EMPTY_LEAD_META_FILTERS,
-  });
+  }, options?.cacheTrustScope);
 
-  const tagsQuery = useTags({ enabled: isFiltersHydrated && shouldLoadDynamicOptions });
+  const tagsQuery = useTags({ cacheTrustScope: options?.cacheTrustScope, catalog: true, enabled: isFiltersHydrated && shouldLoadDynamicOptions });
+  const leadMetaFilters = periodError || leadMetaFiltersQuery.isAccessBlocked || isSharedFilterOptionsAccessDenied(leadMetaFiltersQuery.error)
+    ? EMPTY_LEAD_META_FILTERS
+    : leadMetaFiltersQuery.displayData;
+  const visibleTags = isSharedFilterOptionsAccessDenied(tagsQuery.error) ? undefined
+    : options?.cacheTrustScope ? tagsQuery.displayData : tagsQuery.data;
+  const visibleTeams = isSharedFilterOptionsAccessDenied(teamsQuery.error) ? undefined
+    : options?.cacheTrustScope ? teamsQuery.displayData : teamsQuery.data;
 
   const dynamicSources = useMemo(() => {
-    const sources = new Set(leadMetaFiltersQuery.data?.sources || []);
+    const sources = new Set(leadMetaFilters?.sources || []);
     return Array.from(sources).map((value) => ({ value, label: labelize(value) }));
-  }, [leadMetaFiltersQuery.data?.sources]);
+  }, [leadMetaFilters?.sources]);
 
   const campaigns = useMemo(
     () =>
       uniqueOptions(
-        (leadMetaFiltersQuery.data?.campaigns || []).map((item) => ({
+        (leadMetaFilters?.campaigns || []).map((item) => ({
           id: item.id,
           name: item.name,
         })),
         entryMode,
       ),
-    [entryMode, leadMetaFiltersQuery.data],
+    [entryMode, leadMetaFilters],
   );
 
   const adSets = useMemo(
     () =>
       uniqueAdSetOptions(
-        (leadMetaFiltersQuery.data?.adsets || [])
+        (leadMetaFilters?.adsets || [])
           .map((item) => ({
             id: item.id,
             name: item.name,
@@ -270,13 +294,13 @@ export function useSharedFilters(options?: {
           }))
           .filter((item) => selectedCampaignIdSet.size === 0 || selectedCampaignIdSet.has(item.campaignId || '')),
       ),
-    [leadMetaFiltersQuery.data, selectedCampaignIdSet],
+    [leadMetaFilters, selectedCampaignIdSet],
   );
 
   const ads = useMemo(
     () =>
       uniqueAdOptions(
-        (leadMetaFiltersQuery.data?.ads || [])
+        (leadMetaFilters?.ads || [])
           .map((item) => ({
             id: item.id,
             name: item.name,
@@ -288,29 +312,37 @@ export function useSharedFilters(options?: {
             (!adSetId || item.adsetId === adSetId)
           )),
       ),
-    [adSetId, leadMetaFiltersQuery.data, selectedCampaignIdSet],
+    [adSetId, leadMetaFilters, selectedCampaignIdSet],
   );
 
   const tags = useMemo(() => {
-    return (tagsQuery.data || [])
+    return (visibleTags || [])
       .map((tag) => ({ id: tag.id, name: tag.name, color: tag.color }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [tagsQuery.data]);
+  }, [visibleTags]);
 
   const selectedTeam = useMemo(
-    () => (teamId ? teamsQuery.data?.find((item) => item.id === teamId) : undefined),
-    [teamId, teamsQuery.data],
+    () => (teamId ? visibleTeams?.find((item) => item.id === teamId) : undefined),
+    [teamId, visibleTeams],
   );
 
   const pages = useMemo(() => {
     const options = new Map<string, string>();
-    (leadMetaFiltersQuery.data?.pages || []).forEach((item) => {
+    (leadMetaFilters?.pages || []).forEach((item) => {
       const id = item.id?.trim();
       if (id) options.set(id, item.name?.trim() || id);
     });
     if (pageId && !options.has(pageId)) options.set(pageId, pageId);
     return Array.from(options.entries()).map(([id, name]) => ({ id, name }));
-  }, [leadMetaFiltersQuery.data, pageId]);
+  }, [leadMetaFilters, pageId]);
+  const unavailableTeamError = useMemo(() => {
+    if (!isFiltersHydrated || permissionsLoading || !teamId) return null;
+    if (!canUseTeamFilters) return new Error('O filtro de equipe selecionado não está disponível para sua permissão atual. Remova esse critério para continuar.');
+    if (shouldLoadDynamicOptions && teamsQuery.isSuccess && !teamsQuery.isFetching && !selectedTeam) {
+      return new Error('A equipe selecionada não está disponível. Remova ou altere esse critério para continuar.');
+    }
+    return null;
+  }, [isFiltersHydrated, permissionsLoading, teamId, canUseTeamFilters, shouldLoadDynamicOptions, teamsQuery.isSuccess, teamsQuery.isFetching, selectedTeam]);
   const teamFilterScope = resolvePipelineFilterScopeState({
     hasSelection: Boolean(teamId),
     loadEnabled:
@@ -320,7 +352,7 @@ export function useSharedFilters(options?: {
       shouldLoadDynamicOptions,
     dataUpdatedAt: teamsQuery.dataUpdatedAt,
     selectionMatchesCachedOptions: Boolean(selectedTeam),
-    queryError: teamsQuery.isError ? teamsQuery.error : null,
+    queryError: unavailableTeamError ?? ((teamsQuery.isError || (Boolean(options?.cacheTrustScope) && teamsQuery.isAccessBlocked)) ? teamsQuery.error : null),
   });
   const isTeamScopeReady = teamFilterScope.ready;
 
@@ -337,173 +369,28 @@ export function useSharedFilters(options?: {
     ).sort();
   }, [isTeamScopeReady, selectedTeam, teamId]);
 
-  useEffect(() => {
-    if (!isFiltersHydrated || permissionsLoading || !teamId) return;
-
-    const shouldClearTeam = !canUseTeamFilters || (
-      shouldLoadDynamicOptions &&
-      !teamsQuery.isFetching &&
-      teamsQuery.isSuccess &&
-      !selectedTeam
-    );
-    if (!shouldClearTeam) return;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (!isActive) return;
-      setTeamId(null);
-      setUserId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [
-    canUseTeamFilters,
-    isFiltersHydrated,
-    permissionsLoading,
-    selectedTeam,
-    setTeamId,
-    setUserId,
-    shouldLoadDynamicOptions,
-    teamId,
-    teamsQuery.isFetching,
-    teamsQuery.isSuccess,
-  ]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated || selectedCampaignIds.length > 0 || (!adSetId && !adId)) return;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (!isActive) return;
-      setAdSetId(null);
-      setAdId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [adId, adSetId, isFiltersHydrated, selectedCampaignIds.length, setAdId, setAdSetId]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated || adSetId || !adId) return;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (isActive) setAdId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [adId, adSetId, isFiltersHydrated, setAdId]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated) {
-      wasMetaFilterCascadeHydratedRef.current = false;
-      previousPageIdRef.current = pageId;
-      previousCampaignSelectionRef.current = campaignSelectionKey;
-      previousAdSetIdRef.current = adSetId;
-      return;
-    }
-    if (!wasMetaFilterCascadeHydratedRef.current) {
-      wasMetaFilterCascadeHydratedRef.current = true;
-      previousPageIdRef.current = pageId;
-      previousCampaignSelectionRef.current = campaignSelectionKey;
-      previousAdSetIdRef.current = adSetId;
-      return;
-    }
-    if (previousCampaignSelectionRef.current === campaignSelectionKey) return;
-    previousCampaignSelectionRef.current = campaignSelectionKey;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (!isActive) return;
-      setAdSetId(null);
-      setAdId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [adSetId, campaignSelectionKey, isFiltersHydrated, pageId, setAdId, setAdSetId]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated || !wasMetaFilterCascadeHydratedRef.current) {
-      previousPageIdRef.current = pageId;
-      return;
-    }
-    if (previousPageIdRef.current === pageId) return;
-    previousPageIdRef.current = pageId;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (!isActive) return;
-      setCampaignId(null);
-      setAdSetId(null);
-      setAdId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [isFiltersHydrated, pageId, setAdId, setAdSetId, setCampaignId]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated || !wasMetaFilterCascadeHydratedRef.current) {
-      previousAdSetIdRef.current = adSetId;
-      return;
-    }
-    if (previousAdSetIdRef.current === adSetId) return;
-    previousAdSetIdRef.current = adSetId;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (isActive) setAdId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [adSetId, isFiltersHydrated, setAdId]);
-
-  useEffect(() => {
-    if (!isFiltersHydrated) {
-      wasFiltersHydratedRef.current = false;
-      previousTeamIdRef.current = teamId;
-      return;
-    }
-    if (!wasFiltersHydratedRef.current) {
-      wasFiltersHydratedRef.current = true;
-      previousTeamIdRef.current = teamId;
-      return;
-    }
-    if (previousTeamIdRef.current === teamId) return;
-    previousTeamIdRef.current = teamId;
-
-    let isActive = true;
-    queueMicrotask(() => {
-      if (isActive) setUserId(null);
-    });
-    return () => {
-      isActive = false;
-    };
-  }, [isFiltersHydrated, setUserId, teamId]);
-
   const filters: SharedFilters = useMemo(
     () => ({
       datePreset,
       dateRange,
+      pipelineId: sharedPipelineId,
       teamId,
       userId,
       source,
       pageId,
       campaignId,
+      campaignIds,
       adSetId,
       adId,
       tagIds,
       dealStatus,
       searchQuery,
     }),
-    [datePreset, dateRange, teamId, userId, source, pageId, campaignId, adSetId, adId, tagIds, dealStatus, searchQuery],
+    [datePreset, dateRange, sharedPipelineId, teamId, userId, source, pageId, campaignId, campaignIds, adSetId, adId, tagIds, dealStatus, searchQuery],
   );
 
   const hasActiveFilters =
+    sharedPipelineId !== null ||
     teamId !== null ||
     (userId !== null && userId !== 'all') ||
     source !== null ||
@@ -524,6 +411,8 @@ export function useSharedFilters(options?: {
     customDateRange,
     setCustomDateRange,
     clearDateFilter,
+    pipelineId: sharedPipelineId,
+    setPipelineId,
     teamId,
     setTeamId,
     userId,
@@ -556,18 +445,19 @@ export function useSharedFilters(options?: {
     tags,
     selectedTeamUserIds,
     isFiltersHydrated,
+    periodError,
     isTeamScopeReady,
-    teamScopeError: teamFilterScope.error,
+    teamScopeError: unavailableTeamError ?? teamFilterScope.error,
     refetchTeams: teamsQuery.refetch,
     refetchLeadMetaFilters: leadMetaFiltersQuery.refetch,
     refetchTags: tagsQuery.refetch,
-    hasTeamOptionsError: canUseTeamFilters && teamsQuery.isError,
-    hasLeadMetaFiltersError: leadMetaFiltersQuery.isError,
-    hasTagsError: tagsQuery.isError,
+    hasTeamOptionsError: canUseTeamFilters && (teamsQuery.isError || (Boolean(options?.cacheTrustScope) && teamsQuery.isAccessBlocked)),
+    hasLeadMetaFiltersError: (leadMetaFiltersQuery.isError || leadMetaFiltersQuery.isAccessBlocked),
+    hasTagsError: (tagsQuery.isError || (Boolean(options?.cacheTrustScope) && tagsQuery.isAccessBlocked)),
     hasDynamicOptionsError:
-      leadMetaFiltersQuery.isError ||
-      tagsQuery.isError ||
-      (canUseTeamFilters && teamsQuery.isError),
+      (leadMetaFiltersQuery.isError || leadMetaFiltersQuery.isAccessBlocked) ||
+      (tagsQuery.isError || (Boolean(options?.cacheTrustScope) && tagsQuery.isAccessBlocked)) ||
+      (canUseTeamFilters && (teamsQuery.isError || (Boolean(options?.cacheTrustScope) && teamsQuery.isAccessBlocked))),
     isRetryingDynamicOptions:
       leadMetaFiltersQuery.isFetching ||
       tagsQuery.isFetching ||

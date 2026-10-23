@@ -20,7 +20,7 @@ import { useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 
 export const NotificationsTab = () => {
-  const { activeOrganization, user, profile, organization } = useAuth();
+  const { activeOrganization, user } = useAuth();
   const {
     isSupported,
     permission,

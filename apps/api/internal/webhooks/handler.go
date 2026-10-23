@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -205,6 +206,8 @@ func writeWebhookError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_webhook_input", "Webhook input is invalid.")
+	case errors.Is(err, distribution.ErrIntakeDestinationUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_intake_destination_unavailable", "The contact destination is unavailable.")
 	case errors.Is(err, ErrInvalidToken):
 		httpserver.WriteError(w, r, http.StatusUnauthorized, "invalid_webhook_token", "Webhook token is invalid or inactive.")
 	case errors.Is(err, ErrWebhookNotFound):

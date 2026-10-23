@@ -447,56 +447,43 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
     <meta name="x-apple-disable-message-reformatting" />
     <title>Convite | Vimob CRM</title>
   </head>
-  <body style="margin:0;padding:0;background:#f5f6f3;color:#151515;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+  <body style="margin:0;padding:0;background:#f7f8f6;color:#151515;font-family:Geist,'Segoe UI',Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%%;-webkit-font-smoothing:antialiased">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;line-height:1px">
       Você recebeu um convite para acessar o Vimob CRM.
       &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
     </div>
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;background:#f5f6f3;border-collapse:collapse">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;background:#f7f8f6;border-collapse:collapse">
       <tr>
-        <td align="center" style="padding:32px 16px">
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;max-width:640px;border-collapse:collapse">
+        <td align="center" style="padding:32px 16px 40px">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="width:100%%;max-width:560px;border-collapse:collapse">
             <tr>
-              <td align="left" style="padding:0 0 18px 0">
-                <img src="https://vimobcrm.com.br/images/logo-black.png" width="142" alt="Vimob CRM" style="display:block;width:142px;max-width:142px;height:auto;border:0;outline:none;text-decoration:none" />
+              <td align="left" style="padding:0 0 40px">
+                <img src="https://vimobcrm.com.br/images/logo-black.png" width="85" alt="Vimob CRM" style="display:block;width:85px;max-width:85px;height:auto;border:0;outline:none;text-decoration:none" />
               </td>
             </tr>
             <tr>
-              <td style="background:#ffffff;border:1px solid #e2e5df;border-radius:14px;overflow:hidden;box-shadow:0 16px 42px rgba(21,21,21,.06)">
-                <table role="presentation" cellpadding="0" cellspacing="0" width="100%%" style="border-collapse:collapse">
+              <td align="left" style="padding:0">
+                <p style="margin:0 0 10px;color:#ff4529;font-size:12px;font-weight:400;line-height:1.5">Convite de acesso</p>
+                <h1 style="margin:0;color:#151515;font-size:24px;font-weight:400;line-height:1.25;letter-spacing:0">%s</h1>
+                <p style="margin:20px 0 0;color:#151515;font-size:15px;font-weight:400;line-height:1.6">%s</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0 24px;border-collapse:collapse">
                   <tr>
-                    <td style="height:6px;background:#ff4529;font-size:0;line-height:0">&nbsp;</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:34px 34px 10px">
-                      <p style="margin:0 0 10px;color:#d9341d;font-size:12px;font-weight:700;line-height:1.4;text-transform:uppercase;letter-spacing:1.8px">Convite de acesso</p>
-                      <h1 style="margin:0;color:#151515;font-size:30px;font-weight:700;line-height:1.18;letter-spacing:0">%s</h1>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="padding:18px 34px 36px">
-                      <p style="margin:0 0 16px;color:#151515;font-size:16px;line-height:1.65">%s</p>
-                      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 24px">
-                        <tr>
-                          <td bgcolor="#d9341d" style="border-radius:8px;mso-padding-alt:14px 22px">
-                            <a href="%s" style="display:inline-block;padding:14px 22px;color:#ffffff;font-size:15px;font-weight:700;line-height:1;text-decoration:none;border-radius:8px;background:#d9341d">%s</a>
-                          </td>
-                        </tr>
-                      </table>
-                      <p style="margin:0 0 8px;color:#626872;font-size:13px;line-height:1.6">Se o botão não abrir, copie e cole este link no navegador:</p>
-                      <p style="margin:0;padding:12px 14px;background:#f5f6f3;border:1px solid #e2e5df;border-radius:8px;color:#d9341d;font-size:12px;line-height:1.6;word-break:break-all">
-                        <a href="%s" style="color:#d9341d;text-decoration:underline;word-break:break-all">%s</a>
-                      </p>
-                      <p style="margin:24px 0 0;padding:14px 16px;border-left:4px solid #ff4529;background:#fff0ed;color:#151515;font-size:14px;line-height:1.6;border-radius:0 8px 8px 0">
-                        Se você não reconhece este convite, ignore esta mensagem. Nenhum acesso será concedido sem o aceite.
-                      </p>
+                    <td align="center" height="48" bgcolor="#ff4529" style="height:48px;border-radius:6px;background:#ff4529;mso-padding-alt:15px 20px">
+                      <a href="%s" style="display:block;padding:15px 20px;color:#ffffff;font-size:14px;font-weight:400;line-height:18px;text-align:center;text-decoration:none;border-radius:6px;background:#ff4529">%s</a>
                     </td>
                   </tr>
                 </table>
+                <p style="margin:0 0 8px;color:#626872;font-size:13px;line-height:1.6">Se o botão não abrir, copie e cole este link no navegador:</p>
+                <p style="margin:0;padding:12px 14px;background:#ffffff;border-radius:6px;color:#151515;font-size:12px;line-height:1.6;word-break:break-all">
+                  <a href="%s" style="color:#151515;text-decoration:underline;word-break:break-all">%s</a>
+                </p>
+                <p style="margin:24px 0 0;color:#626872;font-size:12px;line-height:1.6">
+                  Se você não reconhece este convite, ignore esta mensagem. Nenhum acesso será concedido sem o aceite.
+                </p>
               </td>
             </tr>
             <tr>
-              <td align="left" style="padding:22px 8px 0;color:#626872;font-size:12px;line-height:1.65">
+              <td align="left" style="padding:32px 0 0;color:#626872;font-size:12px;line-height:1.6">
                 Precisa de ajuda? Fale com %s.
               </td>
             </tr>

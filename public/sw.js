@@ -59,6 +59,20 @@ function getSafePushTarget(rawTarget, data) {
       return fallback;
     }
 
+    // Older inbound deliveries used /crm?leadId=. Resolve them to the same
+    // conversation page as new deliveries; its API still verifies access.
+    const type = String(data && (data.type || data.event_type || data.eventType) || "").toLowerCase();
+    if (target.pathname === "/crm" && (target.searchParams.has("leadId") || type === "whatsapp" || type.startsWith("whatsapp_"))) {
+      const metadata = data && data.metadata && typeof data.metadata === "object" ? data.metadata : {};
+      const validID = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
+      const conversationID = validID(data && (data.whatsapp_conversation_id || data.conversation_id || data.conversationId) || metadata.whatsapp_conversation_id);
+      const leadID = validID(data && (data.lead_id || data.leadId) || target.searchParams.get("leadId"));
+      const params = new URLSearchParams();
+      if (conversationID) params.set("conversation", conversationID);
+      if (leadID) params.set("lead", leadID);
+      return `/crm/conversas${params.size ? `?${params.toString()}` : ""}`;
+    }
+
     return `${target.pathname}${target.search}${target.hash}`;
   } catch {
     return fallback;
@@ -110,7 +124,7 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ("focus" in client && client.url.startsWith(self.location.origin)) {
+        if ("focus" in client && new URL(client.url).origin === self.location.origin) {
           const navigate = "navigate" in client
             ? Promise.resolve(client.navigate(targetHref)).catch(() => undefined)
             : Promise.resolve();

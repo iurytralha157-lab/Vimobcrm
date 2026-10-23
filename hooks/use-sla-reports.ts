@@ -22,7 +22,7 @@ export interface SlaFilters {
 }
 
 export function useSlaPerformanceByUser(filters?: SlaFilters) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ["sla-performance-by-user", filters],
@@ -47,7 +47,7 @@ export interface SlaSummary {
 }
 
 export function useSlaSummary(pipelineId?: string | null) {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ["sla-summary", pipelineId],

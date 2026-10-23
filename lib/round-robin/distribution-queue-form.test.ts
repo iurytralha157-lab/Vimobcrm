@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createQueueOperatingSchedule } from './operating-schedule';
 
 import {
   DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
@@ -35,6 +36,8 @@ test("cria o mesmo rascunho padrao para novas filas", () => {
     target_stage_id: "",
     is_active: true,
     settings: {
+      operating_schedule: createQueueOperatingSchedule(),
+      pool_notifications: { enabled: false },
       auto_tag_ids: [],
       enable_redistribution: false,
       redistribution_timeout_minutes: 20,
@@ -109,12 +112,18 @@ test("hidrata regra legada Meta e preserva contexto de WhatsApp e reentrada", ()
       type: "meta_form",
       values: ["form-a"],
       sessionId: undefined,
+      originalRule: { id: "rule-a", match_type: "form", match_value: "form-a" },
+      originalFingerprint: '["meta_form",["form-a"],""]',
+      legacyType: undefined,
     },
     {
       id: "rule-b",
       type: "whatsapp_message_contains",
       values: ["oferta"],
       sessionId: "session-a",
+      originalRule: { id: "rule-b", match_type: "whatsapp_message_contains", match_value: " oferta ", match: { whatsapp_session_id: " session-a " } },
+      originalFingerprint: '["whatsapp_message_contains",["oferta"],"session-a"]',
+      legacyType: undefined,
     },
   ]);
   assert.deepEqual(form.members, [
@@ -123,6 +132,7 @@ test("hidrata regra legada Meta e preserva contexto de WhatsApp e reentrada", ()
       type: "team",
       entityId: "team-a",
       weight: 12,
+      isActive: true,
       name: "Equipe A",
     },
   ]);

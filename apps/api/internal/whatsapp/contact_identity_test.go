@@ -117,6 +117,14 @@ func TestCanonicalWhatsAppSelfJIDRejectsProfileNames(t *testing.T) {
 	}
 }
 
+func TestWhatsAppContactIdentityNeverTreatsContradictoryPNAsAlias(t *testing.T) {
+	identity := newWhatsAppContactIdentity("5511977772222@s.whatsapp.net", "5511988881111@s.whatsapp.net", false)
+	if containsString(identity.RemoteAliases(), "5511977772222@s.whatsapp.net") ||
+		containsString(identity.LeadMatchValues(), "5511977772222@s.whatsapp.net") {
+		t.Fatalf("contradictory PN became a contact alias: %#v", identity)
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {

@@ -12,6 +12,8 @@ export interface OrganizationRole {
   color: string;
   is_system: boolean;
   is_active: boolean;
+  assigned_count: number;
+  assignment_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -21,7 +23,7 @@ export interface AvailablePermission {
   key: string;
   name: string;
   description: string | null;
-  category: 'modules' | 'leads' | 'data' | 'settings';
+  category: string;
 }
 
 export interface RolePermission {
@@ -38,7 +40,7 @@ export interface UserOrganizationRole {
 }
 
 export function useOrganizationRoles() {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ['organization-roles', activeOrganization.organizationId],
@@ -61,18 +63,20 @@ export function useAvailablePermissions() {
 }
 
 export function useRolePermissions(roleId: string | null) {
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   return useQuery({
-    queryKey: ['role-permissions', roleId],
+    queryKey: ['role-permissions', organizationId, roleId],
     queryFn: async () => {
-      if (!roleId) return [];
-      return settingsAPI.listRolePermissions<RolePermission>(roleId);
+      if (!roleId || !organizationId) return [];
+      return settingsAPI.listRolePermissions<RolePermission>(roleId, organizationId);
     },
-    enabled: !!roleId,
+    enabled: !!roleId && !!organizationId,
   });
 }
 
 export function useUserOrganizationRoles() {
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
     queryKey: ['user-organization-roles', activeOrganization.organizationId],
@@ -86,7 +90,7 @@ export function useUserOrganizationRoles() {
 
 export function useCreateRole() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: {
@@ -100,7 +104,7 @@ export function useCreateRole() {
     },
     onSuccess: () => {
       toast.success('Função criada com sucesso!');
-      queryClient.invalidateQueries({ queryKey: ['organization-roles'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-roles', activeOrganization.organizationId] });
     },
     onError: (error: unknown) => {
       toast.error('Erro ao criar função: ' + getErrorMessage(error));
@@ -110,7 +114,7 @@ export function useCreateRole() {
 
 export function useUpdateRole() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: {
@@ -125,7 +129,7 @@ export function useUpdateRole() {
     },
     onSuccess: () => {
       toast.success('Função atualizada!');
-      queryClient.invalidateQueries({ queryKey: ['organization-roles'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-roles', activeOrganization.organizationId] });
     },
     onError: (error: unknown) => {
       toast.error('Erro ao atualizar função: ' + getErrorMessage(error));
@@ -141,8 +145,8 @@ export function useDeleteRole() {
     mutationFn: (roleId: string) => settingsAPI.deleteRole(roleId, activeOrganization.organizationId),
     onSuccess: () => {
       toast.success('Função excluída!');
-      queryClient.invalidateQueries({ queryKey: ['organization-roles'] });
-      queryClient.invalidateQueries({ queryKey: ['user-organization-roles'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-roles', activeOrganization.organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['user-organization-roles', activeOrganization.organizationId] });
     },
     onError: (error: unknown) => {
       toast.error('Erro ao excluir função: ' + getErrorMessage(error));
@@ -152,14 +156,15 @@ export function useDeleteRole() {
 
 export function useUpdateRolePermissions() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: (data: { roleId: string; permissions: string[] }) =>
       settingsAPI.replaceRolePermissions(data.roleId, data.permissions, activeOrganization.organizationId),
     onSuccess: (_, variables) => {
       toast.success('Permissões atualizadas!');
-      queryClient.invalidateQueries({ queryKey: ['role-permissions', variables.roleId] });
+      queryClient.invalidateQueries({ queryKey: ['role-permissions', activeOrganization.organizationId, variables.roleId] });
+      queryClient.invalidateQueries({ queryKey: ['user-permissions-admin', activeOrganization.organizationId] });
     },
     onError: (error: unknown) => {
       toast.error('Erro ao atualizar permissões: ' + getErrorMessage(error));
@@ -169,14 +174,15 @@ export function useUpdateRolePermissions() {
 
 export function useAssignUserRole() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: (data: { userId: string; roleId: string | null }) =>
       settingsAPI.assignUserRole(data, activeOrganization.organizationId),
     onSuccess: () => {
       toast.success('Função do usuário atualizada!');
-      queryClient.invalidateQueries({ queryKey: ['user-organization-roles'] });
+      queryClient.invalidateQueries({ queryKey: ['user-organization-roles', activeOrganization.organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['user-permissions-admin', activeOrganization.organizationId] });
       queryClient.invalidateQueries({ queryKey: ['organization-users'] });
     },
     onError: (error: unknown) => {

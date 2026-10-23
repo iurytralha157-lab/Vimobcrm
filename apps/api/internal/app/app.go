@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/admin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/ai"
@@ -50,10 +51,12 @@ import (
 )
 
 type App struct {
-	handler  http.Handler
-	db       *dbpkg.Postgres
-	auth     *authpkg.Verifier
-	realtime *realtime.Hub
+	handler               http.Handler
+	db                    *dbpkg.Postgres
+	auth                  *authpkg.Verifier
+	realtime              *realtime.Hub
+	stageInactivityCancel context.CancelFunc
+	stageInactivityDone   <-chan struct{}
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -127,7 +130,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	var notificationDispatchStats func() leads.NotificationDispatchStats
 	var whatsappRuntimeStats func() map[string]any
-	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout).WithRuntimeStats(
+	var publicationWorkerStats func() map[string]any
+	var publicationWorkerReady func(time.Time) error
+	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout).WithDatabaseReadOnly(cfg.Database.ForceReadOnly).WithRuntimeStats(
 		func() map[string]any {
 			runtime := map[string]any{
 				"realtime":              realtimeHub.Stats(),
@@ -137,11 +142,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 					"workerEnabled":            cfg.Notifications.DispatchWorkerEnabled,
 				},
 				"whatsapp": map[string]any{
-					"backgroundWorkersEnabled": cfg.BackgroundWorkersEnabled,
-					"webhookWorkerEnabled":     cfg.WhatsApp.WebhookWorkerEnabled,
-					"outboxWorkerEnabled":      cfg.WhatsApp.OutboxWorkerEnabled,
-					"mediaWorkerEnabled":       cfg.WhatsApp.MediaWorkerEnabled,
-					"mediaWorkerConcurrency":   cfg.WhatsApp.MediaWorkerConcurrency,
+					"backgroundWorkersEnabled":       cfg.BackgroundWorkersEnabled,
+					"webhookWorkerEnabled":           cfg.WhatsApp.WebhookWorkerEnabled,
+					"outboxWorkerEnabled":            cfg.WhatsApp.OutboxWorkerEnabled,
+					"mediaWorkerEnabled":             cfg.WhatsApp.MediaWorkerEnabled,
+					"unlinkedRetentionWorkerEnabled": cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
+					"mediaWorkerConcurrency":         cfg.WhatsApp.MediaWorkerConcurrency,
 				},
 			}
 			if notificationDispatchStats != nil {
@@ -150,9 +156,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			if whatsappRuntimeStats != nil {
 				runtime["whatsapp"].(map[string]any)["stats"] = whatsappRuntimeStats()
 			}
+			if publicationWorkerStats != nil {
+				runtime["propertyPublications"] = publicationWorkerStats()
+			}
 			return runtime
 		},
-	)
+	).WithReadinessCheck(func() error {
+		if publicationWorkerReady != nil {
+			return publicationWorkerReady(time.Now())
+		}
+		return nil
+	})
 	helpHandler := help.NewHandler(help.NewRepository(postgres))
 	realtimeHandler := realtime.NewHandler(realtimeHub)
 	analyticsHandler := analytics.NewHandler(analytics.NewRepository(postgres))
@@ -226,7 +240,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	notificationDispatchStats = leadsRepository.NotificationDispatchStats
 	backgroundWorkers.Run(func() {
-		leadsRepository.StartRedistributionWorker(ctx, logger)
+		leadsRepository.StartRedistributionWorker(ctx, logger, realtimeHub)
 	})
 	backgroundWorkers.Run(func() {
 		if !startNotificationDispatchWorker(cfg.Notifications.DispatchWorkerEnabled, func() {
@@ -258,13 +272,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		StorageURL:    cfg.Storage.ProjectURL,
 		StorageAPIKey: cfg.Storage.APIKey,
 		Worker: publications.WorkerConfig{
-			Enabled:     cfg.Publications.WorkerEnabled,
+			Enabled:     cfg.Publications.WorkerEnabled && cfg.BackgroundWorkersEnabled,
 			Interval:    cfg.Publications.WorkerInterval,
 			BatchSize:   cfg.Publications.WorkerBatch,
 			Lease:       cfg.Publications.WorkerLease,
 			MaxAttempts: cfg.Publications.MaxAttempts,
 		},
 	})
+	publicationWorkerStats = publicationsRepository.WorkerStats
+	publicationWorkerReady = publicationsRepository.WorkerReady
 	backgroundWorkers.Run(func() {
 		publicationsRepository.StartWorker(ctx, logger)
 	})
@@ -278,9 +294,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		})
 	})
 	developmentsHandler := developments.NewHandler(developmentsRepository)
-	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres))
+	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres), realtimeHub)
 	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository, cfg.GoogleCalendar.ImmediateDispatchEnabled), realtimeHub)
-	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
+	stageInactivityRepository := stageconfig.NewRepository(postgres).WithStageInactivityRuntime(cfg.StageInactivityEnabled && cfg.BackgroundWorkersEnabled)
+	stageConfigHandler := stageconfig.NewHandler(stageInactivityRepository)
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
 		ProjectURL:          cfg.Storage.ProjectURL,
 		APIKey:              cfg.Storage.APIKey,
@@ -301,7 +318,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	teamsHandler := teams.NewHandler(teams.NewRepository(postgres, teams.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
-	}))
+	}), realtimeHub)
 	telemetryHandler := telemetry.NewHandler(telemetry.NewRepository(postgres))
 	presenceHandler := presence.NewHandler(presence.NewRepository(postgres))
 	usersHandler := users.NewHandler(users.NewRepository(postgres, users.AuthAdminConfig{
@@ -326,8 +343,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	automationsHandler := automations.NewHandler(automationsRepository)
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
-		ProjectURL: cfg.Storage.ProjectURL,
-		APIKey:     cfg.Storage.APIKey,
+		WhatsAppPostFormFollowUpGuardEnabled: cfg.WhatsApp.PostFormFollowUpGuardEnabled,
+		ProjectURL:                           cfg.Storage.ProjectURL,
+		APIKey:                               cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
 			APIURL:                   cfg.EvolutionGo.APIURL,
 			APIKey:                   cfg.EvolutionGo.APIKey,
@@ -338,27 +356,28 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
 	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
-		AIWorkerEnabled:               cfg.WhatsApp.AIWorkerEnabled,
-		AIWorkerInterval:              cfg.WhatsApp.AIWorkerInterval,
-		AIFollowUpWorkerEnabled:       cfg.WhatsApp.AIFollowUpWorkerEnabled,
-		AIFollowUpWorkerInterval:      cfg.WhatsApp.AIFollowUpWorkerInterval,
-		OutboxWorkerEnabled:           cfg.WhatsApp.OutboxWorkerEnabled,
-		OutboxWorkerInterval:          cfg.WhatsApp.OutboxWorkerInterval,
-		OutboxWorkerBatch:             cfg.WhatsApp.OutboxWorkerBatch,
-		OutboxWorkerConcurrency:       cfg.WhatsApp.OutboxWorkerConcurrency,
-		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
-		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
-		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
-		WebhookWorkerConcurrency:      cfg.WhatsApp.WebhookWorkerConcurrency,
-		MediaWorkerEnabled:            cfg.WhatsApp.MediaWorkerEnabled,
-		MediaWorkerInterval:           cfg.WhatsApp.MediaWorkerInterval,
-		MediaWorkerLease:              cfg.WhatsApp.MediaWorkerLease,
-		MediaWorkerConcurrency:        cfg.WhatsApp.MediaWorkerConcurrency,
-		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
-		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
-		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
-		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
-		SessionSupervisorRecoveryIDs:  cfg.WhatsApp.SessionSupervisorRecoveryIDs,
+		AIWorkerEnabled:                cfg.WhatsApp.AIWorkerEnabled,
+		AIWorkerInterval:               cfg.WhatsApp.AIWorkerInterval,
+		AIFollowUpWorkerEnabled:        cfg.WhatsApp.AIFollowUpWorkerEnabled,
+		AIFollowUpWorkerInterval:       cfg.WhatsApp.AIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:            cfg.WhatsApp.OutboxWorkerEnabled,
+		OutboxWorkerInterval:           cfg.WhatsApp.OutboxWorkerInterval,
+		OutboxWorkerBatch:              cfg.WhatsApp.OutboxWorkerBatch,
+		OutboxWorkerConcurrency:        cfg.WhatsApp.OutboxWorkerConcurrency,
+		WebhookWorkerEnabled:           cfg.WhatsApp.WebhookWorkerEnabled,
+		WebhookWorkerInterval:          cfg.WhatsApp.WebhookWorkerInterval,
+		WebhookWorkerBatch:             cfg.WhatsApp.WebhookWorkerBatch,
+		WebhookWorkerConcurrency:       cfg.WhatsApp.WebhookWorkerConcurrency,
+		MediaWorkerEnabled:             cfg.WhatsApp.MediaWorkerEnabled,
+		MediaWorkerInterval:            cfg.WhatsApp.MediaWorkerInterval,
+		MediaWorkerLease:               cfg.WhatsApp.MediaWorkerLease,
+		MediaWorkerConcurrency:         cfg.WhatsApp.MediaWorkerConcurrency,
+		UnlinkedRetentionWorkerEnabled: cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
+		SessionSupervisorEnabled:       cfg.WhatsApp.SessionSupervisorEnabled,
+		SessionSupervisorInitialDelay:  cfg.WhatsApp.SessionSupervisorInitialDelay,
+		SessionSupervisorInterval:      cfg.WhatsApp.SessionSupervisorInterval,
+		SessionSupervisorBatch:         cfg.WhatsApp.SessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:   cfg.WhatsApp.SessionSupervisorRecoveryIDs,
 	})
 	whatsappRuntimeStats = whatsappHandler.RuntimeStats
 	backgroundWorkers.Run(func() {
@@ -372,6 +391,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartUnlinkedRetentionWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)
@@ -443,6 +465,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	registerRoutes(mux, routeDependencies{
 		authVerifier:             authVerifier,
+		activeSessionChecker:     postgresActiveSessionChecker{database: postgres},
 		tenantRepository:         tenantRepository,
 		adminHandler:             adminHandler,
 		aiHandler:                aiHandler,
@@ -459,6 +482,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		homeFocusHandler:         homeFocusHandler,
 		integrationsHandler:      integrationsHandler,
 		leadsHandler:             leadsHandler,
+		automationStageHandler:   leads.NewAutomationStageCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
 		meHandler:                meHandler,
 		metaHandler:              metaHandler,
 		metaMarketingSyncHandler: metaMarketingSyncHandler,
@@ -490,11 +514,20 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		httpserver.CORS(cfg.HTTP.CORSOrigins),
 	)
 
+	stageInactivityCtx, stageInactivityCancel := context.WithCancel(ctx)
+	var stageInactivityDone <-chan struct{}
+	backgroundWorkers.Run(func() {
+		stageInactivityDone = stageInactivityRepository.StartStageInactivityWorker(stageInactivityCtx, logger, stageconfig.StageInactivityWorkerConfig{
+			Enabled: cfg.StageInactivityEnabled && cfg.BackgroundWorkersEnabled,
+		})
+	})
 	return &App{
-		handler:  handler,
-		db:       postgres,
-		auth:     authVerifier,
-		realtime: realtimeHub,
+		handler:               handler,
+		db:                    postgres,
+		auth:                  authVerifier,
+		realtime:              realtimeHub,
+		stageInactivityCancel: stageInactivityCancel,
+		stageInactivityDone:   stageInactivityDone,
 	}, nil
 }
 
@@ -513,6 +546,13 @@ func (app *App) Handler() http.Handler {
 }
 
 func (app *App) Close() {
+	// Finish this bounded worker before closing the shared connection pool.
+	if app.stageInactivityCancel != nil {
+		app.stageInactivityCancel()
+	}
+	if app.stageInactivityDone != nil {
+		<-app.stageInactivityDone
+	}
 	if app.realtime != nil {
 		app.realtime.Close()
 	}

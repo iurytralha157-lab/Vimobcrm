@@ -24,12 +24,15 @@ const (
 var (
 	ErrInvalidInput               = errors.New("invalid lead input")
 	ErrInvalidReference           = errors.New("invalid lead reference")
+	ErrLeadAssigneeTeamMismatch   = fmt.Errorf("%w: assignee must belong to the lead team", ErrInvalidReference)
 	ErrLeadPropertyUnavailable    = errors.New("lead property unavailable")
 	ErrLeadPropertyRelinkWhileWon = errors.New("won lead property link cannot be changed")
 	ErrLeadReservationUnverified  = errors.New("lead property reservation could not be verified")
 	ErrLeadAlreadyExists          = errors.New("lead already exists")
 	ErrLeadPhoneConflict          = errors.New("lead phone already exists")
+	ErrLeadChanged                = errors.New("lead changed since editing began")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
+	ErrWhatsAppSendInFlight       = errors.New("Aguarde a confirmação do envio WhatsApp antes de excluir este lead.")
 	ErrLeadNotFound               = errors.New("lead not found")
 	ErrLeadStageChanged           = errors.New("lead stage changed since it was loaded")
 	ErrNoLeadChanges              = errors.New("no lead changes provided")
@@ -39,46 +42,50 @@ var (
 )
 
 type Lead struct {
-	ID                        string       `json:"id"`
-	OrganizationID            string       `json:"organizationId"`
-	Name                      string       `json:"name"`
-	Email                     string       `json:"email,omitempty"`
-	Phone                     string       `json:"phone,omitempty"`
-	Source                    string       `json:"source"`
-	Status                    string       `json:"status"`
-	DealStatus                string       `json:"dealStatus"`
-	LostReason                string       `json:"lostReason,omitempty"`
-	Priority                  string       `json:"priority"`
-	Message                   string       `json:"message,omitempty"`
-	PropertyCode              string       `json:"propertyCode,omitempty"`
-	PropertyID                string       `json:"propertyId,omitempty"`
-	InterestPropertyID        string       `json:"interestPropertyId,omitempty"`
-	PipelineID                string       `json:"pipelineId,omitempty"`
-	StageID                   string       `json:"stageId,omitempty"`
-	AssignedUserID            string       `json:"assignedUserId,omitempty"`
-	TeamID                    string       `json:"teamId,omitempty"`
-	CanOperate                *bool        `json:"canOperate,omitempty"`
-	InterestValue             string       `json:"interestValue,omitempty"`
-	CommissionPercentage      string       `json:"commissionPercentage,omitempty"`
-	Feedback                  string       `json:"feedback,omitempty"`
-	FinalidadeCompra          string       `json:"finalidadeCompra,omitempty"`
-	Trabalha                  *bool        `json:"trabalha,omitempty"`
-	ProcuraFinanciamento      *bool        `json:"procuraFinanciamento,omitempty"`
-	IsOwnResource             *bool        `json:"isOwnResource,omitempty"`
-	ReentryCount              int          `json:"reentryCount"`
-	Stage                     *Stage       `json:"stage,omitempty"`
-	Assignee                  *Assignee    `json:"assignee,omitempty"`
-	CreatedAt                 time.Time    `json:"createdAt"`
-	UpdatedAt                 time.Time    `json:"updatedAt"`
-	StageEnteredAt            *time.Time   `json:"stageEnteredAt,omitempty"`
-	BoardOrderAt              *time.Time   `json:"boardOrderAt,omitempty"`
-	LastContactAt             *time.Time   `json:"lastContactAt,omitempty"`
-	NextFollowUpAt            *time.Time   `json:"nextFollowUpAt,omitempty"`
-	FirstResponseAt           *time.Time   `json:"firstResponseAt,omitempty"`
-	FirstResponseSeconds      *int         `json:"firstResponseSeconds,omitempty"`
-	FirstResponseChannel      *string      `json:"firstResponseChannel,omitempty"`
-	FirstResponseIsAutomation *bool        `json:"firstResponseIsAutomation,omitempty"`
-	AdditionalFields          LeadMetadata `json:"additionalFields,omitempty"`
+	ID                        string             `json:"id"`
+	OrganizationID            string             `json:"organizationId"`
+	Name                      string             `json:"name"`
+	Email                     string             `json:"email,omitempty"`
+	Phone                     string             `json:"phone,omitempty"`
+	Source                    string             `json:"source"`
+	Status                    string             `json:"status"`
+	DealStatus                string             `json:"dealStatus"`
+	LostReason                string             `json:"lostReason,omitempty"`
+	Priority                  string             `json:"priority"`
+	Message                   string             `json:"message,omitempty"`
+	PropertyCode              string             `json:"propertyCode,omitempty"`
+	PropertyID                string             `json:"propertyId,omitempty"`
+	InterestPropertyID        string             `json:"interestPropertyId,omitempty"`
+	PipelineID                string             `json:"pipelineId,omitempty"`
+	StageID                   string             `json:"stageId,omitempty"`
+	AssignedUserID            string             `json:"assignedUserId,omitempty"`
+	TeamID                    string             `json:"teamId,omitempty"`
+	CanOperate                *bool              `json:"canOperate,omitempty"`
+	FinancialReviewRequired   bool               `json:"financialReviewRequired,omitempty"`
+	QueuePool                 *QueuePoolMetadata `json:"queuePool,omitempty"`
+	QueuePoolReadAccess       *bool              `json:"-"`
+	InterestValue             string             `json:"interestValue,omitempty"`
+	CommissionPercentage      string             `json:"commissionPercentage,omitempty"`
+	Feedback                  string             `json:"feedback,omitempty"`
+	FinalidadeCompra          string             `json:"finalidadeCompra,omitempty"`
+	Trabalha                  *bool              `json:"trabalha,omitempty"`
+	ProcuraFinanciamento      *bool              `json:"procuraFinanciamento,omitempty"`
+	IsOwnResource             *bool              `json:"isOwnResource,omitempty"`
+	ReentryCount              int                `json:"reentryCount"`
+	Stage                     *Stage             `json:"stage,omitempty"`
+	Assignee                  *Assignee          `json:"assignee,omitempty"`
+	Tags                      *LeadTags          `json:"tags,omitempty"`
+	CreatedAt                 time.Time          `json:"createdAt"`
+	UpdatedAt                 time.Time          `json:"updatedAt"`
+	StageEnteredAt            *time.Time         `json:"stageEnteredAt,omitempty"`
+	BoardOrderAt              *time.Time         `json:"boardOrderAt,omitempty"`
+	LastContactAt             *time.Time         `json:"lastContactAt,omitempty"`
+	NextFollowUpAt            *time.Time         `json:"nextFollowUpAt,omitempty"`
+	FirstResponseAt           *time.Time         `json:"firstResponseAt,omitempty"`
+	FirstResponseSeconds      *int               `json:"firstResponseSeconds,omitempty"`
+	FirstResponseChannel      *string            `json:"firstResponseChannel,omitempty"`
+	FirstResponseIsAutomation *bool              `json:"firstResponseIsAutomation,omitempty"`
+	AdditionalFields          LeadMetadata       `json:"additionalFields,omitempty"`
 
 	WhatsAppAvatarURL         *string    `json:"whatsappAvatarUrl,omitempty"`
 	WhatsAppAvatarSyncedAt    *time.Time `json:"whatsappAvatarSyncedAt,omitempty"`
@@ -116,6 +123,11 @@ type CreateDistributionOutcome string
 
 const (
 	CreateDistributionOutcomeAssigned           CreateDistributionOutcome = "assigned"
+	CreateDistributionOutcomePooled             CreateDistributionOutcome = "pooled"
+	CreateDistributionOutcomeQueueClosed        CreateDistributionOutcome = "queue_closed"
+	CreateDistributionOutcomeQueueWaiting       CreateDistributionOutcome = "queue_waiting"
+	CreateDistributionOutcomeQueueLimitReached  CreateDistributionOutcome = "queue_limit_reached"
+	CreateDistributionOutcomeQueueProtected     CreateDistributionOutcome = "queue_protected"
 	CreateDistributionOutcomeAlreadyAssigned    CreateDistributionOutcome = "already_assigned"
 	CreateDistributionOutcomeNoMatchingQueue    CreateDistributionOutcome = "no_matching_queue"
 	CreateDistributionOutcomeNoAvailableMembers CreateDistributionOutcome = "no_available_members"
@@ -124,7 +136,9 @@ const (
 )
 
 type CreateResponse struct {
-	Data                Lead                      `json:"data"`
+	Data                *Lead                     `json:"data"`
+	LeadID              string                    `json:"leadId"`
+	LeadVisible         bool                      `json:"leadVisible"`
 	Reentry             bool                      `json:"reentry"`
 	AssignedUserName    string                    `json:"assignedUserName,omitempty"`
 	DistributionOutcome CreateDistributionOutcome `json:"distributionOutcome"`
@@ -160,6 +174,7 @@ type CreateRequest struct {
 	IsOwnResource          *bool               `json:"isOwnResource,omitempty"`
 	ConversationID         string              `json:"conversationId,omitempty"`
 	ExpectedPreviousLeadID string              `json:"expectedPreviousLeadId,omitempty"`
+	ConfirmHistoryLink     bool                `json:"confirmHistoryLink,omitempty"`
 	TagIDs                 []string            `json:"tagIds,omitempty"`
 	Cargo                  string              `json:"cargo,omitempty"`
 	Empresa                string              `json:"empresa,omitempty"`
@@ -174,6 +189,7 @@ type CreateRequest struct {
 	FaixaValorImovel       string              `json:"faixaValorImovel,omitempty"`
 	Profile                *LeadProfileRequest `json:"profile,omitempty"`
 	ImportMode             bool                `json:"importMode,omitempty"`
+	ImportRequestKey       string              `json:"importRequestKey,omitempty"`
 	AutoDistribute         *bool               `json:"autoDistribute,omitempty"`
 	RoundRobinID           string              `json:"roundRobinId,omitempty"`
 }
@@ -211,6 +227,7 @@ type createInput struct {
 	IsOwnResource          *bool
 	ConversationID         *string
 	ExpectedPreviousLeadID *string
+	ConfirmHistoryLink     bool
 	TagIDs                 []string
 	Cargo                  *string
 	Empresa                *string
@@ -225,6 +242,7 @@ type createInput struct {
 	FaixaValorImovel       *string
 	Metadata               LeadMetadata
 	ImportMode             bool
+	ImportRequestKey       *string
 	AutoDistribute         *bool
 	RoundRobinID           *string
 }
@@ -245,6 +263,7 @@ type patchStringSlice struct {
 }
 
 type UpdateRequest struct {
+	ExpectedUpdatedAt    *time.Time          `json:"expectedUpdatedAt,omitempty"`
 	Name                 patchString         `json:"name,omitempty"`
 	Email                patchString         `json:"email,omitempty"`
 	Phone                patchString         `json:"phone,omitempty"`
@@ -297,21 +316,25 @@ type tagInput struct {
 type MoveStageRequest struct {
 	StageID         string      `json:"stageId"`
 	ExpectedStageID patchString `json:"expectedStageId,omitempty"`
-	IsOwnResource   *bool       `json:"isOwnResource,omitempty"`
-	BoardOrderAt    *time.Time  `json:"boardOrderAt,omitempty"`
-	LostReason      *string     `json:"lostReason,omitempty"`
+	// Exact drag snapshot revision; required to move a closed lead between stages.
+	// Follow-up split: move these legacy DTOs/validation into move_stage_revision.go.
+	ExpectedUpdatedAt *time.Time `json:"expectedUpdatedAt,omitempty"`
+	IsOwnResource     *bool      `json:"isOwnResource,omitempty"`
+	BoardOrderAt      *time.Time `json:"boardOrderAt,omitempty"`
+	LostReason        *string    `json:"lostReason,omitempty"`
 	// StageEnteredAt is kept temporarily for compatibility with older clients
 	// that used this field as the visual Kanban order.
 	StageEnteredAt *time.Time `json:"stageEnteredAt,omitempty"`
 }
 
 type moveStageInput struct {
-	StageID         string
-	ExpectedStageID patchString
-	IsOwnResource   *bool
-	BoardOrderAt    *time.Time
-	StageEnteredAt  *time.Time
-	LostReason      *string
+	StageID           string
+	ExpectedStageID   patchString
+	ExpectedUpdatedAt *time.Time
+	IsOwnResource     *bool
+	BoardOrderAt      *time.Time
+	StageEnteredAt    *time.Time
+	LostReason        *string
 }
 
 type moveStageResult struct {
@@ -320,11 +343,13 @@ type moveStageResult struct {
 }
 
 type AssignRequest struct {
-	AssignedUserID patchString `json:"assignedUserId"`
+	AssignedUserID    patchString `json:"assignedUserId"`
+	ExpectedUpdatedAt *time.Time  `json:"expectedUpdatedAt"`
 }
 
 type assignInput struct {
-	AssignedUserID *string
+	AssignedUserID    *string
+	ExpectedUpdatedAt *time.Time
 }
 
 type RoundRobinResult struct {
@@ -471,6 +496,13 @@ func (request CreateRequest) Validate() (createInput, error) {
 	if input.Name == "" || len([]rune(input.Name)) < 2 {
 		return createInput{}, fmt.Errorf("%w: name must have at least 2 characters", ErrInvalidInput)
 	}
+	if request.ImportRequestKey != "" {
+		key, ok := normalizeUUID(request.ImportRequestKey)
+		if !ok || !request.ImportMode {
+			return createInput{}, fmt.Errorf("%w: importRequestKey requires importMode and a UUID", ErrInvalidInput)
+		}
+		input.ImportRequestKey = &key
+	}
 
 	if input.Source == "" {
 		input.Source = "manual"
@@ -580,6 +612,10 @@ func (request CreateRequest) Validate() (createInput, error) {
 			return createInput{}, fmt.Errorf("%w: conversationId is invalid", ErrInvalidInput)
 		}
 		input.ConversationID = &value
+		input.ConfirmHistoryLink = request.ConfirmHistoryLink
+		if !request.ConfirmHistoryLink {
+			return createInput{}, fmt.Errorf("%w: confirmHistoryLink is required with conversationId", ErrInvalidInput)
+		}
 
 		expectedPreviousLeadID := strings.TrimSpace(request.ExpectedPreviousLeadID)
 		if expectedPreviousLeadID != "unlinked" {
@@ -590,8 +626,8 @@ func (request CreateRequest) Validate() (createInput, error) {
 			expectedPreviousLeadID = normalized
 		}
 		input.ExpectedPreviousLeadID = &expectedPreviousLeadID
-	} else if strings.TrimSpace(request.ExpectedPreviousLeadID) != "" {
-		return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId requires conversationId", ErrInvalidInput)
+	} else if strings.TrimSpace(request.ExpectedPreviousLeadID) != "" || request.ConfirmHistoryLink {
+		return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId and confirmHistoryLink require conversationId", ErrInvalidInput)
 	}
 
 	if len(request.TagIDs) > 50 {
@@ -610,14 +646,9 @@ func (request CreateRequest) Validate() (createInput, error) {
 		input.TagIDs = append(input.TagIDs, value)
 	}
 
-	if request.InterestValue != nil {
-		value := strings.TrimSpace(*request.InterestValue)
-		if value != "" {
-			if _, err := strconv.ParseFloat(value, 64); err != nil {
-				return createInput{}, fmt.Errorf("%w: interestValue is invalid", ErrInvalidInput)
-			}
-			input.InterestValue = &value
-		}
+	input.InterestValue = request.InterestValue
+	if err := normalizeLeadCreateFinancialInput(&input); err != nil {
+		return createInput{}, err
 	}
 
 	metadata, err := validateLeadProfile(request.Profile, input.InterestPropertyIDs)
@@ -651,6 +682,9 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 		request.ExpectedStageID.Value = &expectedStageID
 	}
 
+	if request.ExpectedUpdatedAt != nil && request.ExpectedUpdatedAt.IsZero() {
+		return moveStageInput{}, fmt.Errorf("%w: expectedUpdatedAt is invalid", ErrInvalidInput)
+	}
 	if request.StageEnteredAt != nil && request.StageEnteredAt.IsZero() {
 		return moveStageInput{}, fmt.Errorf("%w: stageEnteredAt is invalid", ErrInvalidInput)
 	}
@@ -670,21 +704,25 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 	}
 
 	return moveStageInput{
-		StageID:         stageID,
-		ExpectedStageID: request.ExpectedStageID,
-		IsOwnResource:   request.IsOwnResource,
-		BoardOrderAt:    request.BoardOrderAt,
-		StageEnteredAt:  request.StageEnteredAt,
-		LostReason:      lostReason,
+		StageID:           stageID,
+		ExpectedStageID:   request.ExpectedStageID,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+		IsOwnResource:     request.IsOwnResource,
+		BoardOrderAt:      request.BoardOrderAt,
+		StageEnteredAt:    request.StageEnteredAt,
+		LostReason:        lostReason,
 	}, nil
 }
 
 func (request AssignRequest) Validate() (assignInput, error) {
+	if request.ExpectedUpdatedAt == nil || request.ExpectedUpdatedAt.IsZero() {
+		return assignInput{}, ErrLeadChanged
+	}
 	if !request.AssignedUserID.Set {
 		return assignInput{}, ErrNoLeadChanges
 	}
 
-	input := assignInput{}
+	input := assignInput{ExpectedUpdatedAt: request.ExpectedUpdatedAt}
 	if request.AssignedUserID.Value != nil {
 		value, ok := normalizeUUID(*request.AssignedUserID.Value)
 		if !ok {
@@ -698,6 +736,7 @@ func (request AssignRequest) Validate() (assignInput, error) {
 
 func (request UpdateRequest) Validate() (updateInput, error) {
 	input := updateInput{
+		ExpectedUpdatedAt:    request.ExpectedUpdatedAt,
 		Name:                 validatePatchString(request.Name, 180),
 		Email:                validatePatchString(request.Email, 254),
 		Phone:                validatePatchString(request.Phone, 40),
@@ -711,8 +750,8 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		AssignedUserID:       request.AssignedUserID,
 		TeamID:               request.TeamID,
 		InterestPropertyIDs:  request.InterestPropertyIDs,
-		InterestValue:        validatePatchString(request.InterestValue, 40),
-		CommissionPercentage: validatePatchString(request.CommissionPercentage, 20),
+		InterestValue:        request.InterestValue,
+		CommissionPercentage: request.CommissionPercentage,
 		DealStatus:           validatePatchString(request.DealStatus, 20),
 		LostReason:           validatePatchString(request.LostReason, 300),
 		Feedback:             validatePatchString(request.Feedback, 2_000),
@@ -733,6 +772,9 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		ProcuraFinanciamento: request.ProcuraFinanciamento,
 		IsOwnResource:        request.IsOwnResource,
 		Profile:              request.Profile,
+	}
+	if input.ExpectedUpdatedAt != nil && input.ExpectedUpdatedAt.IsZero() {
+		return updateInput{}, fmt.Errorf("%w: expectedUpdatedAt is invalid", ErrInvalidInput)
 	}
 
 	if input.Name.Set {
@@ -815,18 +857,8 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		input.MetadataSet = true
 	}
 
-	for _, item := range []struct {
-		name  string
-		field patchString
-	}{
-		{name: "interestValue", field: input.InterestValue},
-		{name: "commissionPercentage", field: input.CommissionPercentage},
-	} {
-		if item.field.Set && item.field.Value != nil {
-			if _, err := strconv.ParseFloat(*item.field.Value, 64); err != nil {
-				return updateInput{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
-			}
-		}
+	if err := normalizeLeadUpdateFinancialInput(&input, leadFinancialWireMaxLength); err != nil {
+		return updateInput{}, err
 	}
 
 	if !input.hasChanges() {
@@ -973,6 +1005,9 @@ func (input updateInput) auditData() map[string]any {
 	addBool("procura_financiamento", input.ProcuraFinanciamento)
 	addBool("is_own_resource", input.IsOwnResource)
 	if input.MetadataSet {
+		if input.InterestPropertyIDs.Set {
+			out["interest_property_ids"] = input.InterestPropertyIDs.Value
+		}
 		if profile, ok := input.Metadata["profile"].(LeadMetadata); ok {
 			for _, key := range []string{
 				"personType", "gender", "socialName", "birthDate", "cpf", "rg", "cnpj",

@@ -38,7 +38,8 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			coalesce(p.position, 0),
 			p.default_round_robin_id::text,
 			p.created_at,
-			p.updated_at
+			p.updated_at,
+			`+pipelineRevisionPayloadSQL+`
 		from public.pipelines p
 		where p.organization_id = $1::uuid
 		order by coalesce(p.position, 0), p.created_at
@@ -91,7 +92,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		if _, err := tx.Exec(ctx, `
 			update public.pipelines
 			set is_default = false,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 		`, tenantContext.OrganizationID); err != nil {
 			return Pipeline{}, err
@@ -151,7 +152,8 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pi
 			coalesce(p.position, 0),
 			p.default_round_robin_id::text,
 			p.created_at,
-			p.updated_at
+			p.updated_at,
+			`+pipelineRevisionPayloadSQL+`
 		from public.pipelines p
 		where p.organization_id = $1::uuid
 		  and p.id = $2::uuid
@@ -171,6 +173,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if !canManagePipelines(tenantContext) {
 		return Pipeline{}, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validatePipelineRevision(input.ExpectedRevision); err != nil {
+		return Pipeline{}, err
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -182,6 +187,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if err := repo.ensurePipeline(ctx, tx, tenantContext.OrganizationID, pipelineID); err != nil {
+		return Pipeline{}, err
+	}
+	if err := lockPipelineRevision(ctx, tx, tenantContext.OrganizationID, pipelineID, input.ExpectedRevision); err != nil {
 		return Pipeline{}, err
 	}
 	if input.IsDefault.IsFalse() {
@@ -203,7 +211,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if _, err := tx.Exec(ctx, `
 			update public.pipelines
 			set is_default = false,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and id <> $2::uuid
 		`, tenantContext.OrganizationID, pipelineID); err != nil {
@@ -221,7 +229,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		args = append(args, nullablePatchBool(input.IsDefault))
 		assignments = append(assignments, fmt.Sprintf("is_default = coalesce($%d::boolean, false)", len(args)))
 	}
-	assignments = append(assignments, "updated_at = now()")
+	assignments = append(assignments, "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')")
 
 	if _, err := tx.Exec(ctx, `
 		update public.pipelines
@@ -239,13 +247,16 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	return repo.Get(ctx, tenantContext, pipelineID)
 }
 
-func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, pipelineID string) error {
+func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, pipelineID string, input deletePipelineInput) error {
 	pipelineID, ok := normalizeUUID(pipelineID)
 	if !ok {
 		return ErrPipelineNotFound
 	}
 	if !canManagePipelines(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
+	}
+	if err := validatePipelineRevision(input.ExpectedRevision); err != nil {
+		return err
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -258,6 +269,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if err := repo.ensurePipeline(ctx, tx, tenantContext.OrganizationID, pipelineID); err != nil {
+		return err
+	}
+	if err := lockPipelineRevision(ctx, tx, tenantContext.OrganizationID, pipelineID, input.ExpectedRevision); err != nil {
 		return err
 	}
 	var wasDefault bool
@@ -320,7 +334,7 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 			)
 			update public.pipelines pipeline
 			set is_default = true,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			from replacement
 			where pipeline.organization_id = $1::uuid
 			  and pipeline.id = replacement.id
@@ -456,6 +470,9 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 	if !canManagePipelines(tenantContext) {
 		return Stage{}, tenant.ErrOrganizationAccessDenied
 	}
+	if input.ExpectedUpdatedAt == nil || input.ExpectedUpdatedAt.IsZero() {
+		return Stage{}, ErrStagesChanged
+	}
 	qualifiedPatch, err := qualifiedPatchForStageUpdate(input)
 	if err != nil {
 		return Stage{}, err
@@ -485,7 +502,7 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 	addBool("is_lost", input.IsLost)
 	addBool("is_qualified", qualifiedPatch)
 	addBool("is_active", input.IsActive)
-	assignments = append(assignments, "updated_at = now()")
+	assignments = append(assignments, "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')")
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -500,6 +517,9 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 		stageID,
 	)
 	if err != nil {
+		return Stage{}, err
+	}
+	if err := lockStageUpdateRevision(ctx, tx, tenantContext.OrganizationID, stageID, input.ExpectedUpdatedAt); err != nil {
 		return Stage{}, err
 	}
 	if err := repo.ensureStageCanBeQualified(
@@ -518,7 +538,7 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 		if _, err := tx.Exec(ctx, `
 			update public.stages
 			set is_qualified = false,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and pipeline_id = $2::uuid
 			  and id <> $3::uuid
@@ -642,6 +662,12 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 			return nil, ErrStagesChanged
 		}
 	}
+	// The parent lock is already held. Include archived aliases and aliases
+	// allocated earlier in this batch before writing any new stages.
+	input.Stages, err = assignReorderedStageKeys(ctx, tx, tenantContext.OrganizationID, pipelineID, input)
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		update public.stages
@@ -684,8 +710,8 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 			set name = $4,
 			    color = $5,
 			    position = $6,
-			    stage_key = $7,
-			    updated_at = now()
+			    stage_key = coalesce(nullif($7::text, ''), stage_key),
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $2::uuid
 			  and pipeline_id = $3::uuid
 			  and id = $1::uuid
@@ -708,7 +734,7 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 		if _, err := tx.Exec(ctx, `
 			update public.stages
 			set position = $4,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and pipeline_id = $2::uuid
 			  and id = $3::uuid
@@ -725,13 +751,16 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	return repo.ListStages(ctx, tenantContext, pipelineID)
 }
 
-func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Context, stageID string) error {
+func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Context, stageID string, input deleteStageInput) error {
 	stageID, ok := normalizeUUID(stageID)
 	if !ok {
 		return ErrStageNotFound
 	}
 	if !canManagePipelines(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
+	}
+	if input.ExpectedUpdatedAt.IsZero() {
+		return ErrStagesChanged
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -741,6 +770,9 @@ func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Con
 	defer tx.Rollback(ctx)
 
 	if _, err := repo.lockStagePipelineForUpdate(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+		return err
+	}
+	if err := lockStageUpdateRevision(ctx, tx, tenantContext.OrganizationID, stageID, &input.ExpectedUpdatedAt); err != nil {
 		return err
 	}
 
@@ -796,14 +828,23 @@ func (repo Repository) SetDefaultRoundRobin(ctx context.Context, tenantContext t
 	if !canManagePipelines(tenantContext) {
 		return Pipeline{}, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validatePipelineRevision(input.ExpectedRevision); err != nil {
+		return Pipeline{}, err
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return Pipeline{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockOrganizationForPipelineMutation(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Pipeline{}, err
+	}
 
 	if err := repo.ensurePipeline(ctx, tx, tenantContext.OrganizationID, pipelineID); err != nil {
+		return Pipeline{}, err
+	}
+	if err := lockPipelineRevision(ctx, tx, tenantContext.OrganizationID, pipelineID, input.ExpectedRevision); err != nil {
 		return Pipeline{}, err
 	}
 
@@ -811,17 +852,20 @@ func (repo Repository) SetDefaultRoundRobin(ctx context.Context, tenantContext t
 		if _, err := tx.Exec(ctx, `
 			update public.pipelines
 			set default_round_robin_id = null,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 		`, tenantContext.OrganizationID, pipelineID); err != nil {
 			return Pipeline{}, err
 		}
 	} else {
+		if err := lockPipelineRoundRobinReference(ctx, tx, tenantContext.OrganizationID, *input.RoundRobinID); err != nil {
+			return Pipeline{}, err
+		}
 		tag, err := tx.Exec(ctx, `
 			update public.pipelines
 			set default_round_robin_id = $3::uuid,
-			    updated_at = now()
+			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			  and exists (
@@ -830,6 +874,7 @@ func (repo Repository) SetDefaultRoundRobin(ctx context.Context, tenantContext t
 			    where queue.organization_id = $1::uuid
 			      and queue.id = $3::uuid
 			      and coalesce(queue.is_active, true) = true
+			      and queue.deleted_at is null
 			  )
 		`, tenantContext.OrganizationID, pipelineID, *input.RoundRobinID)
 		if err != nil {
@@ -897,12 +942,14 @@ func (repo Repository) ensurePipeline(ctx context.Context, tx pgx.Tx, organizati
 }
 
 func (repo Repository) lockOrganizationForPipelineMutation(ctx context.Context, tx pgx.Tx, organizationID string) error {
+	// Serialize pipeline/default changes without blocking FK KEY SHARE checks
+	// from a child writer that already holds the parent pipeline lock.
 	var lockedID string
 	if err := tx.QueryRow(ctx, `
 		select id::text
 		from public.organizations
 		where id = $1::uuid
-		for update
+		for no key update
 	`, organizationID).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidReference
@@ -935,6 +982,9 @@ func (repo Repository) hasDeletionDependencies(
 	pipelineID string,
 	stageID string,
 ) (bool, error) {
+	if err := repo.ensureStageAutomationReferencesSafe(ctx, tx, organizationID, pipelineID, stageID); err != nil {
+		return false, err
+	}
 	var linked bool
 	err := tx.QueryRow(ctx, `
 		with stage_scope as (
@@ -1055,6 +1105,11 @@ func (repo Repository) ensureStageCanBeQualified(
 	if nextIsWon && nextIsLost {
 		return fmt.Errorf("%w: a stage cannot be both won and lost", ErrInvalidInput)
 	}
+	if input.IsWon.Set || input.IsLost.Set {
+		if err := ensureNativeStageStatusCompatible(ctx, tx, organizationID, stageID, nextIsWon, nextIsLost); err != nil {
+			return err
+		}
+	}
 	if nextIsQualified && (nextIsWon || nextIsLost || !nextIsActive) {
 		return fmt.Errorf(
 			"%w: a qualified stage must be active and non-terminal",
@@ -1074,6 +1129,9 @@ func (repo Repository) ensureStageCanBeQualified(
 		if leadCount > 0 {
 			return ErrHasLeads
 		}
+		if err := repo.ensureStageArchiveRoutingSafe(ctx, tx, organizationID, pipelineID, stageID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1084,47 +1142,16 @@ func isForeignKeyViolation(err error) bool {
 }
 
 func (repo Repository) uniqueStageKey(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, name string) (string, error) {
-	baseKey := buildStageKey(name)
-	rows, err := tx.Query(ctx, `
-		select stage_key
-		from public.stages
-		where organization_id = $1::uuid
-		  and pipeline_id = $2::uuid
-		  and stage_key is not null
-	`, organizationID, pipelineID)
+	used, err := readPipelineStageKeys(ctx, tx, organizationID, pipelineID)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
-
-	used := map[string]struct{}{}
-	for rows.Next() {
-		var stageKey pgtype.Text
-		if err := rows.Scan(&stageKey); err != nil {
-			return "", err
-		}
-		if stageKey.Valid {
-			used[stageKey.String] = struct{}{}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-
-	if _, exists := used[baseKey]; !exists {
-		return baseKey, nil
-	}
-
-	for suffix := 2; ; suffix++ {
-		candidate := fmt.Sprintf("%s_%d", baseKey, suffix)
-		if _, exists := used[candidate]; !exists {
-			return candidate, nil
-		}
-	}
+	return uniqueStageKeyCandidate(buildStageKey(name), used), nil
 }
 
 func scanPipeline(row scanner) (Pipeline, error) {
 	var pipeline Pipeline
+	var revisionPayload string
 	var defaultRoundRobinID pgtype.Text
 	if err := row.Scan(
 		&pipeline.ID,
@@ -1136,10 +1163,12 @@ func scanPipeline(row scanner) (Pipeline, error) {
 		&defaultRoundRobinID,
 		&pipeline.CreatedAt,
 		&pipeline.UpdatedAt,
+		&revisionPayload,
 	); err != nil {
 		return Pipeline{}, err
 	}
 	pipeline.DefaultRoundRobinID = textValue(defaultRoundRobinID)
+	pipeline.Revision = pipelineRevision(revisionPayload)
 	return pipeline, nil
 }
 

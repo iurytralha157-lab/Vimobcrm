@@ -15,6 +15,7 @@ import {
 import { DashboardChartTooltip } from './DashboardChartTooltip';
 import { DASHBOARD_DEAL_EVOLUTION_COLORS } from '@/config/dashboard-chart-colors';
 import { DashboardChartError } from './DashboardChartError';
+import { dashboardEvolutionTickLayout, dashboardEvolutionTickLines, dashboardEvolutionTickWidth } from '@/components/features/dashboard/evolution-chart-model';
 
 export interface DealsEvolutionPoint {
   date: string;
@@ -91,30 +92,24 @@ function getYTickCount(chartHeight: number, maxValue: number) {
   return Math.min(dataTicks, 12);
 }
 
-/** Compute X-axis interval so labels don't overlap. ~45px per label. */
-function getXInterval(chartWidth: number, totalPoints: number) {
-  // We want to show as many labels as possible without overlap
-  // For ~30 points (one month), we can show every 3rd or 4th label on small screens
-  // and more on large screens.
-  const labelWidth = 45;
-  const maxLabels = Math.max(2, Math.floor(chartWidth / labelWidth));
-  if (totalPoints <= maxLabels) return 0; // show all
-  return Math.ceil(totalPoints / maxLabels) - 1;
-}
-
 function isHourlyEvolution(data: DealsEvolutionPoint[]) {
   return data.length > 0 && data.every((point) => /^\d{2}:00$/.test(point.date));
 }
 
-function getHourlyXInterval(chartWidth: number, isMobile: boolean) {
-  if (isMobile) return 3;
-  if (chartWidth < 560) return 3;
-  if (chartWidth < 820) return 2;
-  return 1;
-}
-
-function formatHourlyTick(value: string | number) {
-  return String(value).replace(':00', 'h');
+function EvolutionAxisTick({ x = 0, y = 0, payload, chartWidth, hourly }: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string | number };
+  chartWidth: number;
+  hourly: boolean;
+}) {
+  const label = String(payload?.value ?? '');
+  const lines = dashboardEvolutionTickLines(label, hourly);
+  const halfWidth = dashboardEvolutionTickWidth(label, hourly) / 2;
+  const anchor = x - halfWidth < 8 ? 'start' : x + halfWidth > chartWidth - 8 ? 'end' : 'middle';
+  return <text data-evolution-tick="true" x={x} y={y} textAnchor={anchor} dominantBaseline="hanging" style={chartTickStyle} aria-label={label}>
+    {lines.map((line, index) => <tspan key={index} x={x} dy={index === 0 ? 0 : 13}>{line}</tspan>)}
+  </text>;
 }
 
 export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: DealsEvolutionChartProps) {
@@ -188,9 +183,7 @@ export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: Deals
 
   const maxValue = Math.max(...data.map(d => Math.max(d.ganhos, d.perdas, d.abertos)), 1);
   const hourlyEvolution = isHourlyEvolution(data);
-  const tickInterval = hourlyEvolution
-    ? getHourlyXInterval(chartSize.width, isMobile)
-    : getXInterval(chartSize.width, data.length);
+  const tickLayout = dashboardEvolutionTickLayout(data.map((point) => point.date), chartSize.width, isMobile, hourlyEvolution);
   const yTickCount = getYTickCount(chartSize.height, maxValue);
 
   return (
@@ -205,7 +198,7 @@ export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: Deals
       </CardHeader>
       <CardContent className="pb-3 flex-1 flex flex-col px-0">
         {/* Chart */}
-        <div className="dashboard-recharts-focusless relative min-h-[200px] w-full flex-1">
+        <div className="relative min-h-[180px] w-full flex-1">
           <ResponsiveContainer
             width="100%"
             height="100%"
@@ -247,10 +240,10 @@ export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: Deals
                 dataKey="date"
                 axisLine={false}
                 tickLine={false}
-                tick={chartTickStyle}
-                tickFormatter={hourlyEvolution ? formatHourlyTick : undefined}
-                tickMargin={8}
-                interval={tickInterval}
+                tick={<EvolutionAxisTick chartWidth={chartSize.width} hourly={hourlyEvolution} />}
+                tickMargin={6}
+                interval={tickLayout.interval}
+                height={tickLayout.height}
                 minTickGap={5}
               />
               <YAxis
@@ -259,6 +252,7 @@ export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: Deals
                 tick={chartTickStyle}
                 tickMargin={4}
                 width={isMobile ? 32 : 45}
+                tickFormatter={(value: number) => value.toLocaleString('pt-BR', { notation: 'compact', maximumFractionDigits: 1 })}
                 allowDecimals={false}
                 tickCount={yTickCount}
                 domain={[0, 'auto']}

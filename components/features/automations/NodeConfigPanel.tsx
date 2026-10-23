@@ -728,6 +728,15 @@ export function NodeConfigPanel({
                   </Select>
                 </div>
               )}
+              <div className="space-y-1.5">
+                <Label htmlFor="automation-move-lost-reason" className="text-xs">Motivo de perda</Label>
+                <Textarea id="automation-move-lost-reason" maxLength={300}
+                  value={selectedNode.data.move_lost_reason || ''}
+                  onChange={(event) => onNodeDataChange(selectedNode.id, { move_lost_reason: event.target.value })}
+                  placeholder="Informe o motivo se esta movimentação encerrar o lead como Perdido."
+                  className="min-h-16 text-xs" />
+                <p className="text-xs text-muted-foreground">Exigido quando o destino resulta em Perdido. Sem motivo, a movimentação é recusada e o lead é preservado.</p>
+              </div>
             </div>
           )}
 

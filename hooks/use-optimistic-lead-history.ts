@@ -18,6 +18,18 @@ export function appendOptimisticHistoryEvent(
   return [...current, event].sort((a, b) => eventTime(a) - eventTime(b));
 }
 
+export function appendOptimisticLeadHistoryEvent(queryClient: QueryClient, leadId: string, event: UnifiedHistoryEvent) {
+  queryClient.setQueriesData<UnifiedHistoryEvent[]>({ queryKey: ['lead-history-v2', leadId] }, current =>
+    appendOptimisticHistoryEvent(current, event));
+  return event.id;
+}
+
+export function removeOptimisticLeadHistoryEvent(queryClient: QueryClient, leadId: string, eventId: string) {
+  // Rollback only our write. Refetches and concurrent mutations may have added newer facts.
+  queryClient.setQueriesData<UnifiedHistoryEvent[]>({ queryKey: ['lead-history-v2', leadId] }, current =>
+    Array.isArray(current) ? current.filter(event => event.id !== eventId) : current);
+}
+
 export function invalidateLeadHistorySoon(
   queryClient: QueryClient,
   leadId?: string | null,

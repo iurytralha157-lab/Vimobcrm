@@ -9,7 +9,7 @@ const manifestPath = path.join(functionsRoot, "production-manifest.json");
 const verifierPath = path.join(repositoryRoot, "scripts", "supabase", "verify-edge-functions.mjs");
 const releaseSlugs = ["google-calendar-oauth", "google-calendar-sync"];
 const legacySlug = "google-calendar-auth";
-const outboundClaimMigration = "supabase/migrations/20261006150000_claim_google_calendar_outbound_jobs.sql";
+const outboundClaimMigration = "supabase/migrations/20261012212128_harden_google_calendar_outbound_protocol.sql";
 
 function parseArguments(args) {
   let runtimeSlugs = null;
@@ -146,7 +146,9 @@ async function buildPlan(runtimeSlugs) {
     },
     database_prerequisite: {
       migration: outboundClaimMigration,
-      rpc: "public.google_calendar_claim_outbound_sync_jobs(integer, text)",
+      rpc: "public.google_calendar_claim_outbound_sync_jobs_v2(integer, text)",
+      old_edge_workers_must_be_stopped_and_drained: true,
+      old_go_producers_compatible: true,
       runtime_verified: false,
       required_before_sync_worker: true,
     },

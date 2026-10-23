@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,7 +70,7 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 	}
 	legacyConditions := []string{}
 	atomicLegacyMetaConditions := []string{}
-	pageRequiresAtomicLegacyMeta := filter.Page != ""
+	atomicLegacyLeadConditions := []string{}
 
 	addValues := func(values []string, eventColumns []string, leadColumns []string, metaColumns []string) {
 		if len(values) == 0 || (len(values) == 1 && values[0] == "") {
@@ -96,23 +97,14 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		for _, column := range metaColumns {
 			metaMatches = append(metaMatches, fmt.Sprintf("%s.%s %s", metaAlias, column, comparison))
 		}
-		if pageRequiresAtomicLegacyMeta {
-			atomicLegacyMetaConditions = append(atomicLegacyMetaConditions, "("+strings.Join(metaMatches, " or ")+")")
-			return
-		}
-
-		legacyMatches := make([]string, 0, len(leadColumns)+1)
+		atomicLegacyMetaConditions = append(atomicLegacyMetaConditions, "("+strings.Join(metaMatches, " or ")+")")
+		legacyMatches := make([]string, 0, len(leadColumns))
 		for _, column := range leadColumns {
 			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s %s", leadAlias, column, comparison))
 		}
-		legacyMatches = append(legacyMatches, fmt.Sprintf(`exists (
-			select 1
-			from public.lead_meta %s
-			where %s.organization_id = $1::uuid
-			  and %s.lead_id = %s.id
-			  and (%s)
-		)`, metaAlias, metaAlias, metaAlias, leadAlias, strings.Join(metaMatches, " or ")))
-		legacyConditions = append(legacyConditions, "("+strings.Join(legacyMatches, " or ")+")")
+		if len(legacyMatches) > 0 {
+			atomicLegacyLeadConditions = append(atomicLegacyLeadConditions, "("+strings.Join(legacyMatches, " or ")+")")
+		}
 	}
 
 	addValues([]string{filter.Page},
@@ -135,14 +127,19 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		[]string{"meta_ad_id"},
 		[]string{"ad_id", "ad_name"},
 	)
-	if pageRequiresAtomicLegacyMeta {
-		legacyConditions = append(legacyConditions, fmt.Sprintf(`exists (
+	// Keep each legacy projection atomic too: a first-touch campaign on leads
+	// must never combine with a later ad set on lead_meta after a reentry.
+	legacyMeta := fmt.Sprintf(`exists (
 			select 1
 			from public.lead_meta %s
 			where %s.organization_id = $1::uuid
 			  and %s.lead_id = %s.id
 			  and %s
-		)`, metaAlias, metaAlias, metaAlias, leadAlias, strings.Join(atomicLegacyMetaConditions, " and ")))
+		)`, metaAlias, metaAlias, metaAlias, leadAlias, strings.Join(atomicLegacyMetaConditions, " and "))
+	if filter.Page == "" && len(atomicLegacyLeadConditions) > 0 {
+		legacyConditions = append(legacyConditions, "("+legacyMeta+" or ("+strings.Join(atomicLegacyLeadConditions, " and ")+"))")
+	} else {
+		legacyConditions = append(legacyConditions, legacyMeta)
 	}
 
 	addDate := func(value any, operator string) {
@@ -170,50 +167,20 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 }
 
 func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardStage, error) {
-	pipelineID, err := repo.resolvePipelineBoardPipelineID(ctx, tenantContext, filter.PipelineID)
-	if err != nil {
-		return nil, err
-	}
-	if pipelineID == "" {
-		return []PipelineBoardStage{}, nil
-	}
-
-	stages, err := repo.listPipelineBoardStages(ctx, tenantContext, pipelineID)
-	if err != nil {
-		return nil, err
-	}
-
-	stageIDs := make([]string, 0, len(stages))
-	for _, stage := range stages {
-		stageIDs = append(stageIDs, stage.ID)
-	}
-
-	boardFilter := filter
-	boardFilter.PipelineID = pipelineID
-	boardFilter.StageID = ""
-	boardFilter.StageIDs = stageIDs
-	boardFilter.Offset = 0
-	leadsByStage, err := repo.listInitialPipelineBoardLeadsByStage(ctx, tenantContext, boardFilter)
-	if err != nil {
-		return nil, err
-	}
-	metrics, err := repo.listPipelineBoardStageMetrics(ctx, tenantContext, boardFilter)
+	stages, err := repo.readPipelineBoardSnapshot(ctx, repo.db.Pool(), tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
 
 	allLeads := []*PipelineBoardLead{}
 	for index := range stages {
-		metric := metrics[stages[index].ID]
-		stages[index].Leads = leadsByStage[stages[index].ID]
-		stages[index].TotalLeadCount = metric.LeadCount
-		stages[index].TotalValue = metric.TotalValue
-		stages[index].HasMore = metric.LeadCount > int64(len(stages[index].Leads))
 		for leadIndex := range stages[index].Leads {
 			allLeads = append(allLeads, &stages[index].Leads[leadIndex])
 		}
 	}
 
+	// Enrichments and avatar signing intentionally run after releasing the read
+	// snapshot; only the stage/card/count/value projection shares that snapshot.
 	if err := repo.attachPipelineBoardLeadEnrichments(ctx, tenantContext, allLeads); err != nil {
 		return nil, err
 	}
@@ -237,23 +204,20 @@ func (repo Repository) ListPipelineStageLeads(ctx context.Context, tenantContext
 	}
 	filter.PipelineID = pipelineID
 
-	leads, err := repo.listPipelineBoardLeads(ctx, tenantContext, filter)
+	page, err := readPipelineStagePageWithQueryer(ctx, repo.db.Pool(), tenantContext, filter)
 	if err != nil {
 		return PipelineStageLeadsResponse{}, err
 	}
 
-	leadPointers := make([]*PipelineBoardLead, 0, len(leads))
-	for index := range leads {
-		leadPointers = append(leadPointers, &leads[index])
+	leadPointers := make([]*PipelineBoardLead, 0, len(page.Leads))
+	for index := range page.Leads {
+		leadPointers = append(leadPointers, &page.Leads[index])
 	}
 	if err := repo.attachPipelineBoardLeadEnrichments(ctx, tenantContext, leadPointers); err != nil {
 		return PipelineStageLeadsResponse{}, err
 	}
 
-	return PipelineStageLeadsResponse{
-		StageID: stageID,
-		Leads:   leads,
-	}, nil
+	return page, nil
 }
 
 func (repo Repository) CountPipelineStageLeads(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]int64, error) {
@@ -651,7 +615,7 @@ func collectLeadMetaFilterOptions(
 	adsetKey := firstNonEmpty(adsetID, adsetName)
 	adsetReady := campaignReady && adsetKey != "" && adsetName != ""
 	if adsetReady {
-		adsets[campaignKey+"-"+adsetKey] = LeadMetaAdsetOption{
+		adsets[leadMetaFilterTupleKey(campaignKey, adsetKey)] = LeadMetaAdsetOption{
 			ID:         adsetKey,
 			Name:       adsetName,
 			CampaignID: campaignKey,
@@ -661,7 +625,7 @@ func collectLeadMetaFilterOptions(
 	adName = firstNonEmpty(adName)
 	adKey := firstNonEmpty(adID, adName)
 	if adsetReady && adKey != "" && adName != "" {
-		ads[campaignKey+"-"+adsetKey+"-"+adKey] = LeadMetaAdOption{
+		ads[leadMetaFilterTupleKey(campaignKey, adsetKey, adKey)] = LeadMetaAdOption{
 			ID:         adKey,
 			Name:       adName,
 			AdsetID:    adsetKey,
@@ -670,7 +634,18 @@ func collectLeadMetaFilterOptions(
 	}
 }
 
+func leadMetaFilterTupleKey(values ...string) string {
+	// JSON preserves tuple boundaries even for legacy names containing hyphens,
+	// quotes, commas or control characters. Marshaling strings cannot fail.
+	encoded, _ := json.Marshal(values)
+	return string(encoded)
+}
+
 func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenantContext tenant.Context, pipelineID string) (string, error) {
+	return resolvePipelineBoardPipelineIDWithQueryer(ctx, repo.db.Pool(), tenantContext, pipelineID)
+}
+
+func resolvePipelineBoardPipelineIDWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, pipelineID string) (string, error) {
 	if strings.TrimSpace(pipelineID) != "" {
 		normalized, ok := normalizeUUID(pipelineID)
 		if !ok {
@@ -678,7 +653,7 @@ func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenan
 		}
 
 		var id string
-		err := repo.db.Pool().QueryRow(ctx, `
+		err := queryer.QueryRow(ctx, `
 			select id::text
 			from public.pipelines
 			where id = $1::uuid
@@ -695,7 +670,7 @@ func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenan
 	}
 
 	var id string
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select id::text
 		from public.pipelines
 		where organization_id = $1::uuid
@@ -710,7 +685,7 @@ func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenan
 		return "", err
 	}
 
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = queryer.QueryRow(ctx, `
 		select id::text
 		from public.pipelines
 		where organization_id = $1::uuid
@@ -728,7 +703,11 @@ func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenan
 }
 
 func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContext tenant.Context, pipelineID string) ([]PipelineBoardStage, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	return listPipelineBoardStagesWithQueryer(ctx, repo.db.Pool(), tenantContext, pipelineID)
+}
+
+func listPipelineBoardStagesWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, pipelineID string) ([]PipelineBoardStage, error) {
+	rows, err := queryer.Query(ctx, `
 		select
 			id::text,
 			organization_id::text,
@@ -789,6 +768,10 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 }
 
 func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardLead, error) {
+	return listPipelineBoardLeadsWithQueryer(ctx, repo.db.Pool(), tenantContext, filter)
+}
+
+func listPipelineBoardLeadsWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardLead, error) {
 	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
@@ -814,7 +797,7 @@ func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext
 		paginationSQL = " offset $" + fmt.Sprint(len(args))
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			`+pipelineBoardLeadSelectFields(propertyVisibility)+`
 		from public.leads l
@@ -843,6 +826,10 @@ func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext
 }
 
 func (repo Repository) listInitialPipelineBoardLeadsByStage(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, error) {
+	return listInitialPipelineBoardLeadsByStageWithQueryer(ctx, repo.db.Pool(), tenantContext, filter)
+}
+
+func listInitialPipelineBoardLeadsByStageWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, error) {
 	leadsByStage := map[string][]PipelineBoardLead{}
 	for _, stageID := range filter.StageIDs {
 		leadsByStage[stageID] = []PipelineBoardLead{}
@@ -878,7 +865,7 @@ func (repo Repository) listInitialPipelineBoardLeadsByStage(ctx context.Context,
 	boardSortExpression := pipelineBoardSortExpression("l")
 	outerBoardSortExpression := pipelineBoardSortExpression("stage_lead")
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		with requested_stages(stage_id) as (
 			values `+strings.Join(requestedStageValues, ", ")+`
 		)
@@ -927,6 +914,10 @@ type pipelineBoardStageMetric struct {
 // separately from the card preview query. This keeps stage totals exact while
 // allowing the initial board to fetch only the first page from each stage.
 func (repo Repository) listPipelineBoardStageMetrics(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]pipelineBoardStageMetric, error) {
+	return listPipelineBoardStageMetricsWithQueryer(ctx, repo.db.Pool(), tenantContext, filter)
+}
+
+func listPipelineBoardStageMetricsWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]pipelineBoardStageMetric, error) {
 	metrics := map[string]pipelineBoardStageMetric{}
 	for _, stageID := range filter.StageIDs {
 		metrics[stageID] = pipelineBoardStageMetric{}
@@ -941,7 +932,7 @@ func (repo Repository) listPipelineBoardStageMetrics(ctx context.Context, tenant
 	}
 	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			l.stage_id::text,
 			count(*)::bigint as lead_count,
@@ -1081,11 +1072,16 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	if filter.FilterSource != "" && filter.FilterSource != "all" {
 		add("l.source = $%d", filter.FilterSource)
 	}
-	if strings.TrimSpace(filter.Search) != "" {
-		value := searchtext.Pattern(filter.Search)
+	if searchtext.PipelineTrim(filter.Search) != "" {
+		value := searchtext.PipelinePattern(filter.Search)
 		args = append(args, value)
 		index := len(args)
-		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
+		searchClause := searchtext.PipelineAnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index))
+		if digits := searchtext.PipelinePhoneDigits(filter.Search); digits != "" {
+			args = append(args, "%"+digits+"%")
+			searchClause = fmt.Sprintf("(%s or %s)", searchClause, searchtext.PipelinePhoneSQL("l.phone", fmt.Sprintf("$%d", len(args))))
+		}
+		where = append(where, searchClause)
 	}
 	legacyFilterTag := filter.FilterTag
 	if strings.EqualFold(strings.TrimSpace(legacyFilterTag), "all") {
@@ -1106,10 +1102,11 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	}
 
 	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
-		Page:     filter.FilterPage,
-		Campaign: filter.FilterCampaign,
-		AdSet:    filter.FilterAdSet,
-		Ad:       filter.FilterAd,
+		Page:      filter.FilterPage,
+		Campaign:  filter.FilterCampaign,
+		Campaigns: filter.FilterCampaigns,
+		AdSet:     filter.FilterAdSet,
+		Ad:        filter.FilterAd,
 	})
 
 	dateMode := filter.DateMode
@@ -1373,8 +1370,7 @@ func (repo Repository) attachPipelineBoardLeadEnrichments(ctx context.Context, t
 		lead.TasksCount = enrichment.TasksCount
 	}
 	repo.hydratePipelineBoardLeadAvatars(ctx, tenantContext.OrganizationID, leads)
-
-	return nil
+	return hydrateQueuePoolBoard(ctx, repo.db.Pool(), tenantContext, leads)
 }
 
 func firstNonEmpty(values ...string) string {

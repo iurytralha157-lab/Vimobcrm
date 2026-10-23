@@ -1,20 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Json } from '@/lib/supabase/types';
 import { activitiesAPI, type Activity } from '@/lib/api/activities';
-import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
-import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
+import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
+import { appendOptimisticLeadHistoryEvent, removeOptimisticLeadHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
+import { manualActivityCreateInputSchema, type ManualActivityCreateInput } from '@/lib/validation/manual-activities';
+import { parseDomainInput } from '@/lib/validation/common';
 
 export type { Activity } from '@/lib/api/activities';
+let optimisticActivitySequence = 0;
+const manualActivityInputs = new WeakMap<LeadRequestOperation, Readonly<ManualActivityCreateInput>>();
 
 function optimisticActivityLabel(type: string) {
   const labels: Record<string, string> = {
     call: 'Ligacao realizada',
+    call_initiated: 'Ligação iniciada',
     email: 'Email enviado',
     message: 'Mensagem enviada',
     note: 'Nota adicionada',
-    task_completed: 'Tarefa concluida',
-    contact_updated: 'Contato atualizado',
-    proposal_sent: 'Proposta registrada',
   };
   return labels[type] || 'Historico atualizado';
 }
@@ -40,32 +42,42 @@ export function useRecentActivities() {
 
 export function useCreateActivity() {
   const queryClient = useQueryClient();
+  const requestScope = useLeadRequestScope();
 
   return useMutation({
     mutationFn: async (activity: {
       lead_id: string;
       type: string;
-      content?: string;
+      content?: string | null;
       metadata?: Json;
-    }) => activitiesAPI.create(activity),
+    }) => {
+      const operation = requestScope.require(activity);
+      const captured = manualActivityInputs.get(operation);
+      if (!captured) throw new Error('A tentativa de registro não está mais disponível.');
+      return activitiesAPI.create(captured, operation.organizationId, operation.intent);
+    },
     onMutate: async (activity) => {
-      const queryKey = ['lead-history-v2', activity.lead_id] as const;
+      // Validate and freeze the flat payload before cancellation yields. A
+      // caller cannot replace its type/metadata during an async cache read.
+      const validated = parseDomainInput(manualActivityCreateInputSchema, activity, 'activities.create');
+      const captured = Object.freeze({ ...validated, metadata: Object.freeze({ ...validated.metadata }) });
+      const operation = requestScope.bind(activity);
+      manualActivityInputs.set(operation, captured);
+      const queryKey = ['lead-history-v2', captured.lead_id] as const;
       await queryClient.cancelQueries({ queryKey });
-      const previousHistory = queryClient.getQueryData<UnifiedHistoryEvent[]>(queryKey);
+      requestScope.require(activity);
       const timestamp = new Date().toISOString();
-      queryClient.setQueryData<UnifiedHistoryEvent[]>(queryKey, (current) =>
-        appendOptimisticHistoryEvent(current, {
-          id: `optimistic-activity-${activity.lead_id}-${activity.type}-${timestamp}`,
-          type: activity.type,
-          label: optimisticActivityLabel(activity.type),
-          content: activity.content || null,
+      const optimisticHistoryId = appendOptimisticLeadHistoryEvent(queryClient, captured.lead_id, {
+          id: `optimistic-activity-${captured.lead_id}-${captured.type}-${timestamp}-${++optimisticActivitySequence}`,
+          type: captured.type,
+          label: optimisticActivityLabel(captured.type),
+          content: captured.content,
           timestamp,
           actor: null,
           source: 'activity',
-          metadata: historyMetadata(activity.metadata),
-        }),
-      );
-      return { queryKey, previousHistory };
+          metadata: { ...historyMetadata(captured.metadata), origin: 'manual_activity' },
+        });
+      return { leadId: captured.lead_id, optimisticHistoryId, operation };
     },
     onSuccess: (data: Activity) => {
       queryClient.invalidateQueries({ queryKey: ['activities'] });
@@ -75,7 +87,12 @@ export function useCreateActivity() {
       }
     },
     onError: (_error, _activity, context) => {
-      if (context) queryClient.setQueryData(context.queryKey, context.previousHistory);
+      if (context) removeOptimisticLeadHistoryEvent(queryClient, context.leadId, context.optimisticHistoryId);
+    },
+    onSettled: (_data, _error, variables) => {
+      const operation = requestScope.contextFor(variables);
+      if (operation) manualActivityInputs.delete(operation);
+      requestScope.release(variables);
     },
   });
 }

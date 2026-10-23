@@ -29,9 +29,9 @@ func TestScheduleRoutesRequireAgendaModuleAndDedicatedPermission(t *testing.T) {
 	}
 
 	for _, route := range routes {
-		expected := `mux.Handle("` + route.methodPath + `", withModulePermission("agenda", ` + route.permission
+		expected := `mux.Handle("` + route.methodPath + `", withActiveModulePermission("agenda", ` + route.permission
 		if !strings.Contains(source, expected) {
-			t.Fatalf("schedule route must require the agenda module and its dedicated permission: %s", route.methodPath)
+			t.Fatalf("schedule route must require an active session, the agenda module and its dedicated permission: %s", route.methodPath)
 		}
 	}
 }

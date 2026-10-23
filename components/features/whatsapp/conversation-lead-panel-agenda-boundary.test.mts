@@ -23,7 +23,8 @@ test("gates the WhatsApp lead Agenda panel and query by the Agenda module", () =
     source,
     /import \{ CompactScheduleEventsList \} from "@\/components\/features\/schedule\/CompactScheduleEventsList"/,
   );
-  assert.match(source, /emptyLabel="Nenhum compromisso agendado"/);
+  assert.match(source, /scheduleEvents\.length > 0 && <CompactScheduleEventsList/);
+  assert.doesNotMatch(source, /emptyLabel="Nenhum compromisso agendado"/);
   assert.doesNotMatch(source, /function CompactScheduleEventsList\(/);
 });
 
@@ -38,9 +39,16 @@ test("shared compact Agenda cards use live lifecycle and organization timezone",
 
   assert.match(source, /useScheduleCapabilities\(/);
   assert.match(source, /setInterval\([\s\S]*?60_000/);
-  assert.match(source, /getScheduleLifecycleState\(\{/);
-  assert.match(source, /endTime: event\.end_time/);
-  assert.match(source, /isAllDay: event\.is_all_day \?\? false/);
+  assert.match(source, /getScheduleDisplayLifecycle\(event, timeZone, currentTime\)/);
   assert.match(source, /timeZone,/);
-  assert.match(source, /getScheduleLifecycleLabel\(lifecycle\)/);
+  assert.match(source, /getScheduleDisplayLifecycleLabel\(lifecycle\)/);
+
+  const presentation = readFileSync(
+    resolve(process.cwd(), "components/features/schedule/schedule-event-presentation.ts"),
+    "utf8",
+  );
+  assert.match(presentation, /getScheduleLifecycleState\(\{/);
+  assert.match(presentation, /endTime: event\.end_time/);
+  assert.match(presentation, /isAllDay: event\.is_all_day \?\? false/);
+  assert.match(presentation, /timeZone,[\s\S]*now,/);
 });

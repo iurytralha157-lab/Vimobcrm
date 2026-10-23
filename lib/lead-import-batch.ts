@@ -6,6 +6,8 @@ export type ImportBatchFailure = {
 export type ImportBatchResult = {
   successIndexes: number[];
   failures: ImportBatchFailure[];
+  unstartedIndexes: number[];
+  stopped: boolean;
 };
 
 export type ImportBatchProgress = {
@@ -19,6 +21,9 @@ export type ImportBatchProgress = {
 export type ImportBatchOptions = {
   concurrency?: number;
   onProgress?: (progress: ImportBatchProgress) => void;
+  signal?: AbortSignal;
+  /** Stops scheduling only. Requests already sent must retain their real outcome. */
+  shouldContinue?: () => boolean;
 };
 
 const DEFAULT_IMPORT_CONCURRENCY = 3;
@@ -33,6 +38,8 @@ export async function runLeadImportBatch<T>(
     ? options
     : options.concurrency ?? DEFAULT_IMPORT_CONCURRENCY;
   const onProgress = typeof options === 'number' ? undefined : options.onProgress;
+  const canStart = () => typeof options === 'number'
+    || (!options.signal?.aborted && (options.shouldContinue?.() ?? true));
   const requestedConcurrency = Number.isFinite(concurrency)
     ? Math.trunc(concurrency)
     : DEFAULT_IMPORT_CONCURRENCY;
@@ -47,7 +54,7 @@ export async function runLeadImportBatch<T>(
   const failures: ImportBatchFailure[] = [];
 
   const importNext = async () => {
-    while (cursor < rows.length) {
+    while (cursor < rows.length && canStart()) {
       const index = cursor;
       cursor += 1;
 
@@ -74,5 +81,7 @@ export async function runLeadImportBatch<T>(
   return {
     successIndexes: successIndexes.sort((left, right) => left - right),
     failures: failures.sort((left, right) => left.index - right.index),
+    unstartedIndexes: Array.from({ length: rows.length - cursor }, (_, index) => cursor + index),
+    stopped: cursor < rows.length,
   };
 }

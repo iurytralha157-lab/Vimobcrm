@@ -418,6 +418,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return WorkspaceResponse{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := requireDevelopmentResponsibleMember(ctx, tx, tenantContext.OrganizationID, input.ResponsibleUserID); err != nil {
+		return WorkspaceResponse{}, err
+	}
 
 	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1), hashtext($2))`, tenantContext.OrganizationID, "development:"+strings.ToLower(input.Code)); err != nil {
 		return WorkspaceResponse{}, err
@@ -616,26 +619,35 @@ func (repo Repository) BulkCreateUnits(ctx context.Context, tenantContext tenant
 	if err := lockDevelopment(ctx, tx, tenantContext.OrganizationID, developmentID); err != nil {
 		return BulkCreateUnitsResult{}, err
 	}
+	if err := requireDevelopmentInventoryOpen(ctx, tx, tenantContext.OrganizationID, developmentID); err != nil {
+		return BulkCreateUnitsResult{}, err
+	}
 
 	var buildingCode, buildingType string
 	var buildingFloorCount *int
+	var buildingOpen bool
 	err = tx.QueryRow(ctx, `
-		select code, building_type, floor_count
-		from public.property_development_buildings
-		where organization_id = $1::uuid
-		  and development_id = $2::uuid
-		  and id = $3::uuid
-		for update
+		select building.code, building.building_type, building.floor_count, building.status <> 'inactive' and phase.status not in ('cancelled','suspended')
+		from public.property_development_buildings building
+		join public.property_development_phases phase on phase.organization_id = building.organization_id and phase.id = building.phase_id
+		where building.organization_id = $1::uuid
+		  and building.development_id = $2::uuid
+		  and building.id = $3::uuid
+		for update of building
 	`, tenantContext.OrganizationID, developmentID, input.BuildingID).Scan(
 		&buildingCode,
 		&buildingType,
 		&buildingFloorCount,
+		&buildingOpen,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BulkCreateUnitsResult{}, fmt.Errorf("%w: building was not found", ErrInvalidInput)
 	}
 	if err != nil {
 		return BulkCreateUnitsResult{}, err
+	}
+	if !buildingOpen {
+		return BulkCreateUnitsResult{}, fmt.Errorf("%w: building or phase is inactive", ErrConflict)
 	}
 	maximumFloor := input.StartFloor + (input.Count-1)/input.UnitsPerFloor
 	if (buildingType == "tower" || buildingType == "block") && buildingFloorCount != nil && maximumFloor > *buildingFloorCount {
@@ -662,6 +674,7 @@ func (repo Repository) BulkCreateUnits(ctx context.Context, tenantContext tenant
 				where organization_id = $1::uuid
 				  and development_id = $2::uuid
 				  and id = $3::uuid
+				  and status not in ('inactive', 'archived')
 			)
 		`, tenantContext.OrganizationID, developmentID, *input.FloorPlanID).Scan(&exists); err != nil {
 			return BulkCreateUnitsResult{}, err
@@ -840,6 +853,12 @@ func (repo Repository) UpdateUnit(ctx context.Context, tenantContext tenant.Cont
 		publicationPending = false
 	}
 	if published {
+		if err := requireDevelopmentInventoryOpen(ctx, tx, tenantContext.OrganizationID, developmentID); err != nil {
+			return Unit{}, err
+		}
+		if err := requireUnitStructureOpen(ctx, tx, tenantContext.OrganizationID, developmentID, unitID); err != nil {
+			return Unit{}, err
+		}
 		var hasActivePrice bool
 		if err := tx.QueryRow(ctx, `
 			select exists (
@@ -923,11 +942,9 @@ func (repo Repository) ActivatePriceTable(ctx context.Context, tenantContext ten
 	if currentStatus != "draft" && currentStatus != "approved" {
 		return PriceTable{}, fmt.Errorf("%w: only draft or approved tables can be activated", ErrConflict)
 	}
-	if input.ExpectedUpdatedAt != nil {
-		expected, _ := parseTimestamp(input.ExpectedUpdatedAt)
-		if expected != nil && !currentUpdatedAt.Equal(*expected) {
-			return PriceTable{}, ErrConflict
-		}
+	expected, _ := time.Parse(time.RFC3339Nano, *input.ExpectedUpdatedAt)
+	if !currentUpdatedAt.Equal(expected) {
+		return PriceTable{}, ErrConflict
 	}
 	var missingMarketablePrices int
 	if err := tx.QueryRow(ctx, `

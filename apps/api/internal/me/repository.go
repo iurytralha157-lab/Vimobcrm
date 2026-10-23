@@ -19,6 +19,19 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 	return Repository{db: db}
 }
 
+func (repo Repository) CurrentAccountStatus(ctx context.Context, userID string) (AccountStatus, error) {
+	var status AccountStatus
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			count(*) > 0,
+			coalesce(bool_or(is_active), false),
+			coalesce(bool_or(role = 'super_admin'), false)
+		from public.users
+		where id = $1::uuid
+	`, userID).Scan(&status.ProfileExists, &status.GloballyActive, &status.IsSuperAdmin)
+	return status, err
+}
+
 func (repo Repository) CurrentProfile(ctx context.Context, tenantContext tenant.Context) (map[string]any, map[string]any, error) {
 	profile, err := repo.queryJSONObject(ctx, `
 		select jsonb_build_object(

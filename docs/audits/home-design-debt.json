@@ -1,61 +1,61 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "a973d70297e1a7203bb115747c76405909a7c27d307bc005a966bbb7baa4f58f",
-  "surfaceInventoryDigestSha256": "7b044d421b56a6704664670fb4330a1c8b3fa4472bb1fde980feaa66fee9203d",
+  "sourceDigestSha256": "133c3c6b74900b2f1f817a1fdfdc01db7b0444c043ecfbf197ab0f31543f9f7f",
+  "surfaceInventoryDigestSha256": "d21d8a4a73ebdb251f2f97f56679d559e3fc1b2d0febc7436da026d69f48511d",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 547,
+    "filesScanned": 618,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 44,
-    "findings": 118,
-    "protectedReachableFilesWithFindings": 43,
-    "protectedReachableFindings": 117,
+    "filesWithFindings": 51,
+    "findings": 133,
+    "protectedReachableFilesWithFindings": 49,
+    "protectedReachableFindings": 131,
     "bySurfaceScope": {
-      "protected-only": 95,
-      "protected-and-public": 22,
-      "public-only": 1,
+      "protected-only": 93,
+      "protected-and-public": 38,
+      "public-only": 2,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 57,
-      "P2": 15,
-      "P3": 46
+      "P1": 65,
+      "P2": 28,
+      "P3": 40
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 16,
+        "count": 12,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
       },
       "medium-shadow": {
-        "count": 7,
+        "count": 9,
         "guidance": "Blocos Home não usam sombra; validar se a elevação é realmente necessária.",
         "label": "Sombra fora do padrão",
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 5,
+        "count": 4,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 2,
+        "count": 7,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 34,
+        "count": 42,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 5,
+        "count": 15,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
@@ -67,13 +67,13 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 46,
+        "count": 40,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
       },
       "panel-blur": {
-        "count": 0,
+        "count": 1,
         "guidance": "O overlay pode escurecer; o painel deve usar superfície sólida.",
         "label": "Blur no painel",
         "priority": "P2"
@@ -82,13 +82,13 @@
   },
   "topFiles": [
     {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "count": 20,
-      "score": 77,
+      "file": "components/features/settings/RolesTab.tsx",
+      "count": 18,
+      "score": 56,
       "rules": {
-        "oversized-radius": 3,
-        "hardcoded-color": 16,
-        "heavy-shadow": 1
+        "hardcoded-color": 10,
+        "heavy-font": 4,
+        "uppercase-tracking": 4
       }
     },
     {
@@ -101,20 +101,30 @@
       }
     },
     {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "count": 8,
+      "score": 30,
+      "rules": {
+        "oversized-radius": 2,
+        "hardcoded-color": 6
+      }
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "count": 9,
+      "score": 28,
+      "rules": {
+        "hardcoded-color": 5,
+        "hardcoded-surface": 3,
+        "panel-blur": 1
+      }
+    },
+    {
       "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
       "count": 5,
       "score": 20,
       "rules": {
         "hardcoded-color": 5
-      }
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "count": 4,
-      "score": 10,
-      "rules": {
-        "heavy-shadow": 2,
-        "uppercase-tracking": 2
       }
     },
     {
@@ -153,14 +163,6 @@
       }
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 2,
-      "score": 8,
-      "rules": {
-        "heavy-shadow": 2
-      }
-    },
-    {
       "file": "components/features/chat/FloatingChatButton.tsx",
       "count": 2,
       "score": 8,
@@ -178,11 +180,12 @@
       }
     },
     {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "count": 4,
-      "score": 4,
+      "file": "components/features/whatsapp/ScrollToLatestButton.tsx",
+      "count": 2,
+      "score": 6,
       "rules": {
-        "uppercase-tracking": 4
+        "heavy-shadow": 1,
+        "hardcoded-surface": 1
       }
     },
     {
@@ -194,11 +197,36 @@
       }
     },
     {
+      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "medium-shadow": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
       "file": "components/features/schedule/CalendarView.tsx",
       "count": 2,
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/whatsapp/MediaViewer.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
       }
     },
     {
@@ -211,6 +239,14 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/leads/lead-detail/LeadTagPickerContent.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -266,7 +302,7 @@
       }
     },
     {
-      "file": "components/features/teams/TeamEditorScreen.tsx",
+      "file": "components/features/whatsapp/ConfirmConversationLeadLinkDialog.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -282,11 +318,19 @@
       }
     },
     {
-      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "file": "components/features/whatsapp/conversations/ConversationLeadBadges.tsx",
       "count": 1,
       "score": 4,
       "rules": {
-        "heavy-shadow": 1
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationLeadTagBar.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -348,23 +392,23 @@
       }
     },
     {
+      "file": "components/features/whatsapp/message-bubble/MessageText.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
       "count": 2,
       "score": 2,
       "rules": {
@@ -380,7 +424,31 @@
       }
     },
     {
+      "file": "app/preview/sem-organizacao/page.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "hardcoded-surface": 1
+      }
+    },
+    {
       "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/contacts/ExportContactsDialog.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
       "count": 1,
       "score": 2,
       "rules": {
@@ -393,6 +461,14 @@
       "score": 2,
       "rules": {
         "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/shared/filters/FilterSidebar.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "hardcoded-surface": 1
       }
     },
     {
@@ -418,41 +494,17 @@
       "rules": {
         "uppercase-tracking": 1
       }
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/teams/TeamOperationalOverview.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
     }
   ],
   "topProtectedFiles": [
     {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "count": 20,
-      "score": 77,
+      "file": "components/features/settings/RolesTab.tsx",
+      "count": 18,
+      "score": 56,
       "rules": {
-        "oversized-radius": 3,
-        "hardcoded-color": 16,
-        "heavy-shadow": 1
+        "hardcoded-color": 10,
+        "heavy-font": 4,
+        "uppercase-tracking": 4
       }
     },
     {
@@ -465,20 +517,30 @@
       }
     },
     {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "count": 8,
+      "score": 30,
+      "rules": {
+        "oversized-radius": 2,
+        "hardcoded-color": 6
+      }
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "count": 9,
+      "score": 28,
+      "rules": {
+        "hardcoded-color": 5,
+        "hardcoded-surface": 3,
+        "panel-blur": 1
+      }
+    },
+    {
       "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
       "count": 5,
       "score": 20,
       "rules": {
         "hardcoded-color": 5
-      }
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "count": 4,
-      "score": 10,
-      "rules": {
-        "heavy-shadow": 2,
-        "uppercase-tracking": 2
       }
     },
     {
@@ -517,14 +579,6 @@
       }
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 2,
-      "score": 8,
-      "rules": {
-        "heavy-shadow": 2
-      }
-    },
-    {
       "file": "components/features/chat/FloatingChatButton.tsx",
       "count": 2,
       "score": 8,
@@ -542,11 +596,12 @@
       }
     },
     {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "count": 4,
-      "score": 4,
+      "file": "components/features/whatsapp/ScrollToLatestButton.tsx",
+      "count": 2,
+      "score": 6,
       "rules": {
-        "uppercase-tracking": 4
+        "heavy-shadow": 1,
+        "hardcoded-surface": 1
       }
     },
     {
@@ -558,11 +613,36 @@
       }
     },
     {
+      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "medium-shadow": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
       "file": "components/features/schedule/CalendarView.tsx",
       "count": 2,
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/whatsapp/MediaViewer.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
       }
     },
     {
@@ -575,6 +655,14 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/leads/lead-detail/LeadTagPickerContent.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -630,7 +718,7 @@
       }
     },
     {
-      "file": "components/features/teams/TeamEditorScreen.tsx",
+      "file": "components/features/whatsapp/ConfirmConversationLeadLinkDialog.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -646,11 +734,19 @@
       }
     },
     {
-      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "file": "components/features/whatsapp/conversations/ConversationLeadBadges.tsx",
       "count": 1,
       "score": 4,
       "rules": {
-        "heavy-shadow": 1
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationLeadTagBar.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -704,23 +800,23 @@
       }
     },
     {
+      "file": "components/features/whatsapp/message-bubble/MessageText.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
       "count": 2,
       "score": 2,
       "rules": {
@@ -744,11 +840,35 @@
       }
     },
     {
+      "file": "components/features/contacts/ExportContactsDialog.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
       "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
       "count": 1,
       "score": 2,
       "rules": {
         "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/shared/filters/FilterSidebar.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "hardcoded-surface": 1
       }
     },
     {
@@ -776,23 +896,7 @@
       }
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
       "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/teams/TeamOperationalOverview.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -802,8 +906,17 @@
   ],
   "findings": [
     {
+      "file": "app/preview/sem-organizacao/page.tsx",
+      "line": 14,
+      "match": "bg-black/70",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "public-only",
+      "weight": 2
+    },
+    {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "line": 497,
+      "line": 498,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -820,8 +933,89 @@
       "weight": 3
     },
     {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 19,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 24,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 24,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 24,
+      "match": "backdrop-blur-[18px]",
+      "priority": "P2",
+      "rule": "panel-blur",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 32,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 35,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 45,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 45,
+      "match": "bg-black",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 45,
+      "match": "bg-black",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 195,
+      "line": 275,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -829,17 +1023,8 @@
       "weight": 4
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1617,
-      "match": "shadow-[0_4px_12px_rgba",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-and-public",
-      "weight": 4
-    },
-    {
       "file": "components/features/chat/FloatingChatButton.tsx",
-      "line": 130,
+      "line": 162,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -848,7 +1033,7 @@
     },
     {
       "file": "components/features/chat/FloatingChatButton.tsx",
-      "line": 130,
+      "line": 162,
       "match": "shadow-[0_10px_28px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -857,7 +1042,7 @@
     },
     {
       "file": "components/features/contacts/ContactCard.tsx",
-      "line": 210,
+      "line": 264,
       "match": "#ffffff",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -866,7 +1051,7 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-      "line": 630,
+      "line": 656,
       "match": "#ffffff",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -883,8 +1068,17 @@
       "weight": 2
     },
     {
+      "file": "components/features/contacts/ExportContactsDialog.tsx",
+      "line": 428,
+      "match": "bg-white/20",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
       "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "line": 947,
+      "line": 1120,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -893,25 +1087,7 @@
     },
     {
       "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "line": 947,
-      "match": "tracking-wide",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "line": 1005,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "line": 1005,
+      "line": 1120,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -920,7 +1096,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 312,
+      "line": 263,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -929,12 +1105,21 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 348,
+      "line": 299,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
+      "line": 40,
+      "match": "shadow-md",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
@@ -971,10 +1156,19 @@
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/leads/lead-detail/LeadTagPickerContent.tsx",
+      "line": 75,
+      "match": "#F97316",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
     },
     {
       "file": "components/features/leads/LeadCard.tsx",
-      "line": 411,
+      "line": 476,
       "match": "#25D366",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1046,7 +1240,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
+      "line": 88,
       "match": "rounded-[10px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1055,7 +1249,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
+      "line": 88,
       "match": "bg-[rgba(255,255,255,0.08)]",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1064,7 +1258,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
+      "line": 88,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1073,61 +1267,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
-      "match": "bg-[rgba(255,255,255,0.13)]",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
-      "match": "#cbd5e1",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 90,
-      "match": "#94a3b8",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 99,
-      "match": "#94a3b8",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 109,
-      "match": "shadow-xl",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 109,
-      "match": "rounded-[10px]",
-      "priority": "P1",
-      "rule": "oversized-radius",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 109,
+      "line": 92,
       "match": "#172946",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1136,7 +1276,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 109,
+      "line": 92,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1145,61 +1285,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 117,
-      "match": "#f8fafc",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 117,
-      "match": "bg-[rgba(255,255,255,0.1)]",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 117,
-      "match": "#f8fafc",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 129,
-      "match": "#f8fafc",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 129,
-      "match": "bg-[rgba(255,255,255,0.1)]",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 129,
-      "match": "#f8fafc",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 174,
+      "line": 135,
       "match": "rounded-[16px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1208,7 +1294,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 174,
+      "line": 135,
       "match": "#07142f",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1217,7 +1303,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 174,
+      "line": 135,
       "match": "#07142f",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1280,7 +1366,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 421,
+      "line": 432,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1289,7 +1375,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 485,
+      "line": 496,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1298,7 +1384,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 491,
+      "line": 502,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1378,8 +1464,26 @@
       "weight": 1
     },
     {
+      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
+      "line": 35,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
+      "line": 62,
+      "match": "bg-black/65",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 725,
+      "line": 726,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1388,7 +1492,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 751,
+      "line": 752,
       "match": "group-hover:translate-x-0.5",
       "priority": "P2",
       "rule": "aggressive-motion",
@@ -1397,7 +1501,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 810,
+      "line": 811,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1406,7 +1510,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1212,
+      "line": 1213,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1415,70 +1519,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1247,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 150,
-      "match": "shadow-lg",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 270,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 270,
-      "match": "tracking-wide",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 468,
-      "match": "shadow-lg",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 920,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1001,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-      "line": 50,
+      "line": 1248,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1487,7 +1528,7 @@
     },
     {
       "file": "components/features/schedule/CalendarView.tsx",
-      "line": 382,
+      "line": 371,
       "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1496,7 +1537,7 @@
     },
     {
       "file": "components/features/schedule/CalendarView.tsx",
-      "line": 794,
+      "line": 799,
       "match": "bg-white/90",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1520,24 +1561,6 @@
       "rule": "heavy-shadow",
       "surfaceScope": "protected-only",
       "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
-      "line": 249,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
-      "line": 275,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
     },
     {
       "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
@@ -1586,7 +1609,7 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "line": 428,
+      "line": 431,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1595,7 +1618,7 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "line": 508,
+      "line": 511,
       "match": "group-hover:translate-x-0.5",
       "priority": "P2",
       "rule": "aggressive-motion",
@@ -1604,7 +1627,7 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "line": 163,
+      "line": 165,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1648,8 +1671,170 @@
       "weight": 3
     },
     {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#6B7280",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#EF4444",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#F59E0B",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#10B981",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#3B82F6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#8B5CF6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#EC4899",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 88,
+      "match": "#14B8A6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 104,
+      "match": "#6B7280",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 133,
+      "match": "#6B7280",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 256,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 323,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 387,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 387,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 387,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 420,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 420,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/settings/RolesTab.tsx",
+      "line": 420,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
       "file": "components/features/settings/UserPermissionsScreen.tsx",
-      "line": 169,
+      "line": 223,
       "match": "shadow-[0_-10px_30px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1693,27 +1878,36 @@
       "weight": 2
     },
     {
-      "file": "components/features/teams/TeamEditorScreen.tsx",
-      "line": 1108,
-      "match": "shadow-[0_-10px_30px_rgba",
+      "file": "components/features/whatsapp/ConfirmConversationLeadLinkDialog.tsx",
+      "line": 59,
+      "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
-      "file": "components/features/teams/TeamOperationalOverview.tsx",
-      "line": 138,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
+      "file": "components/features/whatsapp/conversations/ConversationFilters.tsx",
+      "line": 247,
+      "match": "#6b7280",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
     },
     {
-      "file": "components/features/whatsapp/conversations/ConversationFilters.tsx",
-      "line": 220,
-      "match": "#ff4b3a",
+      "file": "components/features/whatsapp/conversations/ConversationLeadBadges.tsx",
+      "line": 16,
+      "match": "#ffffff",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationLeadTagBar.tsx",
+      "line": 33,
+      "match": "#ffffff",
       "priority": "P1",
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
@@ -1721,7 +1915,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "line": 309,
+      "line": 299,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1730,21 +1924,12 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "line": 350,
+      "line": 342,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-and-public",
       "weight": 1
-    },
-    {
-      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 241,
-      "match": "shadow-[0_4px_12px_rgba",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-and-public",
-      "weight": 4
     },
     {
       "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
@@ -1756,8 +1941,26 @@
       "weight": 4
     },
     {
+      "file": "components/features/whatsapp/MediaViewer.tsx",
+      "line": 179,
+      "match": "bg-white/10",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
+      "file": "components/features/whatsapp/MediaViewer.tsx",
+      "line": 181,
+      "match": "bg-white/10",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-and-public",
+      "weight": 2
+    },
+    {
       "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
-      "line": 82,
+      "line": 92,
       "match": "shadow-md",
       "priority": "P2",
       "rule": "medium-shadow",
@@ -1765,45 +1968,45 @@
       "weight": 2
     },
     {
-      "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 37,
-      "match": "#3B82F6",
+      "file": "components/features/whatsapp/message-bubble/MessageText.tsx",
+      "line": 33,
+      "match": "font-semibold",
       "priority": "P1",
-      "rule": "hardcoded-color",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-and-public",
+      "weight": 3
+    },
+    {
+      "file": "components/features/whatsapp/ScrollToLatestButton.tsx",
+      "line": 16,
+      "match": "shadow-[0_4px_12px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
       "surfaceScope": "protected-and-public",
       "weight": 4
     },
     {
-      "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 39,
-      "match": "#3B82F6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
+      "file": "components/features/whatsapp/ScrollToLatestButton.tsx",
+      "line": 16,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
       "surfaceScope": "protected-and-public",
-      "weight": 4
+      "weight": 2
     },
     {
-      "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 40,
-      "match": "#10B981",
-      "priority": "P1",
-      "rule": "hardcoded-color",
+      "file": "components/shared/filters/FilterSidebar.tsx",
+      "line": 64,
+      "match": "bg-black/80",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
       "surfaceScope": "protected-and-public",
-      "weight": 4
+      "weight": 2
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 41,
-      "match": "#F59E0B",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-and-public",
-      "weight": 4
-    },
-    {
-      "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 42,
-      "match": "#EF4444",
+      "match": "#3B82F6",
       "priority": "P1",
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
@@ -1812,7 +2015,7 @@
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 43,
-      "match": "#8B5CF6",
+      "match": "#3B82F6",
       "priority": "P1",
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
@@ -1821,7 +2024,7 @@
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 44,
-      "match": "#EC4899",
+      "match": "#10B981",
       "priority": "P1",
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
@@ -1830,7 +2033,7 @@
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 45,
-      "match": "#06B6D4",
+      "match": "#F59E0B",
       "priority": "P1",
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
@@ -1839,6 +2042,42 @@
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "line": 46,
+      "match": "#EF4444",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/shared/SearchableTagPicker.tsx",
+      "line": 47,
+      "match": "#8B5CF6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/shared/SearchableTagPicker.tsx",
+      "line": 48,
+      "match": "#EC4899",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/shared/SearchableTagPicker.tsx",
+      "line": 49,
+      "match": "#06B6D4",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/shared/SearchableTagPicker.tsx",
+      "line": 50,
       "match": "#F97316",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1847,7 +2086,7 @@
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 271,
+      "line": 298,
       "match": "bg-black/10",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1856,7 +2095,7 @@
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
-      "line": 290,
+      "line": 317,
       "match": "bg-black/10",
       "priority": "P2",
       "rule": "hardcoded-surface",

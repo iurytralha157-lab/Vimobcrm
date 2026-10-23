@@ -72,6 +72,10 @@ type invitationConsentExecutor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
+type invitationProfileQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string, request AcceptInvitationRequest) (AcceptInvitationResult, error) {
 	invitation, err := repo.invitationByTokenForAccept(ctx, token)
 	if err != nil {
@@ -449,28 +453,24 @@ func (repo Repository) activateInvitationForUser(
 	invitation.Role = persistedRole
 	memberRole := memberRoleFromInvitation(persistedRole)
 
-	if _, err := tx.Exec(ctx, `
-		insert into public.users (
-			id,
-			organization_id,
-			name,
-			email,
-			role,
-			whatsapp,
-			is_active
-		)
-		values ($1::uuid, $2::uuid, $3, $4, 'user', $5, true)
-		on conflict (id)
-		do update set
-			organization_id = coalesce(public.users.organization_id, excluded.organization_id),
-			name = coalesce(nullif(public.users.name, ''), excluded.name),
-			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
-			whatsapp = coalesce(excluded.whatsapp, public.users.whatsapp),
-			is_active = true,
-			updated_at = now()
-	`, userID, invitation.OrganizationID, name, invitation.Email, whatsapp); err != nil {
+	if err := upsertInvitationProfile(ctx, tx, invitation, userID, name, whatsapp, requireInvitationOwnedIdentity); err != nil {
 		return err
 	}
+	// An invitation into a removed (or missing) membership starts a new grant
+	// lifecycle. Lock the old row before restoring it so its tombstone cannot
+	// change while deciding whether legacy grants must be revoked.
+	var removedAt pgtype.Timestamptz
+	membershipErr := tx.QueryRow(ctx, `
+		select deleted_at
+		from public.organization_members
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		for update
+	`, invitation.OrganizationID, userID).Scan(&removedAt)
+	if membershipErr != nil && !errors.Is(membershipErr, pgx.ErrNoRows) {
+		return membershipErr
+	}
+	newMembershipLifecycle := errors.Is(membershipErr, pgx.ErrNoRows) || removedAt.Valid
 
 	if _, err := tx.Exec(ctx, `
 		insert into public.organization_members (
@@ -494,6 +494,49 @@ func (repo Repository) activateInvitationForUser(
 	`, invitation.OrganizationID, userID, memberRole); err != nil {
 		return err
 	}
+	if newMembershipLifecycle {
+		// Custom-role assignments have no membership FK. Overrides do, so clear
+		// both after the membership UPSERT and within the same transaction.
+		if _, err := tx.Exec(ctx, `
+			update public.user_organization_roles
+			set is_active = false,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and user_id = $2::uuid
+			  and is_active = true
+		`, invitation.OrganizationID, userID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			delete from public.user_permission_overrides
+			where organization_id = $1::uuid
+			  and user_id = $2::uuid
+		`, invitation.OrganizationID, userID); err != nil {
+			return err
+		}
+	}
+	// The public.users organization_id trigger inserts a default membership.
+	// Assign it only after the invited role has been persisted, so a new or
+	// restored member cannot inherit the trigger's default role instead.
+	if _, err := tx.Exec(ctx, `
+		update public.users profile
+		set organization_id = $2::uuid,
+		    role = case
+		      when profile.role = 'super_admin' then profile.role
+		      when exists (
+		        select 1 from public.organization_members member
+		        where member.organization_id = $2::uuid
+		          and member.user_id = profile.id
+		          and member.role in ('owner', 'admin')
+		      ) then 'admin'
+		      else 'user'
+		    end,
+		    updated_at = now()
+		where profile.id = $1::uuid
+		  and profile.organization_id is null
+	`, userID, invitation.OrganizationID); err != nil {
+		return err
+	}
 
 	if consent != nil {
 		if err := insertInvitationLegalConsent(
@@ -512,6 +555,50 @@ func (repo Repository) activateInvitationForUser(
 			errInvitationActivationCommitUnknown,
 			fmt.Errorf("commit invitation activation: %w", err),
 		)
+	}
+	return nil
+}
+
+func upsertInvitationProfile(
+	ctx context.Context,
+	queryer invitationProfileQueryer,
+	invitation invitationRecord,
+	userID string,
+	name string,
+	whatsapp *string,
+	invitationOwnedIdentity bool,
+) error {
+	var activatedProfileUserID string
+	if err := queryer.QueryRow(ctx, `
+		insert into public.users (
+			id,
+			name,
+			email,
+			role,
+			whatsapp,
+			is_active
+		)
+		values ($1::uuid, $2, $3, 'user', $4, true)
+		on conflict (id)
+		do update set
+			name = coalesce(nullif(public.users.name, ''), excluded.name),
+			whatsapp = coalesce(excluded.whatsapp, public.users.whatsapp),
+			is_active = true,
+			updated_at = now()
+		where public.users.is_active is true or $5::boolean
+		returning id::text
+	`, userID, name, invitation.Email, whatsapp, invitationOwnedIdentity).Scan(&activatedProfileUserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// A globally inactive existing account cannot regain access by
+			// accepting a tenant invitation. Only an Auth identity verified as
+			// provisioned by this invitation may activate its inactive profile.
+			// The invitation claim above rolls back with this transaction.
+			return ErrInvitationAccountInactive
+		}
+		return err
+	}
+	if activatedProfileUserID != userID {
+		return ErrInvalidInput
 	}
 	return nil
 }

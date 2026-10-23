@@ -78,11 +78,17 @@ export function LeadSourceSelect({
 
   const selectedOption = options.find((option) => option.value === value) || null
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) {
+      setSearchTerm('')
+      setError(null)
+    }
+  }
+
   const selectOption = (option: LeadSourceOption | null) => {
     onValueChange(option?.value ?? '')
-    setSearchTerm('')
-    setError(null)
-    setOpen(false)
+    handleOpenChange(false)
   }
 
   const handleCreate = async () => {
@@ -114,15 +120,11 @@ export function LeadSourceSelect({
     }
   }
 
-  // Focus input when popover opens; reset search when it closes.
+  // Focus input when popover opens; cancel delayed focus if it closes first.
   useEffect(() => {
-    if (open && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 100)
-    }
-    if (!open) {
-      setSearchTerm('')
-      setError(null)
-    }
+    if (!open) return
+    const focusTimeout = window.setTimeout(() => inputRef.current?.focus(), 100)
+    return () => window.clearTimeout(focusTimeout)
   }, [open])
 
   // Attach a native wheel listener (capture phase, passive) so the scroll works
@@ -141,7 +143,7 @@ export function LeadSourceSelect({
   }, [open])
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -180,7 +182,7 @@ export function LeadSourceSelect({
                 }
                 if (event.key === 'Escape') {
                   event.preventDefault()
-                  setOpen(false)
+                  handleOpenChange(false)
                 }
               }}
               className="h-8 py-1 pl-8 text-sm"

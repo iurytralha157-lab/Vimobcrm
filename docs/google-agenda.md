@@ -1,58 +1,149 @@
 # Google Agenda: envio do Vimob
 
-## Contrato do produto
+O Vimob é a origem dos compromissos. Criar, editar e excluir enfileira saída
+para a conta Google do responsável. Não importamos eventos Google, não criamos
+watch no callback e não convidamos participantes Vimob. Conectar não envia
+histórico. Eventos já enviados permanecem no Google após desconectar.
 
-O Vimob é a origem dos compromissos. Depois que uma pessoa autorizada conecta a própria conta Google, a criação e a edição de um compromisso no Vimob enfileiram o envio para a agenda Google dessa pessoa. Excluir o compromisso no Vimob enfileira a remoção do evento Google vinculado. A fila permite retentativas quando o Google está indisponível.
+## Gate e acesso
 
-Eventos criados, editados ou excluídos diretamente no Google **não alteram o Vimob**. A conexão OAuth não importa eventos existentes, não cria canal de notificações (watch) e não faz sincronização de entrada. O código de entrada legado permanece no repositório para compatibilidade, mas o corte de mão única não publica o webhook nem executa jobs de pull/watch.
+Novas conexões ficam bloqueadas por padrão. GOOGLE_CALENDAR_CONNECT_MODE
+aceita disabled, pilot ou all. Pilot exige UUID Vimob em
+GOOGLE_CALENDAR_PILOT_USER_IDS e capacidade efetiva de Agenda: associação ativa,
+billing, módulo e schedule_manage. O callback revalida capacidade e gate.
+All exige liberação explícita, além de audiência/verificação Google adequada.
+Status e desconexão continuam disponíveis para contas existentes.
+Web/PWA usa retorno web de mesma origem; app nativo exige teste separado.
 
-Ao desconectar a conta, os eventos já enviados permanecem no Google. Edições e exclusões feitas depois no Vimob não podem ser transmitidas com o token revogado. A interface deve avisar disso antes da desconexão.
+## Estado observado em 12/10/2026
 
-A primeira publicação disponibiliza a conexão a todos os usuários Vimob com acesso ativo à Agenda e permissão `schedule_manage`. Cada pessoa conecta a própria conta Google. Não há lista de UUIDs nem liberação gradual no serviço Functions; o acesso efetivo também depende das regras do projeto OAuth no Google Cloud. A desconexão da própria conta continua disponível.
+- Status OAuth 200 com can_use_schedule=true, can_connect=false e
+  GOOGLE_CALENDAR_CONNECT_DISABLED. O antigo 404 não é o resultado atual.
+  GET do handler sync responde 405: rota existente, sem processamento de fila.
+- Google Calendar API desativada; público Externo/Testando, uma conta de teste.
+- Uma conexão ativa em erro, sem last_synced_at; 24 dead pulls legados,
+  nenhum outbound; dois vínculos e quatro canais vencidos.
+- Nenhum Cron Google. Cron secret existe; sync base URL não existe no Vault.
+  O invoker SQL instalado usa URL literal: a chave ausente não é bloqueio
+  isolado atual, mas diverge do arquivo SQL-base local.
+- FK de vínculos SET NULL e claims sem EXECUTE anon/auth já presentes.
+- Helpers Vault/desconexão SECURITY DEFINER tinham EXECUTE anon/auth sem guard
+  interno. P0 comprovado por catálogo, sem ler token, invocar helper ou provar
+  exploração. RLS das tabelas só tinha RESTRICTIVE, sem PERMISSIVE:
+  grants amplos não provaram leitura de linhas. Produção permanece sem correção.
+- API Go release ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b sem diff Google
+  contra o checkout. Hashes Edge efetivos não foram comparados.
 
-## Estado observado em 2026-10-06
+## Candidato local, ainda não aplicado/publicado
 
-Na URL https://supabase.vimobcrm.com.br, as três rotas Google Agenda consultadas respondiam `404 Function not found`, enquanto `evolution-go-webhook` respondeu. Portanto, o status da integração ainda não funciona nesse destino. O editor da stack no Portainer guarda `SUPABASE_PROJECT_URL=https://supabase.vimobcrm.com.br`, mas o ambiente efetivo do processo da API Go não foi lido. O banco tem cinco tabelas `google_calendar_*`, uma conexão em erro, 24 jobs `pull_incremental` mortos, nenhum Cron da Agenda, nenhuma RPC filtrada de saída e não tem `google_calendar_sync_base_url` no Vault. O roteador e os arquivos montados no host, as variáveis reais das Functions e o projeto Google Cloud ainda precisam ser verificados. O comportamento descrito neste guia é o do **checkout local**, ainda não publicado.
+A migração 20261012212128_harden_google_calendar_outbound_protocol.sql revoga
+PUBLIC/anon/auth nos helpers e tabelas Google, mantém serviço autorizado,
+acrescenta guard de role, claim v2, heartbeat/finalização com dono de lease,
+terminalização de upserts comprovadamente obsoletos e protocolo de disconnect.
+Finish RPC também grava erros event/link/conta na mesma transação fenced;
+resposta antiga de uma falha não repinta o card após retry bem-sucedido.
+Não ativa OAuth, API Google, Cron ou entrada Google.
 
-O fluxo e a ordem da liberação geral estão em deploy/supabase-self-hosted/google-calendar-release-readiness.md. Nenhum comando de implantação deste guia foi executado em produção.
+Claim v2 admite um job por compromisso/organização, serializando somente SQL
+curto, sem transação aberta durante rede. HTTP é limitado; PATCH/DELETE usa
+If-Match Google. Versão local concorrente ou 412 devolve o job à fila para
+reconstruir a versão atual; sucesso de snapshot antigo não encerra o envio.
+Aliases de envio manual também enfileiram, sem bypass de claim.
+Retry diferencia permanente/transitório, usa backoff exponencial, jitter e
+Retry-After. Jobs dead válidos continuam exigindo revisão operacional.
 
-## Componentes e segurança
+OAuth exige Calendar scope realmente concedido e access/refresh token antes
+de escrever Vault/conexão. Disconnect prepara o banco com o mesmo row lock
+curto do insert outbox. Enquanto revoga, um comando CRM com saída Google falha
+com 55P03 controlado e reverte a transação; o Go candidato responde 409 para
+repetir depois, preservando intenção caso revoke falhe. Falha Google preserva
+token, desfaz preparação e informa atenção. Outra desconexão simultânea não
+compartilha o marker. Crash após preparação requer revisão operacional antes
+de remover marker; não existe expiração automática que libere duas revogações.
+Cópias sem identidade
+Vimob válida continuam exigindo revisão antes de atualização/remoção.
 
-- Interface: components/features/schedule/GoogleCalendarConnect.tsx, hooks/use-google-calendar.ts e lib/api/google-calendar.ts.
-- Proxy autenticado da API Go: apps/api/internal/integrations. A API encaminha somente google-calendar-oauth e google-calendar-sync.
-- OAuth, envio e fila: supabase/functions/google-calendar-oauth, supabase/functions/google-calendar-sync e supabase/functions/_shared/google-calendar.ts.
-- Vínculos, tokens e jobs: tabelas google_calendar_tokens, google_calendar_event_links e google_calendar_sync_jobs. O segredo OAuth fica no Supabase Vault; a tabela guarda a referência.
-- A API Go grava o compromisso e o job de envio na mesma transação. O worker reivindica somente `push_upsert` e `push_delete` por meio de `public.google_calendar_claim_outbound_sync_jobs(integer,text)`. A migração local revoga o acesso de `service_role` à RPC antiga de claim sem filtro.
-- A conexão exige associação ativa à organização, Agenda habilitada e permissão de gerenciar Agenda. A rota de status e a desconexão continuam disponíveis para quem já está conectado.
+GOOGLE_CALENDAR_IMMEDIATE_DISPATCH_ENABLED permanece false por padrão.
+Wake-up após commit não substitui Cron/retry. Status 200, fila e teste local
+não comprovam entrega Google.
 
-O OAuth usa os escopos openid, email e https://www.googleapis.com/auth/calendar.events.owned. Esse último autoriza acesso aos eventos de agendas próprias no Google; a aplicação local o usa para enviar e manter os eventos vinculados. A política do produto continua sem importação de eventos do Google.
+## Validação e liberação
 
-Nesta versão, o evento vai somente para a agenda do dono conectado. O envio não adiciona convidados nem dispara convites Google para outros usuários. Uma futura distribuição de convites exige checagem própria de associação ativa e privacidade de cada destinatário.
+Roteiro: deploy/supabase-self-hosted/google-calendar-release-readiness.md.
+Migration-first com pausa/drenagem do worker Edge antigo; producers Go são
+compatíveis pelo trigger. Não reaplicar baseline/sweep ou db push em lote.
+Regressões google-calendar-delivery.test.ts extraem funções reais com mocks:
+V1 tardia não substitui V2; snapshot já aceito retorna queued e retry repara;
+OAuth parcial não grava; lease perdido não envia; revoke 503 mantém token.
+Falha antiga com resposta atrasada após retry do mesmo job não regrava erro.
+O teste SQL usa database descartável, duas organizações e grants/claim/fencing/
+disconnect reais. Nenhuma fixture deve rodar em CRM existente ou produção.
+Em 12/10/2026 passou em PostgreSQL 18.6 WASM, PGlite 0.5.9 em memória,
+com authenticator/service_role reais, guard negativo mesmo com grant acidental,
+owner transfer de job dead e bloqueio de insert de outro tenant.
+SQL também prova rollback integral se gravar erro falhar e nega repaint por
+worker antigo; erros de delete respeitam org/conexão do vínculo. Isso não prova
+Postgres 17/Supabase completo nem execução concorrente de duas réplicas.
+O Docker descartável ficou indisponível; nenhum banco CRM foi usado no teste.
+O Go candidato marca pending somente quando INSERT RETURNING confirma job.
+Producers Go anteriores aceitam o SQL aditivo, mas devem ser atualizados antes
+de retomar para manter status coerente quando falta token/conexão, e comunicar
+409 no conflito insert/desconexão. O SQL reverte CRM mesmo com Go anterior.
+O shared legado permanece acima do limite usual de linhas. A política nova
+de HTTP/retry/OAuth está isolada em google-calendar-delivery.ts; a separação
+posterior de OAuth, provider/worker e entrada legada requer revisão própria,
+sem refatorar consumidores incidentais durante este corte de segurança.
 
-O Vimob prevalece em edições posteriores: uma alteração feita diretamente na cópia Google pode ser substituída pela próxima edição do compromisso no Vimob. A exclusão no Vimob remove a cópia vinculada do Google, mesmo que ela tenha sido editada lá. O worker ainda verifica identidade, dono e organização antes de remover um evento recuperado sem vínculo; uma divergência de identidade exige revisão operacional.
-Vínculos legados sem a identidade Vimob gravada no evento remoto também exigem revisão antes de atualização ou remoção automática.
+Antes de liberar, corrigir grants no alvo autorizado, validar hashes/cliente/
+redirect/audiência, ativar API Google sob autorização, preparar piloto, revisar
+fila/destino SQL e Cron somente de saída. Depois testar create/edit/delete,
+concorrência, recorrência, all-day, owner transfer e revogação com conta
+controlada e medir IDs/versão/atraso no Google. OAuth Testing com Calendar tem
+refresh de sete dias: não anunciar liberação geral nesse estado.
+# Fechamento da segunda auditoria — candidato local
 
-## Configuração necessária para o corte futuro
+Além da migration `20261012212128`, este candidato exige a forward
+`20261013000127_harden_google_calendar_activation_status_and_export.sql`.
+Nenhuma delas foi aplicada a CRM/produção por este trabalho. O snapshot de
+configuração/filas registrado anteriormente não foi revalidado por estas
+correções locais.
 
-1. No projeto Google Cloud, habilitar a Google Calendar API, configurar a tela de consentimento, o domínio oficial e um cliente OAuth do tipo Aplicativo da Web. Registrar o callback HTTPS exato de `google-calendar-oauth/callback`. Para conectar todos os usuários autorizados no Vimob, conferir o status de publicação e a verificação OAuth exigida pelo escopo de Agenda. Em `Testing`, só contas listadas como usuários de teste conseguem autorizar e os refresh tokens podem expirar em sete dias; isso não atende à liberação geral.
-2. No serviço Functions do destino correto, conferir a presença de `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALENDAR_REDIRECT_URI` e `GOOGLE_CALENDAR_POST_CONNECT_REDIRECT_URL`. Conferir o Client ID sem expor o secret. `GOOGLE_CALENDAR_WEBHOOK_URL` não é necessário para este fluxo.
-3. Por SELECT, reconciliar as tabelas, os jobs pendentes, o Vault, a RPC existente e os Cron jobs. O Vault precisa ter google_calendar_sync_base_url e google_calendar_cron_secret para os workers. A nova RPC local deve ser reconciliada e aplicada isoladamente antes de ativar o worker novo; não executar db push em lote sem conferir o ledger real.
-4. Manter desativados os Cron jobs de entrada google-calendar-enqueue-due-pulls e google-calendar-renew-watches. Somente google-calendar-sync-jobs processa a fila de saída. Um worker antigo que ainda use a RPC sem filtro deve sair de operação antes do novo corte.
-5. Inspecionar o roteador e os mounts do Supabase self-hosted antes de copiar funções. O plano local seleciona somente google-calendar-oauth e google-calendar-sync, com os arquivos _shared importados. Preservar todas as rotas já em serviço. O manifesto local completo não corresponde ao runtime observado e não deve substituí-lo sem reconciliação.
+- OAuth salva Vault e ativa a conexão na mesma transação curta, após CAS de
+  `credential_revision`. Prepare/abort/finalize disconnect invalidam snapshots
+  de credencial; metadata e access-token rotation não invalidam consentimento.
+- Refresh grava através de CAS de revisão/ref. Não repinta invalid_grant fora
+  do finish. O fluxo autenticado de disconnect usa snapshot fresco e uma flag
+  explícita para renovar token de canal legado; workers comuns permanecem
+  bloqueados sob o marker. A flag e o contexto de lease sobrevivem ao 401.
+- Claim v2 captura a revisão da credencial. Um resultado do grant anterior,
+  mesmo com lease válido, volta à fila sem consumir retry/repintar erros após
+  reconexão. Reconnect não descarta nem reenvia dead intents automaticamente.
+- O agregado de status é derivado em SQL da fila atual, sob lock de conexão,
+  incluindo finish de todos os outcomes e ativação OAuth. Edge não envia um
+  snapshot antigo de erro para persistir. Último sync é monotônico.
+- PATCH envia `null` para descrição/local removidos; o cleanup tardio passa o
+  etag recebido também após perda de dono entre link e metadata.
+- Lead export usa scope atual do dono: defaults, grants ativos, overrides,
+  wildcard, equipe e membership_generation. Participar do evento não concede
+  acesso ao lead. Sem scope, texto e `lead_id` são omitidos; `property_id` não
+  sai sem autorização própria. Nenhum invite/pull/watch é habilitado.
 
-GOOGLE_CALENDAR_IMMEDIATE_DISPATCH_ENABLED na API Go controla a tentativa de acordar o worker após a gravação. Desativada, o compromisso fica na fila até o Cron de saída ou outro disparo controlado. Ativada, a tentativa é imediata, mas a fila/Cron continuam necessários para retentativa. O envio em segundos depende da configuração e da medição em produção; a gravação no Vimob, sozinha, não prova chegada ao Google.
+Ordem dos locks: mutation Go event→links/FK→connection; finish
+event→links aplicáveis→connection→job, com rechecks de binding/lease; disconnect
+connection→jobs, sem lock/write de eventos/links; claim locks jobs e só lê
+eventos/conexões por MVCC; activation/refresh connection→Vault; agregado
+connection e leitura MVCC da fila. HTTP permanece fora dos locks.
 
-O retorno OAuth de web/PWA usa a URL web configurada. O retorno ao app nativo precisa de teste separado antes de anunciar suporte completo no aplicativo.
+Checks persistentes: `node scripts/supabase/check-google-calendar.mjs` faz
+strict semantic check dos quatro entrypoints completos/imports com TypeScript
+e tipos reais da versão instalada de supabase-js. Ambient Deno env/serve é
+fornecido em memória; não substitui `deno check` no runtime alvo.
+`google-calendar-lifecycle.test.ts` cobre os ramos da segunda rodada.
+`node scripts/supabase/test-google-calendar-lifecycle-sql.mjs <caminho-absoluto-para-PGlite-dist/index.js>`
+sempre usa banco novo memory://; não aceita database URL. Fixture SQL também
+pode ser executada por psql somente contra banco descartável novo.
 
-## Teste inicial com uma conta controlada
-
-1. Confirmar, sem escrita, o destino efetivo da API, a publicação das duas Functions, as variáveis e a RPC. Confirmar que o status não retorna mais `Function not found`, que uma pessoa autorizada recebe `can_connect=true` e que uma pessoa sem permissão de Agenda recebe `can_connect=false` e não consegue conectar.
-2. Auditar o backlog de `push_upsert`/`push_delete` por status, idade, conexão, organização e usuário. Ativar somente o Cron de saída após essa revisão e confirmar que ele não executa jobs de entrada. Sem esse Cron e com o despacho imediato desativado, nenhum envio automático pode ser comprovado.
-3. Conectar uma conta Google dedicada. Confirmar que o OAuth não cria registros Vimob a partir do calendário Google.
-   Compromissos antigos do Vimob não são enviados apenas por conectar; um novo cadastro ou uma edição posterior inicia o envio.
-4. Criar, editar e excluir compromissos controlados no Vimob. Verificar no Google o evento vinculado, a atualização e a remoção; medir o atraso e observar jobs failed/dead. Alterar um evento vinculado diretamente no Google, depois editar e excluir pelo Vimob; confirmar que a versão Vimob prevalece.
-   Confirmar também que nenhum participante recebe convite Google por esse fluxo.
-5. Criar e editar um evento somente no Google. Confirmar que ele não aparece no Vimob, inclusive após a execução dos workers.
-6. Testar desconexão e reconexão com a mesma conta. Conferir token revogado/removido, ausência de conexão ativa duplicada e eventuais jobs restantes sem expor credenciais.
-
-A primeira publicação expõe a conexão a todos os usuários Vimob autorizados; a conta controlada verifica o fluxo em produção, mas não limita quem pode usar o botão. Exigir reconciliação do ambiente real, validação do Google Cloud e observação de ponta a ponta antes de considerar o serviço pronto para uso profissional. Nenhuma publicação, migração, alteração de variável ou escrita em produção faz parte desta atualização documental.
+Para release, drenar workers **e callbacks/refresh antigos**, aplicar a forward
+sob revisão, publicar API/Web/Edge compatíveis, validar PostgreSQL 17 alvo,
+duas sessões/réplicas (inclusive ciclo de locks), e canário autorizado Web/PWA
+de uma conta. Testes sintéticos/PG18.6 WASM não provam Google real nem carga.

@@ -1,11 +1,9 @@
 import {
-  apiCreateUserResponseSchema,
   apiDeleteUserImpactResponseSchema,
   apiDeleteUserResponseSchema,
   apiUpdateUserResponseSchema,
   apiUserListResponseSchema,
   apiUserOrganizationListResponseSchema,
-  createUserInputSchema,
   deleteUserInputSchema,
   parseDomainInput,
   updateUserInputSchema,
@@ -21,6 +19,7 @@ type Envelope<T> = {
 export type User = {
   id: string;
   organization_id: string | null;
+  home_organization_id?: string | null;
   name: string;
   email: string;
   role: 'super_admin' | 'admin' | 'manager' | 'user' | string;
@@ -31,25 +30,6 @@ export type User = {
   updated_at: string;
 };
 
-export type CreateUserInput = {
-  name: string;
-  email: string;
-  phone?: string | null;
-  whatsapp?: string | null;
-  endereco?: string | null;
-  role: 'admin' | 'manager' | 'user';
-};
-
-export type CreateUserResult = {
-  success: boolean;
-  user: User;
-  generatedPassword?: string;
-  whatsappSent: boolean;
-  wasMultiOrg: boolean;
-  wasOrphan: boolean;
-  message?: string;
-};
-
 export type UpdateUserInput = Partial<Pick<User, 'name' | 'role' | 'is_active' | 'avatar_url' | 'whatsapp'>> & {
   id: string;
 };
@@ -58,6 +38,10 @@ export type DeleteUserImpact = {
   leads: number;
   properties: number;
   whatsapp_sessions: number;
+  teams: number;
+  custom_roles: number;
+  permission_overrides: number;
+  round_robin_entries: number;
 };
 
 export type DeleteUserInput = {
@@ -100,17 +84,6 @@ export const usersAPI = {
     });
     validateDomainResponse(apiUserListResponseSchema, response, 'users.list');
     return response.data;
-  },
-
-  async createUser(input: CreateUserInput, organizationId?: string | null) {
-    const body = parseDomainInput(createUserInputSchema, input, 'users.create');
-    const response = await vimobAPIRequest<CreateUserResult>('/v1/users', {
-      method: 'POST',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiCreateUserResponseSchema, response, 'users.create');
-    return response;
   },
 
   async updateUser(input: UpdateUserInput, organizationId?: string | null) {

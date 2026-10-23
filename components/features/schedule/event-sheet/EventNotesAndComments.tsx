@@ -15,6 +15,10 @@ export function EventNotesAndComments({
   isExisting,
   description,
   comments,
+  commentsLoading,
+  commentsError,
+  onRetryComments,
+  timeZone,
   commentText,
   canManageSchedule,
   isAdding,
@@ -27,6 +31,10 @@ export function EventNotesAndComments({
   isExisting: boolean;
   description: string;
   comments: readonly ScheduleComment[];
+  commentsLoading: boolean;
+  commentsError: boolean;
+  onRetryComments: () => void;
+  timeZone: string;
   commentText: string;
   canManageSchedule: boolean;
   isAdding: boolean;
@@ -69,7 +77,14 @@ export function EventNotesAndComments({
               </p>
             ) : (
               <>
-                {comments.length === 0 && (
+                {commentsLoading && <p role="status" className="text-[12px] text-[var(--app-text-tertiary)]">Carregando comentários...</p>}
+                {commentsError && (
+                  <div role="status" className="text-[12px] text-[var(--app-text-tertiary)]">
+                    <p>Não foi possível atualizar os comentários.</p>
+                    <Button size="sm" variant="ghost" className="h-8 text-[12px]" onClick={onRetryComments}>Tentar novamente</Button>
+                  </div>
+                )}
+                {!commentsLoading && !commentsError && comments.length === 0 && (
                   <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
                     Nenhum comentário
                   </p>
@@ -95,7 +110,7 @@ export function EventNotesAndComments({
                           {comment.user?.name || "Usuário"}
                         </span>
                         {" · "}
-                        {formatScheduleTimestamp(comment.created_at)}
+                        {formatScheduleTimestamp(comment.created_at, timeZone)}
                       </div>
                       <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-1.5 text-[12px] font-light leading-[18px] text-[var(--app-text-primary)]">
                         {comment.content}

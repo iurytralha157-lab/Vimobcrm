@@ -3193,10 +3193,12 @@ values (
 on conflict (organization_id, module_name) do update
 set is_enabled = excluded.is_enabled;
 
+-- These are already-captured backend rows so this test isolates the automation
+-- routing/binding fence. Attendance classification has its own regression suite.
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, from_me, direction,
-  message_type, content, status, metadata
+  message_type, content, status, metadata, capture_state
 )
 values (
   'd1700000-0000-4000-8000-000000000030',
@@ -3206,7 +3208,7 @@ values (
   'd1400000-0000-4000-8000-000000000042',
   'route-automation-stale', 'route-automation-stale', false, 'inbound',
   'text', 'stale routing event', 'received',
-  '{"whatsapp_event_binding_is_current":false}'::jsonb
+  '{"whatsapp_event_binding_is_current":false}'::jsonb, 'captured'
 );
 
 select is(
@@ -3219,7 +3221,7 @@ select is(
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, from_me, direction,
-  message_type, content, status, metadata
+  message_type, content, status, metadata, capture_state
 )
 values (
   'd1700000-0000-4000-8000-000000000031',
@@ -3229,7 +3231,7 @@ values (
   'd1400000-0000-4000-8000-000000000042',
   'route-automation-current', 'route-automation-current', false, 'inbound',
   'text', 'current routing event', 'received',
-  '{"whatsapp_event_binding_is_current":true}'::jsonb
+  '{"whatsapp_event_binding_is_current":true}'::jsonb, 'captured'
 );
 
 select ok(

@@ -6,6 +6,7 @@ type whatsappContactIdentity struct {
 	RemoteJID       string
 	ContactPhone    string
 	IsGroup         bool
+	PNConflict      bool
 	remoteAliases   []string
 	phoneCandidates []string
 }
@@ -19,6 +20,12 @@ func newWhatsAppContactIdentity(phone string, remoteJID string, forceGroup bool)
 			IsGroup:       true,
 			remoteAliases: uniqueStrings(append([]string{groupJID}, values...)...),
 		}
+	}
+	conflict := whatsAppContactPNConflict(values...)
+	if conflict {
+		// Retain the primary identity for diagnostics, never the contradictory
+		// hint as a lookup/lead/alias candidate. Ingress quarantines the event.
+		values = []string{remoteJID}
 	}
 
 	contactPhone := ""
@@ -46,8 +53,9 @@ func newWhatsAppContactIdentity(phone string, remoteJID string, forceGroup bool)
 		RemoteJID:       remote,
 		ContactPhone:    contactPhone,
 		IsGroup:         false,
+		PNConflict:      conflict,
 		remoteAliases:   uniqueStrings(aliases...),
-		phoneCandidates: phoneMatchCandidates(contactPhone, phone, remoteJID),
+		phoneCandidates: phoneMatchCandidates(canonicalContactLookupValues(contactPhone, values...)...),
 	}
 }
 
@@ -57,7 +65,7 @@ func (identity whatsappContactIdentity) RemoteAliases() []string {
 
 func (identity whatsappContactIdentity) LeadMatchValues() []string {
 	values := append(append([]string{identity.ContactPhone, identity.RemoteJID}, withoutOpaqueAliases(identity.remoteAliases)...), identity.phoneCandidates...)
-	return uniqueStrings(values...)
+	return canonicalContactLookupValues(identity.ContactPhone, values...)
 }
 
 func (identity whatsappContactIdentity) ConversationMatchValues() []string {

@@ -1,3 +1,4 @@
+import { managementAPIRequest } from '@/lib/api/management-request'
 import type { Json, Tables } from '@/lib/supabase/types'
 import {
   addRoundRobinMemberInputSchema,
@@ -19,6 +20,7 @@ import {
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
+import { createUUID } from '@/lib/client-id'
 
 type RoundRobinRow = Tables<'round_robins'>
 type RoundRobinRuleRow = Tables<'round_robin_rules'>
@@ -32,6 +34,8 @@ type UserSummary = {
 }
 
 type APIRoundRobin = {
+  revision: number
+  eligibleUserCount?: number
   id: string
   organizationId: string
   name: string
@@ -65,6 +69,7 @@ type APIRoundRobin = {
 }
 
 type APIRoundRobinRule = {
+  queueRevision?: number
   id: string
   roundRobinId: string
   matchType: string
@@ -77,6 +82,7 @@ type APIRoundRobinRule = {
 }
 
 type APIRoundRobinMember = {
+  queueRevision?: number
   id: string
   roundRobinId: string
   userId?: string | null
@@ -144,6 +150,7 @@ export type RoundRobinMetaFormOption = {
 }
 
 type QueueConditionInput = {
+  priority?: number
   id?: string
   type: string
   values: string[]
@@ -151,6 +158,8 @@ type QueueConditionInput = {
 }
 
 type QueueMemberInput = {
+  isActive?: boolean
+  reenroll?: boolean
   id?: string
   type?: 'user' | 'team'
   entityId?: string
@@ -162,6 +171,8 @@ type QueueMemberInput = {
 }
 
 export type RoundRobinAPIInput = {
+  expectedRevision?: number
+  creationAttemptId?: string
   name?: string
   strategy?: string | null
   target_pipeline_id?: string | null
@@ -171,6 +182,7 @@ export type RoundRobinAPIInput = {
   reentry_behavior?: 'redistribute' | 'keep_assignee' | null
   conditions?: QueueConditionInput[]
   rules?: Array<{
+    id?: string
     match_type?: string
     match_value?: string
     match?: Json | Record<string, unknown> | null
@@ -181,6 +193,8 @@ export type RoundRobinAPIInput = {
 }
 
 export type LegacyRoundRobin = RoundRobinRow & {
+  revision: number
+  eligible_user_count?: number
   created_by_user?: { id: string; name: string | null; email: string | null } | null
   target_pipeline?: { id: string; name: string } | null
   target_stage?: { id: string; name: string; color: string | null } | null
@@ -188,9 +202,10 @@ export type LegacyRoundRobin = RoundRobinRow & {
   members: LegacyRoundRobinMember[]
 }
 
-export type LegacyRoundRobinRule = RoundRobinRuleRow
+export type LegacyRoundRobinRule = RoundRobinRuleRow & { queue_revision?: number }
 
 export type LegacyRoundRobinMember = Omit<RoundRobinMemberRow, 'organization_id'> & {
+  queue_revision?: number
   organization_id?: string
   user?: UserSummary | null
   is_active?: boolean | null
@@ -287,9 +302,10 @@ export const roundRobinsAPI = {
     return toLegacyRoundRobin(response.data)
   },
 
-  async getHistory(roundRobinId: string, organizationId?: string) {
+  async getHistory(roundRobinId: string, organizationId?: string, options: { limit?: number; offset?: number } = {}) {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 50), offset: String(options.offset ?? 0) })
     const response = await vimobAPIRequest<APIListResponse<RoundRobinHistoryEvent>>(
-      `/v1/round-robins/${roundRobinId}/history`,
+      `/v1/round-robins/${roundRobinId}/history?${query.toString()}`,
       { organizationId },
     )
     validateDomainResponse(
@@ -302,8 +318,9 @@ export const roundRobinsAPI = {
 
   async createRoundRobin(input: RoundRobinAPIInput, organizationId?: string) {
     const body = parseDomainInput(createRoundRobinInputSchema, toAPIRoundRobinBody(input, true), 'round-robin.create')
-    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobin>>('/v1/round-robins', {
+    const response = await managementAPIRequest<APIItemResponse<APIRoundRobin>>('/v1/round-robins', {
       method: 'POST',
+      headers: { 'Idempotency-Key': input.creationAttemptId || createUUID() },
       organizationId,
       body,
     })
@@ -314,7 +331,7 @@ export const roundRobinsAPI = {
 
   async updateRoundRobin(id: string, input: RoundRobinAPIInput, organizationId?: string) {
     const body = parseDomainInput(updateRoundRobinInputSchema, toAPIRoundRobinBody(input, false), 'round-robin.update')
-    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobin>>(`/v1/round-robins/${id}`, {
+    const response = await managementAPIRequest<APIItemResponse<APIRoundRobin>>(`/v1/round-robins/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
@@ -324,9 +341,10 @@ export const roundRobinsAPI = {
     return toLegacyRoundRobin(response.data)
   },
 
-  async deleteRoundRobin(id: string, organizationId?: string) {
-    await vimobAPIRequest<null>(`/v1/round-robins/${id}`, {
+  async deleteRoundRobin(id: string, organizationId?: string, expectedRevision?: number) {
+    await managementAPIRequest<null>(`/v1/round-robins/${id}`, {
       method: 'DELETE',
+      headers: revisionHeaders(expectedRevision),
       organizationId,
     })
   },
@@ -341,13 +359,14 @@ export const roundRobinsAPI = {
     return response.data.map((rule) => toLegacyRule(rule, organizationId))
   },
 
-  async createRule(input: { round_robin_id: string; match_type: string; match_value: string; match?: Json | Record<string, unknown> | null }, organizationId?: string) {
+  async createRule(input: { expectedRevision?: number; round_robin_id: string; match_type: string; match_value: string; match?: Json | Record<string, unknown> | null }, organizationId?: string) {
     const body = parseDomainInput(createRoundRobinRuleInputSchema, {
       matchType: input.match_type,
+      expectedRevision: input.expectedRevision,
       matchValue: input.match_value,
       match: asRecord(input.match),
     }, 'round-robin.rules.create')
-    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobinRule>>(`/v1/round-robins/${input.round_robin_id}/rules`, {
+    const response = await managementAPIRequest<APIItemResponse<APIRoundRobinRule>>(`/v1/round-robins/${input.round_robin_id}/rules`, {
       method: 'POST',
       organizationId,
       body,
@@ -357,15 +376,16 @@ export const roundRobinsAPI = {
     return toLegacyRule(response.data, organizationId)
   },
 
-  async updateRule(id: string, input: { match_type?: string; match_value?: string; match?: Json | Record<string, unknown> | null; priority?: number; is_active?: boolean }, organizationId?: string) {
+  async updateRule(id: string, input: { expectedRevision?: number; match_type?: string; match_value?: string; match?: Json | Record<string, unknown> | null; priority?: number; is_active?: boolean }, organizationId?: string) {
     const body = parseDomainInput(updateRoundRobinRuleInputSchema, {
       matchType: input.match_type,
+      expectedRevision: input.expectedRevision,
       matchValue: input.match_value,
       match: input.match === undefined ? undefined : asRecord(input.match),
       priority: input.priority,
       isActive: input.is_active,
     }, 'round-robin.rules.update')
-    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobinRule>>(`/v1/round-robin-rules/${id}`, {
+    const response = await managementAPIRequest<APIItemResponse<APIRoundRobinRule>>(`/v1/round-robin-rules/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
@@ -375,20 +395,23 @@ export const roundRobinsAPI = {
     return toLegacyRule(response.data, organizationId)
   },
 
-  async deleteRule(id: string, organizationId?: string) {
-    await vimobAPIRequest<null>(`/v1/round-robin-rules/${id}`, {
+  async deleteRule(id: string, organizationId?: string, expectedRevision?: number) {
+    await managementAPIRequest<null>(`/v1/round-robin-rules/${id}`, {
       method: 'DELETE',
+      headers: revisionHeaders(expectedRevision),
       organizationId,
     })
   },
 
-  async addMember(input: { roundRobinId: string; userId?: string; teamId?: string; weight?: number }, organizationId?: string) {
+  async addMember(input: { expectedRevision?: number; roundRobinId: string; userId?: string; teamId?: string; weight?: number; isActive?: boolean }, organizationId?: string) {
     const body = parseDomainInput(addRoundRobinMemberInputSchema, {
       userId: input.userId,
+      expectedRevision: input.expectedRevision,
       teamId: input.teamId,
       weight: input.weight,
+      isActive: input.isActive,
     }, 'round-robin.members.add')
-    const response = await vimobAPIRequest<APIListResponse<APIRoundRobinMember>>(`/v1/round-robins/${input.roundRobinId}/members`, {
+    const response = await managementAPIRequest<APIListResponse<APIRoundRobinMember>>(`/v1/round-robins/${input.roundRobinId}/members`, {
       method: 'POST',
       organizationId,
       body,
@@ -398,13 +421,14 @@ export const roundRobinsAPI = {
     return response.data.map((member) => toLegacyMember(member, organizationId))
   },
 
-  async updateMember(id: string, input: { weight?: number; position?: number; is_active?: boolean }, organizationId?: string) {
+  async updateMember(id: string, input: { expectedRevision?: number; weight?: number; position?: number; is_active?: boolean }, organizationId?: string) {
     const body = parseDomainInput(updateRoundRobinMemberInputSchema, {
       weight: input.weight,
+      expectedRevision: input.expectedRevision,
       position: input.position,
       isActive: input.is_active,
     }, 'round-robin.members.update')
-    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobinMember>>(`/v1/round-robin-members/${id}`, {
+    const response = await managementAPIRequest<APIItemResponse<APIRoundRobinMember>>(`/v1/round-robin-members/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
@@ -414,9 +438,10 @@ export const roundRobinsAPI = {
     return toLegacyMember(response.data, organizationId)
   },
 
-  async deleteMember(id: string, organizationId?: string) {
-    await vimobAPIRequest<null>(`/v1/round-robin-members/${id}`, {
+  async deleteMember(id: string, organizationId?: string, expectedRevision?: number) {
+    await managementAPIRequest<null>(`/v1/round-robin-members/${id}`, {
       method: 'DELETE',
+      headers: revisionHeaders(expectedRevision),
       organizationId,
     })
   },
@@ -424,6 +449,7 @@ export const roundRobinsAPI = {
 
 function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean) {
   const body: Record<string, unknown> = {}
+  if (!includeRequired) body.expectedRevision = input.expectedRevision
 
   if (includeRequired || input.name !== undefined) body.name = input.name
   if (input.strategy !== undefined) body.strategy = input.strategy || undefined
@@ -435,6 +461,7 @@ function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean
   if (input.conditions !== undefined) body.conditions = input.conditions
   if (input.rules !== undefined) {
     body.rules = input.rules.map((rule) => ({
+      id: rule.id,
       matchType: rule.match_type,
       matchValue: rule.match_value,
       match: asRecord(rule.match),
@@ -453,6 +480,7 @@ function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean
           entityId,
           teamId: type === 'user' ? member.teamId || member.team_id || undefined : undefined,
           weight: member.weight,
+          isActive: includeRequired || !member.id || member.reenroll ? member.isActive : undefined,
         }
       })
       .filter((member) => (member.type === 'user' || member.type === 'team') && Boolean(member.entityId))
@@ -463,6 +491,8 @@ function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean
 
 function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
   return {
+    revision: item.revision,
+    eligible_user_count: item.eligibleUserCount,
     ai_agent_id: null,
     created_at: item.createdAt,
     created_by: item.createdBy || null,
@@ -505,6 +535,7 @@ function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
 
 function toLegacyRule(rule: APIRoundRobinRule, organizationId?: string): LegacyRoundRobinRule {
   return {
+    queue_revision: rule.queueRevision,
     conditions: null,
     created_at: rule.createdAt,
     id: rule.id,
@@ -522,6 +553,7 @@ function toLegacyRule(rule: APIRoundRobinRule, organizationId?: string): LegacyR
 
 function toLegacyMember(member: APIRoundRobinMember, organizationId?: string): LegacyRoundRobinMember {
   return {
+    queue_revision: member.queueRevision,
     created_at: null,
     id: member.id,
     leads_count: member.leadsCount,
@@ -542,6 +574,11 @@ function toLegacyMember(member: APIRoundRobinMember, organizationId?: string): L
         }
       : null,
   }
+}
+
+function revisionHeaders(revision?: number) {
+  if (!Number.isSafeInteger(revision) || (revision ?? 0) < 1) throw new Error('Recarregue a fila antes de alterar sua configuração.')
+  return { 'If-Match': `"${revision}"` }
 }
 
 function asRecord(value: Json | Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {

@@ -5,6 +5,8 @@ import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { FILTER_UI } from '@/config/filter-ui';
+import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -25,6 +27,8 @@ export default function FinancialDRE() {
   const [regime, setRegime] = useState<RegimeType>('cash');
   const [compareWithPrevious, setCompareWithPrevious] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => format(new Date(), 'yyyy-MM'));
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedQuarter, setSelectedQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
   const [isInitializingGroups, setIsInitializingGroups] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
@@ -46,9 +50,9 @@ export default function FinancialDRE() {
         return { start: startOfMonth(date), end: endOfMonth(date) };
       }
       case 'quarter':
-        return { start: startOfQuarter(now), end: endOfQuarter(now) };
+        return { start: startOfQuarter(new Date(selectedYear, (selectedQuarter - 1) * 3, 1)), end: endOfQuarter(new Date(selectedYear, (selectedQuarter - 1) * 3, 1)) };
       case 'year':
-        return { start: startOfYear(now), end: endOfYear(now) };
+        return { start: startOfYear(new Date(selectedYear, 0, 1)), end: endOfYear(new Date(selectedYear, 0, 1)) };
       default:
         return { start: startOfMonth(now), end: endOfMonth(now) };
     }
@@ -150,9 +154,9 @@ export default function FinancialDRE() {
             <div className="flex flex-wrap items-end gap-4">
               {/* Período */}
               <div className="space-y-2">
-                <Label>Período</Label>
+                <Label htmlFor="dre-period">Período</Label>
                 <Select value={periodType} onValueChange={(v) => setPeriodType(v as PeriodType)}>
-                  <SelectTrigger className="w-[140px]">
+                  <SelectTrigger id="dre-period" className={cn(FILTER_UI.control, 'w-[140px]')}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -166,9 +170,9 @@ export default function FinancialDRE() {
               {/* Seletor de mês */}
               {periodType === 'month' && (
                 <div className="space-y-2">
-                  <Label>Mês</Label>
+                  <Label htmlFor="dre-month">Mês</Label>
                   <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                    <SelectTrigger className="w-[180px]">
+                    <SelectTrigger id="dre-month" className={cn(FILTER_UI.control, 'w-[180px]')}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -183,10 +187,28 @@ export default function FinancialDRE() {
               )}
 
               {/* Regime */}
+              {(periodType === 'quarter' || periodType === 'year') && (
+                <div className="space-y-2">
+                  <Label htmlFor="dre-year">Ano</Label>
+                  <Select value={String(selectedYear)} onValueChange={value => setSelectedYear(Number(value))}>
+                    <SelectTrigger id="dre-year" className={cn(FILTER_UI.control, 'w-[140px]')}><SelectValue /></SelectTrigger>
+                    <SelectContent>{Array.from({ length: 21 }, (_, index) => new Date().getFullYear() - index).map(year => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              )}
+              {periodType === 'quarter' && (
+                <div className="space-y-2">
+                  <Label htmlFor="dre-quarter">Trimestre</Label>
+                  <Select value={String(selectedQuarter)} onValueChange={value => setSelectedQuarter(Number(value))}>
+                    <SelectTrigger id="dre-quarter" className={cn(FILTER_UI.control, 'w-[150px]')}><SelectValue /></SelectTrigger>
+                    <SelectContent>{[1, 2, 3, 4].map(quarter => <SelectItem key={quarter} value={String(quarter)}>{quarter}º trimestre</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-2">
-                <Label>Regime</Label>
+                <Label htmlFor="dre-regime">Regime</Label>
                 <Select value={regime} onValueChange={(v) => setRegime(v as RegimeType)}>
-                  <SelectTrigger className="w-[150px]">
+                  <SelectTrigger id="dre-regime" className={cn(FILTER_UI.control, 'w-[150px]')}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

@@ -45,8 +45,8 @@ export function ConversationEmptyState({
         </>
       ) : (
         <>
-          <p className="font-medium">Selecione uma conversa</p>
-          <p className="text-sm">para começar a enviar mensagens</p>
+          <p className="text-[14px] font-medium">Selecione uma conversa</p>
+          <p className="text-[12px] font-light">para começar a enviar mensagens</p>
         </>
       )}
     </div>

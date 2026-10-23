@@ -64,6 +64,47 @@ func TestUpdateStatusRequiresExplicitBoolean(t *testing.T) {
 	}
 }
 
+func TestUpdateTeamRequiresExpectedRevision(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing", body: `{"name":"Equipe nova"}`},
+		{name: "null", body: `{"name":"Equipe nova","expected_revision":null}`},
+		{name: "zero", body: `{"name":"Equipe nova","expected_revision":0}`},
+		{name: "negative", body: `{"name":"Equipe nova","expected_revision":-1}`},
+		{name: "unsafe integer", body: `{"name":"Equipe nova","expected_revision":9007199254740992}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPatch, "/v1/teams/11111111-1111-4111-8111-111111111111", strings.NewReader(test.body))
+			request.SetPathValue("id", "11111111-1111-4111-8111-111111111111")
+			request = request.WithContext(tenant.ContextWithTenant(context.Background(), tenant.Context{
+				OrganizationID: "22222222-2222-4222-8222-222222222222",
+				UserID:         "33333333-3333-4333-8333-333333333333",
+				MemberRole:     "admin",
+			}))
+			response := httptest.NewRecorder()
+
+			NewHandler(Repository{}).Update(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			var payload struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if payload.Error.Code != "invalid_team_input" {
+				t.Fatalf("error code = %q, want invalid_team_input", payload.Error.Code)
+			}
+		})
+	}
+}
+
 func TestUpdateTeamStatusRequestPreservesExplicitBoolean(t *testing.T) {
 	for _, expected := range []bool{false, true} {
 		body := []byte(`{"is_active":false}`)

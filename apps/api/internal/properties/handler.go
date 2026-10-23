@@ -1,8 +1,10 @@
 package properties
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,11 +14,13 @@ import (
 )
 
 type Handler struct {
-	repo Repository
+	repo                          Repository
+	readProperty                  func(context.Context, tenant.Context, string) (Property, error)
+	resolveCreationRecoveryTenant func(context.Context, string, string) (tenant.Context, error)
 }
 
 func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+	return Handler{repo: repo, readProperty: repo.Get}
 }
 
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +76,30 @@ func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	property, err := handler.repo.Get(r.Context(), tenantContext, r.PathValue("id"))
+	creationRecovery := isPropertyCreationRecoveryRequest(r)
+	propertyID := r.PathValue("id")
+	if creationRecovery {
+		current, err := handler.propertyCreationRecoveryTenant(r.Context(), tenantContext)
+		if err != nil {
+			writePropertyError(w, r, err)
+			return
+		}
+		tenantContext = current
+		var valid bool
+		propertyID, valid = normalizeUUID(propertyID)
+		if !valid {
+			writePropertyError(w, r, fmt.Errorf("%w: property id is invalid", ErrInvalidInput))
+			return
+		}
+	}
+	readProperty := handler.readProperty
+	if readProperty == nil {
+		readProperty = handler.repo.Get
+	}
+	property, err := readProperty(r.Context(), tenantContext, propertyID)
+	if creationRecovery && errors.Is(err, ErrPropertyNotFound) {
+		err = ErrPropertyCreationResourceRemoved
+	}
 	if err != nil {
 		writePropertyError(w, r, err)
 		return
@@ -138,13 +165,17 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	property, err := handler.repo.Create(r.Context(), tenantContext, input)
+	property, created, err := handler.repo.CreateIdempotent(r.Context(), tenantContext, input, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		writePropertyError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusCreated, map[string]Property{"data": property})
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	httpserver.WriteJSON(w, status, map[string]Property{"data": property})
 }
 
 func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +283,10 @@ func writePropertyError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "property_asset_published", "A mídia integra uma versão publicada. Despublique os canais antes de alterar sua visibilidade, conteúdo ou excluí-la.")
 	case errors.Is(err, ErrPropertyWorkspaceConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "property_workspace_conflict", "O imóvel foi alterado por outra pessoa. Atualize a página e tente novamente.")
+	case errors.Is(err, ErrPropertyCreationKeyConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_creation_key_conflict", "Esta tentativa de cadastro já foi usada com outros dados. Inicie uma nova tentativa.")
+	case errors.Is(err, ErrPropertyCreationResourceRemoved):
+		httpserver.WriteError(w, r, http.StatusGone, "property_creation_resource_removed", "O imóvel desta tentativa foi excluído. Revise os dados antes de iniciar um novo cadastro.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	case errors.Is(err, ErrStorageNotConfigured):

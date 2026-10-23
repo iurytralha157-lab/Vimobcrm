@@ -1,4 +1,5 @@
-import { vimobAPIRequest } from './vimob-client'
+import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
+import { captureCurrentLeadRequestIntent } from '@/lib/api/lead-request-intent'
 import type { LeadTask } from '@/hooks/use-lead-tasks'
 import { apiLeadTaskListResponseSchema, apiLeadTaskResponseSchema, cadenceTaskCompletionInputSchema, entityIdSchema, leadTaskCreateInputSchema, leadTaskPatchInputSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
@@ -36,28 +37,35 @@ export const leadTasksAPI = {
     title: string
     description?: string
     due_date?: string
-  }) {
+  }, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const body = parseDomainInput(leadTaskCreateInputSchema, task, 'lead-tasks.create')
     const response = await vimobAPIRequest<Envelope<LeadTask>>('/v1/lead-tasks', {
       method: 'POST',
+      ...requestIntent,
+      organizationId,
       body,
     })
     validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.create')
     return response.data
   },
 
-  async patch(id: string, input: { is_done?: boolean; outcome?: string; outcome_notes?: string; leadId?: string }) {
+  async patch(id: string, input: { is_done?: boolean; outcome?: string; outcome_notes?: string; leadId?: string }, organizationId?: string, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const taskId = parseDomainInput(entityIdSchema, id, 'lead-tasks.patch.id')
     const body = parseDomainInput(leadTaskPatchInputSchema, input, 'lead-tasks.patch')
     const response = await vimobAPIRequest<Envelope<LeadTask>>(`/v1/lead-tasks/${taskId}`, {
       method: 'PATCH',
+      ...requestIntent,
+      organizationId,
       body,
     })
     validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.patch')
     return response.data
   },
 
-  async completeCadence(input: CompleteCadenceTaskInput) {
+  async completeCadence(input: CompleteCadenceTaskInput, intent?: VimobAPIRequestIntent) {
+    const requestIntent = captureCurrentLeadRequestIntent(intent)
     const { organizationId, ...completion } = input
     const body = parseDomainInput(
       cadenceTaskCompletionInputSchema,
@@ -66,6 +74,7 @@ export const leadTasksAPI = {
     )
     const response = await vimobAPIRequest<Envelope<LeadTask>>('/v1/lead-tasks/complete-cadence', {
       method: 'POST',
+      ...requestIntent,
       body,
       organizationId,
     })

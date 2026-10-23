@@ -83,6 +83,7 @@ export function useAllRoundRobinRules() {
 }
 
 interface CreateRuleInput {
+  expectedRevision: number;
   round_robin_id: string;
   match_type: string;
   match_value: string;
@@ -104,6 +105,8 @@ export function useCreateRoundRobinRule() {
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
       queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-history', organizationId] });
       toast.success('Regra criada com sucesso!');
     },
     onError: (error: Error) => {
@@ -113,6 +116,7 @@ export function useCreateRoundRobinRule() {
 }
 
 interface UpdateRuleInput {
+  expectedRevision: number;
   id: string;
   round_robin_id: string;
   match_type?: string;
@@ -126,6 +130,7 @@ export function useUpdateRoundRobinRule() {
   return useMutation({
     mutationFn: async (input: UpdateRuleInput) => {
       const rule = await roundRobinsAPI.updateRule(input.id, {
+        expectedRevision: input.expectedRevision,
         match_type: input.match_type,
         match_value: input.match_value,
       }, requireOrganizationId(organizationId));
@@ -138,6 +143,8 @@ export function useUpdateRoundRobinRule() {
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
       queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-history', organizationId] });
       toast.success('Regra atualizada!');
     },
     onError: (error: Error) => {
@@ -151,8 +158,8 @@ export function useDeleteRoundRobinRule() {
   const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: async ({ id, roundRobinId }: { id: string; roundRobinId: string }) => {
-      await roundRobinsAPI.deleteRule(id, requireOrganizationId(organizationId));
+    mutationFn: async ({ id, roundRobinId, expectedRevision }: { id: string; roundRobinId: string; expectedRevision: number }) => {
+      await roundRobinsAPI.deleteRule(id, requireOrganizationId(organizationId), expectedRevision);
       return roundRobinId;
     },
     onSuccess: (roundRobinId) => {
@@ -162,6 +169,8 @@ export function useDeleteRoundRobinRule() {
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
       queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-history', organizationId] });
       toast.success('Regra excluida!');
     },
     onError: (error: Error) => {
@@ -175,15 +184,18 @@ export function useReorderRules() {
   const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: async (rules: { id: string; match_type: string }[]) => {
-      requireOrganizationId(organizationId);
-      void rules;
-      return true;
+    mutationFn: async ({ roundRobinId, expectedRevision, rules }: { roundRobinId: string; expectedRevision: number; rules: RoundRobinRule[] }) => {
+      return roundRobinsAPI.updateRoundRobin(roundRobinId, {
+        expectedRevision,
+        rules: rules.map((rule, index) => ({ id: rule.id, match_type: rule.match_type, match_value: rule.match_value, match: rule.match as Record<string, unknown> | null, priority: 1000 - index, is_active: rule.is_active })),
+      }, requireOrganizationId(organizationId));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-history', organizationId] });
       toast.success('Regras atualizadas!');
     },
     onError: (error: Error) => {

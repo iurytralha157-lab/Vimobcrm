@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { getErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
+import { useWhatsAppMutationIntent } from "@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 interface StartAutomationDialogProps {
   open: boolean;
@@ -38,7 +40,19 @@ const getTriggerIcon = (type: TriggerType) => {
   }
 };
 
-export function StartAutomationDialog({
+export function StartAutomationDialog(props: StartAutomationDialogProps) {
+  const scope = useWhatsAppQueryScope();
+  const { profile } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
+  // Changing the card, actor or permission scope also cancels a pending start.
+  return props.open ? <StartAutomationDialogContent key={JSON.stringify([
+    scope.organizationId, scope.userId, scope.accessScope, profile?.organization_id,
+    hasPermission("automations_manage"), hasModule("automations"), props.leadId, props.conversationId,
+  ])} {...props} /> : null;
+}
+
+function StartAutomationDialogContent({
   open,
   onOpenChange,
   leadId,
@@ -47,11 +61,13 @@ export function StartAutomationDialog({
 }: StartAutomationDialogProps) {
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
-  const canStartAutomations = hasModule("automations") && hasPermission("automations_manage");
+  const { profile, activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
+  const canStartAutomations = Boolean(organizationId && profile?.organization_id === organizationId)
+    && hasModule("automations") && hasPermission("automations_manage");
   const permissionLoading = permissionsLoading || modulesLoading;
   const { data: automations, isLoading, error, refetch } = useAutomations(open && canStartAutomations);
-  const { activeOrganization, organization, profile } = useAuth();
-  const organizationId = activeOrganization.organizationId;
+  const { capture } = useWhatsAppMutationIntent();
   const queryClient = useQueryClient();
   const [starting, setStarting] = useState<string | null>(null);
 
@@ -59,16 +75,21 @@ export function StartAutomationDialog({
 
   const handleStart = async (automationId: string, automationName: string) => {
     if (!organizationId || !canStartAutomations) return;
+    const intent = capture();
     setStarting(automationId);
 
     try {
-      const result = await automationsAPI.startAutomation(
+      intent.assertCurrent();
+      const result = await intent.run((transport) => automationsAPI.startAutomation(
         automationId,
         { leadId, conversationId },
         organizationId,
-      );
+        transport,
+      ));
+      intent.assertCurrent();
 
       await queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
+      intent.assertCurrent();
 
       if (result.status === 'completed') {
         toast.success(`Automação "${automationName}" concluída.`);
@@ -86,9 +107,10 @@ export function StartAutomationDialog({
 
       onOpenChange(false);
     } catch (err: unknown) {
-      toast.error("Erro ao iniciar automação: " + getErrorMessage(err));
+      if (intent.isCurrent()) toast.error("Erro ao iniciar automação: " + getErrorMessage(err));
     } finally {
-      setStarting(null);
+      if (intent.isCurrent()) setStarting(null);
+      intent.release();
     }
   };
 
@@ -110,7 +132,7 @@ export function StartAutomationDialog({
         <div className="space-y-2 max-h-[400px] overflow-y-auto">
           {permissionLoading ? (
             <div className="flex items-center justify-center py-8" role="status">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="h-6 w-6 animate-spin motion-reduce:animate-none text-muted-foreground" />
             </div>
           ) : !canStartAutomations ? (
             <div className="py-8 text-center" role="alert">
@@ -118,7 +140,7 @@ export function StartAutomationDialog({
             </div>
           ) : isLoading ? (
             <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="h-6 w-6 animate-spin motion-reduce:animate-none text-muted-foreground" />
             </div>
           ) : error ? (
             <div className="py-8 text-center" role="alert">
@@ -157,7 +179,7 @@ export function StartAutomationDialog({
                     </p>
                   </div>
                   {isStarting ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                    <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-primary shrink-0" />
                   ) : (
                     <Play className="h-4 w-4 text-muted-foreground shrink-0" />
                   )}

@@ -114,7 +114,7 @@ export interface FinancialDashboardData {
 }
 
 export function useFinancialCategories() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -127,7 +127,7 @@ export function useFinancialCategories() {
 
 export function useCreateFinancialCategory() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -157,21 +157,21 @@ export function useFinancialEntries(filters?: {
   endDate?: string;
   limit?: number;
   offset?: number;
-}) {
-  const { activeOrganization, profile, organization } = useAuth();
+}, options: { enabled?: boolean } = {}) {
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["financial-entries", organizationId, filters],
     queryFn: () =>
       financialAPI.listEntries<FinancialEntry[]>(filters, organizationId),
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false,
   });
 }
 
 export function useCreateFinancialEntry() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -197,7 +197,7 @@ export function useCreateFinancialEntry() {
 
 export function useUpdateFinancialEntry() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -226,7 +226,7 @@ export function useUpdateFinancialEntry() {
 
 export function useMarkEntryAsPaid() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -256,7 +256,7 @@ export function useMarkEntryAsPaid() {
 
 export function useDeleteFinancialEntry() {
   const queryClient = useQueryClient();
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -281,7 +281,7 @@ export function useDeleteFinancialEntry() {
 }
 
 export function useFinancialDashboard() {
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
 
   return useQuery({
@@ -289,5 +289,6 @@ export function useFinancialDashboard() {
     queryFn: () =>
       financialAPI.dashboard<FinancialDashboardData>(organizationId),
     enabled: !!organizationId,
+    refetchOnMount: true,
   });
 }

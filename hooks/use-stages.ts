@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
 import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization';
 import { pipelinesAPI } from '@/lib/api/pipelines';
 import type { PropertySummary } from '@/lib/api/property-support';
@@ -26,11 +27,15 @@ import type { Tables } from '@/lib/supabase/types';
 import { reusePreviousDataWhenKeyPartsMatch } from '@/lib/query-placeholder-safety';
 import { resolvePipelineDateModeForRange } from '@/lib/pipeline-date-mode';
 import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
+import { useStageDeleteIntent, type DeleteStageData } from '@/hooks/pipelines/use-stage-delete-intent';
+import { usePipelineCreateMutation, usePipelineDeleteMutation, usePipelineUpdateMutation, useStageCreateMutation, useStageUpdateMutation, useStagesReorderMutation } from '@/hooks/pipelines/use-pipeline-mutations';
+import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
+import { capturePipelinePageLease } from '@/lib/pipeline-page-lease';
 import {
   buildPipelineStageRestorePlans,
   createPipelinePaginationStorageKey,
   getPipelineStageLoadedCountsFromBoard,
-  hasMorePipelineStageLeadsAfterPage,
+  getPipelineStagePaginationAfterPage,
   mergePipelineStageLoadedCounts,
   parsePipelineStageLoadedCounts,
   type PipelineStageLoadedCounts,
@@ -60,6 +65,7 @@ type LeadMetaRow = {
 };
 
 export type PipelineLead = Partial<Tables<'leads'>> & {
+  queue_pool?: import('@/lib/validation/queue-runtime').QueuePool | null;
   id: string;
   stage_id: string | null;
   can_operate?: boolean;
@@ -79,6 +85,7 @@ export type StageWithLeads = Stage & {
   total_lead_count: number;
   total_value?: number;
   has_more: boolean;
+  pagination_count_is_estimate?: boolean;
 };
 
 export type PipelineQueryFilters = PipelineQueryKeyFilters;
@@ -96,7 +103,9 @@ const PIPELINE_CACHE_TIME_MS = 1000 * 60 * 60;
 
 type PipelineBackgroundRestoreState = {
   queryKeyId: string;
+  identity: object;
   generation: number;
+  filters?: PipelineQueryFilters;
   desiredLoadedCounts: PipelineStageLoadedCounts;
   attemptedStageIds: Set<string>;
 };
@@ -129,6 +138,7 @@ export function useStages(pipelineId?: string) {
     },
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
+    refetchOnMount: true,
     retry: shouldRetryPipelineQuery,
     retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
@@ -143,8 +153,9 @@ export function useStagesWithLeads(
   },
 ) {
   const organizationId = useOrganizationId();
-  const { profile, user } = useAuth();
+  const { profile, user, session } = useAuth();
   const queryClient = useQueryClient();
+  const requestScope = useLeadRequestScope();
   const queryKey = useMemo(
     () => stageWithLeadsQueryKey({
       organizationId,
@@ -165,21 +176,21 @@ export function useStagesWithLeads(
   const [restoreError, setRestoreError] = useState<{
     queryKeyId: string;
     generation: number;
+    identity: object;
     error: unknown;
   } | null>(null);
-  const restoreLifecycleRef = useRef(true);
-  const restoreAllowedRef = useRef(isBoardEnabled);
-
-  useEffect(() => {
-    restoreLifecycleRef.current = true;
+  const sessionId = getGlobalSignOutSessionId(session);
+  const restoreIdentity = useMemo(() => ({ queryKeyId, queryClient, paginationStorageKey, isBoardEnabled, userId: user?.id, sessionId }),
+    [queryKeyId, queryClient, paginationStorageKey, isBoardEnabled, user?.id, sessionId]);
+  const restoreVisitRef = useRef<{ identity: typeof restoreIdentity; controller: AbortController } | null>(null);
+  useLayoutEffect(() => {
+    const visit = { identity: restoreIdentity, controller: new AbortController() };
+    restoreVisitRef.current = visit;
     return () => {
-      restoreLifecycleRef.current = false;
+      visit.controller.abort();
+      if (restoreVisitRef.current === visit) restoreVisitRef.current = null;
     };
-  }, []);
-
-  useEffect(() => {
-    restoreAllowedRef.current = isBoardEnabled;
-  }, [isBoardEnabled]);
+  }, [restoreIdentity]);
 
   const boardQuery = useQuery<StageWithLeads[]>({
     queryKey,
@@ -190,7 +201,7 @@ export function useStagesWithLeads(
         previousData,
         previousQuery?.queryKey,
         queryKey,
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
       ),
     enabled: isBoardEnabled,
     refetchOnMount: true,
@@ -210,10 +221,12 @@ export function useStagesWithLeads(
       const previousRestoreState = backgroundRestoreStateRef.current;
       backgroundRestoreStateRef.current = {
         queryKeyId,
+        identity: restoreIdentity,
         generation:
           previousRestoreState?.queryKeyId === queryKeyId
             ? previousRestoreState.generation + 1
             : 1,
+        filters: filters ? structuredClone(filters) : undefined,
         desiredLoadedCounts,
         attemptedStageIds: new Set(),
       };
@@ -232,10 +245,15 @@ export function useStagesWithLeads(
   });
 
   useEffect(() => {
-    if (!boardQuery.data || !organizationId || !pipelineId || !isBoardEnabled) return;
+    if (!boardQuery.data || !organizationId || !pipelineId || !isBoardEnabled
+      || boardQuery.fetchStatus !== 'idle' || boardQuery.isPlaceholderData || boardQuery.isError) return;
 
     const restoreState = backgroundRestoreStateRef.current;
-    if (!restoreState || restoreState.queryKeyId !== queryKeyId) return;
+    if (!restoreState || restoreState.queryKeyId !== queryKeyId || restoreState.identity !== restoreIdentity) return;
+    const visit = restoreVisitRef.current;
+    if (!visit || visit.identity !== restoreIdentity || !restoreIdentity.isBoardEnabled) return;
+    const isCurrentRestore = () => restoreVisitRef.current === visit && !visit.controller.signal.aborted
+      && backgroundRestoreStateRef.current === restoreState && getPendingPipelineMoves(queryKey).length === 0;
 
     const restorePlans = buildPipelineStageRestorePlans(
       boardQuery.data,
@@ -251,94 +269,110 @@ export function useStagesWithLeads(
       // Restore one column at a time. The first 12 cards are already visible,
       // and a saved deep board cannot fan out into many simultaneous requests.
       for (const plan of restorePlans) {
-        if (
-          !restoreLifecycleRef.current ||
-          !restoreAllowedRef.current ||
-          backgroundRestoreStateRef.current !== restoreState
-        ) {
-          return;
-        }
-
-        let response: { stageId: string; leads: PipelineLead[] };
+        if (!isCurrentRestore()) return;
+        // A prior column's accepted append creates a new snapshot. Bind the next
+        // column to that current snapshot rather than to the effect's old data.
+        const currentPlan = buildPipelineStageRestorePlans(
+          queryClient.getQueryData<StageWithLeads[]>(queryKey) || [],
+          restoreState.desiredLoadedCounts,
+        ).find(candidate => candidate.stageId === plan.stageId);
+        if (!currentPlan) continue;
+        let operation: LeadRequestOperation | undefined;
+        let lease: ReturnType<typeof capturePipelinePageLease> | undefined;
         try {
-          response = (await getPipelineStageLeads({
-            organizationId,
-            pipelineId,
-            stageId: plan.stageId,
-            offset: plan.offset,
-            cursorBefore: plan.cursorBefore,
-            cursorBeforeId: plan.cursorBeforeId,
-            filterUserId,
-            filters: filters as PipelineBoardFilters,
-            limit: plan.limit,
-          })) as { stageId: string; leads: PipelineLead[] };
-        } catch (error) {
-          // Preserve the initial page and expose this bounded restore failure.
-          // A manual refresh starts a new generation for another attempt.
-          if (
-            restoreLifecycleRef.current &&
-            restoreAllowedRef.current &&
-            backgroundRestoreStateRef.current === restoreState
-          ) {
-            setRestoreError((current) => current?.generation === restoreState.generation &&
-              current.queryKeyId === queryKeyId
-              ? current
-              : { queryKeyId, generation: restoreState.generation, error });
+          operation = requestScope.capture();
+          if (operation.organizationId !== organizationId || !isCurrentRestore()) return;
+          lease = capturePipelinePageLease(queryClient, queryKey, { ...currentPlan, signal: visit.controller.signal });
+          const abortLease = () => visit.controller.abort();
+          operation.intent.signal?.addEventListener('abort', abortLease, { once: true });
+          let response: { stageId: string; leads: PipelineLead[]; hasMore?: boolean };
+          try {
+            response = (await getPipelineStageLeads({
+              organizationId: operation.organizationId,
+              pipelineId,
+              stageId: currentPlan.stageId,
+              offset: currentPlan.offset,
+              cursorBefore: currentPlan.cursorBefore,
+              cursorBeforeId: currentPlan.cursorBeforeId,
+              filterUserId,
+              filters: restoreState.filters as PipelineBoardFilters | undefined,
+              limit: currentPlan.limit,
+              intent: operation.intent,
+              signal: lease.signal,
+            })) as { stageId: string; leads: PipelineLead[]; hasMore?: boolean };
+          } finally {
+            operation.intent.signal?.removeEventListener('abort', abortLease);
           }
-          continue;
-        }
+          if (!isCurrentRestore() || !operation.isCurrent() || !lease.isCurrent()) return;
+          if (response.stageId !== currentPlan.stageId || response.leads.some(lead =>
+            (lead.stage_id && lead.stage_id !== currentPlan.stageId)
+            || (lead.organization_id && lead.organization_id !== operation!.organizationId)
+            || (lead.pipeline_id && lead.pipeline_id !== pipelineId))) {
+            throw new Error('A página recebida não corresponde à coluna atual. Atualize o quadro.');
+          }
+          const currentIds = new Set((queryClient.getQueryData<StageWithLeads[]>(queryKey) || [])
+            .flatMap(stage => stage.leads.map(lead => lead.id)));
+          if ((response.hasMore === true && response.leads.length === 0)
+            || (response.leads.length > 0 && response.leads.every(lead => currentIds.has(lead.id)))) {
+            throw new Error('O quadro mudou. Atualize os leads para continuar o carregamento.');
+          }
 
-        if (
-          !restoreLifecycleRef.current ||
-          !restoreAllowedRef.current ||
-          backgroundRestoreStateRef.current !== restoreState
-        ) {
-          return;
-        }
+          // Release before our own synchronous write, which retires concurrent pages.
+          lease.release();
+          let loadedCount: number | undefined;
+          queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) => {
+            if (!current) return current;
 
-        let loadedCount: number | undefined;
-        queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) => {
-          if (!current) return current;
-
-          const existingIds = new Set(
-            current.flatMap((stage) => stage.leads.map((lead) => lead.id)),
-          );
-
-          return current.map((stage) => {
-            if (stage.id !== response.stageId) return stage;
-
-            const uniqueLeads = response.leads.filter(
-              (lead) => !existingIds.has(lead.id),
+            const existingIds = new Set(
+              current.flatMap((stage) => stage.leads.map((lead) => lead.id)),
             );
-            const leads = [...stage.leads, ...uniqueLeads];
-            loadedCount = leads.length;
 
-            return {
-              ...stage,
-              leads,
-              has_more: hasMorePipelineStageLeadsAfterPage({
-                totalCount: stage.total_lead_count,
-                loadedCount: leads.length,
-                receivedCount: response.leads.length,
-                addedCount: uniqueLeads.length,
-                requestedCount: plan.limit,
-              }),
-            };
+            return current.map((stage) => {
+              if (stage.id !== response.stageId) return stage;
+
+              const uniqueLeads = response.leads.filter(
+                (lead) => !existingIds.has(lead.id),
+              );
+              const leads = [...stage.leads, ...uniqueLeads];
+              loadedCount = leads.length;
+
+              return {
+                ...stage,
+                leads,
+                ...getPipelineStagePaginationAfterPage({
+                  totalCount: stage.total_lead_count,
+                  loadedCount: leads.length,
+                  receivedCount: response.leads.length,
+                  addedCount: uniqueLeads.length,
+                  requestedCount: currentPlan.limit,
+                  hasMore: response.hasMore,
+                  countIsEstimate: stage.pagination_count_is_estimate,
+                }),
+              };
+            });
           });
-        });
 
-        if (loadedCount) {
-          persistPipelineStageLoadedCount(
-            paginationStorageKey,
-            response.stageId,
-            loadedCount,
-          );
+          if (loadedCount) {
+            persistPipelineStageLoadedCount(paginationStorageKey, response.stageId, loadedCount);
+          }
+        } catch (error) {
+          // An obsolete request cannot change pagination, persistence or notices.
+          if (!isCurrentRestore() || (operation && !operation.isCurrent()) || (lease && !lease.isCurrent())) return;
+          // Keep the initial page usable. Only a refresh starts another attempt.
+          setRestoreError((current) => current?.generation === restoreState.generation && current.queryKeyId === queryKeyId
+            && current.identity === restoreIdentity
+            ? current : { queryKeyId, generation: restoreState.generation, identity: restoreIdentity, error });
+        } finally {
+          lease?.release();
         }
       }
     })();
   }, [
     boardQuery.data,
     boardQuery.dataUpdatedAt,
+    boardQuery.fetchStatus,
+    boardQuery.isError,
+    boardQuery.isPlaceholderData,
     filterUserId,
     filters,
     isBoardEnabled,
@@ -348,11 +382,13 @@ export function useStagesWithLeads(
     queryClient,
     queryKey,
     queryKeyId,
+    requestScope,
+    restoreIdentity,
   ]);
 
   return {
     ...boardQuery,
-    restoreError: restoreError?.queryKeyId === queryKeyId ? restoreError : null,
+    restoreError: restoreError?.queryKeyId === queryKeyId && restoreError.identity === restoreIdentity ? restoreError : null,
   };
 }
 
@@ -416,6 +452,7 @@ export function useFilteredStageCounts({
   dateMode,
   filterPage,
   filterCampaign,
+  filterCampaigns,
   filterAdSet,
   filterAd,
   filterSource,
@@ -432,6 +469,7 @@ export function useFilteredStageCounts({
     filterDealStatus,
     searchQuery,
     filterCampaign,
+    filterCampaigns,
     filterAdSet,
     filterAd,
     filterSource,
@@ -460,6 +498,7 @@ export function useFilteredStageCounts({
       dateMode,
       filterPage,
       filterCampaign,
+      filterCampaigns?.length ? JSON.stringify([...new Set(filterCampaigns)].sort()) : undefined,
       filterAdSet,
       filterAd,
       filterSource,
@@ -494,6 +533,7 @@ export function usePipelines() {
     queryKey: ['pipelines', organizationId],
     enabled: Boolean(organizationId),
     queryFn: ({ signal }) => pipelinesAPI.getPipelines(organizationId, signal),
+    refetchOnMount: true,
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
     retry: shouldRetryPipelineQuery,
@@ -502,127 +542,104 @@ export function usePipelines() {
 }
 
 export function useCreatePipeline() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: ({ name, isDefault = false }: { name: string; isDefault?: boolean }) => {
-      return pipelinesAPI.createPipeline({ name, isDefault }, organizationId);
-    },
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return usePipelineCreateMutation();
 }
 
 export function useUpdatePipeline() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: ({ id, name, isDefault }: { id: string; name?: string; isDefault?: boolean }) => {
-      return pipelinesAPI.updatePipeline(id, { name, isDefault }, organizationId);
-    },
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return usePipelineUpdateMutation();
 }
 
 export function useDeletePipeline() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: (id: string) => pipelinesAPI.deletePipeline(id, organizationId),
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return usePipelineDeleteMutation();
 }
 
 export function useCreateStage() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: ({ pipelineId, name, color }: { pipelineId: string; name: string; color?: string }) => {
-      return pipelinesAPI.createStage({ pipelineId, name, color }, organizationId);
-    },
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return useStageCreateMutation();
 }
 
 export function useUpdateStage() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: ({ id, name, color, stageKey, isWon, isLost, isQualified, isActive }: {
-      id: string;
-      name?: string;
-      color?: string;
-      stageKey?: string;
-      isWon?: boolean;
-      isLost?: boolean;
-      isQualified?: boolean;
-      isActive?: boolean;
-    }) => {
-      return pipelinesAPI.updateStage(id, { name, color, stageKey, isWon, isLost, isQualified, isActive }, organizationId);
-    },
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return useStageUpdateMutation();
 }
 
-export function useDeleteStage() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: (id: string) => pipelinesAPI.deleteStage(id, organizationId),
-    onSuccess: () => invalidatePipelineQueries(queryClient),
+export function useDeleteStage(pipelineId?: string) {
+  const requestScope = useStageDeleteIntent(pipelineId);
+  const mutation = useMutation({
+    mutationFn: async (input: DeleteStageData) => {
+      const operation = requestScope.require(input);
+      await pipelinesAPI.deleteStage(input.id, input.expectedUpdatedAt, operation.organizationId, operation.intent);
+      requestScope.require(input);
+    },
+    retry: false,
+    onSettled: (_data, _error, input) => requestScope.settled(input),
   });
+  return { ...mutation, capture: requestScope.capture, discard: requestScope.discard, isCurrent: requestScope.isCurrent, isScopeCurrent: requestScope.isScopeCurrent };
 }
 
 export function useReorderStages() {
-  const queryClient = useQueryClient();
-  const organizationId = useOrganizationId();
-
-  return useMutation({
-    mutationFn: ({ pipelineId, stages }: {
-      pipelineId: string;
-      stages: Array<{
-        id: string;
-        name: string;
-        color?: string | null;
-        stage_key?: string | null;
-        isNew?: boolean;
-        expectedUpdatedAt?: string;
-      }>;
-    }) => pipelinesAPI.reorderStages(pipelineId, stages, organizationId),
-    onSuccess: () => invalidatePipelineQueries(queryClient),
-  });
+  return useStagesReorderMutation();
 }
 
 export function useLoadMoreLeads() {
   const queryClient = useQueryClient();
   const organizationId = useOrganizationId();
-  const { profile, user } = useAuth();
+  const { profile, user, session } = useAuth();
+  const requestScope = useLeadRequestScope();
+  const sessionId = getGlobalSignOutSessionId(session);
+  const access = useMemo(() => ({ queryClient, organizationId, viewerId: profile?.id || user?.id, sessionId }),
+    [queryClient, organizationId, profile?.id, user?.id, sessionId]);
+  type Variables = {
+    pipelineId: string;
+    stageId: string;
+    offset: number;
+    cursorBefore?: string;
+    cursorBeforeId?: string;
+    filterUserId?: string;
+    filters?: PipelineQueryFilters;
+  };
+  type Captured = {
+    client: typeof queryClient;
+    operation?: LeadRequestOperation;
+    lease?: ReturnType<typeof capturePipelinePageLease>;
+    queryKey: ReturnType<typeof stageWithLeadsQueryKey>;
+    viewerId?: string;
+    error?: unknown;
+    applied?: boolean;
+  };
+  const captured = useRef(new WeakMap<Variables, Captured>());
+  const capture = (input: Variables) => {
+    // Freeze the request's filter values before React Query awaits global onMutate.
+    const variables: Variables = { ...input, filters: input.filters ? structuredClone(input.filters) : undefined };
+    const queryKey = stageWithLeadsQueryKey({ organizationId, pipelineId: variables.pipelineId, filterUserId: variables.filterUserId, filters: variables.filters });
+    const state: Captured = { client: queryClient, queryKey, viewerId: profile?.id || user?.id };
+    captured.current.set(variables, state);
+    try {
+      state.operation = requestScope.capture();
+      if (state.operation.organizationId !== organizationId || getPendingPipelineMoves(queryKey).length) throw new Error('Aguarde a atualização do quadro antes de carregar mais leads.');
+      state.lease = capturePipelinePageLease(queryClient, queryKey, { ...variables, signal: state.operation.intent.signal! });
+    } catch (error) { state.error = error; }
+    return variables;
+  };
+  const requireCaptured = (variables: Variables) => {
+    const state = captured.current.get(variables);
+    if (state?.error) throw state.error;
+    if (!state?.operation?.isCurrent() || !state.lease?.isCurrent() || getPendingPipelineMoves(state.queryKey).length) throw new Error('O quadro mudou. Carregue os leads novamente.');
+    return { ...state, operation: state.operation, lease: state.lease };
+  };
 
-  return useMutation({
-    mutationFn: async ({
-      pipelineId,
-      stageId,
-      offset,
-      cursorBefore,
-      cursorBeforeId,
-      filterUserId,
-      filters,
-    }: {
-      pipelineId: string;
-      stageId: string;
-      offset: number;
-      cursorBefore?: string;
-      cursorBeforeId?: string;
-      filterUserId?: string;
-      filters?: PipelineQueryFilters;
-    }) => {
+  const mutation = useMutation({
+    mutationFn: async (variables: Variables) => {
+      const state = requireCaptured(variables);
+      const {
+        pipelineId,
+        stageId,
+        offset,
+        cursorBefore,
+        cursorBeforeId,
+        filterUserId,
+        filters,
+      } = variables;
       return (await getPipelineStageLeads({
-        organizationId,
+        organizationId: state.operation.organizationId,
         pipelineId,
         stageId,
         offset,
@@ -631,12 +648,25 @@ export function useLoadMoreLeads() {
         filterUserId,
         filters: filters as PipelineBoardFilters,
         limit: LEADS_PER_STAGE,
-      })) as { stageId: string; leads: PipelineLead[] };
+        intent: state.operation.intent,
+        signal: state.lease.signal,
+      })) as { stageId: string; leads: PipelineLead[]; hasMore?: boolean };
     },
-    onSuccess: ({ stageId, leads }, { pipelineId, filterUserId, filters }) => {
-      const queryKey = stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters });
+    onSuccess: ({ stageId, leads, hasMore }, variables) => {
+      const state = captured.current.get(variables);
+      if (!state?.operation?.isCurrent() || !state.lease?.isCurrent() || getPendingPipelineMoves(state.queryKey).length) return;
+      if (stageId !== variables.stageId || leads.some(lead => (lead.stage_id && lead.stage_id !== stageId)
+        || (lead.organization_id && lead.organization_id !== state.operation!.organizationId))) return;
+      const destination = state.client.getQueryData<StageWithLeads[]>(state.queryKey)?.find(stage => stage.id === stageId);
+      // A partial snapshot can still show these IDs in the source column. Recover
+      // the whole board rather than exhaust an empty destination through dedup.
+      if (destination?.has_more && destination.leads.length === 0) return;
+      if (hasMore === true && leads.length === 0) return;
+      // No awaits between the final check and the append; this page's own write may retire other pages.
+      state.lease.release();
+      const queryKey = state.queryKey;
       let loadedCount: number | undefined;
-      queryClient.setQueryData(
+      state.client.setQueryData(
         queryKey,
         (old: StageWithLeads[] | undefined) => {
           if (!old) return old;
@@ -649,23 +679,28 @@ export function useLoadMoreLeads() {
             if (stage.id !== stageId) return stage;
 
             const newLeads = leads.filter((lead) => !existingIds.has(lead.id));
+            // Reconcile a stale projection rather than exhaust an unadvanced cursor.
+            if (leads.length > 0 && newLeads.length === 0) return stage;
+            state.applied = true;
             loadedCount = (stage.leads?.length || 0) + newLeads.length;
 
             return {
               ...stage,
               leads: [...(stage.leads || []), ...newLeads],
-              has_more: hasMorePipelineStageLeadsAfterPage({
+              ...getPipelineStagePaginationAfterPage({
                 totalCount: stage.total_lead_count,
                 loadedCount,
                 receivedCount: leads.length,
                 addedCount: newLeads.length,
                 requestedCount: LEADS_PER_STAGE,
+                hasMore,
+                countIsEstimate: stage.pagination_count_is_estimate,
               }),
             };
           });
         },
       );
-      const viewerId = profile?.id || user?.id;
+      const viewerId = state.viewerId;
       if (viewerId && loadedCount) {
         persistPipelineStageLoadedCount(
           createPipelinePaginationStorageKey(viewerId, queryKey),
@@ -674,9 +709,48 @@ export function useLoadMoreLeads() {
         );
       }
     },
+    onSettled: (_data, _error, variables) => {
+      const state = captured.current.get(variables);
+      if (!state) return;
+      const needsRefresh = !state.applied;
+      state.lease?.release();
+      if (needsRefresh && state.operation?.canReconcileCapturedAccess()) void state.client.invalidateQueries({
+        queryKey: state.queryKey, exact: true, refetchType: state.operation.isCurrent() ? 'active' : 'none',
+      }, { cancelRefetch: false });
+      captured.current.delete(variables);
+    },
     retry: shouldRetryPipelineQuery,
     retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
+  const reset = mutation.reset;
+  useLayoutEffect(() => { reset(); }, [reset, access]);
+  const bindOptions = (variables: Variables, options?: Parameters<typeof mutation.mutate>[1]) => {
+    const state = captured.current.get(variables);
+    if (!options) return options;
+    return {
+      ...options,
+      onSuccess: options.onSuccess ? (...args: Parameters<NonNullable<typeof options.onSuccess>>) => {
+        if (state?.operation?.isCurrent() && state.applied) options.onSuccess!(...args);
+      } : undefined,
+      onError: options.onError ? (...args: Parameters<NonNullable<typeof options.onError>>) => {
+        if (state?.operation?.isCurrent() && (state.error || state.lease?.isCurrent())) options.onError!(...args);
+      } : undefined,
+      onSettled: options.onSettled ? (...args: Parameters<NonNullable<typeof options.onSettled>>) => {
+        if (state?.operation?.isCurrent()) options.onSettled!(...args);
+      } : undefined,
+    };
+  };
+  return {
+    ...mutation,
+    mutate: (input: Variables, options?: Parameters<typeof mutation.mutate>[1]) => {
+      const variables = capture(input);
+      mutation.mutate(variables, bindOptions(variables, options));
+    },
+    mutateAsync: (input: Variables, options?: Parameters<typeof mutation.mutateAsync>[1]) => {
+      const variables = capture(input);
+      return mutation.mutateAsync(variables, bindOptions(variables, options));
+    },
+  };
 }
 
 function readPipelineStageLoadedCounts(storageKey: string | null): PipelineStageLoadedCounts {
@@ -704,19 +778,4 @@ function persistPipelineStageLoadedCount(
   } catch {
     // Pagination still works when sessionStorage is unavailable.
   }
-}
-
-function invalidatePipelineQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries(
-    { queryKey: ['pipelines'] },
-    { cancelRefetch: false },
-  );
-  queryClient.invalidateQueries(
-    { queryKey: ['stages'] },
-    { cancelRefetch: false },
-  );
-  queryClient.invalidateQueries(
-    { queryKey: ['stages-with-leads'] },
-    { cancelRefetch: false },
-  );
 }

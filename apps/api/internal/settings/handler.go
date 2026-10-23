@@ -89,6 +89,15 @@ func (handler Handler) UploadProfileAvatar(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	organizations, audienceErr := handler.repo.profileAvatarOrganizations(r.Context(), tenantContext.UserID)
+	if audienceErr != nil {
+		// The photo is already saved; an unavailable realtime read must not make
+		// the client retry the upload or expose database details in a log.
+		slog.Warn("profile avatar realtime audience unavailable")
+	} else {
+		handler.publishProfileAvatarChanged(tenantContext.UserID, organizations)
+	}
+
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[AssetUpload]{Data: uploaded})
 }
 
@@ -179,7 +188,7 @@ func (handler Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	request.Source = source
 	tenantContext := tenant.Context{UserID: authenticatedUser.ID}
 
-	result, err := handler.repo.ChangePassword(r.Context(), tenantContext, request)
+	result, err := handler.repo.ChangePassword(r.Context(), tenantContext, r.Header.Get("Authorization"), request)
 	if err != nil {
 		writeSettingsError(w, r, err)
 		return
@@ -569,6 +578,7 @@ func (handler Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		writeSettingsError(w, r, err)
 		return
 	}
+	handler.publishRoleAccessChanged(tenantContext, fmt.Sprint(item["id"]))
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[map[string]any]{Data: item})
 }
 
@@ -587,6 +597,7 @@ func (handler Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeSettingsError(w, r, err)
 		return
 	}
+	handler.publishRoleAccessChanged(tenantContext, r.PathValue("id"))
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
@@ -599,6 +610,7 @@ func (handler Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeSettingsError(w, r, err)
 		return
 	}
+	handler.publishRoleAccessChanged(tenantContext, r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -618,6 +630,7 @@ func (handler Handler) ReplaceRolePermissions(w http.ResponseWriter, r *http.Req
 		writeSettingsError(w, r, err)
 		return
 	}
+	handler.publishRoleAccessChanged(tenantContext, r.PathValue("id"))
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -642,7 +655,19 @@ func (handler Handler) AssignUserRole(w http.ResponseWriter, r *http.Request) {
 		writeSettingsError(w, r, err)
 		return
 	}
+	handler.publishRoleAccessChanged(tenantContext, roleID)
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (handler Handler) publishRoleAccessChanged(tenantContext tenant.Context, roleID string) {
+	// One organization-wide event also reaches assignments that were revoked by
+	// this change. The server recalculates authorization on the next request.
+	handler.publisher.Publish(realtime.NewEvent(
+		"access.roles.changed",
+		tenantContext.OrganizationID,
+		"",
+		map[string]any{"roleId": roleID},
+	))
 }
 
 func (handler Handler) HasPermission(w http.ResponseWriter, r *http.Request) {
@@ -771,6 +796,10 @@ func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "settings_storage_not_configured", "Settings storage is not configured.")
 	case errors.Is(err, ErrStorageOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "settings_storage_failed", "Settings storage operation failed.")
+	case errors.Is(err, ErrPasswordSessionRevocationUnconfirmed):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "password_session_revocation_unconfirmed", "A senha não foi atualizada porque não foi possível confirmar o encerramento das sessões. Tente novamente.")
+	case errors.Is(err, ErrPasswordUpdateAfterRevocationUnconfirmed):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "password_update_unconfirmed_after_revocation", "A revogação das sessões foi aceita, mas não foi possível confirmar a atualização da senha. Solicite um novo link de recuperação se necessário.")
 	case errors.Is(err, ErrAuthNotConfigured):
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "settings_auth_not_configured", "Settings auth admin is not configured.")
 	case errors.Is(err, ErrAuthOperation):

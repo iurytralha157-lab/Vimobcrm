@@ -1,4 +1,6 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { withWhatsAppLegacyHttpDeadline } from "../_shared/whatsapp-legacy-http.ts";
+import { observedWhatsAppConnection } from "../_shared/whatsapp-connection-state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,9 +8,24 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+interface SessionRecord {
+  id: string;
+  provider: string;
+  instance_id: string | null;
+  instance_name: string;
+  status: string;
+  is_active: boolean | null;
+  display_name: string | null;
+  organization_id: string;
+  owner_user_id: string;
+  updated_at: string;
+  last_connected_at: string | null;
+  created_at: string;
+}
+
 async function checkInstanceConnection(
-  session: any,
-): Promise<{ isConnected: boolean; data: any }> {
+  session: Pick<SessionRecord, "provider" | "instance_id" | "instance_name">,
+): Promise<{ isConnected: boolean; data: unknown }> {
   const isGo = session.provider === "evolution_go";
   const evolutionUrl = isGo
     ? Deno.env.get("EVOLUTION_GO_API_URL")
@@ -27,30 +44,36 @@ async function checkInstanceConnection(
     }`
     : `/instance/connectionState/${session.instance_name}`;
 
-  const response = await fetch(`${evolutionUrl}${endpoint}`, {
+  const { response, data } = await withWhatsAppLegacyHttpDeadline(`${evolutionUrl}${endpoint}`, {
     headers: { "apikey": evolutionKey },
-  });
-
-  if (!response.ok) {
-    return {
-      isConnected: false,
-      data: { status: response.status, error: "HTTP error" },
-    };
-  }
-
-  const data = await response.json();
-
-  let isConnected = false;
-  if (isGo) {
-    const s = data?.data?.data ?? data?.data ?? {};
-    isConnected = s.connected === true || s.Connected === true ||
-      s.state === "open" || s.LoggedIn === true;
-  } else {
-    const state = (data?.instance?.state || data?.state || "").toLowerCase();
-    isConnected = state === "open" || state === "connected";
-  }
+  }, async response => ({ response, data: response.ok ? await response.json() as unknown : null }));
+  if (!response.ok) throw new Error(`whatsapp_status_unavailable:${response.status}`);
+  const isConnected = observedWhatsAppConnection(data, isGo);
+  if (isConnected === null) throw new Error("whatsapp_status_unknown");
 
   return { isConnected, data };
+}
+
+// Optimistic fencing follows provider I/O without holding database locks.
+// A newer lifecycle/webhook update wins, including when the status is unchanged.
+function sessionSnapshotQuery(supabase: SupabaseClient, session: SessionRecord,
+  update?: { updated_at: string; status?: "connected" | "disconnected"; last_connected_at?: string }) {
+  const table = supabase.from("whatsapp_sessions");
+  let query = (update ? table.update(update).select("id") : table.select("id"))
+    .eq("id", session.id).eq("organization_id", session.organization_id)
+    .eq("owner_user_id", session.owner_user_id).eq("provider", session.provider)
+    .eq("instance_name", session.instance_name).eq("status", session.status)
+    .eq("updated_at", session.updated_at);
+  query = session.instance_id == null ? query.is("instance_id", null) : query.eq("instance_id", session.instance_id);
+  query = session.is_active == null ? query.is("is_active", null) : query.eq("is_active", session.is_active);
+  return query.maybeSingle();
+}
+
+async function requireSessionSnapshot(supabase: SupabaseClient, session: SessionRecord,
+  update?: { updated_at: string; status?: "connected" | "disconnected"; last_connected_at?: string }) {
+  const { data, error } = await sessionSnapshotQuery(supabase, session, update);
+  if (error) throw new Error(update ? "whatsapp_session_status_update_failed" : "whatsapp_session_snapshot_lookup_failed");
+  if (!data) throw new Error("whatsapp_session_snapshot_changed");
 }
 
 function isAuthorizedCronCall(req: Request): boolean {
@@ -65,7 +88,7 @@ async function enqueueNotification(
   serviceRoleKey: string,
   payload: Record<string, unknown>,
 ) {
-  const response = await fetch(
+  const { response, result } = await withWhatsAppLegacyHttpDeadline(
     `${supabaseUrl}/functions/v1/notification-dispatcher`,
     {
       method: "POST",
@@ -75,14 +98,10 @@ async function enqueueNotification(
         "Authorization": `Bearer ${serviceRoleKey}`,
       },
       body: JSON.stringify(payload),
-    },
+    }, async response => ({ response, result: await response.json().catch(() => null) as {
+      success?: boolean; queued?: boolean; notification_id?: string; error?: string;
+    } | null }),
   );
-  const result = await response.json().catch(() => null) as {
-    success?: boolean;
-    queued?: boolean;
-    notification_id?: string;
-    error?: string;
-  } | null;
   if (
     !response.ok || result?.success !== true || result.queued !== true ||
     typeof result.notification_id !== "string"
@@ -133,11 +152,11 @@ Deno.serve(async (req) => {
           },
         );
       }
-      const { data: profile } = await supabase.from("users").select("role").eq(
+      const { data: profile, error: profileError } = await supabase.from("users").select("role, is_active").eq(
         "id",
         user.id,
       ).single();
-      if (profile?.role !== "super_admin") {
+      if (profileError || profile?.role !== "super_admin" || profile?.is_active !== true) {
         return new Response(
           JSON.stringify({ success: false, error: "Forbidden" }),
           {
@@ -152,11 +171,12 @@ Deno.serve(async (req) => {
       .from("whatsapp_sessions")
       .select("*")
       .in("status", ["connected", "connecting"])
+      .not("is_active", "is", false)
       .order("updated_at", { ascending: true, nullsFirst: true })
       .limit(20);
 
     if (sessionsError) {
-      console.error("Error fetching sessions:", sessionsError);
+      console.error("WhatsApp health-check session lookup failed");
       return new Response(
         JSON.stringify({ success: false, error: sessionsError.message }),
         {
@@ -172,15 +192,17 @@ Deno.serve(async (req) => {
 
     const results = [];
 
-    for (const session of sessions || []) {
+    for (const session of (sessions || []) as SessionRecord[]) {
       try {
+        if (session.is_active === false) throw new Error("whatsapp_session_inactive");
         const firstCheck = await checkInstanceConnection(session);
-        console.log(
-          `Health check #1 for ${session.instance_name}:`,
-          firstCheck.data,
-        );
+        console.log("WhatsApp health-check first probe completed", { connected: firstCheck.isConnected });
 
-        const updateData: any = {
+        const updateData: {
+          updated_at: string;
+          status?: "connected" | "disconnected";
+          last_connected_at?: string;
+        } = {
           updated_at: new Date().toISOString(),
         };
 
@@ -190,10 +212,7 @@ Deno.serve(async (req) => {
             updateData.last_connected_at = new Date().toISOString();
           }
 
-          await supabase
-            .from("whatsapp_sessions")
-            .update(updateData)
-            .eq("id", session.id);
+          await requireSessionSnapshot(supabase, session, updateData);
 
           results.push({
             session_id: session.id,
@@ -203,31 +222,21 @@ Deno.serve(async (req) => {
             success: true,
           });
         } else {
-          console.log(
-            `Session ${session.instance_name} failed first check, retrying in 3s...`,
-          );
+          console.log("WhatsApp health-check second probe scheduled");
           await new Promise((resolve) => setTimeout(resolve, 3000));
 
           const secondCheck = await checkInstanceConnection(session);
-          console.log(
-            `Health check #2 for ${session.instance_name}:`,
-            secondCheck.data,
-          );
+          console.log("WhatsApp health-check second probe completed", { connected: secondCheck.isConnected });
 
           if (secondCheck.isConnected) {
-            console.log(
-              `Session ${session.instance_name} recovered on retry - keeping connected`,
-            );
+            console.log("WhatsApp health-check connection recovered");
 
             if (session.status !== "connected") {
               updateData.status = "connected";
               updateData.last_connected_at = new Date().toISOString();
             }
 
-            await supabase
-              .from("whatsapp_sessions")
-              .update(updateData)
-              .eq("id", session.id);
+            await requireSessionSnapshot(supabase, session, updateData);
 
             results.push({
               session_id: session.id,
@@ -238,10 +247,12 @@ Deno.serve(async (req) => {
               success: true,
             });
           } else {
-            console.log(
-              `Session ${session.instance_name} confirmed disconnected after retry`,
-            );
+            console.log("WhatsApp health-check disconnection confirmed");
             updateData.status = "disconnected";
+
+            // Do not notify for a stale observation. The final conditional write
+            // repeats this check after notification I/O; accepted POSTs cannot be recalled.
+            await requireSessionSnapshot(supabase, session);
 
             const displayName = session.display_name || session.instance_name;
             const disconnectEpisode = session.updated_at ||
@@ -300,34 +311,24 @@ Deno.serve(async (req) => {
               }
             }
 
-            const { error: statusUpdateError } = await supabase
-              .from("whatsapp_sessions")
-              .update(updateData)
-              .eq("id", session.id);
-            if (statusUpdateError) {
-              throw new Error(
-                `whatsapp_session_status_update_failed:${statusUpdateError.code}`,
-              );
-            }
+            await requireSessionSnapshot(supabase, session, updateData);
 
             // Audit log
-            await supabase.from("audit_logs").insert({
+            const { error: auditError } = await supabase.from("audit_logs").insert({
               action: "whatsapp.session_disconnected",
               entity_type: "whatsapp_session",
               entity_id: session.id,
               organization_id: session.organization_id,
               new_data: {
-                instance_name: session.instance_name,
                 previous_status: session.status,
                 new_status: "disconnected",
-                first_check: firstCheck.data,
-                second_check: secondCheck.data,
+                first_check: { connected: firstCheck.isConnected },
+                second_check: { connected: secondCheck.isConnected },
               },
             });
+            if (auditError) throw new Error("whatsapp_session_audit_failed");
 
-            console.log(
-              `Session ${session.instance_name} status changed: ${session.status} -> disconnected`,
-            );
+            console.log("WhatsApp health-check disconnection recorded");
 
             results.push({
               session_id: session.id,
@@ -340,10 +341,7 @@ Deno.serve(async (req) => {
           }
         }
       } catch (error) {
-        console.error(
-          `Error checking session ${session.instance_name}:`,
-          error,
-        );
+        console.error("WhatsApp health-check item failed");
         results.push({
           session_id: session.id,
           instance_name: session.instance_name,
@@ -362,7 +360,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("Session health check error:", error);
+    console.error("WhatsApp health-check request failed");
     return new Response(
       JSON.stringify({
         success: false,

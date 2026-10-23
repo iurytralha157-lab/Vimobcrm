@@ -1,9 +1,10 @@
-import { createClient } from "npm:@supabase/supabase-js@2.110.7";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decode } from "https://deno.land/std@0.177.0/encoding/base64.ts";
 import {
   claimEvolutionMessageDelivery,
   completeEvolutionMessageDelivery,
   EvolutionMessageClaimError,
+  type EvolutionWebhookClaimClient,
   type OwnedEvolutionMessageClaim,
   retryEvolutionMessageDelivery,
 } from "./delivery-claim.ts";
@@ -39,6 +40,7 @@ const MAGIC_BYTES: Record<string, string[]> = {
 // ============================================================
 type InboundRule = {
   id: string;
+  name?: string | null;
   organization_id: string;
   session_id: string | null;
   priority: number;
@@ -65,20 +67,140 @@ type ResolvedWebhookSession = {
   name?: string | null;
   is_active?: boolean | null;
   status?: string | null;
+  owner_user_id?: string | null;
   advanced_settings?: { webhook_token?: string | null } | null;
   [key: string]: unknown;
 };
 
-function extractAdContext(contextInfo: any) {
-  const ext = contextInfo?.externalAdReply || {};
+type LegacySupabaseClient = SupabaseClient;
+type LegacyDeliveryClient = SupabaseClient & EvolutionWebhookClaimClient;
+type LegacyConversation = {
+  id: string;
+  lead_id?: string | null;
+  contact_name?: string | null;
+  contact_picture?: string | null;
+  unread_count?: number | null;
+  last_message?: string | null;
+  last_message_preview?: string | null;
+  last_message_at?: string | null;
+};
+type LegacyLead = { id: string; metadata?: Record<string, unknown> | null };
+type AdContext = {
+  meta_campaign_id: string | null;
+  meta_ad_id: string | null;
+  meta_click_id: string | null;
+  meta_adset_id: string | null;
+  headline: string | null;
+  body: string | null;
+  source_url: string | null;
+};
+type HubContext = {
+  rule: InboundRule | null;
+  adContext: AdContext;
+  utm: Record<string, string>;
+};
+type EvolutionContextInfo = {
+  conversionSource?: string;
+  entryPointConversionSource?: string;
+  entryPointConversionApp?: string;
+  externalAdReply?: {
+    sourceId?: string;
+    ctwaClid?: string;
+    title?: string;
+    body?: string;
+    sourceUrl?: string;
+  } | null;
+};
+type EvolutionMedia = {
+  url?: string;
+  directPath?: string;
+  mimetype?: string | false;
+  caption?: string;
+  fileName?: string;
+  ptt?: boolean;
+  jpegThumbnail?: unknown;
+  base64?: unknown;
+  mediaBase64?: unknown;
+  data?: unknown;
+};
+type EvolutionMessage = {
+  conversation?: string;
+  extendedTextMessage?: { text?: string };
+  imageMessage?: EvolutionMedia;
+  videoMessage?: EvolutionMedia;
+  audioMessage?: EvolutionMedia;
+  documentMessage?: EvolutionMedia;
+  stickerMessage?: EvolutionMedia;
+  reactionMessage?: unknown;
+  protocolMessage?: unknown;
+  contextInfo?: EvolutionContextInfo;
+  base64?: unknown;
+  mediaBase64?: unknown;
+};
+type EvolutionMessageKey = {
+  id?: string;
+  remoteJid?: string;
+  fromMe?: boolean;
+  participant?: string;
+};
+type EvolutionMessageData = {
+  key?: EvolutionMessageKey;
+  message?: EvolutionMessage;
+  contextInfo?: EvolutionContextInfo;
+  groupMetadata?: { subject?: string };
+  source?: { groupMetadata?: { subject?: string } };
+  pushName?: string;
+  verifiedBizName?: string;
+  messageTimestamp?: unknown;
+  base64?: unknown;
+  mediaBase64?: unknown;
+  messages?: Array<EvolutionMessageData | null>;
+};
+type EvolutionConnectionUpdate = {
+  state?: string;
+  status?: string;
+  wuid?: string;
+  profileName?: string;
+  profilePictureUrl?: string;
+  instance?: {
+    state?: string;
+    wuid?: string;
+    profileName?: string;
+    profilePictureUrl?: string;
+  };
+};
+type EvolutionMessageUpdate = {
+  key?: EvolutionMessageKey;
+  update?: { status?: number | string };
+  status?: number | string;
+};
+type EvolutionMessageDelete = { key?: EvolutionMessageKey; id?: string };
+type EvolutionPresenceUpdate = {
+  id?: string;
+  presences?: Record<string, { lastKnownPresence?: string }>;
+};
+type EvolutionGroupUpdate = { id?: string; subject?: string };
+type EvolutionWebhookPayload = Record<string, unknown> & {
+  sender?: string;
+  data?: { base64?: unknown; message?: { base64?: unknown } };
+  media?: { base64?: unknown };
+};
+type LegacyCaptureMetadata = {
+  attendance_capture?: { entry_id?: unknown };
+  whatsapp_attendance_capture?: { attendance_entry_id?: unknown };
+  attendance_entry_id?: unknown;
+} | null;
+
+function extractAdContext(contextInfo: EvolutionContextInfo | null | undefined): AdContext {
+  const ext = contextInfo?.externalAdReply;
   return {
-    meta_campaign_id: ext.sourceId || ext.ctwaClid || null,
-    meta_ad_id: ext.sourceId || null,
-    meta_click_id: ext.ctwaClid || null,
+    meta_campaign_id: ext?.sourceId || ext?.ctwaClid || null,
+    meta_ad_id: ext?.sourceId || null,
+    meta_click_id: ext?.ctwaClid || null,
     meta_adset_id: null,
-    headline: ext.title || null,
-    body: ext.body || null,
-    source_url: ext.sourceUrl || null,
+    headline: ext?.title || null,
+    body: ext?.body || null,
+    source_url: ext?.sourceUrl || null,
   };
 }
 
@@ -100,22 +222,20 @@ function extractUtmFromText(text: string) {
 }
 
 function buildLeadMetaFromWhatsApp(
-  hubCtx:
-    | { rule: any | null; adContext: any; utm: Record<string, string> }
-    | null,
+  hubCtx: HubContext | null,
   isFromAds: boolean,
   adSource: string | null,
 ) {
   const rule = hubCtx?.rule || null;
-  const adCtx = hubCtx?.adContext || {};
+  const adCtx = hubCtx?.adContext;
   const utm = hubCtx?.utm || {};
-  const campaignId = adCtx.meta_campaign_id || utm.utm_campaign ||
+  const campaignId = adCtx?.meta_campaign_id || utm.utm_campaign ||
     rule?.campaign_label || null;
   const campaignName = rule?.campaign_label || utm.utm_campaign ||
-    adCtx.headline || campaignId;
+    adCtx?.headline || campaignId;
 
   if (
-    !campaignId && !campaignName && !adCtx.meta_ad_id && !adCtx.meta_click_id &&
+    !campaignId && !campaignName && !adCtx?.meta_ad_id && !adCtx?.meta_click_id &&
     Object.keys(utm).length === 0
   ) {
     return null;
@@ -124,9 +244,9 @@ function buildLeadMetaFromWhatsApp(
   return {
     campaign_id: campaignId,
     campaign_name: campaignName,
-    ad_id: adCtx.meta_ad_id || null,
-    ad_name: adCtx.headline || null,
-    adset_id: adCtx.meta_adset_id || null,
+    ad_id: adCtx?.meta_ad_id || null,
+    ad_name: adCtx?.headline || null,
+    adset_id: adCtx?.meta_adset_id || null,
     adset_name: null,
     platform: isFromAds ? "whatsapp_meta" : "whatsapp",
     source_type: "whatsapp",
@@ -139,7 +259,7 @@ function buildLeadMetaFromWhatsApp(
       source: "evolution_webhook",
       from_ads: isFromAds,
       ad_source: adSource,
-      ad_context: adCtx,
+      ad_context: adCtx || {},
       utm,
       inbound_rule_id: rule?.id || null,
     },
@@ -147,11 +267,9 @@ function buildLeadMetaFromWhatsApp(
 }
 
 async function recordLeadMetaFromWhatsApp(
-  supabase: any,
+  supabase: LegacySupabaseClient,
   leadId: string,
-  hubCtx:
-    | { rule: any | null; adContext: any; utm: Record<string, string> }
-    | null,
+  hubCtx: HubContext | null,
   isFromAds: boolean,
   adSource: string | null,
 ) {
@@ -169,13 +287,13 @@ async function recordLeadMetaFromWhatsApp(
 }
 
 async function applyInboundRules(
-  supabase: any,
-  session: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
   ctx: {
     content: string;
     pushName: string;
     phone: string;
-    adContext: any;
+    adContext: AdContext;
     utm: Record<string, string>;
   },
 ): Promise<InboundRule | null> {
@@ -273,12 +391,12 @@ function isValidBase64(str: string): boolean {
 
 // Robust base64 extractor — checks every common location Evolution may use
 function extractBase64FromPayload(
-  message: any,
-  messageData: any,
-  payload: any,
-  mediaContainer: any,
+  message: EvolutionMessage,
+  messageData: EvolutionMessageData,
+  payload: EvolutionWebhookPayload,
+  mediaContainer: EvolutionMedia,
 ): string | null {
-  const candidates: any[] = [
+  const candidates: unknown[] = [
     mediaContainer?.base64,
     mediaContainer?.mediaBase64,
     mediaContainer?.data,
@@ -299,7 +417,7 @@ function extractBase64FromPayload(
 }
 
 // Convert WhatsApp jpegThumbnail (object with numeric keys or array) to Uint8Array
-function jpegThumbnailToBytes(thumbnail: any): Uint8Array | null {
+function jpegThumbnailToBytes(thumbnail: unknown): Uint8Array | null {
   if (!thumbnail) return null;
   try {
     if (Array.isArray(thumbnail)) return new Uint8Array(thumbnail);
@@ -314,10 +432,10 @@ function jpegThumbnailToBytes(thumbnail: any): Uint8Array | null {
       const keys = Object.keys(thumbnail).filter((k) => /^\d+$/.test(k));
       if (keys.length === 0) return null;
       const bytes = new Uint8Array(keys.length);
-      for (const k of keys) bytes[Number(k)] = thumbnail[k];
+      for (const k of keys) bytes[Number(k)] = (thumbnail as Record<string, number>)[k];
       return bytes;
     }
-  } catch (_e) {
+  } catch {
     return null;
   }
   return null;
@@ -362,11 +480,11 @@ function normalizePhoneNumber(phone: string): string {
 }
 
 async function findLegacyWhatsAppLeadByPhone(
-  supabase: any,
+  supabase: LegacySupabaseClient,
   organizationId: string,
   phone: string,
   originRoundRobinId?: string | null,
-): Promise<{ lead: any | null; ambiguous: boolean }> {
+): Promise<{ lead: LegacyLead | null; ambiguous: boolean }> {
   const parameters: Record<string, unknown> = {
     p_organization_id: organizationId,
     p_phone: phone,
@@ -395,9 +513,9 @@ async function findLegacyWhatsAppLeadByPhone(
 }
 
 async function activateLegacyWhatsAppConversationLeadBinding(
-  supabase: any,
-  session: any,
-  conversation: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
+  conversation: LegacyConversation,
   leadId: string,
   providerMessageId: string | null,
 ) {
@@ -442,16 +560,16 @@ type LegacyAttendanceCapture = {
 // inbox acceptance) must both precede the explicit card/session entry. Missing
 // identity or timestamps suppress capture; a phone match alone never grants it.
 async function resolveLegacyAttendanceCapture(
-  supabase: any,
-  session: any,
-  conversation: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
+  conversation: LegacyConversation,
   leadId: string | null,
   bindingIsCurrent: boolean,
   providerOccurredAt: string | null,
   claim: OwnedEvolutionMessageClaim,
   existingCaptureState: string | null | undefined,
   existingMessageId: string | null | undefined,
-  existingCaptureMetadata: any,
+  existingCaptureMetadata: LegacyCaptureMetadata,
 ): Promise<LegacyAttendanceCapture> {
   const resumedCaptured = Boolean(
     claim.resumed && existingMessageId && existingCaptureState === "captured",
@@ -663,7 +781,7 @@ Deno.serve(async (req) => {
     }
     const supabase = createClient(SUPABASE_URL, SUPABASE_ADMIN_KEY);
 
-    const payload = await req.json();
+    const payload = await req.json() as EvolutionWebhookPayload;
     console.log("Evolution webhook received", { event: payload?.event });
 
     // Evolution API v2 payload format
@@ -747,14 +865,14 @@ Deno.serve(async (req) => {
         session.provider_instance_id,
         session.name,
       ]
-        .filter((value) => typeof value === "string" && value.trim())
+        .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
         .map((value) => value.trim()),
     );
     const suppliedInstanceSignals = [
       requestUrl.searchParams.get("instance_id"),
       typeof instanceName === "string" ? instanceName : "",
     ]
-      .filter((value) => typeof value === "string" && value.trim())
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
       .map((value) => value.trim());
     if (
       expectedInstanceSignals.size === 0 ||
@@ -812,7 +930,7 @@ Deno.serve(async (req) => {
         },
       );
     }
-    session = sessionRevalidation.data;
+    session = sessionRevalidation.data as ResolvedWebhookSession;
 
     const revalidatedCallbackToken =
       await validateEvolutionCallbackSessionToken(
@@ -842,7 +960,7 @@ Deno.serve(async (req) => {
         session.provider_instance_id,
         session.name,
       ]
-        .filter((value) => typeof value === "string" && value.trim())
+        .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
         .map((value) => value.trim()),
     );
     if (
@@ -868,15 +986,15 @@ Deno.serve(async (req) => {
     switch (event) {
       case "connection.update":
       case "CONNECTION_UPDATE":
-        await handleConnectionUpdate(supabase, session, data);
+        await handleConnectionUpdate(supabase, session, data as EvolutionConnectionUpdate);
         break;
 
       case "messages.upsert":
       case "MESSAGES_UPSERT":
         messageResult = await handleMessagesUpsert(
-          supabase,
+          supabase as LegacyDeliveryClient,
           session,
-          data,
+          data as EvolutionMessageData | EvolutionMessageData[],
           SUPABASE_URL,
           SUPABASE_ADMIN_KEY,
           payload,
@@ -885,32 +1003,32 @@ Deno.serve(async (req) => {
 
       case "messages.update":
       case "MESSAGES_UPDATE":
-        await handleMessagesUpdate(supabase, session, data);
+        await handleMessagesUpdate(supabase, session, data as EvolutionMessageUpdate | EvolutionMessageUpdate[]);
         break;
 
       case "messages.delete":
       case "MESSAGES_DELETE":
-        await handleMessagesDelete(supabase, session, data);
+        await handleMessagesDelete(supabase, session, data as EvolutionMessageDelete);
         break;
 
       case "presence.update":
       case "PRESENCE_UPDATE":
-        await handlePresenceUpdate(supabase, session, data);
+        await handlePresenceUpdate(supabase, session, data as EvolutionPresenceUpdate);
         break;
 
       case "send.message":
       case "SEND_MESSAGE":
-        await handleSendMessage(supabase, session, data);
+        await handleSendMessage(supabase, session, data as EvolutionMessageDelete);
         break;
 
       case "groups.upsert":
       case "GROUPS_UPSERT":
-        await handleGroupsUpsert(supabase, session, data);
+        await handleGroupsUpsert(supabase, session, data as EvolutionGroupUpdate | EvolutionGroupUpdate[]);
         break;
 
       case "groups.update":
       case "GROUP_UPDATE":
-        await handleGroupUpdate(supabase, session, data);
+        await handleGroupUpdate(supabase, session, data as EvolutionGroupUpdate | EvolutionGroupUpdate[]);
         break;
 
       case "qrcode.updated":
@@ -942,7 +1060,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function handleConnectionUpdate(supabase: any, session: any, data: any) {
+async function handleConnectionUpdate(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionConnectionUpdate) {
   // Evolution v2 sends state in data directly or in instance object
   const state = data?.state || data?.instance?.state || data?.status;
   console.log(`Connection update for session ${session.id}: ${state}`, data);
@@ -960,7 +1078,14 @@ async function handleConnectionUpdate(supabase: any, session: any, data: any) {
     status = "disconnected";
   }
 
-  const updateData: any = {
+  const updateData: {
+    status: string;
+    updated_at: string;
+    last_connected_at?: string;
+    phone_number?: string;
+    profile_name?: string;
+    profile_picture?: string;
+  } = {
     status,
     updated_at: new Date().toISOString(),
   };
@@ -971,15 +1096,17 @@ async function handleConnectionUpdate(supabase: any, session: any, data: any) {
   }
 
   // Extract phone number and profile info if available
-  if (data?.instance?.wuid || data?.wuid) {
-    updateData.phone_number = (data.instance?.wuid || data.wuid).split("@")[0];
+  const wuid = data?.instance?.wuid || data?.wuid;
+  if (wuid) {
+    updateData.phone_number = wuid.split("@")[0];
   }
-  if (data?.profileName || data?.instance?.profileName) {
-    updateData.profile_name = data.profileName || data.instance.profileName;
+  const profileName = data?.profileName || data?.instance?.profileName;
+  if (profileName) {
+    updateData.profile_name = profileName;
   }
-  if (data?.profilePictureUrl || data?.instance?.profilePictureUrl) {
-    updateData.profile_picture = data.profilePictureUrl ||
-      data.instance.profilePictureUrl;
+  const profilePictureUrl = data?.profilePictureUrl || data?.instance?.profilePictureUrl;
+  if (profilePictureUrl) {
+    updateData.profile_picture = profilePictureUrl;
   }
 
   await supabase
@@ -1020,12 +1147,12 @@ class EvolutionMessageBatchError extends Error {
 }
 
 async function handleMessagesUpsert(
-  supabase: any,
-  session: any,
-  data: any,
+  supabase: LegacyDeliveryClient,
+  session: ResolvedWebhookSession,
+  data: EvolutionMessageData | EvolutionMessageData[],
   supabaseUrl: string,
   supabaseKey: string,
-  payload: any,
+  payload: EvolutionWebhookPayload,
 ): Promise<MessageUpsertResult> {
   // Evolution v2 can send single message or array
   const messages = Array.isArray(data) ? data : (data?.messages || [data]);
@@ -1223,7 +1350,7 @@ async function handleMessagesUpsert(
       let mediaUrl = "";
       let mediaMimeType = "";
       let base64FromWebhook: string | null = null;
-      let jpegThumbnailRaw: any = null;
+      let jpegThumbnailRaw: unknown = null;
 
       if (message.conversation) {
         content = message.conversation;
@@ -1234,7 +1361,7 @@ async function handleMessagesUpsert(
         content = message.imageMessage.caption || "[Imagem]";
         mediaUrl = message.imageMessage.url || "";
         const rawMime = message.imageMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+        mediaMimeType = (rawMime && rawMime !== "false")
           ? rawMime
           : "image/jpeg";
         base64FromWebhook = extractBase64FromPayload(
@@ -1249,7 +1376,7 @@ async function handleMessagesUpsert(
         content = message.videoMessage.caption || "[Vídeo]";
         mediaUrl = message.videoMessage.url || "";
         const rawMime = message.videoMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+        mediaMimeType = (rawMime && rawMime !== "false")
           ? rawMime
           : "video/mp4";
         base64FromWebhook = extractBase64FromPayload(
@@ -1264,7 +1391,7 @@ async function handleMessagesUpsert(
         content = message.audioMessage.ptt ? "[Áudio]" : "[Gravação]";
         mediaUrl = message.audioMessage.url || "";
         const rawMime = message.audioMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+        mediaMimeType = (rawMime && rawMime !== "false")
           ? rawMime
           : "audio/ogg";
         base64FromWebhook = extractBase64FromPayload(
@@ -1278,7 +1405,7 @@ async function handleMessagesUpsert(
         content = message.documentMessage.fileName || "[Documento]";
         mediaUrl = message.documentMessage.url || "";
         const rawMime = message.documentMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+        mediaMimeType = (rawMime && rawMime !== "false")
           ? rawMime
           : "application/octet-stream";
         base64FromWebhook = extractBase64FromPayload(
@@ -1292,7 +1419,7 @@ async function handleMessagesUpsert(
         content = "[Figurinha]";
         mediaUrl = message.stickerMessage.url || "";
         const rawMime = message.stickerMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+        mediaMimeType = (rawMime && rawMime !== "false")
           ? rawMime
           : "image/webp";
         base64FromWebhook = extractBase64FromPayload(
@@ -2154,8 +2281,8 @@ function getExtensionFromMime(mediaMimeType: string): string {
 
 // Store base64 media directly (when webhook sends base64) - returns both URL and path
 async function storeBase64MediaWithPath(
-  supabase: any,
-  session: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
   conversationId: string,
   messageId: string,
   messageType: string,
@@ -2214,15 +2341,15 @@ async function storeBase64MediaWithPath(
 }
 
 async function downloadAndStoreMediaWithPath(
-  supabase: any,
+  supabase: LegacySupabaseClient,
   supabaseUrl: string,
-  session: any,
+  session: ResolvedWebhookSession,
   conversationId: string,
   messageId: string,
   messageType: string,
   mediaMimeType: string,
-  key: any,
-  messageData: any,
+  key: EvolutionMessageKey,
+  messageData: EvolutionMessageData,
   fromMe: boolean = true,
 ): Promise<{ url: string; path: string | null }> {
   const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
@@ -2402,7 +2529,7 @@ async function downloadAndStoreMediaWithPath(
   return { url: "", path: null };
 }
 
-async function handleMessagesUpdate(supabase: any, session: any, data: any) {
+async function handleMessagesUpdate(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionMessageUpdate | EvolutionMessageUpdate[]) {
   const updates = Array.isArray(data) ? data : [data];
 
   for (const update of updates) {
@@ -2415,7 +2542,11 @@ async function handleMessagesUpdate(supabase: any, session: any, data: any) {
       // Evolution v2 status format
       const status = update.update?.status || update.status;
 
-      const updateData: any = {};
+      const updateData: {
+        status?: "sent" | "delivered" | "read" | "played";
+        delivered_at?: string;
+        read_at?: string;
+      } = {};
 
       // Status codes: 0 = error, 1 = pending, 2 = server, 3 = delivery, 4 = read, 5 = played
       if (status === 2 || status === "SERVER_ACK") {
@@ -2449,7 +2580,7 @@ async function handleMessagesUpdate(supabase: any, session: any, data: any) {
 }
 
 // Handle MESSAGES_DELETE event - when messages are deleted
-async function handleMessagesDelete(supabase: any, session: any, data: any) {
+async function handleMessagesDelete(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionMessageDelete) {
   try {
     const messageId = data?.key?.id || data?.id;
 
@@ -2481,11 +2612,11 @@ async function handleMessagesDelete(supabase: any, session: any, data: any) {
 }
 
 // Handle PRESENCE_UPDATE event - when contact is typing/recording
-async function handlePresenceUpdate(supabase: any, session: any, data: any) {
+async function handlePresenceUpdate(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionPresenceUpdate) {
   try {
     // data format: { id: "5511999999999@s.whatsapp.net", presences: { "5511999999999@s.whatsapp.net": { lastKnownPresence: "composing" } } }
     const contactJid = data?.id;
-    const presenceInfo = data?.presences?.[contactJid];
+    const presenceInfo = contactJid ? data?.presences?.[contactJid] : undefined;
 
     if (!contactJid || !presenceInfo) {
       console.log("Presence update missing data:", data);
@@ -2528,7 +2659,7 @@ async function handlePresenceUpdate(supabase: any, session: any, data: any) {
 }
 
 // Handle SEND_MESSAGE event - confirmation of sent messages
-async function handleSendMessage(supabase: any, session: any, data: any) {
+async function handleSendMessage(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionMessageDelete) {
   try {
     const key = data?.key || {};
     const messageId = key.id;
@@ -2555,7 +2686,7 @@ async function handleSendMessage(supabase: any, session: any, data: any) {
 }
 
 // Handle GROUPS_UPSERT event - when groups are created or updated
-async function handleGroupsUpsert(supabase: any, session: any, data: any) {
+async function handleGroupsUpsert(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionGroupUpdate | EvolutionGroupUpdate[]) {
   const groups = Array.isArray(data) ? data : [data];
   console.log(
     `Processing ${groups.length} groups upsert for session ${session.id}`,
@@ -2592,7 +2723,7 @@ async function handleGroupsUpsert(supabase: any, session: any, data: any) {
 }
 
 // Handle GROUP_UPDATE event - when group name/description/photo changes
-async function handleGroupUpdate(supabase: any, session: any, data: any) {
+async function handleGroupUpdate(supabase: LegacySupabaseClient, session: ResolvedWebhookSession, data: EvolutionGroupUpdate | EvolutionGroupUpdate[]) {
   const updates = Array.isArray(data) ? data : [data];
   console.log(
     `Processing ${updates.length} group updates for session ${session.id}`,
@@ -2630,17 +2761,15 @@ async function handleGroupUpdate(supabase: any, session: any, data: any) {
 }
 
 async function createLeadFromConversation(
-  supabase: any,
-  session: any,
-  conversation: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
+  conversation: LegacyConversation,
   contactName: string,
   contactPhone: string,
   providerMessageId: string,
   isFromAds: boolean = false,
   adSource: string | null = null,
-  hubCtx:
-    | { rule: any | null; adContext: any; utm: Record<string, string> }
-    | null = null,
+  hubCtx: HubContext | null = null,
 ) {
   try {
     console.log(
@@ -2850,12 +2979,12 @@ async function createLeadFromConversation(
 
     // ===== HUB OVERRIDES (rules) =====
     const rule = hubCtx?.rule || null;
-    const adCtx = hubCtx?.adContext || {};
+    const adCtx = hubCtx?.adContext;
     const utm = hubCtx?.utm || {};
 
     if (rule?.source_label) leadSource = rule.source_label;
     if (rule?.target_pipeline_id) pipelineId = rule.target_pipeline_id;
-    if (rule?.target_stage_id) stage = { id: rule.target_stage_id } as any;
+    if (rule?.target_stage_id) stage = { id: rule.target_stage_id };
     if (rule?.target_user_id) assignedUserId = rule.target_user_id;
     // round_robin/team-based assignment: deixar trigger handle_lead_intake decidir (não setamos assigned_user_id)
     if (rule?.target_round_robin_id && !rule?.target_user_id) {
@@ -2888,10 +3017,10 @@ async function createLeadFromConversation(
         intake_scope_key: intakeScopeKey,
         origin_round_robin_id: originRoundRobinId,
         // Meta CTWA
-        meta_campaign_id: adCtx.meta_campaign_id || null,
-        meta_ad_id: adCtx.meta_ad_id || null,
-        meta_click_id: adCtx.meta_click_id || null,
-        meta_adset_id: adCtx.meta_adset_id || null,
+        meta_campaign_id: adCtx?.meta_campaign_id || null,
+        meta_ad_id: adCtx?.meta_ad_id || null,
+        meta_click_id: adCtx?.meta_click_id || null,
+        meta_adset_id: adCtx?.meta_adset_id || null,
         // UTM
         utm_source: utm.utm_source || null,
         utm_medium: utm.utm_medium || null,
@@ -3006,7 +3135,6 @@ async function createLeadFromConversation(
         supabase,
         session.organization_id,
         newLead.id,
-        adSource,
       );
     }
 
@@ -3025,7 +3153,7 @@ async function createLeadFromConversation(
           rule_name: rule?.name || null,
           match_type: rule?.match_type || null,
           match_value: rule?.match_value || null,
-          meta: adCtx,
+          meta: adCtx || {},
           utm,
         },
       });
@@ -3069,10 +3197,9 @@ async function createLeadFromConversation(
 
 // Apply "Facebook Ads" tag to a lead
 async function applyFacebookAdsTag(
-  supabase: any,
+  supabase: LegacySupabaseClient,
   organizationId: string,
   leadId: string,
-  adSource: string | null,
 ) {
   try {
     // Tag única "Tráfego" para todos os leads de ads (padrão para todas as organizações)
@@ -3146,8 +3273,8 @@ async function applyFacebookAdsTag(
 // Fetch and save contact profile picture from Evolution API
 // Downloads the image and stores permanently in Supabase Storage to avoid expired URLs
 async function fetchAndSaveProfilePicture(
-  supabase: any,
-  session: any,
+  supabase: LegacySupabaseClient,
+  session: ResolvedWebhookSession,
   conversationId: string,
   phone: string,
 ) {
@@ -3270,8 +3397,31 @@ async function fetchAndSaveProfilePicture(
 // ===== STOP FOLLOW-UP ON REPLY =====
 // When a lead responds to a WhatsApp message, cancel any waiting/running automation executions
 // and optionally move the lead to a configured stage
+type AutomationConnection = {
+  source_node_id: string;
+  target_node_id: string;
+  source_handle?: string | null;
+};
+type AutomationNode = {
+  id: string;
+  node_type?: string;
+  node_config?: Record<string, unknown> | null;
+  config?: Record<string, unknown> | null;
+};
+type LegacyAutomationExecution = {
+  id: string;
+  lead_id: string | null;
+  organization_id: string;
+  automation: {
+    id: string;
+    name: string | null;
+    trigger_config: { stop_on_reply?: boolean } | null;
+    created_by: string | null;
+  } | null;
+};
+
 async function handleStopFollowUpOnReply(
-  supabase: any,
+  supabase: LegacySupabaseClient,
   conversationId: string,
   leadId: string,
   isManualInteraction: boolean = false,
@@ -3282,7 +3432,7 @@ async function handleStopFollowUpOnReply(
     );
 
     // Find all running or waiting executions for this lead or conversation
-    const { data: executions, error: execError } = await supabase
+    const { data: executionRows, error: execError } = await supabase
       .from("automation_executions")
       .select(`
         id,
@@ -3299,6 +3449,9 @@ async function handleStopFollowUpOnReply(
       `)
       .or(`lead_id.eq.${leadId},conversation_id.eq.${conversationId}`)
       .in("status", ["running", "waiting"]);
+    // The untyped legacy join is one automation per execution, though the
+    // generic PostgREST relation inference treats it as an array.
+    const executions = executionRows as unknown as LegacyAutomationExecution[] | null;
 
     if (execError) {
       console.error("Error fetching automation executions:", execError);
@@ -3378,7 +3531,7 @@ async function handleStopFollowUpOnReply(
 
       // Keep track of the user to notify (prefer lead owner, fallback to automation creator)
       if (!notifyUserId) {
-        notifyUserId = exec.automation?.created_by;
+        notifyUserId = exec.automation?.created_by || null;
       }
 
       // ===== KEY FIX: Instead of cancelling, check if there's a "replied" branch to continue =====
@@ -3410,7 +3563,7 @@ async function handleStopFollowUpOnReply(
         ) {
           // Find which delay node leads to current_node_id via "no_reply"
           const noReplyConn = fullAutomation.connections.find(
-            (c: any) =>
+            (c: AutomationConnection) =>
               c.target_node_id === currentNodeId &&
               (c.source_handle === "no_reply" ||
                 c.source_handle === "default" || !c.source_handle),
@@ -3419,7 +3572,7 @@ async function handleStopFollowUpOnReply(
           let delayNodeId = noReplyConn?.source_node_id;
 
           if (!delayNodeId) {
-            const currentNode = fullAutomation.nodes.find((n: any) =>
+            const currentNode = fullAutomation.nodes.find((n: AutomationNode) =>
               n.id === currentNodeId
             );
             if (currentNode && (currentNode.node_type === "delay")) {
@@ -3429,10 +3582,10 @@ async function handleStopFollowUpOnReply(
 
           if (!delayNodeId) {
             const anyConn = fullAutomation.connections.find(
-              (c: any) => c.target_node_id === currentNodeId,
+              (c: AutomationConnection) => c.target_node_id === currentNodeId,
             );
             if (anyConn) {
-              const sourceNode = fullAutomation.nodes.find((n: any) =>
+              const sourceNode = fullAutomation.nodes.find((n: AutomationNode) =>
                 n.id === anyConn.source_node_id
               );
               if (sourceNode && sourceNode.node_type === "delay") {
@@ -3445,7 +3598,7 @@ async function handleStopFollowUpOnReply(
           // If the delay node explicitly has stop_on_reply === false, keep waiting and
           // skip this execution entirely (no branch, no cancel).
           if (delayNodeId) {
-            const delayNode = fullAutomation.nodes.find((n: any) =>
+            const delayNode = fullAutomation.nodes.find((n: AutomationNode) =>
               n.id === delayNodeId
             );
             const delayCfg =
@@ -3464,7 +3617,7 @@ async function handleStopFollowUpOnReply(
           if (delayNodeId && !continuedViaReplyBranch) {
             // Now find the "replied" branch connection from this delay node
             const repliedConn = fullAutomation.connections.find(
-              (c: any) =>
+              (c: AutomationConnection) =>
                 c.source_node_id === delayNodeId &&
                 c.source_handle === "replied",
             );

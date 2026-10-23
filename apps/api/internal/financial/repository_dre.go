@@ -36,21 +36,37 @@ func (repo Repository) DREInput(ctx context.Context, tenantContext tenant.Contex
 	if startDate == "" || endDate == "" {
 		return nil, ErrInvalidInput
 	}
+	if err := validateFinancialDateRange(startDate, endDate); err != nil {
+		return nil, err
+	}
+	if (prevStart == "") != (prevEnd == "") {
+		return nil, ErrInvalidInput
+	}
+	if err := validateFinancialDateRange(prevStart, prevEnd); err != nil {
+		return nil, err
+	}
 	dateColumn := "due_date"
-	statuses := []string{"pending", "paid", "overdue"}
+	statuses := []string{"pending", "pendente", "partial", "parcial", "paid", "paga", "overdue", "vencido"}
+	amountSQL := "fe.amount"
 	if regime == "cash" {
 		dateColumn = "paid_date"
-		statuses = []string{"paid"}
+		statuses = []string{"paid", "paga", "partial", "parcial"}
+		// Legacy fields may coexist: count the recorded payment once and never
+		// treat an unknown partial amount as a fully paid installment.
+		amountSQL = `least(fe.amount, greatest(coalesce(fe.paid_amount, 0), coalesce(fe.paid_value, 0),
+			case when lower(btrim(fe.status)) in ('paid', 'paga') and coalesce(fe.paid_amount, 0) = 0 and coalesce(fe.paid_value, 0) = 0 then fe.amount else 0 end))`
+	} else if regime != "accrual" {
+		return nil, ErrInvalidInput
 	}
 	args := []any{tenantContext.OrganizationID, startDate, endDate, statuses}
 	entriesSQL := fmt.Sprintf(`
-		select coalesce(jsonb_agg(to_jsonb(fe)), '[]'::jsonb)
+		select coalesce(jsonb_agg(to_jsonb(fe) || jsonb_build_object('amount', %s)), '[]'::jsonb)
 		from public.financial_entries fe
 		where fe.organization_id = $1::uuid
-		  and fe.status = any($4::text[])
+		  and lower(btrim(fe.status)) = any($4::text[])
 		  and fe.%s >= $2::date
 		  and fe.%s <= $3::date
-	`, dateColumn, dateColumn)
+	`, amountSQL, dateColumn, dateColumn)
 	entries, err := repo.queryJSONArray(ctx, entriesSQL, args...)
 	if err != nil {
 		return nil, err

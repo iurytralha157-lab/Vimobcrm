@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { searchTextIncludes } from "@/lib/search-text";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -114,9 +116,10 @@ export function DistributionTab() {
   const router = useRouter();
   const { activeOrganization, profile } = useAuth();
   const organizationId = activeOrganization.organizationId;
-  const { data: roundRobins = EMPTY_ROUND_ROBINS, isLoading } =
+  const [queueSearch, setQueueSearch] = useState("");
+  const { data: roundRobins = EMPTY_ROUND_ROBINS, isLoading, isError: queuesError, refetch: refetchQueues } =
     useRoundRobins();
-  const { data: teams = EMPTY_LIST, isLoading: teamsLoading } = useTeams();
+  const { data: teams = EMPTY_LIST, isLoading: teamsLoading, isError: teamsError, refetch: refetchTeams } = useTeams();
   const { data: tags = EMPTY_LIST } = useTags();
   const { data: properties = EMPTY_LIST } = useProperties();
   const { data: webhooks = EMPTY_LIST } = useWebhooks();
@@ -133,27 +136,30 @@ export function DistributionTab() {
   );
   const [ruleProperties, setRuleProperties] = useState<RulePropertyLabel[]>([]);
   const visibleRoundRobins = useMemo(() => {
-    if (canManageAllDistribution) return roundRobins;
+    const searchedQueues = roundRobins.filter(queue => searchTextIncludes(queue.name, queueSearch));
+    if (canManageAllDistribution) return searchedQueues;
     const ledTeamIds = new Set(accessScope.ledTeamIds);
     const ledUserIds = new Set(accessScope.ledUserIds);
     const currentUserId = profile?.id;
-    return roundRobins.filter(
+    const ledPipelineIds = new Set(accessScope.ledPipelineIds);
+    return searchedQueues.filter(
       (queue) =>
         (currentUserId && queue.created_by === currentUserId) ||
+        (queue.target_pipeline_id && ledPipelineIds.has(queue.target_pipeline_id)) ||
         queue.members.some(
           (member) =>
-            (member.team_id && ledTeamIds.has(member.team_id)) ||
-            (!member.team_id &&
-              member.user_id &&
-              ledUserIds.has(member.user_id)),
+            member.is_active !== false && ((member.team_id && ledTeamIds.has(member.team_id)) ||
+            (member.user_id && ledUserIds.has(member.user_id))),
         ),
     );
   }, [
     canManageAllDistribution,
     accessScope.ledTeamIds,
     accessScope.ledUserIds,
+    accessScope.ledPipelineIds,
     profile?.id,
     roundRobins,
+    queueSearch,
   ]);
 
   const propertyRuleIds = useMemo(() => {
@@ -194,7 +200,7 @@ export function DistributionTab() {
       setRuleProperties(data || []);
     };
 
-    loadRuleProperties();
+    void loadRuleProperties().catch(() => { if (!cancelled) setRuleProperties([]); });
 
     return () => {
       cancelled = true;
@@ -202,20 +208,21 @@ export function DistributionTab() {
   }, [organizationId, properties, propertyRuleIds]);
 
   const hasQueueCriteria = (queue: RoundRobinType) =>
-    queue.rules.some((rule) => !!rule.match_value?.trim());
+    queue.rules.some((rule) => rule.is_active !== false && (!!rule.match_value?.trim() || ["all", "any"].includes(rule.match_type)));
 
   const toggleActive = async (queue: RoundRobinType) => {
     if (!queue.is_active && !hasQueueCriteria(queue)) {
       toast.error("Adicione pelo menos um critério antes de ativar a fila");
       return;
     }
-    if (!queue.is_active && queue.members.length === 0) {
+    if (!queue.is_active && !queue.members.some((member) => member.is_active !== false)) {
       toast.error("Adicione pelo menos um participante antes de ativar a fila");
       return;
     }
     await updateRoundRobin.mutateAsync({
       id: queue.id,
       is_active: !queue.is_active,
+      revision: queue.revision,
     });
   };
 
@@ -225,7 +232,7 @@ export function DistributionTab() {
 
   const confirmDeleteRR = async () => {
     if (!queueToDelete) return;
-    await deleteRoundRobin.mutateAsync(queueToDelete.id);
+    await deleteRoundRobin.mutateAsync({ id: queueToDelete.id, revision: queueToDelete.revision });
     setQueueToDelete(null);
   };
 
@@ -301,7 +308,7 @@ export function DistributionTab() {
       : member.user?.name || member.user?.email || "Usuário";
   };
 
-  if (isLoading || teamsLoading) {
+  if (isLoading || (teamsLoading && roundRobins.length === 0)) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <ManagementToolbarPortal>
@@ -324,6 +331,7 @@ export function DistributionTab() {
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col gap-3">
+        <Input aria-label="Buscar filas de distribuição" placeholder="Buscar filas por nome..." value={queueSearch} onChange={event => setQueueSearch(event.target.value)} className="h-8 max-w-sm shrink-0 text-[12px]" />
         <ManagementToolbarPortal>
           <Button
             data-tour="distribution-new-queue"
@@ -335,19 +343,26 @@ export function DistributionTab() {
           </Button>
         </ManagementToolbarPortal>
 
-        {visibleRoundRobins.length === 0 ? (
+        {queuesError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-[6px] bg-destructive/10 px-3 py-2 text-[12px] font-light text-destructive">
+            <p>{roundRobins.length ? "Não foi possível atualizar as filas. Os últimos dados carregados foram mantidos." : "Não foi possível carregar as filas de distribuição."}</p>
+            <Button type="button" variant="ghost" className="h-8 text-[12px]" onClick={() => refetchQueues()}>Tentar novamente</Button>
+          </div>
+        )}
+        {teamsError && <div role="status" className="flex items-center justify-between gap-3 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[12px] font-light"><p>Não foi possível atualizar os nomes das equipes. As filas continuam disponíveis.</p><Button type="button" variant="ghost" className="h-8 text-[12px]" onClick={() => refetchTeams()}>Tentar novamente</Button></div>}
+        {visibleRoundRobins.length === 0 && !queuesError ? (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto overscroll-contain rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-10 text-center shadow-none">
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-white">
               <Shuffle className="h-5 w-5" />
             </div>
             <h3 className="mb-1 text-[14px] font-normal text-[var(--app-text-primary)]">
-              Configure sua distribuição
+              {queueSearch ? "Nenhuma fila corresponde à busca" : "Configure sua distribuição"}
             </h3>
             <p className="mb-4 max-w-sm text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-              Crie filas para distribuir leads automaticamente entre sua equipe.
+              {queueSearch ? "Ajuste a busca ou limpe o texto para exibir suas filas." : "Crie filas para distribuir leads automaticamente entre sua equipe."}
             </p>
           </div>
-        ) : (
+        ) : visibleRoundRobins.length > 0 ? (
           <div
             data-management-scroll-region="distribution"
             className="min-h-0 flex-1 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none [&>div]:h-full [&>div]:overflow-auto [&>div]:overscroll-contain"
@@ -428,7 +443,8 @@ export function DistributionTab() {
                       >
                         <Switch
                           checked={queue.is_active || false}
-                          onCheckedChange={() => toggleActive(queue)}
+                          disabled={updateRoundRobin.isPending}
+                          onCheckedChange={() => { void toggleActive(queue).catch(() => { /* The mutation displays the error. */ }); }}
                           aria-label={
                             queue.is_active ? "Desativar fila" : "Ativar fila"
                           }
@@ -588,7 +604,7 @@ export function DistributionTab() {
               </TableBody>
             </Table>
           </div>
-        )}
+        ) : null}
 
         <AlertDialog
           open={!!queueToDelete}
@@ -602,6 +618,7 @@ export function DistributionTab() {
               <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
                 A fila &quot;{queueToDelete?.name}&quot; será removida. Essa
                 ação não pode ser desfeita.
+                {" "}Filas com leads em rotação ou no bolsão precisam ter essas pendências resolvidas antes da exclusão.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -609,7 +626,7 @@ export function DistributionTab() {
                 Cancelar
               </AlertDialogCancel>
               <AlertDialogAction
-                onClick={confirmDeleteRR}
+                onClick={() => { void confirmDeleteRR().catch(() => { /* The mutation displays the error. */ }); }}
                 disabled={deleteRoundRobin.isPending}
                 className="h-9 rounded-[6px] bg-destructive text-[12px] font-light text-destructive-foreground hover:bg-destructive/90"
               >
