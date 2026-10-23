@@ -784,7 +784,6 @@ além de runbooks em `docs/runbooks/`, README, QUICK_REFERENCE, INDEX e AGENTS.
 
 | Onde | Problema |
 |---|---|
-| README | cita Next 16.3.4; `package.json` usa 16.3.8 |
 | README | `lib/api` descrito só como cliente Go; há Supabase Auth e escrita direta em `user-activity` |
 | README | `.env.example` descrito como catálogo; faltam 20 variáveis |
 | Catálogo de contratos | 541 contratos; router tem 579 |

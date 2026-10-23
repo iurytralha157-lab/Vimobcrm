@@ -5,7 +5,7 @@ contratos HTTP, migrações e funções Supabase, testes e artefatos de deploy.
 
 ## Stack
 
-- Next.js 16.3.4, React 19, TypeScript e React Query no frontend.
+- Next.js 16.4.2, React 19, TypeScript e React Query no frontend.
 - API Go como fronteira principal de regras de negócio e acesso privilegiado.
 - Supabase Auth, Postgres, Storage, Realtime e Edge Functions.
 - Zod para contratos de entrada/saída no frontend e validação explícita na API.
