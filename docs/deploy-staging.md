@@ -312,3 +312,33 @@ Antes da nova execucao, `typecheck`, lint dos fontes alterados e `audit:check`
 passaram; `validation:test` concluiu 871 testes sem falhas ou pulos. Os inventarios
 gerados tiveram somente seus digests atualizados. Os 35 testes Node das fixtures
 tambem passaram; a integracao completa no runner Ubuntu continua obrigatoria.
+
+A segunda execucao (`40120738903`, commit `c94eae55`) confirmou no Ubuntu a
+auditoria, os 871 contratos de validacao, a fixture de round-robin e o startup
+do PostgreSQL descartavel do WhatsApp. Ela parou em uma dependencia Ajv nao
+declarada, outra fixture de permissoes e uma expectativa de progresso imediato
+no teste de claim concorrente. O build das imagens continuou bloqueado.
+O validador de OpenAPI agora tem dependencias explicitas: Ajv 8.20.0 no dialeto
+2020-12 e ajv-formats 2.1.1. A allowlist cobre apenas os metadados OpenAPI usados;
+os asserts, formatos e restricoes dos schemas foram preservados. Os 64 contratos
+OpenAPI passaram. As fixtures de roles receberam as colunas de geracao de
+membership e os perfis/tabelas usados pelas consultas atuais, sem alterar SQL
+canonico ou permissoes da aplicacao.
+
+O ensaio de concorrencia foi corrigido depois de reproduzir a falha original e
+provar o mutex em um PostgreSQL 17.11 local descartavel. A reserva e nao
+bloqueante: um passe pode retornar vazio durante contencao. O teste agora mantem
+as quatro replicas concorrentes e exige exatamente uma lease do root correto
+apos um unico passe adicional sem contencao, com o child ainda pendente e sem
+duplicidade. Uma fase deterministica mantem a reserva aberta, verifica a
+exclusao e exige progresso apos rollback explicito. Nao houve sleep, loop de
+retry ou alteracao da query funcional. Passaram 30 testes/subtestes focados e
+todos os 52 testes Go obrigatorios da gate (122 incluindo subtestes), sem pulos.
+O readback retornou zero fixtures, locks e transacoes abertas; o cluster foi
+parado e a porta fechada. A execucao completa no Ubuntu continua obrigatoria.
+
+Na preparacao local de 24/10, os dois segredos de assinatura/recuperacao e o
+par VAPID foram gerados exclusivamente para homologacao, sem exibir valores.
+O arquivo de entrada permanece fora do Git com ACL restrita ao usuario Windows.
+Ainda faltam nele os dois valores do projeto novo (chave server-only e URL de
+conexao); a entrada de credenciais no Portainer sera concluida pelo usuario.

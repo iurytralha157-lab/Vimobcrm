@@ -1,6 +1,6 @@
 {
   "kind": "vimob-staging-hosting-preparation-v1",
-  "observedAtUTC": "2026-10-24T18:25:09Z",
+  "observedAtUTC": "2026-10-24T18:48:26Z",
   "projectRef": "lfkfuhvjvqgwyikzcfep",
   "repository": "iurytralha157-lab/vimob-crm-homologacao",
   "repositoryVisibility": "private",
@@ -41,7 +41,7 @@
   },
   "github": {
     "publicBuildVariablesConfigured": 5,
-    "lastAttempt": {
+    "firstAttempt": {
       "runId": 40118681536,
       "commit": "137b09a0cce9bae0ae9cb7de3ae34fd05efba9cc",
       "status": "failed",
@@ -50,6 +50,22 @@
         "Zod dependency advisory GHSA-mrhx-c7xc-m3w5",
         "Disposable membership fixture omitted round_robins.revision",
         "Owned WhatsApp PostgreSQL startup failed before contracts; original server log unavailable"
+      ]
+    },
+    "lastAttempt": {
+      "runId": 40120738903,
+      "commit": "c94eae55cb26b307f61f6c7a72f81802fb660fb7",
+      "status": "failed",
+      "buildJob": "skipped",
+      "verifiedRepairs": [
+        "Release dependency audit and all 871 validation tests passed on Ubuntu",
+        "Round-robin member epoch PostgreSQL test passed",
+        "Owned WhatsApp PostgreSQL startup and 77-migration bootstrap passed"
+      ],
+      "failures": [
+        "OpenAPI test imported an undeclared Ajv dependency",
+        "Tenant role fixture omitted membership_generation",
+        "One concurrent WhatsApp route claim test expected immediate progress under a nonblocking mutex"
       ]
     }
   },
@@ -61,6 +77,32 @@
     "validationCommand": { "tests": 871, "passed": 871, "skipped": 0 },
     "changedSourceLint": "passed",
     "postgresFixtureNodeTests": { "tests": 35, "passed": 35, "skipped": 0 },
+    "openApiContracts": { "tests": 64, "passed": 64, "skipped": 0 },
+    "openApiValidator": "explicit Ajv 8.20.0 JSON Schema 2020-12 with ajv-formats 2.1.1; strict schema and all assertions preserved",
+    "fullSourceLint": { "status": "passed", "errors": 0, "existingWarnings": 7 },
+    "authAdminContracts": { "tests": 44, "passed": 44, "skipped": 0 },
+    "staticGoPackages": "passed; database integration flags absent",
+    "migrationIntegrity": { "canonicalMigrations": 258, "status": "passed" },
+    "edgeManifest": { "live": 41, "tombstones": 26, "retired": 15, "status": "passed" },
+    "retiredEdgeBoundaries": { "tests": 20, "passed": 20, "skipped": 0 },
+    "roleLifecycleWindowsPostgres": "passed including guarded database cleanup",
+    "tenantRoleWindowsPostgres": "all assertions completed; full command failed on existing DROP DATABASE cleanup timeout",
+    "routeClaimWindowsPostgres": {
+      "version": "17.11",
+      "originalFailureReproduced": true,
+      "emptyLiveMutexDiagnostic": "passed",
+      "focusedIncludingSubtests": 30,
+      "requiredGateTopLevelTests": 52,
+      "requiredGateIncludingSubtests": 122,
+      "failed": 0,
+      "skipped": 0,
+      "exactlyOneRootLeaseAndPendingChildAsserted": true,
+      "progressAfterMutexReleaseAsserted": true,
+      "functionalSqlChanged": false,
+      "cleanupCountsZero": true,
+      "clusterStopped": true,
+      "portClosed": true
+    },
     "windowsOwnedPostgres": "startup/settings/guarded cleanup verified; membership asserts ran but complete integration failed on existing DROP DATABASE cleanup timeout",
     "ubuntuRerunRequired": true
   },
@@ -69,7 +111,11 @@
     "stackDeployed": false,
     "imagesPublished": false,
     "registryAuthenticationPendingUser": true,
-    "requiredRuntimeValuesPending": 6,
+    "dedicatedRuntimeValuesGeneratedLocally": 4,
+    "runtimeCredentialFileOutsideGit": true,
+    "runtimeCredentialFileRestrictedToCurrentWindowsUser": true,
+    "requiredSupabaseValuesPending": 2,
+    "runtimeValuesEnteredInPortainer": false,
     "internalProxyCidrVerificationPending": true,
     "productionServicesChanged": false
   },
