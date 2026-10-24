@@ -175,7 +175,7 @@ export const propertyDevelopmentSchema = z
     amenities: z.array(z.string()),
     published_on_site: z.boolean(),
     responsible_user_id: nullableUUIDSchema.optional(),
-    metadata: z.record(z.unknown()),
+    metadata: z.record(z.string(), z.unknown()),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -227,7 +227,7 @@ export const propertyDevelopmentPhaseSchema = z
     construction_started_at: nullableDateSchema.optional(),
     expected_delivery_date: nullableDateSchema.optional(),
     delivered_at: nullableDateSchema.optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -246,7 +246,7 @@ export const propertyDevelopmentBuildingSchema = z
     sort_order: z.number().int().min(0),
     status: propertyDevelopmentBuildingStatusSchema,
     unit_count: z.number().int().min(0).optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -272,7 +272,7 @@ export const propertyDevelopmentFloorPlanSchema = z
     description: z.string().nullable().optional(),
     image_url: z.string().nullable().optional(),
     unit_count: z.number().int().min(0).optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -317,7 +317,7 @@ export const propertyDevelopmentUnitSchema = z
     draft_price_table_id: nullableUUIDSchema.optional(),
     draft_price_table_name: z.string().nullable().optional(),
     draft_price_table_updated_at: nullableTimestampSchema.optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -369,7 +369,7 @@ export const propertyDevelopmentPriceTableSchema = z
     priced_unit_count: z.number().int().min(0),
     minimum_list_price: z.number().finite().positive().nullable().optional(),
     maximum_list_price: z.number().finite().positive().nullable().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -382,9 +382,9 @@ export const propertyDevelopmentUnitEventSchema = z
     development_id: uuidSchema,
     unit_id: uuidSchema,
     event_type: propertyDevelopmentUnitEventTypeSchema,
-    before_data: z.record(z.unknown()).nullable().optional(),
-    after_data: z.record(z.unknown()).nullable().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    before_data: z.record(z.string(), z.unknown()).nullable().optional(),
+    after_data: z.record(z.string(), z.unknown()).nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     created_by: nullableUUIDSchema.optional(),
     created_at: timestampSchema,
   })
@@ -489,7 +489,7 @@ export const propertyDevelopmentCreateInputSchema = z
     main_image_url: nullableHTTPURL(2_000).optional(),
     published_on_site: z.boolean().optional(),
     responsible_user_id: uuidSchema.optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, context) => {
@@ -522,7 +522,7 @@ export const propertyDevelopmentPhaseCreateInputSchema = z
     launch_date: nullableDateSchema.optional(),
     construction_started_at: nullableDateSchema.optional(),
     expected_delivery_date: nullableDateSchema.optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, context) => {
@@ -549,7 +549,7 @@ export const propertyDevelopmentBuildingCreateInputSchema = z
     floor_count: nullableCount.optional(),
     sort_order: z.number().int().min(0).default(0),
     status: propertyDevelopmentBuildingStatusSchema.default("planned"),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 
@@ -569,7 +569,7 @@ export const propertyDevelopmentFloorPlanCreateInputSchema = z
     garden_area: nullableArea.optional(),
     description: nullableString(5_000).optional(),
     image_url: nullableHTTPURL(2_000).optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, context) => {
@@ -609,7 +609,7 @@ export const propertyDevelopmentBulkUnitsInputSchema = z
     number_padding: z.number().int().min(0).max(8),
     initial_list_price: z.number().finite().positive().max(1_000_000_000_000),
     price_table_name: nullableString(160).optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 
@@ -639,7 +639,7 @@ export type PropertyDevelopmentMaintenanceKind = z.infer<
 const maintenanceCommon = {
   code: z.string().trim().min(1).max(80).optional(),
   name: z.string().trim().min(1).max(200).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 };
 const maintenanceDates = {
   launch_date: nullableDateSchema.optional(),
@@ -802,7 +802,7 @@ export const propertyDevelopmentUnitPriceInputSchema = z
       .max(1_000_000_000_000)
       .nullable()
       .optional(),
-    payment_terms: z.record(z.unknown()).nullable().optional(),
+    payment_terms: z.record(z.string(), z.unknown()).nullable().optional(),
     expected_price_table_id: nullableUUIDSchema.optional(),
     expected_price_table_updated_at: nullableInputTimestampSchema.optional(),
   })

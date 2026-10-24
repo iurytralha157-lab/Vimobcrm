@@ -2,7 +2,7 @@ import { z } from "zod";
 import { propertyCreateInputSchema } from "@/lib/validation/properties";
 
 const propertyCreationIntentSchema = z.object({
-  key: z.string().uuid(),
+  key: z.guid(),
   body: propertyCreateInputSchema,
 });
 

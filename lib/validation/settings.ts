@@ -222,7 +222,7 @@ export const changePasswordInputSchema = z
   .strict();
 export const setupGuideProgressInputSchema = z
   .object({
-    completed_steps: z.record(z.boolean()).optional(),
+    completed_steps: z.record(z.string(), z.boolean()).optional(),
     skipped: z.boolean().optional(),
   })
   .strict()
@@ -365,7 +365,7 @@ export const replaceRolePermissionsInputSchema = z
   .strict();
 export const replaceUserPermissionsInputSchema = z
   .object({
-    permissions: z.record(z.boolean()),
+    permissions: z.record(z.string(), z.boolean()),
   })
   .strict();
 export const assignUserRoleInputSchema = z
@@ -375,7 +375,7 @@ export const assignUserRoleInputSchema = z
   })
   .strict();
 export const settingsRoleInputSchema = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .refine(
     (input) => Object.keys(input).length > 0,
     "Informe ao menos uma alteracao",
@@ -422,7 +422,7 @@ export const apiOrganizationModuleSchema = z
   .passthrough();
 export const apiSetupGuideProgressSchema = z
   .object({
-    completed_steps: z.record(z.boolean()),
+    completed_steps: z.record(z.string(), z.boolean()),
     skipped: z.boolean(),
   })
   .passthrough();
@@ -471,9 +471,9 @@ export const apiPaymentHistoryItemResponseSchema = apiEnvelopeSchema(
 );
 export const apiSubscriptionOverviewSchema = z
   .object({
-    org: z.record(z.unknown()).nullable(),
-    plan: z.record(z.unknown()).nullable(),
-    pendingPlan: z.record(z.unknown()).nullable().default(null),
+    org: z.record(z.string(), z.unknown()).nullable(),
+    plan: z.record(z.string(), z.unknown()).nullable(),
+    pendingPlan: z.record(z.string(), z.unknown()).nullable().default(null),
     planChange: z
       .object({
         id: uuidSchema,
@@ -492,7 +492,7 @@ export const apiSubscriptionOverviewSchema = z
       })
       .nullable()
       .default(null),
-    availablePlans: z.array(z.record(z.unknown())),
+    availablePlans: z.array(z.record(z.string(), z.unknown())),
     history: z.array(apiPaymentHistoryItemSchema),
     billingCheckoutReady: z.boolean().default(false),
   })

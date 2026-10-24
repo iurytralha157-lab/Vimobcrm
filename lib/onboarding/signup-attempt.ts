@@ -13,14 +13,14 @@ const MAX_COMPLETION_CLOCK_SKEW_MS = 5 * 60 * 1_000
 
 type SignupStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>
 
-const signupAttemptIdSchema = z.string().uuid()
+const signupAttemptIdSchema = z.guid()
 const canonicalCheckoutTokenSchema = z.string().regex(/^[0-9a-f]{32}$/)
 const recoveryCapabilitySchema = z.string().min(120).max(4096).regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)
 
 const publicSignupCompletionSchema = z.object({
   attemptId: signupAttemptIdSchema,
   email: z.string().email(),
-  organizationId: z.string().uuid(),
+  organizationId: z.guid(),
   redirectTo: z.string().min(1).max(512).refine((value) => value.startsWith('/') && !value.startsWith('//')),
   checkoutToken: canonicalCheckoutTokenSchema.nullable(),
   requiresPayment: z.boolean(),

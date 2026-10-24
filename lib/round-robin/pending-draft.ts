@@ -12,13 +12,13 @@ export type DistributionDraftRecovery = { status: "ready"; form: DistributionQue
 const draftSchema = z.object({
   savedAt: z.number().int().positive(),
   form: z.object({
-    creationAttemptId: z.string().uuid().optional(),
+    creationAttemptId: z.guid().optional(),
     expectedRevision: z.number().int().positive().optional(),
     // Recover incomplete/legacy names verbatim for correction. The full record
     // remains byte-bounded below; API validation owns the 2–120 character limit.
     name: z.string(), strategy: z.enum(["simple", "weighted"]),
     target_pipeline_id: z.string().max(36), target_stage_id: z.string().max(36),
-    is_active: z.boolean(), settings: z.record(z.unknown()),
+    is_active: z.boolean(), settings: z.record(z.string(), z.unknown()),
     conditions: z.array(z.object({
       id: z.string().max(200), type: z.enum(["source", "webhook", "whatsapp_session", "meta_form", "website_category", "campaign_contains", "whatsapp_message_contains", "tag", "city", "interest_property"]),
       values: z.array(z.string()), sessionId: z.string().max(36).optional(),
@@ -62,7 +62,7 @@ export function readDistributionDraftRecovery(storage: DraftStorage, key: string
     }
     const decoded = JSON.parse(raw);
     if (isCreation && decoded?.reviewRequired === true) {
-      const attempt = z.string().uuid().safeParse(decoded.creationAttemptId);
+      const attempt = z.guid().safeParse(decoded.creationAttemptId);
       return { status: "review_required", creationAttemptId: attempt.success ? attempt.data : undefined };
     }
     const parsed = draftSchema.safeParse(decoded);

@@ -58,7 +58,7 @@ export const apiSwitchLeadCadenceResponseSchema = apiEnvelopeSchema(z.object({
 
 const positiveMinutesSchema = z.number().int().min(1)
 const optionalTaskTextSchema = (max: number) => (
-  z.string().trim().max(max).nullish().transform((value) => value || undefined)
+  z.string().trim().max(max).nullish().transform((value) => value || undefined).optional()
 )
 
 export const stageOperationalCadenceTaskSchema = z.object({

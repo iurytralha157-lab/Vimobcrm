@@ -15,7 +15,7 @@ const raw = z.object({
   queueRuntimeEvents: z.array(datedRow.extend({ event_type: z.string().min(1) })).optional(),
   users: z.array(row.extend({ name: z.string() })),
   lead: row.extend({ created_at: timestamp }),
-  leadMeta: z.record(z.unknown()).nullable(),
+  leadMeta: z.record(z.string(), z.unknown()).nullable(),
   historyCoverage: z.object({
     complete: z.literal(false),
     canonicalPresence: z.object({

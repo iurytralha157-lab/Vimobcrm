@@ -302,7 +302,7 @@ export const whatsAppMessageSchema = z.object({
   reaction_emoji: z.string().nullable().optional(),
   reaction_sender_jid: z.string().nullable().optional(),
   reaction_sender_name: z.string().nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   status: z.string(),
   can_quote: z.boolean().optional(),
   can_react: z.boolean().optional(),
@@ -400,7 +400,7 @@ export const sendWhatsAppMessageResponseSchema = z.object({
   conversationId: uuidSchema,
   status: z.string().min(1).optional(),
   message: whatsAppMessageSchema.optional(),
-  providerData: z.record(z.unknown()).optional(),
+  providerData: z.record(z.string(), z.unknown()).optional(),
 }).passthrough()
 
 export const whatsAppSendStatusQuerySchema = z.object({

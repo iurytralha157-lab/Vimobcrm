@@ -4,8 +4,8 @@ import { stageAutomationInputSchema } from '@/lib/validation/auxiliary'
 // Keep the original server text: Date would truncate PostgreSQL microseconds.
 const originalAutomationRevisionSchema = z.string().min(1).datetime({ offset: true })
 
-export const stageAutomationUpdateInputSchema = stageAutomationInputSchema.innerType()
-  .extend({ expected_updated_at: originalAutomationRevisionSchema })
+export const stageAutomationUpdateInputSchema = stageAutomationInputSchema
+  .safeExtend({ expected_updated_at: originalAutomationRevisionSchema })
   .strict()
   .refine((value) => Object.keys(value).length > 1, 'Informe ao menos um campo para alterar')
 

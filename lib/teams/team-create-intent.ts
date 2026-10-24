@@ -21,9 +21,9 @@ export function teamCreationErrorConfirmsNoResult(error: { status: number; code?
 }
 
 const intentSchema = z.object({
-  organizationId: z.string().uuid(),
-  userId: z.string().uuid(),
-  idempotencyKey: z.string().uuid(),
+  organizationId: z.guid(),
+  userId: z.guid(),
+  idempotencyKey: z.guid(),
   savedAt: z.number().int().positive(),
   input: createTeamInputSchema.and(z.object({ name: z.string().trim().min(1).max(120) })),
 }).strict();

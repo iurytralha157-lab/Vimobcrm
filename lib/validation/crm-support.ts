@@ -123,7 +123,7 @@ export const apiActivitySchema = z.object({
   user_id: uuidSchema.nullable(),
   type: z.string(),
   content: z.string().nullable(),
-  metadata: z.unknown(),
+  metadata: z.unknown().optional(),
   created_at: timestampSchema,
 }).passthrough()
 export const apiActivityListResponseSchema = apiEnvelopeSchema(z.array(apiActivitySchema))
@@ -326,9 +326,9 @@ export const apiTeamHistoryEventSchema = z.object({
   action: z.string().min(1),
   entity_type: z.string().min(1),
   entity_id: uuidSchema,
-  old_data: z.record(z.unknown()).nullable().optional(),
-  new_data: z.record(z.unknown()).nullable().optional(),
-  diff: z.record(z.unknown()).nullable().optional(),
+  old_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  new_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  diff: z.record(z.string(), z.unknown()).nullable().optional(),
   created_at: timestampSchema,
   user: apiTeamUserSchema.nullable().optional(),
   subject_user: apiTeamUserSchema.nullable().optional(),
@@ -382,7 +382,7 @@ const roundRobinRuleInputSchema = z.object({
   // Unchanged snapshots identified by ID may exceed today's creation limit.
   // The server compares the persisted matcher before permitting that exception.
   matchValue: z.string(),
-  match: z.record(z.unknown()).optional(),
+  match: z.record(z.string(), z.unknown()).optional(),
   priority: nonNegativeIntegerSchema.max(2_147_483_647).optional(),
   isActive: z.boolean().optional(),
 }).strict()
@@ -482,7 +482,7 @@ export const apiRoundRobinRuleSchema = z.object({
   queueRevision: teamRevisionSchema.optional(),
   matchType: z.string(),
   matchValue: z.string(),
-  match: z.record(z.unknown()).optional(),
+  match: z.record(z.string(), z.unknown()).optional(),
   priority: nonNegativeIntegerSchema,
   isActive: z.boolean(),
   createdAt: timestampSchema,
@@ -523,9 +523,9 @@ export const apiRoundRobinHistoryEventSchema = z.object({
     'distribution_queue_member',
   ]),
   entity_id: uuidSchema,
-  old_data: z.record(z.unknown()).nullable().optional(),
-  new_data: z.record(z.unknown()).nullable().optional(),
-  diff: z.record(z.unknown()).nullable().optional(),
+  old_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  new_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  diff: z.record(z.string(), z.unknown()).nullable().optional(),
   created_at: timestampSchema,
   user: apiTeamUserSchema.nullable().optional(),
   subject_user: apiTeamUserSchema.nullable().optional(),
@@ -572,7 +572,7 @@ export const createNotificationInputSchema = z.object({
   content: z.string().trim().max(2_000).optional(),
   type: z.string().trim().max(120).optional(),
   lead_id: uuidSchema.optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 }).strict()
 export const dispatchNotificationInputSchema = z.object({
   event_key: z.string().trim().max(180).optional(),
@@ -582,7 +582,7 @@ export const dispatchNotificationInputSchema = z.object({
   recipient: z.string().trim().max(500).optional(),
   title: z.string().trim().max(180).optional(),
   content: z.string().trim().max(4_000).optional(),
-  variables: z.record(z.unknown()),
+  variables: z.record(z.string(), z.unknown()),
   lead_id: uuidSchema.optional(),
   dedupe_key: z.string().trim().max(255).optional(),
   is_test: z.boolean().optional(),
@@ -598,7 +598,7 @@ export const apiNotificationSchema = z.object({
   is_read: z.boolean(),
   lead_id: uuidSchema.nullable(),
   target_url: z.string().nullable().optional(),
-  metadata: z.record(z.unknown()).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   created_at: timestampSchema,
 }).passthrough()
 export const apiNotificationListResponseSchema = apiEnvelopeSchema(z.array(apiNotificationSchema)).extend({

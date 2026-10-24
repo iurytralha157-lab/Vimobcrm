@@ -162,16 +162,16 @@ export const grupoOLXIntegrationSchema = z.object({
 
 const grupoOLXPublicationPropertySchema = z.object({
   id: uuidSchema,
-  code: z.unknown(),
-  title: z.unknown(),
-  status: z.unknown(),
-  tipo_de_negocio: z.unknown(),
-  tipo_de_imovel: z.unknown(),
-  cidade: z.unknown(),
-  bairro: z.unknown(),
-  preco: z.unknown(),
-  valor_locacao: z.unknown(),
-  imagem_principal: z.unknown(),
+  code: z.unknown().optional(),
+  title: z.unknown().optional(),
+  status: z.unknown().optional(),
+  tipo_de_negocio: z.unknown().optional(),
+  tipo_de_imovel: z.unknown().optional(),
+  cidade: z.unknown().optional(),
+  bairro: z.unknown().optional(),
+  preco: z.unknown().optional(),
+  valor_locacao: z.unknown().optional(),
+  imagem_principal: z.unknown().optional(),
 }).strict()
 
 export const grupoOLXPublicationSchema = z.object({
@@ -275,9 +275,9 @@ export const metaFormConfigInputSchema = z.object({
   purpose: z.string().trim().max(120).nullish(),
   source: z.string().trim().max(120).nullish(),
   sourceDetails: z.string().trim().max(500).nullish(),
-  defaultValues: z.record(z.unknown()).optional(),
+  defaultValues: z.record(z.string(), z.unknown()).optional(),
   autoTags: z.array(uuidSchema).max(100).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
-  fieldMapping: z.record(z.string()).optional(),
+  fieldMapping: z.record(z.string(), z.string()).optional(),
   customFieldsConfig: z.array(z.string()).max(200).optional(),
   isActive: z.boolean().optional(),
 }).strict()
@@ -420,7 +420,7 @@ export const metaPublicIntegrationSchema = z.object({
   instagram_business_account_id: metaNullableTextSchema,
   instagram_username: metaNullableTextSchema,
   ad_account_id: metaNullableTextSchema,
-  selected_ad_accounts: z.unknown(),
+  selected_ad_accounts: z.unknown().optional(),
   pipeline_id: uuidSchema.nullable(),
   stage_id: uuidSchema.nullable(),
   // Explicit compatibility with the older tokenless public view. These fields
@@ -428,8 +428,8 @@ export const metaPublicIntegrationSchema = z.object({
   // strict object boundary below.
   assigned_user_id: uuidSchema.nullish(),
   form_ids: z.array(metaProviderIdSchema).max(1_000).nullish(),
-  field_mapping: z.record(z.unknown()).nullish(),
-  campaign_property_mapping: z.record(z.unknown()).nullish(),
+  field_mapping: z.record(z.string(), z.unknown()).nullish(),
+  campaign_property_mapping: z.record(z.string(), z.unknown()).nullish(),
   default_status: metaNullableTextSchema,
   leads_received: nonNegativeIntegerSchema.nullable(),
   last_lead_at: z.string().trim().max(64).nullable(),
@@ -467,7 +467,7 @@ export const metaConnectPageActionResponseSchema = z.object({
   success: z.literal(true),
   marketing_active: z.boolean(),
   messenger_active: z.boolean(),
-  integration: z.record(z.unknown()),
+  integration: z.record(z.string(), z.unknown()),
   missing_permissions: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
 }).strict()
 
@@ -478,12 +478,12 @@ export type MetaLeadForm = z.infer<typeof metaLeadFormSchema>
 export type MetaPublicIntegration = z.infer<typeof metaPublicIntegrationSchema>
 export type MetaConnectPageActionResponse = z.infer<typeof metaConnectPageActionResponseSchema>
 
-export const apiIntegrationRecordSchema = z.record(z.unknown())
+export const apiIntegrationRecordSchema = z.record(z.string(), z.unknown())
 export const apiOptionalIntegrationResponseSchema = apiEnvelopeSchema(apiIntegrationRecordSchema.nullable())
 export const apiIntegrationResponseSchema = apiEnvelopeSchema(apiIntegrationRecordSchema)
 export const apiIntegrationListResponseSchema = apiEnvelopeSchema(z.array(apiIntegrationRecordSchema))
 export const apiMetaWebhookHealthResponseSchema = apiEnvelopeSchema(z.object({
-  counts: z.record(nonNegativeIntegerSchema),
+  counts: z.record(z.string(), nonNegativeIntegerSchema),
   lastError: z.string().nullable(),
   missing: z.boolean(),
 }).passthrough())

@@ -8,6 +8,6 @@ export const adminTableFilterSchema = z.object({
 }).strict();
 
 export const adminTablePageSchema = z.object({
-  data: z.array(z.record(z.unknown())),
+  data: z.array(z.record(z.string(), z.unknown())),
   meta: z.object({ nextOffset: z.number().int().nonnegative().nullable() }),
 });

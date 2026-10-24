@@ -23,7 +23,7 @@ const metadataByType = {
 /** Public activity writes record manual contact facts, never system transitions.
  * Read schemas deliberately retain historical types and producer metadata. */
 export const manualActivityCreateInputSchema = z.object({
-  lead_id: z.string().transform(trim).pipe(z.string().uuid()).transform(value => value.toLowerCase()),
+  lead_id: z.string().transform(trim).pipe(z.string().regex(z.regexes.guid, "Invalid uuid")).transform(value => value.toLowerCase()),
   type: z.string().transform(trim).pipe(z.enum(manualTypes)),
   content: text(2000).nullish().transform(value => value || null),
   metadata: z.unknown().optional(),

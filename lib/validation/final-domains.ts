@@ -4,7 +4,7 @@ import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchem
 import { filterTextSchema } from '@/lib/validation/filter-text'
 import { MAX_DASHBOARD_SOURCE_FILTER_LENGTH } from '@/lib/validation/dashboard-filter-text'
 
-export const dynamicRecordSchema = z.record(z.unknown())
+export const dynamicRecordSchema = z.record(z.string(), z.unknown())
 export const nonEmptyDynamicRecordSchema = dynamicRecordSchema.refine(
   (input) => Object.keys(input).length > 0,
   'Informe ao menos um campo',
@@ -169,7 +169,7 @@ export const apiAIRunResponseSchema = z.object({
   mode: z.enum(['openai', 'simulated', 'routed']),
   agent: z.object({ id: uuidSchema, name: z.string(), type: z.string() }).passthrough(),
   output: z.string(),
-  toolsUsed: z.array(z.object({ name: z.string(), data: z.unknown() }).passthrough()),
+  toolsUsed: z.array(z.object({ name: z.string(), data: z.unknown().optional() }).passthrough()),
 }).passthrough()
 export const apiAIMetricsSchema = z.object({
   leadsReceived: nonNegativeIntegerSchema,
@@ -766,7 +766,7 @@ export const apiDashboardExtraCountsResponseSchema = apiEnvelopeSchema(apiDashbo
 export const apiDashboardRecentActivitiesResponseSchema = apiEnvelopeSchema(apiDashboardRecentActivitiesSchema)
 export const apiDashboardTeamLeadIdsSchema = z.object({ leadIds: z.array(uuidSchema) }).passthrough()
 
-export const analyticsQuerySchema = z.record(z.union([
+export const analyticsQuerySchema = z.record(z.string(), z.union([
   z.string(),
   z.number().finite(),
   z.boolean(),

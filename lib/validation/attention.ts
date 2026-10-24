@@ -51,7 +51,7 @@ export const apiAttentionPolicySchema = z.object({
   redistributionMinutes: optionalMinutesSchema,
   businessHoursOnly: z.boolean(),
   redistributeBeforeContactOnly: z.boolean().optional(),
-  config: z.record(z.unknown()).nullish(),
+  config: z.record(z.string(), z.unknown()).nullish(),
   createdBy: nullableUUIDSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
@@ -87,7 +87,7 @@ export const apiAttentionItemSchema = z.object({
   resolvedAt: nullableTimestampSchema,
   resolutionReason: nullableTextSchema,
   reminderCount: nonNegativeIntegerSchema,
-  metadata: z.record(z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
   updatedAt: timestampSchema,
 }).passthrough()
 
@@ -142,7 +142,7 @@ const attentionPolicyMutationBodySchema = z.object({
   redistributionMinutes: z.number().int().min(1).max(525_600).nullable().optional(),
   businessHoursOnly: z.boolean(),
   redistributeBeforeContactOnly: z.boolean().optional(),
-  config: z.record(z.unknown()).nullable().optional(),
+  config: z.record(z.string(), z.unknown()).nullable().optional(),
 }).strict()
 
 export const createAttentionPolicyInputSchema = attentionPolicyMutationBodySchema.superRefine((value, context) => {

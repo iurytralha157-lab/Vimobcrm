@@ -38,7 +38,7 @@ function optionalQueryUUID() {
     return !normalized || normalized.toLowerCase() === "all"
       ? undefined
       : normalized;
-  }, z.string().uuid().optional());
+  }, z.string().regex(z.regexes.guid, "Invalid uuid").optional());
 }
 
 const optionalCampaignIdsSchema = z.array(providerIdSchema).max(50)
@@ -68,14 +68,14 @@ function optionalQueryUUIDList(maxItems = 50) {
       context.addIssue({
         code: z.ZodIssueCode.too_big,
         maximum: maxItems,
-        type: "array",
+        origin: "array",
         inclusive: true,
         message: `Selecione no máximo ${maxItems} tags`,
       });
       return;
     }
     values.forEach((item, index) => {
-      if (!z.string().uuid().safeParse(item).success) {
+      if (!z.string().regex(z.regexes.guid, "Invalid uuid").safeParse(item).success) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: [index],
@@ -93,7 +93,7 @@ export const campaignInsightsQuerySchema = z
     teamId: optionalQueryUUID(),
     pipelineId: optionalQueryUUID(),
     userId: z.preprocess((value) => value === null || value === undefined || value === 'all' || value === '' ? undefined : value,
-      z.union([z.string().trim().uuid(), z.literal('unassigned')]).optional()),
+      z.union([z.string().trim().regex(z.regexes.guid, "Invalid uuid"), z.literal('unassigned')]).optional()),
     source: optionalQueryText(MAX_LEAD_SOURCE_FILTER_LENGTH),
     accountId: optionalQueryText(255),
     objective: optionalQueryText(255),
@@ -452,7 +452,7 @@ const marketingMediaAssetSchema = z
     video_url: nullableTextSchema,
     permalink_url: nullableTextSchema,
     published_at: nullableTextSchema,
-    metrics: z.record(z.unknown()).default({}),
+    metrics: z.record(z.string(), z.unknown()).default({}),
     last_synced_at: z.string().trim().min(1).max(64),
   })
   .passthrough();

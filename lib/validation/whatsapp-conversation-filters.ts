@@ -3,7 +3,7 @@ import { filterTextSchema, MAX_LEAD_SOURCE_FILTER_LENGTH } from '@/lib/validatio
 
 const optionalText = (max: number) => filterTextSchema(max, 1).optional();
 const instant = z.string().datetime({ offset: true }).optional();
-const uuid = z.string().uuid();
+const uuid = z.string().regex(z.regexes.guid, "Invalid uuid");
 const user = z.union([uuid, z.literal('unassigned')]).optional();
 
 export const whatsAppConversationListQuerySchema = z.object({

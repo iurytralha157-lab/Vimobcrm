@@ -23,7 +23,7 @@ const checkoutPlanResponseSchema = z.object({
   message: z.string().trim().min(1).max(500),
   requiresPayment: z.boolean().optional(),
   checkoutToken: z.string().regex(/^(?:[a-f0-9]{32}|[a-f0-9]{48})$/i).nullable().optional(),
-  organizationId: z.string().uuid().optional(),
+  organizationId: z.guid().optional(),
   plan: z.record(z.string(), z.unknown()).optional(),
 })
 
