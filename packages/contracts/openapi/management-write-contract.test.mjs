@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import Ajv from "ajv";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import yaml from "js-yaml";
 
 const document = yaml.load(readFileSync("packages/contracts/openapi/v1.yaml", "utf8"));
-// Ajv is already present in the locked workspace toolchain. These management
-// schemas use supported JSON Schema constraints; compile their local references
-// so incompatible allOf/additionalProperties combinations fail on real examples.
-const validator = new Ajv({ allErrors: true, logger: false });
+// OpenAPI 3.1 uses JSON Schema 2020-12. Compile local references with explicitly
+// installed validators so allOf/additionalProperties and formats remain active.
+const validator = new Ajv2020({ allErrors: true, logger: false, strictSchema: true });
+addFormats(validator);
+// Allow only the document envelope and OpenAPI annotation used by these refs;
+// unknown JSON Schema keywords must still fail compilation.
+validator.addVocabulary([
+  "openapi", "info", "servers", "security", "paths", "components", "example",
+]);
 // int64 is an OpenAPI numeric format, rather than a built-in string format.
 validator.addFormat("int64", { type: "number", validate: Number.isInteger });
 validator.addSchema(document, "vimob");
