@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -276,49 +278,73 @@ func TestHydrateMessageMediaURLsCannotSignWithoutActor(t *testing.T) {
 }
 
 func TestSignedWhatsAppMessageMediaURLUsesTenantScopedCache(t *testing.T) {
-	const organizationID = "20000000-0000-0000-0000-000000000011"
-	objectPath := "orgs/" + organizationID + "/sessions/session-1/incoming/lazy.png"
-	whatsappMediaSignedURLCache.Delete(objectPath)
-	t.Cleanup(func() { whatsappMediaSignedURLCache.Delete(objectPath) })
+	// The production TTL truncates remaining seconds, so any elapsed real time
+	// can turn 840 into 839. Freeze time and keep Storage entirely in memory;
+	// the singleflight goroutine and its timeout remain inside this bubble.
+	synctest.Test(t, func(t *testing.T) {
+		const organizationID = "20000000-0000-0000-0000-000000000011"
+		const projectURL = "https://storage-signing.example.invalid"
+		const wantSignedTTL, wantSafeTTL = 15 * 60, 14 * 60
+		objectPath := "orgs/" + organizationID + "/sessions/session-1/incoming/lazy.png"
+		whatsappMediaSignedURLCache.Delete(objectPath)
+		t.Cleanup(func() { whatsappMediaSignedURLCache.Delete(objectPath) })
 
-	var signingRequests atomic.Int32
-	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		signingRequests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"signedURL":"/object/sign/whatsapp-media/safe?token=lazy"}`))
-	}))
-	defer storage.Close()
+		var signingRequests atomic.Int32
+		client := &http.Client{Transport: storageURLTestTransport(func(r *http.Request) (*http.Response, error) {
+			signingRequests.Add(1)
+			defer r.Body.Close()
+			if r.Method != http.MethodPost || r.URL.String() != projectURL+"/storage/v1/object/sign/"+whatsappMediaBucket+"/"+objectPath {
+				t.Errorf("Storage signing request = %s %s, want tenant-scoped POST", r.Method, r.URL)
+			}
+			var payload struct {
+				ExpiresIn int `json:"expiresIn"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			if payload.ExpiresIn != wantSignedTTL {
+				t.Errorf("Storage bearer URL TTL = %d, want %d", payload.ExpiresIn, wantSignedTTL)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"signedURL":"/object/sign/whatsapp-media/safe?token=lazy"}`))}, nil
+		})}
+		repo := Repository{storage: storageClient{projectURL: projectURL, apiKey: "service-role-test-key", httpClient: client}}
+		startedAt := time.Now()
+		first, firstTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
+		if err != nil || first == "" {
+			t.Fatalf("first lazy media signing = %q, %v", first, err)
+		}
+		if firstTTL != wantSafeTTL {
+			t.Fatalf("first lazy media safe TTL = %d, want %d", firstTTL, wantSafeTTL)
+		}
+		second, secondTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
+		if err != nil || second != first {
+			t.Fatalf("cached lazy media signing = %q, %v; want %q", second, err, first)
+		}
+		if secondTTL != wantSafeTTL {
+			t.Fatalf("cached lazy media safe TTL = %d, want %d", secondTTL, wantSafeTTL)
+		}
+		if elapsed := time.Since(startedAt); elapsed != 0 {
+			t.Fatalf("in-memory signing advanced the fake clock by %v", elapsed)
+		}
+		entry, ok := whatsappMediaSignedURLCache.Load(objectPath)
+		if !ok || !entry.expiresAt.Equal(startedAt.Add(wantSafeTTL*time.Second)) {
+			t.Fatalf("cached expiry = %v (present=%v), want exactly %ds after signing", entry.expiresAt, ok, wantSafeTTL)
+		}
+		foreignOrganization := "20000000-0000-0000-0000-000000000012"
+		if _, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), foreignOrganization, objectPath); !errors.Is(err, ErrMessageNotFound) {
+			t.Fatalf("foreign tenant signing error = %v, want ErrMessageNotFound", err)
+		}
+		if signingRequests.Load() != 1 {
+			t.Fatalf("Storage signing requests = %d, want one cached request with no foreign tenant signing", signingRequests.Load())
+		}
+	})
+}
 
-	repo := Repository{storage: storageClient{
-		projectURL: storage.URL,
-		apiKey:     "service-role-test-key",
-		httpClient: storage.Client(),
-	}}
-	first, firstTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
-	if err != nil || first == "" {
-		t.Fatalf("first lazy media signing = %q, %v", first, err)
-	}
-	if firstTTL != whatsappMediaSignedURLTTLSeconds-int(whatsappMediaSignedURLCacheSkew/time.Second) {
-		t.Fatalf("first lazy media safe TTL = %d, want %d", firstTTL, whatsappMediaSignedURLTTLSeconds-int(whatsappMediaSignedURLCacheSkew/time.Second))
-	}
-	if whatsappMediaSignedURLTTLSeconds > 15*60 {
-		t.Fatalf("lazy media bearer URL TTL = %ds, exceeds 15 minute security bound", whatsappMediaSignedURLTTLSeconds)
-	}
-	second, secondTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
-	if err != nil || second != first {
-		t.Fatalf("cached lazy media signing = %q, %v; want %q", second, err, first)
-	}
-	if secondTTL < 1 || secondTTL > firstTTL {
-		t.Fatalf("cached lazy media safe TTL = %d, want 1..%d", secondTTL, firstTTL)
-	}
-	if signingRequests.Load() != 1 {
-		t.Fatalf("Storage signing requests = %d, want one cached request", signingRequests.Load())
-	}
+type storageURLTestTransport func(*http.Request) (*http.Response, error)
 
-	foreignOrganization := "20000000-0000-0000-0000-000000000012"
-	if _, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), foreignOrganization, objectPath); !errors.Is(err, ErrMessageNotFound) {
-		t.Fatalf("foreign tenant signing error = %v, want ErrMessageNotFound", err)
-	}
+func (transport storageURLTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
 }
 
 func TestWhatsAppMediaSignedURLCacheIsBoundedAndSweepsExpiredEntries(t *testing.T) {
