@@ -51,8 +51,13 @@ proxy ou rede existente foi alterado no host; a stack ainda nao foi criada.
 O indice complementar de inatividade foi aplicado apenas ao Supabase novo e
 passou no gate SQL exato da API; ver
 [a evidencia](../deploy/staging/cloud-inactivity-index-verification.json).
-Continuam pendentes as imagens, os segredos de runtime, DNS/Auth e os testes
-HTTP completos. O suplemento de ACLs tambem foi aplicado e o smoke SQL original
+Continuam pendentes as imagens, os segredos de runtime e os testes HTTP
+completos. Os dois registros A de homologacao foram criados como DNS only para
+`5.161.108.48` e conferidos no nameserver autoritativo; nenhum registro anterior
+foi editado. O Site URL do projeto Supabase novo e os dois redirects exatos de
+reset de senha/confirmacao de e-mail foram salvos e relidos. Ver o estado em
+[hosting-preparation-verification.json](../deploy/staging/hosting-preparation-verification.json).
+O suplemento de ACLs tambem foi aplicado e o smoke SQL original
 passou novamente; a evidencia e os limites estao em
 [cloud-rpc-hardening-verification.json](../deploy/staging/cloud-rpc-hardening-verification.json).
 As cinco Repository variables publicas de build foram cadastradas no GitHub
@@ -292,3 +297,18 @@ Essa alteracao esta na candidata local de homologacao; nao atualiza a instalacao
 em producao. O gate de auditoria existente continua obrigatorio e sem excecao
 nova; sua excecao anterior para `braces` em ferramentas de desenvolvimento
 continua registrada em `scripts/security/check-release-audit.mjs`.
+
+O primeiro build manual de 24/10 foi bloqueado pelo aviso
+[GHSA-mrhx-c7xc-m3w5 do Zod](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
+e por duas falhas das fixtures descartaveis de PostgreSQL. As imagens nao foram
+publicadas nessa tentativa. A candidata seguinte usa Zod 4.6.7 e
+`@hookform/resolvers` 5.9.2: a versao 6 teve conflito de peers com Effect 3,
+entao foi mantida a linha compativel, sem `--force` ou `--legacy-peer-deps`.
+O gate original de auditoria passou sem excecao nova. A compatibilidade preserva
+UUIDs PostgreSQL legados, campos omitidos, defaults de criacao e PATCH sem
+defaults novos; os contratos existentes e o novo teste de migracao verificam
+esses comportamentos. A atualizacao e exclusiva da branch de homologacao.
+Antes da nova execucao, `typecheck`, lint dos fontes alterados e `audit:check`
+passaram; `validation:test` concluiu 871 testes sem falhas ou pulos. Os inventarios
+gerados tiveram somente seus digests atualizados. Os 35 testes Node das fixtures
+tambem passaram; a integracao completa no runner Ubuntu continua obrigatoria.

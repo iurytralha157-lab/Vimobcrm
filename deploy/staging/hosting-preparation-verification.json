@@ -1,0 +1,84 @@
+{
+  "kind": "vimob-staging-hosting-preparation-v1",
+  "observedAtUTC": "2026-10-24T18:25:09Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "repository": "iurytralha157-lab/vimob-crm-homologacao",
+  "repositoryVisibility": "private",
+  "defaultBranch": "homologacao",
+  "portainer": "https://painel.vettercompany.com.br",
+  "environment": "primary",
+  "plannedStack": "vimob-staging",
+  "dns": {
+    "zone": "vimobcrm.com.br",
+    "authoritativeServer": "dante.ns.cloudflare.com",
+    "verified": true,
+    "records": [
+      {
+        "type": "A",
+        "name": "homologacao.vimobcrm.com.br",
+        "value": "5.161.108.48",
+        "proxy": false,
+        "ttlSeconds": 300
+      },
+      {
+        "type": "A",
+        "name": "api-homologacao.vimobcrm.com.br",
+        "value": "5.161.108.48",
+        "proxy": false,
+        "ttlSeconds": 300
+      }
+    ],
+    "existingRecordsEdited": false
+  },
+  "auth": {
+    "siteUrl": "https://homologacao.vimobcrm.com.br",
+    "redirectUrls": [
+      "https://homologacao.vimobcrm.com.br/reset-password",
+      "https://homologacao.vimobcrm.com.br/login?emailConfirmation=success"
+    ],
+    "savedAndReadBack": true,
+    "usersCreated": 0
+  },
+  "github": {
+    "publicBuildVariablesConfigured": 5,
+    "lastAttempt": {
+      "runId": 40118681536,
+      "commit": "137b09a0cce9bae0ae9cb7de3ae34fd05efba9cc",
+      "status": "failed",
+      "buildJob": "skipped",
+      "failures": [
+        "Zod dependency advisory GHSA-mrhx-c7xc-m3w5",
+        "Disposable membership fixture omitted round_robins.revision",
+        "Owned WhatsApp PostgreSQL startup failed before contracts; original server log unavailable"
+      ]
+    }
+  },
+  "candidateRepairValidation": {
+    "zod": "4.6.7",
+    "hookformResolvers": "5.9.2",
+    "dependencyAudit": "passed_without_new_exception",
+    "typecheck": "passed",
+    "validationCommand": { "tests": 871, "passed": 871, "skipped": 0 },
+    "changedSourceLint": "passed",
+    "postgresFixtureNodeTests": { "tests": 35, "passed": 35, "skipped": 0 },
+    "windowsOwnedPostgres": "startup/settings/guarded cleanup verified; membership asserts ran but complete integration failed on existing DROP DATABASE cleanup timeout",
+    "ubuntuRerunRequired": true
+  },
+  "runtime": {
+    "stackDraftPrepared": true,
+    "stackDeployed": false,
+    "imagesPublished": false,
+    "registryAuthenticationPendingUser": true,
+    "requiredRuntimeValuesPending": 6,
+    "internalProxyCidrVerificationPending": true,
+    "productionServicesChanged": false
+  },
+  "acceptance": {
+    "httpsVerified": false,
+    "appLoginVerified": false,
+    "crudVerified": false,
+    "privateStorageVerified": false,
+    "privateRealtimeVerified": false,
+    "generalTestingReady": false
+  }
+}
