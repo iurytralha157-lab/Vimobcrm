@@ -72,6 +72,16 @@ func TestMemberReadShowsRemovedEpochAsInactive(t *testing.T) {
 			t.Fatalf("execute %s: %v", path, err)
 		}
 	}
+	// Member reads also project the queue revision introduced by
+	// 20261012212832_management_revisions_and_create_intents.sql.
+	if _, err := setup.Exec(ctx, `
+		alter table public.round_robins add column revision bigint not null default 1;
+		alter table public.round_robins add constraint round_robins_revision_safe_integer
+		check (revision between 1 and 9007199254740991) not valid;
+		alter table public.round_robins validate constraint round_robins_revision_safe_integer;
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("prepare disposable queue revision schema: %v", err)
+	}
 	if err := setup.Close(ctx); err != nil {
 		t.Fatalf("close migration connection: %v", err)
 	}

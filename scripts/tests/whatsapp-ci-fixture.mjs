@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFile, writeFile, mkdir, lstat, realpath, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, lstat, realpath, access, open } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -24,14 +24,54 @@ export async function command(file, args, options = {}) {
   pending.child.stdin?.end();
   return pending;
 }
-async function startPostgres(file, args) {
-  // pg_ctl's Windows child may retain inherited stdout even with -l. Waiting
-  // on process exit with closed stdio avoids waiting for the server's lifetime.
-  await new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd: repository, env: childEnvironment(), stdio: 'ignore', windowsHide: true });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(new Error('owned pg_ctl start failed: ' + code)));
-  });
+export const postgresServerOptions = `-h 127.0.0.1 -p ${CI_PORT} -c unix_socket_directories= -c fsync=on -c synchronous_commit=on`;
+async function logTail(file) {
+  let handle;
+  try {
+    handle = await open(file, 'r');
+    const size = (await handle.stat()).size, length = Math.min(size, 16 * 1024);
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    const tail = buffer.subarray(0, bytesRead).toString('utf8');
+    if (size <= length) return tail;
+    // A cut-through credential would not match its full redaction token.
+    // Discard the first partial line instead of publishing its fragment.
+    const newline = tail.indexOf('\n');
+    return '[earlier startup log truncated]\n' + (newline < 0 ? '[incomplete log line omitted]' : tail.slice(newline + 1));
+  } catch (error) { return `[startup log unavailable: ${error.code || 'unknown'}]`; }
+  finally { await handle?.close(); }
+}
+function redactStartupLog(value, secrets) {
+  let redacted = String(value);
+  for (const secret of secrets) if (secret) redacted = redacted.replaceAll(secret, '[synthetic-credential]');
+  return redacted.replace(/postgres(?:ql)?:\/\/[^\s"'<>]+/gi, '[redacted-database-url]')
+    .replace(/\b(?:PGPASSWORD|password|nonce)\s*[:=]\s*[^\s,;]+/gi, '[redacted-credential]')
+    .replace(/\b[a-f0-9]{64}\b/gi, '[redacted-token]');
+}
+export async function startPostgres(file, args, root, secrets = [], timeout = 45_000) {
+  fixtureRoot(root);
+  assert.ok(Number.isInteger(timeout) && timeout > 0 && timeout <= 45_000, 'owned startup must be bounded');
+  // Files, rather than pipes, keep a Windows server's inherited descriptors
+  // from making Node wait for the server's lifetime after pg_ctl has exited.
+  const pgctlLog = path.join(root, 'pgctl-startup.log');
+  const handle = await open(pgctlLog, 'wx', 0o600);
+  let failure;
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(file, args, { cwd: repository, env: childEnvironment(),
+        stdio: ['ignore', handle.fd, handle.fd], windowsHide: true, timeout });
+      child.once('error', reject);
+      child.once('exit', (code, signal) => code === 0 ? resolve()
+        : reject(new Error(`owned pg_ctl start failed: ${code ?? signal ?? 'unknown'}`)));
+    });
+  } catch (error) { failure = error; }
+  finally { await handle.close(); }
+  if (failure) {
+    const [pgctl, postgres] = await Promise.all([logTail(pgctlLog), logTail(path.join(root, 'postgres.log'))]);
+    const diagnostic = redactStartupLog(`pg_ctl:\n${pgctl}\npostgres:\n${postgres}`, secrets);
+    await writeFile(path.join(root, 'results', 'postgres-startup.log'), diagnostic, { flag: 'wx', mode: 0o600 });
+    throw new Error(`${redactStartupLog(failure.message, secrets)}\n${diagnostic}`);
+  }
 }
 async function safeRoot(root) {
   fixtureRoot(root);
@@ -89,7 +129,8 @@ export async function initialize(root, bin) {
   const plan = await preflight(root, bin); root = plan.root; bin = plan.bin;
   await mkdir(root); await mkdir(path.join(root, 'results'));
   try {
-  await writeFile(path.join(root, 'password.txt'), randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 });
+  const password = randomBytes(32).toString('hex');
+  await writeFile(path.join(root, 'password.txt'), password, { flag: 'wx', mode: 0o600 });
   await command(executable(bin, 'initdb'), ['-D', path.join(root, 'data'), '-U', 'postgres',
     '--auth-host=scram-sha-256', '--auth-local=scram-sha-256', '--encoding=UTF8', '--locale=C',
     ...(process.platform === 'win32' ? ['--no-sync'] : []), '--pwfile=' + path.join(root, 'password.txt')]);
@@ -103,8 +144,10 @@ export async function initialize(root, bin) {
       listenAddresses: '127.0.0.1', serverAddress: '127.0.0.1', fsync: 'on', synchronousCommit: 'on' } };
   validateManifest(runtime, root);
   await writeFile(path.join(root, 'runtime.json'), JSON.stringify(runtime, null, 2), { flag: 'wx', mode: 0o600 });
+  // All clients use loopback TCP. Distribution builds can default Unix sockets
+  // to a system directory unavailable to the unprivileged GitHub runner.
   await startPostgres(executable(bin, 'pg_ctl'), ['-D', runtime.actual.dataDirectory, '-l', path.join(root, 'postgres.log'),
-    '-o', `-h 127.0.0.1 -p ${CI_PORT} -c fsync=on -c synchronous_commit=on`, '-w', '-t', '30', 'start']);
+    '-o', postgresServerOptions, '-w', '-t', '30', 'start'], root, [password, runtime.nonce]);
   const admin = await connect(root, 'postgres');
   try {
     assertCluster(runtime, await actualCluster(admin, false), false);
