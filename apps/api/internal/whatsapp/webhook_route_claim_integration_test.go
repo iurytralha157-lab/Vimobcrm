@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -168,6 +167,7 @@ func TestWebhookRouteClaimFreshStatementSeesCommittedOtherLaneLease(t *testing.T
 }
 
 func TestWebhookRouteClaimConcurrentReplicasKeepCrossLaneDependency(t *testing.T) {
+	t.Run("short_mutex_contention", testWebhookRouteClaimShortMutexContention)
 	ctx, db := webhookDependencyDatabase(t)
 	for attempt := range 8 {
 		t.Run(fmt.Sprintf("race_%d", attempt), func(t *testing.T) {
@@ -178,41 +178,27 @@ func TestWebhookRouteClaimConcurrentReplicasKeepCrossLaneDependency(t *testing.T
 			child := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
 				key: f.suffix + "-child", providerID: "child", route: "jid:dependent", lane: evolutionWebhookLaneLive,
 				predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: time.Minute})
-			var wg sync.WaitGroup
-			start := make(chan struct{})
-			results := make(chan []pendingEvolutionWebhook, 4)
-			errors := make(chan error, 4)
-			for _, lane := range []string{evolutionWebhookLaneLive, evolutionWebhookLaneBacklog, evolutionWebhookLaneLive, evolutionWebhookLaneBacklog} {
-				wg.Add(1)
-				go func(lane string) {
-					defer wg.Done()
-					<-start
-					items, _, err := NewRepository(db, nil, StorageConfig{}).claimEvolutionWebhooksForLane(ctx, lane, 1, "")
-					results <- items
-					errors <- err
-				}(lane)
+			repo := NewRepository(db, nil, StorageConfig{})
+			items := concurrentWebhookRouteClaims(t, ctx, repo)
+			// try-lock/SKIP LOCKED make this round nonblocking. A live
+			// reservation with no eligible head can retain the session mutex
+			// while both backlog replicas try it, so all four may return empty.
+			// Every claim transaction has ended after the goroutines join: one
+			// further backlog pass must now make progress, without a retry loop.
+			next, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, "")
+			if err != nil {
+				t.Fatal(err)
 			}
-			close(start)
-			wg.Wait()
-			close(results)
-			close(errors)
-			for err := range errors {
-				if err != nil {
-					t.Fatal(err)
+			items = append(items, next...)
+			for _, item := range items {
+				if item.ID != root {
+					t.Fatalf("cross-lane worker bypassed exact dependency: %s", item.ID)
 				}
 			}
-			count := 0
-			for items := range results {
-				for _, item := range items {
-					if item.ID != root {
-						t.Fatalf("cross-lane worker bypassed exact dependency: %s", item.ID)
-					}
-					count++
-				}
+			if len(items) != 1 {
+				t.Fatalf("exact root got %d leases across concurrent and uncontended passes, want one", len(items))
 			}
-			if count != 1 {
-				t.Fatalf("exact root got %d leases, want one", count)
-			}
+			assertRouteClaimState(t, ctx, db.Pool(), root, "processing", 1)
 			assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
 		})
 	}
