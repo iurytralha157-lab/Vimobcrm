@@ -358,9 +358,9 @@ commit `cca3b0d6cd4186d1064720b81bd183303776c790`. As paginas de ambos os pacote
 confirmaram visibilidade privada, esse mesmo SHA e `linux/amd64`. Os digests do
 indice e da plataforma estao no artefato de preparacao de hospedagem. O draft
 do Portainer e os arquivos locais apontam para esse par aprovado. O registro
-GHCR continua pendente da credencial do usuario; os seis campos de runtime do
-draft seguem vazios, sendo quatro ja gerados no arquivo privado fora do Git e
-dois do Supabase ainda pendentes. Nenhum deploy foi feito. Ha uma checagem de
+GHCR continua pendente da credencial do usuario. As 19 linhas de variaveis do
+draft foram conferidas exatamente por `innerText`; apenas `STAGING_DATABASE_URL`
+permanece vazia. A acao de deploy nao foi clicada. Ha uma checagem de
 conectividade somente leitura preparada fora do Git, mas ela ainda nao foi
 executada com os valores do usuario. A evidencia adicionada depois do build
 nao altera os fontes das imagens; o SHA a implantar continua sendo `cca3b0d6`.
@@ -368,5 +368,12 @@ nao altera os fontes das imagens; o SHA a implantar continua sendo `cca3b0d6`.
 Na preparacao local de 24/10, os dois segredos de assinatura/recuperacao e o
 par VAPID foram gerados exclusivamente para homologacao, sem exibir valores.
 O arquivo de entrada permanece fora do Git com ACL restrita ao usuario Windows.
-Ainda faltam nele os dois valores do projeto novo (chave server-only e URL de
-conexao); a entrada de credenciais no Portainer sera concluida pelo usuario.
+Foi conferido um unico principal permitido, com heranca da ACL desabilitada.
+Esses quatro valores ja foram transferidos ao draft do Portainer. A chave
+`sb_secret` existente do projeto `lfkfuhvjvqgwyikzcfep` tambem foi copiada para
+o arquivo restrito e o draft, sem gerar ou rotacionar a chave. Falta apenas
+`STAGING_DATABASE_URL`; a entrada dessa conexao sera concluida pelo usuario.
+Um GET direto a `/rest/v1/organizations?select=id&limit=0` no projeto isolado,
+usando essa chave em `apikey`, retornou HTTP 200 e `[]` (zero linhas), sem
+mutacao. Isso confirma a aceitacao HTTP da chave nessa rota; nao valida uma
+conexao SQL nem a aceitacao funcional do CRM.
