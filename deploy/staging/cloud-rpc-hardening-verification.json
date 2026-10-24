@@ -1,0 +1,102 @@
+{
+  "kind": "vimob-cloud-staging-rpc-hardening-verification-v1",
+  "observedAtUTC": "2026-10-24T17:40:20.162Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "sentinelRunId": "f7196a56-e7bb-4221-b61d-f3a95245338c",
+  "definitionHashContext": {
+    "searchPath": "pg_catalog",
+    "deparser": "pg_catalog.pg_get_functiondef",
+    "digest": "pg_catalog.md5"
+  },
+  "application": {
+    "migrationName": "staging_restrict_reviewed_client_rpc_execution",
+    "applied": true,
+    "applySHA256": "e7de34357dc7555dc505f67e61c095e322d75637ef59a027b6b8859362d7193b",
+    "changedSignatures": 24,
+    "serviceRoleSignatures": 22,
+    "retiredSignatures": 2,
+    "retainedSignatures": 16,
+    "definitionsOwnersAndProconfigUnchanged": true,
+    "retainedRawAclsAssertedUnchanged": true,
+    "originalPhaseLedgerModified": false
+  },
+  "rehearsal": {
+    "package": "rpc-hardening-20261024-v3",
+    "previewSHA256": "cd712a9d09a0da6e75bf5a636dc6567b722c5817027b92fe6d2ef4ae2f77fb8e",
+    "passed": true,
+    "rolledBack": true,
+    "syntheticOrganizations": 2,
+    "actualInvocationDenialSignatures": 23,
+    "exactOidAclOnlySignature": "rebind_whatsapp_conversation_session(uuid,uuid)",
+    "limitation": "Direct two-argument rebind invocation is ambiguous because the three-argument overload has a default third argument. Its exact OID effective ACL was asserted denied per role/identity; it was not reported as an invoked 42501 denial.",
+    "priorAttempts": [
+      "V1 stopped before ACLs at search_path-dependent pg_get_functiondef hash; fixed stable pg_catalog hash context.",
+      "V2 rolled back on ambiguous legacy overload invocation; V3 uses exact-OID ACL check for this one signature and actual 42501 assertions for the other 23."
+    ],
+    "serviceWorkerTransitionsPassed": true,
+    "siblingTenantEffectUnchanged": true
+  },
+  "coreSmokeAfterApply": {
+    "sha256": "7d322dcc1e2ccbf0b6fb63799de358d15f4234d562dbb31c301eab07b5d6b6fc",
+    "result": "sql_smoke_passed_and_rolled_back",
+    "scope": "Auth trigger, session liveness/revocation, two-tenant RLS, activity ACLs and SQL Realtime policy/send"
+  },
+  "counts": {
+    "leads": 0,
+    "users": 0,
+    "phases": 35,
+    "objects": 0,
+    "cronPresent": false,
+    "vaultEntries": 0,
+    "organizations": 0,
+    "clientCallableDefiners": 52
+  },
+  "readyForGeneralTesting": false,
+  "pending": [
+    "PostgREST/Auth HTTP, private WebSocket, Storage upload/download and deployed CRM acceptance.",
+    "GraphQL/RLS advisor triage and public/retained RPC session-revocation tests."
+  ],
+  "productionAccessed": false,
+  "rpcRows": [
+    {"owner":"postgres","decision":"retain-guarded","signature":"admin_dashboard_feed(integer)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-guarded","signature":"admin_dashboard_pending_boards()","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-guarded","signature":"admin_list_organizations(text,text,text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"can_access_whatsapp_session(uuid,uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"can_manage_session(uuid)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"cancel_disabled_automation_runtime(integer)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"check_storage_org_access(text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"complete_automation_event(uuid,text)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"copy_default_dre_groups(uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"count_unique_sessions(uuid,timestamp with time zone,timestamp with time zone)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"enter_automation_delay_wait(uuid,uuid,uuid,text,text,timestamp with time zone)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"fail_automation_event(uuid,text,text,integer)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"find_duplicate_lead_by_phone(text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"finish_automation_external_effect(text,text,jsonb,text,text)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"generate_organization_api_key(text,uuid)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-guarded","signature":"get_my_org_id()","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"get_or_create_active_season(uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"get_session_owner(uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"get_sla_pending_leads()","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"get_sla_start_at(uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"get_user_organization_role(uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"has_whatsapp_session_ownership(uuid,uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"list_all_organizations_admin()","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-guarded","signature":"list_all_users_admin()","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"mark_overdue_financial_entries()","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"notify_financial_entries()","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-noop","signature":"notify_whatsapp_on_lead(uuid,uuid,text,text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retired","signature":"rebind_whatsapp_conversation_session(uuid,uuid,text)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":false,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retired","signature":"rebind_whatsapp_conversation_session(uuid,uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":false,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"recover_stuck_executions(integer)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"release_due_automation_delays(integer)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"release_execution_step_lock(uuid,text)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"reserve_automation_external_effect(uuid,uuid,text,text,text,text,jsonb)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-public","signature":"resolve_site_domain(text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"service","signature":"resume_automation_delay(uuid,uuid,text,timestamp with time zone,jsonb,uuid,uuid)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"start_automation_execution_from_event(uuid,uuid,uuid,uuid,uuid,text,jsonb)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"service","signature":"try_acquire_execution_step_lock(uuid,integer)","anonExecute":false,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":false},
+    {"owner":"postgres","decision":"retain-guarded","signature":"user_has_session_access(uuid)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-public","signature":"verify_billing_payment_receipt(uuid)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true},
+    {"owner":"postgres","decision":"retain-guarded","signature":"vimob_can_access_whatsapp_conversation(uuid,text)","anonExecute":true,"bodyMatches":true,"publicExecute":false,"serviceExecute":true,"postgresExecute":true,"securityDefiner":true,"authenticatedExecute":true}
+  ]
+}

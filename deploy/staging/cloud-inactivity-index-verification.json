@@ -1,0 +1,38 @@
+{
+  "kind": "vimob-cloud-staging-index-supplement-verification-v1",
+  "observedAtUTC": "2026-10-24T17:20:54.458Z",
+  "projectRef": "lfkfuhvjvqgwyikzcfep",
+  "script": "scripts/staging/stage-inactivity-index.sql",
+  "scriptSHA256": "53ace2193b4376007193c1de2b3e1ff77ac9e3aba6213839716f81ba5745dc88",
+  "reviewedFileSHA256BeforeEofCleanup": "4a17b7f5c85923d99f7c80daee6583df46538b5851cd1a98c7ea5c13bfefcdb0",
+  "eofCleanup": "Removed one surplus empty line after COMMIT before committing the source; no SQL statement or applied database state changed.",
+  "canonicalSource": "supabase/cutovers/20261013_prepare_simple_stage_inactivity_index.sql",
+  "canonicalSHA256": "10ec8ddce819172012980a8218803bd3b0c1f6093f983a5e937ac799ac15fb4e",
+  "adaptation": "Remove CONCURRENTLY and IF NOT EXISTS only from the DDL; require empty leads and absent index, with staging identity and 35 phase hash checks, lock SHARE and runtime assertion.",
+  "rehearsal": {
+    "passed": true,
+    "rolledBack": true,
+    "indexAbsentAfterRollback": true
+  },
+  "application": {
+    "migrationName": "staging_prepare_simple_stage_inactivity_index",
+    "applied": true,
+    "baselinePhaseHistoryModified": false
+  },
+  "verification": {
+    "index": {
+      "owner": "postgres",
+      "ready": true,
+      "valid": true,
+      "definition": "CREATE INDEX idx_leads_simple_stage_inactivity_scan ON public.leads USING btree (organization_id, stage_id, id) WHERE ((deal_status = 'open'::text) AND (operational_effects_suppressed = false))"
+    },
+    "leads": 0,
+    "users": 0,
+    "phases": 35,
+    "cronPresent": false,
+    "runtimeReady": true
+  },
+  "workersEnabled": false,
+  "productionAccessed": false,
+  "applicationHttpTested": false
+}

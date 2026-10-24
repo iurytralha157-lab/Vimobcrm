@@ -1,0 +1,84 @@
+{
+  "kind": "vimob-staging-portainer-target-v1",
+  "observedAtUTC": "2026-10-24T17:31:31.624Z",
+  "environment": "staging",
+  "managementUrl": "https://painel.vettercompany.com.br",
+  "endpoint": {
+    "id": 1,
+    "name": "primary",
+    "mode": "swarm"
+  },
+  "node": {
+    "id": "rrvjz85t3g4yc07h7tsubfd6m",
+    "name": "vetter-app-server",
+    "platform": "linux/amd64",
+    "observedOS": "linux x86_64",
+    "cpuCount": 4,
+    "memoryBytesApprox": 8130000000,
+    "dockerVersion": "28.3.3",
+    "publicIPv4": "5.161.108.48",
+    "state": "ready",
+    "availability": "active"
+  },
+  "proxy": {
+    "image": "traefik:v2.11.3",
+    "provider": "docker",
+    "swarmMode": true,
+    "exposedByDefault": false,
+    "network": "network_swarm_public",
+    "networkDriver": "overlay",
+    "networkScope": "swarm",
+    "networkAttachable": false,
+    "proxyNetworkCIDR": "10.0.1.0/24",
+    "httpsEntrypoint": "websecure",
+    "httpsPort": 443,
+    "certificateResolver": "letsencryptresolver",
+    "httpChallengeEntrypoint": "web",
+    "httpPort": 80
+  },
+  "capacitySnapshot": {
+    "scope": "Linux /proc and container overlay filesystem observed from existing Traefik exec console; one snapshot, not peak or sustained-capacity proof",
+    "memTotalKiB": 7936720,
+    "memAvailableKiB": 2661172,
+    "swapTotalKiB": 0,
+    "loadAverage": [
+      0.08,
+      0.09,
+      0.08
+    ],
+    "memoryPressureAvg10": 0,
+    "cpuPressureAvg10": 0.32,
+    "overlaySizeGiBApprox": 149.9,
+    "overlayFreeGiBApprox": 29.5,
+    "overlayUsedPercent": 79
+  },
+  "plannedStack": {
+    "name": "vimob-staging",
+    "replicas": {
+      "web": 1,
+      "api": 1
+    },
+    "memoryLimitMiB": {
+      "web": 512,
+      "api": 256
+    },
+    "cpuLimit": {
+      "web": 0.75,
+      "api": 0.5
+    },
+    "updateOrder": "stop-first",
+    "backgroundWorkersEnabled": false
+  },
+  "actions": {
+    "hostConfigurationChanged": false,
+    "existingServicesChanged": false,
+    "imagesBuilt": false,
+    "stagingStackDeployed": false,
+    "dnsChanged": false
+  },
+  "limits": [
+    "No server purchase or new Portainer installation.",
+    "Snapshot does not prove peak headroom; monitor actual startup and app memory before expanding tests.",
+    "Only the future staging template has resource limits; no live service was changed."
+  ]
+}

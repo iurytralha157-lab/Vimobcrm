@@ -5,9 +5,15 @@ services:
     image: ${STAGING_IMAGE_PREFIX:?Set the private staging image prefix}-web-staging:${STAGING_RELEASE_SHA:?Set the full staging commit SHA}
     deploy:
       replicas: 1
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
+        reservations:
+          memory: 128M
       update_config:
         parallelism: 1
-        order: start-first
+        order: stop-first
         failure_action: pause
         monitor: 2m
       restart_policy:
@@ -40,9 +46,15 @@ services:
     image: ${STAGING_IMAGE_PREFIX:?Set the private staging image prefix}-api-staging:${STAGING_RELEASE_SHA:?Set the full staging commit SHA}
     deploy:
       replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
       update_config:
         parallelism: 1
-        order: start-first
+        order: stop-first
         failure_action: pause
         monitor: 2m
       restart_policy:

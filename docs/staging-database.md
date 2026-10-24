@@ -1,6 +1,6 @@
 # Homologação do banco no Supabase Cloud
 
-Estado em 2026-10-23: **schema instalado e smoke SQL aprovado; liberação geral em HOLD**.
+Estado em 2026-10-24: **schema e suplementos instalados, smoke SQL aprovado; liberação geral em HOLD**.
 A aprovação do banco descrita aqui não certifica o CRM publicado.
 
 ## Projeto e evidências
@@ -11,6 +11,8 @@ A aprovação do banco descrita aqui não certifica o CRM publicado.
 - [Alvo público, sem credenciais](../deploy/staging/supabase-target.json).
 - [Verificação atual de schema, fases e smoke SQL](../deploy/staging/cloud-verification.json).
 - [Verificação dos buckets privados](../deploy/staging/cloud-storage-verification.json).
+- [Suplemento RPC aplicado e verificado](../deploy/staging/cloud-rpc-hardening-verification.json).
+- [Índice de inatividade aplicado e verificado](../deploy/staging/cloud-inactivity-index-verification.json).
 - [Catálogo inicial, anterior à instalação](../deploy/staging/cloud-catalog.json).
 - [Painel do projeto](https://supabase.com/dashboard/project/lfkfuhvjvqgwyikzcfep).
 
@@ -87,21 +89,23 @@ com sessão revogada; esses testes continuam pendentes.
 
 ## Segurança e liberação
 
-**Manter HOLD para acesso geral até concluir a triagem de ACLs e advisors.**
+**Manter HOLD para acesso geral até validar HTTP, RPCs preservadas e advisors.**
 Consultar a [revisão de segurança](staging-security-review.md) e o
 [readback das permissões efetivas de RPC](../deploy/staging/cloud-rpc-grants.json).
 O relatório contém quatro categorias WARN: visibilidade GraphQL para `anon`
 e `authenticated`, e execução de funções SECURITY DEFINER por esses dois papéis.
 Há também uma categoria INFO de RLS habilitada sem policy.
 
-O catálogo confirmou `EXECUTE` efetivo de `anon` e `authenticated` em cinco
-funções SECURITY DEFINER de owner `postgres`, incluindo
-`public.cancel_disabled_automation_runtime(integer)`, de escopo global, e
-`rebind_whatsapp_conversation_session(uuid,uuid)`. A variante
-`rebind_whatsapp_conversation_session(uuid,uuid,text)` não permite execução
-por esses dois papéis. Não houve execução funcional nem chamada HTTP dessas RPCs.
-Esses caminhos e os grants herdados exigem triagem específica. Preservar ACLs
-canônicas e aprovar o smoke não equivale a aprovar todas essas permissões.
+Em 24/10, o [suplemento RPC](staging-rpc-hardening.md) foi ensaiado com duas
+organizações e ROLLBACK, aplicado e conferido por SELECT: 24 assinaturas
+restringidas, incluindo as rotinas globais e os dois rebind legados; 16 RPCs
+preservadas. As definições e owners das 40 assinaturas permaneceram iguais;
+as SECDEF com EXECUTE para clientes passaram de 75 para 52 (36 triggers e 16 RPCs).
+O smoke SQL original passou novamente após a aplicação, com ROLLBACK. O índice
+de inatividade também foi aplicado como suplemento, válido e pronto, com workers
+desligados. Nenhum suplemento alterou o ledger original de 35 fases. Não houve
+chamada RPC por HTTP; guards das RPCs preservadas e avisos GraphQL/RLS ainda
+exigem validação específica. Aprovar o SQL não equivale à liberação geral.
 Não remover bloqueios ou enfraquecer testes apenas para obter aprovação.
 
 ## Ferramentas e próximos passos

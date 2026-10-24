@@ -18,10 +18,48 @@ nao criam recursos, nao aplicam SQL e nao fazem deploy automaticamente.
 - Nao houve publicacao de imagens, deploy da aplicacao, alteracao de DNS ou
   mudanca no host. Ainda nao ha uma instancia web/API de homologacao validada
   em execucao.
-- A hospedagem aguarda o login do usuario no Portainer. Antes de renderizar
-  uma stack para o alvo, conferir a configuracao do Caddy e do gateway
-  existentes, redes, arquitetura e capacidade livre do host. O template
-  Swarm/Traefik permanece uma alternativa nao validada para esse alvo.
+- Na observacao inicial de 23/10, o login no outro Portainer estava pendente
+  e o host com Caddy/gateway ainda precisava de inspecao. Esse registro
+  historico foi superado pela escolha e verificacao do Portainer antigo com
+  Swarm/Traefik em 24/10, descritas na secao seguinte.
+
+## Destino confirmado em 2026-10-24
+
+O usuario escolheu o Portainer antigo, e o acesso autenticado foi confirmado em
+`https://painel.vettercompany.com.br`, ambiente `primary` (endpoint 1).
+O node `vetter-app-server` esta ready/active, Linux x86_64, Docker 28.3.3,
+4 CPUs e aproximadamente 8.13 GB RAM. Este e o destino de homologacao selecionado.
+O outro painel com Caddy nao e o alvo deste deploy.
+
+O Traefik v2.11.3 usa provider Docker com SwarmMode, rede overlay
+`network_swarm_public` (`10.0.1.0/24`), entrypoint `websecure` e resolver
+`letsencryptresolver` com HTTP challenge em `web` (80). A rede nao e attachable;
+isso permite anexar servicos Swarm, sem exigir containers standalone nela.
+Os detalhes publicos estao em [portainer-target.json](../deploy/staging/portainer-target.json).
+
+A leitura de `/proc` pelo console do container Traefik mostrou cerca de 2.54 GiB
+MemAvailable, swap ausente e load 0.08/0.09/0.08 naquele instante. O overlay
+mostrou aproximadamente 29.5 GiB disponiveis (79% usado). E uma amostra,
+nao capacidade de pico ou prova de suporte a carga sustentada.
+
+O template futuro limita Web a 512 MiB/0.75 CPU e API a 256 MiB/0.5 CPU,
+com uma replica de cada. A atualizacao usa `stop-first`, com uma interrupcao
+curta aceitavel em homologacao, para limitar memoria transitoria. Conferir
+consumo e readiness reais antes de ampliar os testes. Nenhum limite, servico,
+proxy ou rede existente foi alterado no host; a stack ainda nao foi criada.
+
+O indice complementar de inatividade foi aplicado apenas ao Supabase novo e
+passou no gate SQL exato da API; ver
+[a evidencia](../deploy/staging/cloud-inactivity-index-verification.json).
+Continuam pendentes as imagens, os segredos de runtime, DNS/Auth e os testes
+HTTP completos. O suplemento de ACLs tambem foi aplicado e o smoke SQL original
+passou novamente; a evidencia e os limites estao em
+[cloud-rpc-hardening-verification.json](../deploy/staging/cloud-rpc-hardening-verification.json).
+As cinco Repository variables publicas de build foram cadastradas no GitHub
+privado para `homologacao.vimobcrm.com.br` e `api-homologacao.vimobcrm.com.br`.
+O preflight de build passou localmente. A suite de staging passou em 51 testes,
+o lint dos quatro novos scripts RPC passou e o lock das 258 migrations atuais
+foi verificado. Isso nao certifica imagens, runtime, DNS ou HTTP.
 
 ## Arquivos e limites iniciais
 
@@ -141,13 +179,10 @@ os valores `NEXT_PUBLIC_*` compilados no navegador.
 
 ## Escolha de host, proxy e stack
 
-Os templates nao comprovam a topologia do host. A inspecao inicial encontrou
-Caddy e gateway custom no ambiente existente, sem Traefik confirmado. Portanto,
-o YAML Swarm/Traefik abaixo e uma alternativa condicionada a um proxy Traefik
-disponivel, nao uma instrucao para aplica-lo no host de producao atual.
-O acesso ao Portainer continua na tela de login. A configuracao efetiva do
-Caddy, o caminho ate os containers e a capacidade livre ainda precisam ser
-conferidos antes de escolher ou renderizar o template de hospedagem.
+O destino selecionado e o Portainer antigo descrito acima, com Swarm e Traefik
+confirmados. Usar o template Swarm e os valores observados, conferindo-os de novo
+antes do deploy. O Compose/Caddy abaixo permanece uma alternativa para outro
+desenho; nao se aplica ao host selecionado. Nao alterar o proxy existente.
 
 Para **Docker Compose standalone e Caddy executado no host**, usar
 `deploy/staging/compose.yml`, projeto Compose `vimob-staging`, e portas livres
@@ -215,6 +250,14 @@ A rede interna recebe o prefixo da stack, sem compartilhar a rede interna
 `vimob`. O web chama `vimob-staging-api`, alias presente somente nessa rede
 interna; nao usa o alias generico `api` que outras stacks podem anunciar na
 rede compartilhada do proxy. Os routers e servicos Traefik tem nomes exclusivos.
+Depois de criar a overlay interna, conferir seu CIDR e membros exclusivos e
+incluir somente essa subnet em `STAGING_TRUSTED_PROXY_CIDRS`, junto da subnet
+efetiva do Traefik. O BFF Next envia `X-Forwarded-For` pela rede interna; confiar
+apenas na rede do Traefik concentra rate-limit e auditoria no IP do Web nesse
+caminho. Antes de aceitar signup/recovery, testar dois IPs de clientes e um
+prefixo `X-Forwarded-For` forjado. Nao confiar em outra overlay compartilhada
+apenas porque ela existe no host; trocar o BFF para HTTPS tambem nao prova a
+preservacao do IP entre dois proxies.
 O YAML atende uma stack de homologacao por proxy; para mais ambientes
 simultaneos, dar nomes distintos tambem aos routers/servicos.
 

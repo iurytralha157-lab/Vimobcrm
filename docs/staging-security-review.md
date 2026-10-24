@@ -3,6 +3,25 @@
 Data: 2026-10-23. Checkout: `D:\Vimob\workspaces\vimob-crm`, branch
 `homologacao`, candidata `57ea4e5f883094bcbbbccd2267a2c926c71c9a44`.
 
+**Atualizacao de 24/10: suplemento de ACL aplicado e verificado; HOLD geral
+mantido para HTTP, RPCs preservadas e advisors.** A
+[matriz das 39 RPCs](staging-rpc-hardening.md) classificou os consumidores e
+orientou 24 restricoes: 22 assinaturas para service_role/postgres e os dois
+rebind aposentados somente para postgres. A
+[evidencia duravel](../deploy/staging/cloud-rpc-hardening-verification.json)
+confirma 40 definicoes/owners/proconfig inalterados, contratos das 24 ACLs e
+ACLs das 16 RPCs preservadas. As client-callable SECDEF passaram de 75 para
+52 (36 triggers e 16 RPCs). Preview v3 com duas organizacoes e smoke SQL
+original passaram com ROLLBACK; nenhuma fixture permaneceu. O ledger segue
+com 35 fases. Nao houve chamada RPC HTTP nem acesso a producao.
+
+As secoes abaixo preservam a triagem historica de 23/10 e os grants anteriores
+ao suplemento; nao descrevem as permissoes atuais das 24 assinaturas corrigidas.
+O ensaio v1 abortou antes das ACLs por contexto de deparser; v2 reverteu por
+overload rebind ambiguo. V3 passou: essa assinatura foi negada por ACL efetiva
+do OID exato, enquanto as outras 23 exigiram 42501 real. A limitacao de chamada
+direta do rebind de dois argumentos continua explicita na evidencia.
+
 ## Decisao
 
 **HOLD para acesso geral ao ambiente de homologacao antes da triagem dirigida
