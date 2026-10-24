@@ -119,10 +119,12 @@ func TestRoleDeactivationRevalidatesCachedAccessAcrossOrganizations(t *testing.T
 	assertAccess(orgB, true)
 }
 
+// Match the membership epoch columns required by both fresh and cached tenant
+// resolution (20261009030225_membership_access_generation.sql).
 const tenantRoleTestSchema = `
 create table public.users (id uuid primary key, role text not null, organization_id uuid, is_active boolean not null default true);
 create table public.organizations (id uuid primary key, name text not null, logo_url text, is_active boolean not null default true, subscription_status text default 'active', subscription_type text default 'free', trial_ends_at timestamptz, billing_grace_until timestamptz);
-create table public.organization_members (organization_id uuid not null, user_id uuid not null, role text not null default 'user', is_active boolean not null default true, deleted_at timestamptz, primary key (organization_id, user_id));
+create table public.organization_members (organization_id uuid not null, user_id uuid not null, role text not null default 'user', is_active boolean not null default true, deleted_at timestamptz, membership_generation bigint not null default 1, primary key (organization_id, user_id));
 create table public.organization_modules (organization_id uuid not null, module_name text not null, is_enabled boolean not null default true);
 create table public.organization_roles (id uuid primary key, organization_id uuid not null, is_active boolean not null default true);
 create table public.available_permissions (id integer primary key, key text not null);
@@ -130,7 +132,7 @@ create table public.organization_role_permissions (organization_id uuid not null
 create table public.user_organization_roles (organization_id uuid not null, user_id uuid not null, role_id uuid not null, is_active boolean not null default true);
 create table public.user_permission_overrides (organization_id uuid not null, user_id uuid not null, permission_key text not null, allowed boolean not null);
 create table public.teams (id uuid primary key, organization_id uuid not null, is_active boolean not null default true);
-create table public.team_members (team_id uuid not null, organization_id uuid not null, user_id uuid not null, is_active boolean not null default true, is_leader boolean not null default false);
+create table public.team_members (team_id uuid not null, organization_id uuid not null, user_id uuid not null, membership_generation bigint not null default 1, is_active boolean not null default true, is_leader boolean not null default false);
 create table public.pipelines (id uuid primary key, organization_id uuid not null, is_active boolean not null default true);
 create table public.team_pipelines (team_id uuid not null, organization_id uuid not null, pipeline_id uuid not null);
 `

@@ -78,6 +78,7 @@ func TestRoleLifecycleProtectsSystemRolesAndTenantScope(t *testing.T) {
 		query string
 		args  []any
 	}{
+		{`insert into public.users (id, organization_id, name, email) values ($1::uuid, $4::uuid, 'Synthetic member', 'role-member@example.invalid'), ($2::uuid, $4::uuid, 'Synthetic admin', 'role-admin@example.invalid'), ($3::uuid, $4::uuid, 'Synthetic target', 'role-target@example.invalid')`, []any{memberID, adminTargetID, userTargetID, orgA}},
 		{`insert into public.organization_roles (id, organization_id, name, is_system) values ($1::uuid, $4::uuid, 'System', true), ($2::uuid, $4::uuid, 'Custom', false), ($3::uuid, $5::uuid, 'Other', false)`, []any{systemRole, customRole, otherRole, orgA, orgB}},
 		{`insert into public.organization_members (organization_id, user_id) values ($1::uuid, $2::uuid)`, []any{orgA, memberID}},
 		{`insert into public.organization_members (organization_id, user_id, role) values ($1::uuid, $2::uuid, 'admin'), ($1::uuid, $3::uuid, 'user')`, []any{orgA, adminTargetID, userTargetID}},
@@ -168,8 +169,11 @@ func TestRoleLifecycleProtectsSystemRolesAndTenantScope(t *testing.T) {
 }
 
 const roleLifecycleTestSchema = `
+create table public.users (id uuid primary key, organization_id uuid, name text, email text, avatar_url text, is_active boolean not null default true);
 create table public.organization_roles (id uuid primary key, organization_id uuid not null, name text not null, description text, color text not null default '#6B7280', is_system boolean not null default false, is_active boolean not null default true, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
-create table public.organization_members (organization_id uuid not null, user_id uuid not null, role text not null default 'user', is_active boolean not null default true, deleted_at timestamptz);
+create table public.organization_members (organization_id uuid not null, user_id uuid not null, role text not null default 'user', is_active boolean not null default true, deleted_at timestamptz, membership_generation bigint not null default 1);
+create table public.teams (id uuid primary key, organization_id uuid not null, is_active boolean not null default true);
+create table public.team_members (team_id uuid not null, organization_id uuid not null, user_id uuid not null, is_active boolean not null default true, is_leader boolean not null default false, membership_generation bigint not null default 1);
 create table public.user_organization_roles (organization_id uuid not null, user_id uuid not null, organization_role_id uuid, role_id uuid not null, is_active boolean not null default true, updated_at timestamptz not null default now());
 create unique index user_organization_roles_organization_user_uidx on public.user_organization_roles (organization_id, user_id);
 create table public.organization_role_permissions (id uuid primary key default gen_random_uuid(), organization_id uuid not null, role_id uuid not null, organization_role_id uuid not null, permission_key text not null, permission_id integer not null);
