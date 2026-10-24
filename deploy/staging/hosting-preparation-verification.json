@@ -1,6 +1,6 @@
 {
   "kind": "vimob-staging-hosting-preparation-v1",
-  "observedAtUTC": "2026-10-24T18:48:26Z",
+  "observedAtUTC": "2026-10-24T19:03:00Z",
   "projectRef": "lfkfuhvjvqgwyikzcfep",
   "repository": "iurytralha157-lab/vimob-crm-homologacao",
   "repositoryVisibility": "private",
@@ -52,7 +52,7 @@
         "Owned WhatsApp PostgreSQL startup failed before contracts; original server log unavailable"
       ]
     },
-    "lastAttempt": {
+    "secondAttempt": {
       "runId": 40120738903,
       "commit": "c94eae55cb26b307f61f6c7a72f81802fb660fb7",
       "status": "failed",
@@ -66,6 +66,29 @@
         "OpenAPI test imported an undeclared Ajv dependency",
         "Tenant role fixture omitted membership_generation",
         "One concurrent WhatsApp route claim test expected immediate progress under a nonblocking mutex"
+      ]
+    },
+    "lastAttempt": {
+      "runId": 40122446057,
+      "commit": "935fef6da542b7a0eb71f6fa72befc53a0b61816",
+      "status": "failed",
+      "buildJob": "skipped",
+      "invitationPostgres": "passed",
+      "membershipPostgres": "passed",
+      "whatsAppPostgresAndMobile": {
+        "status": "passed",
+        "nodeTests": 178,
+        "requiredGoTopLevel": 52,
+        "requiredGoIncludingSubtests": 122,
+        "sqlFiles": 7,
+        "maintenanceTests": 15,
+        "runtimeTests": 444,
+        "artifactId": 12572141646,
+        "artifactSha256": "bddd7ee1f7728e85e8671643ead7fef7782f3a607403e36116ce22dbaa75b1d4"
+      },
+      "staticGatesBeforeFinalGo": "passed including typecheck, lint, validation, OpenAPI, migration integrity and Edge boundaries",
+      "failures": [
+        "Signed-media cache test expected 840 remaining seconds under the real clock; Linux correctly truncated elapsed fractions to 839"
       ]
     }
   },
@@ -85,6 +108,16 @@
     "migrationIntegrity": { "canonicalMigrations": 258, "status": "passed" },
     "edgeManifest": { "live": 41, "tombstones": 26, "retired": 15, "status": "passed" },
     "retiredEdgeBoundaries": { "tests": 20, "passed": 20, "skipped": 0 },
+    "localWhatsAppRuntime": { "tests": 444, "passed": 444, "skipped": 0 },
+    "signedMediaClockTest": {
+      "focusedRepetitionsPassed": 1000,
+      "staticWhatsAppPassed": 606,
+      "optionalDatabaseIntegrationsSkippedInStaticRun": 136,
+      "functionalCodeChanged": false,
+      "safeTtlSeconds": 840,
+      "signedTtlSeconds": 900,
+      "virtualClockAndInMemoryTransport": true
+    },
     "roleLifecycleWindowsPostgres": "passed including guarded database cleanup",
     "tenantRoleWindowsPostgres": "all assertions completed; full command failed on existing DROP DATABASE cleanup timeout",
     "routeClaimWindowsPostgres": {

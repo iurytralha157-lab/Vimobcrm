@@ -337,6 +337,22 @@ todos os 52 testes Go obrigatorios da gate (122 incluindo subtestes), sem pulos.
 O readback retornou zero fixtures, locks e transacoes abertas; o cluster foi
 parado e a porta fechada. A execucao completa no Ubuntu continua obrigatoria.
 
+A terceira execucao (`40122446057`, commit `935fef6d`) aprovou no Ubuntu os
+checks de convite, membership e a gate completa do WhatsApp: 178 contratos Node,
+52 testes Go obrigatorios (122 com subtestes), sete arquivos SQL, 15 checks de
+manutencao e 444 testes de interface. Typecheck, lint, inventarios, migracoes,
+OpenAPI e demais contratos estaticos tambem passaram. A ultima suite Go parou
+somente no teste de TTL do cache de midia: apos a assinatura, qualquer fracao
+de segundo consumida e truncada de 840 para 839. A execucao local no Windows
+tinha passado; nao foi demonstrado defeito no prazo funcional.
+O ensaio agora usa `testing/synctest` do Go 1.25 e transporte HTTP em memoria.
+Exige TTL seguro e expiry exatos de 840s, assinatura de 900s, uma requisicao e
+negacao do tenant alheio. Passaram 1.000 repeticoes focadas e 606 testes
+estaticos do WhatsApp; 136 integracoes opcionais ficam puladas nesse comando,
+separadamente dos 52 testes obrigatorios aprovados na gate PostgreSQL.
+Nenhum codigo funcional foi alterado por essa correcao. As imagens continuaram
+sem publicar; a candidata corrigida precisa de nova execucao completa.
+
 Na preparacao local de 24/10, os dois segredos de assinatura/recuperacao e o
 par VAPID foram gerados exclusivamente para homologacao, sem exibir valores.
 O arquivo de entrada permanece fora do Git com ACL restrita ao usuario Windows.
