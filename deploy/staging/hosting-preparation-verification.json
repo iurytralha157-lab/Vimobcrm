@@ -1,6 +1,6 @@
 {
   "kind": "vimob-staging-hosting-preparation-v1",
-  "observedAtUTC": "2026-10-24T19:03:00Z",
+  "observedAtUTC": "2026-10-24T19:23:00Z",
   "projectRef": "lfkfuhvjvqgwyikzcfep",
   "repository": "iurytralha157-lab/vimob-crm-homologacao",
   "repositoryVisibility": "private",
@@ -68,7 +68,7 @@
         "One concurrent WhatsApp route claim test expected immediate progress under a nonblocking mutex"
       ]
     },
-    "lastAttempt": {
+    "thirdAttempt": {
       "runId": 40122446057,
       "commit": "935fef6da542b7a0eb71f6fa72befc53a0b61816",
       "status": "failed",
@@ -90,6 +90,39 @@
       "failures": [
         "Signed-media cache test expected 840 remaining seconds under the real clock; Linux correctly truncated elapsed fractions to 839"
       ]
+    },
+    "lastAttempt": {
+      "runId": 40123578387,
+      "commit": "cca3b0d6cd4186d1064720b81bd183303776c790",
+      "status": "passed",
+      "allFiveReleaseGates": "passed",
+      "buildJob": "success",
+      "platform": "linux/amd64",
+      "whatsAppProof": {
+        "artifactId": 12572238433,
+        "artifactSha256": "a31f137333ba4fbcf64169e95ac8d97f0830f26a45fbbe08f4763092734019c5",
+        "syntheticOnly": true,
+        "nodeTests": 178,
+        "requiredGoTopLevel": 52,
+        "requiredGoIncludingSubtests": 122,
+        "sqlFiles": 7,
+        "maintenanceTests": 15,
+        "runtimeTests": 444,
+        "ownedClusterStopped": true
+      },
+      "api": {
+        "image": "ghcr.io/iurytralha157-lab/vimob-crm-homologacao-api-staging:cca3b0d6cd4186d1064720b81bd183303776c790",
+        "indexDigest": "sha256:6a5bcbb34233c41b8053fed8a51139e357828a02e8cc00ebc003837a5a3415f9",
+        "amd64Digest": "sha256:7667a3938e19723469417de24ca1cca5813800ae44490327730acfca3714e16a",
+        "visibilityReadBack": "private"
+      },
+      "web": {
+        "image": "ghcr.io/iurytralha157-lab/vimob-crm-homologacao-web-staging:cca3b0d6cd4186d1064720b81bd183303776c790",
+        "indexDigest": "sha256:ce5999d5e25b9a91158c460a5f04e97ea26f83f97dee6c389171c5b4de16a9c6",
+        "amd64Digest": "sha256:82370b604cb0c4ed5f8abdfe1be83798d3381c86e0334d2e587e865e5ce590bd",
+        "visibilityReadBack": "private"
+      },
+      "deploymentPerformedByWorkflow": false
     }
   },
   "candidateRepairValidation": {
@@ -142,13 +175,18 @@
   "runtime": {
     "stackDraftPrepared": true,
     "stackDeployed": false,
-    "imagesPublished": false,
+    "imagesPublished": true,
+    "approvedSourceCommit": "cca3b0d6cd4186d1064720b81bd183303776c790",
+    "publicPortainerDraftReadBackExact": true,
+    "portainerRuntimeFieldsStillBlank": 6,
     "registryAuthenticationPendingUser": true,
     "dedicatedRuntimeValuesGeneratedLocally": 4,
     "runtimeCredentialFileOutsideGit": true,
     "runtimeCredentialFileRestrictedToCurrentWindowsUser": true,
     "requiredSupabaseValuesPending": 2,
     "runtimeValuesEnteredInPortainer": false,
+    "readOnlyCredentialConnectivityCheckPreparedOutsideGit": true,
+    "credentialConnectivityCheckExecuted": false,
     "internalProxyCidrVerificationPending": true,
     "productionServicesChanged": false
   },

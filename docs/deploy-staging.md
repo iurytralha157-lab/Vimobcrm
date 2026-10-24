@@ -353,6 +353,18 @@ separadamente dos 52 testes obrigatorios aprovados na gate PostgreSQL.
 Nenhum codigo funcional foi alterado por essa correcao. As imagens continuaram
 sem publicar; a candidata corrigida precisa de nova execucao completa.
 
+A quarta execucao (`40123578387`) passou nos cinco gates e publicou o par do
+commit `cca3b0d6cd4186d1064720b81bd183303776c790`. As paginas de ambos os pacotes
+confirmaram visibilidade privada, esse mesmo SHA e `linux/amd64`. Os digests do
+indice e da plataforma estao no artefato de preparacao de hospedagem. O draft
+do Portainer e os arquivos locais apontam para esse par aprovado. O registro
+GHCR continua pendente da credencial do usuario; os seis campos de runtime do
+draft seguem vazios, sendo quatro ja gerados no arquivo privado fora do Git e
+dois do Supabase ainda pendentes. Nenhum deploy foi feito. Ha uma checagem de
+conectividade somente leitura preparada fora do Git, mas ela ainda nao foi
+executada com os valores do usuario. A evidencia adicionada depois do build
+nao altera os fontes das imagens; o SHA a implantar continua sendo `cca3b0d6`.
+
 Na preparacao local de 24/10, os dois segredos de assinatura/recuperacao e o
 par VAPID foram gerados exclusivamente para homologacao, sem exibir valores.
 O arquivo de entrada permanece fora do Git com ACL restrita ao usuario Windows.
