@@ -1,0 +1,21 @@
+name: Prepare hotfix Web export and column reorder ARM64
+
+on:
+  push:
+    branches:
+      - hotfix/export-reorder-20261027
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare-web:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/hotfix/export-reorder-20261027'
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    uses: ./.github/workflows/hotfix-web-export-reorder-20261027.yml
+    secrets:
+      PUBLIC_BUILD_ANON: ${{ secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}

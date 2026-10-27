@@ -1,9 +1,11 @@
 name: Hotfix Web export and column reorder ARM64
 
 on:
-  push:
-    branches:
-      - hotfix/export-reorder-20261027
+  workflow_call:
+    secrets:
+      PUBLIC_BUILD_ANON:
+        description: Public build key passed as a named secret for runner log masking
+        required: true
 
 permissions:
   contents: read
@@ -17,14 +19,15 @@ env:
   WEB_IMAGE: ghcr.io/iurytralha157-lab/vimob-crm-web
 
 jobs:
+  # Reusable workflows retain the caller's push event and branch in github context.
   source-and-config:
     name: Verify narrow source and production public build hashes
     if: github.event_name == 'push' && github.ref == 'refs/heads/hotfix/export-reorder-20261027'
     runs-on: ubuntu-24.04-arm
     env:
       WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
-      # Deliberately secret-only: a vars fallback would expose the key in runner env logs.
-      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      # The caller resolves configuration; the named secret is masked before job logs.
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_BUILD_ANON }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
     steps:
@@ -56,6 +59,7 @@ jobs:
           if (head !== process.env.GITHUB_SHA) throw new Error('Checkout does not match the triggering SHA.');
           git('merge-base', '--is-ancestor', base, head);
           const allowed = [
+            ".github/workflows/hotfix-web-export-reorder-20261027-entry.yml",
             ".github/workflows/hotfix-web-export-reorder-20261027.yml",
             "components/features/contacts/ExportContactsDialog.tsx",
             "components/features/contacts/README.md",
@@ -71,7 +75,7 @@ jobs:
             "lib/export-contacts.ts"
           ].sort();
           const changed = git('diff', '--no-renames', '--name-only', '-z', base, head).toString().split('\0').filter(Boolean).sort();
-          if (JSON.stringify(changed) !== JSON.stringify(allowed)) throw new Error('Source must be exactly the 13 reviewed paths over the production Web base.');
+          if (JSON.stringify(changed) !== JSON.stringify(allowed)) throw new Error('Source must be exactly the 14 reviewed paths over the production Web base.');
           git('diff', '--check', base, head);
           const sourceHashes = {};
           for (const file of changed) {
@@ -83,7 +87,7 @@ jobs:
           const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
           fs.mkdirSync(directory, { recursive: true });
           fs.writeFileSync(path.join(directory, 'source-scope.json'), JSON.stringify(proof, null, 2));
-          console.log('Verified exactly 13 reviewed paths over the production Web base.');
+          console.log('Verified exactly 14 reviewed paths over the production Web base.');
           NODE
 
       - name: Verify public build arguments against the production receipt
@@ -102,7 +106,7 @@ jobs:
           const verified = {};
           for (const [name, expectedHash] of Object.entries(expected)) {
             const value = process.env[name];
-            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (configure the existing GitHub Secret; vars fallback is intentionally disabled)' : ''));
+            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (required named workflow secret PUBLIC_BUILD_ANON)' : ''));
             const hash = createHash('sha256').update(value, 'utf8').digest('hex');
             if (hash !== expectedHash) throw new Error('Production receipt hash mismatch: ' + name);
             verified[name] = hash;
@@ -223,8 +227,8 @@ jobs:
       architecture: ${{ steps.proof.outputs.architecture }}
     env:
       WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
-      # Deliberately secret-only: a vars fallback would expose the key in runner env logs.
-      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      # The caller resolves configuration; the named secret is masked before job logs.
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_BUILD_ANON }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -262,7 +266,7 @@ jobs:
           const verified = {};
           for (const [name, expectedHash] of Object.entries(expected)) {
             const value = process.env[name];
-            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (configure the existing GitHub Secret; vars fallback is intentionally disabled)' : ''));
+            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (required named workflow secret PUBLIC_BUILD_ANON)' : ''));
             const hash = createHash('sha256').update(value, 'utf8').digest('hex');
             if (hash !== expectedHash) throw new Error('Production receipt hash mismatch: ' + name);
             verified[name] = hash;
