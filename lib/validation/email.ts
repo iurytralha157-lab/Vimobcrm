@@ -51,8 +51,8 @@ export const paymentConfirmedEmailPayloadSchema = z.object({
 const emailBaseSendRequestSchema = z.object({
   to: z.union([z.string().trim().email(), emailRecipientSchema]),
   subject: z.string().trim().min(1).max(180),
-  organization_id: z.string().uuid().optional(),
-  user_id: z.string().uuid().optional(),
+  organization_id: z.string().regex(z.regexes.guid, "Invalid uuid").optional(),
+  user_id: z.string().regex(z.regexes.guid, "Invalid uuid").optional(),
   from: z.string().trim().min(3).max(180).optional(),
   reply_to: z.string().trim().email().optional(),
   idempotency_key: z.string().trim().min(1).max(256).optional(),

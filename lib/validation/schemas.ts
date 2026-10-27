@@ -92,7 +92,7 @@ export const metaCreativeAssetSchema = z.object({
   creative_video_url: z.string().url().optional().nullable(),
   creative_permalink_url: z.string().url().optional().nullable(),
   instagram_permalink_url: z.string().url().optional().nullable(),
-  raw_payload: z.record(z.unknown()).default({}),
+  raw_payload: z.record(z.string(), z.unknown()).default({}),
 })
 
 export type MetaCreativeAssetInput = z.infer<typeof metaCreativeAssetSchema>

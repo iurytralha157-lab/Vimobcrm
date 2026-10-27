@@ -163,7 +163,7 @@ export const propertyDevelopmentSchema = z.object({
   amenities: z.array(z.string()),
   published_on_site: z.boolean(),
   responsible_user_id: nullableUUIDSchema.optional(),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -203,7 +203,7 @@ export const propertyDevelopmentPhaseSchema = z.object({
   construction_started_at: nullableDateSchema.optional(),
   expected_delivery_date: nullableDateSchema.optional(),
   delivered_at: nullableDateSchema.optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -220,7 +220,7 @@ export const propertyDevelopmentBuildingSchema = z.object({
   sort_order: z.number().int().min(0),
   status: propertyDevelopmentBuildingStatusSchema,
 	unit_count: z.number().int().min(0).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -244,7 +244,7 @@ export const propertyDevelopmentFloorPlanSchema = z.object({
   description: z.string().nullable().optional(),
   image_url: z.string().nullable().optional(),
 	unit_count: z.number().int().min(0).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -281,7 +281,7 @@ export const propertyDevelopmentUnitSchema = z.object({
   draft_price_table_id: nullableUUIDSchema.optional(),
   draft_price_table_name: z.string().nullable().optional(),
   draft_price_table_updated_at: nullableTimestampSchema.optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -329,7 +329,7 @@ export const propertyDevelopmentPriceTableSchema = z.object({
   priced_unit_count: z.number().int().min(0),
   minimum_list_price: z.number().finite().positive().nullable().optional(),
   maximum_list_price: z.number().finite().positive().nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).passthrough()
@@ -340,9 +340,9 @@ export const propertyDevelopmentUnitEventSchema = z.object({
   development_id: uuidSchema,
   unit_id: uuidSchema,
   event_type: propertyDevelopmentUnitEventTypeSchema,
-  before_data: z.record(z.unknown()).nullable().optional(),
-  after_data: z.record(z.unknown()).nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  before_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  after_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_by: nullableUUIDSchema.optional(),
   created_at: timestampSchema,
 }).passthrough()
@@ -424,7 +424,7 @@ export const propertyDevelopmentCreateInputSchema = z.object({
   main_image_url: nullableHTTPURL(2_000).optional(),
   published_on_site: z.boolean().optional(),
   responsible_user_id: uuidSchema.optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((value, context) => {
 	if (value.published_on_site) {
 		context.addIssue({
@@ -450,7 +450,7 @@ export const propertyDevelopmentPhaseCreateInputSchema = z.object({
   launch_date: nullableDateSchema.optional(),
   construction_started_at: nullableDateSchema.optional(),
   expected_delivery_date: nullableDateSchema.optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((value, context) => {
   if (value.launch_date && value.expected_delivery_date && value.expected_delivery_date < value.launch_date) {
     context.addIssue({
@@ -469,7 +469,7 @@ export const propertyDevelopmentBuildingCreateInputSchema = z.object({
   floor_count: nullableCount.optional(),
   sort_order: z.number().int().min(0).default(0),
   status: propertyDevelopmentBuildingStatusSchema.default('planned'),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 }).strict()
 
 export const propertyDevelopmentFloorPlanCreateInputSchema = z.object({
@@ -487,7 +487,7 @@ export const propertyDevelopmentFloorPlanCreateInputSchema = z.object({
   garden_area: nullableArea.optional(),
   description: nullableString(5_000).optional(),
   image_url: nullableHTTPURL(2_000).optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((value, context) => {
   if (value.bedrooms != null && value.suites != null && value.suites > value.bedrooms) {
     context.addIssue({
@@ -516,7 +516,7 @@ export const propertyDevelopmentBulkUnitsInputSchema = z.object({
   number_padding: z.number().int().min(0).max(8),
   initial_list_price: z.number().finite().positive().max(1_000_000_000_000),
   price_table_name: nullableString(160).optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 }).strict()
 
 export const propertyDevelopmentUnitPatchInputSchema = z.object({
@@ -573,7 +573,7 @@ export const propertyDevelopmentReservationExtendInputSchema = z.object({
 export const propertyDevelopmentUnitPriceInputSchema = z.object({
   list_price: z.number().finite().positive().max(1_000_000_000_000),
   minimum_price: z.number().finite().positive().max(1_000_000_000_000).nullable().optional(),
-  payment_terms: z.record(z.unknown()).nullable().optional(),
+  payment_terms: z.record(z.string(), z.unknown()).nullable().optional(),
   expected_price_table_id: nullableUUIDSchema.optional(),
   expected_price_table_updated_at: nullableInputTimestampSchema.optional(),
 }).strict().superRefine((value, context) => {

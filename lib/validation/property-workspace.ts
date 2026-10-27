@@ -138,14 +138,14 @@ export const propertyWorkspacePropertySchema = z
     codigo_agua: nullableStringSchema.optional(),
     observacoes_documentacao: nullableStringSchema.optional(),
     documents: z
-      .union([z.array(z.unknown()), z.record(z.unknown())])
+      .union([z.array(z.unknown()), z.record(z.string(), z.unknown())])
       .nullable()
       .optional(),
     arquivos: z
-      .union([z.array(z.unknown()), z.record(z.unknown())])
+      .union([z.array(z.unknown()), z.record(z.string(), z.unknown())])
       .nullable()
       .optional(),
-    metadata: z.record(z.unknown()).nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).nullable().optional(),
     valor_venda_avaliado: nullableNumberSchema.optional(),
     valor_locacao_avaliado: nullableNumberSchema.optional(),
     ocupacao: nullableStringSchema.optional(),
@@ -253,12 +253,12 @@ export const propertyWorkspaceOfferSchema = z
     price: z.number().finite().min(0).nullable(),
     currency: z.string().regex(/^[A-Z]{3}$/),
     price_period: propertyPricePeriodSchema.nullable(),
-    terms: z.record(z.unknown()),
+    terms: z.record(z.string(), z.unknown()),
     available_from: nullableDateSchema,
     available_until: nullableDateSchema,
     published_at: nullableTimestampSchema,
     completed_at: nullableTimestampSchema,
-    metadata: z.record(z.unknown()),
+    metadata: z.record(z.string(), z.unknown()),
     created_at: workspaceTimestampSchema,
     updated_at: workspaceTimestampSchema,
   })
@@ -322,7 +322,7 @@ export const propertyWorkspaceAssetSchema = z
     is_primary: z.boolean(),
     document_category: z.string().nullable(),
     expires_at: nullableDateSchema,
-    metadata: z.record(z.unknown()),
+    metadata: z.record(z.string(), z.unknown()),
     created_at: workspaceTimestampSchema,
     updated_at: workspaceTimestampSchema,
   })
@@ -425,7 +425,7 @@ export const propertyAssetCreateInputSchema = z
     is_primary: z.boolean().default(false),
     document_category: nullableAssetField(120),
     expires_at: nullableDateSchema.optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, context) => {
@@ -470,7 +470,7 @@ export const propertyAssetUpdateInputSchema = z
     file_size_bytes: z.number().int().min(0).nullable().optional(),
     document_category: nullableAssetField(120),
     expires_at: nullableDateSchema.optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
     expected_updated_at: workspaceTimestampSchema,
   })
   .strict()
@@ -808,10 +808,10 @@ export const propertyOfferUpsertInputSchema = z
       .regex(/^[A-Z]{3}$/)
       .default("BRL"),
     price_period: propertyPricePeriodSchema.nullable().optional(),
-    terms: z.record(z.unknown()).default({}),
+    terms: z.record(z.string(), z.unknown()).default({}),
     available_from: nullableDateSchema.optional(),
     available_until: nullableDateSchema.optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
     expected_updated_at: workspaceTimestampSchema.optional(),
   })
   .strict()
@@ -842,7 +842,7 @@ export const propertyKeyCreateInputSchema = z
     key_code: nullableTrimmedString(120).optional(),
     current_location: nullableTrimmedString(240).optional(),
     notes: nullableTrimmedString(1_200).optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 
@@ -855,7 +855,7 @@ export const propertyKeyMovementInputSchema = z
     to_location: nullableTrimmedString(240).optional(),
     expected_return_at: nullableTimestampSchema.optional(),
     notes: nullableTrimmedString(1_200).optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, context) => {

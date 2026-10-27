@@ -54,9 +54,7 @@ export const publicSiteContactSchema = z
       .max(1_000, "Mensagem muito longa"),
     best_time: optionalEmptyText(80, "Horario muito longo"),
     privacy_accepted: z.literal(true, {
-      errorMap: () => ({
-        message: "Aceite a politica de privacidade para continuar",
-      }),
+      error: "Aceite a politica de privacidade para continuar",
     }),
     privacy_url: optionalEmptyText(300),
     property_id: uuidSchema.optional(),
@@ -183,7 +181,7 @@ export const publicTrackingInputSchema = z
         code: z.ZodIssueCode.too_big,
         maximum: 16 * 1_024,
         inclusive: true,
-        type: "array",
+        origin: "array",
         message: "Tracking metadata exceeds 16 KiB",
         path: ["metadata"],
       });

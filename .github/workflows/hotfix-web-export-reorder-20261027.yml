@@ -61,6 +61,8 @@ jobs:
           const allowed = [
             ".github/workflows/hotfix-web-export-reorder-20261027-entry.yml",
             ".github/workflows/hotfix-web-export-reorder-20261027.yml",
+            "app/api/onboarding/checkout-plan/route.ts",
+            "components/features/auth/screens/ResetPasswordScreen.tsx",
             "components/features/contacts/ExportContactsDialog.tsx",
             "components/features/contacts/README.md",
             "components/features/contacts/contact-export-download.runtime.test.ts",
@@ -69,13 +71,42 @@ jobs:
             "docs/audits/crm-surface-inventory.json",
             "docs/audits/crm-surface-inventory.md",
             "docs/audits/home-design-debt.json",
+            "lib/api/contacts-export-timeout.runtime.test.mjs",
+            "lib/api/contacts.ts",
             "lib/contact-export-download.test.ts",
             "lib/contact-export-download.ts",
             "lib/contact-export-file-ready.test.mjs",
-            "lib/export-contacts.ts"
+            "lib/export-contacts.ts",
+            "lib/onboarding/signup-attempt.ts",
+            "lib/validation/attention.ts",
+            "lib/validation/automations.ts",
+            "lib/validation/auxiliary.ts",
+            "lib/validation/cadences.ts",
+            "lib/validation/common.ts",
+            "lib/validation/crm-support.ts",
+            "lib/validation/dashboard-visits.ts",
+            "lib/validation/email.ts",
+            "lib/validation/final-domains.ts",
+            "lib/validation/home.ts",
+            "lib/validation/integrations.ts",
+            "lib/validation/legacy-hotfix-zod4.test.mjs",
+            "lib/validation/marketing.ts",
+            "lib/validation/onboarding.ts",
+            "lib/validation/pipelines.ts",
+            "lib/validation/properties.ts",
+            "lib/validation/property-developments.ts",
+            "lib/validation/property-workspace.ts",
+            "lib/validation/public-site.ts",
+            "lib/validation/schedule-dashboard.ts",
+            "lib/validation/schemas.ts",
+            "lib/validation/settings.ts",
+            "lib/validation/whatsapp.ts",
+            "lib/validation/zod4-contract.test.ts",
+            "package-lock.json",
+            "package.json"
           ].sort();
           const changed = git('diff', '--no-renames', '--name-only', '-z', base, head).toString().split('\0').filter(Boolean).sort();
-          if (JSON.stringify(changed) !== JSON.stringify(allowed)) throw new Error('Source must be exactly the 14 reviewed paths over the production Web base.');
+          if (JSON.stringify(changed) !== JSON.stringify(allowed)) throw new Error('Source must be exactly the 45 reviewed paths over the production Web base.');
           git('diff', '--check', base, head);
           const sourceHashes = {};
           for (const file of changed) {
@@ -87,7 +118,7 @@ jobs:
           const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
           fs.mkdirSync(directory, { recursive: true });
           fs.writeFileSync(path.join(directory, 'source-scope.json'), JSON.stringify(proof, null, 2));
-          console.log('Verified exactly 14 reviewed paths over the production Web base.');
+          console.log('Verified exactly 45 reviewed paths over the production Web base.');
           NODE
 
       - name: Verify public build arguments against the production receipt

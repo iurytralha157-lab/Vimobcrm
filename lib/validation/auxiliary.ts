@@ -202,7 +202,7 @@ const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
     z.boolean(),
     z.null(),
     z.array(jsonValueSchema),
-    z.record(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
   ]),
 );
 const leadMetaSchema = z
@@ -659,7 +659,7 @@ export const publicDomainSchema = z
   .max(253)
   .transform((value) => value.toLowerCase());
 export const publicSiteQuerySchema = z.record(
-  z.union([
+  z.string(), z.union([
     z.string(),
     z.number().finite(),
     z.boolean(),
@@ -970,7 +970,7 @@ export const pageSpeedResponseSchema = z
           .passthrough(),
         audits: z
           .record(
-            z
+            z.string(), z
               .object({
                 numericValue: z.number().finite().optional(),
                 displayValue: z.string().optional(),
@@ -1184,7 +1184,7 @@ const webhookMutationSchema = z
     target_tag_ids: z.array(uuidSchema).max(500).optional(),
     target_property_id: optionalUUID,
     field_mapping: z
-      .record(z.string().trim().min(1).max(120))
+      .record(z.string(), z.string().trim().min(1).max(120))
       .superRefine((value, ctx) => {
         if (Object.keys(value).length > 100) {
           ctx.addIssue({
@@ -1283,7 +1283,7 @@ export const publicAPILeadInputSchema = z
     utm_term: z.string().trim().max(500).optional(),
     occurred_at: z.string().trim().datetime({ offset: true }).optional(),
     custom_fields: z
-      .record(z.string().trim().max(1_000))
+      .record(z.string(), z.string().trim().max(1_000))
       .superRefine((value, ctx) => {
         if (Object.keys(value).length > 50) {
           ctx.addIssue({

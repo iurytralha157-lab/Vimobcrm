@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-const uuid = z.string().uuid()
+const uuid = z.string().regex(z.regexes.guid, "Invalid uuid")
 const count = z.number().int().nonnegative()
 const text = (max: number) => z.string().max(max)
 
