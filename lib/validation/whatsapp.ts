@@ -222,7 +222,7 @@ export const whatsAppMessageSchema = z.object({
   reaction_emoji: z.string().nullable().optional(),
   reaction_sender_jid: z.string().nullable().optional(),
   reaction_sender_name: z.string().nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   status: z.string(),
   delivery_error_code: z.enum(['recipient_not_registered', 'outcome_unknown', 'send_failed']).nullable().optional(),
   delivery_failed_at: timestampSchema.nullable().optional(),
@@ -301,7 +301,7 @@ export const sendWhatsAppMessageResponseSchema = z.object({
   conversationId: uuidSchema,
   status: z.string().min(1).optional(),
   message: whatsAppMessageSchema.optional(),
-  providerData: z.record(z.unknown()).optional(),
+  providerData: z.record(z.string(), z.unknown()).optional(),
 }).passthrough()
 
 export const reactWhatsAppMessageInputSchema = z.object({

@@ -368,7 +368,7 @@ export default function ResetPasswordScreen() {
     const parsed = resetSchema.safeParse({ password, confirmPassword });
     if (!parsed.success) {
       const fieldErrors: Record<string, string> = {};
-      parsed.error.errors.forEach((error) => {
+      parsed.error.issues.forEach((error) => {
         if (error.path[0]) {
           fieldErrors[String(error.path[0])] = error.message;
         }

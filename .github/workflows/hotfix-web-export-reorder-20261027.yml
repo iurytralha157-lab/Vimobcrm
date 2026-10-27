@@ -1,0 +1,459 @@
+name: Hotfix Web export and column reorder ARM64
+
+on:
+  workflow_call:
+    secrets:
+      PUBLIC_BUILD_ANON:
+        description: Public build key passed as a named secret for runner log masking
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hotfix-web-export-reorder-20261027-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  WEB_IMAGE: ghcr.io/iurytralha157-lab/vimob-crm-web
+
+jobs:
+  # Reusable workflows retain the caller's push event and branch in github context.
+  source-and-config:
+    name: Verify narrow source and production public build hashes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/hotfix/export-reorder-20261027'
+    runs-on: ubuntu-24.04-arm
+    env:
+      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
+      # The caller resolves configuration; the named secret is masked before job logs.
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_BUILD_ANON }}
+      WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
+    steps:
+      - name: Checkout exact triggering snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify exactly the reviewed source paths
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const base = 'ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b';
+          const expectedRef = 'refs/heads/hotfix/export-reorder-20261027';
+          if (process.env.GITHUB_EVENT_NAME !== 'push' || process.env.GITHUB_REF !== expectedRef) throw new Error('This workflow only prepares its dedicated hotfix branch.');
+          const git = (...args) => execFileSync('git', args, { maxBuffer: 16 * 1024 * 1024 });
+          const head = git('rev-parse', 'HEAD').toString().trim();
+          if (head !== process.env.GITHUB_SHA) throw new Error('Checkout does not match the triggering SHA.');
+          git('merge-base', '--is-ancestor', base, head);
+          const allowed = [
+            ".github/workflows/hotfix-web-export-reorder-20261027-entry.yml",
+            ".github/workflows/hotfix-web-export-reorder-20261027.yml",
+            "app/api/onboarding/checkout-plan/route.ts",
+            "components/features/auth/screens/ResetPasswordScreen.tsx",
+            "components/features/contacts/ExportContactsDialog.tsx",
+            "components/features/contacts/README.md",
+            "components/features/contacts/contact-export-download.runtime.test.ts",
+            "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
+            "components/features/pipelines/pipeline-screen/stage-editor-reorder-contract.test.mjs",
+            "docs/audits/crm-surface-inventory.json",
+            "docs/audits/crm-surface-inventory.md",
+            "docs/audits/home-design-debt.json",
+            "lib/api/contacts-export-timeout.runtime.test.mjs",
+            "lib/api/contacts.ts",
+            "lib/contact-export-download.test.ts",
+            "lib/contact-export-download.ts",
+            "lib/contact-export-file-ready.test.mjs",
+            "lib/export-contacts.ts",
+            "lib/onboarding/signup-attempt.ts",
+            "lib/validation/attention.ts",
+            "lib/validation/automations.ts",
+            "lib/validation/auxiliary.ts",
+            "lib/validation/cadences.ts",
+            "lib/validation/common.ts",
+            "lib/validation/crm-support.ts",
+            "lib/validation/dashboard-visits.ts",
+            "lib/validation/email.ts",
+            "lib/validation/final-domains.ts",
+            "lib/validation/home.ts",
+            "lib/validation/integrations.ts",
+            "lib/validation/legacy-hotfix-zod4.test.mjs",
+            "lib/validation/marketing.ts",
+            "lib/validation/onboarding.ts",
+            "lib/validation/pipelines.ts",
+            "lib/validation/properties.ts",
+            "lib/validation/property-developments.ts",
+            "lib/validation/property-workspace.ts",
+            "lib/validation/public-site.ts",
+            "lib/validation/schedule-dashboard.ts",
+            "lib/validation/schemas.ts",
+            "lib/validation/settings.ts",
+            "lib/validation/whatsapp.ts",
+            "lib/validation/zod4-contract.test.ts",
+            "package-lock.json",
+            "package.json"
+          ].sort();
+          const changed = git('diff', '--no-renames', '--name-only', '-z', base, head).toString().split('\0').filter(Boolean).sort();
+          if (JSON.stringify(changed) !== JSON.stringify(allowed)) throw new Error('Source must be exactly the 45 reviewed paths over the production Web base.');
+          git('diff', '--check', base, head);
+          const sourceHashes = {};
+          for (const file of changed) {
+            const mode = git('ls-tree', head, '--', file).toString().split(' ')[0];
+            if (mode !== '100644') throw new Error('Expected a regular reviewed source file: ' + file);
+            sourceHashes[file] = createHash('sha256').update(git('show', head + ':' + file)).digest('hex');
+          }
+          const proof = { productionWebBase: base, candidateSha: head, candidateTree: git('rev-parse', 'HEAD^{tree}').toString().trim(), changedPaths: changed, sourceHashes };
+          const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
+          fs.mkdirSync(directory, { recursive: true });
+          fs.writeFileSync(path.join(directory, 'source-scope.json'), JSON.stringify(proof, null, 2));
+          console.log('Verified exactly 45 reviewed paths over the production Web base.');
+          NODE
+
+      - name: Verify public build arguments against the production receipt
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createHash } = require('node:crypto');
+          const expected = {
+            "WEB_NEXT_PUBLIC_SUPABASE_URL": "558510e10eb371c26e3b1416cf4fd873507164db1ce35906e9f4dcf09fc770a1",
+            "WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY": "53e75b1974eeb6f2b717bce57119ab4b354b49c002c4d8035f02023c9baf0329",
+            "WEB_NEXT_PUBLIC_VIMOB_API_URL": "2a5b177d61f54da4478d4829a826efe52eafbb4ea72aff1a5e616cbcc8dc14c1",
+            "WEB_NEXT_PUBLIC_SITE_URL": "52a679a0cf847fc37975d2ab09532e058ae75fb6efbc9d114bf4609a8c2a12b6"
+          };
+          const verified = {};
+          for (const [name, expectedHash] of Object.entries(expected)) {
+            const value = process.env[name];
+            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (required named workflow secret PUBLIC_BUILD_ANON)' : ''));
+            const hash = createHash('sha256').update(value, 'utf8').digest('hex');
+            if (hash !== expectedHash) throw new Error('Production receipt hash mismatch: ' + name);
+            verified[name] = hash;
+          }
+          const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
+          fs.mkdirSync(directory, { recursive: true });
+          fs.writeFileSync(path.join(directory, 'public-build-hashes.json'), JSON.stringify({ receiptDate: '2026-10-20', encoding: 'UTF-8 without trimming', hashes: verified }, null, 2));
+          console.log('Validated all four public build argument hashes; values were not printed.');
+          NODE
+
+      - name: Preserve source and configuration proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotfix-source-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hotfix-web-proof/*.json
+          if-no-files-found: error
+          retention-days: 14
+
+  release-gates:
+    name: Static release gates
+    runs-on: ubuntu-latest
+    needs: source-and-config
+    if: github.event_name == 'push' && github.ref == 'refs/heads/hotfix/export-reorder-20261027'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Audit release dependencies
+        run: node scripts/security/check-release-audit.mjs
+
+      - name: Verify generated inventories
+        run: npm run audit:check
+
+      - name: Test validation contracts
+        run: npm run validation:test
+
+      - name: Test Meta Page confirmation contract
+        run: node --test scripts/tests/meta-connect-flow-ui.test.mjs
+
+      - name: Test property media contracts
+        run: npm run test:property-media
+
+      - name: Test property UI contracts
+        run: npm run test:property-ui
+
+      - name: Test property Edge contracts
+        run: npm run test:property-edge
+
+      - name: Test canonical auth and admin contracts
+        run: npm run validation:auth-admin
+
+      - name: Type-check application sources
+        run: npm run typecheck
+
+      - name: Lint application sources
+        run: npm run lint
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Verify Supabase migration integrity
+        run: node scripts/supabase/verify-migrations.mjs
+
+      - name: Verify Edge Function release manifest
+        run: node scripts/supabase/verify-edge-functions.mjs
+
+      - name: Verify retired Edge Function boundaries
+        run: >-
+          node --test
+          scripts/tests/media-worker-edge-retirement.test.mjs
+          scripts/tests/meta-edge-retirement.test.mjs
+          scripts/tests/message-worker-gateway-config.test.mjs
+          scripts/tests/queue-scoped-lead-online-cutover.test.mjs
+          scripts/tests/queue-scoped-lead-edge-consumers.test.mjs
+          scripts/tests/whatsapp-auxiliary-binding-hardening.test.mjs
+          supabase/functions/_shared/whatsapp-binding-snapshot.test.ts
+
+      - name: Test API and shared Go packages
+        run: go test ./apps/api/... ./packages/auth/... ./packages/db/...
+
+      - name: Test hotfix column reordering (5 regressions)
+        run: node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test components/features/pipelines/pipeline-screen/stage-editor-reorder-contract.test.mjs
+
+      - name: Test hotfix export delivery (16 regressions)
+        run: |
+          node --experimental-strip-types --test lib/contact-export-download.test.ts lib/contact-export-file-ready.test.mjs lib/export-contacts.test.ts
+          node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test components/features/contacts/contact-export-download.runtime.test.ts
+
+  build-web-arm64:
+    name: Prepare immutable Web ARM64 image without deployment
+    needs: [source-and-config, release-gates]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/hotfix/export-reorder-20261027'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    outputs:
+      image: ${{ steps.image-meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+      architecture: ${{ steps.proof.outputs.architecture }}
+    env:
+      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
+      # The caller resolves configuration; the named secret is masked before job logs.
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_BUILD_ANON }}
+      WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Checkout exact triggering snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download reviewed source proof
+        uses: actions/download-artifact@v4
+        with:
+          name: hotfix-source-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hotfix-web-proof
+
+      - name: Recheck public build arguments immediately before building
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createHash } = require('node:crypto');
+          const expected = {
+            "WEB_NEXT_PUBLIC_SUPABASE_URL": "558510e10eb371c26e3b1416cf4fd873507164db1ce35906e9f4dcf09fc770a1",
+            "WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY": "53e75b1974eeb6f2b717bce57119ab4b354b49c002c4d8035f02023c9baf0329",
+            "WEB_NEXT_PUBLIC_VIMOB_API_URL": "2a5b177d61f54da4478d4829a826efe52eafbb4ea72aff1a5e616cbcc8dc14c1",
+            "WEB_NEXT_PUBLIC_SITE_URL": "52a679a0cf847fc37975d2ab09532e058ae75fb6efbc9d114bf4609a8c2a12b6"
+          };
+          const verified = {};
+          for (const [name, expectedHash] of Object.entries(expected)) {
+            const value = process.env[name];
+            if (!value) throw new Error('Missing required build setting: ' + name + (name.endsWith('ANON_KEY') ? ' (required named workflow secret PUBLIC_BUILD_ANON)' : ''));
+            const hash = createHash('sha256').update(value, 'utf8').digest('hex');
+            if (hash !== expectedHash) throw new Error('Production receipt hash mismatch: ' + name);
+            verified[name] = hash;
+          }
+          const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
+          fs.mkdirSync(directory, { recursive: true });
+          fs.writeFileSync(path.join(directory, 'public-build-hashes.json'), JSON.stringify({ receiptDate: '2026-10-20', encoding: 'UTF-8 without trimming', hashes: verified }, null, 2));
+          console.log('Validated all four public build argument hashes; values were not printed.');
+          NODE
+
+      - name: Compute a unique run and attempt image tag
+        id: image-meta
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { GITHUB_SHA: sha, GITHUB_RUN_ID: run, GITHUB_RUN_ATTEMPT: attempt, WEB_IMAGE: repository } = process.env;
+          if (!/^[a-f0-9]{40}$/.test(sha) || !/^\d+$/.test(run) || !/^\d+$/.test(attempt)) throw new Error('Invalid immutable image identity.');
+          const image = repository + ':' + sha + '-arm64-hotfix-' + run + '-' + attempt;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'image=' + image + '\n');
+          NODE
+
+      - name: Set up native ARM64 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse an already existing immutable tag
+        env:
+          IMAGE_REF: ${{ steps.image-meta.outputs.image }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { spawnSync } = require('node:child_process');
+          const result = spawnSync('docker', ['buildx', 'imagetools', 'inspect', process.env.IMAGE_REF], { encoding: 'utf8' });
+          if (result.error) throw new Error('Could not verify the new image tag.');
+          if (result.status === 0) throw new Error('The immutable image tag already exists; refusing to overwrite it.');
+          if (!/(manifest unknown|manifest_unknown|not found|404)/i.test(result.stderr || '')) throw new Error('Registry availability or authorization could not be verified; no image was built.');
+          NODE
+
+      - name: Build and push only the reviewed Web image
+        id: build
+        uses: docker/build-push-action@v6
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.WEB_NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_VIMOB_API_URL: ${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ github.sha }}
+            NEXT_PUBLIC_SUPABASE_URL
+            NEXT_PUBLIC_SUPABASE_ANON_KEY
+            NEXT_PUBLIC_VIMOB_API_URL
+            NEXT_PUBLIC_SITE_URL
+          tags: ${{ steps.image-meta.outputs.image }}
+
+      - name: Verify pushed digest and ARM64 image metadata
+        id: proof
+        env:
+          IMAGE_REF: ${{ steps.image-meta.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { execFileSync, spawnSync } = require('node:child_process');
+          const { IMAGE_REF: image, IMAGE_DIGEST: digest } = process.env;
+          if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('The registry did not return a valid image digest.');
+          const reference = image + '@' + digest;
+          execFileSync('docker', ['pull', '--platform', 'linux/arm64', reference], { stdio: 'pipe' });
+          const architecture = execFileSync('docker', ['image', 'inspect', '--format', '{{.Os}}/{{.Architecture}}', reference], { encoding: 'utf8' }).trim();
+          if (architecture !== 'linux/arm64') throw new Error('The prepared image is not linux/arm64.');
+          const directory = path.join(process.env.RUNNER_TEMP, 'hotfix-web-proof');
+          const source = JSON.parse(fs.readFileSync(path.join(directory, 'source-scope.json'), 'utf8'));
+          if (source.candidateSha !== process.env.GITHUB_SHA) throw new Error('Source proof does not match this image SHA.');
+          const publicBuild = JSON.parse(fs.readFileSync(path.join(directory, 'public-build-hashes.json'), 'utf8'));
+          const suffix = process.env.GITHUB_RUN_ID + '-' + process.env.GITHUB_RUN_ATTEMPT;
+          const network = 'hotfix-web-isolated-' + suffix;
+          const container = 'hotfix-web-smoke-' + suffix;
+          const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', stdio: 'pipe' });
+          const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+          async function verifyIsolatedHTTP() {
+            let result;
+            const cleanup = { containerRemoved: false, networkRemoved: false };
+            try {
+              docker('network', 'create', '--driver', 'bridge', '--internal', network);
+              const inspectedNetwork = JSON.parse(docker('network', 'inspect', network));
+              if (!Array.isArray(inspectedNetwork) || inspectedNetwork.length !== 1 || inspectedNetwork[0].Name !== network || inspectedNetwork[0].Driver !== 'bridge' || inspectedNetwork[0].Internal !== true || typeof inspectedNetwork[0].Id !== 'string' || !inspectedNetwork[0].Id) throw new Error('Smoke network is not a single internal bridge.');
+              docker('run', '--detach', '--pull', 'never', '--name', container,
+                '--network', network, '--dns', '127.0.0.1', reference);
+              const bindings = JSON.parse(docker('inspect', '--format', '{{json .HostConfig.PortBindings}}', container));
+              if (bindings !== null && (typeof bindings !== 'object' || Array.isArray(bindings) || Object.keys(bindings).length !== 0)) throw new Error('Smoke container must not publish any host port.');
+              const networks = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Networks}}', container));
+              if (!networks || Object.keys(networks).length !== 1 || networks[network]?.NetworkID !== inspectedNetwork[0].Id) throw new Error('Smoke container is not connected exclusively to its internal network.');
+              const dns = JSON.parse(docker('inspect', '--format', '{{json .HostConfig.Dns}}', container));
+              if (!Array.isArray(dns) || dns.length !== 1 || dns[0] !== '127.0.0.1') throw new Error('Smoke container external DNS must remain disabled.');
+              const probeScript = [
+                "const response = await fetch('http://127.0.0.1:3000/login', { redirect: 'manual', signal: AbortSignal.timeout(5000) });",
+                'const bytes = (await response.arrayBuffer()).byteLength;',
+                "process.stdout.write(JSON.stringify({ status: response.status, releaseSha: response.headers.get('x-vimob-release-sha'), bytes }));",
+              ].join('\n');
+              const deadline = Date.now() + 90_000;
+              while (Date.now() < deadline) {
+                let probe;
+                try {
+                  probe = JSON.parse(execFileSync('docker', ['exec', container, 'node', '--input-type=module', '--eval', probeScript], {
+                    encoding: 'utf8', stdio: 'pipe', timeout: Math.max(1, Math.min(6000, deadline - Date.now())), maxBuffer: 64 * 1024,
+                  }));
+                  if (!probe || Array.isArray(probe) || Object.keys(probe).sort().join(',') !== 'bytes,releaseSha,status' || !Number.isInteger(probe.status) || probe.status < 100 || probe.status > 599 || !Number.isSafeInteger(probe.bytes) || probe.bytes < 0 || (probe.releaseSha !== null && typeof probe.releaseSha !== 'string')) throw new Error('Invalid isolated HTTP probe result.');
+                } catch {
+                  await wait(Math.min(1000, Math.max(0, deadline - Date.now())));
+                  continue;
+                }
+                if (probe.status === 200) {
+                  if (probe.releaseSha !== process.env.GITHUB_SHA) throw new Error('Isolated login release SHA does not match this candidate.');
+                  if (probe.bytes === 0) throw new Error('Isolated login response body is empty.');
+                  result = { method: 'GET', path: '/login', status: probe.status, releaseSha: probe.releaseSha, bytes: probe.bytes, probeTransport: 'docker-exec-node-fetch', probeScope: 'container-loopback', publishedHostPorts: 0, containerNetworkCount: 1, internalNetwork: true, externalDNSDisabled: true, runtimeEnvironmentAdded: false, cookieSent: false, productionAccess: false };
+                  break;
+                }
+                await wait(Math.min(1000, Math.max(0, deadline - Date.now())));
+              }
+              if (!result) throw new Error('Isolated Web HTTP smoke failed; internal networking was retained without an egress fallback.');
+            } finally {
+              const removedContainer = spawnSync('docker', ['rm', '--force', container], { encoding: 'utf8' });
+              const removedNetwork = spawnSync('docker', ['network', 'rm', network], { encoding: 'utf8' });
+              cleanup.containerRemoved = removedContainer.status === 0 || /no such container/i.test(removedContainer.stderr || '');
+              cleanup.networkRemoved = removedNetwork.status === 0 || /network .*not found|no such network/i.test(removedNetwork.stderr || '');
+              if (!cleanup.containerRemoved || !cleanup.networkRemoved) throw new Error('Isolated smoke cleanup did not complete.');
+            }
+            return { ...result, cleanup };
+          }
+          (async () => {
+            const httpSmoke = await verifyIsolatedHTTP();
+            fs.writeFileSync(path.join(directory, 'image-proof.json'), JSON.stringify({ image, digest, reference, architecture, httpSmoke, source, publicBuild, workflowRunId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, deploymentPerformed: false }, null, 2));
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'architecture=' + architecture + '\n');
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, 'Prepared Web image: ' + reference + '\n\nArchitecture: ' + architecture + '\n\nAll original release gates, 21 hotfix regressions and isolated Linux login HTTP smoke passed. No production service was updated.\n');
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+
+      - name: Upload image, architecture, source and configuration proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotfix-web-arm64-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hotfix-web-proof/*.json
+          if-no-files-found: error
+          retention-days: 14

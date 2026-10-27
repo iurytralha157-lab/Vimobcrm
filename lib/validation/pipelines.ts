@@ -151,7 +151,7 @@ export const pipelineStageLeadsResponseSchema = z.object({
   leads: z.array(pipelineBoardLeadSchema),
 }).passthrough()
 export const pipelineStageCountsResponseSchema = apiEnvelopeSchema(
-  z.record(nonNegativeIntegerSchema),
+  z.record(z.string(), nonNegativeIntegerSchema),
 )
 const metaOptionSchema = z.object({ id: z.string().min(1), name: z.string() }).passthrough()
 export const leadMetaFiltersResponseSchema = apiEnvelopeSchema(z.object({

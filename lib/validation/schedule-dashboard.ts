@@ -73,10 +73,10 @@ function optionalQueryUUID() {
     return !normalized || normalized.toLowerCase() === "all"
       ? undefined
       : normalized;
-  }, z.string().uuid().optional());
+  }, z.string().regex(z.regexes.guid, "Invalid uuid").optional());
 }
 
-function optionalQueryEnum<T extends z.ZodEnum<[string, ...string[]]>>(
+function optionalQueryEnum<T extends z.ZodEnum>(
   schema: T,
 ) {
   return z.preprocess((value) => {
@@ -271,7 +271,7 @@ const scheduleDashboardSourceSchema = scheduleDashboardBreakdownSchema
 
 const scheduleDashboardTopPerformerSchema = z
   .object({
-    user_id: z.string().trim().uuid(),
+    user_id: z.string().trim().regex(z.regexes.guid, "Invalid uuid"),
     name: z.string().trim().min(1).max(255),
     avatar_url: z.string().nullable(),
     total: nonNegativeIntegerSchema,
@@ -300,17 +300,17 @@ const nullableDashboardText = (maxLength: number) =>
 
 export const scheduleDashboardUpcomingEventSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.string().regex(z.regexes.guid, "Invalid uuid"),
     title: z.string().trim().min(1).max(255),
     event_type: scheduleDashboardReportedEventTypeSchema,
     start_time: z.string().datetime({ offset: true }),
     end_time: z.string().datetime({ offset: true }),
-    user_id: z.string().uuid(),
+    user_id: z.string().regex(z.regexes.guid, "Invalid uuid"),
     user_name: z.string().trim().min(1).max(255),
     user_avatar_url: nullableDashboardText(2_048),
-    lead_id: z.string().uuid().nullable(),
+    lead_id: z.string().regex(z.regexes.guid, "Invalid uuid").nullable(),
     lead_name: nullableDashboardText(255),
-    property_id: z.string().uuid().nullable(),
+    property_id: z.string().regex(z.regexes.guid, "Invalid uuid").nullable(),
     property_title: nullableDashboardText(255),
     property_code: nullableDashboardText(120),
   })
@@ -371,7 +371,7 @@ export const scheduleDashboardEventsPageSchema = z
 
 const scheduleDashboardOverdueOwnerSchema = z
   .object({
-    user_id: z.string().uuid(),
+    user_id: z.string().regex(z.regexes.guid, "Invalid uuid"),
     name: z.string().trim().min(1).max(255),
     avatar_url: nullableDashboardText(2_048),
     overdue: nonNegativeIntegerSchema,
@@ -380,7 +380,7 @@ const scheduleDashboardOverdueOwnerSchema = z
 
 const scheduleDashboardPerformerRankingSchema = z
   .object({
-    user_id: z.string().uuid(),
+    user_id: z.string().regex(z.regexes.guid, "Invalid uuid"),
     name: z.string().trim().min(1).max(255),
     avatar_url: nullableDashboardText(2_048),
     total: nonNegativeIntegerSchema,

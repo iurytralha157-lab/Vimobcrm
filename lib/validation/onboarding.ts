@@ -142,7 +142,7 @@ export const onboardingStepValidationResponseSchema = z.union([
 ])
 
 export const onboardingSignupSchema = z.object({
-  attemptId: z.string().uuid(),
+  attemptId: z.string().regex(z.regexes.guid, "Invalid uuid"),
   companyName: z.string().trim().min(2).max(160),
   documentNumber: z.string()
     .trim()
@@ -199,7 +199,7 @@ export const onboardingSignupSuccessResponseSchema = z.object({
   message: z.string().min(1).max(500),
   redirectTo: safeInternalRedirectSchema,
   checkoutToken: canonicalCheckoutTokenSchema.nullable(),
-  organizationId: z.string().uuid(),
+  organizationId: z.string().regex(z.regexes.guid, "Invalid uuid"),
   requiresPayment: z.boolean(),
   emailConfirmationRequired: z.literal(true),
   recoveryCapability: signupRecoveryCapabilitySchema,

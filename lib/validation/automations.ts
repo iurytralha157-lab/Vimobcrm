@@ -171,7 +171,7 @@ const automationActionConfigSchemas = {
   remove_tag: z.object({ tag_id: uuidSchema }).passthrough(),
   move_lead: z.object({ pipeline_id: uuidSchema, stage_id: uuidSchema }).passthrough(),
   assign_user: z.object({ user_id: uuidSchema }).passthrough(),
-  set_variable: z.record(z.unknown()).superRefine((config, ctx) => {
+  set_variable: z.record(z.string(), z.unknown()).superRefine((config, ctx) => {
     if (config.actionType === 'property_interest') {
       if (!uuidSchema.safeParse(config.property_id).success) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['property_id'], message: 'Selecione o imóvel' })
@@ -211,7 +211,7 @@ const automationConditionFlowNodeSchema = automationNodeBaseSchema.extend({
 const automationActionFlowNodeSchema = automationNodeBaseSchema.extend({
   type: z.literal('action'),
   action_type: automationActionTypeSchema,
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
 }).strict()
 
 export const automationFlowNodeSchema = z.discriminatedUnion('type', [
@@ -258,7 +258,7 @@ export const automationFlowConnectionSchema = z.object({
 export const automationFlowDefinitionSchema = z.object({
   nodes: z.array(automationFlowNodeSchema).max(250),
   connections: z.array(automationFlowConnectionSchema).max(500),
-  settings: z.record(z.unknown()).default({}),
+  settings: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((flow, ctx) => {
   const nodeIds = new Set<string>()
   flow.nodes.forEach((node, index) => {
@@ -396,7 +396,7 @@ export const createAutomationInputSchema = z.object({
   name: z.string().trim().min(1).max(180),
   description: z.string().trim().max(2_000).nullish(),
   trigger_type: automationTriggerTypeSchema.default('manual'),
-  trigger_config: z.record(z.unknown()).optional(),
+  trigger_config: z.record(z.string(), z.unknown()).optional(),
   flow_definition: savedAutomationFlowDefinitionSchema.optional(),
   is_active: z.boolean().optional(),
 }).strict().superRefine((input, ctx) => {
@@ -444,7 +444,7 @@ export const apiAutomationSchema = z.object({
   description: z.string().nullable(),
   is_active: z.boolean(),
   trigger_type: automationTriggerTypeSchema,
-  trigger_config: z.unknown(),
+  trigger_config: z.unknown().optional(),
   flow_definition: z.unknown().optional(),
   created_by: uuidSchema.nullable(),
   created_at: timestampSchema,
@@ -456,7 +456,7 @@ export const apiAutomationNodeSchema = z.object({
   automation_id: uuidSchema,
   node_type: automationNodeTypeSchema,
   action_type: z.string().nullable(),
-  config: z.unknown(),
+  config: z.unknown().optional(),
   position_x: z.number().finite(),
   position_y: z.number().finite(),
   created_at: timestampSchema,
@@ -499,7 +499,7 @@ export const apiAutomationExecutionSchema = z.object({
   started_at: timestampSchema,
   completed_at: timestampSchema.nullable(),
   error_message: z.string().nullable(),
-  execution_data: z.unknown(),
+  execution_data: z.unknown().optional(),
   next_execution_at: timestampSchema.nullable(),
 }).passthrough()
 
@@ -550,7 +550,7 @@ export const apiAutomationRuntimeIssueSchema = z.object({
   executionId: uuidSchema.nullable(),
   leadId: uuidSchema.nullable(),
   message: z.string().nullable(),
-  details: z.unknown(),
+  details: z.unknown().optional(),
   retryable: z.boolean(),
   occurredAt: timestampSchema,
 }).passthrough()
@@ -562,7 +562,7 @@ export const apiAutomationMediaFileSchema = z.object({
   publicUrl: z.string().min(1),
   contentType: z.string().nullable(),
   size: nonNegativeIntegerSchema.nullable(),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   createdAt: timestampSchema.nullable(),
   updatedAt: timestampSchema.nullable(),
 }).passthrough()

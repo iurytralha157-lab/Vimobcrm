@@ -6,6 +6,9 @@ type Envelope<T> = {
   data: T
 }
 
+// Full export pages can take longer to stream after their HTTP headers arrive.
+const CONTACT_EXPORT_REQUEST_TIMEOUT_MS = 60_000
+
 export const contactsAPI = {
   async list(
     filters: ContactListFilters,
@@ -21,6 +24,7 @@ export const contactsAPI = {
         tagIds: tagIds?.join(','),
       },
       signal: options?.signal,
+      timeoutMs: parsedQuery.mode === 'export' ? CONTACT_EXPORT_REQUEST_TIMEOUT_MS : undefined,
     })
     validateDomainResponse(apiContactListResponseSchema, response, 'contacts.list')
 

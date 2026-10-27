@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   CheckCircle2,
   FileSpreadsheet,
@@ -36,6 +36,13 @@ import {
 } from '@/lib/export-contacts';
 import { cn } from '@/lib/utils';
 import { formatPtBRNumber } from '@/lib/utils/formatting';
+import { useAuth } from '@/contexts/AuthContext';
+import { readAccessTokenClaims } from '@/lib/auth/password-recovery';
+import { createContactExportDownload } from '@/lib/contact-export-download';
+
+type PreparedContactDownload = ReturnType<typeof createContactExportDownload> & {
+  isCurrent: () => boolean;
+};
 
 type ExportContactsDialogProps = {
   open: boolean;
@@ -85,11 +92,11 @@ function progressLabel(
   completedCount: number | null,
 ) {
   if (completedCount !== null) {
-    return `${formatPtBRNumber(completedCount)} contatos exportados.`;
+    return `Arquivo pronto com ${formatPtBRNumber(completedCount)} contato${completedCount === 1 ? '' : 's'}. Clique em Baixar arquivo.`;
   }
   if (!progress) return 'Preparando exportação...';
   if (progress.phase === 'generating') return 'Gerando o arquivo...';
-  if (progress.phase === 'downloading') return 'Finalizando o download...';
+  if (progress.phase === 'downloading') return 'Preparando o arquivo para baixar...';
   if (progress.total !== null) {
     return `Carregando ${formatPtBRNumber(progress.processed)} de ${formatPtBRNumber(progress.total)} contatos...`;
   }
@@ -104,6 +111,12 @@ export function ExportContactsDialog({
   totalCount,
   onExportingChange,
 }: ExportContactsDialogProps) {
+  const { user, session } = useAuth();
+  // This key only owns the in-memory file. Server authorization is unchanged.
+  const sessionClaims = readAccessTokenClaims(session?.access_token || '');
+  const sessionId = typeof sessionClaims?.session_id === 'string' ? sessionClaims.session_id : null;
+  const ownerKey = open && organizationId && user?.id && sessionId
+    ? JSON.stringify([organizationId, user.id, sessionId]) : null;
   const [format, setFormat] = useState<ContactExportFormat>('xlsx');
   const [selectedColumns, setSelectedColumns] = useState<Set<ContactExportColumnKey>>(
     () => new Set(DEFAULT_CONTACT_EXPORT_COLUMN_KEYS),
@@ -113,8 +126,38 @@ export function ExportContactsDialog({
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState<ContactExportProgress | null>(null);
   const [completedCount, setCompletedCount] = useState<number | null>(null);
+  const [preparedDownload, setPreparedDownload] = useState<PreparedContactDownload | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const preparedDownloadRef = useRef<PreparedContactDownload | null>(null);
+  const scopeRef = useRef({ generation: 0, ownerKey: null as string | null, active: false });
+  const filtersKey = JSON.stringify(filters);
+
+  useLayoutEffect(() => {
+    const scope = scopeRef.current;
+    scope.generation += 1;
+    scope.ownerKey = ownerKey;
+    scope.active = ownerKey !== null;
+    const generation = scope.generation;
+    return () => {
+      if (scope.generation === generation) scope.active = false;
+      const controller = abortControllerRef.current;
+      abortControllerRef.current = null;
+      controller?.abort();
+      const download = preparedDownloadRef.current;
+      preparedDownloadRef.current = null;
+      download?.dispose();
+      if (download || controller) {
+        setPreparedDownload(null);
+        setCompletedCount(null);
+        setProgress(null);
+      }
+      if (controller) {
+        setIsExporting(false);
+        onExportingChange?.(false);
+      }
+    };
+  }, [ownerKey, filtersKey, onExportingChange]);
 
   const normalizedColumnSearch = normalizeSearch(columnSearch);
   const groupedColumns = useMemo(
@@ -132,9 +175,21 @@ export function ExportContactsDialog({
   );
 
   const clearRunFeedback = () => {
+    preparedDownloadRef.current?.dispose();
+    preparedDownloadRef.current = null;
+    setPreparedDownload(null);
     setCompletedCount(null);
     setErrorMessage(null);
     setProgress(null);
+  };
+
+  const handleDownload = (event: MouseEvent<HTMLAnchorElement>) => {
+    const download = preparedDownloadRef.current;
+    if (!download || download !== preparedDownload || !download.isCurrent()) {
+      event.preventDefault();
+      clearRunFeedback();
+      setErrorMessage('O contexto da exportação mudou. Gere um novo arquivo antes de baixar.');
+    }
   };
 
   const toggleColumn = (key: ContactExportColumnKey, checked: boolean) => {
@@ -159,6 +214,7 @@ export function ExportContactsDialog({
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isExporting) return;
+    if (!nextOpen) clearRunFeedback();
     onOpenChange(nextOpen);
   };
 
@@ -167,10 +223,19 @@ export function ExportContactsDialog({
   };
 
   const handleExport = async () => {
-    if (isExporting || selectedColumns.size === 0) return;
+    if (abortControllerRef.current || selectedColumns.size === 0) return;
+    if (!ownerKey) {
+      setErrorMessage('Não foi possível confirmar a sessão. Entre novamente antes de exportar.');
+      return;
+    }
+    const scope = scopeRef.current;
+    const generation = scope.generation;
+    const isCurrent = () => scope.active && scope.ownerKey === ownerKey && scope.generation === generation;
+    if (!isCurrent()) return;
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    clearRunFeedback();
     setIsExporting(true);
     onExportingChange?.(true);
     setCompletedCount(null);
@@ -186,10 +251,29 @@ export function ExportContactsDialog({
         columnKeys: [...selectedColumns],
         includeDynamicFields,
         signal: abortController.signal,
-        onProgress: setProgress,
+        onFileReady: (file) => {
+          abortController.signal.throwIfAborted();
+          if (abortControllerRef.current !== abortController || !isCurrent()) {
+            throw new DOMException('O contexto da exportação mudou.', 'AbortError');
+          }
+          const download = { ...createContactExportDownload(file), isCurrent };
+          preparedDownloadRef.current?.dispose();
+          preparedDownloadRef.current = download;
+          setPreparedDownload(download);
+        },
+        onProgress: (nextProgress) => {
+          if (abortControllerRef.current === abortController && isCurrent()) setProgress(nextProgress);
+        },
       });
+      abortController.signal.throwIfAborted();
+      if (abortControllerRef.current !== abortController || !isCurrent()) return;
+      if (!preparedDownloadRef.current) throw new Error('Não foi possível preparar o arquivo para baixar. Tente novamente.');
       setCompletedCount(count);
     } catch (error: unknown) {
+      if (abortControllerRef.current !== abortController || !isCurrent()) return;
+      preparedDownloadRef.current?.dispose();
+      preparedDownloadRef.current = null;
+      setPreparedDownload(null);
       setProgress(null);
       setErrorMessage(
         isAbortError(error)
@@ -199,9 +283,11 @@ export function ExportContactsDialog({
             : 'Não foi possível exportar os contatos.',
       );
     } finally {
-      abortControllerRef.current = null;
-      setIsExporting(false);
-      onExportingChange?.(false);
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+        setIsExporting(false);
+        onExportingChange?.(false);
+      }
     }
   };
 
@@ -422,7 +508,11 @@ export function ExportContactsDialog({
           >
             {isExporting ? 'Cancelar exportação' : 'Fechar'}
           </Button>
-          <Button
+          {preparedDownload ? (
+            <Button asChild size="sm" className="h-8 rounded-[6px] px-3 text-[11px] font-light shadow-none">
+              <a href={preparedDownload.href} download={preparedDownload.filename} onClick={handleDownload}>Baixar arquivo</a>
+            </Button>
+          ) : <Button
             type="button"
             size="sm"
             disabled={isExporting || selectedColumns.size === 0 || totalCount === 0}
@@ -430,8 +520,8 @@ export function ExportContactsDialog({
             className="h-8 rounded-[6px] px-3 text-[11px] font-light shadow-none"
           >
             {isExporting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {completedCount !== null ? 'Exportar novamente' : 'Exportar'}
-          </Button>
+            Preparar arquivo
+          </Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

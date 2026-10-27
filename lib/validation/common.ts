@@ -1,17 +1,19 @@
 import { z } from 'zod'
 
-export const uuidSchema = z.string().trim().uuid()
+// PostgreSQL IDs retain the existing 8-4-4-4-12 hexadecimal contract, including
+// nil/legacy fixture IDs. A Zod upgrade must not add RFC version/variant gates.
+export const uuidSchema = z.string().trim().regex(z.regexes.guid, "Invalid uuid")
 export const timestampSchema = z.string().trim().min(1)
 export const nonNegativeIntegerSchema = z.number().int().min(0)
 
-export function apiEnvelopeSchema<T extends z.ZodTypeAny>(dataSchema: T) {
+export function apiEnvelopeSchema<T extends z.ZodType>(dataSchema: T) {
   return z.object({ data: dataSchema }).passthrough()
 }
 
-export const apiUnknownEnvelopeSchema = apiEnvelopeSchema(z.unknown())
+export const apiUnknownEnvelopeSchema = apiEnvelopeSchema(z.unknown().optional())
 export const apiUnknownListEnvelopeSchema = apiEnvelopeSchema(z.array(z.unknown()))
-export const apiRecordEnvelopeSchema = apiEnvelopeSchema(z.record(z.unknown()))
-export const apiRecordListEnvelopeSchema = apiEnvelopeSchema(z.array(z.record(z.unknown())))
+export const apiRecordEnvelopeSchema = apiEnvelopeSchema(z.record(z.string(), z.unknown()))
+export const apiRecordListEnvelopeSchema = apiEnvelopeSchema(z.array(z.record(z.string(), z.unknown())))
 export const okResponseSchema = z.object({ ok: z.boolean() }).passthrough()
 
 export class DomainValidationError extends Error {
@@ -38,7 +40,7 @@ export class DomainValidationError extends Error {
   }
 }
 
-export function parseDomainInput<T extends z.ZodTypeAny>(
+export function parseDomainInput<T extends z.ZodType>(
   schema: T,
   input: unknown,
   context: string,
@@ -50,7 +52,7 @@ export function parseDomainInput<T extends z.ZodTypeAny>(
   return result.data
 }
 
-export function validateDomainResponse<T extends z.ZodTypeAny>(
+export function validateDomainResponse<T extends z.ZodType>(
   schema: T,
   response: unknown,
   context: string,

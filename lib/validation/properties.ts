@@ -315,7 +315,7 @@ const propertyMutationShape = {
   marcadores: z.array(z.string()).nullable().optional(),
   documents: z.unknown().optional(),
   arquivos: z.unknown().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   finalidade: z.string().trim().max(4_000).nullable().optional(),
   aprovacao_ambiental: z.string().trim().max(4_000).nullable().optional(),
   bairro: z.string().trim().max(4_000).nullable().optional(),
@@ -482,7 +482,7 @@ export const apiPropertyHistoryResponseSchema = apiEnvelopeSchema(
         id: z.string().min(1),
         type: z.string().min(1),
         title: z.string().min(1),
-        metadata: z.record(z.unknown()),
+        metadata: z.record(z.string(), z.unknown()),
         created_at: timestampSchema,
       })
       .passthrough(),

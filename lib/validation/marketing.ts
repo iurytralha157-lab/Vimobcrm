@@ -37,7 +37,7 @@ function optionalQueryUUID() {
     return !normalized || normalized.toLowerCase() === "all"
       ? undefined
       : normalized;
-  }, z.string().uuid().optional());
+  }, z.string().regex(z.regexes.guid, "Invalid uuid").optional());
 }
 
 function optionalQueryUUIDList(maxItems = 50) {
@@ -55,14 +55,14 @@ function optionalQueryUUIDList(maxItems = 50) {
       context.addIssue({
         code: z.ZodIssueCode.too_big,
         maximum: maxItems,
-        type: "array",
+        origin: "array",
         inclusive: true,
         message: `Selecione no máximo ${maxItems} tags`,
       });
       return;
     }
     values.forEach((item, index) => {
-      if (!z.string().uuid().safeParse(item).success) {
+      if (!z.string().regex(z.regexes.guid, "Invalid uuid").safeParse(item).success) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: [index],
@@ -436,7 +436,7 @@ const marketingMediaAssetSchema = z
     video_url: nullableTextSchema,
     permalink_url: nullableTextSchema,
     published_at: nullableTextSchema,
-    metrics: z.record(z.unknown()).default({}),
+    metrics: z.record(z.string(), z.unknown()).default({}),
     last_synced_at: z.string().trim().min(1).max(64),
   })
   .passthrough();

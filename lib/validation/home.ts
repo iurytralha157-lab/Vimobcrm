@@ -271,6 +271,19 @@ export const createHomePublicationInputSchema =
 export const updateHomePublicationInputSchema =
   homePublicationMutationObjectSchema
     .partial()
+    // Defaults belong to creation; omitted PATCH fields must stay omitted.
+    .extend({
+      cardSize: homePublicationCardSizeSchema.optional(),
+      accent: homePublicationAccentSchema.optional(),
+      displayOrder: publicationDisplayOrderSchema.optional(),
+      isActive: z.boolean().optional(),
+      startsAt: publicationTimestampSchema.nullable().optional(),
+      endsAt: publicationTimestampSchema.nullable().optional(),
+      targetType: homePublicationTargetTypeSchema.optional(),
+      targetOrganizationIds: targetOrganizationIdsSchema.optional(),
+      targetUserIds: targetUserIdsSchema.optional(),
+      targetRoles: targetRolesSchema.optional(),
+    })
     .strict()
     .refine((value) => Object.keys(value).length > 0, {
       message: "Informe ao menos uma alteração.",
