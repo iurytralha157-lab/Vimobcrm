@@ -397,30 +397,40 @@ jobs:
             const cleanup = { containerRemoved: false, networkRemoved: false };
             try {
               docker('network', 'create', '--driver', 'bridge', '--internal', network);
-              if (docker('network', 'inspect', '--format', '{{.Internal}}', network).trim() !== 'true') throw new Error('Smoke network is not internal.');
+              const inspectedNetwork = JSON.parse(docker('network', 'inspect', network));
+              if (!Array.isArray(inspectedNetwork) || inspectedNetwork.length !== 1 || inspectedNetwork[0].Name !== network || inspectedNetwork[0].Driver !== 'bridge' || inspectedNetwork[0].Internal !== true || typeof inspectedNetwork[0].Id !== 'string' || !inspectedNetwork[0].Id) throw new Error('Smoke network is not a single internal bridge.');
               docker('run', '--detach', '--pull', 'never', '--name', container,
-                '--network', network, '--dns', '127.0.0.1', '--publish', '127.0.0.1::3000', reference);
-              const ports = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', container));
-              const bindings = ports['3000/tcp'];
-              if (!Array.isArray(bindings) || bindings.length !== 1 || bindings[0].HostIp !== '127.0.0.1' || !/^\d+$/.test(bindings[0].HostPort)) throw new Error('Smoke HTTP port is not bound exclusively to loopback.');
-              const url = 'http://127.0.0.1:' + bindings[0].HostPort + '/login';
+                '--network', network, '--dns', '127.0.0.1', reference);
+              const bindings = JSON.parse(docker('inspect', '--format', '{{json .HostConfig.PortBindings}}', container));
+              if (bindings !== null && (typeof bindings !== 'object' || Array.isArray(bindings) || Object.keys(bindings).length !== 0)) throw new Error('Smoke container must not publish any host port.');
+              const networks = JSON.parse(docker('inspect', '--format', '{{json .NetworkSettings.Networks}}', container));
+              if (!networks || Object.keys(networks).length !== 1 || networks[network]?.NetworkID !== inspectedNetwork[0].Id) throw new Error('Smoke container is not connected exclusively to its internal network.');
+              const dns = JSON.parse(docker('inspect', '--format', '{{json .HostConfig.Dns}}', container));
+              if (!Array.isArray(dns) || dns.length !== 1 || dns[0] !== '127.0.0.1') throw new Error('Smoke container external DNS must remain disabled.');
+              const probeScript = [
+                "const response = await fetch('http://127.0.0.1:3000/login', { redirect: 'manual', signal: AbortSignal.timeout(5000) });",
+                'const bytes = (await response.arrayBuffer()).byteLength;',
+                "process.stdout.write(JSON.stringify({ status: response.status, releaseSha: response.headers.get('x-vimob-release-sha'), bytes }));",
+              ].join('\n');
               const deadline = Date.now() + 90_000;
               while (Date.now() < deadline) {
-                let response;
+                let probe;
                 try {
-                  response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+                  probe = JSON.parse(execFileSync('docker', ['exec', container, 'node', '--input-type=module', '--eval', probeScript], {
+                    encoding: 'utf8', stdio: 'pipe', timeout: Math.max(1, Math.min(6000, deadline - Date.now())), maxBuffer: 64 * 1024,
+                  }));
+                  if (!probe || Array.isArray(probe) || Object.keys(probe).sort().join(',') !== 'bytes,releaseSha,status' || !Number.isInteger(probe.status) || probe.status < 100 || probe.status > 599 || !Number.isSafeInteger(probe.bytes) || probe.bytes < 0 || (probe.releaseSha !== null && typeof probe.releaseSha !== 'string')) throw new Error('Invalid isolated HTTP probe result.');
                 } catch {
-                  await wait(1000);
+                  await wait(Math.min(1000, Math.max(0, deadline - Date.now())));
                   continue;
                 }
-                const bytes = (await response.arrayBuffer()).byteLength;
-                if (response.status === 200) {
-                  const releaseSha = response.headers.get('x-vimob-release-sha');
-                  if (releaseSha !== process.env.GITHUB_SHA) throw new Error('Isolated login release SHA does not match this candidate.');
-                  result = { method: 'GET', path: '/login', status: response.status, releaseSha, bytes, internalNetwork: true, externalDNSDisabled: true, loopbackOnly: true, runtimeEnvironmentAdded: false, cookieSent: false, productionAccess: false };
+                if (probe.status === 200) {
+                  if (probe.releaseSha !== process.env.GITHUB_SHA) throw new Error('Isolated login release SHA does not match this candidate.');
+                  if (probe.bytes === 0) throw new Error('Isolated login response body is empty.');
+                  result = { method: 'GET', path: '/login', status: probe.status, releaseSha: probe.releaseSha, bytes: probe.bytes, probeTransport: 'docker-exec-node-fetch', probeScope: 'container-loopback', publishedHostPorts: 0, containerNetworkCount: 1, internalNetwork: true, externalDNSDisabled: true, runtimeEnvironmentAdded: false, cookieSent: false, productionAccess: false };
                   break;
                 }
-                await wait(1000);
+                await wait(Math.min(1000, Math.max(0, deadline - Date.now())));
               }
               if (!result) throw new Error('Isolated Web HTTP smoke failed; internal networking was retained without an egress fallback.');
             } finally {
