@@ -408,6 +408,7 @@ export function PipelineDialogs({
             position: stage.position,
             lead_count: stage.total_lead_count ?? stage.leads.length ?? 0,
             stage_key: stage.stage_key || undefined,
+            updated_at: stage.updated_at,
           }))}
         />
       )}

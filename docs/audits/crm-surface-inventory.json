@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "7b044d421b56a6704664670fb4330a1c8b3fa4472bb1fde980feaa66fee9203d",
+  "sourceDigestSha256": "08d15a31a0b3396076068fb92806ccf0cc011480ed3db4f5c377a230bece2c12",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1271,10 +1271,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:87ba2411c94499ea6c4c",
+          "id": "overlay:5711649c2ebe7815f98a",
           "column": 5,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 211,
+          "line": 297,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -2055,10 +2055,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:42e819b79c7d8fce0b71",
+          "id": "overlay:170445d5a805bcc9de56",
           "column": 7,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 415,
+          "line": 416,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -11151,10 +11151,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2117a5cb2d334f895cfb",
+          "id": "cta:a25d2c075246d42c3ebd",
           "column": 13,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 233,
+          "line": 319,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -11163,10 +11163,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:3a8712f05d37a8ff7bb7",
+          "id": "cta:7bc1f7690ad395dbd23f",
           "column": 13,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 254,
+          "line": 340,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -11175,10 +11175,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1988841e33778a548125",
+          "id": "cta:a27931f16eab5d32b055",
           "column": 15,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 282,
+          "line": 368,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -11187,10 +11187,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9eb455acdc1e312c8e78",
+          "id": "cta:7887544d6a4736c27992",
           "column": 11,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 416,
+          "line": 502,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -11199,10 +11199,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ed4ab1bf1a3072a93efe",
-          "column": 11,
+          "id": "cta:2271c555ac36f23a65f1",
+          "column": 15,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 425,
+          "line": 515,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -32476,10 +32476,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:d439674017116ea99832",
+          "id": "control:3b714e2bf59cd5ac3bda",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 430,
+          "line": 431,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -32488,10 +32488,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:2a346789b817e2ed1062",
+          "id": "control:aa9208a9a505edc8af4e",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
-          "line": 436,
+          "line": 437,
           "owner": "PipelineDialogs",
           "routes": [
             "/crm/pipelines"
@@ -35448,7 +35448,7 @@
         }
       ]
     },
-    "digestSha256": "336b8134e142368b849bc82540482bc52315febc9d8b003dfd7d95a6aa208a12"
+    "digestSha256": "3daf6e2e433ae99e0564d4d9347a1e3458abd278eaac6c5845b02764a5f6dd0d"
   },
   "routes": [
     {
@@ -45329,17 +45329,17 @@
       "not-found.tsx": 1
     },
     "surfaces": {
-      "asChildButtonsExcluded": 41,
+      "asChildButtonsExcluded": 42,
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1417,
+      "ctasAll": 1418,
       "ctasByKind": {
         "actionButton": 1254,
         "external": 6,
         "internal": 31,
         "internalDynamic": 78,
-        "unknownDynamic": 48
+        "unknownDynamic": 49
       },
       "forms": 50,
       "formsRouteReachable": 50,

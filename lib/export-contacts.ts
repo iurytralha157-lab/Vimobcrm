@@ -4,6 +4,7 @@ import { ptBR } from 'date-fns/locale';
 import { contactsAPI } from '@/lib/api/contacts';
 import { buildContactExportCSV } from '@/lib/export-contacts-csv';
 import type { Contact, ContactListFilters } from '@/hooks/use-contacts-list';
+import type { ContactExportFile } from '@/lib/contact-export-download';
 
 export { buildContactExportCSV, escapeContactExportCSVCell } from '@/lib/export-contacts-csv';
 
@@ -44,6 +45,7 @@ interface ExportOptions {
   includeDynamicFields?: boolean;
   signal?: AbortSignal;
   onProgress?: (progress: ContactExportProgress) => void;
+  onFileReady?: (file: ContactExportFile) => void;
 }
 
 type ContactExportRow = Record<string, string | number | boolean | null | undefined>;
@@ -821,6 +823,7 @@ export async function exportContactsFiltered({
   includeDynamicFields = columnKeys === undefined,
   signal,
   onProgress,
+  onFileReady,
 }: ExportOptions) {
   signal?.throwIfAborted();
   const contacts = await fetchAllFilteredContacts(
@@ -863,7 +866,7 @@ export async function exportContactsFiltered({
       processed: contacts.length,
       total: contacts.length,
     });
-    downloadCSV(contacts, filename, columns);
+    downloadCSV(contacts, filename, columns, onFileReady);
     return contacts.length;
   }
 
@@ -885,7 +888,7 @@ export async function exportContactsFiltered({
     processed: contacts.length,
     total: contacts.length,
   });
-  await downloadWorkbook(workbook, filename, exportFormat);
+  await downloadWorkbook(workbook, filename, exportFormat, onFileReady);
   return contacts.length;
 }
 
@@ -947,6 +950,7 @@ function downloadCSV(
   contacts: Contact[],
   filename: string,
   columns: readonly ExportColumn[],
+  onFileReady?: (file: ContactExportFile) => void,
 ) {
   const headers = columns.map((column) => column.header);
   const rows = contacts.map((contact) => {
@@ -963,6 +967,7 @@ function downloadCSV(
     csv,
     `${filename}.csv`,
     'text/csv;charset=utf-8;',
+    onFileReady,
   );
 }
 
@@ -986,20 +991,30 @@ async function downloadWorkbook(
   workbook: ExcelJS.Workbook,
   filename: string,
   exportFormat: ContactExportFormat,
+  onFileReady?: (file: ContactExportFile) => void,
 ) {
   if (exportFormat === 'csv') {
     const buffer = await workbook.csv.writeBuffer();
-    downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;');
+    downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;', onFileReady);
     return;
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  downloadFile(buffer, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  downloadFile(buffer, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', onFileReady);
 }
 
-function downloadFile(buffer: ExcelJS.Buffer | string | Array<ExcelJS.Buffer | string>, filename: string, mimeType: string) {
+function downloadFile(
+  buffer: ExcelJS.Buffer | string | Array<ExcelJS.Buffer | string>,
+  filename: string,
+  mimeType: string,
+  onFileReady?: (file: ContactExportFile) => void,
+) {
   const parts = Array.isArray(buffer) ? buffer : [buffer];
   const blob = new Blob(parts as BlobPart[], { type: mimeType });
+  if (onFileReady) {
+    onFileReady({ blob, filename });
+    return;
+  }
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;
