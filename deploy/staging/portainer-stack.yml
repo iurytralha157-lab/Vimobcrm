@@ -34,7 +34,7 @@ services:
       NEXT_PUBLIC_VIMOB_API_URL: ${STAGING_PUBLIC_API_URL:?Set the staging API URL}
       NEXT_PUBLIC_SITE_URL: ${STAGING_PUBLIC_WEB_URL:?Set the staging web URL}
       VIMOB_API_URL: http://vimob-staging-api:8081
-      SUPABASE_SECRET_KEY: ${STAGING_SUPABASE_SECRET_KEY:?Set the staging server-only Supabase key}
+      SUPABASE_SECRET_KEY: ${STAGING_SUPABASE_SECRET_KEY:?Set the staging server only Supabase key}
       RESEND_API_KEY: ''
       RESEND_WEBHOOK_SECRET: ''
       EMAIL_INTERNAL_SECRET: ''
@@ -83,7 +83,7 @@ services:
       SUPABASE_JWKS_URL: ${STAGING_SUPABASE_URL:?Set the isolated Supabase URL}/auth/v1/.well-known/jwks.json
       SUPABASE_JWT_ISSUER: ${STAGING_SUPABASE_URL:?Set the isolated Supabase URL}/auth/v1
       SUPABASE_JWT_AUDIENCE: authenticated
-      SUPABASE_SECRET_KEY: ${STAGING_SUPABASE_SECRET_KEY:?Set the staging server-only Supabase key}
+      SUPABASE_SECRET_KEY: ${STAGING_SUPABASE_SECRET_KEY:?Set the staging server only Supabase key}
       DATABASE_URL: ${STAGING_DATABASE_URL:?Set the isolated database URL}
       DATABASE_MAX_CONNS: '4'
       DATABASE_MIN_CONNS: '0'
