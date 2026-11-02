@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "d815560c61ba2b76e2bac8313674c3f55074752e6e6f319601fed8f3e25db6a0",
+  "sourceDigestSha256": "9ff79d7f673e347171ab47f5dd29a97f51aefded3e225c1016313f7b49abd942",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -6040,10 +6040,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:cb164352aa938a8423b5",
+          "id": "form:5839a9206ca8707a7219",
           "column": 9,
           "file": "components/features/auth/login-form.tsx",
-          "line": 610,
+          "line": 559,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6052,10 +6052,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:735fd04031bf5b885e80",
+          "id": "form:a31f273cfed3dbf13cd0",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 689,
+          "line": 644,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6064,10 +6064,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:f66b159c86461ea45816",
+          "id": "form:eb410cf7208523444821",
           "column": 9,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 610,
+          "line": 304,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -10317,10 +10317,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ff13ca602fe72a213b92",
+          "id": "cta:abed171fff7fe1e5c9bd",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 571,
+          "line": 520,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10329,10 +10329,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a95a86bd382161343c66",
+          "id": "cta:52886bf133ccbcced7b0",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 659,
+          "line": 608,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10341,10 +10341,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:841db556a6b7f524c33e",
+          "id": "cta:ba48809b523ae629e8c3",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 751,
+          "line": 707,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10353,10 +10353,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:57192fa75c68d884fef5",
+          "id": "cta:f434208d0182053eefbc",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 780,
+          "line": 736,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10365,10 +10365,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f23fc2058135a749fdcc",
+          "id": "cta:26e00c75b0c23c5d2e22",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 800,
+          "line": 756,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10377,10 +10377,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f8ddf6428ca558522486",
+          "id": "cta:a5dd34576f47e35e35df",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 829,
+          "line": 785,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10389,10 +10389,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:820b141af27c59c0294d",
+          "id": "cta:cf4a40d291c9605aaada",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 839,
+          "line": 795,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10454,10 +10454,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bdb5479879539eca456b",
+          "id": "cta:ccd4e1d59502718437e2",
           "column": 11,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 556,
+          "line": 250,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -10466,10 +10466,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:d118395682caca503160",
+          "id": "cta:52273b0da23878754d43",
           "column": 15,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 651,
+          "line": 345,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -10478,10 +10478,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:0891e28acb8a282bd4b2",
+          "id": "cta:1d1bf6f919c66f31075a",
           "column": 15,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 732,
+          "line": 426,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -10490,10 +10490,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:365df08897dac75138aa",
+          "id": "cta:30da385e1dcac84cf85e",
           "column": 11,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 754,
+          "line": 448,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -10502,10 +10502,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:575492c40a5893acfcd7",
+          "id": "cta:c2d93f2733dab28df7d3",
           "column": 13,
           "file": "components/features/auth/screens/ResetPasswordScreen.tsx",
-          "line": 764,
+          "line": 458,
           "owner": "ResetPasswordScreen",
           "routes": [
             "/reset-password"
@@ -45543,7 +45543,7 @@
         }
       ]
     },
-    "digestSha256": "d177c3019082fb6ab9992d75f1264963da53bd0b986617971ef290e6f51682f8"
+    "digestSha256": "2e49f6147eaf3ee3abcc06f4f612a4a7f32e11d1110c0735914c99122fc8963e"
   },
   "routes": [
     {
