@@ -102,8 +102,17 @@ Referências: [Resend SMTP](https://resend.com/docs/send-with-smtp) e
 
 Em homologação Cloud, configure Custom SMTP no projeto exclusivo e use o mesmo
 HTML de `supabase/templates/recovery.html` no template de reset. Os links legais
-usam `SiteURL` e a recuperação usa `RedirectTo`, de modo que cada ambiente
-mantém seus destinos. A mudança local não instala o template em nenhum Auth.
+usam `SiteURL`; CTA e fallback de recuperação usam `ConfirmationURL` sem
+reconstruir o endereço. O Auth verifica o token PKCE em `/auth/v1/verify` e
+redireciona para o `redirect_to` autorizado de `/reset-password`. O código deve
+ser trocado no mesmo navegador que iniciou a solicitação, pois o verifier PKCE
+fica nesse navegador. A mudança local não instala o template em nenhum Auth.
+
+Não substitua esse caminho por `RedirectTo?token_hash=...` com `verifyOtp` POST:
+nesse contrato o Auth emite método `otp`, enquanto o Vimob exige o método
+assinado `recovery` para a troca de senha. Não trate qualquer OTP como prova de
+recuperação. Uma solicitação feita no navegador interno e aberta no Chrome não
+valida o fluxo PKCE; faça solicitação e abertura no mesmo navegador e perfil.
 
 O override implantável é
 `deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml`. Ele preserva
@@ -162,9 +171,9 @@ docker compose \
 
 sha256sum /tmp/vimob-recovery-served.html
 sha256sum /opt/supabase/docker/volumes/templates/recovery.html
-grep -F '{{ .RedirectTo }}' /tmp/vimob-recovery-served.html
-grep -F '{{ .TokenHash }}' /tmp/vimob-recovery-served.html
-grep -F 'type=recovery' /tmp/vimob-recovery-served.html
+grep -F '{{ .ConfirmationURL }}' /tmp/vimob-recovery-served.html
+grep -F '{{ .SiteURL }}' /tmp/vimob-recovery-served.html
+! grep -F '{{ .TokenHash }}' /tmp/vimob-recovery-served.html
 ```
 
 Os dois SHA-256 devem ser iguais. O endpoint
@@ -178,16 +187,21 @@ nunca imprima `Config.Env` completo ou `SMTP_PASS`.
 
 Faça um canário com uma conta dedicada antes de liberar produção:
 
-1. Solicitar uma única recuperação em `https://app.vimobcrm.com.br/login`.
+1. Solicitar uma única recuperação em `https://app.vimobcrm.com.br/login` no
+   navegador e perfil em que o e-mail será aberto; não usar outro navegador,
+   perfil ou janela anônima para concluir a troca PKCE.
 2. Confirmar remetente/domínio, assunto, logo compacto, layout claro sem
    cartão e botão laranja no e-mail recebido, todo o texto em português e
    ausência das frases de fallback
    `Reset Your Password`, `Follow this link` e `enter the code`, inclusive nos
    logs do Auth.
-3. Inspecionar o destino do botão: ele deve começar em
-   `https://app.vimobcrm.com.br/reset-password`, ter um único `token_hash` e
-   `type=recovery`, sem o provedor de e-mail reescrever a URL.
-4. Abrir o link uma vez, definir uma senha nova e validar login com ela; a senha
+3. Confirmar somente origem, caminho e nomes dos parâmetros, sem copiar o
+   token: o destino do botão deve ser o `/auth/v1/verify` do Auth configurado,
+   com `token`, `type=recovery` e `redirect_to` para
+   `https://app.vimobcrm.com.br/reset-password`. Não reconstruir esse endereço
+   nem permitir que o provedor SMTP o reescreva. Após a verificação, o retorno
+   deve chegar a `/reset-password?code=...` para a troca PKCE nesse navegador.
+4. Abrir o link uma vez no mesmo navegador/perfil, definir uma senha nova e validar login com ela; a senha
    anterior deve falhar e a reutilização do link deve ser recusada.
 5. Só então executar os canários restantes de Auth. Se qualquer etapa falhar,
    interromper o cutover e manter a origem ativa.

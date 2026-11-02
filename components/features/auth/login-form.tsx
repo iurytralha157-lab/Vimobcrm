@@ -537,7 +537,7 @@ export function LoginForm() {
             id="password-recovery-description"
             className={`mt-1.5 text-[12px] font-light leading-[18px] ${paragraphTextClass}`}
           >
-            Digite seu e-mail e enviaremos um link para redefinir sua senha.
+            Digite seu e-mail para solicitar um link de recuperação. Abra o link neste mesmo navegador.
           </p>
         </header>
       ) : (

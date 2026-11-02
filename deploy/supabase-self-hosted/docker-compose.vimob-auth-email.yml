@@ -29,9 +29,9 @@ services:
         - CMD-SHELL
         - >-
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1/recovery.html
-          && grep -F '{{ .RedirectTo }}' /templates/recovery.html > /dev/null
-          && grep -F '{{ .TokenHash }}' /templates/recovery.html > /dev/null
-          && grep -F 'type=recovery' /templates/recovery.html > /dev/null
+          && grep -F '{{ .ConfirmationURL }}' /templates/recovery.html > /dev/null
+          && grep -F '{{ .SiteURL }}' /templates/recovery.html > /dev/null
+          && ! grep -F '{{ .TokenHash }}' /templates/recovery.html > /dev/null
       interval: 5s
       timeout: 3s
       retries: 12

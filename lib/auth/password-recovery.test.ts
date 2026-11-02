@@ -49,7 +49,7 @@ const selfHostedAuthEmailEnvExampleSource = readFileSync(
   'utf8',
 )
 const recoveryTemplateLink =
-  '{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=recovery'
+  '{{ .ConfirmationURL }}'
 
 function unsignedToken(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
@@ -288,7 +288,7 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
   assert.equal(recoveryLinkOccurrences, 3)
   assert.deepEqual(
     Array.from(new Set(templateVariables)).sort(),
-    ['RedirectTo', 'SiteURL', 'TokenHash'],
+    ['ConfirmationURL', 'SiteURL'],
   )
   assert.match(recoveryEmailTemplateSource, /<html lang="pt-BR">/)
   assert.match(recoveryEmailTemplateSource, /name="color-scheme" content="light"/)
@@ -327,7 +327,7 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
     recoveryEmailTemplateSource,
     /\{\{ \.SiteURL \}\}\/politica-de-privacidade/,
   )
-  assert.doesNotMatch(recoveryEmailTemplateSource, /\.ConfirmationURL/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /\.TokenHash|\.RedirectTo/)
   assert.equal(recoveryEmailTemplateSource.split('{{ .SiteURL }}').length - 1, 2)
   assert.doesNotMatch(recoveryEmailTemplateSource, /{{\s*\.Token\s*}}/)
   assert.doesNotMatch(
@@ -369,7 +369,7 @@ test('recovery template has an executable local and self-hosted Auth contract', 
   assert.match(selfHostedAuthEmailComposeSource, /read_only:\s*true/)
   assert.match(
     selfHostedAuthEmailComposeSource,
-    /healthcheck:[\s\S]*?recovery\.html[\s\S]*?\{\{ \.RedirectTo \}\}[\s\S]*?\{\{ \.TokenHash \}\}[\s\S]*?type=recovery/,
+    /healthcheck:[\s\S]*?recovery\.html[\s\S]*?\{\{ \.ConfirmationURL \}\}[\s\S]*?\{\{ \.SiteURL \}\}[\s\S]*?! grep -F '\{\{ \.TokenHash \}\}'/,
   )
   assert.doesNotMatch(selfHostedAuthEmailComposeSource, /^\s+ports:/m)
   assert.match(

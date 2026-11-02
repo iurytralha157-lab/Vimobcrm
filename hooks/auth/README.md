@@ -5,6 +5,14 @@ O transporte continua em `authAPI.resetPassword`, por meio do Supabase Auth.
 Este hook não cria tokens, não envia e-mails por outro canal e não consulta
 a existência de uma conta.
 
+O e-mail usa a `ConfirmationURL` gerada pelo Auth. O pedido inicia PKCE; o
+link passa pelo GET `/auth/v1/verify` e retorna com um código para
+`/reset-password`. Solicitação e abertura do e-mail devem usar o mesmo navegador
+e perfil, onde o SDK guardou o verifier. Receber o e-mail em outro navegador
+comprova entrega, mas não valida a conclusão do reset. Não reconstruir o link
+com `token_hash` e POST `verifyOtp`: esse caminho emite método `otp`, que sozinho
+não satisfaz a exigência de sessão assinada `recovery` do Vimob.
+
 Cada retorno concluído usa a mesma mensagem neutra, inclusive erros devolvidos
 pelo provedor. A interface não confirma entrega nem deduz indisponibilidade
 global de um erro associado a um endereço. Após 15 segundos sem conclusão,
