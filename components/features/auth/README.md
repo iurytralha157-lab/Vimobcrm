@@ -4,6 +4,19 @@
 e o ciclo da visita ficam em `hooks/auth/use-password-recovery-session.ts`.
 PKCE, token hash e sessão implícita continuam usando o cliente Supabase canônico.
 
+O proxy encaminha sessões assinadas de recuperação das rotas de login, cadastro,
+onboarding e CRM para `/reset-password`, preservando a sessão. Uma navegação ou
+evento recebido por outra aba não representa cancelamento. A query `cancel=1`
+também não encerra a sessão: a saída usa a ação explícita da tela e os guards
+da identidade que está sendo recuperada.
+
+Na tela inválida, `Voltar ao login` pode encerrar a recuperação atual mesmo sem
+prova local do link. O clique captura visita e identidade antes de consultar a
+sessão fresca; só encerra a mesma sessão com AMR `recovery`, sem autorizar troca
+de senha. Sessões normais/OTP estáveis são preservadas, e uma substituição durante
+a consulta invalida a saída. O listener continua observando identidades após
+invalidar a visita, sem reabrir o formulário nem conceder prova.
+
 Uma visita validada captura usuário e `session_id`. `settingsAPI.changePassword`
 encaminha essa identidade ao transporte; chamadas de Configurações sem intenção
 explícita capturam os mesmos dados do token corrente no início da chamada.
@@ -34,6 +47,7 @@ Verificações focadas, sem rede ou banco:
 
 ```sh
 node --test hooks/auth/password-recovery-session.race.test.mjs lib/auth/password-recovery-exit.test.mjs lib/api/password-change-identity.test.mjs
+node --test lib/auth/password-recovery-proxy.test.mjs
 node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test lib/auth/password-recovery.test.ts
 ```
 

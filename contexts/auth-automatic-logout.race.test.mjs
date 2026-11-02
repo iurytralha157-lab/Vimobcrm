@@ -45,7 +45,7 @@ function harness(pathname='/crm') {
   const sandbox={...base,...helper,...cache,h,isMounted:true,userRef,logoutLifecycleRef:lifecycle,
     automaticLogoutSequenceRef:{current:0},isLoggingOutRef:{current:false},signOutInFlightRef:{current:null},
     credentialSignInInFlightRef:{current:false},organizationListRequestRef:{current:0},profileRef:{current:null},organizationRef:{current:null},
-    recoveryActionScheduledRef:{current:false},ROUTES:{RESET_PASSWORD:'/reset-password',SIGNUP:'/cadastro',LOGIN:'/login'},
+    recoveryActionScheduledRef:{current:null},ROUTES:{RESET_PASSWORD:'/reset-password',SIGNUP:'/cadastro',LOGIN:'/login'},
     useCallback:callback=>callback,setSessionState:value=>{h.session=value},setUser:value=>{h.user=value},
     setVimobAPIAccessToken:token=>h.tokenWrites.push(token),authSnapshotKey:id=>`snapshot:${id}`,authDebug:noop,authDebugWarn:noop,
     setProfile:noop,setOrganization:noop,setTenantContext:noop,setUserOrganizations:noop,setOrganizationsLoaded:noop,setIsSuperAdmin:noop,
@@ -108,23 +108,23 @@ test('same actor new session invalidates a scheduled recovery cleanup',async()=>
   const {h,sandbox}=harness('/login');sandbox.recoverySession(h.session);h.transition(makeSession('user-a','new-session-a'));h.flushTimer();await tick();
   assert.equal(h.locals,0);assert.deepEqual(h.redirects,[]);
 });
-test('current recovery cancellation uses local-only cleanup and the login destination',async()=>{
+test('passive recovery on the login page preserves evidence and redirects without SDK cleanup',async()=>{
   const {h,sandbox,scoped}=harness('/login');
   scoped.setItem('vimob:password-recovery:intent:v1','synthetic-intent');
   scoped.setItem('vimob:password-recovery:proof:v1','synthetic-proof');
   scoped.setItem('synthetic-unrelated','preserved');
   sandbox.recoverySession(h.session);h.flushTimer();await tick();
-  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,1);assert.deepEqual(h.redirects,['/login']);
-  assert.equal(scoped.getItem('vimob:password-recovery:intent:v1'),null);
-  assert.equal(scoped.getItem('vimob:password-recovery:proof:v1'),null);
+  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,0);assert.deepEqual(h.redirects,['/reset-password']);
+  assert.equal(scoped.getItem('vimob:password-recovery:intent:v1'),'synthetic-intent');
+  assert.equal(scoped.getItem('vimob:password-recovery:proof:v1'),'synthetic-proof');
   assert.equal(scoped.getItem('synthetic-unrelated'),'preserved');
 });
 
-test('denied recovery storage acquisition still permits current local-only cancellation',async()=>{
+test('passive recovery navigation does not acquire denied browser storage or sign out',async()=>{
   const {h,sandbox}=harness('/login');
   Object.defineProperty(sandbox.window,'sessionStorage',{get(){throw new DOMException('Synthetic denied storage','SecurityError');}});
   sandbox.recoverySession(h.session);h.flushTimer();await tick();
-  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,1);assert.deepEqual(h.redirects,['/login']);
+  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,0);assert.deepEqual(h.redirects,['/reset-password']);
 });
 test('current recovery route still navigates to reset without local or global revocation',async()=>{
   const {h,sandbox}=harness('/crm');sandbox.recoverySession(h.session);h.flushTimer();await tick();
@@ -134,4 +134,47 @@ test('recovery fresh SDK lookup cannot finish against B while its auth callback 
   const {h,sandbox}=harness('/login');h.lookupGate=deferred();sandbox.recoverySession(h.session);h.flushTimer();await tick();
   h.sdkSession=makeSession('user-b','session-b');h.lookupGate.resolve({data:{session:h.sdkSession},error:null});await tick();
   assert.equal(h.locals,0);assert.deepEqual(h.redirects,[]);
+});
+
+test('a stale recovery action cannot prevent a later recovery visit after a normal login',async()=>{
+  const {h,sandbox}=harness('/login');
+  sandbox.recoverySession(h.sdkSession);
+  h.transition(makeSession('user-b','normal-session-b'));
+  h.transition(makeSession('user-c','recovery-session-c'));
+  sandbox.recoverySession(h.sdkSession);
+  assert.equal(h.timers.length,2);
+  h.timers.shift()();h.flushTimer();await tick();
+  assert.deepEqual(h.redirects,['/reset-password']);assert.equal(h.locals,0);assert.deepEqual(h.revokes,[]);
+  assert.equal(h.sdkSession.user.id,'user-c');
+});
+
+test('repeated recovery notifications coalesce to the latest valid redirect guard',async()=>{
+  const {h,sandbox}=harness('/login');
+  sandbox.recoverySession(h.sdkSession);sandbox.recoverySession(h.sdkSession);
+  assert.equal(h.timers.length,2);
+  h.timers.shift()();h.flushTimer();await tick();
+  assert.deepEqual(h.redirects,['/reset-password']);assert.equal(h.locals,0);assert.deepEqual(h.revokes,[]);
+});
+
+test('a deferred passive redirect cannot replace a recovery URL already reached by navigation',async()=>{
+  const {h,sandbox}=harness('/login');sandbox.recoverySession(h.sdkSession);
+  sandbox.window.location.pathname='/reset-password';h.flushTimer();await tick();
+  assert.deepEqual(h.redirects,[]);assert.equal(h.locals,0);assert.deepEqual(h.revokes,[]);
+});
+
+test('a failed fresh SDK read does not navigate or clean up a passive recovery',async()=>{
+  const {h,sandbox}=harness('/login');h.lookupGate=deferred();sandbox.recoverySession(h.sdkSession);h.flushTimer();await tick();
+  h.lookupGate.resolve({data:{session:h.sdkSession},error:new Error('Synthetic session lookup failure')});await tick();
+  assert.deepEqual(h.redirects,[]);assert.equal(h.locals,0);assert.deepEqual(h.revokes,[]);
+});
+
+test('a refreshed JWT for the same recovery user and session keeps the latest redirect valid',async()=>{
+  const {h,sandbox}=harness('/login');h.lookupGate=deferred();
+  sandbox.recoverySession(h.sdkSession);h.flushTimer();await tick();
+  const refreshed=makeSession();refreshed.access_token=refreshed.access_token.replace('.synthetic','.synthetic-refreshed');
+  h.sdkSession=refreshed;sandbox.recoverySession(refreshed);h.flushTimer();await tick();
+  h.lookupGate.resolve({data:{session:refreshed},error:null});await tick();
+  assert.deepEqual(h.redirects,['/reset-password']);assert.equal(h.locals,0);assert.deepEqual(h.revokes,[]);
+  assert.equal(h.sdkSession.access_token,refreshed.access_token);
+  assert.equal(sandbox.recoveryActionScheduledRef.current,null);
 });

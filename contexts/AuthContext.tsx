@@ -19,8 +19,6 @@ import {
   setVimobAPIAccessToken,
 } from '@/lib/api/vimob-client';
 import {
-  clearPasswordRecoveryEvidence,
-  getPasswordRecoveryStorage,
   isPasswordRecoveryAccessToken,
 } from '@/lib/auth/password-recovery';
 import {
@@ -29,7 +27,7 @@ import {
   shouldForceOrganizationSelectionForAuthEvent,
   shouldRevalidateMembership,
 } from '@/lib/auth/frontend-auth-reliability';
-import { captureGlobalSignOutGuard, signOutLocallyWithSessionGuard, signOutWithGlobalRevocation, trackGlobalSignOutSession, type GlobalSignOutLifecycle } from '@/lib/auth/global-sign-out';
+import { captureGlobalSignOutGuard, getGlobalSignOutSessionKey, signOutWithGlobalRevocation, trackGlobalSignOutSession, type GlobalSignOutLifecycle } from '@/lib/auth/global-sign-out';
 import {
   resolveActiveOrganization,
   type ActiveOrganizationResolution,
@@ -127,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOutInFlightRef = useRef<Promise<void> | null>(null);
   const signOutInFlightIdentityRef = useRef<{ generation: number; key: string | null } | null>(null);
   const automaticLogoutSequenceRef = useRef(0);
-  const recoveryActionScheduledRef = useRef(false);
+  const recoveryActionScheduledRef = useRef<{ key: string | null } | null>(null);
   const credentialSignInInFlightRef = useRef(false);
 
   const [session, setSessionState] = useState<Session | null>(null);
@@ -595,36 +593,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return true;
       }
 
-      if (recoveryActionScheduledRef.current) return true;
-      recoveryActionScheduledRef.current = true;
-
-      const shouldCancelRecovery = ['/login', '/cadastro', '/onboarding'].some((route) =>
-        window.location.pathname.startsWith(route),
-      );
+      // Auth events also arrive from other tabs. Passive isolation must never
+      // sign out the browser-wide recovery session owned by the email tab.
+      const action = { key: getGlobalSignOutSessionKey(recoverySession) };
+      recoveryActionScheduledRef.current = action;
+      const isCurrent = () => isMounted && recoveryActionScheduledRef.current === action && guard.isCurrent();
 
       setTimeout(() => {
-        if (!isMounted || !guard.isCurrent()) return;
-
-        if (!shouldCancelRecovery) {
-          window.location.replace(ROUTES.RESET_PASSWORD);
-          return;
-        }
-
-        const destination = window.location.pathname.startsWith('/cadastro')
-          ? ROUTES.SIGNUP
-          : ROUTES.LOGIN;
-
-        const recoveryStorage = getPasswordRecoveryStorage();
-        if (recoveryStorage) clearPasswordRecoveryEvidence(recoveryStorage);
-        void signOutLocallyWithSessionGuard({
-          getSession: () => supabase.auth.getSession(),
-          clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
-        }, guard).then(outcome => {
-          if (outcome === 'cancelled' || !guard.isCurrent()) return;
-          setVimobAPIAccessToken(null, null);
-          window.location.replace(destination);
-        }).catch(error => {
-          if (guard.isCurrent()) authDebugWarn('Não foi possível encerrar a sessão de recuperação:', error);
+        if (!isCurrent()) return;
+        void (async () => {
+          const { data, error } = await supabase.auth.getSession();
+          if (!isCurrent() || error || getGlobalSignOutSessionKey(data.session) !== action.key
+            || !isPasswordRecoveryAccessToken(data.session?.access_token)) return;
+          if (!window.location.pathname.startsWith(ROUTES.RESET_PASSWORD)) {
+            window.location.replace(ROUTES.RESET_PASSWORD);
+          }
+        })().catch(() => {
+          if (isCurrent()) authDebugWarn('Não foi possível conferir a sessão antes de redirecionar a recuperação.');
+        }).finally(() => {
+          if (recoveryActionScheduledRef.current === action) recoveryActionScheduledRef.current = null;
         });
       }, 0);
 

@@ -208,21 +208,18 @@ test('recovery redirect policy keeps recovery sessions out of normal navigation'
     amr: [{ method: 'recovery' }, { method: 'token_refresh' }],
   }
 
-  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/dashboard'), { kind: 'reset' })
-  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/settings/account'), { kind: 'reset' })
-  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/login'), {
-    kind: 'cancel',
-    next: '/login',
-  })
-  assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, '/cadastro'), {
-    kind: 'cancel',
-    next: '/cadastro',
-  })
-  assert.equal(getPasswordRecoveryRedirect(recoveryClaims, '/reset-password'), null)
-  assert.equal(getPasswordRecoveryRedirect(recoveryClaims, '/convite/token'), null)
+  for (const pathname of ['/dashboard', '/settings/account', '/login', '/cadastro', '/onboarding']) {
+    assert.deepEqual(getPasswordRecoveryRedirect(recoveryClaims, pathname), { kind: 'reset' })
+  }
+  for (const pathname of ['/reset-password', '/convite/token', '/termos-de-uso', '/politica-de-privacidade']) {
+    assert.equal(getPasswordRecoveryRedirect(recoveryClaims, pathname), null)
+  }
 
-  assert.equal(getPasswordRecoveryRedirect({ amr: [{ method: 'password' }] }, '/dashboard'), null)
-  assert.equal(getPasswordRecoveryRedirect({ amr: [{ method: 'token_refresh' }] }, '/dashboard'), null)
+  for (const method of ['password', 'otp', 'token_refresh']) {
+    for (const pathname of ['/dashboard', '/login', '/cadastro', '/onboarding']) {
+      assert.equal(getPasswordRecoveryRedirect({ amr: [{ method }] }, pathname), null)
+    }
+  }
   assert.equal(getPasswordRecoveryRedirect({ type: 'recovery' }, '/dashboard'), null)
 })
 

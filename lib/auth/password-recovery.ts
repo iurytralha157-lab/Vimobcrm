@@ -95,19 +95,13 @@ export function hasPasswordRecoveryAuthenticationMethod(claims: unknown) {
 
 export function getPasswordRecoveryRedirect(claims: unknown, pathname: string):
   | { kind: 'reset' }
-  | { kind: 'cancel'; next: '/login' | '/cadastro' }
   | null {
   if (!hasPasswordRecoveryAuthenticationMethod(claims)) return null
 
-  if (isProtectedAppPath(pathname)) {
+  // A passive request from another tab is not an explicit cancellation.
+  // Keep the recovery session isolated without revoking the shared identity.
+  if (isProtectedAppPath(pathname) || isPublicAuthRoute(pathname)) {
     return { kind: 'reset' }
-  }
-
-  if (isPublicAuthRoute(pathname)) {
-    return {
-      kind: 'cancel',
-      next: pathname.startsWith('/cadastro') ? '/cadastro' : '/login',
-    }
   }
 
   return null

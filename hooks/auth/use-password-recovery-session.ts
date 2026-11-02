@@ -100,12 +100,31 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
   const leavePasswordRecovery = useCallback(async (destination: string) => {
     const guard = captureGuard()
     if (guard) { await exitTo(destination, guard); return }
-    // An invalid link has no recovery identity to revoke. Navigation must not
-    // clear a normal session that happens to be open in this browser.
-    const visit = visitRef.current, generation = lifecycleRef.current.generation
-    if (lifecycleRef.current.mounted && visit === visitRef.current && generation === lifecycleRef.current.generation) {
-      window.location.replace(destination)
+    // This explicit click may exit an unproven recovery, but cannot authorize a
+    // password change or take ownership of a replacement observed after it.
+    const lifecycle = lifecycleRef.current
+    const visit = visitRef.current, generation = lifecycle.generation, key = lifecycle.sessionKey
+    const current = () => lifecycle.mounted && visit === visitRef.current
+      && generation === lifecycle.generation && key === lifecycle.sessionKey
+    let session: Session | null
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (!current()) return
+      if (error) throw error
+      if (getGlobalSignOutSessionKey(data.session) !== key) return
+      session = data.session
+    } catch {
+      if (current()) setValidationMessage('Não foi possível conferir a sessão. Tente voltar ao login novamente.')
+      return
     }
+    if (session && isPasswordRecoveryAccessToken(session.access_token)) {
+      const exitGuard = captureGlobalSignOutGuard(session, session.user.id, lifecycle)
+      await exitTo(destination, { ...exitGuard,
+        isCurrent: () => visit === visitRef.current && exitGuard.isCurrent(),
+      })
+      return
+    }
+    if (current()) window.location.replace(destination)
   }, [captureGuard, exitTo])
 
   const finishPasswordRecovery = useCallback((outcome: 'success' | 'unverified', guard: PasswordRecoveryGuard) =>
@@ -169,17 +188,6 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       if (!current()) return
       setRecoveryState('checking')
       setValidationMessage(null)
-      if (searchParams.get('cancel') === '1') {
-        const { data } = await supabase.auth.getSession()
-        if (!current()) return
-        if (data.session && isPasswordRecoveryAccessToken(data.session.access_token)) {
-          trackGlobalSignOutSession(lifecycleRef.current, data.session)
-          recoverySessionRef.current = data.session
-          const guard = captureGuard()
-          if (guard) await exitTo(searchParams.get('next') === ROUTES.SIGNUP ? ROUTES.SIGNUP : ROUTES.LOGIN, guard)
-        } else window.location.replace(ROUTES.LOGIN)
-        return
-      }
       const url = new URL(window.location.href)
       const evidence = readPasswordRecoveryUrlEvidence(url)
       const storage = getPasswordRecoveryStorage()
@@ -225,9 +233,12 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       } finally { if (current()) establishing = false }
     }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!current()) return
+      // A closed validation visit must still observe replacements while this
+      // effect is mounted, so an explicit exit cannot act on a later identity.
+      if (!mounted || !lifecycleRef.current.mounted) return
       const key = getGlobalSignOutSessionKey(session)
       trackGlobalSignOutSession(lifecycleRef.current, session)
+      if (!current()) return
       if (event === 'INITIAL_SESSION') return
       if (event === 'SIGNED_OUT') {
         if (!closingRef.current) invalid(changedSessionMessage, true)

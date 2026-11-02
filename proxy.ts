@@ -79,10 +79,6 @@ export async function proxy(request: NextRequest) {
   const recoveryRedirect = getPasswordRecoveryRedirect(user, request.nextUrl.pathname)
   if (recoveryRedirect) {
     const recoveryURL = new URL('/reset-password', request.url)
-    if (recoveryRedirect.kind === 'cancel') {
-      recoveryURL.searchParams.set('cancel', '1')
-      recoveryURL.searchParams.set('next', recoveryRedirect.next)
-    }
     return redirectWithSessionCookies(recoveryURL, response)
   }
 

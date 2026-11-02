@@ -7,16 +7,16 @@ import ts from 'typescript';
 const repo = new URL('../../', import.meta.url);
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { resolve, promise }; }
 const session = (user = 'a', sid = 'sid-a', recovery = true) => ({ user: { id: user }, access_token:
-  `e30.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, amr: [{ method: recovery ? 'recovery' : 'password' }] })).toString('base64url')}.synthetic` });
+  `e30.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, amr: [{ method: typeof recovery === 'string' ? recovery : recovery ? 'recovery' : 'password' }] })).toString('base64url')}.synthetic` });
 const tick = () => new Promise(setImmediate);
 
-function harness(kind = 'token_hash', unavailableStorage = false) {
-  const suffix = kind === 'pkce' ? '?code=synthetic-code'
+function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) {
+  const suffix = initial.suffix ?? (kind === 'pkce' ? '?code=synthetic-code'
     : kind === 'implicit' ? `#access_token=${session().access_token}&refresh_token=synthetic-refresh&type=recovery`
-      : kind === 'none' ? '' : '?token_hash=synthetic-hash&type=recovery';
+      : kind === 'none' ? '' : '?token_hash=synthetic-hash&type=recovery');
   const auth = deferred(), states = [], updates = [], effects = [], refs = [], layouts = [], callbacks = [];
   const values = new Map();
-  const h = { sdkSession: null, auth, effects, states, updates, refs, storageWrites: [], calls: [], callback: null };
+  const h = { sdkSession: initial.session ?? null, auth, effects, states, updates, refs, storageWrites: [], calls: [], callback: null };
   const storage = { getItem: key => values.get(key) || null,
     setItem: (key, value) => { h.storageWrites.push(key); values.set(key, value); },
     removeItem: key => { h.storageWrites.push(key); values.delete(key); } };
@@ -39,9 +39,13 @@ function harness(kind = 'token_hash', unavailableStorage = false) {
   const exit = load('lib/auth/password-recovery-exit.ts', { '@/lib/auth/global-sign-out': globalSignOut,
     '@/lib/auth/frontend-auth-reliability': reliability });
   const recovery = load('lib/auth/password-recovery.ts', { './post-login-redirect': { isProtectedAppPath: () => false } });
+  if (initial.recordedProof && h.sdkSession) {
+    recovery.capturePasswordRecoveryIntent(storage, new URL('https://staging.example.test/reset-password?code=synthetic-code'));
+    recovery.grantPasswordRecoveryProof(storage, h.sdkSession.user.id);
+  }
   const supabase = { auth: {
     getUser: () => h.userLookup?.promise || Promise.resolve({ data: { user: h.sdkSession?.user }, error: null }),
-    getSession: () => h.getSessionError ? Promise.reject(h.getSessionError)
+    getSession: () => h.lookupSession ? h.lookupSession() : h.getSessionError ? Promise.reject(h.getSessionError)
       : h.fresh?.promise || Promise.resolve({ data: { session: h.sdkSession }, error: null }),
     exchangeCodeForSession: () => { h.calls.push('pkce'); return h.auth.promise; },
     verifyOtp: () => { h.calls.push('token_hash'); return h.auth.promise; },
@@ -163,6 +167,121 @@ test('the original guard still permits leaving after the password request revoke
   await h.result.leavePasswordRecovery('/login');
   assert(h.effects.some(effect => effect[0] === 'navigate' && effect[1] === '/login'));
   h.unmount();
+});
+for (const [name, current] of [['absent', null], ['normal', session('a', 'sid-a', false)], ['unproven recovery', session()]]) {
+  test(`a legacy cancel query cannot revoke or navigate the ${name} session`, async () => {
+    const h = harness('none', false, { suffix: '?cancel=1&next=%2Flogin', session: current });
+    try {
+      await tick(); await tick();
+      assert.equal(h.states[0], 'invalid'); assert.equal(h.result.captureGuard(), null);
+      assert.equal(h.sdkSession, current); assert.deepEqual(h.calls, []);
+      assert.deepEqual(h.effects, []); assert.deepEqual(h.storageWrites, []);
+    } finally { h.unmount(); }
+  });
+}
+test('a legacy cancel query preserves an already proven recovery and its identity guard', async () => {
+  const current = session();
+  const h = harness('none', false, { suffix: '?cancel=1&next=%2Fcadastro', session: current, recordedProof: true });
+  try {
+    await tick(); await tick();
+    assert.equal(h.states[0], 'ready'); assert.equal(h.sdkSession, current);
+    assert.deepEqual(h.calls, []); assert.deepEqual(h.effects, [['url', '/reset-password']]);
+    const guard = h.result.captureGuard();
+    assert.equal(guard.expectedUserId, 'a'); assert.equal(guard.expectedSessionId, 'sid-a');
+  } finally { h.unmount(); }
+});
+test('cancel query parameters cannot cancel an otherwise valid PKCE recovery visit', async () => {
+  const h = harness('pkce', false, { suffix: '?code=synthetic-code&cancel=1&next=%2Flogin' });
+  try {
+    h.resolve(session()); await tick(); await tick();
+    assert.equal(h.states[0], 'ready'); assert.deepEqual(h.calls, ['pkce']);
+    assert.deepEqual(h.effects, [['url', '/reset-password']]);
+    assert.equal(h.result.captureGuard().expectedSessionId, 'sid-a');
+  } finally { h.unmount(); }
+});
+test('an explicit leave action still signs out its own verified recovery session', async () => {
+  const h = harness();
+  try {
+    h.resolve(session()); await tick(); await tick();
+    await h.result.leavePasswordRecovery('/login');
+    assert.equal(h.sdkSession, null);
+    assert.equal(h.effects.filter(effect => effect[0] === 'logout').length, 1);
+    assert(h.effects.some(effect => effect[0] === 'navigate' && effect[1] === '/login'));
+  } finally { h.unmount(); }
+});
+test('explicit Back exits an observed unproven recovery without authorizing a password change', async () => {
+  const current = session(), h = harness('none', false, { session: current });
+  try {
+    h.transition(current, 'INITIAL_SESSION'); await tick(); await tick();
+    assert.equal(h.states[0], 'invalid'); assert.equal(h.result.captureGuard(), null);
+    await h.result.leavePasswordRecovery('/login');
+    assert.equal(h.states[0], 'invalid'); assert.equal(h.result.captureGuard(), null);
+    assert.equal(h.sdkSession, null);
+    assert.equal(h.effects.filter(effect => effect[0] === 'logout').length, 1);
+    assert(h.effects.some(effect => effect[0] === 'navigate' && effect[1] === '/login'));
+  } finally { h.unmount(); }
+});
+for (const [name, current] of [['absent', null], ['password', session('a', 'sid-a', false)], ['OTP', session('a', 'sid-a', 'otp')]]) {
+  test(`explicit Back preserves a stable ${name} session and navigates without logout`, async () => {
+    const h = harness('none', false, { session: current });
+    try {
+      h.transition(current, 'INITIAL_SESSION'); await tick(); await tick();
+      await h.result.leavePasswordRecovery('/login');
+      assert.equal(h.sdkSession, current);
+      assert.deepEqual(h.effects, [['navigate', '/login']]);
+    } finally { h.unmount(); }
+  });
+}
+for (const [name, replacement] of [['password', session('b', 'sid-b', false)], ['OTP', session('b', 'sid-b', 'otp')], ['recovery', session('a', 'next-sid-a')]]) {
+  test(`explicit Back cannot acquire a replacement ${name} session while its auth callback lags`, async () => {
+    const current = session(), h = harness('none', false, { session: current });
+    try {
+      h.transition(current, 'INITIAL_SESSION'); await tick(); await tick();
+      h.fresh = deferred(); const leave = h.result.leavePasswordRecovery('/login');
+      h.sdkSession = replacement;
+      h.fresh.resolve({ data: { session: replacement }, error: null }); await leave;
+      assert.equal(h.sdkSession, replacement); assert.equal(h.states[0], 'invalid');
+      assert.deepEqual(h.effects, []); assert.deepEqual(h.storageWrites, []);
+    } finally { h.unmount(); }
+  });
+}
+test('a closed invalid visit still observes C and D so a pending explicit exit cannot clear D', async () => {
+  const h = harness();
+  try {
+    h.resolve(session()); await tick(); await tick();
+    h.transition(session('b', 'sid-b', false), 'SIGNED_IN');
+    assert.equal(h.states[0], 'invalid');
+    const current = session('c', 'sid-c'), replacement = session('d', 'sid-d', false);
+    h.transition(current, 'PASSWORD_RECOVERY');
+    assert.equal(h.states[0], 'invalid'); assert.equal(h.result.captureGuard(), null);
+    h.effects.length = 0;
+    const lookup = deferred(); let reads = 0;
+    h.lookupSession = () => ++reads === 1 ? Promise.resolve({ data: { session: current }, error: null }) : lookup.promise;
+    const leave = h.result.leavePasswordRecovery('/login'); await tick();
+    assert.equal(reads, 2);
+    h.transition(replacement, 'SIGNED_IN');
+    lookup.resolve({ data: { session: current }, error: null }); await leave;
+    assert.equal(h.sdkSession, replacement); assert.equal(h.states[0], 'invalid');
+    assert.deepEqual(h.effects, []);
+  } finally { h.unmount(); }
+});
+test('unmount invalidates a pending explicit Back lookup without effects', async () => {
+  const current = session(), h = harness('none', false, { session: current });
+  h.transition(current, 'INITIAL_SESSION'); await tick(); await tick();
+  h.fresh = deferred(); const leave = h.result.leavePasswordRecovery('/login');
+  h.unmount(); h.fresh.resolve({ data: { session: current }, error: null }); await leave;
+  assert.equal(h.sdkSession, current); assert.deepEqual(h.effects, []);
+});
+test('a failed explicit Back lookup remains on the invalid page without exposing raw errors', async () => {
+  const current = session(), h = harness('none', false, { session: current });
+  try {
+    h.transition(current, 'INITIAL_SESSION'); await tick(); await tick();
+    h.getSessionError = new Error('Synthetic provider detail');
+    await h.result.leavePasswordRecovery('/login');
+    assert.equal(h.sdkSession, current); assert.equal(h.states[0], 'invalid');
+    assert.equal(h.states[1], 'Não foi possível conferir a sessão. Tente voltar ao login novamente.');
+    assert.deepEqual(h.effects, []);
+  } finally { h.unmount(); }
 });
 test('blocked sessionStorage cannot manufacture recovery proof from an existing session', async () => {
   const h = harness('none', true); h.sdkSession = session();
