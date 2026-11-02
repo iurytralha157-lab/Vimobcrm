@@ -1,8 +1,7 @@
 'use client';
 
 import { useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
+import { FormEvent, useEffect, useMemo, useRef } from "react";
 import { z } from "zod";
 import { AlertCircle, Check, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { ROUTES } from "@/config/constants";
@@ -15,22 +14,11 @@ import { settingsAPI } from "@/lib/api/settings";
 import { VimobAPIError } from "@/lib/api/vimob-error";
 import { setVimobAPIAccessToken } from "@/lib/api/vimob-client";
 import { PASSWORD_POLICY, strongPasswordSchema } from "@/lib/validation/password";
-import { runBestEffortAuthOperation } from "@/lib/auth/frontend-auth-reliability";
-import {
-  capturePasswordRecoveryIntent,
-  clearPasswordRecoveryEvidence,
-  grantPasswordRecoveryProof,
-  hasPasswordRecoveryProof,
-  isPasswordRecoveryAccessToken,
-  isPasswordRecoveryIdentityMatch,
-  readPasswordRecoveryUrlEvidence,
-} from "@/lib/auth/password-recovery";
-
-type RecoveryState = "checking" | "ready" | "invalid" | "incomplete" | "success";
-
-const RECOVERY_SIGN_OUT_WAIT_MS = 2_000;
-const RECOVERY_LOCAL_SIGN_OUT_WAIT_MS = 750;
-const RECOVERY_SUCCESS_MESSAGE_WAIT_MS = 1_600;
+import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
+import { usePasswordRecoverySession } from "@/hooks/auth/use-password-recovery-session";
+import { usePasswordRecoveryForm } from "@/hooks/auth/use-password-recovery-form";
+import type { PasswordRecoveryGuard } from "@/lib/auth/password-recovery-exit";
+import { isPasswordRecoveryAccessToken, isPasswordRecoveryIdentityMatch } from "@/lib/auth/password-recovery";
 
 const STRENGTH_COLORS: Record<PasswordStrength["level"], string> = {
   "very-weak": "bg-red-500",
@@ -58,131 +46,21 @@ const resetSchema = z
     path: ["confirmPassword"],
   });
 
-function readRecoveryHash() {
-  if (typeof window === "undefined" || !window.location.hash) {
-    return null;
-  }
-
-  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
-}
-
-function cleanRecoveryUrl() {
-  if (typeof window === "undefined") return;
-
-  window.history.replaceState({}, "", ROUTES.RESET_PASSWORD);
-}
-
-function getRecoveryExitPath(next: string | null) {
-  return next === ROUTES.SIGNUP ? ROUTES.SIGNUP : ROUTES.LOGIN;
-}
-
-function waitFor(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, milliseconds);
-  });
-}
-
-async function signOutPasswordRecoverySession(
-  timeoutMs: number,
-) {
-  return runBestEffortAuthOperation(async () => {
-    const { error } = await supabase.auth.signOut({ scope: "local" });
-    if (error) throw error;
-  }, timeoutMs);
-}
-
-async function leavePasswordRecovery(destination: string) {
-  if (typeof window === "undefined") return;
-
-  clearPasswordRecoveryEvidence(window.sessionStorage);
-  setVimobAPIAccessToken(null, null);
-  cleanRecoveryUrl();
-
-  try {
-    await runBestEffortAuthOperation(async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      if (isPasswordRecoveryAccessToken(data.session?.access_token)) {
-        const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
-        if (signOutError) throw signOutError;
-      }
-    }, RECOVERY_SIGN_OUT_WAIT_MS);
-  } finally {
-    window.location.replace(destination);
-  }
-}
-
-async function finishPasswordRecovery(outcome: "success" | "unverified") {
-  if (typeof window === "undefined") return;
-
-  try {
-    if (outcome === "unverified") {
-      // An older API replica may have changed the password without revoking sessions.
-      // Supabase JS can hide logout 401/403, so this remains best effort only.
-      await runBestEffortAuthOperation(async () => {
-        const { error } = await supabase.auth.signOut({ scope: "global" });
-        if (error) throw error;
-      }, RECOVERY_SIGN_OUT_WAIT_MS);
-    }
-
-    // The new API accepted global revocation before updating the password.
-    // Remove this browser's recovery session even when the old API did not prove it.
-    await Promise.all([
-      signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS),
-      waitFor(RECOVERY_SUCCESS_MESSAGE_WAIT_MS),
-    ]);
-  } finally {
-    setVimobAPIAccessToken(null, null);
-    window.location.replace(`${ROUTES.LOGIN}?passwordReset=${outcome}`);
-  }
-}
-
 function passwordErrorMessage(error: unknown) {
   return getFriendlyErrorMessage(error);
-}
-
-function authValidationErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
-
-  if (message.toLowerCase().includes("expired") || message.toLowerCase().includes("invalid")) {
-    return "Este link de recuperação expirou ou já foi usado. Solicite um novo link para redefinir sua senha.";
-  }
-
-  return "Não foi possível validar este link de recuperação. Solicite um novo link e tente novamente.";
-}
-
-function isExpectedRecoveryValidationError(error: unknown) {
-  const name = error instanceof Error ? error.name : "";
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? String(error.code).toLowerCase()
-      : "";
-
-  return (
-    name === "AuthPKCECodeVerifierMissingError" ||
-    code === "flow_state_not_found" ||
-    code === "bad_code_verifier" ||
-    code === "otp_expired" ||
-    message.includes("pkce code verifier") ||
-    message.includes("expired") ||
-    message.includes("invalid")
-  );
 }
 
 export default function ResetPasswordScreen() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const [recoveryState, setRecoveryState] = useState<RecoveryState>("checking");
-  const [validationMessage, setValidationMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [emailNotificationSent, setEmailNotificationSent] = useState<boolean | null>(null);
-  const recoveryUserIdRef = useRef<string | null>(null);
+  const { recoveryState, setRecoveryState, validationMessage, setValidationMessage,
+    recoveryIdentity, captureGuard, captureRequest, leavePasswordRecovery, finishPasswordRecovery,
+  } = usePasswordRecoverySession(searchParams);
+  const { loading, setLoading, showPassword, setShowPassword, showConfirmPassword, setShowConfirmPassword,
+    password, setPassword, confirmPassword, setConfirmPassword, errors, setErrors,
+    emailNotificationSent, setEmailNotificationSent,
+  } = usePasswordRecoveryForm(recoveryIdentity);
+  const submissionInFlightRef = useRef<PasswordRecoveryGuard | null>(null);
   const recoveryHeadingRef = useRef<HTMLHeadingElement>(null);
   const successHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -220,256 +98,78 @@ export default function ResetPasswordScreen() {
     return () => window.cancelAnimationFrame(animationFrame);
   }, [recoveryState]);
 
-  useEffect(() => {
-    let mounted = true;
-    let establishedUserId: string | null = null;
-
-    if (searchParams.get("cancel") === "1") {
-      void leavePasswordRecovery(getRecoveryExitPath(searchParams.get("next")));
-      return () => {
-        mounted = false;
-      };
-    }
-
-    const markReady = (session: Session) => {
-      if (!mounted) return;
-      establishedUserId = session.user.id;
-      recoveryUserIdRef.current = session.user.id;
-      setRecoveryState("ready");
-      setValidationMessage(null);
-    };
-
-    const markInvalid = (message: string) => {
-      if (!mounted) return;
-      establishedUserId = null;
-      recoveryUserIdRef.current = null;
-      setRecoveryState("invalid");
-      setValidationMessage(message);
-    };
-
-    const markReadyFromRecordedRecovery = async () => {
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-
-      if (error || !session || !isPasswordRecoveryAccessToken(session.access_token)) return false;
-      if (!hasPasswordRecoveryProof(window.sessionStorage, session.user.id)) return false;
-
-      cleanRecoveryUrl();
-      markReady(session);
-      return true;
-    };
-
-    const authorizeVerifiedRecoverySession = (session: Session) => {
-      if (!isPasswordRecoveryAccessToken(session.access_token)) {
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        markInvalid("Esta sessão não é uma recuperação de senha válida. Solicite um novo link.");
-        return false;
-      }
-
-      grantPasswordRecoveryProof(window.sessionStorage, session.user.id);
-      cleanRecoveryUrl();
-      markReady(session);
-      return true;
-    };
-
-    const establishRecoverySession = async () => {
-      if (mounted) {
-        setRecoveryState("checking");
-        setValidationMessage(null);
-      }
-
-      const recoveryUrl = new URL(window.location.href);
-      const evidence = readPasswordRecoveryUrlEvidence(recoveryUrl);
-      capturePasswordRecoveryIntent(window.sessionStorage, recoveryUrl);
-      const hashParams = readRecoveryHash();
-      const hasExternalAuthError = Boolean(
-        hashParams?.has("error_description") || hashParams?.has("error"),
-      );
-
-      if (hasExternalAuthError) {
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        cleanRecoveryUrl();
-        markInvalid(
-          "Este link de recuperação expirou ou não é válido. Solicite um novo link para redefinir sua senha.",
-        );
-        return;
-      }
-
-      try {
-        if (evidence.kind === "pkce") {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(evidence.code);
-          if (error) throw error;
-          // auth-js returns redirectType at runtime for PKCE exchanges, although
-          // AuthTokenResponse currently omits it from the public declaration.
-          if (!("redirectType" in data) || data.redirectType !== "recovery" || !data.session) {
-            throw new Error("Invalid password recovery redirect type");
-          }
-
-          authorizeVerifiedRecoverySession(data.session);
-          return;
-        }
-
-        if (evidence.kind === "token_hash") {
-          const { data, error } = await supabase.auth.verifyOtp({
-            token_hash: evidence.tokenHash,
-            type: "recovery",
-          });
-          if (error) throw error;
-          if (!data.session) throw new Error("Missing password recovery session");
-
-          authorizeVerifiedRecoverySession(data.session);
-          return;
-        }
-
-        if (evidence.kind === "implicit") {
-          const { data, error } = await supabase.auth.setSession({
-            access_token: evidence.accessToken,
-            refresh_token: evidence.refreshToken,
-          });
-          if (error) throw error;
-          if (!data.session) throw new Error("Missing password recovery session");
-
-          authorizeVerifiedRecoverySession(data.session);
-          return;
-        }
-
-        if (await markReadyFromRecordedRecovery()) return;
-        if (establishedUserId) return;
-
-        markInvalid("Este link de recuperação não é mais válido. Solicite um novo link de redefinição de senha.");
-      } catch (error) {
-        if (establishedUserId) return;
-        if (await markReadyFromRecordedRecovery()) return;
-
-        if (!isExpectedRecoveryValidationError(error)) {
-          console.error("Error validating password recovery session:", error);
-        }
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        cleanRecoveryUrl();
-        markInvalid(authValidationErrorMessage(error));
-      }
-    };
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!mounted) return;
-
-      if (event === "PASSWORD_RECOVERY" && session) {
-        authorizeVerifiedRecoverySession(session);
-      }
-    });
-
-    void establishRecoverySession();
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [searchParams]);
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlightRef.current?.isCurrent()) return;
     setErrors({});
-
     const parsed = resetSchema.safeParse({ password, confirmPassword });
     if (!parsed.success) {
       const fieldErrors: Record<string, string> = {};
       parsed.error.issues.forEach((error) => {
-        if (error.path[0]) {
-          fieldErrors[String(error.path[0])] = error.message;
-        }
+        if (error.path[0]) fieldErrors[String(error.path[0])] = error.message;
       });
       setErrors(fieldErrors);
       return;
     }
-
     if (!passwordStrength.isValid) {
       setErrors({ password: "A senha não atende aos critérios mínimos de segurança" });
       return;
     }
-
+    const guard = captureGuard();
+    if (!guard?.isCurrent() || !guard.expectedUserId || !guard.expectedSessionId) {
+      setErrors({ password: "A sessão de recuperação mudou ou expirou. Solicite um novo link." });
+      return;
+    }
+    const request = captureRequest(guard);
+    submissionInFlightRef.current = guard;
     setLoading(true);
     let passwordChangeAttempted = false;
     try {
-      const expectedUserId = recoveryUserIdRef.current;
       const [{ data: userData, error: userError }, { data: sessionData, error: sessionError }] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.auth.getSession(),
+        supabase.auth.getUser(), supabase.auth.getSession(),
       ]);
+      if (!guard.isCurrent()) return;
       if (userError) throw userError;
       if (sessionError) throw sessionError;
-
-      if (!isPasswordRecoveryIdentityMatch(
-        expectedUserId,
-        userData.user?.id,
-        sessionData.session?.user.id,
-      ) || !sessionData.session || !isPasswordRecoveryAccessToken(sessionData.session.access_token)) {
-        const message = "A sessão de recuperação mudou ou expirou. Solicite um novo link para proteger sua conta.";
-        recoveryUserIdRef.current = null;
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        cleanRecoveryUrl();
+      if (!isPasswordRecoveryIdentityMatch(guard.expectedUserId, userData.user?.id, sessionData.session?.user.id)
+        || !sessionData.session || !isPasswordRecoveryAccessToken(sessionData.session.access_token)
+        || getGlobalSignOutSessionId(sessionData.session) !== guard.expectedSessionId) {
         setRecoveryState("invalid");
-        setValidationMessage(message);
-        toast({
-          title: "Sessão de recuperação inválida",
-          description: message,
-          variant: "destructive",
-        });
-        if (isPasswordRecoveryAccessToken(sessionData.session?.access_token)) {
-          void signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
-        }
+        setValidationMessage("A sessão de recuperação mudou ou expirou. Solicite um novo link para proteger sua conta.");
         return;
       }
-
+      if (!guard.isCurrent()) return;
       setVimobAPIAccessToken(sessionData.session.access_token, sessionData.session.user.id);
       passwordChangeAttempted = true;
-      const result = await settingsAPI.changePassword({
-        password,
-        source: "recovery",
+      const result = await settingsAPI.changePassword({ password, source: "recovery" }, null, {
+        expectedUserId: guard.expectedUserId, expectedSessionId: guard.expectedSessionId, signal: request.signal,
       });
-
+      if (!guard.isCurrent()) return;
       if (result?.allowed === false) {
         const message = result.message || "Não foi possível alterar sua senha agora.";
         setErrors({ password: message });
-        toast({
-          title: "Alteração bloqueada",
-          description: message,
-          variant: "destructive",
-        });
+        toast({ title: "Alteração bloqueada", description: message, variant: "destructive" });
         return;
       }
-
       if (result.sessionsRevoked !== true) {
         setRecoveryState("incomplete");
         setPassword("");
         setConfirmPassword("");
-        recoveryUserIdRef.current = null;
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        await finishPasswordRecovery("unverified");
+        await finishPasswordRecovery("unverified", guard);
         return;
       }
-
       const notificationSent = result.emailNotificationSent === true;
       setEmailNotificationSent(notificationSent);
       setRecoveryState("success");
       setPassword("");
       setConfirmPassword("");
-      recoveryUserIdRef.current = null;
-      clearPasswordRecoveryEvidence(window.sessionStorage);
-
-      toast({
-        title: "Senha alterada com sucesso",
-        description:
-          notificationSent
-            ? "Enviamos um aviso de segurança para o seu e-mail."
-            : "A senha foi alterada, mas não conseguimos confirmar o envio do aviso por e-mail.",
+      toast({ title: "Senha alterada com sucesso", description: notificationSent
+        ? "Enviamos um aviso de segurança para o seu e-mail."
+        : "A senha foi alterada, mas não conseguimos confirmar o envio do aviso por e-mail.",
       });
-
-      await finishPasswordRecovery("success");
+      await finishPasswordRecovery("success", guard);
     } catch (error) {
+      if (!guard.isCurrent()) return;
       const message = passwordChangeAttempted
         ? error instanceof VimobAPIError && error.code === "password_update_unconfirmed_after_revocation"
           ? "A revogação das sessões foi aceita, mas não conseguimos confirmar se a nova senha foi salva. Solicite um novo link de recuperação."
@@ -478,24 +178,18 @@ export default function ResetPasswordScreen() {
             : "Não conseguimos confirmar a troca de senha com segurança. Solicite um novo link de recuperação."
         : passwordErrorMessage(error);
       if (passwordChangeAttempted) {
-        recoveryUserIdRef.current = null;
-        clearPasswordRecoveryEvidence(window.sessionStorage);
-        setVimobAPIAccessToken(null, null);
-        cleanRecoveryUrl();
         setRecoveryState("incomplete");
         setValidationMessage(message);
         setPassword("");
         setConfirmPassword("");
-        void signOutPasswordRecoverySession(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
       }
-      toast({
-        title: "Erro ao alterar senha",
-        description: message,
-        variant: "destructive",
-      });
+      // A delayed failure must never sign out or clear whichever SDK identity replaced this visit.
+      toast({ title: "Erro ao alterar senha", description: message, variant: "destructive" });
       setErrors({ password: message });
     } finally {
-      setLoading(false);
+      request.finish();
+      if (submissionInFlightRef.current === guard) submissionInFlightRef.current = null;
+      if (guard.isCurrent()) setLoading(false);
     }
   }
 

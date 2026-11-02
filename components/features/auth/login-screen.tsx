@@ -12,14 +12,14 @@ export default function LoginScreen() {
           Ao continuar, você concorda com os{" "}
           <Link
             href="/termos-de-uso"
-            className="text-primary outline-none transition-opacity hover:opacity-80"
+            className="text-primary transition-opacity hover:opacity-80 focus-visible:underline"
           >
             Termos de Uso
           </Link>{" "}
           e a{" "}
           <Link
             href="/politica-de-privacidade"
-            className="text-primary outline-none transition-opacity hover:opacity-80"
+            className="text-primary transition-opacity hover:opacity-80 focus-visible:underline"
           >
             Política de Privacidade
           </Link>

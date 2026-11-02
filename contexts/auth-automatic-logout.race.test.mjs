@@ -22,7 +22,7 @@ const compile = code=>ts.transpileModule(code,{compilerOptions:{target:ts.Script
 function load(path,sandbox) { const record={exports:{}};vm.runInNewContext(compile(readFileSync(path,'utf8')),{...sandbox,exports:record.exports,module:record});return record.exports; }
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done});return {promise,resolve};}
 const makeSession=(user='user-a',sid='session-a')=>({user:{id:user},access_token:`e30.${Buffer.from(JSON.stringify({sub:user,session_id:sid})).toString('base64url')}.synthetic`});
-function storage(){const map=new Map();return {map,get length(){return map.size},key:index=>[...map.keys()][index],removeItem:key=>map.delete(key),getItem:key=>map.get(key)||null};}
+function storage(){const map=new Map();return {map,get length(){return map.size},key:index=>[...map.keys()][index],removeItem:key=>map.delete(key),getItem:key=>map.get(key)||null,setItem:(key,value)=>map.set(key,value)};}
 
 function harness(pathname='/crm') {
   const h={session:null,user:null,sdkSession:null,timers:[],revokes:[],locals:0,cacheActions:[],redirects:[],tokenWrites:[]};
@@ -35,6 +35,12 @@ function harness(pathname='/crm') {
     process:{env:{NEXT_PUBLIC_SUPABASE_URL:'https://synthetic.supabase.co'}}};
   const helper=load(new URL('../lib/auth/global-sign-out.ts',import.meta.url),base);
   const cache=load(new URL('../lib/cache-utils.ts',import.meta.url),base);
+  const redirect=load(new URL('../lib/auth/post-login-redirect.ts',import.meta.url),base);
+  const recovery=load(new URL('../lib/auth/password-recovery.ts',import.meta.url),{
+    ...base,URLSearchParams,require:path=>{
+      assert.equal(path,'./post-login-redirect');return redirect;
+    },
+  });
   const noop=()=>{};
   const sandbox={...base,...helper,...cache,h,isMounted:true,userRef,logoutLifecycleRef:lifecycle,
     automaticLogoutSequenceRef:{current:0},isLoggingOutRef:{current:false},signOutInFlightRef:{current:null},
@@ -44,7 +50,8 @@ function harness(pathname='/crm') {
     setVimobAPIAccessToken:token=>h.tokenWrites.push(token),authSnapshotKey:id=>`snapshot:${id}`,authDebug:noop,authDebugWarn:noop,
     setProfile:noop,setOrganization:noop,setTenantContext:noop,setUserOrganizations:noop,setOrganizationsLoaded:noop,setIsSuperAdmin:noop,
     setImpersonating:noop,setOrganizationsError:noop,setIsInitializingOrg:noop,setLoading:noop,setAuthInitialized:noop,
-    failOrganizationValidation:noop,isExpiredAPISessionError:()=>true,isPasswordRecoveryAccessToken:()=>true,clearPasswordRecoveryEvidence:noop,
+    failOrganizationValidation:noop,isExpiredAPISessionError:()=>true,isPasswordRecoveryAccessToken:()=>true,
+    getPasswordRecoveryStorage:recovery.getPasswordRecoveryStorage,clearPasswordRecoveryEvidence:recovery.clearPasswordRecoveryEvidence,
     setTimeout:callback=>h.timers.push(callback),
     supabase:{auth:{getSession:()=>h.lookupGate?.promise||Promise.resolve({data:{session:h.sdkSession},error:null}),
       admin:{signOut:async token=>{h.revokes.push(JSON.parse(Buffer.from(token.split('.')[1],'base64url')).sub);return h.revokeGate?.promise||{error:null}}},
@@ -102,7 +109,21 @@ test('same actor new session invalidates a scheduled recovery cleanup',async()=>
   assert.equal(h.locals,0);assert.deepEqual(h.redirects,[]);
 });
 test('current recovery cancellation uses local-only cleanup and the login destination',async()=>{
-  const {h,sandbox}=harness('/login');sandbox.recoverySession(h.session);h.flushTimer();await tick();
+  const {h,sandbox,scoped}=harness('/login');
+  scoped.setItem('vimob:password-recovery:intent:v1','synthetic-intent');
+  scoped.setItem('vimob:password-recovery:proof:v1','synthetic-proof');
+  scoped.setItem('synthetic-unrelated','preserved');
+  sandbox.recoverySession(h.session);h.flushTimer();await tick();
+  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,1);assert.deepEqual(h.redirects,['/login']);
+  assert.equal(scoped.getItem('vimob:password-recovery:intent:v1'),null);
+  assert.equal(scoped.getItem('vimob:password-recovery:proof:v1'),null);
+  assert.equal(scoped.getItem('synthetic-unrelated'),'preserved');
+});
+
+test('denied recovery storage acquisition still permits current local-only cancellation',async()=>{
+  const {h,sandbox}=harness('/login');
+  Object.defineProperty(sandbox.window,'sessionStorage',{get(){throw new DOMException('Synthetic denied storage','SecurityError');}});
+  sandbox.recoverySession(h.session);h.flushTimer();await tick();
   assert.deepEqual(h.revokes,[]);assert.equal(h.locals,1);assert.deepEqual(h.redirects,['/login']);
 });
 test('current recovery route still navigates to reset without local or global revocation',async()=>{

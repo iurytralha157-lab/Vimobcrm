@@ -24,13 +24,27 @@ func TestRecoveryEmailTemplateRendersCanonicalResetLinks(t *testing.T) {
 		t.Fatalf("parse recovery email as Go HTML template: %v", err)
 	}
 
+	for _, siteURL := range []string{
+		"https://app.vimobcrm.com.br",
+		"https://homologacao.vimobcrm.com.br",
+	} {
+		t.Run(siteURL, func(t *testing.T) {
+			assertRecoveryEmailDestinations(t, parsed, siteURL)
+		})
+	}
+}
+
+func assertRecoveryEmailDestinations(t *testing.T, parsed *template.Template, siteURL string) {
+	t.Helper()
 	const tokenHash = "canonical-token-hash"
-	const redirectTo = "https://app.vimobcrm.com.br/reset-password"
+	redirectTo := siteURL + "/reset-password"
 	var rendered bytes.Buffer
 	if err := parsed.Execute(&rendered, struct {
+		SiteURL    string
 		RedirectTo string
 		TokenHash  string
 	}{
+		SiteURL:    siteURL,
 		RedirectTo: redirectTo,
 		TokenHash:  tokenHash,
 	}); err != nil {
@@ -52,6 +66,12 @@ func TestRecoveryEmailTemplateRendersCanonicalResetLinks(t *testing.T) {
 		}
 	}
 
+	for _, legalPath := range []string{"/termos-de-uso", "/politica-de-privacidade"} {
+		if !strings.Contains(renderedHTML, `href="`+siteURL+legalPath+`"`) {
+			t.Fatalf("legal link %s must stay in the configured environment %s", legalPath, siteURL)
+		}
+	}
+
 	recoveryLinks := make([]string, 0, 2)
 	for _, match := range recoveryEmailHrefPattern.FindAllStringSubmatch(renderedHTML, -1) {
 		candidate := html.UnescapeString(match[1])
@@ -69,7 +89,7 @@ func TestRecoveryEmailTemplateRendersCanonicalResetLinks(t *testing.T) {
 			t.Fatalf("parse rendered recovery link %q: %v", rawLink, err)
 		}
 		if parsedURL.Scheme != "https" ||
-			parsedURL.Host != "app.vimobcrm.com.br" ||
+			parsedURL.Host != strings.TrimPrefix(siteURL, "https://") ||
 			parsedURL.Path != "/reset-password" {
 			t.Fatalf("rendered recovery destination is not canonical: %s", parsedURL.String())
 		}

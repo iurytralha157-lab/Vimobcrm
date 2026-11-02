@@ -23,14 +23,14 @@ export default function ResetPasswordPage() {
           Ao continuar, você concorda com os{' '}
           <Link
             href="/termos-de-uso"
-            className="text-primary outline-none transition-opacity hover:opacity-80"
+            className="rounded-sm text-primary transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
           >
             Termos de Uso
           </Link>{' '}
           e a{' '}
           <Link
             href="/politica-de-privacidade"
-            className="text-primary outline-none transition-opacity hover:opacity-80"
+            className="rounded-sm text-primary transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
           >
             Política de Privacidade
           </Link>

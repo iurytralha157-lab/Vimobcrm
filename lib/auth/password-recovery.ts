@@ -25,6 +25,18 @@ type RecoveryProof = RecoveryIntent & {
 
 export type PasswordRecoveryStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
+export function getPasswordRecoveryStorage(
+  browser: { readonly sessionStorage: PasswordRecoveryStorage } | null | undefined =
+    typeof window === 'undefined' ? undefined : window,
+): PasswordRecoveryStorage | null {
+  try {
+    // Accessing the property itself can throw before getItem/setItem are called.
+    return browser?.sessionStorage ?? null
+  } catch {
+    return null
+  }
+}
+
 type AuthenticationMethodReference = {
   method?: unknown
 }

@@ -1,8 +1,10 @@
 'use client'
 
 import { createBrowserClient } from '@supabase/ssr'
+import { createPasswordRecoveryTransport } from '@/lib/auth/password-recovery-transport'
 import {
   capturePasswordRecoveryIntent,
+  getPasswordRecoveryStorage,
   grantPasswordRecoveryProof,
 } from '@/lib/auth/password-recovery'
 import type { Database } from './types'
@@ -20,6 +22,11 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
   throw new Error('Missing env.NEXT_PUBLIC_SUPABASE_ANON_KEY')
 }
 
+const recoveryTransport = createPasswordRecoveryTransport(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  (input, init) => fetch(input, init),
+)
+
 const guardedSupabaseFetch: typeof fetch = (input, init) => {
   const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url
   const method = init?.method || (input instanceof Request ? input.method : 'GET')
@@ -28,14 +35,15 @@ const guardedSupabaseFetch: typeof fetch = (input, init) => {
     return Promise.reject(new Error(LOCAL_READ_ONLY_ERROR_MESSAGE))
   }
 
-  return fetch(input, init)
+  return recoveryTransport(input, init)
 }
 
 // The Supabase client consumes PKCE/hash parameters during initialization.
 // Capture only the presence/type of recovery evidence before creating it; the
 // tokens themselves are never persisted by this helper.
 if (typeof window !== 'undefined') {
-  capturePasswordRecoveryIntent(window.sessionStorage, new URL(window.location.href))
+  const storage = getPasswordRecoveryStorage()
+  if (storage) capturePasswordRecoveryIntent(storage, new URL(window.location.href))
 }
 
 export const supabase = createBrowserClient<Database>(
@@ -55,7 +63,8 @@ export const createClient = () => supabase
 if (typeof window !== 'undefined') {
   supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY' && session?.user.id) {
-      grantPasswordRecoveryProof(window.sessionStorage, session.user.id)
+      const storage = getPasswordRecoveryStorage()
+      if (storage) grantPasswordRecoveryProof(storage, session.user.id)
     }
   })
 }

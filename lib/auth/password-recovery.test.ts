@@ -6,6 +6,7 @@ import {
   capturePasswordRecoveryIntent,
   clearPasswordRecoveryEvidence,
   getPasswordRecoveryRedirect,
+  getPasswordRecoveryStorage,
   grantPasswordRecoveryProof,
   hasPasswordRecoveryAuthenticationMethod,
   hasPasswordRecoveryProof,
@@ -24,6 +25,8 @@ const resetPasswordPageSource = readFileSync(
   'app/(auth)/reset-password/page.tsx',
   'utf8',
 )
+const recoverySessionHookSource = readFileSync('hooks/auth/use-password-recovery-session.ts', 'utf8')
+const recoveryExitSource = readFileSync('lib/auth/password-recovery-exit.ts', 'utf8')
 const telemetryProviderSource = readFileSync(
   'components/providers/telemetry-provider.tsx',
   'utf8',
@@ -61,6 +64,29 @@ function memoryStorage(): PasswordRecoveryStorage {
     removeItem: (key) => { values.delete(key) },
   }
 }
+
+test('browser recovery storage acquisition handles a denied property getter', () => {
+  let getterReads = 0
+  const deniedBrowser = {
+    get sessionStorage(): PasswordRecoveryStorage {
+      getterReads += 1
+      throw new DOMException('Browser storage is unavailable', 'SecurityError')
+    },
+  }
+
+  assert.equal(getPasswordRecoveryStorage(deniedBrowser), null)
+  assert.equal(getterReads, 1)
+  assert.equal(getPasswordRecoveryStorage(undefined), null)
+  assert.equal(getPasswordRecoveryStorage(null), null)
+})
+
+test('available browser recovery storage retains its existing evidence contract', () => {
+  const storage = memoryStorage()
+  assert.equal(getPasswordRecoveryStorage({ sessionStorage: storage }), storage)
+  assert.equal(capturePasswordRecoveryIntent(storage, new URL('https://app.test/reset-password?code=synthetic-code'), 1_000), true)
+  assert.equal(grantPasswordRecoveryProof(storage, 'synthetic-user', 1_001), true)
+  assert.equal(hasPasswordRecoveryProof(storage, 'synthetic-user', 1_002), true)
+})
 
 test('recognizes only explicit recovery URL formats on /reset-password', () => {
   assert.deepEqual(
@@ -244,10 +270,10 @@ test('telemetry provider sends only the sanitized browser location', () => {
 })
 
 test('reset screen maps external auth errors to fixed copy', () => {
-  assert.match(resetPasswordScreenSource, /hashParams\?\.has\("error_description"\)/)
-  assert.match(resetPasswordScreenSource, /Este link de recuperação expirou ou não é válido\./)
-  assert.doesNotMatch(resetPasswordScreenSource, /markInvalid\(hashError\)/)
-  assert.doesNotMatch(resetPasswordScreenSource, /hashParams\?\.get\("error_description"\)/)
+  assert.match(recoverySessionHookSource, /hash\.has\('error_description'\)/)
+  assert.match(recoverySessionHookSource, /Este link de recuperação expirou ou não é válido\./)
+  assert.doesNotMatch(recoverySessionHookSource, /invalid\(hashError\)/)
+  assert.doesNotMatch(recoverySessionHookSource, /hash\.get\('error_description'\)/)
 })
 
 test('recovery email keeps the exact reset contract in the light Vimob layout', () => {
@@ -262,7 +288,7 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
   assert.equal(recoveryLinkOccurrences, 3)
   assert.deepEqual(
     Array.from(new Set(templateVariables)).sort(),
-    ['RedirectTo', 'TokenHash'],
+    ['RedirectTo', 'SiteURL', 'TokenHash'],
   )
   assert.match(recoveryEmailTemplateSource, /<html lang="pt-BR">/)
   assert.match(recoveryEmailTemplateSource, /name="color-scheme" content="light"/)
@@ -287,7 +313,7 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
   assert.match(recoveryEmailTemplateSource, /<table class="email-action"[^>]*style="margin:0 0 26px/)
   assert.doesNotMatch(recoveryEmailTemplateSource, /<table class="email-action"[^>]*width="100%"/)
   assert.doesNotMatch(recoveryEmailTemplateSource, /\.email-action\s*\{\s*width:\s*100%/)
-  assert.match(recoveryEmailTemplateSource, /display:inline-block;padding:14px 18px;color:#ffffff;font-size:15px;font-weight:400/)
+  assert.match(recoveryEmailTemplateSource, /display:inline-block;padding:14px 18px;color:#151515;font-size:15px;font-weight:400/)
   assert.match(recoveryEmailTemplateSource, /bgcolor="#ffffff"/)
   assert.match(recoveryEmailTemplateSource, /@media only screen and \(max-width: 620px\)/)
   assert.doesNotMatch(recoveryEmailTemplateSource, /box-shadow|border:1px|height="6"/)
@@ -295,13 +321,14 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
   assert.match(recoveryEmailTemplateSource, /copie e cole este endereço no navegador/)
   assert.match(
     recoveryEmailTemplateSource,
-    /https:\/\/app\.vimobcrm\.com\.br\/termos-de-uso/,
+    /\{\{ \.SiteURL \}\}\/termos-de-uso/,
   )
   assert.match(
     recoveryEmailTemplateSource,
-    /https:\/\/app\.vimobcrm\.com\.br\/politica-de-privacidade/,
+    /\{\{ \.SiteURL \}\}\/politica-de-privacidade/,
   )
-  assert.doesNotMatch(recoveryEmailTemplateSource, /\.ConfirmationURL|\.SiteURL/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /\.ConfirmationURL/)
+  assert.equal(recoveryEmailTemplateSource.split('{{ .SiteURL }}').length - 1, 2)
   assert.doesNotMatch(recoveryEmailTemplateSource, /{{\s*\.Token\s*}}/)
   assert.doesNotMatch(
     recoveryEmailTemplateSource,
@@ -368,23 +395,14 @@ test('recovery template has an executable local and self-hosted Auth contract', 
   )
 })
 
-test('recovery exits are bounded and always navigate from a finally block', () => {
-  const leaveStart = resetPasswordScreenSource.indexOf('async function leavePasswordRecovery')
-  const finishStart = resetPasswordScreenSource.indexOf('async function finishPasswordRecovery')
-  const passwordErrorStart = resetPasswordScreenSource.indexOf('function passwordErrorMessage')
-
-  assert.notEqual(leaveStart, -1)
-  assert.notEqual(finishStart, -1)
-  assert.notEqual(passwordErrorStart, -1)
-
-  const leaveSource = resetPasswordScreenSource.slice(leaveStart, finishStart)
-  const finishSource = resetPasswordScreenSource.slice(finishStart, passwordErrorStart)
-  assert.match(leaveSource, /runBestEffortAuthOperation/)
-  assert.match(leaveSource, /finally \{\s*window\.location\.replace\(destination\)/)
-  assert.match(finishSource, /if \(outcome === "unverified"\) \{[\s\S]*?scope: "global"/)
-  assert.match(finishSource, /signOutPasswordRecoverySession\(RECOVERY_LOCAL_SIGN_OUT_WAIT_MS\)/)
+test('recovery exits delegate to bounded identity-guarded cleanup before navigation', () => {
+  assert.match(recoverySessionHookSource, /exitPasswordRecovery\(/)
+  assert.match(recoverySessionHookSource, /supabase\.auth\.admin\.signOut\(token, 'global'\)/)
+  assert.match(recoveryExitSource, /runAuthOperationWithTimeout\([\s\S]*?2_000/)
+  assert.match(recoveryExitSource, /signOutLocallyWithSessionGuard\(operations, guard\), 750/)
+  assert.match(recoveryExitSource, /if \(local\.status !== 'completed'\) return 'incomplete'/)
+  assert.match(recoveryExitSource, /if \(!guard\.isCurrent\(\)\) return 'cancelled'\s+effects\.navigate\(destination\)/)
   assert.match(resetPasswordScreenSource, /result\.sessionsRevoked !== true/)
-  assert.match(finishSource, /finally \{[\s\S]*?window\.location\.replace/)
 })
 
 test('every recovery state is announced, focused and has a non-empty suspense fallback', () => {

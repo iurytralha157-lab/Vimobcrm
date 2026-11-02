@@ -20,6 +20,7 @@ import {
 } from '@/lib/api/vimob-client';
 import {
   clearPasswordRecoveryEvidence,
+  getPasswordRecoveryStorage,
   isPasswordRecoveryAccessToken,
 } from '@/lib/auth/password-recovery';
 import {
@@ -613,7 +614,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? ROUTES.SIGNUP
           : ROUTES.LOGIN;
 
-        clearPasswordRecoveryEvidence(window.sessionStorage);
+        const recoveryStorage = getPasswordRecoveryStorage();
+        if (recoveryStorage) clearPasswordRecoveryEvidence(recoveryStorage);
         void signOutLocallyWithSessionGuard({
           getSession: () => supabase.auth.getSession(),
           clearLocal: () => supabase.auth.signOut({ scope: 'local' }),

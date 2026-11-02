@@ -418,7 +418,13 @@ export const settingsAPI = {
   async changePassword(
     input: { password: string; source?: string },
     organizationId?: string | null,
+    intent: VimobAPIRequestIntent = {},
   ) {
+    const passwordIntent = {
+      ...intent,
+      expectedUserId: intent.expectedUserId !== undefined ? intent.expectedUserId : getVimobAPIAccessTokenUserId(),
+      expectedSessionId: intent.expectedSessionId !== undefined ? intent.expectedSessionId : getVimobAPIAccessTokenSessionId(),
+    };
     const body = parseDomainInput(
       changePasswordInputSchema,
       input,
@@ -430,6 +436,7 @@ export const settingsAPI = {
       emailNotificationSent?: boolean;
       sessionsRevoked?: boolean;
     }>("/v1/settings/password", {
+      ...passwordIntent,
       method: "POST",
       organizationId,
       body,

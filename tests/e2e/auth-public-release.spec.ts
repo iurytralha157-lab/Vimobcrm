@@ -82,12 +82,14 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
   });
 
   test('login inválido e recuperação usam respostas Auth mockadas', async ({ page }) => {
+    await page.clock.install();
     let loginRequests = 0;
     let recoveryRequests = 0;
     let recoveryRedirectTo: string | null = null;
     let loginErrorCode = 'invalid_credentials';
     let loginStatus = 400;
     let recoveryStatus = 200;
+    const recoveryNotice = 'Se existir uma conta com esse e-mail, você poderá receber um link de recuperação. Não é possível confirmar o envio por aqui. Aguarde antes de tentar novamente.';
     const consoleErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -167,26 +169,38 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
 
     await expect(
-      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
+      page.getByText(recoveryNotice),
     ).toBeVisible();
     expect(recoveryRequests).toBe(1);
     expect(recoveryRedirectTo).toBe(`${new URL(page.url()).origin}/reset-password`);
+    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
+    await page.clock.fastForward(60_000);
 
     recoveryStatus = 400;
     await page.getByLabel('Seu e-mail').fill('outro@vimob.test');
     await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
     await expect(
-      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
+      page.getByText(recoveryNotice),
     ).toBeVisible();
     expect(recoveryRequests).toBe(2);
+    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
+    await page.clock.fastForward(60_000);
 
     recoveryStatus = 429;
     await page.getByLabel('Seu e-mail').fill('limite@vimob.test');
     await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
     await expect(
-      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
+      page.getByText(recoveryNotice),
     ).toBeVisible();
     expect(recoveryRequests).toBe(3);
+    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
+    await page.clock.fastForward(60_000);
+    recoveryStatus = 503;
+    await page.getByLabel('Seu e-mail').fill('indisponivel@vimob.test');
+    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
+    await expect(page.getByText(recoveryNotice)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
+    expect(recoveryRequests).toBe(4);
     expect(consoleErrors.join(' ')).not.toMatch(/user_not_found|User not found/i);
   });
 

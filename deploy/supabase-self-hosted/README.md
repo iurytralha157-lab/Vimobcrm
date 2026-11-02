@@ -82,14 +82,28 @@ reenvio do onboarding público e deve permanecer autorizado.
 ```dotenv
 AUTH_EMAIL_TEMPLATES_DIR=/opt/supabase/docker/volumes/templates
 SMTP_ADMIN_EMAIL=naoresponde@vimobcrm.com.br
-SMTP_HOST=<host-smtp>
+SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
-SMTP_USER=<usuario-smtp>
+SMTP_USER=resend
 SMTP_PASS=<segredo-no-cofre>
 SMTP_SENDER_NAME=Vimob CRM
 SITE_URL=https://app.vimobcrm.com.br
 ADDITIONAL_REDIRECT_URLS=https://app.vimobcrm.com.br/reset-password,https://app.vimobcrm.com.br/login?emailConfirmation=success
 ```
+
+Para Resend, `SMTP_PASS` é uma chave com permissão de envio para o domínio
+remetente verificado. Insira-a diretamente no ambiente operacional; não a envie
+em chat, Git ou logs. A porta 587 usa STARTTLS e é aceita pelo Resend. O guia
+Supabase do provedor também mostra 465 (TLS implícito), mas essa porta é
+bloqueada por padrão na Hetzner Cloud. Confirme conexão e TLS verificado a partir
+do ambiente real antes de recriar o Auth; trocar de porta não comprova envio.
+Referências: [Resend SMTP](https://resend.com/docs/send-with-smtp) e
+[Hetzner](https://docs.hetzner.com/cloud/servers/faq/#why-can-i-not-send-any-mails-from-my-server).
+
+Em homologação Cloud, configure Custom SMTP no projeto exclusivo e use o mesmo
+HTML de `supabase/templates/recovery.html` no template de reset. Os links legais
+usam `SiteURL` e a recuperação usa `RedirectTo`, de modo que cada ambiente
+mantém seus destinos. A mudança local não instala o template em nenhum Auth.
 
 O override implantável é
 `deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml`. Ele preserva
@@ -132,6 +146,8 @@ AUTH_CONTAINER_ID="$(docker compose \
   -f /caminho/do/checkout/deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml \
   --env-file .env \
   ps -q auth)"
+# Interrompa se houver zero ou mais de um ID. Não escolha por grep/head:
+# confirme projeto, serviço e imagem da stack antes de inspecionar o container.
 docker inspect "$AUTH_CONTAINER_ID" \
   --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | grep -E '^GOTRUE_MAILER_(TEMPLATES|SUBJECTS)_RECOVERY='
@@ -155,6 +171,10 @@ Os dois SHA-256 devem ser iguais. O endpoint
 `http://templates-server/recovery.html` é um contrato de rede: não use `file://`
 nem `localhost` no valor entregue ao Auth. Desative link tracking/click
 rewriting no provedor SMTP para não alterar o link de recuperação.
+Ao compartilhar diagnóstico, não copie logs brutos filtrados por `recover` ou
+`mail`: essas linhas ainda podem conter e-mail, token ou URL de recuperação.
+Reporte somente horário, código/status, contagens e presença das configurações;
+nunca imprima `Config.Env` completo ou `SMTP_PASS`.
 
 Faça um canário com uma conta dedicada antes de liberar produção:
 

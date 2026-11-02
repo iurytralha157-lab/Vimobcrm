@@ -2034,6 +2034,9 @@ body {
     transparent
   );
   --auth-action-background-hover: var(--vimob-accent);
+  --auth-action-foreground: #ffffff;
+  --auth-action-foreground-hover: #151515;
+  --auth-link-color: var(--vimob-accent);
   background: var(--app-background);
   color: var(--app-text-primary);
 }
@@ -2041,6 +2044,19 @@ body {
 .light .auth-login-page {
   /* Keep supporting copy readable without changing the Vimob brand accent. */
   --app-text-tertiary: rgb(21 21 21 / 0.62);
+  --auth-action-foreground: #151515;
+  --auth-link-color: color-mix(in srgb, var(--vimob-accent) 72%, #000000);
+}
+
+.auth-login-page .text-primary,
+.auth-login-page [class~="hover:text-primary"]:hover {
+  color: var(--auth-link-color);
+}
+
+.auth-login-page :is(a, button).text-primary:not(:disabled):is(:hover, :focus-visible) {
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .auth-login-page .auth-login-hero-title {
@@ -2072,6 +2088,14 @@ body {
 .auth-login-page .auth-login-legal,
 .auth-login-page .auth-login-legal a {
   font-weight: var(--app-font-weight-body) !important;
+}
+
+.auth-login-page .auth-login-legal a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 @media (min-width: 1024px) {
@@ -2141,6 +2165,7 @@ body {
 
 .auth-login-page .auth-primary-action {
   background-color: var(--auth-action-background);
+  color: var(--auth-action-foreground);
   transition:
     background-color 160ms ease,
     color 160ms ease,
@@ -2150,21 +2175,31 @@ body {
 .auth-login-page .auth-primary-action:not(:disabled):hover,
 .auth-login-page .auth-primary-action:not(:disabled):focus-visible {
   background-color: var(--auth-action-background-hover);
+  color: var(--auth-action-foreground-hover);
+}
+
+.auth-login-page .auth-primary-action:focus-visible {
+  outline: 2px solid var(--app-text-primary);
+  outline-offset: 3px;
 }
 
 .auth-login-page .auth-primary-action:disabled {
-  background-color: color-mix(in srgb, var(--vimob-accent) 24%, transparent);
-  color: rgb(255 255 255 / 0.7);
+  background-color: var(--auth-action-background);
+  color: var(--auth-action-foreground);
   opacity: 1;
 }
 
 @media (hover: none) {
-  .auth-login-page .auth-primary-action:not(:disabled) {
+  .auth-login-page .auth-primary-action:not(:disabled),
+  .auth-login-page .auth-primary-action:not(:disabled):hover {
     background-color: var(--auth-action-background);
+    color: var(--auth-action-foreground);
   }
 
-  .auth-login-page .auth-primary-action:not(:disabled):active {
+  .auth-login-page .auth-primary-action:not(:disabled):active,
+  .auth-login-page .auth-primary-action:not(:disabled):focus-visible {
     background-color: var(--auth-action-background-hover);
+    color: var(--auth-action-foreground-hover);
   }
 }
 

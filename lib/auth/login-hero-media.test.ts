@@ -104,19 +104,13 @@ test("password recovery exposes a labelled heading and an honest back action", (
   assert.doesNotMatch(loginFormSource, /aria-label="Voltar para o login"/);
 });
 
-test("password recovery preserves the typed email and blocks concurrent requests", () => {
+test("password recovery preserves the email and delegates pending requests and feedback to its lifecycle hook", () => {
   assert.match(loginFormSource, /id="recovery-email"[\s\S]*?value=\{email\}/);
-  assert.match(loginFormSource, /recoverySubmissionInFlightRef\.current/);
-  assert.match(
-    loginFormSource,
-    /if \(recoverySubmissionInFlightRef\.current\) return;\s*recoverySubmissionInFlightRef\.current = true;/,
-  );
-  assert.match(loginFormSource, /finally \{\s*recoverySubmissionInFlightRef\.current = false;/);
-  assert.match(loginFormSource, /PASSWORD_RECOVERY_REQUEST_WAIT_MS/);
-  assert.match(
-    loginFormSource,
-    /runAuthOperationWithTimeout\(\s*\(\) => resetPassword\(normalizedEmail\)/,
-  );
+  assert.match(loginFormSource, /usePasswordRecoveryRequest\(\{ active: isRecoveringPassword, email, request: resetPassword \}\)/);
+  assert.match(loginFormSource, /await recoveryRequest\.submit\(\)/);
+  assert.match(loginFormSource, /disabled=\{recoveryRequest\.blocked\}/);
+  assert.match(loginFormSource, /recoveryRequest\.invalidate\(\)/);
+  assert.doesNotMatch(loginFormSource, /setRecoveryMessage\(\s*"Se existir uma conta/);
 });
 
 test("AuthContext delegates login and recovery to the validated auth API", () => {

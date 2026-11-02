@@ -13,12 +13,12 @@ import {
 import {
   EMAIL_CONFIRMATION_RESEND_WAIT_MS,
   LOGIN_OPERATION_WAIT_MS,
-  PASSWORD_RECOVERY_REQUEST_WAIT_MS,
   POST_LOGIN_ROUTING_WAIT_MS,
   runAuthOperationWithTimeout,
   shouldWaitForPostLoginRouting,
 } from "@/lib/auth/frontend-auth-reliability";
 import { authAPI } from "@/lib/api/auth";
+import { usePasswordRecoveryRequest } from "@/hooks/auth/use-password-recovery-request";
 
 type FormMode = "login" | "recover";
 
@@ -148,9 +148,7 @@ export function LoginForm() {
   const [email, setEmail] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
-  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
-  const [isSubmittingRecovery, setIsSubmittingRecovery] = useState(false);
   const [emailConfirmationPending, setEmailConfirmationPending] = useState(false);
   const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
   const [confirmationResendMessage, setConfirmationResendMessage] = useState<string | null>(null);
@@ -161,10 +159,11 @@ export function LoginForm() {
   const recoveryTitleRef = useRef<HTMLHeadingElement>(null);
   const previousFormModeRef = useRef<FormMode>(formMode);
   const loginSubmissionInFlightRef = useRef(false);
-  const recoverySubmissionInFlightRef = useRef(false);
   const pendingLoginSawAuthenticatedUserRef = useRef(false);
 
   const isRecoveringPassword = formMode === "recover";
+  const recoveryRequest = usePasswordRecoveryRequest({ active: isRecoveringPassword, email, request: resetPassword });
+  const { isSubmitting: isSubmittingRecovery, error: recoveryError, message: recoveryRequestMessage } = recoveryRequest;
   const textClass = "text-[var(--app-text-primary)]";
   const mutedTextClass = "text-[var(--app-text-tertiary)]";
   const paragraphTextClass = "text-[var(--app-text-secondary)]";
@@ -378,8 +377,8 @@ export function LoginForm() {
   }, [pendingPostLoginPath]);
 
   function showRecoveryForm() {
+    recoveryRequest.invalidate();
     setLoginError(null);
-    setRecoveryError(null);
     setRecoveryMessage(null);
     setConfirmationResendMessage(null);
     setConfirmationResendError(null);
@@ -387,8 +386,8 @@ export function LoginForm() {
   }
 
   function showLoginForm() {
+    recoveryRequest.invalidate();
     setLoginError(null);
-    setRecoveryError(null);
     setRecoveryMessage(null);
     setFormMode("login");
   }
@@ -511,57 +510,7 @@ export function LoginForm() {
 
   async function handleRecoverySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    const normalizedEmail = email.trim();
-
-    setRecoveryError(null);
-    setRecoveryMessage(null);
-
-    if (!normalizedEmail) {
-      setRecoveryError("Informe seu e-mail para receber o link.");
-      return;
-    }
-
-    if (recoverySubmissionInFlightRef.current) return;
-    recoverySubmissionInFlightRef.current = true;
-    setIsSubmittingRecovery(true);
-
-    try {
-      const recoveryResult = await runAuthOperationWithTimeout(
-        () => resetPassword(normalizedEmail),
-        PASSWORD_RECOVERY_REQUEST_WAIT_MS,
-      );
-
-      if (recoveryResult.status === "timed_out") {
-        setRecoveryError(
-          "O envio demorou mais que o esperado. Verifique sua conexão e tente novamente.",
-        );
-        return;
-      }
-      if (recoveryResult.status === "failed") {
-        throw recoveryResult.error;
-      }
-
-      const { error } = recoveryResult.value;
-
-      if (error) {
-        // Auth error codes can differ for existing and unknown addresses.
-        // Keep the public response the same for every accepted email format.
-        setRecoveryMessage(
-          "Se existir uma conta com esse e-mail, você receberá um link de recuperação.",
-        );
-        return;
-      }
-
-      setRecoveryMessage(
-        "Se existir uma conta com esse e-mail, você receberá um link de recuperação.",
-      );
-    } catch {
-      setRecoveryError("Não foi possível enviar o link agora. Tente novamente em instantes.");
-    } finally {
-      recoverySubmissionInFlightRef.current = false;
-      setIsSubmittingRecovery(false);
-    }
+    await recoveryRequest.submit();
   }
 
   return (
@@ -641,15 +590,15 @@ export function LoginForm() {
                 placeholder="seu@email.com"
                 value={email}
                 onChange={(event) => {
+                  recoveryRequest.invalidate();
                   setEmail(event.target.value);
-                  setRecoveryError(null);
-                  setRecoveryMessage(null);
                 }}
                 aria-invalid={Boolean(recoveryError)}
                 aria-describedby={[
                   "password-recovery-description",
                   recoveryError ? "recovery-error" : null,
-                  recoveryMessage ? "recovery-success" : null,
+                  recoveryRequestMessage ? "recovery-notice" : null,
+                  recoveryRequest.remainingSeconds > 0 ? "recovery-cooldown" : null,
                 ].filter(Boolean).join(" ")}
                 className={`${inputClass} pl-11`}
               />
@@ -658,10 +607,11 @@ export function LoginForm() {
 
           <button
             type="submit"
-            disabled={isSubmittingRecovery}
+            disabled={recoveryRequest.blocked}
             className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
           >
-            {isSubmittingRecovery ? "Enviando..." : "Enviar link de recuperação"}
+            {isSubmittingRecovery ? "Enviando..." : recoveryRequest.pending ? "Aguardando confirmação..." :
+              recoveryRequest.remainingSeconds > 0 ? `Solicitar novamente em ${recoveryRequest.remainingSeconds}s` : "Enviar link de recuperação"}
           </button>
 
           {recoveryError ? (
@@ -674,13 +624,18 @@ export function LoginForm() {
             </p>
           ) : null}
 
-          {recoveryMessage ? (
+          {recoveryRequestMessage ? (
             <p
-              id="recovery-success"
-              className={`text-center text-sm font-light leading-5 ${successTextClass}`}
+              id="recovery-notice"
+              className={`text-center text-sm font-light leading-5 ${paragraphTextClass}`}
               role="status"
             >
-              {recoveryMessage}
+              {recoveryRequestMessage}
+            </p>
+          ) : null}
+          {recoveryRequest.remainingSeconds > 0 ? (
+            <p id="recovery-cooldown" className={`text-center text-xs leading-5 ${mutedTextClass}`}>
+              Aguarde {recoveryRequest.remainingSeconds} segundos antes de solicitar outro link.
             </p>
           ) : null}
         </form>
@@ -718,6 +673,7 @@ export function LoginForm() {
                   placeholder="seu@email.com"
                   value={email}
                   onChange={(event) => {
+                    recoveryRequest.invalidate();
                     setEmail(event.target.value);
                     setConfirmationResendMessage(null);
                     setConfirmationResendError(null);
