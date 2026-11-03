@@ -40,19 +40,23 @@ type DraftOperations = {
   update: (id: string, input: UpdateHomePublicationInput) => Promise<HomePublication>
   upload: (id: string, file: File) => Promise<HomePublication>
   removeImage: (id: string) => Promise<HomePublication>
+  uploadMobile: (id: string, file: File) => Promise<HomePublication>
+  removeMobileImage: (id: string) => Promise<HomePublication>
   checkpoint: (publication: HomePublication) => void
-  imageSaved: () => void
+  imageSaved: (variant: 'desktop' | 'mobile') => void
 }
 
 export async function saveHomePublicationDraft({
-  input, publication, file, removeImage,
+  input, publication, file, removeImage, mobileFile = null, removeMobileImage = false,
 }: {
   input: CreateHomePublicationInput
   publication: HomePublication | null
   file: File | null
   removeImage: boolean
+  mobileFile?: File | null
+  removeMobileImage?: boolean
 }, operations: DraftOperations): Promise<HomePublication> {
-  const imageChanged = Boolean(file || removeImage)
+  const imageChanged = Boolean(file || removeImage || mobileFile || removeMobileImage)
   const metadata = { ...input, isActive: imageChanged ? false : input.isActive }
   let saved = publication
     ? await operations.update(publication.id, metadata)
@@ -62,11 +66,20 @@ export async function saveHomePublicationDraft({
   if (file) {
     saved = await operations.upload(saved.id, file)
     operations.checkpoint(saved)
-    operations.imageSaved()
+    operations.imageSaved('desktop')
   } else if (removeImage) {
     saved = await operations.removeImage(saved.id)
     operations.checkpoint(saved)
-    operations.imageSaved()
+    operations.imageSaved('desktop')
+  }
+  if (mobileFile) {
+    saved = await operations.uploadMobile(saved.id, mobileFile)
+    operations.checkpoint(saved)
+    operations.imageSaved('mobile')
+  } else if (removeMobileImage) {
+    saved = await operations.removeMobileImage(saved.id)
+    operations.checkpoint(saved)
+    operations.imageSaved('mobile')
   }
   if (imageChanged && input.isActive) {
     saved = await operations.update(saved.id, { isActive: true })

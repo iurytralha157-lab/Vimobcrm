@@ -493,6 +493,18 @@ test("resposta pública expõe somente o conteúdo necessário do card", () => {
   }
 });
 
+test("imagem mobile é opcional nos DTOs e não permite metadados privados no card público", () => {
+  for (const mobileImageUrl of [undefined, null, "https://cdn.example.com/mobile.webp"]) {
+    assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, mobileImageUrl }] }).success, true);
+    assert.equal(apiHomePublicationListResponseSchema.safeParse({ data: [{ ...publication, mobileImageUrl }] }).success, true);
+  }
+  for (const mobileImageUrl of ["javascript:alert(1)", "data:image/svg+xml,<svg/>", "ftp://cdn.example.com/mobile.webp"]) {
+    assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, mobileImageUrl }] }).success, false);
+  }
+  assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, mobileImageStoragePath: "private/path" }] }).success, false);
+  assert.equal(createHomePublicationInputSchema.safeParse({ title: "Imagem", body: "Texto", ctaLabel: "Ajuda", ctaHref: "/suporte", mobileImageUrl: "https://cdn.example.com/mobile.webp" }).success, false);
+});
+
 test("reordenação exige itens únicos e ordens válidas", () => {
   assert.equal(
     reorderHomePublicationsInputSchema.safeParse({

@@ -141,6 +141,22 @@ test('unknown RPC, changed owner/body/effective ACL and ledger hash/order are re
   ]) {const options=fixture();mutate(options);assert.throws(()=>buildRpcHardening(source,options));}
 });
 
+test('a later unapplied forward preserves the historical ledger and remains source/dependency checked',()=>{
+  const added = source.forwards.find(row => row.file === '20261103141001_add_home_publication_mobile_image_variant.sql');
+  assert.ok(added);
+  assert.equal(verification.catalog.phaseHistory.length,35);
+  assert.ok(!verification.catalog.phaseHistory.some(row => row.phase.includes(added.file.slice(0,14))));
+  assert.doesNotThrow(()=>buildRpcHardening(source,fixture()));
+  let changed=structuredClone(source);
+  changed.forwards.find(row=>row.file===added.file).source+='\nSELECT 1;\n';
+  assert.throws(()=>buildRpcHardening(changed,fixture()),/source changed after validation/);
+  changed=structuredClone(source);
+  const modified=changed.forwards.find(row=>row.file===added.file);
+  modified.source+='\nSELECT public.get_session_owner(NULL);\n';
+  modified.sha256=sha256(modified.source);
+  assert.throws(()=>buildRpcHardening(changed,fixture()),/reviewed RPC occurs in a forward/);
+});
+
 test('source chain changes and direct policy/forward dependencies require review',()=>{
   let changed=structuredClone(source);changed.manifest.sourceChainSHA256='0'.repeat(64);
   assert.throws(()=>buildRpcHardening(changed,fixture()));

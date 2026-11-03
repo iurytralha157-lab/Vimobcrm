@@ -15,7 +15,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   Carousel,
@@ -135,21 +135,32 @@ function PublicationSlide({
 }) {
   const visual = PUBLICATION_VISUALS[publication.accent];
 
-  if (publication.imageUrl) {
+  const desktopImageUrl = publication.imageUrl || publication.mobileImageUrl;
+
+  if (desktopImageUrl) {
     return (
       <article
         aria-label={`${index + 1} de ${total}: ${publication.title}`}
-        className="relative aspect-[2070/228] w-full min-w-0 min-h-[100px] overflow-hidden bg-[var(--app-surface-solid)] sm:min-h-[152px]"
+        className="relative w-full min-w-0 overflow-hidden"
       >
-        <Image
-          src={publication.imageUrl}
-          alt={publication.title}
-          fill
-          sizes="100vw"
-          className="object-contain"
-          loading={index === 0 ? "eager" : "lazy"}
-          unoptimized
-        />
+        <picture>
+          {publication.mobileImageUrl ? (
+            <source
+              media="(max-width: 767px)"
+              srcSet={publication.mobileImageUrl}
+            />
+          ) : null}
+          <Image
+            src={desktopImageUrl}
+            alt={publication.title}
+            width={2070}
+            height={228}
+            sizes="100vw"
+            className="block h-auto w-full object-contain"
+            loading={index === 0 ? "eager" : "lazy"}
+            unoptimized
+          />
+        </picture>
       </article>
     );
   }
@@ -250,6 +261,23 @@ export function HomePublicationCarousel({
   const [isFocusWithin, setIsFocusWithin] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isDocumentVisible, setIsDocumentVisible] = useState(true);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [activeSlideHeight, setActiveSlideHeight] = useState<number>();
+
+  useEffect(() => {
+    const slides = viewportRef.current?.querySelectorAll("article");
+    const activeSlide = slides?.[selectedIndex] || slides?.[0];
+    if (!activeSlide) return undefined;
+
+    // The flex track can be taller than the active artwork. Follow that artwork
+    // after image load, screen-size changes and navigation between unequal slides.
+    const updateHeight = () =>
+      setActiveSlideHeight(activeSlide.getBoundingClientRect().height);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(activeSlide);
+    return () => observer.disconnect();
+  }, [publications, selectedIndex, isLoading, hasError]);
 
   const syncCarouselState = useCallback((carouselApi: CarouselApi) => {
     if (!carouselApi) return;
@@ -332,7 +360,7 @@ export function HomePublicationCarousel({
           setIsFocusWithin(false);
         }
       }}
-      className="relative overflow-hidden rounded-none bg-[var(--app-surface-solid)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
+      className="relative overflow-hidden rounded-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
     >
       <p
         className="sr-only"
@@ -348,25 +376,31 @@ export function HomePublicationCarousel({
         setApi={setApi}
         aria-label="Carrossel de novidades da Página inicial"
       >
-        <CarouselContent className="-ml-0">
-          {publications.map((publication, index) => (
-            <CarouselItem key={publication.id} className="pl-0">
-              <PublicationSlide
-                publication={publication}
-                index={index}
-                total={publications.length}
-              />
-            </CarouselItem>
-          ))}
-        </CarouselContent>
+        <div
+          ref={viewportRef}
+          className="overflow-hidden"
+          style={activeSlideHeight ? { height: activeSlideHeight } : undefined}
+        >
+          <CarouselContent className="-ml-0 items-start">
+            {publications.map((publication, index) => (
+              <CarouselItem key={publication.id} className="pl-0">
+                <PublicationSlide
+                  publication={publication}
+                  index={index}
+                  total={publications.length}
+                />
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+        </div>
 
         {hasMultipleSlides ? (
-          <>
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
               aria-label="Comunicado anterior"
               onClick={() => api?.scrollPrev()}
-              className="absolute left-2 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/80 text-[var(--app-text-secondary)] shadow-none outline-none transition-[background-color,color,transform] hover:bg-primary hover:text-primary-foreground focus-visible:bg-primary focus-visible:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-95 active:bg-primary active:text-primary-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/80 text-[var(--app-text-secondary)] shadow-none outline-none transition-[background-color,color,transform] hover:bg-primary hover:text-primary-foreground focus-visible:bg-primary focus-visible:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-95 active:bg-primary active:text-primary-foreground"
             >
               <ChevronLeft className="h-4 w-4" strokeWidth={1.8} />
             </button>
@@ -374,11 +408,11 @@ export function HomePublicationCarousel({
               type="button"
               aria-label="Próximo comunicado"
               onClick={() => api?.scrollNext()}
-              className="absolute right-2 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/80 text-[var(--app-text-secondary)] shadow-none outline-none transition-[background-color,color,transform] hover:bg-primary hover:text-primary-foreground focus-visible:bg-primary focus-visible:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-95 active:bg-primary active:text-primary-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/80 text-[var(--app-text-secondary)] shadow-none outline-none transition-[background-color,color,transform] hover:bg-primary hover:text-primary-foreground focus-visible:bg-primary focus-visible:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-95 active:bg-primary active:text-primary-foreground"
             >
               <ChevronRight className="h-4 w-4" strokeWidth={1.8} />
             </button>
-          </>
+          </div>
         ) : null}
       </Carousel>
     </section>

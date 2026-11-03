@@ -30,9 +30,17 @@ export function validateRpcInputs(source, { target, readback, preflight, verific
   assert.equal(verification.projectRef, STAGING_REF); assert.equal(verification.sentinelRunId, RUN_ID);
   assert.equal(verification.sourceChainSHA256, SOURCE_CHAIN);
   assert.equal(sha256(JSON.stringify(verification.catalog.phaseHistory)), LEDGER_DIGEST, 'Reviewed original ledger hashes changed.');
-  assert.equal(source.forwards.length,20,'This supplement requires exactly the twenty already installed canonical forwards.');
-  for (const [index,forward] of source.forwards.entries()) {
+  // This historical supplement checks the installed ledger, not later forwards.
+  // Every current source stays hash-checked and participates in the RPC scan.
+  for (const forward of source.forwards) {
     assert.equal(sha256(normalize(forward.source)),forward.sha256,'Canonical forward source changed after validation.');
+  }
+  const installedPhases = verification.catalog.phaseHistory.slice(15);
+  assert.equal(installedPhases.length,20,'The reviewed historical ledger requires exactly twenty installed forwards.');
+  const installedForwards = source.forwards.filter(forward => installedPhases.some(phase =>
+    phase.phase === `40-forward-${forward.file.slice(0,14)}.sql`));
+  assert.equal(installedForwards.length,20,'An installed canonical forward is absent from the current sources.');
+  for (const [index,forward] of installedForwards.entries()) {
     const phase=verification.catalog.phaseHistory[15+index];
     assert.equal(phase.phase,`40-forward-${forward.file.slice(0,14)}.sql`);
     assert.equal(phase.payloadSHA256,sha256(transactionalMigration(normalize(forward.source))),

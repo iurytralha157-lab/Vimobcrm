@@ -1034,6 +1034,10 @@
     {
       "file": "20261019230804_restrict_agenda_activity_browser_reads_to_canonical_api.sql",
       "sha256": "98e1bebc28654833fe02ae09924d4846b29f32f25f3161d82159ef46f95c0d67"
+    },
+    {
+      "file": "20261103141001_add_home_publication_mobile_image_variant.sql",
+      "sha256": "9647c26f7d798cbf6f65f27f30f0feb52a18cb330d48c0b79f7cbf611151277b"
     }
   ]
 }

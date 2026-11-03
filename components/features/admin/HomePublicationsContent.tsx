@@ -60,11 +60,13 @@ import {
   useCreateHomePublication,
   useDeleteHomePublication,
   useDeleteHomePublicationImage,
+  useDeleteHomePublicationMobileImage,
   useHomePublicationOrganizations,
   useHomePublicationUsers,
   useReorderHomePublications,
   useUpdateHomePublication,
   useUploadHomePublicationImage,
+  useUploadHomePublicationMobileImage,
   type HomeAudienceOption,
 } from '@/hooks/home'
 import type {
@@ -394,6 +396,7 @@ function PublicationListItem({
 }) {
   const status = getPublicationStatus(publication)
   const accent = ACCENT_OPTIONS.find((option) => option.value === publication.accent)
+  const artwork = publication.imageUrl || publication.mobileImageUrl
 
   return (
     <article className="app-card overflow-hidden">
@@ -409,8 +412,8 @@ function PublicationListItem({
             publication.accent === 'slate' && 'from-slate-500/25 to-slate-500/5',
           )}
         >
-          {publication.imageUrl ? (
-            <Image src={publication.imageUrl} alt="" fill sizes="160px" className="object-contain" unoptimized />
+          {artwork ? (
+            <Image src={artwork} alt="" fill sizes="160px" className="object-contain" unoptimized />
           ) : (
             <div className="flex h-full items-center justify-center">
               <Sparkles className={cn('h-8 w-8', accent?.textColor)} />
@@ -422,14 +425,14 @@ function PublicationListItem({
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="truncate text-base font-normal">{publication.title}</h2>
             <Badge className={cn('border-0', status.className)}>{status.label}</Badge>
-            {publication.imageUrl ? (
+            {artwork ? (
               <Badge className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
                 <ImageIcon className="mr-1 h-3 w-3" />
-                Com imagem
+                {publication.mobileImageUrl ? 'Com versão para celular' : 'Com imagem desktop'}
               </Badge>
             ) : null}
           </div>
-          {!publication.imageUrl ? <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{publication.body}</p> : null}
+          {!artwork ? <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{publication.body}</p> : null}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <UsersRound className="h-3.5 w-3.5" />
@@ -439,7 +442,7 @@ function PublicationListItem({
               <CalendarClock className="h-3.5 w-3.5" />
               {formatSchedule(publication)}
             </span>
-            <span>{publication.imageUrl ? 'Imagem integral, sem link' : `Botão: ${publication.ctaLabel}`}</span>
+            <span>{artwork ? 'Imagem integral, sem link' : `Botão: ${publication.ctaLabel}`}</span>
           </div>
         </div>
 
@@ -496,6 +499,8 @@ export function HomePublicationsContent() {
   const reorderPublications = useReorderHomePublications()
   const uploadImage = useUploadHomePublicationImage()
   const deleteImage = useDeleteHomePublicationImage()
+  const uploadMobileImage = useUploadHomePublicationMobileImage()
+  const deleteMobileImage = useDeleteHomePublicationMobileImage()
 
   const publications = useMemo(
     () => (publicationsQuery.data || []).slice().sort((left, right) => (
@@ -508,6 +513,8 @@ export function HomePublicationsContent() {
   const [publicationToDelete, setPublicationToDelete] = useState<HomePublication | null>(null)
   const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(null)
   const [removeStoredImage, setRemoveStoredImage] = useState(false)
+  const [pendingMobileImage, setPendingMobileImage] = useState<{ file: File; previewUrl: string } | null>(null)
+  const [removeStoredMobileImage, setRemoveStoredMobileImage] = useState(false)
   const [saveInProgress, setSaveInProgress] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const savingRef = useRef(false)
@@ -523,11 +530,15 @@ export function HomePublicationsContent() {
   useEffect(() => () => {
     if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl)
   }, [pendingImage])
+  useEffect(() => () => {
+    if (pendingMobileImage) URL.revokeObjectURL(pendingMobileImage.previewUrl)
+  }, [pendingMobileImage])
 
   const imageUrl = pendingImage?.previewUrl || (!removeStoredImage ? editingPublication?.imageUrl : null) || null
-  const hasImage = Boolean(imageUrl)
+  const mobileImageUrl = pendingMobileImage?.previewUrl || (!removeStoredMobileImage ? editingPublication?.mobileImageUrl : null) || null
+  const hasImage = Boolean(imageUrl || mobileImageUrl)
   const isSaving = saveInProgress || createPublication.isPending || updatePublication.isPending
-  const isImageSaving = uploadImage.isPending || deleteImage.isPending
+  const isImageSaving = uploadImage.isPending || deleteImage.isPending || uploadMobileImage.isPending || deleteMobileImage.isPending
   const readyCount = publications.filter((publication) => publication.isActive).length
   const scheduledCount = publications.filter((publication) => (
     Boolean(publication.startsAt || publication.endsAt)
@@ -546,6 +557,8 @@ export function HomePublicationsContent() {
     if (!open) {
       setPendingImage(null)
       setRemoveStoredImage(false)
+      setPendingMobileImage(null)
+      setRemoveStoredMobileImage(false)
       setSaveError(null)
     }
   }
@@ -557,6 +570,8 @@ export function HomePublicationsContent() {
     setEditingPublication(null)
     setPendingImage(null)
     setRemoveStoredImage(false)
+    setPendingMobileImage(null)
+    setRemoveStoredMobileImage(false)
     setSaveError(null)
     setForm(createEmptyForm(nextOrder))
     setDialogOpen(true)
@@ -566,6 +581,8 @@ export function HomePublicationsContent() {
     setEditingPublication(publication)
     setPendingImage(null)
     setRemoveStoredImage(false)
+    setPendingMobileImage(null)
+    setRemoveStoredMobileImage(false)
     setSaveError(null)
     setForm(toPublicationForm(publication))
     setDialogOpen(true)
@@ -612,17 +629,24 @@ export function HomePublicationsContent() {
     setSaveError(null)
     let checkpoint = editingPublication
     try {
-      await saveHomePublicationDraft({ input: result.data, publication: editingPublication, file: pendingImage?.file || null, removeImage: removeStoredImage }, {
+      await saveHomePublicationDraft({ input: result.data, publication: editingPublication, file: pendingImage?.file || null, removeImage: removeStoredImage, mobileFile: pendingMobileImage?.file || null, removeMobileImage: removeStoredMobileImage }, {
         create: (value) => createPublication.mutateAsync(value),
         update: (id, value) => updatePublication.mutateAsync({ id, input: value }),
         upload: (id, file) => uploadImage.mutateAsync({ id, file }),
         removeImage: async (id) => (await deleteImage.mutateAsync(id)).publication,
+        uploadMobile: (id, file) => uploadMobileImage.mutateAsync({ id, file }),
+        removeMobileImage: async (id) => (await deleteMobileImage.mutateAsync(id)).publication,
         checkpoint: (value) => { checkpoint = value; setEditingPublication(value) },
-        imageSaved: () => { setPendingImage(null); setRemoveStoredImage(false) },
+        imageSaved: (variant) => {
+          if (variant === 'desktop') { setPendingImage(null); setRemoveStoredImage(false) }
+          else { setPendingMobileImage(null); setRemoveStoredMobileImage(false) }
+        },
       })
       setDialogOpen(false)
       setPendingImage(null)
       setRemoveStoredImage(false)
+      setPendingMobileImage(null)
+      setRemoveStoredMobileImage(false)
     } catch {
       setSaveError(checkpoint?.isActive === false
         ? 'O rascunho continua pausado. Tente salvar novamente para concluir.'
@@ -658,14 +682,15 @@ export function HomePublicationsContent() {
     }
   }
 
-  const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (event: ChangeEvent<HTMLInputElement>, variant: 'desktop' | 'mobile') => {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
     if (!file || savingRef.current || isSaving || isImageSaving) return
     const error = getHomeSlideImageError(file)
     if (error) { toast.error(error); return }
-    setPendingImage({ file, previewUrl: URL.createObjectURL(file) })
-    setRemoveStoredImage(false)
+    const selection = { file, previewUrl: URL.createObjectURL(file) }
+    if (variant === 'desktop') { setPendingImage(selection); setRemoveStoredImage(false) }
+    else { setPendingMobileImage(selection); setRemoveStoredMobileImage(false) }
     setSaveError(null)
     setForm((current) => ({ ...current, title: current.title.trim() ? current.title : getHomeSlideImageTitle(file.name) }))
   }
@@ -992,14 +1017,26 @@ export function HomePublicationsContent() {
               </div>
 
               <PublicationImageField
+                variant="desktop"
                 imageUrl={imageUrl}
                 title={form.title}
                 disabled={isSaving || isImageSaving}
                 selected={Boolean(pendingImage)}
                 canRestore={removeStoredImage && Boolean(editingPublication?.imageUrl)}
-                onSelect={handleImageUpload}
+                onSelect={(event) => handleImageUpload(event, 'desktop')}
                 onRemove={() => pendingImage ? setPendingImage(null) : setRemoveStoredImage(true)}
                 onRestore={() => setRemoveStoredImage(false)}
+              />
+              <PublicationImageField
+                variant="mobile"
+                imageUrl={mobileImageUrl}
+                title={form.title}
+                disabled={isSaving || isImageSaving}
+                selected={Boolean(pendingMobileImage)}
+                canRestore={removeStoredMobileImage && Boolean(editingPublication?.mobileImageUrl)}
+                onSelect={(event) => handleImageUpload(event, 'mobile')}
+                onRemove={() => pendingMobileImage ? setPendingMobileImage(null) : setRemoveStoredMobileImage(true)}
+                onRestore={() => setRemoveStoredMobileImage(false)}
               />
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-xs leading-5 text-muted-foreground">
                 <p className="font-normal text-[var(--app-text-primary)]">Dica de composição</p>

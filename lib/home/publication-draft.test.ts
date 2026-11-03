@@ -25,8 +25,9 @@ function fixture() {
   let record = initial()
   let retained = record
   const calls: Array<{ operation: string; id?: string; active?: boolean }> = []
-  const failures = { upload: false, activation: false }
+  const failures = { upload: false, mobileUpload: false, activation: false }
   let savedImages = 0
+  const savedVariants: Array<'desktop' | 'mobile'> = []
   const operations: Parameters<typeof saveHomePublicationDraft>[1] = {
     create: async (value) => { calls.push({ operation: 'create', active: value.isActive }); record = { ...record, ...value }; return record },
     update: async (id, value) => {
@@ -42,10 +43,18 @@ function fixture() {
       record = { ...record, imageUrl: 'https://cdn.example.test/slide.webp' }; return record
     },
     removeImage: async (id) => { calls.push({ operation: 'remove', id }); record = { ...record, imageUrl: null }; return record },
+    uploadMobile: async (id) => {
+      calls.push({ operation: 'uploadMobile', id })
+      assert.equal(retained.id, id)
+      assert.equal(record.isActive, false)
+      if (failures.mobileUpload) throw new Error('mobile upload failed')
+      record = { ...record, mobileImageUrl: 'https://cdn.example.test/mobile.webp' }; return record
+    },
+    removeMobileImage: async (id) => { calls.push({ operation: 'removeMobile', id }); record = { ...record, mobileImageUrl: null }; return record },
     checkpoint: (value) => { retained = value },
-    imageSaved: () => { savedImages += 1 },
+    imageSaved: (variant) => { savedImages += 1; savedVariants.push(variant) },
   }
-  return { operations, calls, failures, retained: () => retained, savedImages: () => savedImages }
+  return { operations, calls, failures, retained: () => retained, savedImages: () => savedImages, savedVariants }
 }
 
 test('image filenames and optional text produce valid internal metadata while preserving audience and period', () => {
@@ -170,4 +179,59 @@ test('new slide ranks stay within the API ceiling and reuse an unoccupied positi
   assert.equal(getNextHomeSlideOrder([{ displayOrder: 9_995 }]), 10_000)
   assert.equal(getNextHomeSlideOrder([{ displayOrder: 10_000 }, { displayOrder: 9_999 }]), 9_998)
   assert.throws(() => getNextHomeSlideOrder(Array.from({ length: 10_001 }, (_, displayOrder) => ({ displayOrder }))), /posição de ordem livre/)
+})
+
+test('two image variants upload desktop then mobile and only activate after both checkpoints', async () => {
+  const state = fixture()
+  await saveHomePublicationDraft({ input, publication: null, file: image, mobileFile: image, removeImage: false }, state.operations)
+  assert.deepEqual(state.calls.map((call) => [call.operation, call.active]), [['create', false], ['upload', undefined], ['uploadMobile', undefined], ['update', true]])
+  assert.deepEqual(state.savedVariants, ['desktop', 'mobile'])
+  assert.ok(state.retained().imageUrl)
+  assert.ok(state.retained().mobileImageUrl)
+})
+
+test('mobile upload failure retains desktop and retries the same ID without reuploading desktop', async () => {
+  const state = fixture()
+  state.failures.mobileUpload = true
+  await assert.rejects(saveHomePublicationDraft({ input, publication: null, file: image, mobileFile: image, removeImage: false }, state.operations), /mobile upload failed/)
+  assert.ok(state.retained().imageUrl)
+  assert.equal(state.retained().isActive, false)
+  assert.deepEqual(state.savedVariants, ['desktop'])
+  state.failures.mobileUpload = false
+  await saveHomePublicationDraft({ input, publication: state.retained(), file: null, mobileFile: image, removeImage: false }, state.operations)
+  assert.equal(state.calls.filter((call) => call.operation === 'create').length, 1)
+  assert.equal(state.calls.filter((call) => call.operation === 'upload').length, 1)
+  assert.equal(state.calls.filter((call) => call.operation === 'uploadMobile').length, 2)
+  assert.equal(state.retained().isActive, true)
+})
+
+test('desktop upload failure never starts mobile upload or activation', async () => {
+  const state = fixture()
+  state.failures.upload = true
+  await assert.rejects(saveHomePublicationDraft({ input, publication: null, file: image, mobileFile: image, removeImage: false }, state.operations), /upload failed/)
+  assert.deepEqual(state.calls.map((call) => call.operation), ['create', 'upload'])
+  assert.deepEqual(state.savedVariants, [])
+})
+
+test('a mobile-only draft uses its own endpoint and metadata retry after activation failure uploads neither variant', async () => {
+  const state = fixture()
+  state.failures.activation = true
+  await assert.rejects(saveHomePublicationDraft({ input, publication: null, file: null, mobileFile: image, removeImage: false }, state.operations), /activation failed/)
+  assert.equal(state.retained().imageUrl, null)
+  assert.ok(state.retained().mobileImageUrl)
+  assert.deepEqual(state.savedVariants, ['mobile'])
+  state.failures.activation = false
+  await saveHomePublicationDraft({ input, publication: state.retained(), file: null, removeImage: false }, state.operations)
+  assert.equal(state.calls.filter((call) => call.operation === 'uploadMobile').length, 1)
+  assert.equal(state.calls.filter((call) => call.operation === 'upload').length, 0)
+  assert.equal(state.retained().isActive, true)
+})
+
+test('variant removals run independently and an unchanged variant is never deleted', async () => {
+  for (const variant of ['desktop', 'mobile'] as const) {
+    const state = fixture()
+    await saveHomePublicationDraft({ input, publication: { ...initial(), imageUrl: 'https://cdn.example.test/desktop.webp', mobileImageUrl: 'https://cdn.example.test/mobile.webp' }, file: null, removeImage: variant === 'desktop', removeMobileImage: variant === 'mobile' }, state.operations)
+    assert.deepEqual(state.savedVariants, [variant])
+    assert.deepEqual(state.calls.map((call) => call.operation), ['update', variant === 'desktop' ? 'remove' : 'removeMobile', 'update'])
+  }
 })

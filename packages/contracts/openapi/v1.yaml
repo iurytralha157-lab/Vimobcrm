@@ -7815,9 +7815,16 @@ paths:
   /v1/home/publications:
     get:
       summary: List home cards visible to the current user
-      description: Returns at most 12 active cards after schedule and audience filtering.
+      description: Returns active cards after schedule and audience filtering. The mobileImageUrl field is emitted only when include_mobile=true; requests without the flag retain the legacy nine-field card.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
+        - in: query
+          name: include_mobile
+          required: false
+          description: Opt in to the optional mobile image URL. Older clients omit this flag.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Visible home publications ordered for display.
@@ -8053,6 +8060,46 @@ paths:
       responses:
         "200":
           description: Image detached from the home publication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomePublicationImageMutationResponse"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/admin/home-publications/{id}/mobile-image:
+    post:
+      summary: Upload or replace only the mobile image of a home publication
+      description: Superadministrator only. Accepts JPEG, PNG, or WebP files up to 5 MiB. Leaves the desktop image unchanged.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Mobile image attached to the home publication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomePublicationImageMutationResponse"
+        default:
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Remove only the mobile image of a home publication
+      description: Superadministrator only. Leaves the desktop image unchanged. Storage cleanup failures are returned as a non-fatal warning.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Mobile image detached from the home publication.
           content:
             application/json:
               schema:
@@ -11789,6 +11836,10 @@ components:
         imageUrl:
           type: [string, "null"]
           format: uri
+        mobileImageUrl:
+          type: [string, "null"]
+          format: uri
+          description: Optional; emitted only by GET /v1/home/publications?include_mobile=true.
         cardSize:
           $ref: "#/components/schemas/HomePublicationCardSize"
         accent:
@@ -11850,6 +11901,10 @@ components:
           type: [string, "null"]
           format: uri
           description: Read-only public URL managed through the image endpoint.
+        mobileImageUrl:
+          type: [string, "null"]
+          format: uri
+          description: Read-only public mobile URL managed through the mobile-image endpoint.
         cardSize:
           $ref: "#/components/schemas/HomePublicationCardSize"
         accent:

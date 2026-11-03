@@ -344,6 +344,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("DELETE /v1/admin/home-publications/{id}", withActiveAuthTenant(http.HandlerFunc(adminHandler.DeleteHomePublicationAdmin)))
 	mux.Handle("POST /v1/admin/home-publications/{id}/image", withActiveAuthTenant(http.HandlerFunc(adminHandler.UploadHomePublicationImageAdmin)))
 	mux.Handle("DELETE /v1/admin/home-publications/{id}/image", withActiveAuthTenant(http.HandlerFunc(adminHandler.DeleteHomePublicationImageAdmin)))
+	mux.Handle("POST /v1/admin/home-publications/{id}/mobile-image", withActiveAuthTenant(http.HandlerFunc(adminHandler.UploadHomePublicationMobileImageAdmin)))
+	mux.Handle("DELETE /v1/admin/home-publications/{id}/mobile-image", withActiveAuthTenant(http.HandlerFunc(adminHandler.DeleteHomePublicationMobileImageAdmin)))
 	mux.Handle("GET /v1/feature-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ListMyFeatureRequests)))
 	mux.Handle("POST /v1/feature-requests", withOrganization(http.HandlerFunc(adminHandler.CreateFeatureRequest)))
 	mux.Handle("GET /v1/admin/feature-requests", withActiveAuthTenant(http.HandlerFunc(adminHandler.ListFeatureRequestsAdmin)))

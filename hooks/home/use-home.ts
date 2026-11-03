@@ -179,3 +179,25 @@ export function useDeleteHomePublicationImage() {
     },
   })
 }
+
+export function useUploadHomePublicationMobileImage() {
+  const invalidate = useInvalidateHomePublications()
+  return useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => homeAPI.uploadPublicationMobileImage(id, file),
+    onSuccess: async () => { await invalidate(); toast.success('Imagem para celular enviada.') },
+    onError: (error: unknown) => { toast.error(getErrorMessage(error, 'Não foi possível enviar a imagem para celular.')) },
+  })
+}
+
+export function useDeleteHomePublicationMobileImage() {
+  const invalidate = useInvalidateHomePublications()
+  return useMutation({
+    mutationFn: (id: string) => homeAPI.deletePublicationMobileImage(id),
+    onSuccess: async (result) => {
+      await invalidate()
+      if (result.cleanupWarning) { toast.warning(`Imagem para celular desvinculada. ${result.cleanupWarning}`); return }
+      toast.success('Imagem para celular removida.')
+    },
+    onError: (error: unknown) => { toast.error(getErrorMessage(error, 'Não foi possível remover a imagem para celular.')) },
+  })
+}

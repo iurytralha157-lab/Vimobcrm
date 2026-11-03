@@ -103,6 +103,7 @@ export const homeAPI = {
       {
         organizationId,
         signal,
+        query: { include_mobile: true },
       },
     );
     validateDomainResponse(
@@ -301,6 +302,29 @@ export const homeAPI = {
       publication: response.data,
       cleanupWarning: response.cleanupWarning,
     };
+  },
+
+  async uploadPublicationMobileImage(id: string, file: File): Promise<HomePublication> {
+    const publicationId = parseDomainInput(uuidSchema, id, "home.admin.publications.mobile-image.upload.id");
+    const parsedFile = parseDomainInput(homePublicationImageFileSchema, file, "home.admin.publications.mobile-image.upload.file");
+    const body = new FormData();
+    body.append("file", parsedFile);
+    const response = await vimobAPIRequest<Envelope<HomePublication>>(
+      `/v1/admin/home-publications/${publicationId}/mobile-image`,
+      { method: "POST", body },
+    );
+    validateDomainResponse(apiHomePublicationResponseSchema, response, "home.admin.publications.mobile-image.upload");
+    return response.data;
+  },
+
+  async deletePublicationMobileImage(id: string): Promise<DeleteHomePublicationImageResult> {
+    const publicationId = parseDomainInput(uuidSchema, id, "home.admin.publications.mobile-image.delete.id");
+    const response = await vimobAPIRequest<Envelope<HomePublication> & { cleanupWarning?: string }>(
+      `/v1/admin/home-publications/${publicationId}/mobile-image`,
+      { method: "DELETE" },
+    );
+    validateDomainResponse(apiDeleteHomePublicationImageResponseSchema, response, "home.admin.publications.mobile-image.delete");
+    return { publication: response.data, cleanupWarning: response.cleanupWarning };
   },
 };
 

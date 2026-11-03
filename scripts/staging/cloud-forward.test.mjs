@@ -22,11 +22,11 @@ const trial = promoteCloudExport(baselineDraft, { target, readback, sentinelRunI
 const options = { target, readback, now };
 const prepared = buildCloudForwards(source, trial, options);
 
-test('twenty canonical forwards become twenty phases after the fifteen-phase baseline', () => {
-  assert.equal(prepared.manifest.count, 20);
+test('twenty-one canonical forwards become twenty-one planned phases after the fifteen-phase baseline', () => {
+  assert.equal(prepared.manifest.count, 21);
   assert.equal(prepared.manifest.firstOrdinal, 15);
-  assert.equal(prepared.manifest.lastOrdinal, 34);
-  assert.equal(prepared.manifest.outerTransactionsRemoved, 18);
+  assert.equal(prepared.manifest.lastOrdinal, 35);
+  assert.equal(prepared.manifest.outerTransactionsRemoved, 19);
   assert.equal(prepared.manifest.ready, false);
   assert.equal(prepared.manifest.trialPassed, false);
   assert.equal(prepared.manifest.remoteApplySupported, false);
@@ -55,7 +55,7 @@ test('first forward requires all baseline payload hashes and later forwards requ
     assert.ok(first.includes(entry.file)); assert.ok(first.includes(entry.payloadSHA256));
   }
   const last = prepared.files[prepared.manifest.files.at(-1).file];
-  assert.ok(last.includes(') <> 34'));
+  assert.ok(last.includes(') <> 35'));
   for (const entry of prepared.manifest.files.slice(0, -1)) {
     assert.ok(last.includes(entry.file)); assert.ok(last.includes(entry.payloadSHA256));
   }

@@ -10,7 +10,11 @@ existente e carrega o conteúdo em camadas para não depender do Dashboard:
 Há um único carrossel abaixo dos avisos críticos, alimentado pelas publicações
 ativas configuradas pelo superadministrador. Imagens ocupam o slide inteiro,
 preservam a proporção e não recebem texto sobreposto nem ação de clique; o título
-é seu texto alternativo. Recomenda-se arte horizontal de 2070 × 228 px. Slides sem
+é seu texto alternativo. Cada slide aceita uma arte de desktop e outra opcional
+para celular (telas abaixo de 768 px), escolhida pelo navegador sem baixar as duas.
+Sem uma arte mobile, a versão de desktop é usada em qualquer tela. A imagem mantém
+sua altura natural, sem fundo sólido, altura mínima ou recorte imposto pelo slide.
+Recomenda-se arte horizontal de 2070 × 228 px para desktop. Slides sem
 imagem mantêm o conteúdo editorial existente e o filtro por acesso ao destino.
 O backend aplica período e público-alvo a todos os slides, inclusive às imagens.
 O carrossel avança automaticamente e pausa durante interação, aba oculta ou
@@ -39,10 +43,13 @@ Dados e validação ficam fora dos componentes:
 ## Administração
 
 Superadministradores gerenciam os slides em `/admin/home-content`. O editor
-permite imagem, título acessível, ordem, período e público; conteúdo editorial
+permite imagens separadas de desktop e celular, título acessível, ordem, período e público; conteúdo editorial
 sem imagem continua disponível. Os itens ativos são publicados na Página inicial.
 Imagens são enviadas pelo backend para `site-images/platform/home/`; o browser
-não recebe credenciais de Storage.
+não recebe credenciais de Storage. Os arquivos ficam no Storage; URLs, ordem,
+período e público ficam no banco. O editor só ativa um novo slide depois de salvar
+todas as imagens selecionadas e permite repetir um upload que falhou sem criar
+outra publicação ou reenviar a imagem já salva.
 
 ## Assistente de ajuda
 

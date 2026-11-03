@@ -5,11 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
-	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -84,6 +80,7 @@ type HomePublication struct {
 	CTALabel              string     `json:"ctaLabel"`
 	CTAHref               string     `json:"ctaHref"`
 	ImageURL              *string    `json:"imageUrl"`
+	MobileImageURL        *string    `json:"mobileImageUrl"`
 	CardSize              string     `json:"cardSize"`
 	Accent                string     `json:"accent"`
 	DisplayOrder          int        `json:"displayOrder"`
@@ -101,20 +98,22 @@ type HomePublication struct {
 // HomePublicationCard is the deliberately minimal user-facing projection.
 // Audience configuration stays private to superadministrators.
 type HomePublicationCard struct {
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
-	Body         string  `json:"body"`
-	CTALabel     string  `json:"ctaLabel"`
-	CTAHref      string  `json:"ctaHref"`
-	ImageURL     *string `json:"imageUrl"`
-	CardSize     string  `json:"cardSize"`
-	Accent       string  `json:"accent"`
-	DisplayOrder int     `json:"displayOrder"`
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	Body           string  `json:"body"`
+	CTALabel       string  `json:"ctaLabel"`
+	CTAHref        string  `json:"ctaHref"`
+	ImageURL       *string `json:"imageUrl"`
+	MobileImageURL *string `json:"mobileImageUrl,omitempty"`
+	CardSize       string  `json:"cardSize"`
+	Accent         string  `json:"accent"`
+	DisplayOrder   int     `json:"displayOrder"`
 }
 
 type homePublicationRecord struct {
 	HomePublication
-	ImageStoragePath string
+	ImageStoragePath       string `json:"-"`
+	MobileImageStoragePath string `json:"-"`
 }
 
 type homePublicationCreateRequest struct {
@@ -201,7 +200,20 @@ func (handler Handler) ListHomePublications(w http.ResponseWriter, r *http.Reque
 		writeHomePublicationError(w, r, err)
 		return
 	}
+	items = homePublicationCardsForClient(items, r.URL.Query().Get("include_mobile") == "true")
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]HomePublicationCard]{Data: items})
+}
+
+// Mobile is opt-in so previously deployed strict clients keep their nine-key DTO.
+func homePublicationCardsForClient(items []HomePublicationCard, includeMobile bool) []HomePublicationCard {
+	result := make([]HomePublicationCard, len(items))
+	copy(result, items)
+	if !includeMobile {
+		for index := range result {
+			result[index].MobileImageURL = nil
+		}
+	}
+	return result
 }
 
 func (handler Handler) AnswerHomeAssistant(w http.ResponseWriter, r *http.Request) {
@@ -316,19 +328,15 @@ func (handler Handler) DeleteHomePublicationAdmin(w http.ResponseWriter, r *http
 		writeHomePublicationError(w, r, ErrInvalidInput)
 		return
 	}
-	storagePath, err := handler.repo.DeleteHomePublication(r.Context(), tenantContext, id)
+	storagePaths, err := handler.repo.DeleteHomePublication(r.Context(), tenantContext, id)
 	if err != nil {
 		writeHomePublicationError(w, r, err)
 		return
 	}
 
 	response := map[string]any{"ok": true}
-	if storagePath != "" {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if cleanupErr := handler.repo.deleteHomePublicationObject(cleanupContext, storagePath); cleanupErr != nil {
-			response["cleanupWarning"] = "Publication was deleted, but its previous image could not be removed."
-		}
+	if !handler.repo.cleanupHomePublicationObjects(storagePaths) {
+		response["cleanupWarning"] = "Publication was deleted, but one or more images could not be removed."
 	}
 	httpserver.WriteJSON(w, http.StatusOK, response)
 }
@@ -350,79 +358,6 @@ func (handler Handler) ReorderHomePublicationsAdmin(w http.ResponseWriter, r *ht
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]HomePublication]{Data: items})
-}
-
-func (handler Handler) UploadHomePublicationImageAdmin(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := adminContext(w, r)
-	if !ok {
-		return
-	}
-	id, valid := normalizeUUID(r.PathValue("id"))
-	if !valid {
-		writeHomePublicationError(w, r, ErrInvalidInput)
-		return
-	}
-
-	contentType, body, cleanup, err := parseHomePublicationImage(w, r)
-	if cleanup != nil {
-		defer cleanup()
-	}
-	if err != nil {
-		writeHomePublicationError(w, r, err)
-		return
-	}
-
-	updated, previousPath, err := handler.repo.UploadHomePublicationImage(r.Context(), tenantContext, id, contentType, body)
-	if err != nil {
-		writeHomePublicationError(w, r, err)
-		return
-	}
-	response := struct {
-		Data           HomePublication `json:"data"`
-		CleanupWarning string          `json:"cleanupWarning,omitempty"`
-	}{
-		Data: updated.HomePublication,
-	}
-	if previousPath != "" && previousPath != updated.ImageStoragePath {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if cleanupErr := handler.repo.deleteHomePublicationObject(cleanupContext, previousPath); cleanupErr != nil {
-			response.CleanupWarning = "Image was replaced, but the previous object could not be removed."
-		}
-	}
-	httpserver.WriteJSON(w, http.StatusCreated, response)
-}
-
-func (handler Handler) DeleteHomePublicationImageAdmin(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := adminContext(w, r)
-	if !ok {
-		return
-	}
-	id, valid := normalizeUUID(r.PathValue("id"))
-	if !valid {
-		writeHomePublicationError(w, r, ErrInvalidInput)
-		return
-	}
-
-	updated, previousPath, err := handler.repo.ClearHomePublicationImage(r.Context(), tenantContext, id)
-	if err != nil {
-		writeHomePublicationError(w, r, err)
-		return
-	}
-	response := struct {
-		Data           HomePublication `json:"data"`
-		CleanupWarning string          `json:"cleanupWarning,omitempty"`
-	}{
-		Data: updated.HomePublication,
-	}
-	if previousPath != "" {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if cleanupErr := handler.repo.deleteHomePublicationObject(cleanupContext, previousPath); cleanupErr != nil {
-			response.CleanupWarning = "Image was detached, but the previous object could not be removed."
-		}
-	}
-	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
 func (repo Repository) ListVisibleHomePublications(ctx context.Context, tenantContext tenant.Context) ([]HomePublicationCard, error) {
@@ -584,23 +519,24 @@ func (repo Repository) UpdateHomePublication(ctx context.Context, tenantContext 
 	return record, err
 }
 
-func (repo Repository) DeleteHomePublication(ctx context.Context, tenantContext tenant.Context, id string) (string, error) {
+func (repo Repository) DeleteHomePublication(ctx context.Context, tenantContext tenant.Context, id string) ([]string, error) {
 	if !tenantContext.IsSuperAdmin {
-		return "", tenant.ErrOrganizationAccessDenied
+		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	var storagePath pgtype.Text
+	var mobileStoragePath pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
 		delete from public.home_publications
 		where id = $1::uuid
-		returning image_storage_path
-	`, id).Scan(&storagePath)
+		returning image_storage_path, mobile_image_storage_path
+	`, id).Scan(&storagePath, &mobileStoragePath)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return textValueOrEmpty(storagePath), nil
+	return []string{textValueOrEmpty(storagePath), textValueOrEmpty(mobileStoragePath)}, nil
 }
 
 func (repo Repository) ReorderHomePublications(ctx context.Context, tenantContext tenant.Context, items []homePublicationOrderItem) ([]HomePublication, error) {
@@ -648,85 +584,6 @@ func (repo Repository) ReorderHomePublications(ctx context.Context, tenantContex
 		return nil, err
 	}
 	return repo.ListHomePublicationsAdmin(ctx, tenantContext)
-}
-
-func (repo Repository) UploadHomePublicationImage(
-	ctx context.Context,
-	tenantContext tenant.Context,
-	id string,
-	contentType string,
-	body io.Reader,
-) (homePublicationRecord, string, error) {
-	if !tenantContext.IsSuperAdmin {
-		return homePublicationRecord{}, "", tenant.ErrOrganizationAccessDenied
-	}
-
-	current, err := repo.GetHomePublicationAdmin(ctx, tenantContext, id)
-	if err != nil {
-		return homePublicationRecord{}, "", err
-	}
-	token, err := randomInvitationToken()
-	if err != nil {
-		return homePublicationRecord{}, "", err
-	}
-	objectPath := fmt.Sprintf(
-		"platform/home/%s/%d-%s%s",
-		id,
-		time.Now().UTC().UnixMilli(),
-		token[:16],
-		homeImageExtension(contentType),
-	)
-	if err := repo.uploadHomePublicationObject(ctx, objectPath, contentType, body); err != nil {
-		return homePublicationRecord{}, "", err
-	}
-	imageURL := repo.homePublicationPublicURL(objectPath)
-	updated, err := scanHomePublication(repo.db.Pool().QueryRow(ctx, `
-		update public.home_publications
-		set image_url = $2,
-		    image_storage_path = $3,
-		    updated_by = $4::uuid
-		where id = $1::uuid
-		returning `+homePublicationSelectColumnsWithoutAlias+`
-	`, id, imageURL, objectPath, tenantContext.UserID))
-	if err != nil {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = repo.deleteHomePublicationObject(cleanupContext, objectPath)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return homePublicationRecord{}, "", ErrNotFound
-		}
-		return homePublicationRecord{}, "", err
-	}
-	return updated, current.ImageStoragePath, nil
-}
-
-func (repo Repository) ClearHomePublicationImage(
-	ctx context.Context,
-	tenantContext tenant.Context,
-	id string,
-) (homePublicationRecord, string, error) {
-	if !tenantContext.IsSuperAdmin {
-		return homePublicationRecord{}, "", tenant.ErrOrganizationAccessDenied
-	}
-	current, err := repo.GetHomePublicationAdmin(ctx, tenantContext, id)
-	if err != nil {
-		return homePublicationRecord{}, "", err
-	}
-	updated, err := scanHomePublication(repo.db.Pool().QueryRow(ctx, `
-		update public.home_publications
-		set image_url = null,
-		    image_storage_path = null,
-		    updated_by = $2::uuid
-		where id = $1::uuid
-		returning `+homePublicationSelectColumnsWithoutAlias+`
-	`, id, tenantContext.UserID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return homePublicationRecord{}, "", ErrNotFound
-	}
-	if err != nil {
-		return homePublicationRecord{}, "", err
-	}
-	return updated, current.ImageStoragePath, nil
 }
 
 func (repo Repository) FindHomeAssistantAnswer(ctx context.Context, question string) (*HomeAssistantAnswer, error) {
@@ -786,6 +643,8 @@ const homePublicationSelectColumns = `
 	hp.cta_href,
 	hp.image_url,
 	hp.image_storage_path,
+	hp.mobile_image_url,
+	hp.mobile_image_storage_path,
 	hp.card_size,
 	hp.accent,
 	hp.display_order,
@@ -808,6 +667,8 @@ const homePublicationSelectColumnsWithoutAlias = `
 	cta_href,
 	image_url,
 	image_storage_path,
+	mobile_image_url,
+	mobile_image_storage_path,
 	card_size,
 	accent,
 	display_order,
@@ -829,6 +690,7 @@ const homePublicationCardSelectColumns = `
 	hp.cta_label,
 	hp.cta_href,
 	hp.image_url,
+	hp.mobile_image_url,
 	hp.card_size,
 	hp.accent,
 	hp.display_order
@@ -837,6 +699,7 @@ const homePublicationCardSelectColumns = `
 func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCard, error) {
 	var card HomePublicationCard
 	var imageURL pgtype.Text
+	var mobileImageURL pgtype.Text
 	err := scanner.Scan(
 		&card.ID,
 		&card.Title,
@@ -844,6 +707,7 @@ func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCar
 		&card.CTALabel,
 		&card.CTAHref,
 		&imageURL,
+		&mobileImageURL,
 		&card.CardSize,
 		&card.Accent,
 		&card.DisplayOrder,
@@ -852,6 +716,7 @@ func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCar
 		return HomePublicationCard{}, err
 	}
 	card.ImageURL = homeTextPointer(imageURL)
+	card.MobileImageURL = homeTextPointer(mobileImageURL)
 	return card, nil
 }
 
@@ -871,6 +736,8 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 	var record homePublicationRecord
 	var imageURL pgtype.Text
 	var imageStoragePath pgtype.Text
+	var mobileImageURL pgtype.Text
+	var mobileImageStoragePath pgtype.Text
 	var startsAt pgtype.Timestamptz
 	var endsAt pgtype.Timestamptz
 	err := scanner.Scan(
@@ -881,6 +748,8 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 		&record.CTAHref,
 		&imageURL,
 		&imageStoragePath,
+		&mobileImageURL,
+		&mobileImageStoragePath,
 		&record.CardSize,
 		&record.Accent,
 		&record.DisplayOrder,
@@ -899,6 +768,8 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 	}
 	record.ImageURL = homeTextPointer(imageURL)
 	record.ImageStoragePath = textValueOrEmpty(imageStoragePath)
+	record.MobileImageURL = homeTextPointer(mobileImageURL)
+	record.MobileImageStoragePath = textValueOrEmpty(mobileImageStoragePath)
 	record.StartsAt = timestamptzPointer(startsAt)
 	record.EndsAt = timestamptzPointer(endsAt)
 	record.TargetOrganizationIDs = nonNilStrings(record.TargetOrganizationIDs)
@@ -1171,147 +1042,6 @@ func normalizeHomeMemberRole(value string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
-}
-
-func parseHomePublicationImage(w http.ResponseWriter, r *http.Request) (string, io.Reader, func(), error) {
-	r.Body = http.MaxBytesReader(w, r.Body, homePublicationImageLimit+(1<<20))
-	if err := r.ParseMultipartForm(homePublicationImageLimit + (1 << 20)); err != nil {
-		return "", nil, nil, fmt.Errorf("%w: invalid multipart form", ErrInvalidInput)
-	}
-	cleanup := func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}
-
-	file, fileHeader, err := r.FormFile("file")
-	if err != nil {
-		cleanup()
-		return "", nil, nil, fmt.Errorf("%w: file is required", ErrInvalidInput)
-	}
-	if fileHeader.Size <= 0 || fileHeader.Size > homePublicationImageLimit {
-		file.Close()
-		cleanup()
-		return "", nil, nil, fmt.Errorf("%w: invalid file size", ErrInvalidInput)
-	}
-
-	buffer := make([]byte, 512)
-	readBytes, err := file.Read(buffer)
-	if err != nil && !errors.Is(err, io.EOF) {
-		file.Close()
-		cleanup()
-		return "", nil, nil, fmt.Errorf("%w: could not read file", ErrInvalidInput)
-	}
-	buffer = buffer[:readBytes]
-	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(buffer)))
-	if !isHomePublicationImageType(contentType) {
-		file.Close()
-		cleanup()
-		return "", nil, nil, fmt.Errorf("%w: unsupported image type", ErrInvalidInput)
-	}
-
-	return contentType, io.MultiReader(bytes.NewReader(buffer), file), func() {
-		file.Close()
-		cleanup()
-	}, nil
-}
-
-func isHomePublicationImageType(contentType string) bool {
-	switch contentType {
-	case "image/jpeg", "image/png", "image/webp":
-		return true
-	default:
-		return false
-	}
-}
-
-func homeImageExtension(contentType string) string {
-	switch contentType {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ""
-	}
-}
-
-func (repo Repository) uploadHomePublicationObject(ctx context.Context, objectPath string, contentType string, body io.Reader) error {
-	if repo.projectURL == "" || repo.apiKey == "" {
-		return errHomePublicationStorageNotConfigured
-	}
-	endpoint := fmt.Sprintf(
-		"%s/storage/v1/object/%s/%s",
-		repo.projectURL,
-		url.PathEscape(homePublicationImageBucket),
-		supabasehttp.EscapeObjectPath(objectPath),
-	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
-	if err != nil {
-		return err
-	}
-	supabasehttp.SetServiceAuth(request, repo.apiKey)
-	request.Header.Set("Content-Type", contentType)
-	request.Header.Set("Cache-Control", "31536000, immutable")
-	request.Header.Set("x-upsert", "false")
-
-	response, err := repo.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errHomePublicationStorageOperation, err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		message := strings.TrimSpace(string(payload))
-		if message == "" {
-			message = response.Status
-		}
-		return fmt.Errorf("%w: %s", errHomePublicationStorageOperation, message)
-	}
-	return nil
-}
-
-func (repo Repository) deleteHomePublicationObject(ctx context.Context, objectPath string) error {
-	if strings.TrimSpace(objectPath) == "" {
-		return nil
-	}
-	if repo.projectURL == "" || repo.apiKey == "" {
-		return errHomePublicationStorageNotConfigured
-	}
-	if !strings.HasPrefix(objectPath, "platform/home/") {
-		return ErrInvalidInput
-	}
-	endpoint := fmt.Sprintf(
-		"%s/storage/v1/object/%s/%s",
-		repo.projectURL,
-		url.PathEscape(homePublicationImageBucket),
-		supabasehttp.EscapeObjectPath(objectPath),
-	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	supabasehttp.SetServiceAuth(request, repo.apiKey)
-
-	response, err := repo.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errHomePublicationStorageOperation, err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("%w: %s", errHomePublicationStorageOperation, strings.TrimSpace(string(payload)))
-	}
-	return nil
-}
-
-func (repo Repository) homePublicationPublicURL(objectPath string) string {
-	return supabasehttp.PublicObjectURL(repo.projectURL, homePublicationImageBucket, objectPath)
 }
 
 func sanitizeHomeAssistantText(value string, maxRunes int) string {
