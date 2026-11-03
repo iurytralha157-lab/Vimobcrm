@@ -19,7 +19,7 @@ import {
 export type RecoveryState = 'checking' | 'ready' | 'invalid' | 'incomplete' | 'success'
 
 function cleanRecoveryUrl() { window.history.replaceState({}, '', ROUTES.RESET_PASSWORD) }
-const invalidLinkMessage = 'Este link de recuperação expirou ou não é válido. Solicite um novo link para redefinir sua senha.'
+const invalidLinkMessage = 'Este link de recuperação expirou, já foi usado ou foi aberto em outro navegador. Solicite um novo link e abra-o no mesmo navegador em que fez o pedido.'
 const changedSessionMessage = 'A sessão de recuperação mudou. Solicite um novo link para proteger sua conta.'
 
 /** Owns this page's effects; does not start cleanup after observing a replacement. */

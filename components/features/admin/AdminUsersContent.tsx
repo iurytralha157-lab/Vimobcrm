@@ -249,18 +249,11 @@ export function AdminUserActions({ user }: { user: AdminRecord }) {
     },
   });
 
-  const resetPassword = useMutation({
-    mutationFn: async () => adminAPI.resetUserPassword(userId),
-    onSuccess: (result) => {
-      const email = getString(result, "email", getString(user, "email", ""));
-      toast.success(email
-        ? `Pedido de recuperação aceito para ${email}. A entrega do e-mail ainda não foi confirmada.`
-        : "Pedido de recuperação aceito. A entrega do e-mail ainda não foi confirmada.");
-    },
-    onError: (error) => {
-      toast.error(`Erro ao resetar senha: ${getErrorMessage(error)}`);
-    },
-  });
+  // A link requested by the API has no PKCE verifier in the user's browser, so
+  // the reset screen would refuse it. The user must request the link themselves.
+  const explainPasswordReset = () => {
+    toast.info('Peça ao usuário para clicar em "Esqueceu sua senha?" na tela de login e abrir o e-mail no mesmo navegador.');
+  };
 
   return (
     <>
@@ -270,12 +263,12 @@ export function AdminUserActions({ user }: { user: AdminRecord }) {
           variant="outline"
           size="icon"
           className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
-          onClick={() => resetPassword.mutate()}
-          disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
-          aria-label="Resetar senha"
-          title="Resetar senha"
+          onClick={explainPasswordReset}
+          disabled={!userId || toggleStatus.isPending}
+          aria-label="Como redefinir a senha"
+          title="Como redefinir a senha"
         >
-          {resetPassword.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+          <KeyRound className="h-3.5 w-3.5" />
         </Button>
         <Button
           type="button"
@@ -283,7 +276,7 @@ export function AdminUserActions({ user }: { user: AdminRecord }) {
           size="icon"
           className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
           onClick={() => toggleStatus.mutate()}
-          disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
+          disabled={!userId || toggleStatus.isPending}
           aria-label={isActive ? "Inativar usuário" : "Reativar usuário"}
           title={isActive ? "Inativar usuário" : "Reativar usuário"}
         >

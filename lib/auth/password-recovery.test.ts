@@ -268,7 +268,7 @@ test('telemetry provider sends only the sanitized browser location', () => {
 
 test('reset screen maps external auth errors to fixed copy', () => {
   assert.match(recoverySessionHookSource, /hash\.has\('error_description'\)/)
-  assert.match(recoverySessionHookSource, /Este link de recuperação expirou ou não é válido\./)
+  assert.match(recoverySessionHookSource, /Este link de recuperação expirou, já foi usado ou foi aberto em outro navegador\./)
   assert.doesNotMatch(recoverySessionHookSource, /invalid\(hashError\)/)
   assert.doesNotMatch(recoverySessionHookSource, /hash\.get\('error_description'\)/)
 })
