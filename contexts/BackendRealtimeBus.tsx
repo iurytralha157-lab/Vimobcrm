@@ -227,7 +227,7 @@ export function BackendRealtimeBus() {
         redirectToOrganizationSelection();
         void Promise.allSettled([
           invalidateOrganizations(),
-          refreshOrganizationsForCurrentScope(),
+          isCurrentScope() ? refreshOrganizationsRef.current({ accessRevoked: true }) : undefined,
         ]);
         return;
       }

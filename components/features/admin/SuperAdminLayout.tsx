@@ -27,6 +27,7 @@ import {
   type AdminNavItem,
 } from "@/components/features/admin/admin-navigation";
 import { VimobLoader } from "@/components/shared/loading";
+import { AccessValidationNotice } from "@/components/shared/layout/AccessValidationNotice";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -463,6 +464,7 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider>
+      <AccessValidationNotice />
       <div className="app-shell flex h-[100dvh] w-full flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
         <div className="flex flex-1 overflow-hidden">
         <div className="hidden flex-shrink-0 lg:block">

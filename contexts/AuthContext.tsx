@@ -33,6 +33,7 @@ import {
   type ActiveOrganizationResolution,
 } from '@/lib/auth/active-organization';
 import { shouldPersistOrganizationSelectionRemotely } from '@/lib/local-read-only';
+import { classifyAccessValidationFailure } from '@/lib/auth/access-validation';
 import { deactivateCurrentPushEndpoint } from '@/lib/pwa/push-session';
 import { usePushDeviceIntent } from '@/hooks/use-push-device-intent';
 
@@ -90,6 +91,7 @@ function authSnapshotKey(userId: string) {
 }
 
 const MEMBERSHIP_FOCUS_REVALIDATION_INTERVAL_MS = 30_000;
+const STALE_ACCESS_RETRY_INTERVAL_MS = 35_000;
 
 interface AuthContextType {
   user: User | null;
@@ -105,13 +107,16 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
   refreshProfile: () => Promise<boolean>;
-  refreshOrganizations: () => Promise<void>;
+  /** `accessRevoked` makes a failed recheck clear the context instead of keeping it. */
+  refreshOrganizations: (options?: { accessRevoked?: boolean }) => Promise<void>;
   startImpersonate: (orgId: string, orgName: string) => Promise<void>;
   stopImpersonate: () => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
   authInitialized: boolean;
   organizationsLoaded: boolean;
   organizationsError: string | null;
+  /** The last validated access remains in use while a transient recheck fails. */
+  accessValidationStale: boolean;
   isInitializingOrg: boolean;
   userOrganizations: UserOrganization[];
 }
@@ -158,6 +163,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [organizationsError, setOrganizationsError] = useState<string | null>(null);
+  const [accessValidationStale, setAccessValidationStale] = useState(false);
+  const accessValidationStaleRef = useRef(false);
+  const validatedAccessUserRef = useRef<string | null>(null);
+  const markAccessValidationStale = useCallback((stale: boolean) => {
+    accessValidationStaleRef.current = stale;
+    setAccessValidationStale(stale);
+  }, []);
   const [isInitializingOrg, setIsInitializingOrg] = useState(false);
   const [userOrganizations, setUserOrganizations] = useState<UserOrganization[]>([]);
   const authStateRef = useRef({
@@ -204,10 +216,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const failOrganizationValidation = useCallback((message: string) => {
+    validatedAccessUserRef.current = null;
+    markAccessValidationStale(false);
     clearOrganizationContext();
     setUserOrganizations([]);
     setOrganizationsError(message);
-  }, [clearOrganizationContext]);
+  }, [clearOrganizationContext, markAccessValidationStale]);
+
+  // A failed recheck is not evidence of lost access. Denied and revoked sessions
+  // still clear the context, and the API remains the authority on every request.
+  const retainValidatedAccess = useCallback((userId: string, error: unknown) => {
+    if (classifyAccessValidationFailure(error) !== 'transient') return false;
+    if (validatedAccessUserRef.current !== userId) return false;
+    markAccessValidationStale(true);
+    return true;
+  }, [markAccessValidationStale]);
 
   const fetchProfile = async (
     userId: string,
@@ -320,6 +343,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
         console.error('Error fetching profile:', error);
+        if (retainValidatedAccess(userId, error)) return false;
         failOrganizationValidation('Não foi possível validar seu acesso. Tente novamente.');
         if (isExpiredAPISessionError(error)) {
           const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
@@ -498,6 +522,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (options?.forceSelectorForMultiOrg) {
             authDebug('[AuthContext] multiple organizations found; forcing organization selector');
             clearOrganizationContext();
+            validatedAccessUserRef.current = userId;
+            markAccessValidationStale(false);
             return;
           }
 
@@ -522,9 +548,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             authDebug('[AuthContext] multiple organizations found but none active/saved');
           }
         }
+
+        validatedAccessUserRef.current = userId;
+        markAccessValidationStale(false);
       } catch (err) {
         if (requestId !== organizationListRequestRef.current || userRef.current?.id !== userId) return;
         console.error('[AuthContext] Error in checkMultiOrg:', err);
+        if (retainValidatedAccess(userId, err)) return;
         failOrganizationValidation('Não foi possível carregar suas organizações. Tente novamente.');
       } finally {
         if (requestId === organizationListRequestRef.current && userRef.current?.id === userId) {
@@ -553,6 +583,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authDebug('Cleaning auth states');
       credentialSignInInFlightRef.current = false;
       organizationListRequestRef.current += 1;
+      validatedAccessUserRef.current = null;
+      markAccessValidationStale(false);
       setVimobAPIAccessToken(null, null);
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
@@ -651,6 +683,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .catch((error) => {
           if (!isMounted || userRef.current?.id !== currentUserId) return;
           console.error('[AuthContext] Falha ao revalidar o acesso:', error);
+          if (retainValidatedAccess(currentUserId, error)) return;
           failOrganizationValidation('Não foi possível validar seu acesso. Tente novamente.');
         })
         .finally(() => {
@@ -887,15 +920,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleFocus);
 
+    const handleOnline = () => {
+      if (accessValidationStaleRef.current) revalidateCurrentMembership();
+    };
+    window.addEventListener('online', handleOnline);
+    const staleAccessRetry = window.setInterval(() => {
+      if (accessValidationStaleRef.current) revalidateCurrentMembership(true);
+    }, STALE_ACCESS_RETRY_INTERVAL_MS);
+
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
       window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('online', handleOnline);
+      window.clearInterval(staleAccessRetry);
       subscription.unsubscribe();
     };
-  }, [failOrganizationValidation, setSession]);
+  }, [failOrganizationValidation, markAccessValidationStale, retainValidatedAccess, setSession]);
 
   const signIn = async (email: string, password: string) => {
     credentialSignInInFlightRef.current = true;
@@ -990,9 +1033,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return fetchProfile(user.id);
   };
 
-  const refreshOrganizations = async () => {
+  const refreshOrganizations = async (options?: { accessRevoked?: boolean }) => {
     const activeUser = userRef.current || user;
     if (!activeUser) return;
+    if (options?.accessRevoked) validatedAccessUserRef.current = null;
 
     setOrganizationsLoaded(false);
     setOrganizationsError(null);
@@ -1031,6 +1075,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authInitialized,
       organizationsLoaded,
       organizationsError,
+      accessValidationStale,
       isInitializingOrg,
       userOrganizations,
       signIn,

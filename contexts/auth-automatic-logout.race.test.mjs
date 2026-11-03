@@ -44,7 +44,7 @@ function harness(pathname='/crm') {
   const noop=()=>{};
   const sandbox={...base,...helper,...cache,h,isMounted:true,userRef,logoutLifecycleRef:lifecycle,
     automaticLogoutSequenceRef:{current:0},isLoggingOutRef:{current:false},signOutInFlightRef:{current:null},
-    credentialSignInInFlightRef:{current:false},organizationListRequestRef:{current:0},profileRef:{current:null},organizationRef:{current:null},
+    credentialSignInInFlightRef:{current:false},validatedAccessUserRef:{current:null},markAccessValidationStale:()=>{},organizationListRequestRef:{current:0},profileRef:{current:null},organizationRef:{current:null},
     recoveryActionScheduledRef:{current:null},ROUTES:{RESET_PASSWORD:'/reset-password',SIGNUP:'/cadastro',LOGIN:'/login'},
     useCallback:callback=>callback,setSessionState:value=>{h.session=value},setUser:value=>{h.user=value},
     setVimobAPIAccessToken:token=>h.tokenWrites.push(token),authSnapshotKey:id=>`snapshot:${id}`,authDebug:noop,authDebugWarn:noop,

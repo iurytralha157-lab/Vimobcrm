@@ -21,6 +21,7 @@ import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useAuth } from '@/contexts/AuthContext';
 import { VimobLoader } from '@/components/shared/loading';
+import { AccessValidationNotice } from './AccessValidationNotice';
 import { Wrench } from 'lucide-react';
 import { canManageOrganization } from '@/lib/access/organization';
 import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
@@ -283,8 +284,11 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   }
 
   return (
-    <AppLayoutContent title={title} belowHeader={belowHeader} disableMainScroll={disableMainScroll} borderless={borderless}>
-      {children}
-    </AppLayoutContent>
+    <>
+      <AccessValidationNotice />
+      <AppLayoutContent title={title} belowHeader={belowHeader} disableMainScroll={disableMainScroll} borderless={borderless}>
+        {children}
+      </AppLayoutContent>
+    </>
   );
 }
