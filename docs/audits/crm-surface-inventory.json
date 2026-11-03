@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "93b64c6c7c820d5e49724d75c47585258a8090f33b750fb7a88697114f1ca26c",
+  "sourceDigestSha256": "35edf34cbcc0195928072ff8c5554648f5af2a02dd63d2d04b89bdbe4568e9a4",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -50090,6 +50090,15 @@
         "protected"
       ],
       "file": "components/features/home/HomeAssistant.tsx",
+      "routes": [
+        "/inicio"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/home/HomeBrandBanner.tsx",
       "routes": [
         "/inicio"
       ]

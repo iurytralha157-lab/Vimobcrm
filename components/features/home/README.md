@@ -7,8 +7,13 @@ existente e carrega o conteúdo em camadas para não depender do Dashboard:
 2. atenção, tarefas e agenda são consultadas em paralelo conforme módulos e
    permissões do usuário.
 
+O banner institucional usa a arte vetorial local em
+`public/images/vimob-home-banner.svg`, inteira e proporcional, com texto alternativo
+equivalente e sem ação de clique. Ele aparece abaixo dos avisos críticos, antes das
+publicações, independentemente do carregamento ou resultado dessa consulta.
+
 O carrossel editorial é alimentado pelas publicações ativas configuradas pelo
-superadministrador. Ele ocupa a largura inteira logo abaixo dos avisos críticos, avança
+superadministrador. Ele ocupa a largura inteira abaixo do banner, avança
 automaticamente e pausa durante a interação, sem controles visuais sobre o slide. O conteúdo
 respeita período, público-alvo, permissões, módulos e destinos disponíveis ao usuário.
 
@@ -16,6 +21,7 @@ respeita período, público-alvo, permissões, módulos e destinos disponíveis 
 
 - `HomeScreen.tsx`: composição da página e controle de acesso dos atalhos;
 - `HomeAssistant.tsx`: pesquisa determinística na ajuda e nos leads visíveis;
+- `HomeBrandBanner.tsx`: arte institucional local, proporcional e sem interação;
 - `HomePublicationCarousel.tsx`: carrossel de novidades configuradas pela plataforma;
 - `HomeFocusList.tsx`: prioridades reais do usuário;
 - `home-catalog.ts`: atalhos e destinos internos permitidos.

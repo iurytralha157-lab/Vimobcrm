@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { HomeBrandBanner } from "@/components/features/home/HomeBrandBanner";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -132,16 +133,17 @@ export default function HomeScreen() {
       borderless
       belowHeader={<HomeNoticeRail notices={noticesQuery.data || []} />}
     >
-      {showPublicationCarousel ? (
-        <div className="-mx-5 -mt-2 md:-mx-6 md:-mt-3">
+      <div className="-mx-5 -mt-2 md:-mx-6 md:-mt-3">
+        <HomeBrandBanner />
+        {showPublicationCarousel ? (
           <HomePublicationCarousel
             publications={publications}
             isLoading={!accessReady || publicationsQuery.isLoading}
             hasError={publicationsQuery.isError}
             onRetry={() => void publicationsQuery.refetch()}
           />
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <div className="mx-auto w-full max-w-[980px] pb-8">
         <HomeAssistant
