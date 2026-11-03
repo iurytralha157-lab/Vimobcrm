@@ -1,22 +1,13 @@
 // Browser matrix for login routing and access resilience. See README.md.
-import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+import { createRunnerLifecycle } from './runner-lifecycle.mjs';
 
 const F = 'http://127.0.0.1:54400';
 const APP = process.env.AUTH_SCENARIOS_URL || 'http://127.0.0.1:3199';
-const children = [];
-
-function start(command, args, env = {}) {
-  const child = spawn(command, args, { stdio: 'ignore', env: { ...process.env, ...env } });
-  children.push(child);
-}
-
-async function waitFor(url) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    try { await fetch(url); return; } catch { await new Promise((resolve) => setTimeout(resolve, 1000)); }
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
+const require = createRequire(import.meta.url);
+const lifecycle = createRunnerLifecycle({ cwd: fileURLToPath(new URL('../../', import.meta.url)) });
 
 const ctl=o=>fetch(F+'/__control',{method:'POST',body:o?JSON.stringify(o):undefined}).then(r=>r.json());
 const results=[];
@@ -27,22 +18,27 @@ async function sc(browser,name,fn){await ctl({reset:true});const ctx=await brows
 const focus=async p=>{await p.clock.fastForward(36000);await p.evaluate(()=>window.dispatchEvent(new Event('focus'))).catch(()=>{});await p.waitForTimeout(2500)};
 const stay=async(p,re)=>{await p.waitForTimeout(1500);if(!re.test(new URL(p.url()).pathname+new URL(p.url()).search))throw new Error('saiu da página: '+p.url())};
 (async()=>{
-start('node', [new URL('./fake-backend.mjs', import.meta.url).pathname]);
-await waitFor(F + '/__control');
+let browser;
+const unwatch = lifecycle.watchSignals(() => browser);
+try {
+const backend = lifecycle.startNode('Fake backend', [fileURLToPath(new URL('./fake-backend.mjs', import.meta.url))], {}, 'fake up');
+await lifecycle.waitFor(F + '/__control', backend);
+let next;
 if (!process.env.AUTH_SCENARIOS_URL) {
-  start('npx', ['next', 'dev', '--hostname', '127.0.0.1', '--port', '3199'], {
+  next = lifecycle.startNode('Next dev', [require.resolve('next/dist/bin/next'), 'dev', '--hostname', '127.0.0.1', '--port', '3199'], {
     NEXT_DIST_DIR: '.next-auth-scenarios',
     NEXT_PUBLIC_SUPABASE_URL: F,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon',
     NEXT_PUBLIC_VIMOB_API_URL: F,
+    VIMOB_API_URL: F,
     NEXT_PUBLIC_SITE_URL: APP,
     NEXT_PUBLIC_APP_URL: APP,
     NEXT_PUBLIC_DISABLE_ERROR_TELEMETRY: 'true',
     NEXT_TELEMETRY_DISABLED: '1',
-  });
+  }, 'Ready in');
 }
-await waitFor(APP + '/login');
-const browser=await chromium.launch(process.env.AUTH_SCENARIOS_CHROMIUM?{executablePath:process.env.AUTH_SCENARIOS_CHROMIUM}:{});
+await lifecycle.waitFor(APP + '/login', next);
+browser=await chromium.launch(process.env.AUTH_SCENARIOS_CHROMIUM?{executablePath:process.env.AUTH_SCENARIOS_CHROMIUM}:{});
 const only=process.argv[2]?new RegExp(process.argv[2]):null; const S=(n,f)=>only&&!only.test(n)?null:sc(browser,n,f);
 await S('01 uma org → /inicio',async p=>{await login(p,'one@t.test');await until(p,/\/inicio/)});
 await S('02 volta com query',async p=>{await p.goto(APP+'/settings?tab=x',{timeout:120000});await until(p,/\/login\?redirectTo/);await login(p,'one@t.test','/login?redirectTo=%2Fsettings%3Ftab%3Dx');await until(p,/\/settings\?tab=x/)});
@@ -67,4 +63,9 @@ await S('M6 acesso lento conclui depois do aviso',async p=>{await p.goto(APP+'/l
 await S('M7 serviço fora tem mensagem própria',async p=>{await ctl({login:503});await login(p,'one@t.test');await p.getByText(/Não foi possível conectar ao serviço/).waitFor({timeout:30000})});
 await S('M7 429 tem mensagem própria',async p=>{await ctl({login:429});await login(p,'one@t.test');await p.getByText(/Muitas tentativas/).waitFor({timeout:15000})});
 await S('M7 senha errada segue neutra',async p=>{await login(p,'one@t.test','/login','errada');await p.getByText('Não foi possível entrar. Confira seus dados').waitFor({timeout:15000})});
-await browser.close();const f=results.filter(r=>!r.ok);console.log(`\n${results.length-f.length}/${results.length} ok`);children.forEach((child)=>child.kill());process.exit(f.length?1:0)})();
+const f=results.filter(r=>!r.ok);console.log(`\n${results.length-f.length}/${results.length} ok`);process.exitCode ||= f.length?1:0;
+} finally {
+  unwatch();
+  await lifecycle.cleanup(browser);
+}
+})().catch((error) => { console.error(error.message); process.exitCode ||= 1; });

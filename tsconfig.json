@@ -40,7 +40,9 @@
     ".next-wa-e2e/types/**/*.ts",
     ".next-wa-e2e/dev/types/**/*.ts",
     ".next-pipeline-local-save/types/**/*.ts",
-    ".next-pipeline-local-save/dev/types/**/*.ts"
+    ".next-pipeline-local-save/dev/types/**/*.ts",
+    ".next-auth-scenarios/types/**/*.ts",
+    ".next-auth-scenarios/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
