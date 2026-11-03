@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "80add846b19e36003e8287c5b66b8ceadb18a7409ac9e83eb9c9009b65d1a017",
+  "sourceDigestSha256": "93b64c6c7c820d5e49724d75c47585258a8090f33b750fb7a88697114f1ca26c",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -645,10 +645,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:b911202be387750c18a7",
+          "id": "overlay:d5947a51966c2edf0ceb",
           "column": 5,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 342,
+          "line": 335,
           "owner": "CreateOrganizationUserDialog",
           "routes": [
             "/admin",
@@ -818,10 +818,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:88395c6f3ca8906d8ed8",
+          "id": "overlay:22b181220ddee66e1ee2",
           "column": 9,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 134,
+          "line": 135,
           "owner": "renderNavItem",
           "routes": [
             "/admin",
@@ -847,10 +847,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:8768fcbb482957bf5671",
+          "id": "overlay:07dd8a6edc93d47b60d8",
           "column": 9,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 453,
+          "line": 474,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -876,10 +876,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:71acb51f1e824f08f721",
+          "id": "overlay:9945adc1f2dc8e80cb33",
           "column": 15,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 494,
+          "line": 515,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -6040,10 +6040,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:5839a9206ca8707a7219",
+          "id": "form:af78fe69da9fce4e49dd",
           "column": 9,
           "file": "components/features/auth/login-form.tsx",
-          "line": 559,
+          "line": 599,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6052,10 +6052,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:a31f273cfed3dbf13cd0",
+          "id": "form:88120ffd42d58891df52",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 644,
+          "line": 684,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -7615,10 +7615,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2cd9cdebbd8e7f1e8b22",
+          "id": "cta:27d4c7ba43c77405ff8b",
           "column": 9,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 268,
+          "line": 261,
           "owner": "AdminUserActions",
           "routes": [
             "/admin",
@@ -7644,10 +7644,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a890bd049043e9b7e661",
+          "id": "cta:edd56769c2955df9f7a3",
           "column": 9,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 280,
+          "line": 273,
           "owner": "AdminUserActions",
           "routes": [
             "/admin",
@@ -7673,10 +7673,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9f406a5ae4fc19f25ba6",
+          "id": "cta:e0dfeae599b8fbc7d13d",
           "column": 9,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 348,
+          "line": 341,
           "owner": "CreateOrganizationUserDialog",
           "routes": [
             "/admin",
@@ -7702,10 +7702,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cfca5b31f2d073ad74bf",
+          "id": "cta:5fb756775ab32e2485c7",
           "column": 11,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 394,
+          "line": 387,
           "owner": "CreateOrganizationUserDialog",
           "routes": [
             "/admin",
@@ -7731,10 +7731,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ce00dc538f70b4c2421e",
+          "id": "cta:60938fe1f976718c7aae",
           "column": 11,
           "file": "components/features/admin/AdminUsersContent.tsx",
-          "line": 402,
+          "line": 395,
           "owner": "CreateOrganizationUserDialog",
           "routes": [
             "/admin",
@@ -9213,10 +9213,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:77a5db3738b30e41027f",
+          "id": "cta:b33a16dd76e47cb39b71",
           "column": 13,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 136,
+          "line": 137,
           "owner": "renderNavItem",
           "routes": [
             "/admin",
@@ -9243,10 +9243,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:eaaff1c8e0474db3f8b5",
+          "id": "cta:c5a82f30341ac4afc578",
           "column": 19,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 173,
+          "line": 174,
           "owner": "renderNavItem",
           "routes": [
             "/admin",
@@ -9274,10 +9274,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:ccf20ab3db7ae6df99d9",
+          "id": "cta:fbe7b30385ff26210d80",
           "column": 7,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 191,
+          "line": 192,
           "owner": "renderNavItem",
           "routes": [
             "/admin",
@@ -9305,10 +9305,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:c49e72878ca21e606f4c",
+          "id": "cta:593ae490052e8b67807d",
           "column": 13,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 235,
+          "line": 236,
           "owner": "SuperAdminSidebar",
           "routes": [
             "/admin",
@@ -9335,10 +9335,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8a7e8e883256e006a885",
+          "id": "cta:d299069624cdc02f420d",
           "column": 9,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 249,
+          "line": 250,
           "owner": "SuperAdminSidebar",
           "routes": [
             "/admin",
@@ -9365,10 +9365,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:430b1aa75f76e64712bf",
+          "id": "cta:a5bf3fa73b91a027084e",
           "column": 7,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 309,
+          "line": 310,
           "owner": "renderMobileLink",
           "routes": [
             "/admin",
@@ -9396,10 +9396,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:9c55f46376daef85c4b4",
+          "id": "cta:e474e430f39cd56432aa",
           "column": 11,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 355,
+          "line": 356,
           "owner": "SuperAdminMobileSidebar",
           "routes": [
             "/admin",
@@ -9426,10 +9426,40 @@
           "tag": "button"
         },
         {
-          "id": "cta:63b44338f80c35f4b278",
+          "id": "cta:c85abd483617c91ea084",
+          "column": 11,
+          "file": "components/features/admin/SuperAdminLayout.tsx",
+          "line": 436,
+          "owner": "SuperAdminLayout",
+          "routes": [
+            "/admin",
+            "/admin/ai",
+            "/admin/announcements",
+            "/admin/audit",
+            "/admin/database",
+            "/admin/email-logs",
+            "/admin/email-templates",
+            "/admin/error-logs",
+            "/admin/help",
+            "/admin/home-content",
+            "/admin/notifications",
+            "/admin/onboarding",
+            "/admin/organizations",
+            "/admin/organizations/[id]",
+            "/admin/plans",
+            "/admin/requests",
+            "/admin/settings",
+            "/admin/system-settings",
+            "/admin/users"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:e99b69d2bc399d2724c9",
           "column": 13,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 438,
+          "line": 458,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -9457,10 +9487,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:b5b87e85d15795d394c5",
+          "id": "cta:80a10f1c79cf722e6e5d",
           "column": 13,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 467,
+          "line": 488,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -9487,10 +9517,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9d100b9fb6ba7bcee4f4",
+          "id": "cta:c4ddbc6255e14348809f",
           "column": 15,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 484,
+          "line": 505,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -9517,10 +9547,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:20053464bad90deee485",
+          "id": "cta:4b07643730d94fd94474",
           "column": 19,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 496,
+          "line": 517,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -9547,10 +9577,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:124824e0ad7bd4eeef4f",
+          "id": "cta:f226273f3d8ea5c440e9",
           "column": 23,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 536,
+          "line": 557,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -10317,10 +10347,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:abed171fff7fe1e5c9bd",
+          "id": "cta:1e54b026751f02c7573a",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 520,
+          "line": 560,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10329,10 +10359,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:52886bf133ccbcced7b0",
+          "id": "cta:fd104738372d83b62077",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 608,
+          "line": 648,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10341,10 +10371,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ba48809b523ae629e8c3",
+          "id": "cta:eaf32785ca360cb0811c",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 707,
+          "line": 747,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10353,10 +10383,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f434208d0182053eefbc",
+          "id": "cta:465df935141bf19634e4",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 736,
+          "line": 776,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10365,10 +10395,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:26e00c75b0c23c5d2e22",
+          "id": "cta:a44301cf7e6dbf50ca1d",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 756,
+          "line": 796,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10377,10 +10407,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a5dd34576f47e35e35df",
+          "id": "cta:8912921857d7c20c0020",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 785,
+          "line": 825,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10389,10 +10419,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:cf4a40d291c9605aaada",
+          "id": "cta:bdb53a676a1ddb80deba",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 795,
+          "line": 835,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10428,10 +10458,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:ce14da68770af5619d00",
+          "id": "cta:d0c0a962671548d5996c",
           "column": 11,
           "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-          "line": 40,
+          "line": 42,
           "owner": "NoOrganizationEmptyState",
           "routes": [
             "/preview/sem-organizacao",
@@ -10441,10 +10471,23 @@
           "tag": "button"
         },
         {
-          "id": "cta:a6d0516233a96061e3ac",
+          "id": "cta:d4d621f8e96b7a49411a",
           "column": 11,
           "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-          "line": 50,
+          "line": 52,
+          "owner": "NoOrganizationEmptyState",
+          "routes": [
+            "/preview/sem-organizacao",
+            "/select-organization"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:05c7ceec9fb226f54c49",
+          "column": 11,
+          "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+          "line": 63,
           "owner": "NoOrganizationEmptyState",
           "routes": [
             "/preview/sem-organizacao",
@@ -10514,10 +10557,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c73adeaa07134cac06e6",
+          "id": "cta:a170cad6784f8af094a3",
           "column": 11,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 232,
+          "line": 234,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -10526,10 +10569,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:88c6c98f313a3ae8d131",
+          "id": "cta:2a4979758c1cedf89d5c",
           "column": 11,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 239,
+          "line": 241,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -10538,10 +10581,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8c35dd83f7cf5a3ebff8",
+          "id": "cta:250c948f05321edd0f49",
           "column": 11,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 300,
+          "line": 303,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -10550,10 +10593,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:058e7293c285286e0118",
+          "id": "cta:38c78bdbce02a7d0cae5",
           "column": 15,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 338,
+          "line": 341,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -10562,10 +10605,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e300f9cb6961be0852d7",
+          "id": "cta:8dd2a04016d554e5fca7",
           "column": 17,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 364,
+          "line": 367,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -10574,10 +10617,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2d0ff0dc0187435c9861",
+          "id": "cta:d8ceb5f9f0eaef7265c1",
           "column": 13,
           "file": "components/features/auth/screens/SelectOrganizationScreen.tsx",
-          "line": 421,
+          "line": 424,
           "owner": "SelectOrganization",
           "routes": [
             "/select-organization"
@@ -40037,10 +40080,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:aa936a96c91821d12664",
+          "id": "control:ebe514ac6f74c9a4e45c",
           "column": 19,
           "file": "components/features/admin/SuperAdminLayout.tsx",
-          "line": 543,
+          "line": 564,
           "owner": "SuperAdminLayout",
           "routes": [
             "/admin",
@@ -45543,7 +45586,7 @@
         }
       ]
     },
-    "digestSha256": "2e49f6147eaf3ee3abcc06f4f612a4a7f32e11d1110c0735914c99122fc8963e"
+    "digestSha256": "6f93e961c510b8a5747612f37d7e85b8f72f73d8aef20ac65100ae648cf095bc"
   },
   "routes": [
     {
@@ -58271,6 +58314,78 @@
         "protected",
         "public"
       ],
+      "file": "components/shared/layout/AccessValidationNotice.tsx",
+      "routes": [
+        "/admin",
+        "/admin/ai",
+        "/admin/announcements",
+        "/admin/audit",
+        "/admin/database",
+        "/admin/email-logs",
+        "/admin/email-templates",
+        "/admin/error-logs",
+        "/admin/help",
+        "/admin/home-content",
+        "/admin/notifications",
+        "/admin/onboarding",
+        "/admin/organizations",
+        "/admin/organizations/[id]",
+        "/admin/plans",
+        "/admin/requests",
+        "/admin/settings",
+        "/admin/system-settings",
+        "/admin/users",
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
       "file": "components/shared/layout/AppHeader.tsx",
       "routes": [
         "/agenda",
@@ -58849,9 +58964,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1605,
+      "ctasAll": 1607,
       "ctasByKind": {
-        "actionButton": 1437,
+        "actionButton": 1439,
         "external": 6,
         "internal": 33,
         "internalDynamic": 76,
@@ -58860,8 +58975,8 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1546,
-      "internalCtasRouteReachable": 1517,
+      "internalCtas": 1548,
+      "internalCtasRouteReachable": 1519,
       "overlays": 252,
       "overlaysByKind": {
         "alertDialog": 75,
@@ -58889,7 +59004,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 168,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1517,
+    "routeReachableInternalCtaImplementations": 1519,
     "routeReachableOverlayImplementations": 247,
     "routeReachableSupplementalOverlayAndTabControls": 303
   },

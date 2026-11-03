@@ -1,25 +1,25 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "1321d3d661bc1baf20766cfe9ec9d609264779ba0e43894d302ef3cf0963280e",
-  "surfaceInventoryDigestSha256": "80add846b19e36003e8287c5b66b8ceadb18a7409ac9e83eb9c9009b65d1a017",
+  "sourceDigestSha256": "0900293c4a22d0b84299dde8bad85d7d097cd89af083350a4c3cd33868f29fc6",
+  "surfaceInventoryDigestSha256": "93b64c6c7c820d5e49724d75c47585258a8090f33b750fb7a88697114f1ca26c",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 618,
+    "filesScanned": 619,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 51,
-    "findings": 133,
-    "protectedReachableFilesWithFindings": 49,
-    "protectedReachableFindings": 131,
+    "filesWithFindings": 52,
+    "findings": 136,
+    "protectedReachableFilesWithFindings": 50,
+    "protectedReachableFindings": 134,
     "bySurfaceScope": {
       "protected-only": 93,
-      "protected-and-public": 38,
+      "protected-and-public": 41,
       "public-only": 2,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 65,
+      "P1": 68,
       "P2": 28,
       "P3": 40
     },
@@ -49,7 +49,7 @@
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 42,
+        "count": 45,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
@@ -101,22 +101,22 @@
       }
     },
     {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "count": 11,
+      "score": 36,
+      "rules": {
+        "hardcoded-color": 7,
+        "hardcoded-surface": 3,
+        "panel-blur": 1
+      }
+    },
+    {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
       "count": 8,
       "score": 30,
       "rules": {
         "oversized-radius": 2,
         "hardcoded-color": 6
-      }
-    },
-    {
-      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "count": 9,
-      "score": 28,
-      "rules": {
-        "hardcoded-color": 5,
-        "hardcoded-surface": 3,
-        "panel-blur": 1
       }
     },
     {
@@ -339,6 +339,14 @@
       "score": 4,
       "rules": {
         "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/shared/layout/AccessValidationNotice.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -486,14 +494,6 @@
       "rules": {
         "uppercase-tracking": 1
       }
-    },
-    {
-      "file": "components/features/marketing/MarketingPaidTable.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
     }
   ],
   "topProtectedFiles": [
@@ -517,22 +517,22 @@
       }
     },
     {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "count": 11,
+      "score": 36,
+      "rules": {
+        "hardcoded-color": 7,
+        "hardcoded-surface": 3,
+        "panel-blur": 1
+      }
+    },
+    {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
       "count": 8,
       "score": 30,
       "rules": {
         "oversized-radius": 2,
         "hardcoded-color": 6
-      }
-    },
-    {
-      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "count": 9,
-      "score": 28,
-      "rules": {
-        "hardcoded-color": 5,
-        "hardcoded-surface": 3,
-        "panel-blur": 1
       }
     },
     {
@@ -755,6 +755,14 @@
       "score": 4,
       "rules": {
         "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/shared/layout/AccessValidationNotice.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
       }
     },
     {
@@ -934,7 +942,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 19,
+      "line": 21,
       "match": "#171717",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -943,7 +951,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 24,
+      "line": 26,
       "match": "#171717",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -952,7 +960,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 24,
+      "line": 26,
       "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -961,7 +969,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 24,
+      "line": 26,
       "match": "backdrop-blur-[18px]",
       "priority": "P2",
       "rule": "panel-blur",
@@ -970,7 +978,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 32,
+      "line": 34,
       "match": "#171717",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -979,7 +987,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 35,
+      "line": 37,
       "match": "#171717",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -988,7 +996,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 45,
+      "line": 47,
       "match": "#171717",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -997,7 +1005,7 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 45,
+      "line": 47,
       "match": "bg-black",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1006,12 +1014,30 @@
     },
     {
       "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
-      "line": 45,
+      "line": 47,
       "match": "bg-black",
       "priority": "P2",
       "rule": "hardcoded-surface",
       "surfaceScope": "protected-and-public",
       "weight": 2
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 66,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/auth/screens/NoOrganizationEmptyState.tsx",
+      "line": 66,
+      "match": "#171717",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
@@ -2002,6 +2028,15 @@
       "rule": "hardcoded-surface",
       "surfaceScope": "protected-and-public",
       "weight": 2
+    },
+    {
+      "file": "components/shared/layout/AccessValidationNotice.tsx",
+      "line": 12,
+      "match": "#151515",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
     },
     {
       "file": "components/shared/SearchableTagPicker.tsx",

@@ -6,13 +6,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 618
-- Arquivos com achados: 51
-- Achados: 133
-- Arquivos protegidos/mistos com achados: 49
-- Achados alcançáveis pelo CRM protegido: 131
-- Distribuição por superfície: protected-only 93, protected-and-public 38, public-only 2, infraestrutura 0
-- P1: 65
+- Arquivos analisados: 619
+- Arquivos com achados: 52
+- Achados: 136
+- Arquivos protegidos/mistos com achados: 50
+- Achados alcançáveis pelo CRM protegido: 134
+- Distribuição por superfície: protected-only 93, protected-and-public 41, public-only 2, infraestrutura 0
+- P1: 68
 - P2: 28
 - P3: 40
 
@@ -24,7 +24,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P2 | Sombra fora do padrão | 9 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 4 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 7 | Texto normal usa 300; títulos usam 400. |
-| P1 | Cor hardcoded | 42 | Usar tokens --app-* ou cores semânticas do domínio. |
+| P1 | Cor hardcoded | 45 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 15 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
 | P3 | Caixa alta/tracking | 40 | Preferir texto natural em 10–12px e peso 300. |
@@ -38,8 +38,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | --- | ---: | ---: | --- |
 | `components/features/settings/RolesTab.tsx` | 56 | 18 | hardcoded-color: 10, heavy-font: 4, uppercase-tracking: 4 |
 | `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
+| `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 36 | 11 | hardcoded-color: 7, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 30 | 8 | oversized-radius: 2, hardcoded-color: 6 |
-| `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 28 | 9 | hardcoded-color: 5, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/schedule/dashboard/AgendaDashboardPanels.tsx` | 20 | 5 | hardcoded-color: 5 |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 8 | 6 | medium-shadow: 1, hardcoded-surface: 1, uppercase-tracking: 4 |
@@ -67,6 +67,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/whatsapp/conversations/ConversationLeadBadges.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationLeadTagBar.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/shared/layout/AccessValidationNotice.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
@@ -92,8 +93,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | --- | ---: | ---: | --- |
 | `components/features/settings/RolesTab.tsx` | 56 | 18 | hardcoded-color: 10, heavy-font: 4, uppercase-tracking: 4 |
 | `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
+| `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 36 | 11 | hardcoded-color: 7, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 30 | 8 | oversized-radius: 2, hardcoded-color: 6 |
-| `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 28 | 9 | hardcoded-color: 5, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/schedule/dashboard/AgendaDashboardPanels.tsx` | 20 | 5 | hardcoded-color: 5 |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 8 | 6 | medium-shadow: 1, hardcoded-surface: 1, uppercase-tracking: 4 |
@@ -121,6 +122,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/whatsapp/conversations/ConversationLeadBadges.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/conversations/ConversationLeadTagBar.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/shared/layout/AccessValidationNotice.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |
@@ -139,4 +141,3 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/shared/filters/FilterSidebar.tsx` | 2 | 1 | hardcoded-surface: 1 |
 | `components/features/admin/AdminNotificationSettingsContent.tsx` | 1 | 1 | uppercase-tracking: 1 |
 | `components/features/marketing/MarketingMediaGallery.tsx` | 1 | 1 | uppercase-tracking: 1 |
-| `components/features/marketing/MarketingPaidTable.tsx` | 1 | 1 | uppercase-tracking: 1 |
