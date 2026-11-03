@@ -55,3 +55,19 @@ Os testes executam o hook, o handler de submit extraído da tela, o método real
 API e os helpers de saída com transporte em memória. Cobrem substituição de
 usuário/sessão, respostas tardias, desmontagem, refresh e falhas de logout. Não
 substituem testes autenticados no navegador ou a entrega de e-mail pelo SMTP.
+
+# Destino após o login e falhas de acesso
+
+`lib/auth/post-login-destination.ts` é a única regra de destino. Superadmin fora de
+impersonação vai para `/admin`, salvo se pediu uma rota do painel ou uma rota do CRM
+com organização ativa. O `proxy` não conhece o papel, então o `AppLayout` envia ao
+painel o superadmin que abre o `/inicio` sem organização ativa. Com organização ativa,
+ele continua podendo abrir o `/inicio` dela. A regra do usuário comum não mudou.
+
+`lib/auth/access-validation.ts` separa falha temporária de perda de acesso. Rede,
+408, 425, 429 e 5xx mantêm o último contexto validado, mostram um aviso e tentam de
+novo. 403, 404 e a primeira carga continuam falhando fechado. Um 401 da API só
+encerra a sessão depois que o Auth confirma, e apenas neste dispositivo. A revogação
+global fica para logout explícito, recuperação concluída e conta suspensa.
+
+`npm run test:auth-scenarios` roda esses fluxos em navegador real, com backend falso.
