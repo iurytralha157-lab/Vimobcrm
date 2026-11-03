@@ -44,7 +44,7 @@ function harness() {
     }, pushControllers: new Set(),
   };
   const sandbox = {
-    ...authHelper, h, logoutLifecycleRef: lifecycle,
+    ...authHelper, h, sessionRef:{current:null},logoutLifecycleRef: lifecycle,
     isLoggingOutRef: {current:false}, signOutInFlightRef: {current:null}, signOutInFlightIdentityRef: {current:null},
     useCallback: callback=>callback, AbortController, DOMException, Promise,
     setSessionState: next=>{h.session=next;}, authDebug:()=>{},

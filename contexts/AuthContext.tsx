@@ -15,7 +15,6 @@ import {
   type UserProfile,
 } from '@/lib/validation/auth-context';
 import {
-  VimobAPIError,
   setVimobAPIAccessToken,
 } from '@/lib/api/vimob-client';
 import {
@@ -27,13 +26,14 @@ import {
   shouldForceOrganizationSelectionForAuthEvent,
   shouldRevalidateMembership,
 } from '@/lib/auth/frontend-auth-reliability';
-import { captureGlobalSignOutGuard, getGlobalSignOutSessionKey, signOutWithGlobalRevocation, trackGlobalSignOutSession, type GlobalSignOutLifecycle } from '@/lib/auth/global-sign-out';
+import { captureGlobalSignOutGuard, getGlobalSignOutSessionKey, signOutLocallyWithSessionGuard, signOutWithGlobalRevocation, trackGlobalSignOutSession, type GlobalSignOutLifecycle } from '@/lib/auth/global-sign-out';
 import {
   resolveActiveOrganization,
   type ActiveOrganizationResolution,
 } from '@/lib/auth/active-organization';
 import { shouldPersistOrganizationSelectionRemotely } from '@/lib/local-read-only';
-import { classifyAccessValidationFailure } from '@/lib/auth/access-validation';
+import { classifyAccessValidationFailure, confirmSessionFailure, type AccessValidationFailure } from '@/lib/auth/access-validation';
+import { parseImpersonationSession } from '@/lib/auth/impersonation';
 import { deactivateCurrentPushEndpoint } from '@/lib/pwa/push-session';
 import { usePushDeviceIntent } from '@/hooks/use-push-device-intent';
 
@@ -51,19 +51,6 @@ function authDebugWarn(...args: unknown[]) {
   if (isAuthDebugEnabled) {
     console.warn(...args);
   }
-}
-
-function isExpiredAPISessionError(error: unknown) {
-  if (error instanceof VimobAPIError) {
-    return (
-      error.status === 401 ||
-      error.code === 'unauthorized' ||
-      error.code === 'missing_session'
-    );
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  return /invalid or expired bearer token|sess[aã]o expirada|missing bearer token/i.test(message);
 }
 
 const normalizeProfileRole = (role: string | null | undefined): UserProfile['role'] => {
@@ -134,8 +121,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const credentialSignInInFlightRef = useRef(false);
 
   const [session, setSessionState] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
   const logoutLifecycleRef = useRef<GlobalSignOutLifecycle>({ generation: 0, sessionKey: null, userId: null, mounted: false, pendingPush: new Set() });
   const setSession = useCallback((nextSession: Session | null) => {
+    sessionRef.current = nextSession;
     trackGlobalSignOutSession(logoutLifecycleRef.current, nextSession);
     setSessionState(nextSession);
   }, []);
@@ -196,8 +185,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [impersonating, setImpersonating] = useState<ImpersonateSession | null>(() => {
     if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('impersonating');
-      return stored ? JSON.parse(stored) : null;
+      try {
+        const stored = localStorage.getItem('impersonating');
+        const parsed = parseImpersonationSession(stored);
+        if (stored && !parsed) localStorage.removeItem('impersonating');
+        return parsed;
+      } catch {
+        return null;
+      }
     }
     return null;
   });
@@ -253,7 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return false;
           }
           if (accountEntry === 'globally_suspended') {
-            const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+            const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
             if (!guard.isCurrent()) return false;
             failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
             await signOutWithGlobalRevocation({
@@ -275,9 +270,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const storedImpersonating = localStorage.getItem('impersonating');
-        const activeImpersonation: ImpersonateSession | null = storedImpersonating
-          ? JSON.parse(storedImpersonating)
-          : null;
+        const activeImpersonation: ImpersonateSession | null = parseImpersonationSession(storedImpersonating);
         const preferredOrganizationIdCandidate = activeImpersonation?.orgId
           || requestedOrganizationId
           || localStorage.getItem(`vimob_active_organization_${userId}`);
@@ -297,7 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setIsSuperAdmin(superAdmin);
         if (!profileData.is_active && !superAdmin) {
-          const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+          const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
           if (!guard.isCurrent()) return false;
           authDebugWarn('User is deactivated, signing out');
           failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
@@ -343,10 +336,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
         console.error('Error fetching profile:', error);
-        if (retainValidatedAccess(userId, error)) return false;
+        const failure: AccessValidationFailure = await confirmSessionFailure(
+          classifyAccessValidationFailure(error),
+          () => supabase.auth.getUser(),
+        );
+        if (requestId !== fetchProfileRequestRef.current || userRef.current?.id !== userId) return true;
+        if (failure === 'transient' && validatedAccessUserRef.current === userId) {
+          markAccessValidationStale(true);
+          return false;
+        }
         failOrganizationValidation('Não foi possível validar seu acesso. Tente novamente.');
-        if (isExpiredAPISessionError(error)) {
-          const guard = captureGlobalSignOutGuard(session, userId, logoutLifecycleRef.current);
+        if (failure === 'session') {
+          const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
           if (!guard.isCurrent()) return false;
           const logoutSequence = ++automaticLogoutSequenceRef.current;
           isLoggingOutRef.current = true;
@@ -363,19 +364,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setOrganizationsLoaded(true);
 
           try {
-            const outcome = await signOutWithGlobalRevocation({
+            // This session ended. Other devices are only revoked by an explicit
+            // logout, a completed recovery or an account suspension.
+            const outcome = await signOutLocallyWithSessionGuard({
               getSession: () => supabase.auth.getSession(),
-              revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
               clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
             }, guard);
             if (outcome === 'cancelled' || !guard.isCurrent()) return false;
             await performFullCacheClear({
               clearAuth: true,
-              redirectTo: outcome === 'verified-global' ? '/login' : '/login?logout=unverified',
+              redirectTo: '/login',
               isCurrent: guard.isCurrent,
             });
           } catch (signOutError) {
-            authDebug('Logout server-side falhou apos token invalido:', signOutError);
+            authDebug('Logout local falhou apos sessao invalida:', signOutError);
           } finally {
             if (automaticLogoutSequenceRef.current === logoutSequence && !signOutInFlightRef.current) {
               isLoggingOutRef.current = false;

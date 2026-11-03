@@ -44,7 +44,7 @@ function harness(pathname='/crm') {
   const noop=()=>{};
   const sandbox={...base,...helper,...cache,h,isMounted:true,userRef,logoutLifecycleRef:lifecycle,
     automaticLogoutSequenceRef:{current:0},isLoggingOutRef:{current:false},signOutInFlightRef:{current:null},
-    credentialSignInInFlightRef:{current:false},validatedAccessUserRef:{current:null},markAccessValidationStale:()=>{},organizationListRequestRef:{current:0},profileRef:{current:null},organizationRef:{current:null},
+    credentialSignInInFlightRef:{current:false},sessionRef:{current:null},validatedAccessUserRef:{current:null},markAccessValidationStale:()=>{},organizationListRequestRef:{current:0},profileRef:{current:null},organizationRef:{current:null},
     recoveryActionScheduledRef:{current:null},ROUTES:{RESET_PASSWORD:'/reset-password',SIGNUP:'/cadastro',LOGIN:'/login'},
     useCallback:callback=>callback,setSessionState:value=>{h.session=value},setUser:value=>{h.user=value},
     setVimobAPIAccessToken:token=>h.tokenWrites.push(token),authSnapshotKey:id=>`snapshot:${id}`,authDebug:noop,authDebugWarn:noop,
@@ -62,7 +62,7 @@ function harness(pathname='/crm') {
   vm.runInNewContext(compile(`const setSession=${initializer('setSession')};const clearAllStates=${initializer('clearAllStates')};
     globalThis.setSessionForTest=setSession;
     globalThis.signedOutEvent=()=>{const authEvent='SIGNED_OUT';${branch("authEvent === 'SIGNED_OUT'")}};
-    globalThis.expiredSession=async()=>{const session=h.session,userId=h.user.id,error={status:401};${branch('isExpiredAPISessionError(error)')}};
+    globalThis.expiredSession=async()=>{const userId=h.user.id,failure='session';${branch("failure === 'session'")}};
     globalThis.suspendedCatalogue=async()=>{const session=h.session,userId=h.user.id,accountEntry='globally_suspended';${branch("accountEntry === 'globally_suspended'")}};
     globalThis.suspendedProfile=async()=>{const session=h.session,userId=h.user.id,profileData={is_active:false},superAdmin=false;${branch('!profileData.is_active && !superAdmin')}};
     globalThis.recoverySession=${initializer('isolatePasswordRecoverySession')};`),sandbox);
@@ -85,20 +85,28 @@ test('current automatic SIGNED_OUT still clears and redirects once',async()=>{
   const {h,sandbox}=harness();sandbox.signedOutEvent();h.flushTimer();await tick();
   assert.ok(h.cacheActions.includes('unsubscribe'));assert.equal(h.redirects.length,1);
 });
-for(const name of ['expiredSession','suspendedCatalogue','suspendedProfile'])test(`${name}: deferred revocation cannot consume B or clear its browser state`,async()=>{
+for(const name of ['suspendedCatalogue','suspendedProfile'])test(`${name}: deferred revocation cannot consume B or clear its browser state`,async()=>{
   const {h,sandbox}=harness();h.revokeGate=deferred();const pending=sandbox[name]();await tick();
   h.transition(makeSession('user-b','session-b'));h.revokeGate.resolve({error:null});await pending;
   assert.equal(h.revokes.includes('user-b'),false);assert.equal(h.locals,0);assert.deepEqual(h.cacheActions,[]);assert.deepEqual(h.redirects,[]);
 });
-for(const name of ['expiredSession','suspendedCatalogue','suspendedProfile'])test(`${name}: a same actor new session also invalidates the original cleanup`,async()=>{
+for(const name of ['suspendedCatalogue','suspendedProfile'])test(`${name}: a same actor new session also invalidates the original cleanup`,async()=>{
   const {h,sandbox}=harness();h.revokeGate=deferred();const pending=sandbox[name]();await tick();
   h.transition(makeSession('user-a','new-session-a'));h.revokeGate.resolve({error:null});await pending;
   assert.equal(h.locals,0);assert.deepEqual(h.cacheActions,[]);assert.deepEqual(h.redirects,[]);assert.equal(h.sdkSession.access_token,makeSession('user-a','new-session-a').access_token);
 });
-for(const name of ['expiredSession','suspendedCatalogue','suspendedProfile'])test(`${name}: current session still revokes its own token and clears locally`,async()=>{
+for(const name of ['suspendedCatalogue','suspendedProfile'])test(`${name}: current session still revokes every device`,async()=>{
   const {h,sandbox}=harness();await sandbox[name]();
   assert.deepEqual(h.revokes,['user-a']);assert.equal(h.locals,1);
-  if(name==='expiredSession')assert.equal(h.redirects.length,1);
+});
+test('expiredSession: ends only this device and returns to the login',async()=>{
+  const {h,sandbox}=harness();await sandbox.expiredSession();
+  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,1);assert.equal(h.redirects.length,1);
+});
+test('expiredSession: a replacement session during the lookup is left untouched',async()=>{
+  const {h,sandbox}=harness();h.lookupGate=deferred();const pending=sandbox.expiredSession();await tick();
+  h.transition(makeSession('user-b','session-b'));h.lookupGate.resolve({data:{session:h.sdkSession},error:null});await pending;
+  assert.deepEqual(h.revokes,[]);assert.equal(h.locals,0);assert.deepEqual(h.cacheActions,[]);assert.deepEqual(h.redirects,[]);
 });
 test('recovery timer cannot clear or redirect after a new authenticated visit',async()=>{
   const {h,sandbox}=harness('/login');sandbox.recoverySession(h.session);h.transition(makeSession('user-b','session-b'));h.flushTimer();await tick();

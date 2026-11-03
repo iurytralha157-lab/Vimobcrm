@@ -1,3 +1,5 @@
+import { runAuthOperationWithTimeout } from './frontend-auth-reliability';
+
 export type AccessValidationFailure = 'session' | 'transient' | 'denied';
 
 const SESSION_ERROR_CODES = new Set(['unauthorized', 'missing_session', 'session_missing', 'session_revoked']);
@@ -21,4 +23,36 @@ export function classifyAccessValidationFailure(error: unknown): AccessValidatio
   return SESSION_ERROR_MESSAGE.test(typeof message === 'string' ? message : String(error ?? ''))
     ? 'session'
     : 'transient';
+}
+
+const ENDED_SESSION_CODES = new Set([
+  'session_not_found',
+  'refresh_token_not_found',
+  'refresh_token_already_used',
+  'user_not_found',
+]);
+const AUTH_SESSION_CHECK_WAIT_MS = 5_000;
+
+/** Only the Auth service can say that a session ended; other outcomes stay undecided. */
+export function isEndedAuthSessionError(error: unknown) {
+  // A bare 401/403 can come from the gateway or a bad key, not from this session.
+  const { code } = readErrorFields(error);
+  const name = error && typeof error === 'object' ? (error as { name?: unknown }).name : undefined;
+  return name === 'AuthSessionMissingError'
+    || (typeof code === 'string' && ENDED_SESSION_CODES.has(code));
+}
+
+/**
+ * The API answers 401 for any token verification failure, including JWKS or
+ * configuration problems. Ask Auth before treating that answer as a dead session.
+ */
+export async function confirmSessionFailure(
+  failure: AccessValidationFailure,
+  checkAuthSession: () => PromiseLike<{ error: unknown }>,
+  waitMs = AUTH_SESSION_CHECK_WAIT_MS,
+): Promise<AccessValidationFailure> {
+  if (failure !== 'session') return failure;
+  const check = await runAuthOperationWithTimeout(checkAuthSession, waitMs);
+  if (check.status !== 'completed') return 'transient';
+  return isEndedAuthSessionError(check.value.error) ? 'session' : 'transient';
 }
