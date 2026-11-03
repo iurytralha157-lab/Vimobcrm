@@ -7,6 +7,19 @@ if (
   throw new Error("NEXT_PUBLIC_LOCAL_READ_ONLY is only allowed in local development");
 }
 
+// Credentials and platform administration must never render inside another site.
+// Public sites and previews stay out of this list because they may be embedded.
+const AUTHENTICATION_SURFACES = [
+  "/login",
+  "/cadastro",
+  "/onboarding",
+  "/reset-password",
+  "/confirmar-email",
+  "/convite/:path*",
+  "/admin",
+  "/admin/:path*",
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   distDir: process.env.NEXT_DIST_DIR || ".next",
@@ -29,6 +42,14 @@ const nextConfig: NextConfig = {
   ],
   async headers() {
     return [
+      ...AUTHENTICATION_SURFACES.map((source) => ({
+        source,
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+        ],
+      })),
       {
         source: "/sw.js",
         headers: [
