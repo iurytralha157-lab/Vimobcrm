@@ -203,7 +203,7 @@ test('login retorna ao convite canonico antes de exigir uma organizacao', () => 
     'if (isInvitationPostLoginPath(pendingPostLoginPath))',
   );
   const organizationRouting = loginFormSource.indexOf(
-    'const activeOrganizations = userOrganizations.filter',
+    'const destination = resolvePostLoginDestination(',
   );
 
   assert.notEqual(directInvitationRoute, -1);

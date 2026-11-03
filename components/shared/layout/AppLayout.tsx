@@ -25,6 +25,7 @@ import { Wrench } from 'lucide-react';
 import { canManageOrganization } from '@/lib/access/organization';
 import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 import { hasValidatedProtectedAppAccess } from '@/lib/auth/active-organization';
+import { SUPER_ADMIN_HOME_ROUTE, shouldRedirectToSuperAdminHome } from '@/lib/auth/post-login-destination';
 
 const INITIAL_SIDEBAR_BOOT_FALLBACK_MS = 1400;
 let hasCompletedInitialAppShellBoot = false;
@@ -164,6 +165,12 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     isImpersonating: Boolean(impersonating),
     hasProfile: Boolean(profile),
   });
+  const redirectToSuperAdminHome = allowRender && shouldRedirectToSuperAdminHome({
+    pathname,
+    isSuperAdmin,
+    isImpersonating: Boolean(impersonating),
+    hasActiveOrganization: activeOrganization.status === 'ready',
+  });
   const hasSidebarTenantContext = Boolean(
     isSuperAdmin ||
       impersonating ||
@@ -237,6 +244,10 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   ]);
 
   useEffect(() => {
+    if (redirectToSuperAdminHome) router.replace(SUPER_ADMIN_HOME_ROUTE);
+  }, [redirectToSuperAdminHome, router]);
+
+  useEffect(() => {
     if (initialShellReady || !allowRender) return;
 
     if (sidebarBootReady) {
@@ -255,7 +266,7 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     return () => window.clearTimeout(fallbackTimer);
   }, [allowRender, initialShellReady, sidebarBootReady]);
 
-  if (!allowRender || isResolvingLinkedOrganization) {
+  if (!allowRender || isResolvingLinkedOrganization || redirectToSuperAdminHome) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <VimobLoader size="lg" label="Carregando ambiente..." />

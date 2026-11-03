@@ -15,6 +15,7 @@ import {
   createLoginPath,
   getPostLoginPathFromSearchParams,
 } from '@/lib/auth/post-login-redirect';
+import { SUPER_ADMIN_HOME_ROUTE } from '@/lib/auth/post-login-destination';
 import {
   ORGANIZATION_SWITCH_WAIT_MS,
   runBestEffortAuthOperation,
@@ -134,6 +135,7 @@ export default function SelectOrganization() {
     && !loading
     && !isInitializingOrg
     && pendingOrgId === null
+    && !isSuperAdmin
     && organizations.length === 1;
 
   useEffect(() => {
@@ -256,6 +258,7 @@ export default function SelectOrganization() {
         onSignOut={() => void handleSignOut()}
         signingOut={isSigningOut}
         error={logoutError}
+        onOpenSuperAdmin={isSuperAdmin ? () => router.push(SUPER_ADMIN_HOME_ROUTE) : undefined}
       />
     );
   }
@@ -419,7 +422,7 @@ export default function SelectOrganization() {
 
           {isSuperAdmin && (
             <button
-              onClick={() => router.push('/admin')}
+              onClick={() => router.push(SUPER_ADMIN_HOME_ROUTE)}
               className="mx-auto mt-8 block text-center text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-primary"
             >
               Acessar Painel Super Admin

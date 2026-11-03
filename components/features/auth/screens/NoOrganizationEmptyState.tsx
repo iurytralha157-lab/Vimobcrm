@@ -1,19 +1,21 @@
 'use client';
 
 import NextImage from 'next/image';
-import { LogOut, MessageCircle } from 'lucide-react';
+import { LogOut, MessageCircle, ShieldCheck } from 'lucide-react';
 import { LoginHeroMedia } from '@/components/features/auth/LoginHeroMedia';
 
 type NoOrganizationEmptyStateProps = {
   onSignOut?: () => void;
   signingOut?: boolean;
   error?: string | null;
+  onOpenSuperAdmin?: () => void;
 };
 
 export function NoOrganizationEmptyState({
   onSignOut,
   signingOut = false,
   error,
+  onOpenSuperAdmin,
 }: NoOrganizationEmptyStateProps) {
   return (
     <div className="relative isolate flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-[#171717] p-4 text-center text-white">
@@ -56,6 +58,17 @@ export function NoOrganizationEmptyState({
             Falar com suporte
           </button>
         </div>
+
+        {onOpenSuperAdmin ? (
+          <button
+            type="button"
+            onClick={onOpenSuperAdmin}
+            className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 text-[12px] font-light text-[#171717]/70 underline-offset-4 transition-colors hover:text-[#171717] hover:underline"
+          >
+            <ShieldCheck className="h-4 w-4" strokeWidth={1.6} />
+            Acessar Painel Super Admin
+          </button>
+        ) : null}
 
         {error ? <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p> : null}
 

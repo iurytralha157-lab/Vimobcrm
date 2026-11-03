@@ -390,7 +390,7 @@ function SuperAdminMobileSidebar({
 
 export function SuperAdminLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "";
-  const { loading, isSuperAdmin, profile, signOut } = useAuth();
+  const { loading, isSuperAdmin, profile, signOut, organizationsError, refreshOrganizations } = useAuth();
   const { resolvedTheme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -421,6 +421,25 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
         aria-live="polite"
       >
         <VimobLoader size="lg" label="Carregando painel super admin..." />
+      </div>
+    );
+  }
+
+  if (!isSuperAdmin && organizationsError) {
+    return (
+      <div className="app-shell flex min-h-[100dvh] items-center justify-center bg-[var(--app-background)] p-6">
+        <section className="app-card max-w-xl p-6 text-center" aria-labelledby="superadmin-validation-title">
+          <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-primary" />
+          <h1 id="superadmin-validation-title" className="app-page-title">Não foi possível validar seu acesso</h1>
+          <p className="mt-2 text-sm text-muted-foreground" role="alert">{organizationsError}</p>
+          <Button
+            type="button"
+            className="mt-5 bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
+            onClick={() => void refreshOrganizations()}
+          >
+            Tentar novamente
+          </Button>
+        </section>
       </div>
     );
   }

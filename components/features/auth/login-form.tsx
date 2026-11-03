@@ -19,6 +19,7 @@ import {
 } from "@/lib/auth/frontend-auth-reliability";
 import { authAPI } from "@/lib/api/auth";
 import { usePasswordRecoveryRequest } from "@/hooks/auth/use-password-recovery-request";
+import { resolvePostLoginDestination } from "@/lib/auth/post-login-destination";
 
 type FormMode = "login" | "recover";
 
@@ -139,6 +140,7 @@ export function LoginForm() {
     organizationsLoaded,
     isInitializingOrg,
     isSuperAdmin,
+    impersonating,
     organization,
     userOrganizations,
   } = useAuth();
@@ -288,28 +290,22 @@ export function LoginForm() {
       organizationsLoaded,
     })) return;
 
-    const activeOrganizations = userOrganizations.filter((org) => org.is_active);
+    const destination = resolvePostLoginDestination({
+      requestedPath: pendingPostLoginPath,
+      isSuperAdmin,
+      isImpersonating: Boolean(impersonating),
+      hasActiveOrganization: Boolean(organization),
+      activeOrganizationCount: userOrganizations.filter((org) => org.is_active).length,
+    });
 
-    if (isSuperAdmin) {
-      router.replace(pendingPostLoginPath);
-      return;
-    }
-
-    if (organization) {
-      router.replace(pendingPostLoginPath);
-      return;
-    }
-
-    if (!organizationsLoaded || isInitializingOrg) return;
-
-    if (activeOrganizations.length === 1) {
-      router.replace(pendingPostLoginPath);
-      return;
-    }
-
-    router.replace(getSelectOrganizationPath(pendingPostLoginPath));
+    router.replace(
+      destination.kind === "navigate"
+        ? destination.path
+        : getSelectOrganizationPath(destination.redirectTo),
+    );
   }, [
     authInitialized,
+    impersonating,
     isInitializingOrg,
     isSuperAdmin,
     loading,
