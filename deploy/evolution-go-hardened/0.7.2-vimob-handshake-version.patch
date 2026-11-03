@@ -1,0 +1,253 @@
+diff --git a/pkg/whatsmeow/service/handshake_version_test.go b/pkg/whatsmeow/service/handshake_version_test.go
+new file mode 100644
+index 0000000..8ffb945
+--- /dev/null
++++ b/pkg/whatsmeow/service/handshake_version_test.go
+@@ -0,0 +1,137 @@
++package whatsmeow_service
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net/http"
++	"strings"
++	"testing"
++
++	"github.com/evolution-foundation/evolution-go/pkg/config"
++	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
++	"go.mau.fi/whatsmeow/store"
++	"google.golang.org/protobuf/proto"
++)
++
++type versionRoundTripper func(*http.Request) (*http.Response, error)
++
++func (roundTrip versionRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
++	return roundTrip(request)
++}
++
++func resetVersionStateForTest(t *testing.T) {
++	t.Helper()
++	oldVersion := store.GetWAVersion()
++	oldProps := proto.Clone(store.DeviceProps)
++	oldInitialized := devicePropsInitialized
++	oldCached, oldCachedAt := cachedWebVersion, cachedWebVersionAt
++	oldTransport := http.DefaultTransport
++	devicePropsInitialized = false
++	cachedWebVersion = nil
++	t.Cleanup(func() {
++		store.SetWAVersion(oldVersion)
++		proto.Reset(store.DeviceProps)
++		proto.Merge(store.DeviceProps, oldProps)
++		devicePropsInitialized = oldInitialized
++		cachedWebVersion, cachedWebVersionAt = oldCached, oldCachedAt
++		http.DefaultTransport = oldTransport
++	})
++}
++
++func assertHandshakeVersion(t *testing.T, expected store.WAVersionContainer) {
++	t.Helper()
++	if actual := store.GetWAVersion(); actual != expected {
++		t.Fatalf("handshake version = %v, want %v", actual, expected)
++	}
++	if !proto.Equal(store.BaseClientPayload.UserAgent.AppVersion, expected.ProtoAppVersion()) {
++		t.Fatal("UserAgent handshake app version was not updated")
++	}
++}
++
++func TestInitializeDevicePropsUpdatesConfiguredHandshakeVersion(t *testing.T) {
++	resetVersionStateForTest(t)
++	service := whatsmeowService{config: &config.Config{
++		WhatsappVersionMajor: 2, WhatsappVersionMinor: 3000, WhatsappVersionPatch: 1052855845,
++	}}
++	if err := service.initializeDeviceProps(context.Background(), &instance_model.Instance{OsName: "Synthetic"}); err != nil {
++		t.Fatal(err)
++	}
++	expected := store.WAVersionContainer{2, 3000, 1052855845}
++	assertHandshakeVersion(t, expected)
++	service.config.WhatsappVersionPatch++
++	if err := service.initializeDeviceProps(context.Background(), nil); err != nil {
++		t.Fatal(err)
++	}
++	assertHandshakeVersion(t, expected)
++}
++
++func TestInitializeDevicePropsDiscoversVersionFromWhatsAppRoot(t *testing.T) {
++	resetVersionStateForTest(t)
++	requests := 0
++	http.DefaultTransport = versionRoundTripper(func(request *http.Request) (*http.Response, error) {
++		requests++
++		if request.Method != http.MethodGet || request.URL.String() != "https://web.whatsapp.com" {
++			t.Fatalf("unexpected discovery request: %s %s", request.Method, request.URL)
++		}
++		if request.Header.Get("Sec-Fetch-Mode") != "navigate" {
++			t.Fatal("official browser request headers are missing")
++		}
++		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"client_revision":1052855845,}`))}, nil
++	})
++	service := whatsmeowService{config: &config.Config{}}
++	if err := service.initializeDeviceProps(context.Background(), nil); err != nil {
++		t.Fatal(err)
++	}
++	assertHandshakeVersion(t, store.WAVersionContainer{2, 3000, 1052855845})
++	if err := service.initializeDeviceProps(context.Background(), nil); err != nil {
++		t.Fatal(err)
++	}
++	if requests != 1 {
++		t.Fatalf("discovery requests = %d, want 1", requests)
++	}
++}
++
++func TestInitializeDevicePropsDoesNotCommitCanceledInitialization(t *testing.T) {
++	resetVersionStateForTest(t)
++	before := store.GetWAVersion()
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	service := whatsmeowService{config: &config.Config{}}
++	if err := service.initializeDeviceProps(ctx, nil); !errors.Is(err, context.Canceled) {
++		t.Fatalf("error = %v, want context cancellation", err)
++	}
++	if devicePropsInitialized {
++		t.Fatal("canceled initialization was committed")
++	}
++	assertHandshakeVersion(t, before)
++}
++
++func TestInitializeDevicePropsRetriesAfterDiscoveryFailure(t *testing.T) {
++	resetVersionStateForTest(t)
++	before := store.GetWAVersion()
++	requests := 0
++	wantError := errors.New("synthetic discovery failure")
++	http.DefaultTransport = versionRoundTripper(func(request *http.Request) (*http.Response, error) {
++		requests++
++		if requests == 1 {
++			return nil, wantError
++		}
++		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"client_revision":1052855845,}`))}, nil
++	})
++	service := whatsmeowService{config: &config.Config{}}
++	if err := service.initializeDeviceProps(context.Background(), nil); !errors.Is(err, wantError) {
++		t.Fatalf("error = %v, want discovery failure", err)
++	}
++	if devicePropsInitialized {
++		t.Fatal("failed discovery was committed")
++	}
++	assertHandshakeVersion(t, before)
++	if err := service.initializeDeviceProps(context.Background(), nil); err != nil {
++		t.Fatal(err)
++	}
++	assertHandshakeVersion(t, store.WAVersionContainer{2, 3000, 1052855845})
++	if requests != 2 {
++		t.Fatalf("discovery requests = %d, want 2", requests)
++	}
++}
+diff --git a/pkg/whatsmeow/service/whatsmeow.go b/pkg/whatsmeow/service/whatsmeow.go
+index 73c77b6..6a44dc4 100644
+--- a/pkg/whatsmeow/service/whatsmeow.go
++++ b/pkg/whatsmeow/service/whatsmeow.go
+@@ -9,11 +9,9 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"image/png"
+-	"io"
+ 	"math/rand"
+ 	"net/http"
+ 	"os"
+-	"regexp"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -1445,17 +1443,13 @@ func (w whatsmeowService) initializeDeviceProps(ctx context.Context, instance *i
+ 	} else {
+ 		fetchedVersion, err := fetchWhatsAppWebVersion(ctx)
+ 		if err != nil {
+-			if ctxErr := ctx.Err(); ctxErr != nil {
+-				return ctxErr
+-			}
+-			if w.loggerWrapper != nil && instance != nil {
+-				w.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Failed to fetch WhatsApp Web version; keeping library default: %v", instance.Id, err)
+-			}
+-		} else {
+-			version = fetchedVersion
++			return fmt.Errorf("failed to initialize WhatsApp handshake version: %w", err)
+ 		}
++		version = fetchedVersion
+ 	}
+ 	if version != nil {
++		// Update the actual handshake version and build hash before any client starts.
++		store.SetWAVersion(store.WAVersionContainer{uint32(version.Major), uint32(version.Minor), uint32(version.Patch)})
+ 		store.DeviceProps.Version.Primary = proto.Uint32(uint32(version.Major))
+ 		store.DeviceProps.Version.Secondary = proto.Uint32(uint32(version.Minor))
+ 		store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
+@@ -4064,63 +4058,18 @@ func fetchWhatsAppWebVersion(ctx context.Context) (*clientVersion, error) {
+ 		return cachedWebVersion, nil
+ 	}
+ 
+-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://web.whatsapp.com/sw.js", nil)
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to build WhatsApp Web version request: %v", err)
+-	}
+ 	webClient := &http.Client{Timeout: 10 * time.Second}
+-	resp, err := webClient.Do(req)
++	version, err := whatsmeow.GetLatestVersion(ctx, webClient)
+ 	if err != nil {
+-		return nil, fmt.Errorf("failed to fetch WhatsApp Web version: %v", err)
+-	}
+-	defer resp.Body.Close()
+-
+-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to read response body: %v", err)
+-	}
+-
+-	content := string(body)
+-
+-	// Múltiplas estratégias para encontrar client_revision
+-	patterns := []string{
+-		`"client_revision":\s*(\d+)`,              // Formato direto
+-		`\\"client_revision\\":\s*(\d+)`,          // Formato escaped
+-		`client_revision\\?\\"?:[\s]*(\d+)`,       // Formato mais flexível
+-		`["']client_revision["'][\s]*:[\s]*(\d+)`, // Com aspas variadas
++		return nil, fmt.Errorf("failed to fetch WhatsApp Web version: %w", err)
+ 	}
+-
+-	for _, pattern := range patterns {
+-		re := regexp.MustCompile(pattern)
+-		matches := re.FindStringSubmatch(content)
+-
+-		if len(matches) >= 2 {
+-			clientRevision, err := strconv.Atoi(matches[1])
+-			if err != nil {
+-				continue // Tenta próximo padrão
+-			}
+-
+-			// Log qual padrão funcionou
+-			if clientRevision > 0 {
+-				cachedWebVersion = &clientVersion{
+-					Major: 2,
+-					Minor: 3000,
+-					Patch: clientRevision,
+-				}
+-				cachedWebVersionAt = time.Now()
+-				return cachedWebVersion, nil
+-			}
+-		}
++	cachedWebVersion = &clientVersion{
++		Major: int(version[0]),
++		Minor: int(version[1]),
++		Patch: int(version[2]),
+ 	}
+-
+-	// Se chegou aqui, nenhum padrão funcionou - log do conteúdo para debug
+-	// Mostra apenas uma parte para não logar muito
+-	previewLength := 500
+-	if len(content) > previewLength {
+-		content = content[:previewLength] + "..."
+-	}
+-
+-	return nil, fmt.Errorf("could not find client revision in the fetched content. Content preview: %s", content)
++	cachedWebVersionAt = time.Now()
++	return cachedWebVersion, nil
+ }
+ 
+ func (w whatsmeowService) UpdateInstanceSettings(instanceId string) error {

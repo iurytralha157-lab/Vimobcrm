@@ -13,6 +13,7 @@ COPY deploy/evolution-go-hardened/0.7.2-vimob-auth-poolfix.patch /tmp/auth-poolf
 COPY deploy/evolution-go-hardened/0.7.2-vimob-media-hardening.patch /tmp/media-hardening.patch
 COPY deploy/evolution-go-hardened/0.7.2-vimob-media-bounds.patch /tmp/media-bounds.patch
 COPY deploy/evolution-go-hardened/0.7.2-vimob-startup-gate.patch /tmp/startup-gate.patch
+COPY deploy/evolution-go-hardened/0.7.2-vimob-handshake-version.patch /tmp/handshake-version.patch
 RUN cd /src \
     && git apply --check /tmp/auth-poolfix.patch \
     && git apply /tmp/auth-poolfix.patch \
@@ -21,7 +22,9 @@ RUN cd /src \
     && git apply --check /tmp/media-bounds.patch \
     && git apply /tmp/media-bounds.patch \
     && git apply --check /tmp/startup-gate.patch \
-    && git apply /tmp/startup-gate.patch
+    && git apply /tmp/startup-gate.patch \
+    && git apply --check /tmp/handshake-version.patch \
+    && git apply /tmp/handshake-version.patch
 
 FROM golang:1.25.0-alpine@sha256:f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440 AS build
 
@@ -32,7 +35,7 @@ COPY --from=source /src/go.mod /src/go.sum ./
 RUN go mod download
 COPY --from=source /src/ ./
 
-ARG VERSION=0.7.2-vimob-media-pool-hardening.3
+ARG VERSION=0.7.2-vimob-handshake-hardening.4
 RUN CGO_ENABLED=1 go test ./pkg/message/service ./pkg/message/handler ./pkg/whatsmeow/service ./pkg/instance/repository ./pkg/instance/service \
     && CGO_ENABLED=1 go vet ./pkg/whatsmeow/service ./pkg/instance/repository ./pkg/instance/service \
     && CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o server ./cmd/evolution-go
@@ -47,7 +50,7 @@ COPY --from=build /build/manager/dist ./manager/dist
 COPY --from=build /build/VERSION ./VERSION
 
 ARG EVOLUTION_GO_COMMIT=9337afc47e10b86cc896a6f432240e40fee95dd1
-ARG VERSION=0.7.2-vimob-media-pool-hardening.3
+ARG VERSION=0.7.2-vimob-handshake-hardening.4
 LABEL org.opencontainers.image.title="Vimob Evolution Go" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${EVOLUTION_GO_COMMIT}" \

@@ -1,8 +1,21 @@
-# Evolution Go 0.7.2 - Vimob media and auth-pool hardening
+# Evolution Go 0.7.2 - Vimob media, auth-pool, and handshake hardening
 
 This image is built from the immutable upstream Evolution Go `0.7.2` commit
 `9337afc47e10b86cc896a6f432240e40fee95dd1` plus narrowly scoped patches for
 the Whatsmeow auth store, instance startup, and `POST /message/downloadmedia`.
+
+The handshake-version patch discovers the current version through the pinned
+Whatsmeow library's `GetLatestVersion` request to `https://web.whatsapp.com`,
+with a 10-second HTTP timeout and the caller's cancellation context. The existing
+process-wide initialization mutex applies `store.SetWAVersion` before any
+WhatsApp client connects. This updates the actual handshake app version and
+build hash, in addition to the device-registration properties. Explicit
+`WHATSAPP_VERSION_MAJOR`, `WHATSAPP_VERSION_MINOR`, and
+`WHATSAPP_VERSION_PATCH` configuration remains supported. Discovery failures abort
+initialization without committing the obsolete library default, so a later
+explicit start can retry. The patch includes synthetic regression tests for
+the handshake version, automatic discovery, initialization reuse, cancellation,
+and recovery after a failed discovery.
 
 The auth-pool patch is the corrected upstream fix from
 [`f85ea1445373ea142bb12ba0c01dfc85879be212`](https://github.com/evolution-foundation/evolution-go/commit/f85ea1445373ea142bb12ba0c01dfc85879be212)
