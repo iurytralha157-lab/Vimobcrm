@@ -146,6 +146,7 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const linkedOrganizationId = searchParams.get('organization');
+  const searchQuery = searchParams.toString();
   const activeOrganizationId = activeOrganization.organizationId;
   const isResolvingLinkedOrganization = Boolean(
     linkedOrganizationId
@@ -224,13 +225,9 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   useEffect(() => {
     if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
 
-    const hasSelectableOrganization = userOrganizations.some((org) => org.is_active);
-    const redirectTo = pathname || DEFAULT_AUTHENTICATED_ROUTE;
-    if (!hasSelectableOrganization) {
-      router.replace('/select-organization');
-      return;
-    }
-
+    const redirectTo = pathname
+      ? `${pathname}${searchQuery ? `?${searchQuery}` : ''}`
+      : DEFAULT_AUTHENTICATED_ROUTE;
     const params = new URLSearchParams({ redirectTo });
     router.replace(`/select-organization?${params.toString()}`);
   }, [
@@ -241,7 +238,9 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     organizationsLoaded,
     pathname,
     router,
-    userOrganizations,
+    // A screen may rewrite its query while access is lost. Redirect again so
+    // that its navigation cannot strand the user on this loader.
+    searchQuery,
   ]);
 
   useEffect(() => {

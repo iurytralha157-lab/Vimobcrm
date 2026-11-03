@@ -20,6 +20,7 @@ import {
 import { authAPI } from "@/lib/api/auth";
 import { usePasswordRecoveryRequest } from "@/hooks/auth/use-password-recovery-request";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login-destination";
+import { classifyLoginFailure } from "@/lib/auth/login-failure";
 
 type FormMode = "login" | "recover";
 
@@ -162,6 +163,9 @@ export function LoginForm() {
   const previousFormModeRef = useRef<FormMode>(formMode);
   const loginSubmissionInFlightRef = useRef(false);
   const pendingLoginSawAuthenticatedUserRef = useRef(false);
+  // Timing out only stops waiting: the SDK and the profile load may still finish.
+  const lateCompletionAllowedRef = useRef(false);
+  const routingStillWaitingRef = useRef(false);
 
   const isRecoveringPassword = formMode === "recover";
   const recoveryRequest = usePasswordRecoveryRequest({ active: isRecoveringPassword, email, request: resetPassword });
@@ -357,12 +361,23 @@ export function LoginForm() {
   ]);
 
   useEffect(() => {
+    routingStillWaitingRef.current = shouldWaitForPostLoginRouting({
+      authInitialized,
+      authLoading: loading,
+      isInitializingOrganization: isInitializingOrg,
+      organizationsLoaded,
+    });
+  }, [authInitialized, isInitializingOrg, loading, organizationsLoaded]);
+
+  useEffect(() => {
     if (!pendingPostLoginPath) return;
 
     const timeout = window.setTimeout(() => {
       pendingLoginSawAuthenticatedUserRef.current = false;
       loginSubmissionInFlightRef.current = false;
       setPendingPostLoginPath(null);
+      // If auth had already settled, a stalled navigation must not retry silently.
+      lateCompletionAllowedRef.current = routingStillWaitingRef.current;
       setIsSubmittingLogin(false);
       setLoginError(
         "O acesso demorou mais que o esperado. Tente novamente em instantes.",
@@ -371,6 +386,23 @@ export function LoginForm() {
 
     return () => window.clearTimeout(timeout);
   }, [pendingPostLoginPath]);
+
+  useEffect(() => {
+    if (!lateCompletionAllowedRef.current || pendingPostLoginPath || !user) return;
+    if (shouldWaitForPostLoginRouting({
+      authInitialized,
+      authLoading: loading,
+      isInitializingOrganization: isInitializingOrg,
+      organizationsLoaded,
+    })) return;
+
+    lateCompletionAllowedRef.current = false;
+    const routeTimer = window.setTimeout(() => {
+      setLoginError(null);
+      setPendingPostLoginPath(getCurrentRedirectPath());
+    }, 0);
+    return () => window.clearTimeout(routeTimer);
+  }, [authInitialized, isInitializingOrg, loading, organizationsLoaded, pendingPostLoginPath, user]);
 
   function showRecoveryForm() {
     recoveryRequest.invalidate();
@@ -404,6 +436,7 @@ export function LoginForm() {
 
     if (loginSubmissionInFlightRef.current) return;
     loginSubmissionInFlightRef.current = true;
+    lateCompletionAllowedRef.current = false;
     setIsSubmittingLogin(true);
     let shouldKeepRouting = false;
 
@@ -414,6 +447,7 @@ export function LoginForm() {
       );
 
       if (signInResult.status === "timed_out") {
+        lateCompletionAllowedRef.current = true;
         setLoginError("O login demorou mais que o esperado. Verifique sua conexão e tente novamente.");
         return;
       }
@@ -424,6 +458,16 @@ export function LoginForm() {
       const { error } = signInResult.value;
 
       if (error) {
+        const failure = classifyLoginFailure(error);
+        if (failure === "rate_limited") {
+          setLoginError("Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.");
+          return;
+        }
+        if (failure === "unavailable") {
+          setLoginError("Não foi possível conectar ao serviço de acesso. Verifique sua conexão e tente novamente.");
+          return;
+        }
+
         // Keep account confirmation and invalid credentials indistinguishable.
         setEmailConfirmationPending(true);
         setConfirmationResendMessage(null);

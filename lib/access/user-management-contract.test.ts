@@ -203,7 +203,7 @@ test('usuario sem organizacao ativa permanece autenticado na tela de selecao', (
   assert.match(appSource, /GET \/v1\/user-organizations", withActiveAuth\(/)
   assert.doesNotMatch(appSource, /GET \/v1\/user-organizations", withActiveAuthTenant\(/)
   assert.match(authSource, /if \(count === 0\)[\s\S]*setOrganization\(null\)[\s\S]*setTenantContext\(null\)/)
-  assert.match(layoutSource, /if \(!hasSelectableOrganization\)[\s\S]*router\.replace\('\/select-organization'\)/)
+  assert.match(layoutSource, /new URLSearchParams\(\{ redirectTo \}\)[\s\S]*router\.replace\(`\/select-organization\?/)
 })
 
 test('membership removida nao reabre acesso por tenant, troca de organizacao ou helpers legados', () => {

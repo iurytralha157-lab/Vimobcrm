@@ -193,7 +193,9 @@ export function BackendRealtimeBus() {
       if (!isCurrentScope()) return;
 
       const params = new URLSearchParams({
-        redirectTo: pathnameRef.current || DEFAULT_AUTHENTICATED_ROUTE,
+        redirectTo: pathnameRef.current
+          ? `${pathnameRef.current}${window.location.search}`
+          : DEFAULT_AUTHENTICATED_ROUTE,
       });
       routerRef.current.replace(`/select-organization?${params.toString()}`);
     };

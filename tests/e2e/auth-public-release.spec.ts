@@ -159,7 +159,7 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     loginStatus = 429;
     await page.getByRole('button', { name: 'Acessar o CRM', exact: true }).click();
     await expect(
-      page.getByText('Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.'),
+      page.getByText('Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.'),
     ).toBeVisible();
     expect(loginRequests).toBe(3);
 
