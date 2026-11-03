@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 
-import { HomeBrandBanner } from "@/components/features/home/HomeBrandBanner";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -119,7 +118,7 @@ export default function HomeScreen() {
   const publications: HomePublicationCard[] = configuredPublications
     .slice()
     .sort((left, right) => left.displayOrder - right.displayOrder)
-    .filter((publication) => canAccessHref(publication.ctaHref));
+    .filter((publication) => Boolean(publication.imageUrl) || canAccessHref(publication.ctaHref));
   const showPublicationCarousel =
     HOME_PAGE_SECTIONS.publications &&
     (!accessReady ||
@@ -134,7 +133,6 @@ export default function HomeScreen() {
       belowHeader={<HomeNoticeRail notices={noticesQuery.data || []} />}
     >
       <div className="-mx-5 -mt-2 md:-mx-6 md:-mt-3">
-        <HomeBrandBanner />
         {showPublicationCarousel ? (
           <HomePublicationCarousel
             publications={publications}

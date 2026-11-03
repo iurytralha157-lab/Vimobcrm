@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "35edf34cbcc0195928072ff8c5554648f5af2a02dd63d2d04b89bdbe4568e9a4",
+  "sourceDigestSha256": "fbe3fec7817655b7ec83762cffc9014aa411bd490592baaa84b8d147a61e9664",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -785,10 +785,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:083198a5ebef00227b19",
+          "id": "overlay:74ca9a03f58832807ce4",
           "column": 7,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 772,
+          "line": 765,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -796,21 +796,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:1183e32cc596c2263c91",
+          "id": "overlay:6e54f2df3f562a902086",
           "column": 7,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1123,
-          "owner": "HomePublicationsContent",
-          "routes": [
-            "/admin/home-content"
-          ],
-          "kind": "alertDialog"
-        },
-        {
-          "id": "overlay:b6c37e8e58ce8e177165",
-          "column": 7,
-          "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1151,
+          "line": 1036,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9009,10 +8998,34 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0be8b17e799321283e14",
+          "id": "cta:659ce34ad620de30e438",
+          "column": 11,
+          "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+          "line": 44,
+          "owner": "PublicationImageField",
+          "routes": [
+            "/admin/home-content"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:973649c88d15a8cd1319",
+          "column": 11,
+          "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+          "line": 50,
+          "owner": "PublicationImageField",
+          "routes": [
+            "/admin/home-content"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:9f14032ebfd6234bba7e",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 302,
+          "line": 300,
           "owner": "AudiencePicker",
           "routes": [
             "/admin/home-content"
@@ -9021,10 +9034,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b4ac1588ec0f73212e2e",
+          "id": "cta:e4c5e4fa5ac8e741ee53",
           "column": 15,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 322,
+          "line": 320,
           "owner": "AudiencePicker",
           "routes": [
             "/admin/home-content"
@@ -9033,10 +9046,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ac70478fe57709ea6abc",
+          "id": "cta:454abffd9cf8672ba7a8",
           "column": 19,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 343,
+          "line": 341,
           "owner": "AudiencePicker",
           "routes": [
             "/admin/home-content"
@@ -9045,10 +9058,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5e4389c36afee78f80d3",
+          "id": "cta:248891e15e99c698ccf2",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 458,
+          "line": 448,
           "owner": "PublicationListItem",
           "routes": [
             "/admin/home-content"
@@ -9057,10 +9070,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8345e293f241d40ad088",
+          "id": "cta:e54ba1e3568102da9176",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 470,
+          "line": 460,
           "owner": "PublicationListItem",
           "routes": [
             "/admin/home-content"
@@ -9069,10 +9082,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:74bbf60e0e3bb1a87b44",
+          "id": "cta:da8e3db35ee03b726c70",
           "column": 11,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 482,
+          "line": 472,
           "owner": "PublicationListItem",
           "routes": [
             "/admin/home-content"
@@ -9081,10 +9094,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c93fcd91526b150d0c11",
+          "id": "cta:84be732a688c4e8f50e3",
           "column": 11,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 486,
+          "line": 476,
           "owner": "PublicationListItem",
           "routes": [
             "/admin/home-content"
@@ -9093,10 +9106,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:71daefc46e15dc3a4260",
+          "id": "cta:31e544050a2ac3fcec82",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 697,
+          "line": 690,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9105,10 +9118,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c8ed3c22f429e2ae1e50",
+          "id": "cta:74e1a928a2dfc79c9d24",
           "column": 11,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 731,
+          "line": 724,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9117,10 +9130,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6a27b44053845f265238",
+          "id": "cta:3c3048198724bbbe6e12",
           "column": 11,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 750,
+          "line": 743,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9129,10 +9142,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a4f21a5900a3b5b17fdb",
+          "id": "cta:57e547f8b0015bb16217",
           "column": 23,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 856,
+          "line": 849,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9141,10 +9154,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f571ba7fae369c331b46",
+          "id": "cta:291dbafb816b79cf2c9e",
           "column": 23,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 882,
+          "line": 900,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9153,22 +9166,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e35ad36936ab35164904",
-          "column": 23,
-          "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 933,
-          "owner": "HomePublicationsContent",
-          "routes": [
-            "/admin/home-content"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:fefae746ea9d9d0677ea",
+          "id": "cta:410fdd80078108e28fff",
           "column": 25,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 983,
+          "line": 950,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9177,10 +9178,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:3a3c4f6057de9ee915ab",
-          "column": 25,
+          "id": "cta:328e514e019649fa1f34",
+          "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1067,
+          "line": 1016,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -9189,22 +9190,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2319d88adc52831c4156",
+          "id": "cta:17b480ebeefe8d444fac",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1103,
-          "owner": "HomePublicationsContent",
-          "routes": [
-            "/admin/home-content"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:9bd308c07b414a6c30e4",
-          "column": 13,
-          "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1111,
+          "line": 1024,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -15761,10 +15750,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:3cb90736912e8d70c9bf",
+          "id": "cta:d2c83d303cfb65b43a57",
           "column": 9,
           "file": "components/features/home/HomePublicationCarousel.tsx",
-          "line": 226,
+          "line": 227,
           "owner": "PublicationCarouselUnavailable",
           "routes": [
             "/inicio"
@@ -15773,10 +15762,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8d6339c3f24c55dd8d49",
+          "id": "cta:313358b449fe5353263b",
           "column": 13,
           "file": "components/features/home/HomePublicationCarousel.tsx",
-          "line": 364,
+          "line": 365,
           "owner": "HomePublicationCarousel",
           "routes": [
             "/inicio"
@@ -15785,10 +15774,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c98a9572d214da59fe4f",
+          "id": "cta:3dcc781b95285f13497c",
           "column": 13,
           "file": "components/features/home/HomePublicationCarousel.tsx",
-          "line": 372,
+          "line": 373,
           "owner": "HomePublicationCarousel",
           "routes": [
             "/inicio"
@@ -40032,10 +40021,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:ec59b4c647fa082f1d38",
+          "id": "control:c79c208d216d80a0069f",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1135,
+          "line": 1050,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -40044,34 +40033,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:038f0672a0519962e4ea",
+          "id": "control:d339238705c0b3e3d27b",
           "column": 13,
           "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1136,
-          "owner": "HomePublicationsContent",
-          "routes": [
-            "/admin/home-content"
-          ],
-          "kind": "AlertDialogAction",
-          "tag": "AlertDialogAction"
-        },
-        {
-          "id": "control:badc07524b5588cf70d4",
-          "column": 13,
-          "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1165,
-          "owner": "HomePublicationsContent",
-          "routes": [
-            "/admin/home-content"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
-          "id": "control:e0398116b1c8b2849e43",
-          "column": 13,
-          "file": "components/features/admin/HomePublicationsContent.tsx",
-          "line": 1166,
+          "line": 1051,
           "owner": "HomePublicationsContent",
           "routes": [
             "/admin/home-content"
@@ -45586,7 +45551,7 @@
         }
       ]
     },
-    "digestSha256": "6f93e961c510b8a5747612f37d7e85b8f72f73d8aef20ac65100ae648cf095bc"
+    "digestSha256": "98233aa26c0e30877e9616bbdae945ee23a8b314e64349eb35d448b6d14efb7a"
   },
   "routes": [
     {
@@ -48426,6 +48391,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+      "routes": [
+        "/admin/home-content"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/admin/HomePublicationsContent.tsx",
       "routes": [
         "/admin/home-content"
@@ -50090,15 +50064,6 @@
         "protected"
       ],
       "file": "components/features/home/HomeAssistant.tsx",
-      "routes": [
-        "/inicio"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/home/HomeBrandBanner.tsx",
       "routes": [
         "/inicio"
       ]
@@ -58986,25 +58951,25 @@
       "formsWithoutLocalSubmitContract": 0,
       "internalCtas": 1548,
       "internalCtasRouteReachable": 1519,
-      "overlays": 252,
+      "overlays": 251,
       "overlaysByKind": {
-        "alertDialog": 75,
+        "alertDialog": 74,
         "dialog": 97,
         "dropdownMenu": 31,
         "popover": 35,
         "sheet": 14
       },
-      "overlaysRouteReachable": 247,
-      "supplementalControls": 308,
+      "overlaysRouteReachable": 246,
+      "supplementalControls": 306,
       "supplementalControlsByKind": {
-        "AlertDialogAction": 70,
-        "AlertDialogCancel": 72,
+        "AlertDialogAction": 69,
+        "AlertDialogCancel": 71,
         "DropdownMenuItem": 96,
         "DropdownMenuRadioItem": 1,
         "DropdownMenuSubTrigger": 1,
         "TabsTrigger": 68
       },
-      "supplementalControlsRouteReachable": 303
+      "supplementalControlsRouteReachable": 301
     }
   },
   "qaDenominators": {
@@ -59014,8 +58979,8 @@
     "renderableRouteViewportChecksDesktopAndMobile": 168,
     "routeReachableFormImplementations": 53,
     "routeReachableInternalCtaImplementations": 1519,
-    "routeReachableOverlayImplementations": 247,
-    "routeReachableSupplementalOverlayAndTabControls": 303
+    "routeReachableOverlayImplementations": 246,
+    "routeReachableSupplementalOverlayAndTabControls": 301
   },
   "diagnostics": {
     "formsWithoutLocalSubmitContract": [],

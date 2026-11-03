@@ -24,6 +24,7 @@
     "lib/validation/users.ts",
     "lib/validation/whatsapp.ts",
     "lib/validation/*.test.ts",
+    "lib/home/publication-draft.test.ts",
     "lib/presence/*.ts",
     "lib/access/management.ts",
     "lib/access/management.test.ts",

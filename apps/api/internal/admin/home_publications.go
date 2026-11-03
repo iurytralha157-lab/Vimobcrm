@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	homePublicationListLimit   = 12
 	homePublicationImageLimit  = 5 << 20
 	homePublicationImageBucket = "site-images"
 	homeAssistantAnswerLimit   = 1500
@@ -451,8 +450,7 @@ func (repo Repository) ListVisibleHomePublications(ctx context.Context, tenantCo
 		    )
 		  )
 		order by hp.display_order asc, hp.created_at asc, hp.id asc
-		limit $5
-	`, tenantContext.UserID, tenantContext.OrganizationID, normalizeHomeMemberRole(tenantContext.MemberRole), tenantContext.IsSuperAdmin, homePublicationListLimit)
+	`, tenantContext.UserID, tenantContext.OrganizationID, normalizeHomeMemberRole(tenantContext.MemberRole), tenantContext.IsSuperAdmin)
 	if err != nil {
 		return nil, err
 	}

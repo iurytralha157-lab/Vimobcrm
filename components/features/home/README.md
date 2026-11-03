@@ -7,21 +7,23 @@ existente e carrega o conteúdo em camadas para não depender do Dashboard:
 2. atenção, tarefas e agenda são consultadas em paralelo conforme módulos e
    permissões do usuário.
 
-O banner institucional usa a arte vetorial local em
-`public/images/vimob-home-banner.svg`, inteira e proporcional, com texto alternativo
-equivalente e sem ação de clique. Ele aparece abaixo dos avisos críticos, antes das
-publicações, independentemente do carregamento ou resultado dessa consulta.
+Há um único carrossel abaixo dos avisos críticos, alimentado pelas publicações
+ativas configuradas pelo superadministrador. Imagens ocupam o slide inteiro,
+preservam a proporção e não recebem texto sobreposto nem ação de clique; o título
+é seu texto alternativo. Recomenda-se arte horizontal de 2070 × 228 px. Slides sem
+imagem mantêm o conteúdo editorial existente e o filtro por acesso ao destino.
+O backend aplica período e público-alvo a todos os slides, inclusive às imagens.
+O carrossel avança automaticamente e pausa durante interação, aba oculta ou
+preferência por movimento reduzido. Não há outro banner fixo sobre ele.
 
-O carrossel editorial é alimentado pelas publicações ativas configuradas pelo
-superadministrador. Ele ocupa a largura inteira abaixo do banner, avança
-automaticamente e pausa durante a interação, sem controles visuais sobre o slide. O conteúdo
-respeita período, público-alvo, permissões, módulos e destinos disponíveis ao usuário.
+A arte institucional original permanece em `public/images/vimob-home-banner.svg`
+e pode ser cadastrada como publicação na homologação; sua ordem e visibilidade
+são gerenciadas pelo mesmo superadmin, sem depender de novo deploy.
 
 ## Responsabilidades
 
 - `HomeScreen.tsx`: composição da página e controle de acesso dos atalhos;
 - `HomeAssistant.tsx`: pesquisa determinística na ajuda e nos leads visíveis;
-- `HomeBrandBanner.tsx`: arte institucional local, proporcional e sem interação;
 - `HomePublicationCarousel.tsx`: carrossel de novidades configuradas pela plataforma;
 - `HomeFocusList.tsx`: prioridades reais do usuário;
 - `home-catalog.ts`: atalhos e destinos internos permitidos.
@@ -37,8 +39,8 @@ Dados e validação ficam fora dos componentes:
 ## Administração
 
 Superadministradores gerenciam os slides em `/admin/home-content`. O editor
-permite título, texto, CTA interno, layout, cor, ordem, período, público e imagem,
-e os itens ativos são publicados na Página inicial.
+permite imagem, título acessível, ordem, período e público; conteúdo editorial
+sem imagem continua disponível. Os itens ativos são publicados na Página inicial.
 Imagens são enviadas pelo backend para `site-images/platform/home/`; o browser
 não recebe credenciais de Storage.
 

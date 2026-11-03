@@ -94,23 +94,6 @@ function PublicationArtwork({
   const visual = PUBLICATION_VISUALS[publication.accent];
   const Icon = visual.icon;
 
-  if (publication.imageUrl) {
-    return (
-      <div className="pointer-events-none absolute inset-0 sm:left-auto sm:w-[46%]">
-        <Image
-          src={publication.imageUrl}
-          alt=""
-          fill
-          sizes="(max-width: 640px) 100vw, 450px"
-          className="object-cover"
-          unoptimized
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-[var(--app-surface-solid)] via-[var(--app-surface-solid)]/90 to-[var(--app-surface-solid)]/35 sm:via-[var(--app-surface-solid)]/35 sm:to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--app-surface-solid)]/45 via-transparent to-transparent" />
-      </div>
-    );
-  }
-
   return (
     <div
       aria-hidden="true"
@@ -152,6 +135,25 @@ function PublicationSlide({
 }) {
   const visual = PUBLICATION_VISUALS[publication.accent];
 
+  if (publication.imageUrl) {
+    return (
+      <article
+        aria-label={`${index + 1} de ${total}: ${publication.title}`}
+        className="relative aspect-[2070/228] w-full min-w-0 min-h-[100px] overflow-hidden bg-[var(--app-surface-solid)] sm:min-h-[152px]"
+      >
+        <Image
+          src={publication.imageUrl}
+          alt={publication.title}
+          fill
+          sizes="100vw"
+          className="object-contain"
+          loading={index === 0 ? "eager" : "lazy"}
+          unoptimized
+        />
+      </article>
+    );
+  }
+
   return (
     <article
       aria-label={`${index + 1} de ${total}: ${publication.title}`}
@@ -162,7 +164,6 @@ function PublicationSlide({
       <div
         className={cn(
           "relative z-10 flex w-full flex-col px-12 py-4 sm:max-w-[65%] sm:px-14 sm:py-4",
-          publication.imageUrl && "max-w-[88%]",
         )}
       >
         <div

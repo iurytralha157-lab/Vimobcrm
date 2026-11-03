@@ -1,8 +1,10 @@
 'use client'
 
 import {
+  useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from 'react'
@@ -12,7 +14,6 @@ import {
   CalendarClock,
   Check,
   ImageIcon,
-  ImagePlus,
   Loader2,
   Pencil,
   Plus,
@@ -23,7 +24,9 @@ import {
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import Image from 'next/image'
 
+import { PublicationImageField } from '@/components/features/admin/home-publications/PublicationImageField'
 import {
   HOME_PAGE_SECTIONS,
   HOME_PUBLICATION_CTA_OPTIONS,
@@ -73,20 +76,15 @@ import type {
   HomePublicationTargetType,
 } from '@/lib/api/home'
 import { createHomePublicationInputSchema } from '@/lib/validation/home'
+import {
+  buildAdjacentHomeSlideMove,
+  getHomeSlideImageError,
+  getHomeSlideImageTitle,
+  getNextHomeSlideOrder,
+  saveHomePublicationDraft,
+  withHomeSlideImageDefaults,
+} from '@/lib/home/publication-draft'
 import { cn } from '@/lib/utils'
-
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024
-const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
-
-const CARD_SIZE_OPTIONS: Array<{
-  value: HomePublicationCardSize
-  label: string
-  description: string
-}> = [
-  { value: 'wide', label: 'Destaque', description: 'Ocupa toda a largura' },
-  { value: 'half', label: 'Médio', description: 'Duas colunas no desktop' },
-  { value: 'compact', label: 'Compacto', description: 'Três colunas no desktop' },
-]
 
 const ACCENT_OPTIONS: Array<{
   value: HomePublicationAccent
@@ -142,9 +140,9 @@ function createEmptyForm(displayOrder: number): PublicationForm {
   return {
     title: '',
     body: '',
-    ctaLabel: 'Abrir pipeline',
-    ctaHref: '/crm/pipelines',
-    cardSize: 'half',
+    ctaLabel: 'Saiba mais',
+    ctaHref: '/suporte',
+    cardSize: 'wide',
     accent: 'orange',
     displayOrder,
     isActive: true,
@@ -196,24 +194,24 @@ function getPublicationStatus(publication: HomePublication) {
 
   if (!publication.isActive) {
     return {
-      label: channelDisabled ? 'Rascunho pausado' : 'Pausada',
+      label: channelDisabled ? 'Rascunho pausado' : 'Pausado',
       className: 'bg-slate-500/10 text-slate-500',
     }
   }
   if (publication.startsAt && new Date(publication.startsAt).getTime() > now) {
     return {
-      label: channelDisabled ? 'Rascunho agendado' : 'Agendada',
+      label: channelDisabled ? 'Rascunho agendado' : 'Agendado',
       className: 'bg-blue-500/10 text-blue-500',
     }
   }
   if (publication.endsAt && new Date(publication.endsAt).getTime() <= now) {
     return {
-      label: channelDisabled ? 'Rascunho encerrado' : 'Encerrada',
+      label: channelDisabled ? 'Rascunho encerrado' : 'Encerrado',
       className: 'bg-amber-500/10 text-amber-600',
     }
   }
   return {
-    label: channelDisabled ? 'Rascunho pronto' : 'Publicada',
+    label: channelDisabled ? 'Rascunho pronto' : 'Publicado',
     className: channelDisabled
       ? 'bg-slate-500/10 text-slate-600'
       : 'bg-emerald-500/10 text-emerald-500',
@@ -410,22 +408,14 @@ function PublicationListItem({
             publication.accent === 'amber' && 'from-amber-500/25 to-amber-500/5',
             publication.accent === 'slate' && 'from-slate-500/25 to-slate-500/5',
           )}
-          style={publication.imageUrl
-            ? {
-                backgroundImage: `linear-gradient(135deg, rgba(15,23,42,.12), rgba(15,23,42,.5)), url(${JSON.stringify(publication.imageUrl)})`,
-                backgroundPosition: 'center',
-                backgroundSize: 'cover',
-              }
-            : undefined}
         >
-          {!publication.imageUrl ? (
+          {publication.imageUrl ? (
+            <Image src={publication.imageUrl} alt="" fill sizes="160px" className="object-contain" unoptimized />
+          ) : (
             <div className="flex h-full items-center justify-center">
               <Sparkles className={cn('h-8 w-8', accent?.textColor)} />
             </div>
-          ) : null}
-          <span className="absolute bottom-2 left-2 rounded-[4px] bg-[var(--app-overlay-strong)] px-2 py-1 text-[10px] font-normal text-[var(--app-on-media)]">
-            {CARD_SIZE_OPTIONS.find((option) => option.value === publication.cardSize)?.label}
-          </span>
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
@@ -439,7 +429,7 @@ function PublicationListItem({
               </Badge>
             ) : null}
           </div>
-          <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{publication.body}</p>
+          {!publication.imageUrl ? <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{publication.body}</p> : null}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <UsersRound className="h-3.5 w-3.5" />
@@ -449,7 +439,7 @@ function PublicationListItem({
               <CalendarClock className="h-3.5 w-3.5" />
               {formatSchedule(publication)}
             </span>
-            <span>Botão: {publication.ctaLabel}</span>
+            <span>{publication.imageUrl ? 'Imagem integral, sem link' : `Botão: ${publication.ctaLabel}`}</span>
           </div>
         </div>
 
@@ -516,7 +506,11 @@ export function HomePublicationsContent() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingPublication, setEditingPublication] = useState<HomePublication | null>(null)
   const [publicationToDelete, setPublicationToDelete] = useState<HomePublication | null>(null)
-  const [imageDeleteOpen, setImageDeleteOpen] = useState(false)
+  const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(null)
+  const [removeStoredImage, setRemoveStoredImage] = useState(false)
+  const [saveInProgress, setSaveInProgress] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savingRef = useRef(false)
   const [form, setForm] = useState<PublicationForm>(() => createEmptyForm(10))
 
   const organizationsQuery = useHomePublicationOrganizations(
@@ -526,7 +520,13 @@ export function HomePublicationsContent() {
     dialogOpen && form.targetType === 'users',
   )
 
-  const isSaving = createPublication.isPending || updatePublication.isPending
+  useEffect(() => () => {
+    if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl)
+  }, [pendingImage])
+
+  const imageUrl = pendingImage?.previewUrl || (!removeStoredImage ? editingPublication?.imageUrl : null) || null
+  const hasImage = Boolean(imageUrl)
+  const isSaving = saveInProgress || createPublication.isPending || updatePublication.isPending
   const isImageSaving = uploadImage.isPending || deleteImage.isPending
   const readyCount = publications.filter((publication) => publication.isActive).length
   const scheduledCount = publications.filter((publication) => (
@@ -541,22 +541,32 @@ export function HomePublicationsContent() {
   }
 
   const handleDialogOpenChange = (open: boolean) => {
-    if (!open && (isSaving || isImageSaving)) return
+    if (!open && (savingRef.current || isSaving || isImageSaving)) return
     setDialogOpen(open)
-    if (!open) setImageDeleteOpen(false)
+    if (!open) {
+      setPendingImage(null)
+      setRemoveStoredImage(false)
+      setSaveError(null)
+    }
   }
 
   const openCreate = () => {
-    const nextOrder = publications.length > 0
-      ? Math.max(...publications.map((publication) => publication.displayOrder)) + 10
-      : 10
+    let nextOrder: number
+    try { nextOrder = getNextHomeSlideOrder(publications) }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Não foi possível definir a ordem do slide.'); return }
     setEditingPublication(null)
+    setPendingImage(null)
+    setRemoveStoredImage(false)
+    setSaveError(null)
     setForm(createEmptyForm(nextOrder))
     setDialogOpen(true)
   }
 
   const openEdit = (publication: HomePublication) => {
     setEditingPublication(publication)
+    setPendingImage(null)
+    setRemoveStoredImage(false)
+    setSaveError(null)
     setForm(toPublicationForm(publication))
     setDialogOpen(true)
   }
@@ -589,27 +599,37 @@ export function HomePublicationsContent() {
   })
 
   const handleSave = async () => {
-    if (isSaving || isImageSaving) return
-    const input = buildInput()
+    if (savingRef.current || isSaving || isImageSaving) return
+    const input = withHomeSlideImageDefaults(buildInput(), hasImage)
     const result = createHomePublicationInputSchema.safeParse(input)
     if (!result.success) {
       toast.error(result.error.issues[0]?.message || 'Revise os campos do rascunho.')
       return
     }
 
+    savingRef.current = true
+    setSaveInProgress(true)
+    setSaveError(null)
+    let checkpoint = editingPublication
     try {
-      if (editingPublication) {
-        const updated = await updatePublication.mutateAsync({
-          id: editingPublication.id,
-          input: result.data,
-        })
-        setEditingPublication(updated)
-      } else {
-        await createPublication.mutateAsync(result.data)
-      }
+      await saveHomePublicationDraft({ input: result.data, publication: editingPublication, file: pendingImage?.file || null, removeImage: removeStoredImage }, {
+        create: (value) => createPublication.mutateAsync(value),
+        update: (id, value) => updatePublication.mutateAsync({ id, input: value }),
+        upload: (id, file) => uploadImage.mutateAsync({ id, file }),
+        removeImage: async (id) => (await deleteImage.mutateAsync(id)).publication,
+        checkpoint: (value) => { checkpoint = value; setEditingPublication(value) },
+        imageSaved: () => { setPendingImage(null); setRemoveStoredImage(false) },
+      })
       setDialogOpen(false)
+      setPendingImage(null)
+      setRemoveStoredImage(false)
     } catch {
-      // Os hooks exibem a mensagem de erro.
+      setSaveError(checkpoint?.isActive === false
+        ? 'O rascunho continua pausado. Tente salvar novamente para concluir.'
+        : 'Não foi possível concluir. O editor continua aberto para tentar novamente.')
+    } finally {
+      savingRef.current = false
+      setSaveInProgress(false)
     }
   }
 
@@ -617,19 +637,13 @@ export function HomePublicationsContent() {
     if (reorderPublications.isPending) return
     const targetIndex = index + direction
     if (targetIndex < 0 || targetIndex >= publications.length) return
-    const reordered = [...publications]
-    const [moved] = reordered.splice(index, 1)
-    reordered.splice(targetIndex, 0, moved)
-
     try {
+      const items = buildAdjacentHomeSlideMove(publications, index, direction)
       await reorderPublications.mutateAsync({
-        items: reordered.map((publication, publicationIndex) => ({
-          id: publication.id,
-          displayOrder: (publicationIndex + 1) * 10,
-        })),
+        items,
       })
-    } catch {
-      // Os hooks exibem a mensagem de erro.
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Não há espaço de ordem')) toast.error(error.message)
     }
   }
 
@@ -647,34 +661,13 @@ export function HomePublicationsContent() {
   const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
-    if (!file || !editingPublication) return
-    if (!IMAGE_MIME_TYPES.has(file.type)) {
-      toast.error('Use uma imagem JPEG, PNG ou WebP.')
-      return
-    }
-    if (file.size > IMAGE_MAX_BYTES) {
-      toast.error('A imagem deve ter no máximo 5 MB.')
-      return
-    }
-
-    try {
-      const updated = await uploadImage.mutateAsync({ id: editingPublication.id, file })
-      setEditingPublication(updated)
-    } catch {
-      // Os hooks exibem a mensagem de erro.
-    }
-  }
-
-  const handleImageDelete = async () => {
-    if (!editingPublication?.imageUrl || isImageSaving) return
-    const publicationId = editingPublication.id
-    try {
-      const result = await deleteImage.mutateAsync(publicationId)
-      setEditingPublication(result.publication)
-      setImageDeleteOpen(false)
-    } catch {
-      // Os hooks exibem a mensagem de erro.
-    }
+    if (!file || savingRef.current || isSaving || isImageSaving) return
+    const error = getHomeSlideImageError(file)
+    if (error) { toast.error(error); return }
+    setPendingImage({ file, previewUrl: URL.createObjectURL(file) })
+    setRemoveStoredImage(false)
+    setSaveError(null)
+    setForm((current) => ({ ...current, title: current.title.trim() ? current.title : getHomeSlideImageTitle(file.name) }))
   }
 
   return (
@@ -690,8 +683,8 @@ export function HomePublicationsContent() {
                 Slides da Página inicial
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Publique novidades e orientações com público, período, botão, imagem e
-                ordem definidos. Os itens ativos aparecem no carrossel da Página inicial.
+                Adicione imagens ou slides de texto e defina a ordem, o público e o período.
+                Imagens aparecem inteiras no carrossel, sem cortes nem links.
               </p>
             </div>
             <Button
@@ -779,7 +772,7 @@ export function HomePublicationsContent() {
               {editingPublication ? 'Editar slide' : 'Novo slide'}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Configure conteúdo, destino, período, público e imagem do bloco da Página Inicial.
+              Escolha a imagem e configure título, período e público do slide da Página inicial.
             </DialogDescription>
           </DialogHeader>
 
@@ -788,7 +781,7 @@ export function HomePublicationsContent() {
             <div className="space-y-5">
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="home-publication-title">Título</Label>
+                  <Label htmlFor="home-publication-title">{hasImage ? 'Título e descrição da imagem' : 'Título'}</Label>
                   <span className="text-[11px] text-muted-foreground">{form.title.length}/120</span>
                 </div>
                 <Input
@@ -803,7 +796,7 @@ export function HomePublicationsContent() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="home-publication-body">Texto</Label>
+                  <Label htmlFor="home-publication-body">{hasImage ? 'Texto (opcional para imagem)' : 'Texto'}</Label>
                   <span className="text-[11px] text-muted-foreground">{form.body.length}/1000</span>
                 </div>
                 <textarea
@@ -817,7 +810,7 @@ export function HomePublicationsContent() {
                 />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              {!hasImage ? <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="home-publication-cta-href">Destino do botão</Label>
                   <select
@@ -845,35 +838,9 @@ export function HomePublicationsContent() {
                     className="bg-[var(--app-surface-soft)]"
                   />
                 </div>
-              </div>
+              </div> : null}
 
-              <div className="space-y-2">
-                <Label>Tamanho do bloco</Label>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {CARD_SIZE_OPTIONS.map((option) => {
-                    const selected = form.cardSize === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => updateForm('cardSize', option.value)}
-                        className={cn(
-                          'rounded-[8px] border p-3 text-left transition-colors',
-                          selected
-                            ? 'border-primary/40 bg-primary/10'
-                            : 'border-[var(--app-border)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]',
-                        )}
-                      >
-                        <span className="block text-sm font-normal">{option.label}</span>
-                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.description}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-2">
+              {!hasImage ? <div className="space-y-2">
                 <Label>Cor de destaque</Label>
                 <div className="flex flex-wrap gap-2">
                   {ACCENT_OPTIONS.map((option) => {
@@ -898,7 +865,7 @@ export function HomePublicationsContent() {
                     )
                   })}
                 </div>
-              </div>
+              </div> : null}
 
               <div className="space-y-2">
                 <Label>Período de exibição</Label>
@@ -1024,81 +991,27 @@ export function HomePublicationsContent() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)]">
-                <div
-                  className="relative flex min-h-44 items-center justify-center bg-gradient-to-br p-4"
-                  style={editingPublication?.imageUrl
-                    ? {
-                        backgroundImage: `linear-gradient(135deg, rgba(15,23,42,.08), rgba(15,23,42,.55)), url(${JSON.stringify(editingPublication.imageUrl)})`,
-                        backgroundPosition: 'center',
-                        backgroundSize: 'cover',
-                      }
-                    : undefined}
-                >
-                  {!editingPublication?.imageUrl ? (
-                    <div className="text-center text-muted-foreground">
-                      <ImageIcon className="mx-auto h-8 w-8" strokeWidth={1.5} />
-                      <p className="mt-2 text-xs">Sem imagem</p>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="space-y-2 border-t border-[var(--app-border)] p-3">
-                  {editingPublication ? (
-                    <>
-                      <label className={cn(
-                        'flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] text-xs font-normal transition-colors hover:bg-[var(--app-surface-hover)]',
-                        isImageSaving && 'pointer-events-none opacity-50',
-                      )}>
-                        {uploadImage.isPending ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <ImagePlus className="h-3.5 w-3.5" />
-                        )}
-                        {editingPublication.imageUrl ? 'Trocar imagem' : 'Enviar imagem'}
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="sr-only"
-                          onChange={handleImageUpload}
-                          disabled={isImageSaving}
-                        />
-                      </label>
-                      {editingPublication.imageUrl ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setImageDeleteOpen(true)}
-                          disabled={isImageSaving}
-                          className="w-full text-red-500 hover:bg-red-500/10 hover:text-red-500"
-                        >
-                          {deleteImage.isPending ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                          Remover imagem
-                        </Button>
-                      ) : null}
-                    </>
-                  ) : (
-                    <p className="text-center text-xs leading-5 text-muted-foreground">
-                      Salve o rascunho primeiro para enviar uma imagem JPEG, PNG ou WebP de até 5 MB.
-                    </p>
-                  )}
-                </div>
-              </div>
-
+              <PublicationImageField
+                imageUrl={imageUrl}
+                title={form.title}
+                disabled={isSaving || isImageSaving}
+                selected={Boolean(pendingImage)}
+                canRestore={removeStoredImage && Boolean(editingPublication?.imageUrl)}
+                onSelect={handleImageUpload}
+                onRemove={() => pendingImage ? setPendingImage(null) : setRemoveStoredImage(true)}
+                onRestore={() => setRemoveStoredImage(false)}
+              />
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-xs leading-5 text-muted-foreground">
                 <p className="font-normal text-[var(--app-text-primary)]">Dica de composição</p>
                 <p className="mt-1">
-                  Use títulos curtos, uma única ideia por bloco e imagens horizontais com o assunto principal mais à direita.
+                  A imagem será mostrada inteira. Use o título para descrever a arte a quem utiliza leitor de tela; não há botão sobre a imagem.
                 </p>
               </div>
             </aside>
             </div>
           </fieldset>
 
+          {saveError ? <p role="alert" className="px-5 pb-4 text-sm text-destructive">{saveError}</p> : null}
           <DialogFooter className="sticky bottom-0 z-20 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-5 py-4">
             <Button
               variant="outline"
@@ -1114,39 +1027,11 @@ export function HomePublicationsContent() {
               disabled={isSaving || isImageSaving}
             >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {editingPublication ? 'Salvar alterações' : 'Criar rascunho'}
+              {editingPublication ? 'Salvar alterações' : 'Criar slide'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={imageDeleteOpen} onOpenChange={(open) => {
-        if (!open && deleteImage.isPending) return
-        setImageDeleteOpen(open)
-      }}>
-        <AlertDialogContent className="rounded-[8px] shadow-none" aria-busy={deleteImage.isPending}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remover imagem?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A imagem de “{editingPublication?.title}” será removida do rascunho e do armazenamento quando possível. Esta ação não pode ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteImage.isPending}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault()
-                void handleImageDelete()
-              }}
-              disabled={deleteImage.isPending}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteImage.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Remover imagem
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={Boolean(publicationToDelete)} onOpenChange={(open) => {
         if (!open && deletePublication.isPending) return
@@ -1156,8 +1041,8 @@ export function HomePublicationsContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir slide?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{publicationToDelete?.title}” será removida do carrossel da Página inicial.
-              Se estiver publicada, deixará de aparecer imediatamente. A imagem vinculada
+              “{publicationToDelete?.title}” será removido do carrossel da Página inicial.
+              Se estiver publicado, deixará de aparecer imediatamente. A imagem vinculada
               também será removida quando possível.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1172,7 +1057,7 @@ export function HomePublicationsContent() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletePublication.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Excluir rascunho
+              Excluir slide
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
