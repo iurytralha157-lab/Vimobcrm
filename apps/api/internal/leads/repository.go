@@ -874,8 +874,17 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	if isManagedWhatsAppMessageDistributionLead(current.Data) {
 		return RoundRobinResult{}, fmt.Errorf("%w: managed WhatsApp message distribution does not support generic round-robin redistribution", ErrInvalidInput)
 	}
+	result := RoundRobinResult{
+		Success:    true,
+		LeadID:     current.ID,
+		PipelineID: current.PipelineID,
+		StageID:    current.StageID,
+	}
 	if expectedUnassigned && current.AssignedUserID != "" {
-		return RoundRobinResult{Success: false, LeadID: current.ID, AssignedUserID: current.AssignedUserID, Error: "already_assigned"}, nil
+		result.Success = false
+		result.AssignedUserID = current.AssignedUserID
+		result.Error = "already_assigned"
+		return result, nil
 	}
 	managedResult, managed, err := managedQueueManualRedistribution(ctx, tx, tenantContext, current)
 	if err != nil {
@@ -884,20 +893,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	if managed {
 		return managedResult, tx.Commit(ctx)
 	}
-
-	result := RoundRobinResult{
-		Success:    true,
-		LeadID:     current.ID,
-		PipelineID: current.PipelineID,
-		StageID:    current.StageID,
-	}
-	if expectedUnassigned {
-		if current.AssignedUserID != "" {
-			result.Success = false
-			result.AssignedUserID = current.AssignedUserID
-			result.Error = "already_assigned"
-			return result, nil
-		}
+	if current.AssignedUserID == "" {
 		queueID, err := repo.pendingLeadDistributionQueue(ctx, tx, tenantContext.OrganizationID, current)
 		if err != nil {
 			return RoundRobinResult{}, err
@@ -980,8 +976,9 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 			$5::jsonb
 		)
 	`, tenantContext.OrganizationID, selection.RoundRobinID, current.ID, selection.UserID, jsonb(map[string]any{
-		"member_id": selection.MemberID,
-		"source":    "vimob_api",
+		"member_id":        selection.MemberID,
+		"source":           "vimob_api",
+		"previous_user_id": current.AssignedUserID,
 	})); err != nil {
 		return RoundRobinResult{}, err
 	}
