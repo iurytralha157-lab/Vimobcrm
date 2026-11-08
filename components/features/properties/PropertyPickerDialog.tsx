@@ -72,14 +72,14 @@ function getPropertyStatusBadge(status?: string | null): PropertyStatusBadge | n
     case 'reserved':
       return {
         label: 'Reservado',
-        className: 'bg-amber-950/75 text-white dark:bg-amber-200/90 dark:text-amber-950',
+        className: 'bg-[var(--app-surface-solid)] text-warning',
         icon: Clock,
       };
     case 'vendido':
     case 'sold':
       return {
         label: 'Vendido',
-        className: 'bg-zinc-900/75 text-white dark:bg-zinc-100/85 dark:text-zinc-950',
+        className: 'bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]',
         icon: CheckCircle,
       };
     case 'alugado':
@@ -87,7 +87,7 @@ function getPropertyStatusBadge(status?: string | null): PropertyStatusBadge | n
     case 'rented':
       return {
         label: 'Alugado',
-        className: 'bg-sky-950/75 text-white dark:bg-sky-200/85 dark:text-sky-950',
+        className: 'bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]',
         icon: KeyRound,
       };
     default:

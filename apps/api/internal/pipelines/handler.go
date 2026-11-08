@@ -335,6 +335,11 @@ func writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "stage_has_automation_dependencies", automationDependencies.Error())
 		return
 	}
+	var moveRuleDependencies *StageMoveRuleDependenciesError
+	if errors.As(err, &moveRuleDependencies) {
+		httpserver.WriteError(w, r, http.StatusConflict, "stage_has_move_rule_dependencies", moveRuleDependencies.Error())
+		return
+	}
 	var archiveDependencies *StageArchiveDependenciesError
 	if errors.As(err, &archiveDependencies) {
 		httpserver.WriteError(w, r, http.StatusConflict, "stage_has_active_routing", archiveDependencies.Error())

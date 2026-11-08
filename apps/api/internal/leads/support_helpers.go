@@ -12,15 +12,23 @@ import (
 )
 
 func (repo Repository) ensureLeadVisible(ctx context.Context, tenantContext tenant.Context, leadID string) error {
+	return ensureLeadVisibleWithQueryer(ctx, repo.db.Pool(), tenantContext, leadID, false)
+}
+
+func ensureLeadVisibleWithQueryer(ctx context.Context, queryer leadTeamQueryer, tenantContext tenant.Context, leadID string, lock bool) error {
+	lockingClause := ""
+	if lock {
+		lockingClause = " for share of l"
+	}
 	var id string
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select l.id::text
 		from public.leads l
 		where l.organization_id = $1::uuid
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and l.id = $5::uuid
-		limit 1
-	`, tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID).Scan(&id)
+		limit 1`+lockingClause,
+		tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return ErrLeadNotFound
 	}

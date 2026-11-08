@@ -16,7 +16,7 @@ const firstContactSource = readRepoFile(
   "components/features/dashboard/FirstContactDialog.tsx",
 );
 const mobileKpisSource = readRepoFile(
-  "components/features/dashboard/KPICards.tsx",
+  "components/features/dashboard/DashboardKpis.tsx",
 );
 const hookSource = readRepoFile("hooks/use-dashboard-stats.ts");
 const apiSource = readRepoFile("lib/api/dashboard.ts");

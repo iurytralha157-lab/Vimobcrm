@@ -23,6 +23,28 @@ test("historical coverage stays optional for older replicas and distinguishes un
   assert.equal(scheduleDashboardDataQualitySchema.safeParse({ ...quality, completed_without_performer: 21 }).success, false);
 });
 
+test("additive series stay optional for older replicas and reject invalid counts", () => {
+  const response = createDashboardResponse();
+  const parsed = apiScheduleDashboardResponseSchema.parse({
+    data: {
+      ...response.data,
+      hour_distribution: Array.from({ length: 24 }, (_, hour) => ({ hour, total: hour === 9 ? 3 : 0 })),
+      by_type: [{ key: "visit", count: 8, completed: 5 }],
+      by_source: [{ key: "site", label: "Site", count: 7, appointment_completed: 2, appointment_eligible: 3 }],
+    },
+  }).data;
+  assert.equal(parsed.hour_distribution?.[9]?.total, 3);
+  assert.equal(parsed.by_type[0]?.completed, 5);
+  assert.equal(parsed.by_source[0]?.appointment_eligible, 3);
+  assert.equal(apiScheduleDashboardResponseSchema.parse(response).data.hour_distribution, undefined);
+  assert.equal(
+    apiScheduleDashboardResponseSchema.safeParse({
+      data: { ...response.data, hour_distribution: [{ hour: 24, total: 1 }] },
+    }).success,
+    false,
+  );
+});
+
 function createDashboardResponse() {
   return {
     data: {

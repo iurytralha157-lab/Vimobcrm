@@ -223,7 +223,7 @@ func (repo Repository) SiteDetailed(ctx context.Context, tenantContext tenant.Co
 		return repo.siteDetailedLegacy(ctx, tenantContext, values, capabilities)
 	}
 	liveObservedAtSQL := siteAnalyticsObservedAtSQL("live.", capabilities.lastSeenAt)
-	return repo.queryJSONObject(ctx, `
+	detailed, err := repo.queryJSONObject(ctx, `
 		with params as (
 		 select nullif($2, '')::date as date_from, nullif($3, '')::date as date_to
 		), report_settings as (
@@ -335,6 +335,13 @@ func (repo Repository) SiteDetailed(ctx context.Context, tenantContext tenant.Co
 		 'pagesPerSession', t.pages_per_session, 'bounceRate', t.bounce_rate, 'liveVisitors', t.live_visitors)
 		from totals t cross join site_leads s
 	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.attachSiteInsights(ctx, tenantContext, values, detailed); err != nil {
+		return nil, err
+	}
+	return detailed, nil
 }
 
 func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
@@ -376,6 +383,13 @@ func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.C
 		 select e.* from public.site_analytics_events e cross join time_bounds where e.organization_id=$1::uuid
 		 and e.created_at >= time_bounds.starts_at
 		 and e.created_at < time_bounds.ends_at
+		), session_contacts as (
+		 select session_id,
+		   min(created_at) filter (where event_type in ('form_submit','whatsapp_click')) contact_at,
+		   bool_or(event_type = 'form_submit' and lead_id is not null) has_lead
+		 from events
+		 where session_id is not null and session_id not like 'site-contact:%'
+		 group by session_id
 		), journeys as (
 		 select session_id,
 		   coalesce(
@@ -395,10 +409,17 @@ func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.C
 		       when bool_or(metadata->>'facebook_click' = 'true' or nullif(btrim(metadata->>'fbclid'), '') is not null) then 'Facebook / Meta'
 		     end
 		   ) utm_source,
-		   max(referrer) referrer
+		   max(referrer) referrer,
+		   session_contacts.has_lead,
+		   round(extract(epoch from session_contacts.contact_at - min(created_at)))::int seconds_to_contact,
+		   case when session_contacts.contact_at is not null then
+		     count(*) filter (where event_type in ('pageview','page_view') and created_at <= session_contacts.contact_at)::int
+		   end pages_to_contact
 		 from events
+		 join session_contacts using (session_id)
 		 where session_id is not null and session_id not like 'site-contact:%'
-		 group by session_id order by max(`+lastObservedAtSQL+`) desc limit 100
+		 group by session_id, session_contacts.contact_at, session_contacts.has_lead
+		 order by max(`+lastObservedAtSQL+`) desc limit 100
 		), funnel as (
 		 select case when event_type in ('pageview','page_view') then 'pageview' else event_type end event_type,
 		   count(distinct session_id)::int total from events

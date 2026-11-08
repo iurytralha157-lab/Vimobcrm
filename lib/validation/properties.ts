@@ -6,6 +6,16 @@ import {
   uuidSchema,
 } from "./common";
 
+export const propertyPortfolioTypeSchema = z.enum(["ready", "launch", "third_party"]);
+export const propertyThirdPartyKindSchema = z.enum(["partner", "private_owner"]);
+const PROPERTY_THIRD_PARTY_FIELDS = [
+  "third_party_kind",
+  "partner_name",
+  "partner_contact",
+  "commission_split_percent",
+  "third_party_authorized_until",
+] as const;
+
 const optionalUUIDValueSchema = z
   .union([uuidSchema, z.literal(""), z.null()])
   .optional();
@@ -200,6 +210,7 @@ export const propertyListQuerySchema = z
     scope: z.enum(["own"]).optional(),
     search: z.string().trim().max(120).optional(),
     status: propertyStatusInputSchema.optional(),
+    portfolio_type: propertyPortfolioTypeSchema.optional(),
     tipo_de_negocio: propertyDealTypeFilterSchema.optional(),
     tipo_de_imovel: z.string().trim().max(80).optional(),
     cidade: z.string().trim().max(120).optional(),
@@ -367,7 +378,46 @@ const propertyMutationShape = {
   video_imovel: z.string().trim().max(4_000).nullable().optional(),
   vista_codigo: z.string().trim().max(4_000).nullable().optional(),
   zoneamento: z.string().trim().max(4_000).nullable().optional(),
+  portfolio_type: propertyPortfolioTypeSchema.optional(),
+  third_party_kind: z.union([propertyThirdPartyKindSchema, z.literal(""), z.null()]).optional(),
+  partner_name: z.string().trim().max(160).nullable().optional(),
+  partner_contact: z.string().trim().max(200).nullable().optional(),
+  commission_split_percent: z
+    .union([z.number().finite().min(0).max(100), z.null()])
+    .optional(),
+  third_party_authorized_until: z
+    .union([z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(""), z.null()])
+    .optional(),
 };
+
+type PropertyPortfolioInput = {
+  portfolio_type?: string;
+  third_party_kind?: string | null;
+  partner_name?: string | null;
+} & Partial<Record<(typeof PROPERTY_THIRD_PARTY_FIELDS)[number], unknown>>;
+
+function validatePropertyPortfolioCreate(input: PropertyPortfolioInput, context: z.RefinementCtx) {
+  if (input.portfolio_type !== "third_party") {
+    for (const field of PROPERTY_THIRD_PARTY_FIELDS) {
+      const value = input[field];
+      if (value !== undefined && value !== null && value !== "") {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Disponivel apenas para imoveis de terceiros" });
+      }
+    }
+    return;
+  }
+  validatePropertyThirdPartyDetails(input, context);
+}
+
+// An update can omit what is already stored, so it checks only what it supplies.
+function validatePropertyThirdPartyDetails(input: PropertyPortfolioInput, context: z.RefinementCtx) {
+  if (!input.third_party_kind) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["third_party_kind"], message: "Informe o tipo de terceiro" });
+  }
+  if (input.third_party_kind === "partner" && !input.partner_name?.trim()) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["partner_name"], message: "Informe o nome do parceiro" });
+  }
+}
 
 export const propertyCreateInputSchema = z
   .object({
@@ -380,6 +430,7 @@ export const propertyCreateInputSchema = z
   .superRefine((input, context) => {
     validatePropertyMutationAliases(input, context);
     validatePropertyPhotoCapacity(input, context);
+    validatePropertyPortfolioCreate(input, context);
     if (
       input.owner_notify_email &&
       !input.owner_id &&
@@ -409,6 +460,9 @@ export const propertyUpdateInputSchema = z
   .superRefine((input, context) => {
     validatePropertyMutationAliases(input, context);
     validatePropertyPhotoCapacity(input, context);
+    if (input.third_party_kind === "partner" && input.partner_name !== undefined && !input.partner_name?.trim()) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["partner_name"], message: "Informe o nome do parceiro" });
+    }
     if (
       input.owner_notify_email &&
       "owner_email" in input &&

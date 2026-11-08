@@ -73,6 +73,28 @@ export const INTEGRATION_PROVIDER_CATALOG = {
       fallbackClassName: "bg-[#0866ff] text-white",
     },
   },
+  "meta-marketing": {
+    title: "Meta Marketing",
+    description:
+      "Leve campanhas, criativos e dados do Instagram para a dashboard de Marketing.",
+    defaultDetail: "Somente leitura",
+    category: "customer-engagement",
+    availability: "available",
+    defaultStatus: "not-connected",
+    capabilities: ["connection-management", "marketing-sync", "social-sync"],
+    featureFlag: null,
+    requiredModule: "campaigns",
+    requiredPermission: "settings_integrations",
+    requiresAdmin: true,
+    management: { kind: "route", href: "/settings/integrations/meta-marketing" },
+    icon: {
+      kind: "brand",
+      src: INTEGRATION_BRAND_ASSETS.meta,
+      alt: "Meta Marketing",
+      fallback: "M",
+      fallbackClassName: "bg-[#0866ff] text-white",
+    },
+  },
   "grupo-olx": {
     title: "Canal Pro",
     description:

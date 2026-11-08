@@ -35,7 +35,7 @@ const backendRealtimeBusPath = new URL(
 test("painel lista os agendamentos do recorte com paginação interna", async () => {
   const source = await readFile(panelPath, "utf8");
 
-  assert.match(source, />\s*Agendamentos\s*</);
+  assert.match(source, />\s*Lista de compromissos\s*</);
   assert.doesNotMatch(source, /Próximos agendamentos/);
   assert.match(
     source,
@@ -43,7 +43,7 @@ test("painel lista os agendamentos do recorte com paginação interna", async ()
   );
   assert.match(source, /overflow-y-auto/);
   assert.match(source, /Carregar mais/);
-  assert.match(source, /Atualizar lista de agendamentos/);
+  assert.match(source, /Atualizar lista de compromissos/);
   assert.match(source, /eventsQuery\.isFetching \|\| enabled === false/);
   assert.match(source, /event\.lead_name/);
   assert.match(source, /propertyLabel/);

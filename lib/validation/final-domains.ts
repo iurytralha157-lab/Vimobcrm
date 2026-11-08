@@ -548,6 +548,8 @@ export const apiDashboardStatsSchema = z.object({
   avgResponseTime: dashboardTextSchema(32),
   totalSalesValue: dashboardNonNegativeNumberSchema,
   pendingCommissions: dashboardNonNegativeNumberSchema,
+  // Entries compared with the previous period; older APIs omit it.
+  entriesTrend: dashboardTrendSchema.optional().default(0),
   leadsTrend: dashboardTrendSchema,
   openTrend: dashboardTrendSchema,
   lostTrend: dashboardTrendSchema,

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	pathpkg "path"
 	"sort"
@@ -1202,8 +1203,7 @@ func (repo Repository) CreatePropertyAssetUploadIntent(ctx context.Context, tena
 	if err := input.Validate(); err != nil {
 		return PropertyAssetUploadIntent{}, err
 	}
-	_ = repo.cleanupExpiredPropertyAssetUploads(ctx, tenantContext.OrganizationID, propertyAssetCleanupBatchSize)
-	_ = repo.cleanupQueuedPropertyAssetStorage(ctx, tenantContext.OrganizationID, propertyAssetCleanupBatchSize)
+	repo.cleanupPropertyAssetsWithinBudget(ctx, tenantContext.OrganizationID)
 
 	assetID, err := randomPropertyAssetUUID()
 	if err != nil {
@@ -1713,7 +1713,8 @@ func scrubLegacyPropertyPhotoLocator(ctx context.Context, tx pgx.Tx, organizatio
 }
 
 func (repo Repository) enrichWorkspaceAssetAccessURLs(ctx context.Context, organizationID string, propertyID string, assets []map[string]any) {
-	paths := []string{}
+	photoPaths := []string{}
+	privatePaths := []string{}
 	seen := map[string]struct{}{}
 	pathByAssetID := map[string]string{}
 	for _, asset := range assets {
@@ -1727,14 +1728,30 @@ func (repo Repository) enrichWorkspaceAssetAccessURLs(ctx context.Context, organ
 			continue
 		}
 		seen[storagePath] = struct{}{}
-		paths = append(paths, storagePath)
+		if workspaceString(asset, "asset_type") == "photo" && workspaceString(asset, "visibility") != "confidential" {
+			photoPaths = append(photoPaths, storagePath)
+		} else {
+			privatePaths = append(privatePaths, storagePath)
+		}
 	}
-	if len(paths) == 0 {
-		return
+	urls := map[string]string{}
+	if len(photoPaths) > 0 {
+		signed, err := repo.storage.createPhotoAccessURLs(ctx, propertyPrivateBucket, photoPaths)
+		if err != nil {
+			slog.WarnContext(ctx, "could not sign property photo access URLs", "error", err)
+		}
+		for path, url := range signed {
+			urls[path] = url
+		}
 	}
-	urls, err := repo.storage.createSignedURLs(ctx, propertyPrivateBucket, paths, propertyAssetAccessTTL)
-	if err != nil {
-		return
+	if len(privatePaths) > 0 {
+		signed, err := repo.storage.createSignedURLs(ctx, propertyPrivateBucket, privatePaths, propertyAssetAccessTTL)
+		if err != nil {
+			slog.WarnContext(ctx, "could not sign private property asset access URLs", "error", err)
+		}
+		for path, url := range signed {
+			urls[path] = url
+		}
 	}
 	for _, asset := range assets {
 		storagePath := pathByAssetID[workspaceString(asset, "id")]

@@ -13,8 +13,13 @@ const (
 	InactivityClockStageEntry      = "stage_entry"
 	InactivityClockLastInteraction = "last_interaction"
 	InactivityStartAtActivation    = "activation"
+	InactivityNewStageEntries      = "new_stage_entries"
 	InactivityIncludeOverdue       = "include_overdue"
 	inactivityMaximumAttempts      = 5
+
+	InactivityActionNotify       = "notify"
+	InactivityActionMoveStage    = "move_stage"
+	InactivityActionRedistribute = "redistribute"
 )
 
 var ErrInactivityPolicyIncomplete = errors.New("stage inactivity requires an explicit policy")
@@ -35,6 +40,10 @@ type StageInactivityPolicy struct {
 	Days                    int
 	Message                 string
 	Enabled                 bool
+	ActionKind              string
+	TargetStageID           *string
+	ActingUserID            *string
+	TargetRoundRobinID      *string
 }
 
 func (policy StageInactivityPolicy) Validate() error {
@@ -49,7 +58,7 @@ func (policy StageInactivityPolicy) Validate() error {
 	if policy.Clock != InactivityClockStageEntry && policy.Clock != InactivityClockLastInteraction {
 		return ErrInactivityPolicyIncomplete
 	}
-	if policy.StartMode != InactivityStartAtActivation && policy.StartMode != InactivityIncludeOverdue {
+	if policy.StartMode != InactivityStartAtActivation && policy.StartMode != InactivityIncludeOverdue && policy.StartMode != InactivityNewStageEntries {
 		return ErrInactivityPolicyIncomplete
 	}
 	if policy.Clock == InactivityClockLastInteraction && (policy.InteractionCoverageFrom == nil || policy.InteractionCoverageFrom.IsZero()) {
@@ -57,6 +66,39 @@ func (policy StageInactivityPolicy) Validate() error {
 	}
 	if len([]rune(policy.Message)) > 1000 {
 		return ErrInactivityPolicyIncomplete
+	}
+	if policy.ActionKind != InactivityActionRedistribute && policy.TargetRoundRobinID != nil {
+		return ErrInactivityPolicyIncomplete
+	}
+	switch policy.ActionKind {
+	case "", InactivityActionNotify: // rows written before the action column are alerts
+		if policy.TargetStageID != nil {
+			return ErrInactivityPolicyIncomplete
+		}
+	case InactivityActionMoveStage:
+		if policy.TargetStageID == nil {
+			return ErrInactivityPolicyIncomplete
+		}
+		if target, valid := normalizeUUID(*policy.TargetStageID); !valid || target == policy.StageID {
+			return ErrInactivityPolicyIncomplete
+		}
+	case InactivityActionRedistribute:
+		if policy.TargetStageID != nil || policy.TargetRoundRobinID == nil {
+			return ErrInactivityPolicyIncomplete
+		}
+		if _, valid := normalizeUUID(*policy.TargetRoundRobinID); !valid {
+			return ErrInactivityPolicyIncomplete
+		}
+	default:
+		return ErrInactivityPolicyIncomplete
+	}
+	if policy.Enabled && (policy.ActionKind == InactivityActionMoveStage || policy.ActionKind == InactivityActionRedistribute) {
+		if policy.ActingUserID == nil {
+			return ErrInactivityPolicyIncomplete
+		}
+		if _, valid := normalizeUUID(*policy.ActingUserID); !valid {
+			return ErrInactivityPolicyIncomplete
+		}
 	}
 	return nil
 }
@@ -94,6 +136,9 @@ func evaluateInactivityEpisode(policy StageInactivityPolicy, lead inactivityLead
 	}
 	if lead.StageEnteredAt.IsZero() || lead.ScopeStartedAt.IsZero() {
 		return inactivityEpisode{}, false, ErrInactivityPolicyIncomplete
+	}
+	if policy.StartMode == InactivityNewStageEntries && lead.StageEnteredAt.Before(policy.ActivatedAt) {
+		return inactivityEpisode{}, false, nil
 	}
 	baseline := laterTime(lead.StageEnteredAt, lead.ScopeStartedAt)
 	if policy.Clock == InactivityClockLastInteraction {

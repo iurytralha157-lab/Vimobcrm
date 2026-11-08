@@ -59,7 +59,7 @@ export function PropertyFormPreview({ formData }: { formData: PropertyFormData }
           ) : (
             <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-10 w-10 opacity-40" aria-hidden="true" /></div>
           )}
-          <span className="absolute left-3 top-3 rounded-[4px] bg-black/65 px-2 py-1 text-[10px] text-white">{preview.dealType || "Modalidade"}</span>
+          <span className="absolute left-3 top-3 rounded-[4px] bg-[var(--app-surface-solid)] px-1.5 py-0.5 text-[11px] font-light text-[var(--app-text-primary)]">{preview.dealType || "Modalidade"}</span>
         </div>
         <div className="space-y-3 p-4">
           <div>

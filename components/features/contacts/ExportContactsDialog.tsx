@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   CheckCircle2,
   FileSpreadsheet,
@@ -44,6 +44,11 @@ import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
 import { getVimobAPIAccessTokenSessionId, getVimobAPIAccessTokenUserId } from '@/lib/api/vimob-client';
 import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
 import { captureLeadRequestIntent } from '@/lib/lead-request-intent';
+import { createContactExportDownload } from '@/lib/contact-export-download';
+
+type PreparedContactDownload = ReturnType<typeof createContactExportDownload> & {
+  isCurrent: () => boolean;
+};
 
 type ExportContactsDialogProps = {
   open: boolean;
@@ -94,11 +99,11 @@ function progressLabel(
   completedCount: number | null,
 ) {
   if (completedCount !== null) {
-    return `${formatPtBRNumber(completedCount)} contatos exportados.`;
+    return `Arquivo pronto com ${formatPtBRNumber(completedCount)} contato${completedCount === 1 ? '' : 's'}. Clique em Baixar arquivo.`;
   }
   if (!progress) return 'Preparando exportação...';
   if (progress.phase === 'generating') return 'Gerando o arquivo...';
-  if (progress.phase === 'downloading') return 'Finalizando o download...';
+  if (progress.phase === 'downloading') return 'Preparando o arquivo para baixar...';
   if (progress.total !== null) {
     return `Carregando ${formatPtBRNumber(progress.processed)} de ${formatPtBRNumber(progress.total)} contatos...`;
   }
@@ -128,9 +133,12 @@ export function ExportContactsDialog({
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState<ContactExportProgress | null>(null);
   const [completedCount, setCompletedCount] = useState<number | null>(null);
+  const [preparedDownload, setPreparedDownload] = useState<PreparedContactDownload | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState('format');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const preparedDownloadRef = useRef<PreparedContactDownload | null>(null);
+  const filtersKey = JSON.stringify(filters);
 
   useLayoutEffect(() => {
     const deactivate = exportScope.activate(open ? scopeKey : null);
@@ -139,6 +147,14 @@ export function ExportContactsDialog({
       const controller = abortControllerRef.current;
       abortControllerRef.current = null;
       controller?.abort();
+      const download = preparedDownloadRef.current;
+      preparedDownloadRef.current = null;
+      download?.dispose();
+      if (download) {
+        setPreparedDownload(null);
+        setCompletedCount(null);
+        setProgress(null);
+      }
       if (controller) {
         setIsExporting(false);
         setProgress(null);
@@ -146,7 +162,7 @@ export function ExportContactsDialog({
         onExportingChange?.(false);
       }
     };
-  }, [exportScope, scopeKey, open, onExportingChange]);
+  }, [exportScope, scopeKey, open, filtersKey, onExportingChange]);
 
   const normalizedColumnSearch = normalizeSearch(columnSearch);
   const activePreset = CONTACT_EXPORT_PRESETS.find((preset) =>
@@ -169,9 +185,21 @@ export function ExportContactsDialog({
   );
 
   const clearRunFeedback = () => {
+    preparedDownloadRef.current?.dispose();
+    preparedDownloadRef.current = null;
+    setPreparedDownload(null);
     setCompletedCount(null);
     setErrorMessage(null);
     setProgress(null);
+  };
+
+  const handleDownload = (event: MouseEvent<HTMLAnchorElement>) => {
+    const download = preparedDownloadRef.current;
+    if (!download || download !== preparedDownload || !download.isCurrent()) {
+      event.preventDefault();
+      clearRunFeedback();
+      setErrorMessage('O contexto da exportação mudou. Gere um novo arquivo antes de baixar.');
+    }
   };
 
   const toggleColumn = (key: ContactExportColumnKey, checked: boolean) => {
@@ -218,6 +246,7 @@ export function ExportContactsDialog({
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    clearRunFeedback();
     setIsExporting(true);
     onExportingChange?.(true);
     setCompletedCount(null);
@@ -235,15 +264,29 @@ export function ExportContactsDialog({
         signal: abortController.signal,
         requestIntent,
         shouldContinue,
+        onFileReady: (file) => {
+          abortController.signal.throwIfAborted();
+          if (abortControllerRef.current !== abortController || !shouldContinue()) {
+            throw new DOMException('O contexto da exportação mudou.', 'AbortError');
+          }
+          const download = { ...createContactExportDownload(file), isCurrent: shouldContinue };
+          preparedDownloadRef.current?.dispose();
+          preparedDownloadRef.current = download;
+          setPreparedDownload(download);
+        },
         onProgress: (nextProgress) => {
           if (abortControllerRef.current === abortController && shouldContinue()) setProgress(nextProgress);
         },
       });
       abortController.signal.throwIfAborted();
       if (abortControllerRef.current !== abortController || !shouldContinue()) return;
+      if (!preparedDownloadRef.current) throw new Error('Não foi possível preparar o arquivo para baixar. Tente novamente.');
       setCompletedCount(count);
     } catch (error: unknown) {
       if (abortControllerRef.current !== abortController || !shouldContinue()) return;
+      preparedDownloadRef.current?.dispose();
+      preparedDownloadRef.current = null;
+      setPreparedDownload(null);
       setProgress(null);
       setErrorMessage(
         isAbortError(error)
@@ -300,14 +343,18 @@ export function ExportContactsDialog({
             <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME}
               onClick={() => {
                 if (isExporting) cancelExport();
-                else if (activeStep === 'format') handleOpenChange(false);
+                else if (activeStep === 'format' || preparedDownload) handleOpenChange(false);
                 else setActiveStep(activeStep === 'review' ? 'columns' : 'format');
               }}
-            >{isExporting ? 'Cancelar exportação' : activeStep === 'format' ? 'Fechar' : 'Voltar'}</Button>
-            <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}
+            >{isExporting ? 'Cancelar exportação' : activeStep === 'format' || preparedDownload ? 'Fechar' : 'Voltar'}</Button>
+            {preparedDownload && activeStep === 'review' ? (
+              <Button asChild className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}>
+                <a href={preparedDownload.href} download={preparedDownload.filename} onClick={handleDownload}>Baixar arquivo</a>
+              </Button>
+            ) : <Button type="button" className={cn(FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, styles.primaryButton)}
               disabled={isExporting || (activeStep !== 'format' && selectedColumns.size === 0) || totalCount === 0}
               onClick={() => { if (activeStep === 'review') void handleExport(); else setActiveStep(activeStep === 'format' ? 'columns' : 'review'); }}
-            >{isExporting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}{activeStep !== 'review' ? 'Avançar' : completedCount !== null ? 'Exportar novamente' : 'Exportar'}</Button>
+            >{isExporting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}{activeStep !== 'review' ? 'Avançar' : 'Preparar arquivo'}</Button>}
           </>}
         >
         <div id={`${wizardId}-panel`} role="tabpanel" aria-labelledby={`${wizardId}-tab-${activeStep}`} className="flex min-h-0 flex-col gap-3">

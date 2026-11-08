@@ -44,7 +44,7 @@ export const propertyWorkspaceKeys = {
   ] as const,
 }
 
-function useWorkspaceQueryScope() {
+export function useWorkspaceQueryScope() {
   const {
     activeOrganization,
     user,

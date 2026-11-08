@@ -43,6 +43,7 @@ type storageClient struct {
 	projectURL string
 	apiKey     string
 	httpClient *http.Client
+	photoURLs  *propertyPhotoURLCache
 }
 
 type propertyStorageObjectInfo struct {
@@ -55,6 +56,7 @@ func newStorageClient(config StorageConfig) storageClient {
 		projectURL: strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
 		apiKey:     strings.TrimSpace(config.APIKey),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		photoURLs:  newPropertyPhotoURLCache(),
 	}
 }
 

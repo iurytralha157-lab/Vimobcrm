@@ -159,7 +159,7 @@ func (client authAdminClient) revokeSessions(ctx context.Context, authorization 
 	if client.projectURL == "" || client.apiKey == "" {
 		return ErrAuthNotConfigured
 	}
-	if (scope != "global" && scope != "others") ||
+	if (scope != "global" && scope != "others" && scope != "local") ||
 		!strings.HasPrefix(authorization, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")) == "" {
 		return ErrAuthOperation
 	}

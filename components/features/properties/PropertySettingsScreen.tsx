@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Panel } from "@/components/features/marketing/marketing-ui";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { PropertySectionTabs } from "@/components/features/properties/PropertySectionTabs";
@@ -11,14 +12,14 @@ import {
   isPropertySettingsConflict,
   PROPERTY_SETTINGS_CONFLICT_MESSAGE,
 } from "@/lib/property-settings-concurrency";
-import {
-  AlertTriangle,
-  Building2,
-  Eye,
-  Loader2,
-  PencilLine,
-} from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { PROPERTY_PRIMARY_BUTTON_CLASS, PROPERTY_SECONDARY_BUTTON_CLASS } from "./property-ui";
+import { SettingChoice } from "./settings/SettingChoice";
+import { PortfolioSettingsPanel } from "./settings/PortfolioSettingsPanel";
+import { PROPERTY_SETTINGS_GROUPS, type PropertySettingsGroupId } from "./settings/portfolio-settings-schema";
+import { usePortfolioSettingsForm } from "./settings/use-portfolio-settings-form";
 
 type PropertyEditPolicy = "everyone" | "responsible_or_admin";
 type OwnerVisibility = "visible" | "hidden";
@@ -45,7 +46,7 @@ function PropertySettingsContent() {
 
   if (activeOrganization.status === "resolving") {
     return (
-      <div className="max-w-4xl rounded-[8px] bg-card p-5 text-sm text-muted-foreground">
+      <div className="rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light text-[var(--app-text-secondary)]">
         Carregando configurações de imóveis...
       </div>
     );
@@ -60,8 +61,8 @@ function PropertySettingsContent() {
       activeOrganization.status === "missing"
       && activeOrganization.reason === "organization-load-failed";
     return (
-      <div className="max-w-4xl space-y-3 rounded-[8px] bg-card p-5 text-sm">
-        <p className="text-muted-foreground">
+      <div className="space-y-3 rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light">
+        <p className="text-[var(--app-text-secondary)]">
           {loadFailed
             ? "Não foi possível carregar as configurações desta organização."
             : "Nenhuma organização ativa está disponível para estas configurações."}
@@ -113,9 +114,20 @@ function PropertySettingsForm({
   const [hasConcurrencyConflict, setHasConcurrencyConflict] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshingConflict, setRefreshingConflict] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<PropertySettingsGroupId>("general");
+  const portfolio = usePortfolioSettingsForm();
   const hasChanges =
     editPolicy !== savedEditPolicy
     || ownerVisibility !== savedOwnerVisibility;
+
+  const handleSaveAll = async () => {
+    const portfolioSaved = await portfolio.save();
+    if (hasChanges) {
+      await handleSave();
+    } else if (portfolioSaved && portfolio.hasChanges) {
+      toast.success("Preferências da carteira salvas.");
+    }
+  };
 
   const handleSave = async () => {
     if (!hasChanges || hasConcurrencyConflict) return;
@@ -182,158 +194,154 @@ function PropertySettingsForm({
     }
   };
 
+  const group = PROPERTY_SETTINGS_GROUPS.find((item) => item.id === activeGroup) ?? PROPERTY_SETTINGS_GROUPS[0];
+
   return (
-    <div className="max-w-4xl space-y-4">
-      {hasConcurrencyConflict && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className="flex flex-col gap-3 rounded-[8px] bg-card p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div className="flex min-w-0 items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-            <div className="min-w-0 space-y-1">
-              <p className="font-medium">
-                Estas configurações foram alteradas em outra sessão.
-              </p>
-              <p className="text-muted-foreground">
-                Suas escolhas continuam neste formulário. Recarregue a versão
-                atual antes de tentar salvar novamente.
-              </p>
-            </div>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void handleReloadAfterConflict()}
-            disabled={refreshingConflict}
+    <div className="grid min-w-0 gap-3 lg:grid-cols-[216px_minmax(0,1fr)]">
+      <nav aria-label="Grupos de configurações" className="min-w-0 self-start rounded-[12px] bg-[var(--app-surface-solid)] p-2">
+        <ul className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:flex-col [&::-webkit-scrollbar]:hidden">
+          {PROPERTY_SETTINGS_GROUPS.map((item) => (
+            <li key={item.id} className="shrink-0">
+              <button
+                type="button"
+                aria-current={item.id === activeGroup ? "page" : undefined}
+                onClick={() => setActiveGroup(item.id)}
+                className={cn(
+                  "h-9 w-full rounded-[8px] px-3 text-left text-[13px] font-light transition-colors",
+                  item.id === activeGroup
+                    ? "bg-primary/10 text-primary"
+                    : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
+                )}
+              >
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <div className="min-w-0 space-y-3">
+        {hasConcurrencyConflict && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="flex flex-col gap-3 rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light sm:flex-row sm:items-center sm:justify-between"
           >
-            {refreshingConflict && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Recarregar configurações
-          </Button>
-        </div>
-      )}
-      <section className="rounded-[8px] bg-card p-5">
-        <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <Building2 className="h-4 w-4" strokeWidth={1.6} />
-          </div>
-          <div>
-            <h2 className="text-base font-medium">Configurações de imóveis</h2>
-            <p className="text-sm text-muted-foreground">Defina regras da carteira para esta organização.</p>
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
-            <div className="mb-4 flex items-center gap-2">
-              <PencilLine className="h-4 w-4 text-primary" strokeWidth={1.6} />
-              <div>
-                <h3 className="text-sm font-medium">Edição de imóveis</h3>
-                <p className="text-xs text-muted-foreground">Controle quem pode alterar dados dos imóveis.</p>
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <div className="min-w-0 space-y-1">
+                <p>Estas configurações foram alteradas em outra sessão.</p>
+                <p className="text-[var(--app-text-secondary)]">
+                  Suas escolhas continuam neste formulário. Recarregue a versão
+                  atual antes de tentar salvar novamente.
+                </p>
               </div>
             </div>
-            <div className="space-y-2">
-              <PolicyOption
-                value="responsible_or_admin"
-                label="Responsáveis e administradores"
-                description="Somente captador/responsável, gestores e admins podem editar."
-                selected={editPolicy === "responsible_or_admin"}
-                onSelect={() => setEditPolicy("responsible_or_admin")}
-              />
-              <PolicyOption
-                value="everyone"
-                label="Todos os usuários"
-                description="Todos podem editar apenas os imóveis que já têm permissão para visualizar."
-                selected={editPolicy === "everyone"}
-                onSelect={() => setEditPolicy("everyone")}
-              />
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              className={PROPERTY_SECONDARY_BUTTON_CLASS}
+              onClick={() => void handleReloadAfterConflict()}
+              disabled={refreshingConflict}
+            >
+              {refreshingConflict && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+              Recarregar configurações
+            </Button>
           </div>
-
-          <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
-            <div className="mb-4 flex items-center gap-2">
-              <Eye className="h-4 w-4 text-primary" strokeWidth={1.6} />
-              <div>
-                <h3 className="text-sm font-medium">Visualização do proprietário</h3>
-                <p className="text-xs text-muted-foreground">Proteja telefone e contato do proprietário.</p>
-              </div>
+        )}
+        {portfolio.conflict && (
+          <div role="alert" className="flex flex-col gap-3 rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <p>As preferências da carteira foram alteradas por outra pessoa. Recarregar substitui o que você mudou nesta tela.</p>
             </div>
-            <div className="space-y-2">
-              <PolicyOption
-                value="visible"
-                label="Mostrar contato"
-                description="Corretores podem ver nome, telefone e e-mail do proprietário."
-                selected={ownerVisibility === "visible"}
-                onSelect={() => setOwnerVisibility("visible")}
-              />
-              <PolicyOption
-                value="hidden"
-                label="Ocultar contato"
-                description="Corretores veem o nome, mas telefone e e-mail ficam ocultos."
-                selected={ownerVisibility === "hidden"}
-                onSelect={() => setOwnerVisibility("hidden")}
-              />
-            </div>
+            <Button type="button" variant="ghost" className={PROPERTY_SECONDARY_BUTTON_CLASS} onClick={() => void portfolio.reload()}>
+              Recarregar preferências
+            </Button>
           </div>
-        </div>
+        )}
 
-        <div className="mt-5 flex justify-end">
+        {activeGroup === "general" && (
+          <Panel title="Regras da carteira">
+            <SettingChoice
+              label="Quem pode editar"
+              description="Controle quem pode alterar dados dos imóveis."
+              options={[
+                {
+                  value: "responsible_or_admin",
+                  label: "Responsáveis e administradores",
+                  description: "Somente captador/responsável, gestores e admins podem editar.",
+                },
+                {
+                  value: "everyone",
+                  label: "Todos os usuários",
+                  description: "Todos podem editar apenas os imóveis que já têm permissão para visualizar.",
+                },
+              ]}
+              selected={editPolicy}
+              onSelect={(value) => setEditPolicy(value as PropertyEditPolicy)}
+            />
+          </Panel>
+        )}
+        {activeGroup === "owners" && (
+          <Panel title="Contato do proprietário">
+            <SettingChoice
+              label="Quem vê o contato"
+              description="Proteja telefone e contato do proprietário."
+              options={[
+                {
+                  value: "visible",
+                  label: "Mostrar contato",
+                  description: "Corretores podem ver nome, telefone e e-mail do proprietário.",
+                },
+                {
+                  value: "hidden",
+                  label: "Ocultar contato",
+                  description: "Corretores veem o nome, mas telefone e e-mail ficam ocultos.",
+                },
+              ]}
+              selected={ownerVisibility}
+              onSelect={(value) => setOwnerVisibility(value as OwnerVisibility)}
+            />
+          </Panel>
+        )}
+
+        {portfolio.loading ? (
+          <div className="rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light text-[var(--app-text-secondary)]">
+            Carregando preferências da carteira...
+          </div>
+        ) : portfolio.loadFailed || !portfolio.values ? (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-[12px] bg-[var(--app-surface-solid)] p-4 text-[13px] font-light">
+            Não foi possível carregar as preferências da carteira.
+            <Button type="button" variant="ghost" className={PROPERTY_SECONDARY_BUTTON_CLASS} onClick={portfolio.retry}>Tentar novamente</Button>
+          </div>
+        ) : (
+          <PortfolioSettingsPanel
+            group={group}
+            values={portfolio.values}
+            disabled={portfolio.saving || portfolio.conflict}
+            onChange={portfolio.setValue}
+          />
+        )}
+
+        <div className="flex justify-end">
           <Button
-            onClick={handleSave}
+            onClick={() => void handleSaveAll()}
+            className={PROPERTY_PRIMARY_BUTTON_CLASS}
             disabled={
               saving
+              || portfolio.saving
               || refreshingConflict
               || hasConcurrencyConflict
-              || !hasChanges
+              || portfolio.conflict
+              || (!hasChanges && !portfolio.hasChanges)
             }
           >
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {saving || portfolio.saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
             Salvar configurações
           </Button>
         </div>
-      </section>
+      </div>
     </div>
-  );
-}
-
-function PolicyOption({
-  value,
-  label,
-  description,
-  selected,
-  onSelect,
-}: {
-  value: string;
-  label: string;
-  description: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      data-value={value}
-      onClick={onSelect}
-      className={`flex w-full cursor-pointer items-start gap-3 rounded-[6px] p-3 text-left transition ${
-        selected
-          ? "bg-primary/10 text-foreground"
-          : "bg-background/60 text-foreground hover:bg-background"
-      }`}
-    >
-      <span
-        className={`mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full ${
-          selected ? "bg-primary" : "bg-muted-foreground/35"
-        }`}
-      />
-      <span className="space-y-0.5">
-        <span className="block text-sm font-medium">{label}</span>
-        <span className="block text-xs leading-relaxed text-muted-foreground">{description}</span>
-      </span>
-    </button>
   );
 }

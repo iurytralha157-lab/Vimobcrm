@@ -9,6 +9,7 @@ import { serializeContactTags } from '@/lib/contact-tag-transfer';
 import { validateContactExportLayout, validateContactExportXLSXCell } from '@/lib/contact-export-limits';
 import type { Contact, ContactListFilters } from '@/hooks/use-contacts-list';
 import type { VimobAPIRequestIntent } from '@/lib/api/vimob-client';
+import type { ContactExportFile } from '@/lib/contact-export-download';
 
 export { buildContactExportCSV, escapeContactExportCSVCell } from '@/lib/export-contacts-csv';
 
@@ -52,6 +53,7 @@ interface ExportOptions {
   requestIntent?: VimobAPIRequestIntent;
   shouldContinue?: () => boolean;
   onProgress?: (progress: ContactExportProgress) => void;
+  onFileReady?: (file: ContactExportFile) => void;
 }
 
 type ContactExportRow = Record<string, string | number | boolean | null | undefined>;
@@ -630,6 +632,7 @@ export async function exportContactsFiltered({
   requestIntent,
   shouldContinue,
   onProgress,
+  onFileReady,
 }: ExportOptions) {
   signal?.throwIfAborted();
   const { contacts, verifyVersion } = await fetchAllFilteredContacts(
@@ -672,7 +675,7 @@ export async function exportContactsFiltered({
       processed: contacts.length,
       total: contacts.length,
     });
-    await downloadCSV(contacts, filename, columns, verifyVersion, signal);
+    await downloadCSV(contacts, filename, columns, verifyVersion, signal, onFileReady);
     return contacts.length;
   }
 
@@ -696,7 +699,7 @@ export async function exportContactsFiltered({
     processed: contacts.length,
     total: contacts.length,
   });
-  await downloadWorkbook(workbook, filename, exportFormat, verifyVersion, signal);
+  await downloadWorkbook(workbook, filename, exportFormat, verifyVersion, signal, onFileReady);
   return contacts.length;
 }
 
@@ -738,6 +741,7 @@ async function downloadCSV(
   columns: readonly ExportColumn[],
   beforeDownload?: () => Promise<void>,
   signal?: AbortSignal,
+  onFileReady?: (file: ContactExportFile) => void,
 ) {
   const headers = columns.map((column) => column.header);
   const rows: Array<Array<ContactExportRow[string]>> = [];
@@ -763,6 +767,7 @@ async function downloadCSV(
     csv,
     `${filename}.csv`,
     'text/csv;charset=utf-8;',
+    onFileReady,
   );
 }
 
@@ -788,13 +793,14 @@ async function downloadWorkbook(
   exportFormat: ContactExportFormat,
   beforeDownload?: () => Promise<void>,
   signal?: AbortSignal,
+  onFileReady?: (file: ContactExportFile) => void,
 ) {
   if (exportFormat === 'csv') {
     const buffer = await prepareContactExportDownload(
       () => workbook.csv.writeBuffer(), beforeDownload, signal,
     );
     signal?.throwIfAborted();
-    downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;');
+    downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;', onFileReady);
     return;
   }
 
@@ -802,12 +808,21 @@ async function downloadWorkbook(
     () => workbook.xlsx.writeBuffer(), beforeDownload, signal,
   );
   signal?.throwIfAborted();
-  downloadFile(buffer, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  downloadFile(buffer, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', onFileReady);
 }
 
-function downloadFile(buffer: ExcelJS.Buffer | string | Array<ExcelJS.Buffer | string>, filename: string, mimeType: string) {
+function downloadFile(
+  buffer: ExcelJS.Buffer | string | Array<ExcelJS.Buffer | string>,
+  filename: string,
+  mimeType: string,
+  onFileReady?: (file: ContactExportFile) => void,
+) {
   const parts = Array.isArray(buffer) ? buffer : [buffer];
   const blob = new Blob(parts as BlobPart[], { type: mimeType });
+  if (onFileReady) {
+    onFileReady({ blob, filename });
+    return;
+  }
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;

@@ -796,6 +796,12 @@ func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "settings_storage_not_configured", "Settings storage is not configured.")
 	case errors.Is(err, ErrStorageOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "settings_storage_failed", "Settings storage operation failed.")
+	case errors.Is(err, ErrCurrentPasswordRequired):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "current_password_required", "Informe a senha atual.")
+	case errors.Is(err, ErrCurrentPasswordInvalid):
+		httpserver.WriteError(w, r, http.StatusForbidden, "current_password_invalid", "Não foi possível confirmar a senha atual. Confira a senha ou solicite um link de recuperação.")
+	case errors.Is(err, ErrCurrentPasswordRateLimited):
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, "current_password_rate_limited", "Muitas tentativas de confirmação. Aguarde alguns minutos e tente novamente.")
 	case errors.Is(err, ErrPasswordSessionRevocationUnconfirmed):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "password_session_revocation_unconfirmed", "A senha não foi atualizada porque não foi possível confirmar o encerramento das sessões. Tente novamente.")
 	case errors.Is(err, ErrPasswordUpdateAfterRevocationUnconfirmed):

@@ -25,7 +25,7 @@ before(async () => {
   }
   const iconNames = new Set();
   const sourceFiles = [
-    'components/features/pipelines/StageSettingsDialog.tsx', 'components/features/pipelines/StagesEditorDialog.tsx', 'components/features/pipelines/pipeline-screen/StageColumnMenu.tsx',
+    'components/features/pipelines/StageSettingsDialog.tsx', 'components/features/pipelines/StagesEditorDialog.tsx', 'components/features/pipelines/stage-settings-footer.tsx', 'components/features/pipelines/stage-inactivity-alert.tsx', 'components/features/pipelines/pipeline-screen/StageColumnMenu.tsx',
     'components/features/automations/AutomationForm.tsx', 'components/features/automations/AutomationsList.tsx',
     'components/features/cadences/StageOperationalRules.tsx',
     ...(await readdir(join(repository, 'components/features/cadences/stage-operational-rules'))).filter(file => /\.tsx?$/.test(file) && !file.includes('.test.')).map(file => `components/features/cadences/stage-operational-rules/${file}`),
@@ -44,15 +44,18 @@ before(async () => {
   await mock('@/hooks/use-organization-modules', 'export const useOrganizationModules=()=>({hasModule:module=>!(window.h.denyAutomations&&module==="automations")});');
   await mock('@/hooks/use-can-edit-cadences', 'export const useCanEditCadences=()=>true;');
   await mock('@/hooks/use-users', 'export const useOrganizationUsers=()=>({data:[{id:"22222222-2222-4222-8222-222222222222",name:"Corretor sintético"}],isPending:false,isError:false,refetch:async()=>{}});');
+  await mock('@/hooks/use-round-robins', 'export const useRoundRobins=()=>({data:[{id:"88888888-8888-4888-8888-888888888888",name:"Equipe de retomada",is_active:true,target_stage:{name:"Retomar contato"}}],isSuccess:true,isPending:false,isError:false});');
   await mock('@/lib/local-read-only', 'export const isLocalReadOnlyMode=()=>false;');
   await mock('@/lib/api/vimob-client', 'export class VimobAPIError extends Error {}');
   await mock('@/components/features/pipelines/StageColorPicker', 'export const StageColorPicker=()=>null;');
   const mutation = `import React from'react';function useMutation(kind){const[pending,setPending]=React.useState(false);return{isPending:pending,capture:payload=>({...payload}),discard:()=>{},isCurrent:()=>true,isScopeCurrent:()=>true,mutateAsync:async payload=>{setPending(true);try{return await window.h.mutate(kind,payload)}finally{setPending(false)}}};}`;
-  await mock('@/hooks/use-stages', `${mutation}const scopeKey={};const scoped=kind=>({...useMutation(kind),scopeKey,captureScopeGuard:()=>()=>true});export const useUpdateStage=()=>scoped('general');export const useReorderStages=()=>scoped('reorder');export const useDeleteStage=()=>scoped('stage-delete');`);
+  await mock('@/hooks/use-stages', `${mutation}const scopeKey={};const scoped=kind=>({...useMutation(kind),scopeKey,captureScopeGuard:()=>()=>true});export const useUpdateStage=()=>scoped('general');export const useStages=()=>({data:window.h.stages,isPending:false});export const useReorderStages=()=>scoped('reorder');export const useDeleteStage=()=>scoped('stage-delete');`);
   await mock('@/hooks/use-stage-automations', `${mutation}
     export const useStageAutomations=()=>({data:window.h.list,isLoading:false,isError:window.h.listError,isFetching:false,refetch:async()=>{window.h.retries++;return{data:window.h.list}}});
     export const useCreateStageAutomation=()=>({...useMutation('create'),scopeKey:'synthetic-settings',captureScopeGuard:()=>()=>true});export const useUpdateStageAutomation=()=>useMutation('update');export const useDeleteStageAutomation=()=>useMutation('delete');export const useToggleStageAutomation=()=>useMutation('toggle');
-    export const AUTOMATION_TYPE_LABELS={alert_on_inactivity:'Alerta por inatividade',change_assignee_on_enter:'Mudar responsável',change_deal_status_on_enter:'Mudar status'};export const AUTOMATION_TYPE_DESCRIPTIONS={};export const DEAL_STATUS_LABELS={open:'Aberto',won:'Ganho',lost:'Perdido'};`);
+    export const AUTOMATION_TYPE_LABELS={alert_on_inactivity:'Alerta por inatividade',change_assignee_on_enter:'Mudar responsável',change_deal_status_on_enter:'Mudar status',move_stage_on_inactivity:'Mudar etapa por tempo parado',redistribute_on_inactivity:'Redistribuir lead por tempo parado'};
+    export const isInactivityAutomationType=type=>['alert_on_inactivity','move_stage_on_inactivity','redistribute_on_inactivity'].includes(type);
+    export const managedInactivityAlert=list=>list?.filter(item=>item.automation_type==='alert_on_inactivity'&&(item.inactivity_policy?.action??'notify')==='notify').sort((a,b)=>(a.created_at??'').localeCompare(b.created_at??'')||a.id.localeCompare(b.id))[0]??null;export const AUTOMATION_TYPE_DESCRIPTIONS={};export const DEAL_STATUS_LABELS={open:'Aberto',won:'Ganho',lost:'Perdido'};`);
   await mock('@/hooks/use-stage-inactivity-automation', `${mutation}export const useStageInactivityAutomation=()=>({...useMutation('inactivity'),scopeKey:'synthetic-settings'});`);
   await mock('@/hooks/cadences', `${mutation}export const useStageOperationalRules=()=>({data:window.h.rules,isPending:false,refetch:async()=>({data:window.h.rules})});export const useUpdateStageOperationalRules=()=>({...useMutation('rules'),captureScopeGuard:()=>()=>true});`);
   await mock('@/hooks/cadences/use-stage-operational-rules', 'export const stageOperationalRulesErrorMessage=(error,fallback)=>error?.message||fallback;');
@@ -63,11 +66,11 @@ before(async () => {
   const entry = join(directory, 'entry.js');
   await writeFile(entry, `import React from'react';import{createRoot}from'react-dom/client';import{StageSettingsDialog}from'@/components/features/pipelines/StageSettingsDialog';import{StagesEditorDialog}from'@/components/features/pipelines/StagesEditorDialog';import{AutomationsList}from'@/components/features/automations/AutomationsList';import{AutomationForm}from'@/components/features/automations/AutomationForm';import{StageColumnMenu}from'@/components/features/pipelines/pipeline-screen/StageColumnMenu';
     const id='11111111-1111-4111-8111-111111111111',pipeline='33333333-3333-4333-8333-333333333333';
-    const h=window.h={open:true,mode:'settings',list:[],listError:false,retries:0,calls:[],pending:null,stage:{id,name:'Novo',color:'#123456',stage_key:'new',pipeline_id:pipeline,position:0,updated_at:'2026-10-12T12:00:00Z'}};
+    const h=window.h={open:true,mode:'settings',list:[],stages:[],moveTargets:[{id:'44444444-4444-4444-8444-444444444444',name:'Retomar contato'}],listError:false,retries:0,calls:[],pending:null,stage:{id,name:'Novo',color:'#123456',stage_key:'new',pipeline_id:pipeline,position:0,updated_at:'2026-10-12T12:00:00Z'}};
     h.rules={stage_id:id,pipeline_id:pipeline,revision:7,cadence:{enabled:true,tasks:[{id:'55555555-5555-4555-8555-555555555555',position:0,type:'call',title:'Ligar',due_minutes:60,is_required:true,outcome_required:true}]},attention:{source_mode:'inherit',mode:'enabled',warning_minutes:0,business_hours_only:false},lifecycle:{on_stage_move:'skip_pending',on_won:'cancel_pending',on_lost:'cancel_pending',on_reopen:'new_cycle'}};
     h.mutate=(kind,payload)=>{h.calls.push({kind,payload});return new Promise((resolve,reject)=>{h.pending={resolve:()=>resolve(kind==='rules'?{...h.rules,...payload,revision:8}:{}),reject:()=>reject(Error('Falha sintética'))}})};
     const root=createRoot(document.getElementById('root'));
-    h.render=()=>root.render(h.mode==='menu'?React.createElement(React.Fragment,null,React.createElement(StageColumnMenu,{stageName:h.stage.name,isMobile:false,onSelect:(tab,returnFocusElement)=>{h.initialTab=tab;h.returnFocusElement=returnFocusElement;h.open=true;h.render()}}),h.open?React.createElement(StageSettingsDialog,{key:h.stage.id+':'+h.initialTab,initialTab:h.initialTab,returnFocusElement:h.returnFocusElement,open:true,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):null):h.mode==='settings'?React.createElement(StageSettingsDialog,{initialTab:h.initialTab,open:h.open,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):h.mode==='editor'?React.createElement(StagesEditorDialog,{open:h.open,pipelineId:pipeline,pipelineName:'Vendas',stages:[h.stage],archivedStages:h.archivedStages||[],onOpenChange:open=>{h.open=open;h.render()}}):h.mode==='list'?React.createElement(AutomationsList,{stageId:id,canEdit:true}):React.createElement(AutomationForm,{stageId:id,pipelineId:pipeline,onSuccess:()=>{h.success=true},onCancel:()=>{h.cancelled=true}}));`);
+    h.render=()=>root.render(h.mode==='menu'?React.createElement(React.Fragment,null,React.createElement(StageColumnMenu,{stageName:h.stage.name,isMobile:false,onSelect:(tab,returnFocusElement)=>{h.initialTab=tab;h.returnFocusElement=returnFocusElement;h.open=true;h.render()}}),h.open?React.createElement(StageSettingsDialog,{key:h.stage.id+':'+h.initialTab,initialTab:h.initialTab,returnFocusElement:h.returnFocusElement,open:true,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):null):h.mode==='settings'?React.createElement(StageSettingsDialog,{initialTab:h.initialTab,open:h.open,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):h.mode==='editor'?React.createElement(StagesEditorDialog,{open:h.open,pipelineId:pipeline,pipelineName:'Vendas',stages:[h.stage],archivedStages:h.archivedStages||[],onOpenChange:open=>{h.open=open;h.render()}}):h.mode==='list'?React.createElement(AutomationsList,{stageId:id,canEdit:true,stageNames:{'44444444-4444-4444-8444-444444444444':'Retomar contato'},hideManagedAlert:h.hideManagedAlert}):React.createElement(AutomationForm,{stageId:id,pipelineId:pipeline,moveTargets:h.moveTargets,onSuccess:()=>{h.success=true},onCancel:()=>{h.cancelled=true}}));`);
   await new Promise((done, reject) => {
     const compiler = webpack({ mode: 'development', target: 'web', entry, output: { path: directory, filename: 'settings.js' },
       resolve: { extensions: ['.ts', '.tsx', '.js'], modules: [join(repository, 'node_modules'), 'node_modules'], alias: { ...aliases, '@': repository } },
@@ -114,7 +117,7 @@ test('column settings preserve draft on cancelled discard and close only after e
 test('column menu opens the selected real sheet tab and releases focus after closing', async () => {
   const page = await open('menu', { open: false });
   try {
-    for (const [label, tabName] of [['Configurações da coluna', 'Configurações Gerais'], ['Regras da etapa', 'Regras da etapa'], ['Automações', 'Automações']]) {
+    for (const [label, tabName] of [['Configurações da coluna', 'Geral'], ['Regras da etapa', 'Regras da etapa'], ['Automações', 'Automações']]) {
       await page.getByRole('button', { name: 'Configurar coluna Novo', exact: true }).click();
       const menu = page.getByRole('menu');
       await menu.waitFor();
@@ -171,19 +174,105 @@ test('automation switches serialize requests and failed delete keeps confirmatio
   } finally { await page.close(); }
 });
 
-test('automation save catches failure, disables controls and preserves draft', async () => {
+test('move rule is created disabled through the inactivity runtime and keeps the draft on failure', async () => {
   const page = await open('form');
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   try {
-    await page.getByLabel('Mensagem do Alerta', { exact: true }).fill('Ligar para o lead');
+    await page.getByLabel('Tipo de Automação', { exact: true }).click();
+    await page.getByRole('option', { name: 'Mudar etapa por tempo parado', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Criar Automação' }).isDisabled(), true);
+    await page.getByLabel('Dias sem atividade', { exact: true }).fill('5');
+    await page.getByLabel('Mover para a coluna', { exact: true }).click();
+    await page.getByRole('option', { name: 'Retomar contato', exact: true }).click();
     await page.getByRole('button', { name: 'Criar Automação' }).click();
-    assert.equal(await page.getByLabel('Mensagem do Alerta', { exact: true }).isDisabled(), true);
+    assert.equal(await page.getByLabel('Dias sem atividade', { exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole('button', { name: 'Cancelar', exact: true }).isDisabled(), true);
+    assert.deepEqual(await page.evaluate(() => window.h.calls[0]), { kind: 'inactivity', payload: { input: {
+      trigger_days: 5, alert_message: '', clock: 'last_interaction', start_mode: 'new_stage_entries', action: 'move_stage',
+      target_stage_id: '44444444-4444-4444-8444-444444444444', stage_id: '11111111-1111-4111-8111-111111111111', is_enabled: false } } });
     await page.evaluate(() => window.h.pending.reject());
     await page.getByRole('alert').waitFor();
-    assert.equal(await page.getByLabel('Mensagem do Alerta', { exact: true }).inputValue(), 'Ligar para o lead');
+    assert.equal(await page.getByLabel('Dias sem atividade', { exact: true }).inputValue(), '5');
     assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('redistribution uses the selected queue and can include leads already in the column', async () => {
+  const page = await open('settings', { initialTab: 'automations' });
+  try {
+    await page.getByRole('button', { name: 'Nova automação', exact: true }).click();
+    await page.getByLabel('Tipo de Automação', { exact: true }).click();
+    await page.getByRole('option', { name: 'Redistribuir lead por tempo parado', exact: true }).click();
+    const create = page.getByRole('button', { name: 'Criar Automação' });
+    assert.equal(await create.isDisabled(), true);
+    await page.getByLabel('Dias sem atividade', { exact: true }).fill('6');
+    await page.getByLabel('Distribuição', { exact: true }).click();
+    await page.getByRole('option', { name: 'Equipe de retomada', exact: true }).click();
+    await page.getByText('A distribuição também envia o lead para Retomar contato.').waitFor();
+    await page.getByLabel('Aplicar a quais leads?', { exact: true }).click();
+    await page.getByRole('option', { name: 'Incluir quem já está na coluna', exact: true }).click();
+    await create.click();
+    await page.waitForFunction(() => window.h.calls.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.h.calls[0]), { kind: 'inactivity', payload: { input: {
+      trigger_days: 6, alert_message: '', clock: 'last_interaction', start_mode: 'activation', action: 'redistribute',
+      target_round_robin_id: '88888888-8888-4888-8888-888888888888', stage_id: '11111111-1111-4111-8111-111111111111', is_enabled: false } } });
+  } finally { await page.close(); }
+});
+
+test('settings actions sit in the fixed footer: gray Cancelar and orange Salvar', async () => {
+  const page = await open();
+  try {
+    const footer = page.locator('[role="dialog"] > div.border-t');
+    assert.equal(await footer.getByRole('button', { name: 'Cancelar', exact: true }).count(), 1);
+    const save = footer.getByRole('button', { name: 'Salvar', exact: true });
+    assert.equal(await save.isDisabled(), true);
+    assert.match(await save.getAttribute('class'), /bg-primary/);
+    assert.match(await footer.getByRole('button', { name: 'Cancelar', exact: true }).getAttribute('class'), /app-surface-soft/);
+    assert.equal(await page.getByRole('tabpanel').getByRole('button', { name: 'Salvar', exact: true }).count(), 0);
+    await page.getByLabel('Nome da coluna', { exact: true }).fill('Contato');
+    await save.click();
+    await page.waitForFunction(() => window.h.calls.length === 1);
+    assert.equal(await page.evaluate(() => window.h.calls[0].payload.name), 'Contato');
+    assert.equal(await save.isDisabled(), true);
+    await page.getByRole('tab', { name: 'Regras da etapa' }).click();
+    assert.equal(await page.getByRole('tab', { name: 'Geral' }).getAttribute('aria-selected'), 'true');
+  } finally { await page.close(); }
+});
+
+test('inactivity alert is visible above other deadlines and saved by Salvar regras', async () => {
+  const page = await open('settings', { initialTab: 'cadence' });
+  try {
+    const save = page.getByRole('button', { name: 'Salvar regras', exact: true });
+    assert.equal(await save.isDisabled(), true);
+    assert.equal(await page.getByText('Usar regras padrão', { exact: true }).isVisible(), false);
+    await page.getByRole('switch', { name: 'Ativar aviso de lead parado' }).click();
+    await page.getByLabel('Dias sem atividade', { exact: true }).fill('4');
+    assert.match(await page.getByText(/Sem atividade por 4 dias, o responsável recebe um aviso/).innerText(), /4 dias/);
+    await save.click();
+    await page.waitForFunction(() => window.h.calls.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.h.calls[0]), { kind: 'inactivity', payload: { input: {
+      trigger_days: 4, alert_message: '', clock: 'last_interaction', start_mode: 'new_stage_entries', stage_id: '11111111-1111-4111-8111-111111111111', is_enabled: false } } });
+    // The synthetic API reports no inactivity runtime: the rule stays disabled and says so.
+    await page.evaluate(() => window.h.pending.resolve());
+    await page.getByText(/O aviso foi mantido desativado/).waitFor();
+    assert.equal(await page.evaluate(() => window.h.calls.length), 1);
+  } finally { await page.close(); }
+});
+
+test('automations list leaves the managed alert to the rules tab and describes move rules', async () => {
+  const policy = { revision: 2, is_enabled: true, effective_enabled: true, runtime_available: true, clock: 'last_interaction', start_mode: 'activation' };
+  const page = await open('list', { hideManagedAlert: true, list: [
+    { id: 'alert', automation_type: 'alert_on_inactivity', trigger_days: 3, alert_message: 'Parado', is_active: true, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-16T12:00:00Z', inactivity_policy: { ...policy, action: 'notify' } },
+    { id: 'move', automation_type: 'move_stage_on_inactivity', trigger_days: 5, target_stage_id: '44444444-4444-4444-8444-444444444444', is_active: true, created_at: '2026-10-02T00:00:00Z', updated_at: '2026-10-16T12:00:00.5Z', inactivity_policy: { ...policy, action: 'move_stage', target_stage_id: '44444444-4444-4444-8444-444444444444' } },
+  ] });
+  try {
+    await page.getByText('5 dias sem atividade → Retomar contato').waitFor();
+    assert.equal(await page.getByText('3 dias - Parado').count(), 0);
+    await page.getByRole('switch').click();
+    assert.deepEqual(await page.evaluate(() => window.h.calls[0].payload), { id: 'move', runtimeAvailable: true, input: {
+      trigger_days: 5, alert_message: '', is_enabled: false, clock: 'last_interaction', start_mode: 'activation',
+      expected_updated_at: '2026-10-16T12:00:00.5Z', expected_policy_revision: 2, action: 'move_stage', target_stage_id: '44444444-4444-4444-8444-444444444444' } });
   } finally { await page.close(); }
 });
 

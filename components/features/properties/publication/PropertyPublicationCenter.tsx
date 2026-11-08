@@ -5,7 +5,6 @@ import {
   CircleAlert,
   Globe2,
   RefreshCw,
-  Send,
 } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -26,6 +25,7 @@ import type {
 } from '@/lib/validation'
 
 import { PropertyPublicationChannelCard } from './PropertyPublicationChannelCard'
+import { PropertyPublicationHistory } from './PropertyPublicationHistory'
 import { firstPublicationPreviewImages } from './preview-images'
 import { getSitePublicationState } from './site-publication-state'
 
@@ -181,37 +181,21 @@ export function PropertyPublicationCenter({ propertyId, assets, hasAssetPhotos }
 
   return (
     <div className="space-y-3">
-      <div className="app-toolbar flex flex-col gap-3 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
-            <Send className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">Central de Publicação</h2>
-            <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-              Confira pendências e gerencie cada canal.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <span className="rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-light text-[var(--app-text-secondary)]">
-            {readyCount} de {publications.length} prontos
-          </span>
-          <span className="rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-light text-[var(--app-text-secondary)]">
-            {activeDistributionCount} disponibilizações ativas
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={publicationsQuery.isFetching}
-            onClick={() => publicationsQuery.refetch()}
-            className="h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${publicationsQuery.isFetching ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
-        </div>
+      <div className="flex flex-wrap items-center gap-2 text-[12px] font-light text-[var(--app-text-secondary)]">
+        <span>{readyCount} de {publications.length} prontos</span>
+        <span aria-hidden="true">·</span>
+        <span>{activeDistributionCount} disponibilizações ativas</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={publicationsQuery.isFetching}
+          onClick={() => publicationsQuery.refetch()}
+          className="ml-auto h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${publicationsQuery.isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
+          Atualizar
+        </Button>
       </div>
 
       {conflictedChannels.map((channel) => (
@@ -251,7 +235,7 @@ export function PropertyPublicationCenter({ propertyId, assets, hasAssetPhotos }
           </p>
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid min-w-0 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {publications.map((publication) => (
             <PropertyPublicationChannelCard
               key={`${publication.channel}:${publication.channel_account_key}`}
@@ -267,6 +251,8 @@ export function PropertyPublicationCenter({ propertyId, assets, hasAssetPhotos }
           ))}
         </div>
       )}
+
+      {publications.length > 0 && <PropertyPublicationHistory publications={publications} />}
     </div>
   )
 }

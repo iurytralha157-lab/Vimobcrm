@@ -42,9 +42,7 @@ async function launcher(page, kind, width) {
   if (kind !== 'teams' && width < 1024) await page.getByRole('tab', { name: 'Origem', exact: true }).click();
   const trigger = kind === 'teams'
     ? page.getByRole('button', { name: 'Escolher equipes exibidas', exact: true })
-    : kind === 'all-sources'
-      ? page.getByRole('button', { name: 'Ver 547 origens', exact: true })
-      : page.getByRole('button', { name: /^Outras origens:/ });
+    : page.getByRole('button', { name: 'Ver 547 origens', exact: true });
   await trigger.scrollIntoViewIfNeeded();
   return trigger;
 }
@@ -63,7 +61,7 @@ async function close(page, method) {
   await page.waitForTimeout(250);
 }
 
-for (const width of [390, 1280]) for (const kind of ['teams', 'all-sources', 'other-sources']) {
+for (const width of [390, 1280]) for (const kind of ['teams', 'all-sources']) {
   test(`${kind} returns focus after Escape, X and selection at ${width}px`, async () => {
     await withPage(width, async (page) => {
       const observations = [];
@@ -104,7 +102,7 @@ test('canceling a team draft restores focus without applying it', async () => {
   });
 });
 
-for (const width of [390, 1280]) test(`the Other SVG slice returns to its equivalent legend button at ${width}px`, async () => {
+for (const width of [390, 1280]) test(`the Outras origens slice returns focus to the Ver origens button at ${width}px`, async () => {
   await withPage(width, async (page) => {
     const trigger = await launcher(page, 'other-sources', width);
     await page.locator('[data-tour="dashboard-sources"] path.recharts-sector').last().dispatchEvent('click');

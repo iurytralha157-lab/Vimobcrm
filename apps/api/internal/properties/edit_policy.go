@@ -31,6 +31,7 @@ var protectedPropertyOwnerUpdateFields = []string{
 	"owner_media_source",
 	"origin_media",
 	"owner_notify_email",
+	"partner_contact",
 }
 
 var protectedPropertyMediaUpdateFields = []string{

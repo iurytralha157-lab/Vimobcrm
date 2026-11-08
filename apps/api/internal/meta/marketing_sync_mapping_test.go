@@ -593,3 +593,17 @@ func marketingSyncLeadAdStory(pageID, formID string) map[string]any {
 		},
 	}
 }
+
+func TestMarketingSyncScopeSQLLeavesIntegrationStatementsUntouched(t *testing.T) {
+	query := "insert into public.marketing_accounts (a) values ($2::uuid) on conflict do update set integration_id = excluded.integration_id where integration_id = $3::uuid"
+	if got := marketingSyncScopeSQL(query, "11111111-1111-4111-8111-111111111111"); got != query {
+		t.Fatalf("integration statement changed: %s", got)
+	}
+	got := marketingSyncScopeSQL(query, "")
+	if strings.Contains(got, "integration_id = $3::uuid") || !strings.Contains(got, "integration_id is null and $3 = ''") {
+		t.Fatalf("connection filter = %s", got)
+	}
+	if !strings.Contains(got, "coalesce(excluded.integration_id, marketing_accounts.integration_id)") {
+		t.Fatalf("connection upsert = %s", got)
+	}
+}

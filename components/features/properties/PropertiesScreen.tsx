@@ -7,13 +7,6 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SearchableFilterSelect } from "@/components/shared/SearchableFilterSelect";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   AlertDialog,
@@ -34,7 +27,6 @@ import {
   RefreshCw,
   SlidersHorizontal,
   X,
-  ChevronDown,
 } from "lucide-react";
 import {
   useInfiniteProperties,
@@ -46,7 +38,6 @@ import {
 import { PropertyCard } from "@/components/features/properties/PropertyCard";
 import { PropertyHistoryDialog } from "@/components/features/properties/PropertyHistoryDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
-import { PropertyOwnerCombobox } from "@/components/features/properties/PropertyOwnerCombobox";
 import { PropertySectionTabs } from "@/components/features/properties/PropertySectionTabs";
 import { VimobLoader } from "@/components/shared/loading";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -65,18 +56,21 @@ import {
   canUpdatePropertyAvailability,
 } from "@/lib/access/properties";
 import { cn } from "@/lib/utils";
+import { KpiCard, KpiRow } from "@/components/features/marketing/marketing-ui";
+import { formatCount } from "@/components/features/marketing/marketing-format";
+import { usePropertyCatalogStats } from "@/hooks/properties/use-property-catalog-stats";
+import { findPropertyPerson, formatPropertyMoney, plural } from "@/components/features/properties/property-display";
+import { ALL_FILTER_VALUE, PropertyFiltersPanel } from "@/components/features/properties/list/PropertyFiltersPanel";
+import { LaunchDevelopmentsSection } from "@/components/features/properties/list/LaunchDevelopmentsSection";
+import { getPresetFilters, type PropertyCatalogPreset } from "@/components/features/properties/list/property-catalog-presets";
 import { getPropertySiteInfo } from "@/lib/api/property-support";
 import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
-import { getUserFilterLabel } from "@/lib/user-display";
 import { getPropertyNumericFilterErrors, getPropertyCatalogLocationId } from "@/lib/validation/property-filter-input";
-import {
-  formatFixedBRLCurrency,
-  formatPtBRNumber,
-} from "@/lib/utils/formatting";
+import { formatPtBRNumber } from "@/lib/utils/formatting";
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return "Preço não informado";
-  const formatted = formatFixedBRLCurrency(value);
+  const formatted = formatPropertyMoney(value);
   const normalizedType = (tipo || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -94,22 +88,10 @@ const formatPrice = (value: number | null, tipo: string | null) => {
   return formatted;
 };
 
-const ALL_FILTER_VALUE = "__all__";
-
-export type PropertyCatalogPreset = "all" | "launches" | "rentals";
+export type { PropertyCatalogPreset };
 
 type PropertiesScreenProps = {
   preset?: PropertyCatalogPreset;
-};
-
-const getPresetFilters = (preset: PropertyCatalogPreset): PropertyFilters => {
-  if (preset === "rentals") {
-    return { tipo_de_negocio: "rental_catalog" };
-  }
-  if (preset === "launches") {
-    return { tipo_de_negocio: "Lançamento" };
-  }
-  return {};
 };
 
 const getStatusFilterValue = (filters: PropertyFilters) => {
@@ -142,8 +124,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const [historyProperty, setHistoryProperty] = useState<Property | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
-  const [selectedOwnerLabel, setSelectedOwnerLabel] = useState("");
   const [deletePropertyTarget, setDeletePropertyTarget] =
     useState<Property | null>(null);
   const isMobile = useIsMobile();
@@ -210,6 +190,10 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteProperties(debouncedSearch, 24, debouncedFilters, {
+    enabled: !hasInvalidNumericFilters,
+  });
+
+  const statsQuery = usePropertyCatalogStats(debouncedSearch, debouncedFilters, {
     enabled: !hasInvalidNumericFilters,
   });
 
@@ -310,7 +294,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const clearFilters = () => {
     setSearch("");
     setFilters(getPresetFilters(preset));
-    setSelectedOwnerLabel("");
   };
 
   const updateStatusFilter = (value: string) => {
@@ -348,620 +331,34 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const selectedNeighborhood = neighborhoods.find(
     (neighborhood) => filters.neighborhood_id ? neighborhood.id === filters.neighborhood_id : neighborhood.name === filters.bairro,
   );
-  const modalidadeLabel =
-    filters.tipo_de_negocio === "rental_catalog"
-      ? "Locação e temporada"
-      : filters.tipo_de_negocio === "Lançamento"
-        ? "Lançamento"
-        : filters.tipo_de_negocio === "Aluguel"
-          ? "Locação"
-          : filters.tipo_de_negocio === "Venda e Aluguel"
-            ? "Venda e locação"
-            : filters.tipo_de_negocio || "Modalidade";
   const isRentalCatalog = preset === "rentals";
   const isLaunchCatalog = preset === "launches";
+  const isReadyCatalog = preset === "ready";
+  const isThirdPartyCatalog = preset === "third_party";
   const activeSection = isRentalCatalog
     ? "rentals"
     : isLaunchCatalog
       ? "developments"
-      : "all";
+      : isReadyCatalog
+        ? "ready"
+        : isThirdPartyCatalog
+          ? "third_party"
+          : "all";
   const pageTitle = isRentalCatalog
     ? "Imóveis para locação e temporada"
     : isLaunchCatalog
       ? "Imóveis em lançamento"
-      : "Imóveis";
+      : isReadyCatalog
+        ? "Imóveis prontos"
+        : isThirdPartyCatalog
+          ? "Imóveis de terceiros"
+          : "Imóveis";
   const searchPlaceholder = isRentalCatalog
     ? "Buscar imóveis para locação ou temporada"
     : isLaunchCatalog
       ? "Buscar imóveis em lançamento"
-      : "Buscar endereço, nome, bairro ou código";
-  const statusFilterLabel =
-    statusFilterValue === "available"
-      ? "Disponível"
-      : statusFilterValue === "reserved"
-        ? "Reservado"
-        : statusFilterValue === "sold"
-          ? "Vendido"
-          : statusFilterValue === "rented"
-            ? "Alugado"
-            : statusFilterValue === "inactive"
-              ? "Inativo"
-              : "Status comercial";
-  const siteVisibilityLabel =
-    siteVisibilityValue === "published"
-      ? "No site"
-      : siteVisibilityValue === "unpublished"
-        ? "Fora do site"
-        : "Publicação no site";
-  const permutaLabel =
-    filters.aceita_permuta === "true"
-      ? "Aceita permuta"
-      : filters.aceita_permuta === "false"
-        ? "Não aceita permuta"
-        : "Permuta";
-  const financingLabel =
-    filters.aceita_financiamento === "true"
-      ? "Aceita financiamento"
-      : filters.aceita_financiamento === "false"
-        ? "Não aceita financiamento"
-        : "Financiamento";
-  const furnitureLabel = filters.mobilia || "Mobília";
-  const exclusiveLabel =
-    filters.exclusividade === "true"
-      ? "Com exclusividade"
-      : filters.exclusividade === "false"
-        ? "Sem exclusividade"
-        : "Exclusividade";
-  const signLabel =
-    filters.placa_no_local === "true"
-      ? "Com placa"
-      : filters.placa_no_local === "false"
-        ? "Sem placa"
-        : "Placa no local";
-  const featuredLabel =
-    filters.destaque === "true"
-      ? "Em destaque"
-      : filters.destaque === "false"
-        ? "Sem destaque"
-        : "Destaque";
-
-  const filtersPanel = (
-    <aside
-      data-tour="properties-filters-panel"
-      aria-label="Filtros dos imóveis"
-      className="properties-filter-panel flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-0 shadow-none"
-    >
-      <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-[14px] font-normal">
-            <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <SlidersHorizontal className="h-4 w-4" />
-            </span>
-            Filtros
-            {activeFilterCount > 0 && (
-              <span className="rounded-[4px] bg-primary/50 px-2 py-0.5 text-[10px] font-light text-primary-foreground">
-                {activeFilterCount}
-              </span>
-            )}
-          </h2>
-        </div>
-        {activeFilterCount > 0 && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={clearFilters}
-            className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-          >
-            Limpar
-          </Button>
-        )}
-      </div>
-
-      <div className="app-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        {Object.keys(numericFilterErrors).length > 0 && (
-          <div id="property-filter-errors" role="alert" className="rounded-[6px] bg-destructive/10 p-2 text-[12px] text-destructive">
-            {Object.values(numericFilterErrors).map((message) => <p key={message}>{message}</p>)}
-            <p>Corrija os valores para atualizar os resultados.</p>
-          </div>
-        )}
-        <div className="grid grid-cols-1 gap-3">
-          <div data-tour="properties-filter-modality">
-            <Select
-              value={filters.tipo_de_negocio || ALL_FILTER_VALUE}
-              onValueChange={(value) => updateFilter("tipo_de_negocio", value)}
-            >
-              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    !filters.tipo_de_negocio && "text-muted-foreground",
-                  )}
-                >
-                  {modalidadeLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                {isRentalCatalog ? (
-                  <>
-                    <SelectItem value="rental_catalog">
-                      Locação e temporada
-                    </SelectItem>
-                    <SelectItem value="Aluguel">Locação</SelectItem>
-                    <SelectItem value="Temporada">Temporada</SelectItem>
-                  </>
-                ) : isLaunchCatalog ? (
-                  <SelectItem value="Lançamento">Lançamento</SelectItem>
-                ) : (
-                  <>
-                    <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
-                    <SelectItem value="Venda">Venda</SelectItem>
-                    <SelectItem value="Aluguel">Locação</SelectItem>
-                    <SelectItem value="Venda e Aluguel">
-                      Venda e locação
-                    </SelectItem>
-                    <SelectItem value="Temporada">Temporada</SelectItem>
-                    <SelectItem value="Lançamento">Lançamento</SelectItem>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div data-tour="properties-filter-availability">
-            <Select
-              value={statusFilterValue}
-              onValueChange={updateStatusFilter}
-            >
-              <SelectTrigger aria-label="Filtrar por status comercial" className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    statusFilterValue === ALL_FILTER_VALUE &&
-                      "text-muted-foreground",
-                  )}
-                >
-                  {statusFilterLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todos os status</SelectItem>
-                <SelectItem value="available">Disponível</SelectItem>
-                <SelectItem value="reserved">Reservado</SelectItem>
-                <SelectItem value="sold">Vendido</SelectItem>
-                <SelectItem value="rented">Alugado</SelectItem>
-                <SelectItem value="inactive">Inativo</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div data-tour="properties-filter-site-publication">
-            <Select
-              value={siteVisibilityValue}
-              onValueChange={updateSiteVisibilityFilter}
-            >
-              <SelectTrigger aria-label="Filtrar por publicação no site" className="border-0 bg-[var(--app-surface-soft)]">
-                <span
-                  className={cn(
-                    "truncate",
-                    siteVisibilityValue === ALL_FILTER_VALUE &&
-                      "text-muted-foreground",
-                  )}
-                >
-                  {siteVisibilityLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                <SelectItem value="published">No site</SelectItem>
-                <SelectItem value="unpublished">Fora do site</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div data-tour="properties-filter-type">
-            <SearchableFilterSelect value={filters.tipo_de_imovel || null} onChange={value => updateFilter("tipo_de_imovel", value || ALL_FILTER_VALUE)} options={propertyTypes.map(type => ({ value: type, label: type }))} allLabel="Todos os tipos" ariaLabel="Tipo de imóvel" />
-          </div>
-
-          <div
-            data-tour="properties-filter-location"
-            className="grid grid-cols-2 gap-2"
-          >
-            <SearchableFilterSelect value={selectedCity?.id || null} onChange={value => updateCityFilter(value || ALL_FILTER_VALUE)} options={cities.map(city => ({ value: city.id, label: `${city.name}${city.uf ? ` (${city.uf})` : ""}` }))} allLabel="Todas as cidades" ariaLabel="Cidade" />
-            <SearchableFilterSelect value={selectedNeighborhood?.id || null} onChange={value => updateNeighborhoodFilter(value || ALL_FILTER_VALUE)} options={neighborhoods.map(item => ({ value: item.id, label: selectedCity ? item.name : [item.name, item.city?.name, item.city?.uf].filter(Boolean).join(", ") }))} allLabel="Todos os bairros" ariaLabel="Bairro" />
-          </div>
-
-          <div data-tour="properties-filter-responsible">
-            <SearchableFilterSelect value={filters.responsavel_id || null} onChange={value => updateFilter("responsavel_id", value || ALL_FILTER_VALUE)} options={users.map(user => ({ value: user.id, label: getUserFilterLabel(user) }))} allLabel="Todos os responsáveis" ariaLabel="Responsável" />
-          </div>
-
-          <div
-            data-tour="properties-filter-value"
-            className="grid grid-cols-2 gap-2"
-          >
-            <div>
-              <Input
-                value={filters.valor_min || ""}
-                aria-label="Valor mínimo"
-                aria-invalid={Boolean(numericFilterErrors.valor_min)}
-                aria-describedby={numericFilterErrors.valor_min ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("valor_min", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Valor mín."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <div>
-              <Input
-                value={filters.valor_max || ""}
-                aria-label="Valor máximo"
-                aria-invalid={Boolean(numericFilterErrors.valor_max)}
-                aria-describedby={numericFilterErrors.valor_max ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("valor_max", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Valor máx."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-          </div>
-        </div>
-
-        <button
-          data-tour="properties-filter-more"
-          type="button"
-          onClick={() => setAdvancedFiltersOpen((open) => !open)}
-          className="flex h-10 w-full items-center justify-between rounded-md bg-[var(--app-surface-soft)] px-3 text-sm font-medium transition-colors hover:bg-[var(--app-surface-hover)]"
-        >
-          Mais filtros
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 transition-transform",
-              advancedFiltersOpen && "rotate-180",
-            )}
-          />
-        </button>
-
-        {advancedFiltersOpen && (
-          <div data-tour="properties-filter-more-panel" className="space-y-3">
-            <div>
-              <PropertyOwnerCombobox
-                value={filters.owner_id}
-                selectedLabel={selectedOwnerLabel || "Proprietário"}
-                ariaLabel="Filtrar por proprietário"
-                onSelect={(owner) => {
-                  setSelectedOwnerLabel(owner?.name || "");
-                  updateFilter("owner_id", owner?.id || ALL_FILTER_VALUE);
-                }}
-              />
-            </div>
-
-            <div>
-              <SearchableFilterSelect value={filters.condominium_id || null} onChange={value => updateFilter("condominium_id", value || ALL_FILTER_VALUE)} options={condominiums.map(item => ({ value: item.id, label: item.name }))} allLabel="Todos os condomínios" ariaLabel="Condomínio" />
-            </div>
-
-            <div>
-              <Select
-                value={filters.mobilia || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("mobilia", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.mobilia && "text-muted-foreground",
-                    )}
-                  >
-                    {furnitureLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
-                  <SelectItem value="Mobiliado">Mobiliado</SelectItem>
-                  <SelectItem value="Semi-mobiliado">Semi-mobiliado</SelectItem>
-                  <SelectItem value="Sem mobília">Sem mobília</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Select
-                  value={filters.quartos_min || ALL_FILTER_VALUE}
-                  onValueChange={(value) => updateFilter("quartos_min", value)}
-                >
-                  <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                    <span
-                      className={cn(
-                        "truncate",
-                        !filters.quartos_min && "text-muted-foreground",
-                      )}
-                    >
-                      {filters.quartos_min
-                        ? `${filters.quartos_min}+`
-                        : "Quartos"}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                    <SelectItem value="1">1+</SelectItem>
-                    <SelectItem value="2">2+</SelectItem>
-                    <SelectItem value="3">3+</SelectItem>
-                    <SelectItem value="4">4+</SelectItem>
-                    <SelectItem value="5">5+</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Select
-                  value={filters.suites_min || ALL_FILTER_VALUE}
-                  onValueChange={(value) => updateFilter("suites_min", value)}
-                >
-                  <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                    <span
-                      className={cn(
-                        "truncate",
-                        !filters.suites_min && "text-muted-foreground",
-                      )}
-                    >
-                      {filters.suites_min ? `${filters.suites_min}+` : "Suítes"}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                    <SelectItem value="1">1+</SelectItem>
-                    <SelectItem value="2">2+</SelectItem>
-                    <SelectItem value="3">3+</SelectItem>
-                    <SelectItem value="4">4+</SelectItem>
-                    <SelectItem value="5">5+</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Select
-                  value={filters.banheiros_min || ALL_FILTER_VALUE}
-                  onValueChange={(value) =>
-                    updateFilter("banheiros_min", value)
-                  }
-                >
-                  <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                    <span
-                      className={cn(
-                        "truncate",
-                        !filters.banheiros_min && "text-muted-foreground",
-                      )}
-                    >
-                      {filters.banheiros_min
-                        ? `${filters.banheiros_min}+`
-                        : "Banheiros"}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                    <SelectItem value="1">1+</SelectItem>
-                    <SelectItem value="2">2+</SelectItem>
-                    <SelectItem value="3">3+</SelectItem>
-                    <SelectItem value="4">4+</SelectItem>
-                    <SelectItem value="5">5+</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Select
-                  value={filters.vagas_min || ALL_FILTER_VALUE}
-                  onValueChange={(value) => updateFilter("vagas_min", value)}
-                >
-                  <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                    <span
-                      className={cn(
-                        "truncate",
-                        !filters.vagas_min && "text-muted-foreground",
-                      )}
-                    >
-                      {filters.vagas_min ? `${filters.vagas_min}+` : "Vagas"}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                    <SelectItem value="1">1+</SelectItem>
-                    <SelectItem value="2">2+</SelectItem>
-                    <SelectItem value="3">3+</SelectItem>
-                    <SelectItem value="4">4+</SelectItem>
-                    <SelectItem value="5">5+</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={filters.area_util_min || ""}
-                aria-label="Área útil mínima"
-                aria-invalid={Boolean(numericFilterErrors.area_util_min)}
-                aria-describedby={numericFilterErrors.area_util_min ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("area_util_min", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Área útil mín."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-              <Input
-                value={filters.area_util_max || ""}
-                aria-label="Área útil máxima"
-                aria-invalid={Boolean(numericFilterErrors.area_util_max)}
-                aria-describedby={numericFilterErrors.area_util_max ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("area_util_max", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Área útil máx."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={filters.area_total_min || ""}
-                aria-label="Área total mínima"
-                aria-invalid={Boolean(numericFilterErrors.area_total_min)}
-                aria-describedby={numericFilterErrors.area_total_min ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("area_total_min", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Área total mín."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-              <Input
-                value={filters.area_total_max || ""}
-                aria-label="Área total máxima"
-                aria-invalid={Boolean(numericFilterErrors.area_total_max)}
-                aria-describedby={numericFilterErrors.area_total_max ? "property-filter-errors" : undefined}
-                onChange={(event) =>
-                  updateFilter("area_total_max", event.target.value)
-                }
-                inputMode="numeric"
-                placeholder="Área total máx."
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-
-            <div>
-              <Select
-                value={filters.aceita_financiamento || ALL_FILTER_VALUE}
-                onValueChange={(value) =>
-                  updateFilter("aceita_financiamento", value)
-                }
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.aceita_financiamento && "text-muted-foreground",
-                    )}
-                  >
-                    {financingLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Indiferente</SelectItem>
-                  <SelectItem value="true">Aceita</SelectItem>
-                  <SelectItem value="false">Não aceita</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Select
-                value={filters.aceita_permuta || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("aceita_permuta", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.aceita_permuta && "text-muted-foreground",
-                    )}
-                  >
-                    {permutaLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Indiferente</SelectItem>
-                  <SelectItem value="true">Aceita</SelectItem>
-                  <SelectItem value="false">Não aceita</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Select
-                value={filters.exclusividade || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("exclusividade", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.exclusividade && "text-muted-foreground",
-                    )}
-                  >
-                    {exclusiveLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Indiferente</SelectItem>
-                  <SelectItem value="true">Com exclusividade</SelectItem>
-                  <SelectItem value="false">Sem exclusividade</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Select
-                value={filters.placa_no_local || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("placa_no_local", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.placa_no_local && "text-muted-foreground",
-                    )}
-                  >
-                    {signLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Indiferente</SelectItem>
-                  <SelectItem value="true">Com placa</SelectItem>
-                  <SelectItem value="false">Sem placa</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Select
-                value={filters.destaque || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("destaque", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.destaque && "text-muted-foreground",
-                    )}
-                  >
-                    {featuredLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Indiferente</SelectItem>
-                  <SelectItem value="true">Em destaque</SelectItem>
-                  <SelectItem value="false">Sem destaque</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
-
-        {isMobile && (
-          <Button
-            type="button"
-            className="h-10 w-full rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
-            onClick={() => setFiltersOpen(false)}
-          >
-            Ver imóveis
-          </Button>
-        )}
-      </div>
-    </aside>
-  );
-
+      : "Buscar por endereço, nome, bairro ou código";
+  const stats = statsQuery.data;
   if (isLoading && !data) {
     return (
       <AppLayout title={pageTitle}>
@@ -979,30 +376,37 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
     <AppLayout title={pageTitle}>
       <div className="properties-screen animate-in space-y-3">
         <PropertySectionTabs activeSection={activeSection} />
-        {isLaunchCatalog && canCreateProperty && (
-          <div className="app-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[14px] font-normal">Estrutura do lançamento</p>
-              <p className="mt-1 text-[12px] text-[var(--app-text-secondary)]">
-                Organize empreendimentos, fases, torres, plantas e unidades. As fichas dos imóveis continuam nesta carteira.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push("/properties/developments")}
-              className="h-9 shrink-0"
-            >
-              <Building2 className="mr-2 h-4 w-4" aria-hidden="true" />
-              Gerenciar empreendimentos
-            </Button>
-          </div>
+        {isLaunchCatalog ? (
+          <LaunchDevelopmentsSection canManageCatalog={canCreateProperty} />
+        ) : (
+          <KpiRow>
+            <KpiCard
+              label="Na carteira"
+              value={formatCount(stats?.total)}
+              note={stats ? `${plural(stats.sale, "de venda", "de venda")} · ${plural(stats.rental, "de locação", "de locação")}` : undefined}
+            />
+            <KpiCard
+              label="Disponíveis"
+              value={formatCount(stats?.available)}
+              note={stats ? plural(stats.reserved, "reservado", "reservados") : undefined}
+            />
+            <KpiCard
+              label="Publicados no site"
+              value={formatCount(stats ? stats.total - stats.private : undefined)}
+              note={stats ? `${formatCount(stats.private)} fora do site` : undefined}
+            />
+            <KpiCard
+              label="Vendidos e alugados"
+              value={formatCount(stats ? stats.sold + stats.rented : undefined)}
+              note={stats ? `${plural(stats.sold, "vendido", "vendidos")} · ${plural(stats.rented, "alugado", "alugados")}` : undefined}
+            />
+          </KpiRow>
         )}
         <div className="min-w-0 space-y-3">
             <div className="app-toolbar flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
               <div
                 data-tour="properties-filter-search"
-                className="relative w-full min-w-0 flex-1 sm:max-w-[420px]"
+                className="relative w-full min-w-0 flex-1"
               >
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
                 <Input
@@ -1018,7 +422,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               </div>
 
               <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
-                <span className="min-w-0 truncate text-[12px] font-light text-[var(--app-text-secondary)] sm:mr-auto sm:pl-1">
+                <span className="min-w-0 truncate text-[12px] font-light text-[var(--app-text-secondary)] sm:pl-1">
                   {hasInvalidNumericFilters ? "Revise os filtros numéricos" : isFilterUpdating
                     ? "Atualizando carteira..."
                     : `${formatPtBRNumber(totalCount)} ${isRentalCatalog ? "imóveis para locação ou temporada" : isLaunchCatalog ? "imóveis em lançamento" : "imóveis"}`}
@@ -1039,7 +443,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                   <Button
                     data-tour="properties-new-button"
                     onClick={() => router.push("/properties/new")}
-                    className="h-8 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                    className="h-8 shrink-0 rounded-[6px] bg-primary px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
                   >
                     <Plus className="mr-1.5 h-3.5 w-3.5" />
                     {isMobile ? "Novo" : "Novo imóvel"}
@@ -1062,8 +466,8 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               {error && (
                 <div className="app-card-soft flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-3">
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                      <AlertTriangle className="h-4 w-4" />
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-destructive/10 text-destructive">
+                      <AlertTriangle className="h-4 w-4" aria-hidden="true" />
                     </span>
                     <div>
                       <h2 className="text-[14px] font-normal">
@@ -1093,8 +497,8 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
               {!error && properties.length === 0 && (
                 <Card className="app-card">
                   <CardContent className="py-12 text-center">
-                    <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                      <Building2 className="h-5 w-5" />
+                    <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]">
+                      <Building2 className="h-5 w-5" aria-hidden="true" />
                     </div>
                     <h3 className="mb-1 text-[14px] font-normal">
                       {activeFilterCount > 0
@@ -1103,7 +507,11 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                           ? "Nenhum imóvel para locação ou temporada"
                           : isLaunchCatalog
                             ? "Nenhum imóvel em lançamento"
-                            : "Nenhum imóvel cadastrado"}
+                            : isReadyCatalog
+                              ? "Nenhum imóvel pronto"
+                              : isThirdPartyCatalog
+                                ? "Nenhum imóvel de terceiro"
+                                : "Nenhum imóvel cadastrado"}
                     </h3>
                     <p className="mb-4 text-[12px] font-light text-[var(--app-text-secondary)]">
                       {activeFilterCount > 0
@@ -1112,7 +520,9 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                           ? "Cadastre um imóvel para locação ou temporada para vê-lo aqui."
                           : isLaunchCatalog
                             ? "Cadastre um imóvel com modalidade de lançamento para vê-lo aqui."
-                            : "Cadastre o primeiro imóvel para começar a carteira."}
+                            : isThirdPartyCatalog
+                              ? "Cadastre um imóvel de parceiro ou proprietário particular para vê-lo aqui."
+                              : "Cadastre o primeiro imóvel para começar a carteira."}
                     </p>
                     {activeFilterCount > 0 ? (
                       <Button
@@ -1128,7 +538,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                       <Button
                         type="button"
                         onClick={() => router.push("/properties/new")}
-                        className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                        className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
                       >
                         <Plus className="mr-1.5 h-3.5 w-3.5" />
                         Cadastrar imóvel
@@ -1138,7 +548,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                 </Card>
               )}
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {properties.map((property, index) => {
                   const canEditProperty = property.can_edit;
 
@@ -1164,6 +574,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                       canUpdateAvailability={canUpdateAvailability}
                       canDelete={canDeleteProperty}
                       siteInfo={siteInfo}
+                      responsible={findPropertyPerson(users, property.responsible_user_id, property.cadastrado_por)}
                       prioritizeImage={index === 0}
                     />
                   );
@@ -1176,7 +587,7 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
                     type="button"
                     onClick={() => fetchNextPage()}
                     disabled={isFetchingNextPage}
-                    className="h-9 min-w-[200px] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                    className="h-9 min-w-[200px] rounded-[6px] bg-[var(--app-surface-solid)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
                   >
                     {isFetchingNextPage ? (
                       <>
@@ -1203,7 +614,30 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
             )}
           >
             <SheetTitle className="sr-only">Filtros dos imóveis</SheetTitle>
-            {filtersPanel}
+            <PropertyFiltersPanel
+              preset={preset}
+              filters={filters}
+              activeFilterCount={activeFilterCount}
+              numericFilterErrors={numericFilterErrors}
+              statusFilterValue={statusFilterValue}
+              siteVisibilityValue={siteVisibilityValue}
+              propertyTypes={propertyTypes}
+              cities={cities}
+              selectedCityId={selectedCity?.id || null}
+              neighborhoods={neighborhoods}
+              selectedNeighborhoodId={selectedNeighborhood?.id || null}
+              hasSelectedCity={Boolean(selectedCity)}
+              condominiums={condominiums}
+              users={users}
+              isMobile={isMobile}
+              updateFilter={updateFilter}
+              updateCityFilter={updateCityFilter}
+              updateNeighborhoodFilter={updateNeighborhoodFilter}
+              updateStatusFilter={updateStatusFilter}
+              updateSiteVisibilityFilter={updateSiteVisibilityFilter}
+              clearFilters={clearFilters}
+              onClose={() => setFiltersOpen(false)}
+            />
           </SheetContent>
         </Sheet>
 

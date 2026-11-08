@@ -131,7 +131,7 @@ test('a second expired URL renews while the creative remains mounted, without an
   assert.equal(view.render().thumbnail.props.creative.imageUrl, image(3));
 });
 
-test('an expired lookup in a fresh cache still fetches, and an explicit retry remounts the same URL', async (context) => {
+test('an expired lookup in a fresh cache still fetches, and a retry from the preview remounts the same URL', async (context) => {
   let now = 200_000;
   context.mock.method(Date, 'now', () => now);
   const view = harness(context);
@@ -142,9 +142,10 @@ test('an expired lookup in a fresh cache still fetches, and an explicit retry re
   before.thumbnail.props.onUnavailable();
   now += 30_000;
   const failed = view.render();
-  const retry = find(failed.row, (element) => element.type === 'button' && element.props.children === 'Atualizar miniatura');
-  assert.ok(retry);
-  retry.props.onClick(); view.render(); await turn();
+  // The ranking shows no refresh buttons: recovery lives in the image preview.
+  assert.equal(find(failed.row, (element) => element.type === 'button' && element.props.children === 'Atualizar miniatura'), null);
+  find(failed.row, (element) => element.type === 'button' && element.props['aria-label']?.includes('Visualizar imagem')).props.onClick();
+  find(view.render().row, (element) => element.type?.name === 'CreativeImageDialog').props.onRetry(); view.render(); await turn();
   assert.equal(view.requests, 2);
   const after = view.render();
   assert.equal(after.thumbnail.props.creative.imageUrl, image(2));
@@ -173,16 +174,14 @@ test('a transient refresh failure offers bounded manual recovery without automat
   view.reply(Object.assign(new Error('Synthetic unavailable'), { status: 503 }));
   view.render().thumbnail.props.onUnavailable(); view.render(); await turn();
   assert.equal(view.requests, 1);
-  const retry = () => find(view.render().row, (element) => element.type === 'button' && element.props.children === 'Atualizar miniatura');
-  retry().props.onClick(); view.render(); await turn();
+  const preview = () => find(view.render().row, (element) => element.type?.name === 'CreativeImageDialog');
+  find(view.render().row, (element) => element.type === 'button' && element.props['aria-label']?.includes('Visualizar imagem')).props.onClick();
+  assert.ok(preview());
+  preview().props.onRetry(); view.render(); await turn();
   assert.equal(view.requests, 1);
-  assert.ok(find(view.render().row, (element) => element.type === 'span' && element.props.children === 'Atualização recente. Tente novamente em instantes.'));
+  assert.equal(preview().props.refreshHint, 'Atualização recente. Tente novamente em instantes.');
   now += 30_000; view.reply(media(2));
-  const previewButton = find(view.render().row, (element) => element.type === 'button' && element.props['aria-label']?.includes('Visualizar imagem'));
-  previewButton.props.onClick();
-  const preview = find(view.render().row, (element) => element.type?.name === 'CreativeImageDialog');
-  assert.ok(preview);
-  preview.props.onRetry(); view.render(); await turn();
+  preview().props.onRetry(); view.render(); await turn();
   assert.equal(view.requests, 2);
   assert.equal(view.render().thumbnail.props.creative.imageUrl, image(2));
 });

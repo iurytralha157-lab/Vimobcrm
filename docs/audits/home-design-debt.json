@@ -1,43 +1,43 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "c24342cdef4e20081b712664bf88556ac095f6647dd7343795fd3b277a51c305",
-  "surfaceInventoryDigestSha256": "92a19fee19c8ec0539fa899c6c8deec0658404f628309f547983fff5634ab8a5",
+  "sourceDigestSha256": "c18085e74151ce9ab91bd797b9aa01edabd8bee6faa69c4436d0bd045802480c",
+  "surfaceInventoryDigestSha256": "a9de7ac1310bb40b0a23dbc1ffde016c1b094974f10b75f97145716f0928e911",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 620,
+    "filesScanned": 667,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 52,
-    "findings": 136,
-    "protectedReachableFilesWithFindings": 50,
-    "protectedReachableFindings": 134,
+    "filesWithFindings": 64,
+    "findings": 147,
+    "protectedReachableFilesWithFindings": 60,
+    "protectedReachableFindings": 143,
     "bySurfaceScope": {
-      "protected-only": 93,
+      "protected-only": 102,
       "protected-and-public": 41,
       "public-only": 2,
-      "infrastructure": 0
+      "infrastructure": 2
     },
     "byPriority": {
-      "P1": 68,
-      "P2": 28,
-      "P3": 40
+      "P1": 103,
+      "P2": 26,
+      "P3": 18
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 12,
+        "count": 11,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
       },
       "medium-shadow": {
-        "count": 9,
+        "count": 8,
         "guidance": "Blocos Home não usam sombra; validar se a elevação é realmente necessária.",
         "label": "Sombra fora do padrão",
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 4,
+        "count": 40,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
@@ -55,19 +55,19 @@
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 15,
+        "count": 17,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
       },
       "aggressive-motion": {
-        "count": 3,
+        "count": 0,
         "guidance": "Remover scale/translate decorativo de cards e ações operacionais.",
         "label": "Movimento agressivo",
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 40,
+        "count": 18,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -120,38 +120,66 @@
       }
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "count": 5,
-      "score": 20,
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "count": 7,
+      "score": 21,
       "rules": {
-        "hardcoded-color": 5
+        "oversized-radius": 7
       }
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "count": 8,
-      "score": 8,
-      "rules": {
-        "uppercase-tracking": 8
-      }
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
       "count": 6,
-      "score": 8,
+      "score": 16,
       "rules": {
-        "medium-shadow": 1,
-        "hardcoded-surface": 1,
-        "uppercase-tracking": 4
+        "oversized-radius": 1,
+        "uppercase-tracking": 1,
+        "heavy-shadow": 1,
+        "hardcoded-color": 1,
+        "hardcoded-surface": 2
       }
     },
     {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "count": 5,
-      "score": 8,
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "count": 4,
+      "score": 14,
       "rules": {
-        "uppercase-tracking": 4,
-        "heavy-shadow": 1
+        "oversized-radius": 2,
+        "hardcoded-color": 2
+      }
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "count": 4,
+      "score": 12,
+      "rules": {
+        "oversized-radius": 4
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 1,
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/properties/developments/DevelopmentCatalogCard.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
       }
     },
     {
@@ -171,12 +199,28 @@
       }
     },
     {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 5,
+      "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
+      "count": 2,
       "score": 6,
       "rules": {
-        "uppercase-tracking": 4,
-        "aggressive-motion": 1
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingMediaTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyAssetManager.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
       }
     },
     {
@@ -194,15 +238,6 @@
       "score": 4,
       "rules": {
         "uppercase-tracking": 4
-      }
-    },
-    {
-      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
-      "count": 2,
-      "score": 4,
-      "rules": {
-        "medium-shadow": 1,
-        "hardcoded-surface": 1
       }
     },
     {
@@ -263,14 +298,6 @@
     },
     {
       "file": "components/features/marketing/MarketingTrendChart.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -350,33 +377,7 @@
       }
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "count": 2,
-      "score": 3,
-      "rules": {
-        "uppercase-tracking": 1,
-        "aggressive-motion": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-      "count": 2,
-      "score": 3,
-      "rules": {
-        "uppercase-tracking": 1,
-        "aggressive-motion": 1
-      }
-    },
-    {
       "file": "components/features/auth/AuthSplitLayout.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingTabViews.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -392,6 +393,86 @@
       }
     },
     {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSummary.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/tabs/KeysTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/OwnersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
       "file": "components/features/settings/IntegrationsTab.tsx",
       "count": 1,
       "score": 3,
@@ -400,99 +481,19 @@
       }
     },
     {
-      "file": "components/features/whatsapp/message-bubble/MessageText.tsx",
+      "file": "components/features/site/dashboard/SiteJourneysTab.tsx",
       "count": 1,
       "score": 3,
       "rules": {
-        "heavy-font": 1
+        "oversized-radius": 1
       }
     },
     {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "app/preview/sem-organizacao/page.tsx",
+      "file": "components/features/site/dashboard/SitePropertySpotlight.tsx",
       "count": 1,
-      "score": 2,
+      "score": 3,
       "rules": {
-        "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/contacts/ExportContactsDialog.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadSourcesChart.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/shared/filters/FilterSidebar.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingMediaGallery.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
+        "oversized-radius": 1
       }
     }
   ],
@@ -536,38 +537,66 @@
       }
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "count": 5,
-      "score": 20,
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "count": 7,
+      "score": 21,
       "rules": {
-        "hardcoded-color": 5
+        "oversized-radius": 7
       }
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "count": 8,
-      "score": 8,
-      "rules": {
-        "uppercase-tracking": 8
-      }
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
       "count": 6,
-      "score": 8,
+      "score": 16,
       "rules": {
-        "medium-shadow": 1,
-        "hardcoded-surface": 1,
-        "uppercase-tracking": 4
+        "oversized-radius": 1,
+        "uppercase-tracking": 1,
+        "heavy-shadow": 1,
+        "hardcoded-color": 1,
+        "hardcoded-surface": 2
       }
     },
     {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "count": 5,
-      "score": 8,
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "count": 4,
+      "score": 14,
       "rules": {
-        "uppercase-tracking": 4,
-        "heavy-shadow": 1
+        "oversized-radius": 2,
+        "hardcoded-color": 2
+      }
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "count": 4,
+      "score": 12,
+      "rules": {
+        "oversized-radius": 4
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 1,
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/properties/developments/DevelopmentCatalogCard.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
       }
     },
     {
@@ -587,12 +616,28 @@
       }
     },
     {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 5,
+      "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
+      "count": 2,
       "score": 6,
       "rules": {
-        "uppercase-tracking": 4,
-        "aggressive-motion": 1
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingMediaTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyAssetManager.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
       }
     },
     {
@@ -610,15 +655,6 @@
       "score": 4,
       "rules": {
         "uppercase-tracking": 4
-      }
-    },
-    {
-      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
-      "count": 2,
-      "score": 4,
-      "rules": {
-        "medium-shadow": 1,
-        "hardcoded-surface": 1
       }
     },
     {
@@ -675,22 +711,6 @@
       "score": 4,
       "rules": {
         "hardcoded-color": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingTrendChart.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
       }
     },
     {
@@ -766,32 +786,6 @@
       }
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "count": 2,
-      "score": 3,
-      "rules": {
-        "uppercase-tracking": 1,
-        "aggressive-motion": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-      "count": 2,
-      "score": 3,
-      "rules": {
-        "uppercase-tracking": 1,
-        "aggressive-motion": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingTabViews.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
       "file": "components/features/presence/OnlineUsersPanel.tsx",
       "count": 1,
       "score": 3,
@@ -800,11 +794,107 @@
       }
     },
     {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSummary.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/tabs/KeysTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/property-locations/OwnersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
       "file": "components/features/settings/IntegrationsTab.tsx",
       "count": 1,
       "score": 3,
       "rules": {
         "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/site/dashboard/SiteJourneysTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/site/dashboard/SitePropertySpotlight.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
       }
     },
     {
@@ -821,94 +911,6 @@
       "score": 2,
       "rules": {
         "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
-      }
-    },
-    {
-      "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/contacts/ExportContactsDialog.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadSourcesChart.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "medium-shadow": 1
-      }
-    },
-    {
-      "file": "components/shared/filters/FilterSidebar.tsx",
-      "count": 1,
-      "score": 2,
-      "rules": {
-        "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingMediaGallery.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/marketing/MarketingPaidTable.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
       }
     }
   ],
@@ -1148,6 +1150,24 @@
       "weight": 2
     },
     {
+      "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
+      "line": 60,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
+      "line": 164,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
       "line": 1416,
       "match": "uppercase",
@@ -1202,58 +1222,94 @@
       "weight": 4
     },
     {
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "line": 31,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "line": 88,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "line": 184,
+      "match": "#151515",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/marketing-ui.tsx",
+      "line": 184,
+      "match": "#1877f2",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
+      "line": 32,
+      "match": "rounded-[14px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
+      "line": 32,
+      "match": "#151515",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
+      "line": 33,
+      "match": "bg-white/10",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
       "file": "components/features/marketing/MarketingMediaGallery.tsx",
       "line": 183,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "infrastructure",
       "weight": 1
     },
     {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "line": 352,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "line": 415,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "line": 541,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "line": 729,
-      "match": "shadow-[0_10px_30px_rgba",
+      "file": "components/features/marketing/MarketingMediaTab.tsx",
+      "line": 26,
+      "match": "#151515",
       "priority": "P1",
-      "rule": "heavy-shadow",
+      "rule": "hardcoded-color",
       "surfaceScope": "protected-only",
       "weight": 4
     },
     {
-      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
-      "line": 1068,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/marketing/MarketingMediaTab.tsx",
+      "line": 26,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 2
     },
     {
       "file": "components/features/marketing/MarketingPaidTable.tsx",
@@ -1337,13 +1393,58 @@
       "weight": 4
     },
     {
-      "file": "components/features/marketing/MarketingTabViews.tsx",
-      "line": 323,
-      "match": "rounded-[10px]",
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 66,
+      "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
       "surfaceScope": "protected-only",
       "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 67,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 99,
+      "match": "shadow-lg",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 153,
+      "match": "#151515",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 154,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/marketing/MarketingSocialTab.tsx",
+      "line": 155,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
     },
     {
       "file": "components/features/marketing/MarketingTrendChart.tsx",
@@ -1351,7 +1452,7 @@
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
+      "surfaceScope": "infrastructure",
       "weight": 4
     },
     {
@@ -1364,130 +1465,94 @@
       "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 99,
-      "match": "shadow-sm",
-      "priority": "P2",
-      "rule": "medium-shadow",
+      "file": "components/features/properties/detail/PropertyAssetManager.tsx",
+      "line": 122,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 2
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/detail/PropertyAssetManager.tsx",
+      "line": 131,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 101,
-      "match": "bg-black/65",
-      "priority": "P2",
-      "rule": "hardcoded-surface",
+      "line": 47,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 2
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 121,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/detail/PropertyWorkspaceSummary.tsx",
+      "line": 87,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 432,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/detail/tabs/KeysTab.tsx",
+      "line": 151,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 496,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
+      "line": 103,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 502,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/developments/DevelopmentCatalogCard.tsx",
+      "line": 76,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 54,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/developments/DevelopmentCatalogCard.tsx",
+      "line": 127,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 77,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/developments/DevelopmentCatalogCard.tsx",
+      "line": 131,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 119,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
+      "line": 90,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 125,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 250,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 297,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 412,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 413,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
       "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
@@ -1499,58 +1564,139 @@
       "weight": 2
     },
     {
-      "file": "components/features/properties/property-form/PropertyFormPreview.tsx",
-      "line": 62,
-      "match": "bg-black/65",
-      "priority": "P2",
-      "rule": "hardcoded-surface",
+      "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "line": 81,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 2
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "line": 163,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "line": 262,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
+      "line": 85,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/property-locations/OwnersPanel.tsx",
+      "line": 390,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertyCard.tsx",
+      "line": 156,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 49,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 64,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 201,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 228,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 253,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 310,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/PropertySettingsScreen.tsx",
+      "line": 314,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 726,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
+      "line": 515,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 752,
-      "match": "group-hover:translate-x-0.5",
-      "priority": "P2",
-      "rule": "aggressive-motion",
+      "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
+      "line": 107,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 2
-    },
-    {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 811,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1213,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 1248,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
+      "weight": 3
     },
     {
       "file": "components/features/schedule/CalendarView.tsx",
@@ -1571,15 +1717,6 @@
       "weight": 2
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
-      "line": 165,
-      "match": "shadow-[0_8px_24px_rgba",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
       "line": 83,
       "match": "shadow-[0_8px_24px_rgba",
@@ -1587,96 +1724,6 @@
       "rule": "heavy-shadow",
       "surfaceScope": "protected-only",
       "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "line": 19,
-      "match": "#fb6a4a",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "line": 20,
-      "match": "#f97316",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "line": 21,
-      "match": "#f59e0b",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "line": 22,
-      "match": "#0ea5e9",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "line": 23,
-      "match": "#8b5cf6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "line": 431,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-      "line": 511,
-      "match": "group-hover:translate-x-0.5",
-      "priority": "P2",
-      "rule": "aggressive-motion",
-      "surfaceScope": "protected-only",
-      "weight": 2
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "line": 165,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-      "line": 155,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-      "line": 223,
-      "match": "group-hover:translate-x-0.5",
-      "priority": "P2",
-      "rule": "aggressive-motion",
-      "surfaceScope": "protected-only",
-      "weight": 2
     },
     {
       "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
@@ -1866,6 +1913,60 @@
       "rule": "heavy-shadow",
       "surfaceScope": "protected-only",
       "weight": 4
+    },
+    {
+      "file": "components/features/site/dashboard/SiteJourneysTab.tsx",
+      "line": 120,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/site/dashboard/SitePropertySpotlight.tsx",
+      "line": 47,
+      "match": "rounded-[10px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "line": 69,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "line": 72,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "line": 275,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/site/SiteAnalyticsTab.tsx",
+      "line": 297,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/site/VisitorMap.tsx",

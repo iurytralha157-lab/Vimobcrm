@@ -1,6 +1,7 @@
 import {
   apiPropertyAssetUploadIntentResponseSchema,
   apiPropertyAssetUploadDiscardResponseSchema,
+  apiPropertyKeyMovementPageSchema,
   apiPropertyWorkspaceAssetDeleteResponseSchema,
   apiPropertyWorkspaceAssetListResponseSchema,
   apiPropertyWorkspaceAssetResponseSchema,
@@ -19,6 +20,7 @@ import {
   propertyAssetUploadIntentInputSchema,
   propertyKeyCreateInputSchema,
   propertyKeyMovementInputSchema,
+  propertyKeyMovementListQuerySchema,
   propertyOfferUpsertInputSchema,
   propertyOwnershipCreateInputSchema,
   propertyOwnershipEndInputSchema,
@@ -33,6 +35,7 @@ import {
   type PropertyAssetUploadDiscardInput,
   type PropertyKeyCreateInput,
   type PropertyKeyMovementInput,
+  type PropertyKeyMovementListQuery,
   type PropertyOfferType,
   type PropertyOfferUpsertInput,
   type PropertyOwnershipCreateInput,
@@ -64,6 +67,9 @@ function createIdempotencyKey() {
   }
   return `property-key-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
+
+// The API verifies each stored photo with two Storage calls before answering.
+const PROPERTY_MEDIA_REQUEST_TIMEOUT_MS = 45_000
 
 export const propertyWorkspaceAPI = {
   async getWorkspace(organizationId: string, propertyId: string, execution?: PropertyMediaExecutionOptions) {
@@ -103,6 +109,17 @@ export const propertyWorkspaceAPI = {
       'property-workspace.offer.upsert',
     )
     return parsed.data
+  },
+
+  /** Custody history across all keys, newest first. Empty unless meta.can_view_key_custody. */
+  async listKeyMovements(organizationId: string, propertyId: string, query: PropertyKeyMovementListQuery = {}, intent?: VimobAPIRequestIntent) {
+    const parsedQuery = parseDomainInput(propertyKeyMovementListQuerySchema, query, 'property-workspace.key.movements')
+    const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/keys/movements`, {
+      ...intent,
+      organizationId,
+      query: parsedQuery,
+    })
+    return validateDomainResponse(apiPropertyKeyMovementPageSchema, response, 'property-workspace.key.movements')
   },
 
   async createKey(organizationId: string, propertyId: string, input: PropertyKeyCreateInput, intent?: VimobAPIRequestIntent) {
@@ -229,6 +246,7 @@ export const propertyWorkspaceAPI = {
     const body = parseDomainInput(propertyAssetCreateInputSchema, input, 'property-workspace.asset.create')
     const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/assets`, {
       method: 'POST',
+      timeoutMs: PROPERTY_MEDIA_REQUEST_TIMEOUT_MS,
       organizationId,
       body,
       expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId,
@@ -256,7 +274,7 @@ export const propertyWorkspaceAPI = {
     )
     const response = await vimobAPIRequest<unknown>(
       `/v1/properties/${propertyId}/assets/upload-intents`,
-      { method: 'POST', organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
+      { method: 'POST', timeoutMs: PROPERTY_MEDIA_REQUEST_TIMEOUT_MS, organizationId, body, expectedUserId: execution?.expectedUserId, expectedSessionId: execution?.expectedSessionId, onRequestStart: () => assertAssetExecution(execution) },
     )
     const parsed = validateDomainResponse(
       apiPropertyAssetUploadIntentResponseSchema,
@@ -292,7 +310,9 @@ export const propertyWorkspaceAPI = {
       await this.discardAssetUpload(organizationId, propertyId, {
         storage_path: intent.storage_path,
       }, execution).catch(() => undefined)
-      throw new Error(`Falha ao enviar arquivo: ${error.message}`)
+      const status = Number((error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode)
+      throw Object.assign(new Error(`Falha ao enviar arquivo: ${error.message}`),
+        Number.isFinite(status) && status > 0 ? { status } : { transient: true })
     }
 
     return intent

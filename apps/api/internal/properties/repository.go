@@ -51,6 +51,13 @@ type propertySnapshot struct {
 	HasPropertyTaxCharge bool
 	Metadata             map[string]any
 	UpdatedAt            time.Time
+	PortfolioType        string
+	ThirdPartyKind       string
+	PartnerName          string
+	PartnerContact       string
+	// Manager-only values, known here only so a transition cannot erase them.
+	HasCommissionSplit         bool
+	HasThirdPartyAuthorization bool
 }
 
 func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
@@ -76,6 +83,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
+	}
+	if filter.PortfolioType != "" {
+		addFilter("p.portfolio_type = $%d", filter.PortfolioType)
 	}
 	dealType := normalizedDealTypeForFilter(filter.DealType)
 	if filter.DealType != "" {
@@ -208,6 +218,11 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'responsible_user_id', p.responsible_user_id,
 				'cadastrado_por', p.cadastrado_por,
 				'commission_percentage', p.commission_percentage,
+				'portfolio_type', p.portfolio_type,
+				'third_party_kind', p.third_party_kind,
+				'partner_name', p.partner_name,
+				'commission_split_percent', p.commission_split_percent,
+				'third_party_authorized_until', p.third_party_authorized_until,
 				'metadata', p.metadata,
 				'imagem_principal', case
 					when asset_photo_exists.has_photo then coalesce(asset_cover.external_url, '')
@@ -272,7 +287,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		return ListResponse{}, err
 	}
 
-	repo.attachSignedPropertyCoverURLs(ctx, properties)
+	repo.attachSignedPropertyCoverURLs(ctx, tenantContext.OrganizationID, properties)
 	for index := range properties {
 		attachPropertyManagedTerms(properties[index])
 		authorization := propertyUpdateAuthorizationFromProperty(
@@ -313,6 +328,9 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
+	}
+	if filter.PortfolioType != "" {
+		addFilter("p.portfolio_type = $%d", filter.PortfolioType)
 	}
 	dealType := normalizedDealTypeForFilter(filter.DealType)
 	if filter.DealType != "" {
@@ -994,6 +1012,18 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return nil, ErrPropertyManagedByDevelopmentUnit
 		}
 	}
+	if propertyPortfolioChanges(input, current) {
+		linked, err := repo.propertyHasDevelopmentUnitLink(ctx, tx, tenantContext.OrganizationID, propertyID)
+		if err != nil {
+			return nil, err
+		}
+		if linked {
+			return nil, ErrPropertyManagedByDevelopmentUnit
+		}
+	}
+	if err := reconcilePropertyPortfolioUpdate(input, current, authorization.CanViewOwnerContacts, canManageProperties(tenantContext)); err != nil {
+		return nil, err
+	}
 	if err := validateEmbeddedOwnerNotification(input, current.OwnerEmail, current.OwnerNotifyEmail); err != nil {
 		return nil, err
 	}
@@ -1330,6 +1360,12 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	var metadataJSON string
 	err := tx.QueryRow(ctx, `
 		select
+			portfolio_type,
+			coalesce(third_party_kind, ''),
+			coalesce(partner_name, ''),
+			coalesce(partner_contact, ''),
+			commission_split_percent is not null,
+			third_party_authorized_until is not null,
 			id::text,
 			coalesce(created_by::text, ''),
 			coalesce(responsible_user_id::text, ''),
@@ -1357,6 +1393,12 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 		  and id = $2::uuid
 		for update
 	`, organizationID, propertyID).Scan(
+		&snapshot.PortfolioType,
+		&snapshot.ThirdPartyKind,
+		&snapshot.PartnerName,
+		&snapshot.PartnerContact,
+		&snapshot.HasCommissionSplit,
+		&snapshot.HasThirdPartyAuthorization,
 		&snapshot.ID,
 		&creatorID,
 		&responsibleUserID,
@@ -1729,6 +1771,9 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 	if value, ok := input["metadata"]; ok {
 		changes["metadata"] = value
 	}
+	if value, ok := input["portfolio_type"].(string); ok && value != current.PortfolioType {
+		changes["portfolio_type"] = map[string]any{"from": current.PortfolioType, "to": value}
+	}
 
 	actorName := tenantContext.UserID
 	if value, err := repo.getUserDisplayName(ctx, tx, tenantContext.UserID); err == nil && strings.TrimSpace(value) != "" {
@@ -1782,36 +1827,42 @@ func propertyHistoryUpdatedFields(input propertyRequest) []string {
 
 func propertyHistoryFieldLabel(field string) string {
 	labels := map[string]string{
-		"aceita_financiamento": "Financiamento",
-		"aceita_permuta":       "Permuta",
-		"anunciar":             "Anuncio",
-		"banheiros":            "Banheiros",
-		"bairro":               "Bairro",
-		"cadastrado_por":       "Captador",
-		"cidade":               "Cidade",
-		"code":                 "Codigo",
-		"condominio_id":        "Condominio",
-		"created_by":           "Criado por",
-		"descricao":            "Descricao",
-		"destaque":             "Destaque",
-		"endereco":             "Endereco",
-		"finalidade":           "Finalidade",
-		"iptu":                 "IPTU",
-		"metadata":             "Dados adicionais",
-		"mobiliado":            "Mobilia",
-		"preco":                "Valor de venda",
-		"published_on_site":    "Publicacao no site",
-		"quartos":              "Quartos",
-		"responsible_user_id":  "Responsavel",
-		"status":               "Status",
-		"suites":               "Suites",
-		"tipo":                 "Tipo",
-		"tipo_de_imovel":       "Tipo de imovel",
-		"tipo_de_negocio":      "Modalidade",
-		"title":                "Titulo",
-		"valor_condominio":     "Condominio",
-		"valor_locacao":        "Valor de locacao",
-		"vagas":                "Vagas",
+		"aceita_financiamento":         "Financiamento",
+		"aceita_permuta":               "Permuta",
+		"anunciar":                     "Anuncio",
+		"banheiros":                    "Banheiros",
+		"bairro":                       "Bairro",
+		"cadastrado_por":               "Captador",
+		"cidade":                       "Cidade",
+		"code":                         "Codigo",
+		"commission_split_percent":     "Divisao de comissao",
+		"condominio_id":                "Condominio",
+		"created_by":                   "Criado por",
+		"descricao":                    "Descricao",
+		"destaque":                     "Destaque",
+		"endereco":                     "Endereco",
+		"finalidade":                   "Finalidade",
+		"iptu":                         "IPTU",
+		"metadata":                     "Dados adicionais",
+		"mobiliado":                    "Mobilia",
+		"partner_contact":              "Contato do parceiro",
+		"partner_name":                 "Parceiro",
+		"portfolio_type":               "Carteira",
+		"preco":                        "Valor de venda",
+		"published_on_site":            "Publicacao no site",
+		"quartos":                      "Quartos",
+		"responsible_user_id":          "Responsavel",
+		"status":                       "Status",
+		"suites":                       "Suites",
+		"tipo":                         "Tipo",
+		"tipo_de_imovel":               "Tipo de imovel",
+		"tipo_de_negocio":              "Modalidade",
+		"third_party_authorized_until": "Autorizacao de terceiros",
+		"third_party_kind":             "Tipo de terceiro",
+		"title":                        "Titulo",
+		"valor_condominio":             "Condominio",
+		"valor_locacao":                "Valor de locacao",
+		"vagas":                        "Vagas",
 	}
 	if label, ok := labels[field]; ok {
 		return label

@@ -7,6 +7,9 @@ type Envelope<T> = {
   data: T
 }
 
+// Full export pages can take longer to stream after their HTTP headers arrive.
+const CONTACT_EXPORT_REQUEST_TIMEOUT_MS = 60_000
+
 export type ContactPage = {
   data: Contact[]
   total: number
@@ -29,6 +32,7 @@ export const contactsAPI = {
     const requestOptions = {
       ...options,
       organizationId,
+      timeoutMs: parsedQuery.mode === 'export' ? CONTACT_EXPORT_REQUEST_TIMEOUT_MS : undefined,
       query: { ...query, tagIds: tagIds?.join(',') },
     }
     const assertActive = () => {
@@ -62,6 +66,7 @@ export const contactsAPI = {
     const response = await vimobAPIRequest<Envelope<Contact[]>>('/v1/contacts', {
       ...options,
       organizationId,
+      timeoutMs: parsedQuery.mode === 'export' ? CONTACT_EXPORT_REQUEST_TIMEOUT_MS : undefined,
       query: {
         ...query,
         tagIds: tagIds?.join(','),

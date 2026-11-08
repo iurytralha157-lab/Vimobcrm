@@ -40,6 +40,7 @@ import type {
   PropertyFormData,
   PropertyFormSetField,
 } from "./property-form-model";
+import type { PropertyFormPortfolioType } from "./property-form-portfolio";
 
 type AuthContextValue = ReturnType<typeof useAuth>;
 
@@ -78,6 +79,8 @@ export type PropertyFormSectionsContextValue = {
   handleAddPurpose: () => void;
   handleAddPropertyType: () => Promise<void>;
   handleDealTypeChange: (value: string) => void;
+  handlePortfolioTypeChange: (value: PropertyFormPortfolioType) => void;
+  portfolioLocks: { typeLockReason: string | null; kindLockReason: string | null };
   createPropertyType: ReturnType<typeof useCreatePropertyType>;
 
   cities: PropertyCity[];

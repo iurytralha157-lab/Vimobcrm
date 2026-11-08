@@ -123,6 +123,9 @@ func buildScheduleDashboardEventsQuery(tenantContext tenant.Context, filter Dash
 				property.id::text as property_id,
 				left(nullif(btrim(property.title), ''), 255) as property_title,
 				left(nullif(btrim(property.code), ''), 120) as property_code,
+				left(nullif(btrim(lead_stage.name), ''), 255) as lead_stage,
+				nullif(filtered_events.source_key, '__none__') as lead_source,
+				filtered_events.google_sync_status,
 				filtered_events.status,
 				filtered_events.outcome,
 				filtered_events.is_overdue
@@ -137,6 +140,9 @@ func buildScheduleDashboardEventsQuery(tenantContext tenant.Context, filter Dash
 		propertyUserIDPlaceholder,
 		propertyViewTeamPlaceholder,
 	) + `
+			left join public.stages lead_stage
+			  on lead_stage.id = lead.stage_id
+			 and lead_stage.organization_id = filtered_events.organization_id
 			order by filtered_events.start_time asc, filtered_events.id asc
 			limit ` + limitPlaceholder + `::integer
 			offset ` + offsetPlaceholder + `::bigint
@@ -206,6 +212,9 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			select
 				days.report_date,
 				count(filtered_events.id)::bigint as total,
+				count(filtered_events.id) filter (
+					where filtered_events.status in ('completed', 'no_show', 'cancelled') or filtered_events.is_overdue
+				)::bigint as eligible,
 				count(filtered_events.id) filter (where filtered_events.status = 'scheduled')::bigint as open,
 				count(filtered_events.id) filter (where filtered_events.is_overdue)::bigint as overdue,
 				count(filtered_events.id) filter (where filtered_events.status = 'completed')::bigint as completed,
@@ -235,7 +244,10 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			group by hours.report_hour
 		),
 		by_type_rows as (
-			select event_type as key, count(*)::bigint as total
+			select
+				event_type as key,
+				count(*)::bigint as total,
+				count(*) filter (where status = 'completed')::bigint as completed
 			from filtered_events
 			group by event_type
 		),
@@ -243,10 +255,17 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			select
 				source_key as key,
 				case when source_key = '__none__' then 'Sem origem' else source_key end as label,
-				count(*)::bigint as total
+				count(*)::bigint as total,
+				count(*) filter (where event_type in ('visit', 'meeting') and status = 'completed')::bigint as appointment_completed,
+				count(*) filter (
+					where event_type in ('visit', 'meeting')
+					  and (status in ('completed', 'no_show', 'cancelled') or is_overdue)
+				)::bigint as appointment_eligible
 			from filtered_events
 			group by source_key
 		),
+		` + scheduleDashboardOutcomeRowsCTE + `,
+		` + scheduleDashboardHourDistributionCTE(filter.DateBasis) + `,
 		active_roster as (
 			select users.id as user_id, users.name, users.avatar_url
 			from public.users users
@@ -422,6 +441,7 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 				select jsonb_agg(jsonb_build_object(
 					'date', daily_rows.report_date::text,
 					'total', daily_rows.total,
+					'eligible', daily_rows.eligible,
 					'open', daily_rows.open,
 					'overdue', daily_rows.overdue,
 					'completed', daily_rows.completed,
@@ -442,12 +462,29 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 				) order by hourly_rows.report_hour)
 				from hourly_rows
 			), '[]'::jsonb),
+			'hour_distribution', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'hour', hour_distribution_rows.report_hour,
+					'total', hour_distribution_rows.total
+				) order by hour_distribution_rows.report_hour)
+				from hour_distribution_rows
+			), '[]'::jsonb),
 			'by_type', coalesce((
-				select jsonb_agg(jsonb_build_object('key', key, 'count', total) order by total desc, key asc)
+				select jsonb_agg(jsonb_build_object('key', key, 'count', total, 'completed', completed) order by total desc, key asc)
 				from by_type_rows
 			), '[]'::jsonb),
+			'by_outcome', coalesce((
+				select jsonb_agg(jsonb_build_object('key', key, 'count', total) order by total desc, key asc)
+				from by_outcome_rows
+			), '[]'::jsonb),
 			'by_source', coalesce((
-				select jsonb_agg(jsonb_build_object('key', key, 'label', label, 'count', total) order by total desc, key asc)
+				select jsonb_agg(jsonb_build_object(
+					'key', key,
+					'label', label,
+					'count', total,
+					'appointment_completed', appointment_completed,
+					'appointment_eligible', appointment_eligible
+				) order by total desc, key asc)
 				from by_source_rows
 			), '[]'::jsonb),
 			'overdue_by_owner', coalesce((
@@ -636,6 +673,7 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				se.organization_id,
 				se.user_id,
 				se.team_id,
+				se.google_sync_status,
 				l.id as lead_id,
 				se.property_id,
 				left(coalesce(nullif(btrim(se.title), ''), 'Compromisso'), 255) as title,
@@ -720,6 +758,9 @@ func (report *DashboardReport) normalizeCollections() {
 	}
 	if report.Hourly == nil {
 		report.Hourly = []DashboardHourlyPoint{}
+	}
+	if report.HourDistribution == nil {
+		report.HourDistribution = []DashboardHourDistributionPoint{}
 	}
 	if report.Weekly == nil {
 		report.Weekly = []DashboardWeeklyPoint{}

@@ -1,6 +1,7 @@
 export * from "./whatsapp";
 export * from "./ai";
 export * from "./meta";
+export * from "./meta-marketing";
 export * from "./grupo-olx";
 export * from "./zap";
 export * from "./viva-real";

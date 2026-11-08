@@ -77,7 +77,7 @@ export function CadenceSection({
               Cadência da etapa
             </h4>
             <p className="mt-1 text-xs font-light leading-[18px] text-[var(--app-text-tertiary)]">
-              Cria ações somente enquanto o lead estiver nesta coluna.
+              Cria tarefas de acompanhamento para as próximas entradas na coluna.
             </p>
           </div>
         </div>
@@ -97,10 +97,8 @@ export function CadenceSection({
           title="Cadência da etapa desativada"
           description={
             draft.cadence.tasks.length > 0
-              ? draft.cadence.tasks.length === 1
-                ? '1 tarefa fica guardada para reativação. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.'
-                : `${draft.cadence.tasks.length} tarefas ficam guardadas para reativação. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.`
-              : 'Nenhuma nova tarefa será criada. Ao salvar, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências individuais.'
+              ? 'A configuração fica guardada para reativação. Ao salvar, as tarefas pendentes de cadência nesta coluna serão canceladas.'
+              : 'Ao salvar com a cadência desativada, as tarefas pendentes de cadência nesta coluna serão canceladas.'
           }
         />
       ) : (
@@ -108,7 +106,7 @@ export function CadenceSection({
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-light text-[var(--app-text-secondary)]">
-                Linha do tempo
+                Tarefas da cadência
               </p>
               <p className="mt-0.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
                 O prazo conta a partir da entrada na etapa.
@@ -133,7 +131,7 @@ export function CadenceSection({
               className="mt-3"
               icon={Clock3}
               title="Nenhuma tarefa configurada"
-              description="Sem tarefas, esta cadência não gera novas obrigações. Ao salvar assim, as obrigações ainda pendentes dos leads nesta coluna serão canceladas."
+              description="Adicione uma tarefa para começar. Salvar sem tarefas cancela as pendências de cadência desta coluna."
             />
           ) : (
             <ol className="mt-3 space-y-2" aria-label="Tarefas da cadência em ordem">

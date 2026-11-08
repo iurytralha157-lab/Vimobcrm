@@ -3,7 +3,9 @@ package stageconfig
 const inactivityPolicyFields = `policy.automation_id::text, policy.organization_id::text,
  policy.stage_id::text, policy.activation_epoch::text, policy.revision,
  policy.clock, policy.start_mode, policy.activated_at, policy.automation_updated_at,
- policy.duration_days, policy.alert_message, policy.is_enabled, policy.interaction_coverage_from`
+ policy.duration_days, policy.alert_message, policy.is_enabled, policy.interaction_coverage_from,
+ policy.action_kind, policy.target_stage_id::text, policy.acting_user_id::text,
+ to_jsonb(policy)->>'target_round_robin_id'`
 
 const inactivityPolicyJoins = `
  join public.stage_automations automation
@@ -56,6 +58,7 @@ const inactivityLeadPageSQL = `with candidates as materialized (
  insert into private.stage_inactivity_lead_scopes (
    organization_id, lead_id, stage_id, stage_entered_at, started_at, is_open
  ) select organization_id, id, stage_id, entered_at, entered_at, true from candidates
+ where $5::timestamptz is null or entered_at >= $5::timestamptz
  on conflict (organization_id, lead_id) do update set
    stage_id = excluded.stage_id, stage_entered_at = excluded.stage_entered_at,
    cycle_id = case when stage_inactivity_lead_scopes.stage_id <> excluded.stage_id
@@ -68,15 +71,16 @@ const inactivityLeadPageSQL = `with candidates as materialized (
      else stage_inactivity_lead_scopes.started_at end,
    is_open = true
  returning organization_id, lead_id, stage_id, cycle_id, stage_entered_at, started_at
- ) select scope.organization_id::text, scope.lead_id::text, scope.stage_id::text,
-   scope.cycle_id::text, scope.stage_entered_at, scope.started_at, fact.occurred_at, fact.id::text, true
- from scopes scope left join lateral (
+ ) select candidate.organization_id::text, candidate.id::text, candidate.stage_id::text,
+   scope.cycle_id::text, candidate.entered_at, coalesce(scope.started_at, candidate.entered_at), fact.occurred_at, fact.id::text, true
+ from candidates candidate left join scopes scope on scope.organization_id = candidate.organization_id and scope.lead_id = candidate.id
+ left join lateral (
    select action.id, action.occurred_at from public.lead_action_facts action
    where action.organization_id = scope.organization_id and action.lead_id = scope.lead_id
      and action.qualifies_stage_inactivity = true and action.is_automated = false
      and action.occurred_at >= greatest(scope.started_at, scope.stage_entered_at)
    order by action.occurred_at desc, action.id desc limit 1
- ) fact on true order by scope.lead_id`
+ ) fact on true order by candidate.id`
 
 const inactivityCurrentLeadSQL = `select lead.organization_id::text, lead.id::text,
  lead.stage_id::text, scope.cycle_id::text, scope.stage_entered_at, scope.started_at,
@@ -116,7 +120,12 @@ const inactivityClaimJobsSQL = `select id::text, organization_id::text, automati
  lead_id::text, activation_epoch::text, policy_revision, episode_key, attempts
  from private.stage_inactivity_jobs
  where status = 'pending' and due_at <= $1 and next_attempt_at <= $1
- order by next_attempt_at, due_at, id limit $2`
+ order by next_attempt_at, due_at, exists (
+   select 1 from private.stage_inactivity_policies policy
+   where policy.organization_id=stage_inactivity_jobs.organization_id
+     and policy.automation_id=stage_inactivity_jobs.automation_id
+     and policy.action_kind='redistribute'
+ ) desc, id limit $2`
 
 const inactivityClaimJobSQL = `select id::text, organization_id::text, automation_id::text,
  lead_id::text, activation_epoch::text, policy_revision, episode_key, attempts

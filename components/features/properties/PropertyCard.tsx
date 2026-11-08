@@ -1,49 +1,28 @@
-import { Badge } from "@/components/ui/badge";
+"use client";
+
+import { useState } from "react";
 import Image from "next/image";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  MoreHorizontal,
-  MapPin,
-  Bed,
-  Bath,
-  Car,
-  Ruler,
-  Star,
-  Building2,
-  Pencil,
-  Trash2,
-  Eye,
-  CheckCircle,
-  Clock,
-  Globe,
-  Lock,
-  Percent,
-  Share2,
-  ExternalLink,
-  RotateCcw,
-  KeyRound,
-  History,
-  CircleAlert,
-} from "lucide-react";
-import { Property } from "@/hooks/use-properties";
+import { Bath, BedDouble, Building2, Camera, Car, MapPin, Ruler } from "lucide-react";
+
+import type { Property } from "@/hooks/use-properties";
 import type { PropertySiteInfo } from "@/lib/api/property-support";
-import { buildPropertySiteUrl } from "@/lib/property-site-url";
 import { getSafePropertyImageSource } from "@/lib/property-media";
 import { getPropertyMetadataString as metadataString } from "@/lib/property-display-utils";
+import { buildPropertySiteUrl } from "@/lib/property-site-url";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { getSitePublicationCardState, type SitePublication } from "./publication/site-publication-state";
 
-type PropertyWithCommission = Property & {
-  commission_percentage?: number | null;
-};
+import { PropertyCardMenu } from "./list/PropertyCardMenu";
+import {
+  PROPERTY_STATUS_LABELS,
+  formatPropertyMoney,
+  normalizeText,
+  plural,
+  pricePerSquareMeter,
+  propertyDealLabel,
+  propertyStatusKind,
+} from "./property-display";
+import { PropertyChip, ResponsibleAvatar, type PropertyChipTone } from "./property-ui";
+import { getSitePublicationCardState, type SitePublication } from "./publication/site-publication-state";
 
 type PropertyWithPublication = Property & {
   published_on_site?: boolean | null;
@@ -74,20 +53,34 @@ interface PropertyCardProps {
   canUpdateAvailability?: boolean;
   canDelete?: boolean;
   siteInfo?: PropertySiteInfo | null;
+  /** Responsible person resolved from the organization's users; omitted when unknown. */
+  responsible?: { name: string; avatarUrl: string | null } | null;
   /** Load only the first visible catalog image eagerly to improve the list LCP. */
   prioritizeImage?: boolean;
 }
 
-function getPropertyMetadata(property: Property) {
+function propertyMetadata(property: Property) {
   const raw = (property as PropertyWithMetadata).metadata;
   return raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
     : {};
 }
 
-function isShareAbortError(error: unknown) {
-  return error instanceof Error && error.name === "AbortError";
+/** The list only carries legacy galleries; asset-backed photos have no count here. */
+function knownPhotoCount(property: Property) {
+  const urls = [
+    ...(property.image_urls ?? []),
+    ...(Array.isArray(property.fotos) ? property.fotos.filter((item): item is string => typeof item === "string") : []),
+  ];
+  return new Set(urls.filter(Boolean)).size;
 }
+
+const SITE_TONES: Record<string, PropertyChipTone> = {
+  success: "success",
+  pending: "warning",
+  error: "danger",
+  neutral: "neutral",
+};
 
 export function PropertyCard({
   property,
@@ -103,542 +96,199 @@ export function PropertyCard({
   canUpdateAvailability,
   canDelete,
   siteInfo,
+  responsible,
   prioritizeImage = false,
 }: PropertyCardProps) {
   const publication = property as PropertyWithPublication;
-  const propertyMetadata = getPropertyMetadata(property);
-  const displayPropertyType =
-    property.tipo_de_imovel || (property as PropertyWithMetadata).tipo || "";
-  const quadra = metadataString(propertyMetadata.quadra);
-  const lote = metadataString(propertyMetadata.lote);
-  const normalizedStatus = (property.status || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const isSold = normalizedStatus === "vendido" || normalizedStatus === "sold";
-  const isReserved =
-    normalizedStatus === "reservado" || normalizedStatus === "reserved";
-  const isRented =
-    normalizedStatus === "alugado" ||
-    normalizedStatus === "locado" ||
-    normalizedStatus === "rented";
-  const isInactive =
-    normalizedStatus === "inativo" || normalizedStatus === "inactive";
-  const isPrivateStatus = [
-    "privado",
-    "private",
-    "draft",
-    "rascunho",
-    "arquivado",
-    "archived",
-  ].includes(normalizedStatus);
-  const isUnavailable = isSold || isReserved || isRented;
-  const isSitePublished = Boolean(
-    publication.published_on_site ?? publication.anunciar ?? false,
-  );
+  const metadata = propertyMetadata(property);
+  const displayPropertyType = property.tipo_de_imovel || (property as PropertyWithMetadata).tipo || "";
+  const quadra = metadataString(metadata.quadra);
+  const lote = metadataString(metadata.lote);
+  const statusKind = propertyStatusKind(property.status);
+  const isUnavailable = ["sold", "rented", "reserved"].includes(statusKind);
+  const isSitePublished = Boolean(publication.published_on_site ?? publication.anunciar ?? false);
   const canonicalSiteState = publication.site_publication?.id
     ? getSitePublicationCardState(publication.site_publication, isSitePublished)
     : null;
-  const isPrivate = (!isSitePublished && !isUnavailable) || isPrivateStatus;
-  const propertyType = displayPropertyType
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  const propertyType = normalizeText(displayPropertyType);
   const isLand = propertyType === "terreno" || propertyType === "lote";
-  const displayArea = isLand
-    ? property.area_total
-    : property.area_util || property.area_total;
-  const dealType = (property.tipo_de_negocio || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const titleIntent = (property.title || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  const displayArea = isLand ? property.area_total : property.area_util || property.area_total;
+  const dealType = normalizeText(property.tipo_de_negocio);
+  const titleIntent = normalizeText(property.title);
   const isRentalIntent =
-    dealType === "aluguel" ||
-    dealType === "locacao" ||
-    dealType === "venda e aluguel" ||
-    dealType === "venda e locacao" ||
-    dealType === "temporada" ||
+    ["aluguel", "locacao", "venda e aluguel", "venda e locacao", "temporada"].includes(dealType) ||
     titleIntent.includes("locacao") ||
     titleIntent.includes("aluguel") ||
     titleIntent.includes("alugar") ||
     (Number(property.valor_locacao) > 0 && property.preco == null);
-  const isSaleIntent =
-    dealType === "venda" ||
-    dealType === "venda e aluguel" ||
-    dealType === "venda e locacao" ||
-    dealType === "lancamento" ||
-    dealType === "lançamento";
-  const displayPrice = isRentalIntent
-    ? property.valor_locacao || property.preco
-    : property.preco;
+  const isSaleIntent = ["venda", "venda e aluguel", "venda e locacao", "lancamento"].includes(dealType);
+  const displayPrice = isRentalIntent ? property.valor_locacao || property.preco : property.preco;
   const fallbackPhoto =
-    Array.isArray(property.fotos) && typeof property.fotos[0] === "string"
-      ? property.fotos[0]
-      : null;
-  const imageSrc = getSafePropertyImageSource(
-    property.imagem_principal,
-    fallbackPhoto,
-  );
-  const commissionPercentage = (property as PropertyWithCommission)
-    .commission_percentage;
+    Array.isArray(property.fotos) && typeof property.fotos[0] === "string" ? property.fotos[0] : null;
+  const imageSrc = getSafePropertyImageSource(property.imagem_principal, fallbackPhoto);
+  const [failedImageSource, setFailedImageSource] = useState<string | null>(null);
   const isPubliclyAvailable =
-    (canonicalSiteState?.canOpenPublicSite ?? isSitePublished) && !isPrivateStatus && !isUnavailable && !isInactive;
-  const propertySiteUrl = isPubliclyAvailable
-    ? buildPropertySiteUrl(property.code, siteInfo)
-    : null;
-  const statusLabel = isSold
-    ? "Vendido"
-    : isRented
-      ? "Alugado"
-      : isReserved
-        ? "Reservado"
-        : isInactive
-          ? "Inativo"
-          : canonicalSiteState
-            ? canonicalSiteState.label
-          : isPrivate
-            ? "Privado"
-            : null;
-  const statusIcon = isSold
-    ? CheckCircle
-    : isRented
-      ? KeyRound
-      : isReserved
-        ? Clock
-        : canonicalSiteState?.tone === 'error'
-          ? CircleAlert
-        : isPrivate
-          ? Lock
-          : Clock;
-  const StatusIcon = statusIcon;
-  const statusBadgeClass = isSold
-    ? "bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-100"
-    : isRented
-      ? "bg-sky-950 text-white hover:bg-sky-950 dark:bg-sky-200 dark:text-sky-950 dark:hover:bg-sky-200"
-      : isReserved
-        ? "bg-amber-950 text-white hover:bg-amber-950 dark:bg-amber-200 dark:text-amber-950 dark:hover:bg-amber-200"
-        : canonicalSiteState?.tone === 'error'
-          ? "bg-destructive/15 text-destructive hover:bg-destructive/15"
-        : canonicalSiteState?.tone === 'pending'
-          ? "bg-warning/15 text-warning hover:bg-warning/15"
-        : "bg-black text-white hover:bg-black";
-  const canRunAvailabilityActions = canUpdateAvailability ?? canEdit;
-  const canDeleteProperty = canDelete ?? canEdit;
-  const hasStatusActions = canRunAvailabilityActions && !!onChangeStatus;
-  const hasPublicationAction = canRunAvailabilityActions && !!onOpenPublication;
-  const hasAvailabilityActions = hasStatusActions || hasPublicationAction;
-
-  const copyPropertyUrl = async () => {
-    if (!propertySiteUrl) return false;
-
-    try {
-      await navigator.clipboard.writeText(propertySiteUrl);
-      toast.success("Link do imóvel copiado!");
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const handleShareProperty = async (event?: {
-    stopPropagation: () => void;
-  }) => {
-    event?.stopPropagation();
-    if (!propertySiteUrl) {
-      toast.info("Publique o imóvel no site para compartilhar o link.");
-      return;
-    }
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: property.title || property.code || "Imovel",
-          url: propertySiteUrl,
-        });
-        return;
-      } catch (error) {
-        if (isShareAbortError(error)) return;
-        // The platform refused the native sheet; fall back below.
-      }
-    }
-
-    const copied = await copyPropertyUrl();
-    if (!copied) {
-      window.open(propertySiteUrl, "_blank", "noopener,noreferrer");
-      toast.info("Abrimos o link do imóvel em uma nova aba.");
-    }
-  };
-
-  const openPropertySite = (event?: { stopPropagation: () => void }) => {
-    event?.stopPropagation();
-    if (!propertySiteUrl) return;
-    window.open(propertySiteUrl, "_blank", "noopener,noreferrer");
-  };
-
+    (canonicalSiteState?.canOpenPublicSite ?? isSitePublished) &&
+    !isUnavailable &&
+    !["inactive", "draft", "archived"].includes(statusKind);
+  const propertySiteUrl = isPubliclyAvailable ? buildPropertySiteUrl(property.code, siteInfo) : null;
+  const statusLabel = PROPERTY_STATUS_LABELS[statusKind];
+  const perSquareMeter = pricePerSquareMeter(displayPrice, displayArea);
+  const photoCount = knownPhotoCount(property);
+  const ownerLabel =
+    property.third_party_kind === "partner" && property.partner_name
+      ? `Parceiro: ${property.partner_name}`
+      : property.owner_name;
+  const location = [
+    property.bairro,
+    quadra ? `Quadra ${quadra}` : null,
+    lote ? `Lote ${lote}` : null,
+    property.cidade,
+  ].filter(Boolean).join(", ");
+  const attributes = [
+    property.quartos ? { icon: BedDouble, label: plural(property.quartos, "quarto", "quartos") } : null,
+    property.suites ? { icon: Bath, label: plural(property.suites, "suíte", "suítes") } : null,
+    property.vagas ? { icon: Car, label: plural(property.vagas, "vaga", "vagas") } : null,
+    displayArea ? { icon: Ruler, label: `${displayArea} m²${isLand ? " total" : ""}` } : null,
+  ].filter((item): item is NonNullable<typeof item> => Boolean(item));
   const openProperty = () => (onOpenDetails ?? onPreview)(property);
   const propertyLabel = property.title || property.code || "imóvel";
-  const menuItemClass =
-    "h-8 gap-2 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]";
-  const menuIconClass = "h-3.5 w-3.5 shrink-0";
 
   return (
-    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
-      <div className="relative aspect-[16/10] shrink-0 overflow-hidden bg-[var(--app-surface-soft)]">
-        {imageSrc ? (
+    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[12px] bg-[var(--app-surface-solid)]">
+      <div className="relative aspect-[2/1] shrink-0 overflow-hidden bg-[var(--app-surface-soft)]">
+        {imageSrc && failedImageSource !== imageSrc ? (
           <Image
             src={imageSrc}
             alt={property.title || ""}
             fill
-            sizes="(max-width: 768px) 100vw, (max-width: 1536px) 50vw, 33vw"
+            sizes="(max-width: 768px) 100vw, (max-width: 1280px) 50vw, 25vw"
             className="object-cover"
             unoptimized
             loading={prioritizeImage ? "eager" : "lazy"}
+            onError={() => setFailedImageSource(imageSrc)}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <Building2 className="h-10 w-10 text-muted-foreground/30" />
+            <Building2 className="h-10 w-10 text-[var(--app-text-tertiary)] opacity-40" aria-hidden="true" />
           </div>
         )}
-
         <button
           type="button"
-          aria-label={"Abrir ficha de " + propertyLabel}
+          aria-label={`Abrir ficha de ${propertyLabel}`}
           className="absolute inset-0 z-10 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
           onClick={openProperty}
         />
-
-        {isUnavailable && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[color-mix(in_srgb,var(--app-surface-solid)_74%,transparent)]">
-            <Badge
-              data-property-card-status={statusLabel}
-              className={cn(
-                "rounded-[6px] border-0 px-2.5 py-1 text-[10px] font-light shadow-none",
-                statusBadgeClass,
-              )}
-            >
-              <StatusIcon className="mr-1.5 h-3.5 w-3.5" />
-              {statusLabel}
-            </Badge>
+        <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {property.code && (
+              <PropertyChip tone="surface" data-property-card-code>
+                {property.code}
+              </PropertyChip>
+            )}
+            {property.tipo_de_negocio && (
+              <PropertyChip tone="surface" data-property-card-deal-type>
+                {propertyDealLabel(property.tipo_de_negocio)}
+              </PropertyChip>
+            )}
           </div>
-        )}
-
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col items-start gap-1">
-          {property.code && (
-            <div
-              data-property-card-code
-              className="max-w-[45%] truncate rounded-br-[6px] bg-primary px-3 py-1.5 font-mono text-[10px] font-light text-primary-foreground shadow-none"
-              title={property.code}
-            >
-              {property.code}
-            </div>
-          )}
-          {property.destaque && (
-            <Badge className="ml-2 rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary">
-              <Star className="mr-1 h-3 w-3" />
-              Destaque
-            </Badge>
-          )}
+          <PropertyChip tone="surface" data-property-card-status={statusLabel} className="shrink-0">
+            {statusLabel}
+          </PropertyChip>
         </div>
-
-        <div className="pointer-events-none absolute right-2 top-2 z-30 flex items-center gap-1.5">
-          {isPrivate && !isInactive && !canonicalSiteState && (
-            <Badge
-              data-property-card-status="Privado"
-              className={cn(
-                "rounded-[6px] border-0 px-2 py-1 text-[10px] font-light shadow-none",
-                statusBadgeClass,
-              )}
-            >
-              <Lock className="mr-1 h-3 w-3" />
-              Privado
-            </Badge>
-          )}
-          {isInactive && (
-            <Badge
-              data-property-card-status="Inativo"
-              className={cn(
-                "rounded-[6px] border-0 px-2 py-1 text-[10px] font-light shadow-none",
-                statusBadgeClass,
-              )}
-            >
-              <Clock className="mr-1 h-3 w-3" />
-              Inativo
-            </Badge>
-          )}
-          {propertySiteUrl && (
-            <button
-              type="button"
-              aria-label={"Compartilhar " + propertyLabel}
-              title="Compartilhar link do site"
-              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary text-primary-foreground shadow-none transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-              onClick={handleShareProperty}
-            >
-              <Share2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-
-        {commissionPercentage != null && commissionPercentage > 0 && (
-          <div className="pointer-events-none absolute bottom-2 right-2 z-20">
-            <Badge className="rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-solid)]">
-              <Percent className="mr-1 h-3 w-3" />
-              {commissionPercentage}%
-            </Badge>
-          </div>
+        {photoCount > 0 && (
+          <PropertyChip tone="surface" className="pointer-events-none absolute bottom-2 right-2 z-20 gap-1">
+            <Camera className="h-3 w-3" aria-hidden="true" />
+            {photoCount}
+          </PropertyChip>
         )}
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col p-3.5">
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <Badge
-            data-property-card-deal-type
-            className="max-w-[70%] truncate rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary"
-          >
-            {property.tipo_de_negocio}
-          </Badge>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={"Ações de " + propertyLabel}
-                className="h-8 w-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              sideOffset={6}
-              className="w-56 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none"
-            >
-              {onOpenDetails && (
-                <DropdownMenuItem
-                  className={menuItemClass}
-                  onClick={() => onOpenDetails(property)}
-                >
-                  <Building2 className={menuIconClass} />
-                  Abrir ficha 360°
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                className={menuItemClass}
-                onClick={() => onPreview(property)}
-              >
-                <Eye className={menuIconClass} />
-                Visualização rápida
-              </DropdownMenuItem>
-              {onHistory && (
-                <DropdownMenuItem
-                  className={menuItemClass}
-                  onClick={() => onHistory(property)}
-                >
-                  <History className={menuIconClass} />
-                  Histórico
-                </DropdownMenuItem>
-              )}
-
-              {propertySiteUrl && (
-                <>
-                  <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
-                  <DropdownMenuItem
-                    className={menuItemClass}
-                    onClick={handleShareProperty}
-                  >
-                    <Share2 className={menuIconClass} />
-                    Compartilhar link
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={menuItemClass}
-                    onClick={openPropertySite}
-                  >
-                    <ExternalLink className={menuIconClass} />
-                    Abrir no site
-                  </DropdownMenuItem>
-                </>
-              )}
-
-              {(canEdit || hasAvailabilityActions) && (
-                <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
-              )}
-              {canEdit && (
-                <DropdownMenuItem
-                  className={menuItemClass}
-                  onClick={() => onEdit(property)}
-                >
-                  <Pencil className={menuIconClass} />
-                  Editar
-                </DropdownMenuItem>
-              )}
-              {hasStatusActions && (
-                <>
-                  {!isReserved && !isSold && !isRented && (
-                    <DropdownMenuItem
-                      className={menuItemClass}
-                      onClick={() =>
-                        onChangeStatus?.(
-                          property.id,
-                          "reservado",
-                          property.updated_at,
-                        )
-                      }
-                    >
-                      <Clock className={menuIconClass} />
-                      Marcar como reservado
-                    </DropdownMenuItem>
-                  )}
-                  {isSaleIntent && !isSold && (
-                    <DropdownMenuItem
-                      className={menuItemClass}
-                      onClick={() =>
-                        onChangeStatus?.(
-                          property.id,
-                          "vendido",
-                          property.updated_at,
-                        )
-                      }
-                    >
-                      <CheckCircle className={menuIconClass} />
-                      Marcar como vendido
-                    </DropdownMenuItem>
-                  )}
-                  {isRentalIntent && !isRented && (
-                    <DropdownMenuItem
-                      className={menuItemClass}
-                      onClick={() =>
-                        onChangeStatus?.(
-                          property.id,
-                          "alugado",
-                          property.updated_at,
-                        )
-                      }
-                    >
-                      <KeyRound className={menuIconClass} />
-                      Marcar como alugado
-                    </DropdownMenuItem>
-                  )}
-                  {(isUnavailable || isInactive || isPrivateStatus) && (
-                    <DropdownMenuItem
-                      className={menuItemClass}
-                      onClick={() =>
-                        onChangeStatus?.(
-                          property.id,
-                          "ativo",
-                          property.updated_at,
-                        )
-                      }
-                    >
-                      <RotateCcw className={menuIconClass} />
-                      Voltar disponível
-                    </DropdownMenuItem>
-                  )}
-                </>
-              )}
-              {hasPublicationAction && (
-                <DropdownMenuItem
-                  className={menuItemClass}
-                  onClick={() => onOpenPublication?.(property.id)}
-                >
-                  <Globe className={menuIconClass} />
-                  Gerenciar publicação
-                </DropdownMenuItem>
-              )}
-
-              {canDeleteProperty && (
-                <>
-                  <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
-                  <DropdownMenuItem
-                    className={cn(
-                      menuItemClass,
-                      "text-destructive focus:bg-destructive/10 focus:text-destructive",
-                    )}
-                    onClick={() => onDelete(property.id)}
-                  >
-                    <Trash2 className={menuIconClass} />
-                    Excluir
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
+      <div className="flex min-w-0 flex-1 flex-col p-3.5">
         <button
           type="button"
-          aria-label={"Ver detalhes de " + propertyLabel}
-          className="flex min-w-0 w-full flex-1 flex-col rounded-[6px] text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+          aria-label={`Ver detalhes de ${propertyLabel}`}
           onClick={openProperty}
+          className="min-w-0 w-full rounded-[6px] text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
         >
-          <h3 className="mb-1.5 line-clamp-2 text-[14px] font-medium leading-5 text-[var(--app-text-primary)]">
-            {property.title ||
-              (displayPropertyType || "Imóvel") +
-                " em " +
-                (property.bairro ||
-                  property.cidade ||
-                  "localização não informada")}
-          </h3>
-
-          {(property.bairro || property.cidade || quadra || lote) && (
-            <div className="mb-2.5 flex min-w-0 items-center gap-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
-              <MapPin className="h-3 w-3 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">
-                {[
-                  property.bairro,
-                  quadra ? "Quadra " + quadra : null,
-                  lote ? "Lote " + lote : null,
-                  property.cidade,
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-              </span>
-            </div>
-          )}
-
-          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-light text-[var(--app-text-secondary)]">
-            {property.quartos != null && property.quartos > 0 && (
-              <span className="flex items-center gap-1">
-                <Bed className="h-3 w-3" />
-                {property.quartos}
-              </span>
-            )}
-            {property.banheiros != null && property.banheiros > 0 && (
-              <span className="flex items-center gap-1">
-                <Bath className="h-3 w-3" />
-                {property.banheiros}
-              </span>
-            )}
-            {property.vagas != null && property.vagas > 0 && (
-              <span className="flex items-center gap-1">
-                <Car className="h-3 w-3" />
-                {property.vagas}
-              </span>
-            )}
-            {displayArea != null && displayArea > 0 && (
-              <span className="flex items-center gap-1">
-                <Ruler className="h-3 w-3" />
-                {displayArea}m²{isLand ? " total" : ""}
+          <div className="flex min-w-0 items-baseline justify-between gap-2">
+            <p
+              className={cn(
+                "min-w-0 break-words text-[17px] font-normal leading-tight text-[var(--app-text-primary)] [overflow-wrap:anywhere]",
+                isUnavailable && "text-[var(--app-text-tertiary)] line-through",
+              )}
+            >
+              {formatPrice(displayPrice, isRentalIntent ? "Aluguel" : property.tipo_de_negocio)}
+            </p>
+            {perSquareMeter !== null && (
+              <span className="shrink-0 whitespace-nowrap text-[11px] font-light text-[var(--app-text-tertiary)]">
+                {formatPropertyMoney(perSquareMeter)}/m²
               </span>
             )}
           </div>
-
-          <p
-            className={cn(
-              "mt-auto min-w-0 w-full break-words border-t border-[var(--app-border)] pt-3 text-[17px] font-medium leading-tight text-[var(--app-text-primary)] [overflow-wrap:anywhere]",
-              isUnavailable && "text-[var(--app-text-tertiary)] line-through",
-            )}
-          >
-            {formatPrice(
-              displayPrice,
-              isRentalIntent ? "Aluguel" : property.tipo_de_negocio,
-            )}
-          </p>
+          <h3 className="mt-2 line-clamp-2 text-[13px] font-light leading-[18px] text-[var(--app-text-primary)]">
+            {property.title ||
+              `${displayPropertyType || "Imóvel"} em ${property.bairro || property.cidade || "localização não informada"}`}
+          </h3>
+          {location && (
+            <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
+              <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{location}</span>
+            </p>
+          )}
         </button>
+
+        {attributes.length > 0 && (
+          <ul className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 border-t border-[var(--app-border)] pt-2.5 text-[12px] font-light text-[var(--app-text-secondary)]">
+            {attributes.map(({ icon: Icon, label }) => (
+              <li key={label} className="flex items-center gap-1">
+                <Icon className="h-3 w-3" aria-hidden="true" />
+                {label}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {(ownerLabel || responsible) && (
+          <div className="mt-2.5 flex min-h-7 items-center justify-between gap-2">
+            {ownerLabel ? (
+              <div className="min-w-0">
+                <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Proprietário</p>
+                <p className="truncate text-[12px] font-light text-[var(--app-text-primary)]">{ownerLabel}</p>
+              </div>
+            ) : <span />}
+            {responsible && <ResponsibleAvatar name={responsible.name} avatarUrl={responsible.avatarUrl} />}
+          </div>
+        )}
+
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2.5">
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {canonicalSiteState ? (
+              <PropertyChip tone={SITE_TONES[canonicalSiteState.tone] ?? "neutral"}>{canonicalSiteState.label}</PropertyChip>
+            ) : (
+              <PropertyChip tone={isSitePublished ? "success" : "neutral"}>{isSitePublished ? "Site" : "Fora do site"}</PropertyChip>
+            )}
+            {property.portfolio_type === "third_party" && <PropertyChip tone="primary">Terceiro</PropertyChip>}
+          </div>
+          <PropertyCardMenu
+            property={property}
+            propertyLabel={propertyLabel}
+            propertySiteUrl={propertySiteUrl}
+            statusKind={statusKind}
+            isSaleIntent={isSaleIntent}
+            isRentalIntent={isRentalIntent}
+            canEdit={canEdit}
+            canRunAvailabilityActions={canUpdateAvailability ?? canEdit}
+            canDelete={canDelete ?? canEdit}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onPreview={onPreview}
+            onOpenDetails={onOpenDetails}
+            onHistory={onHistory}
+            onChangeStatus={onChangeStatus}
+            onOpenPublication={onOpenPublication}
+          />
+        </div>
       </div>
     </article>
   );

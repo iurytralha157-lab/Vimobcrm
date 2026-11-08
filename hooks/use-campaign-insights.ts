@@ -310,6 +310,7 @@ function emptyResult() {
     topCreatives: [] as TopCreative[],
     dailyData: [] as MarketingDailyPerformance[],
     media: [] as MarketingMediaAsset[],
+    socialDaily: [] as Array<{ date: string; reach: number; interactions: number; posts: number }>,
     social: {
       provider: null as string | null,
       profileName: null as string | null,

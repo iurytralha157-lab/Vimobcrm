@@ -19,7 +19,7 @@ const (
 )
 
 type StageInactivityCycleResult struct {
-	Scanned, Enqueued, Notified, Waiting, Cancelled, Failed, Dead int
+	Scanned, Enqueued, Notified, Moved, Redistributed, Waiting, Cancelled, Failed, Dead int
 }
 
 type inactivityScanPolicy struct {
@@ -115,35 +115,48 @@ func loadInactivityScanPolicies(ctx context.Context, queryer inactivityQueryer, 
 }
 
 func inactivityPolicyDestinations(policy *StageInactivityPolicy) []any {
-	return []any{&policy.AutomationID, &policy.OrganizationID, &policy.StageID, &policy.Epoch, &policy.Revision, &policy.Clock, &policy.StartMode, &policy.ActivatedAt, &policy.AutomationUpdatedAt, &policy.Days, &policy.Message, &policy.Enabled, &policy.InteractionCoverageFrom}
+	return []any{&policy.AutomationID, &policy.OrganizationID, &policy.StageID, &policy.Epoch, &policy.Revision, &policy.Clock, &policy.StartMode, &policy.ActivatedAt, &policy.AutomationUpdatedAt, &policy.Days, &policy.Message, &policy.Enabled, &policy.InteractionCoverageFrom, &policy.ActionKind, &policy.TargetStageID, &policy.ActingUserID, &policy.TargetRoundRobinID}
 }
 
 func (repo Repository) scanInactivityPolicy(ctx context.Context, tx pgx.Tx, policy inactivityScanPolicy, now time.Time, result *StageInactivityCycleResult) error {
-	rows, err := tx.Query(ctx, inactivityLeadPageSQL, policy.OrganizationID, policy.StageID, policy.AfterLeadID, inactivityLeadBatch)
+	var enteredSince *time.Time
+	if policy.StartMode == InactivityNewStageEntries {
+		enteredSince = &policy.ActivatedAt
+	}
+	rows, err := tx.Query(ctx, inactivityLeadPageSQL, policy.OrganizationID, policy.StageID, policy.AfterLeadID, inactivityLeadBatch, enteredSince)
 	if err != nil {
 		return err
 	}
 	leads := []inactivityLeadState{}
+	var lastLeadID string
+	scanned := 0
 	for rows.Next() {
 		var lead inactivityLeadState
-		if err := rows.Scan(&lead.OrganizationID, &lead.LeadID, &lead.StageID, &lead.ScopeCycle, &lead.StageEnteredAt, &lead.ScopeStartedAt, &lead.LastActionAt, &lead.LastActionID, &lead.IsOpen); err != nil {
+		var scopeCycle *string
+		if err := rows.Scan(&lead.OrganizationID, &lead.LeadID, &lead.StageID, &scopeCycle, &lead.StageEnteredAt, &lead.ScopeStartedAt, &lead.LastActionAt, &lead.LastActionID, &lead.IsOpen); err != nil {
 			rows.Close()
 			return err
 		}
-		leads = append(leads, lead)
+		lastLeadID = lead.LeadID
+		scanned++
+		// Out-of-scope entries still advance the bounded stage cursor.
+		if scopeCycle != nil {
+			lead.ScopeCycle = *scopeCycle
+			leads = append(leads, lead)
+		}
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return err
 	}
+	result.Scanned += scanned
 	batch := &pgx.Batch{}
 	for _, lead := range leads {
 		episode, applicable, err := evaluateInactivityEpisode(policy.StageInactivityPolicy, lead)
 		if err != nil {
 			return err
 		}
-		result.Scanned++
 		if !applicable {
 			continue
 		}
@@ -164,8 +177,8 @@ func (repo Repository) scanInactivityPolicy(ctx context.Context, tx pgx.Tx, poli
 		}
 	}
 	var nextID *string
-	if len(leads) == inactivityLeadBatch {
-		nextID = &leads[len(leads)-1].LeadID
+	if scanned == inactivityLeadBatch {
+		nextID = &lastLeadID
 	}
 	_, err = tx.Exec(ctx, `update private.stage_inactivity_policies set scan_after_lead_id = $3::uuid, next_scan_at = $4 where organization_id = $1::uuid and automation_id = $2::uuid`, policy.OrganizationID, policy.AutomationID, nextID, now.Add(inactivityScanDelay))
 	return err
@@ -223,6 +236,12 @@ func (repo Repository) processInactivityJobSafely(ctx context.Context, tx pgx.Tx
 	if !applicable || episode.Key != job.EpisodeKey || episode.DueAt.After(now) {
 		return finishInactivityJob(ctx, tx, job, now, "cancelled", "episode_changed")
 	}
+	switch policy.ActionKind {
+	case InactivityActionMoveStage:
+		return repo.moveInactiveLead(ctx, tx, job, policy, now)
+	case InactivityActionRedistribute:
+		return repo.redistributeInactiveLead(ctx, tx, job, policy, now)
+	}
 	var userID string
 	var generation int64
 	if assignedUserID == nil {
@@ -267,6 +286,15 @@ func markInactivityFailure(ctx context.Context, tx pgx.Tx, job inactivityJob, no
 	if errors.Is(cause, ErrInactivityPolicyIncomplete) {
 		code = "invalid_policy"
 	}
+	if errors.Is(cause, errInactivityQueueUnavailable) {
+		code = "queue_unavailable"
+		if status == "pending" {
+			next = now.Add(6 * time.Hour * time.Duration(1<<job.Attempts))
+		}
+	}
+	if errors.Is(cause, errInactivitySameAssignee) {
+		code = "same_assignee"
+	}
 	_, err := tx.Exec(ctx, `update private.stage_inactivity_jobs set status = $3, attempts = attempts + 1, next_attempt_at = $4, error_code = $5, updated_at = $6 where organization_id = $1::uuid and id = $2::uuid and status = 'pending'`, job.OrganizationID, job.ID, status, next, code, now)
 	if err != nil {
 		return fmt.Errorf("persist stage inactivity retry: %w", err)
@@ -278,4 +306,46 @@ func rollbackInactivityTransaction(tx pgx.Tx) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = tx.Rollback(cleanupCtx)
+}
+
+// StageInactivityMover performs the canonical lead move inside the job
+// transaction. It is injected by the app so this package does not depend on
+// the leads package. outcome is "moved" or a business reason not to move.
+type StageInactivityMover func(ctx context.Context, tx pgx.Tx, move StageInactivityMoveRequest) (outcome string, err error)
+
+type StageInactivityMoveRequest struct {
+	OrganizationID, ActorID, LeadID, FromStageID, ToStageID, AutomationID, EpisodeKey string
+}
+
+// WithStageInactivityMover enables "move_stage" rules. Without it they can be
+// saved disabled but not activated, and pending jobs fail rather than guess.
+func (repo Repository) WithStageInactivityMover(mover StageInactivityMover) Repository {
+	repo.inactivityMover = mover
+	return repo
+}
+
+func (repo Repository) moveInactiveLead(ctx context.Context, tx pgx.Tx, job inactivityJob, policy StageInactivityPolicy, now time.Time) (string, error) {
+	if repo.inactivityMover == nil {
+		return "", errors.New("stage inactivity mover is not configured")
+	}
+	if policy.ActingUserID == nil || policy.TargetStageID == nil {
+		return "", ErrInactivityPolicyIncomplete
+	}
+	outcome, err := repo.inactivityMover(ctx, tx, StageInactivityMoveRequest{
+		OrganizationID: job.OrganizationID, ActorID: *policy.ActingUserID, LeadID: job.LeadID,
+		FromStageID: policy.StageID, ToStageID: *policy.TargetStageID,
+		AutomationID: policy.AutomationID, EpisodeKey: job.EpisodeKey,
+	})
+	if err != nil {
+		return "", err
+	}
+	if outcome != "moved" {
+		// A business refusal is final for this episode: retrying cannot make a
+		// removed manager, an archived target or a changed lead valid again.
+		return finishInactivityJob(ctx, tx, job, now, "cancelled", outcome)
+	}
+	_, err = tx.Exec(ctx, `update private.stage_inactivity_jobs set status='moved', moved_to_stage_id=$3::uuid,
+ moved_at=$4, error_code=null, updated_at=$4
+ where organization_id=$1::uuid and id=$2::uuid and status='pending'`, job.OrganizationID, job.ID, *policy.TargetStageID, now)
+	return "moved", err
 }

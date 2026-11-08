@@ -68,6 +68,10 @@ before(async () => {
     h.render=()=>renderWithQueries(React.createElement(React.Fragment,null,h.shell(),h.overlay==='dialog'?React.createElement(Dialog,{open:true,onOpenChange:noop},React.createElement(DialogContent,null,React.createElement(DialogTitle,null,'Popup sintético'),React.createElement(DialogDescription,null,'Teste da camada real Radix'))):h.overlay==='drawer'?React.createElement(Drawer,{open:true,onOpenChange:noop,shouldScaleBackground:false},React.createElement(DrawerContent,{showHandle:false,style:{height:'80dvh'}},React.createElement(DrawerTitle,null,'Drawer sintético'),React.createElement(DrawerDescription,null,'Teste da camada real Vaul'))):null));h.render();`);
 
   let entrySource = await readFile(entry, 'utf8');
+  entrySource = "import{getPipelineBoardScrollMemory}from'@/hooks/pipelines/use-pipeline-board-scroll';\n" + entrySource;
+  entrySource = entrySource
+    .replace('stages:h.stages,filteredStages:', 'scrollMemory:h.scrollScope?getPipelineBoardScrollMemory(queryClient,h.scrollScope,h.mobile):null,stages:h.stages,filteredStages:')
+    .replace('h.shell(),h.overlay', 'h.away?null:h.shell(),h.overlay');
   entrySource = entrySource.replace("import React from'react';", "import React from'react';import{DragDropContext,Droppable}from'@hello-pangea/dnd';import{LeadCard}from'@/components/features/leads/LeadCard';")
     .replace('onOpenLead:onOpenLead', 'onOpenLead:h.overrideOpen||onOpenLead')
     .replace('isDragDisabled:false,nowMs:', 'isDragDisabled:!!h.disabled,nowMs:')
@@ -130,6 +134,47 @@ async function openBoard(width, height) {
 async function keyboardReady(page) {
   await page.waitForFunction(() => window.pipelineKeyboardSensors.size > 0);
 }
+
+test('returning to the same board restores both column offsets and horizontal scroll', async () => {
+  const page = await openBoard(1280, 580);
+  const viewport = page.locator('[data-pipeline-scroll-viewport]');
+  const first = page.locator('[data-pipeline-drop-column="stage0"]');
+  const second = page.locator('[data-pipeline-drop-column="stage1"]');
+  const positions = async () => Promise.all([
+    viewport.evaluate(element => element.scrollLeft),
+    first.evaluate(element => element.scrollTop),
+    second.evaluate(element => element.scrollTop),
+  ]);
+  try {
+    await page.evaluate(() => { window.h.scrollScope = 'board-a'; window.h.render(); });
+    await viewport.evaluate(async element => {
+      await new Promise(requestAnimationFrame);
+      element.scrollLeft = 140;
+      element.querySelector('[data-pipeline-drop-column="stage0"]').scrollTop = 90;
+      element.querySelector('[data-pipeline-drop-column="stage1"]').scrollTop = 185;
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+    });
+    assert.deepEqual(await positions(), [140, 90, 185]);
+    await page.evaluate(() => { window.h.away = true; window.h.render(); });
+    await viewport.waitFor({ state: 'detached' });
+    await page.evaluate(() => { window.h.away = false; window.h.render(); });
+    await page.waitForFunction(() => {
+      const board = document.querySelector('[data-pipeline-scroll-viewport]');
+      return board?.scrollLeft === 140
+        && board.querySelector('[data-pipeline-drop-column="stage0"]').scrollTop === 90
+        && board.querySelector('[data-pipeline-drop-column="stage1"]').scrollTop === 185;
+    });
+    await page.evaluate(() => { window.h.scrollScope = 'board-b'; window.h.render(); });
+    await page.waitForFunction(() => {
+      const board = document.querySelector('[data-pipeline-scroll-viewport]');
+      return board?.scrollLeft === 0 && [...board.querySelectorAll('[data-pipeline-drop-column]')].every(column => column.scrollTop === 0);
+    });
+    assert.deepEqual(await positions(), [0, 0, 0]);
+  } finally {
+    await page.close();
+  }
+});
 
 test('synthetic real Board benchmark: clock, vertical drag and horizontal boundary', { timeout: 90_000 }, async () => {
   const page = await openBoard(1280, 580);

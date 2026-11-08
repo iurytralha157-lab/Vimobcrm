@@ -1,11 +1,9 @@
 import { useCallback, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { TrendingUp } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -13,7 +11,8 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { DashboardChartTooltip } from './DashboardChartTooltip';
-import { DASHBOARD_DEAL_EVOLUTION_COLORS } from '@/config/dashboard-chart-colors';
+import { NEUTRAL_SOFT, NEUTRAL_STRONG } from '@/components/features/dashboard/dashboard-ui';
+import { cn } from '@/lib/utils';
 import { DashboardChartError } from './DashboardChartError';
 import { dashboardEvolutionTickLayout, dashboardEvolutionTickLines, dashboardEvolutionTickWidth } from '@/components/features/dashboard/evolution-chart-model';
 
@@ -76,8 +75,8 @@ function CustomTooltip(props: DealsTooltipProps) {
       {...props}
       nameFormatter={(name) => {
         if (name === 'ganhos') return 'Ganhos';
-        if (name === 'perdas') return 'Perdas';
-        return 'Em Aberto';
+        if (name === 'perdas') return 'Perdidos';
+        return 'Em aberto';
       }}
     />
   );
@@ -112,7 +111,48 @@ function EvolutionAxisTick({ x = 0, y = 0, payload, chartWidth, hourly }: {
   </text>;
 }
 
-export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: DealsEvolutionChartProps) {
+// Neutral volume with the accent on what was won, as in the Marketing reference.
+const EVOLUTION_FILLS = {
+  abertos: 'color-mix(in srgb, var(--app-text-primary) 11%, transparent)',
+  perdas: 'color-mix(in srgb, var(--app-text-primary) 27%, transparent)',
+  ganhos: 'var(--primary)',
+};
+
+const EVOLUTION_LEGEND = [
+  { key: 'abertos', label: 'Em aberto', className: NEUTRAL_SOFT },
+  { key: 'perdas', label: 'Perdidos', className: NEUTRAL_STRONG },
+  { key: 'ganhos', label: 'Ganhos', className: 'bg-primary' },
+] as const;
+
+export function DealsEvolutionLegend({ className }: { className?: string }) {
+  return (
+    <ul className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-light text-[var(--app-text-secondary)]', className)}>
+      {EVOLUTION_LEGEND.map((item) => (
+        <li key={item.key} className="flex items-center gap-1.5">
+          <span className={cn('h-2.5 w-2.5 rounded-[2px]', item.className)} aria-hidden="true" />
+          {item.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Cards created in each interval, stacked by their current state. */
+export function DealsEvolutionChart(props: DealsEvolutionChartProps) {
+  return (
+    <section className="flex h-full min-h-0 min-w-0 flex-col rounded-[12px] bg-[var(--app-surface-solid)] p-4">
+      <div className="mb-2 flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h3 className="text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">Evolução de negócios</h3>
+        <DealsEvolutionLegend />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <DealsEvolutionBars {...props} />
+      </div>
+    </section>
+  );
+}
+
+function DealsEvolutionBars({ data, isLoading, isError, onRetry }: DealsEvolutionChartProps) {
   const isMobile = useIsMobile();
   const [chartSize, setChartSize] = useState({ width: 600, height: 250 });
 
@@ -120,178 +160,65 @@ export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: Deals
     setChartSize({ width, height });
   }, []);
 
-  if (isLoading) {
-    return (
-      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-        <CardHeader className="px-4 pb-2 pt-4">
-          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <TrendingUp className="h-3.5 w-3.5" />
-            </span>
-            Evolução de Negócios
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex-1">
-          <ChartSkeleton />
-        </CardContent>
-      </Card>
-    );
-  }
+  if (isLoading) return <ChartSkeleton />;
 
   if (isError) {
-    return (
-      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-        <CardHeader className="px-4 pb-2 pt-4">
-          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <TrendingUp className="h-3.5 w-3.5" />
-            </span>
-            Evolução de Negócios
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="min-h-0 flex-1">
-          <DashboardChartError message="Não foi possível carregar a evolução de negócios." onRetry={onRetry} />
-        </CardContent>
-      </Card>
-    );
+    return <DashboardChartError message="Não foi possível carregar a evolução de negócios." onRetry={onRetry} />;
   }
 
   if (!data || data.length === 0) {
     return (
-      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-        <CardHeader className="px-4 pb-2 pt-4">
-          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <TrendingUp className="h-3.5 w-3.5" />
-            </span>
-            Evolução de Negócios
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex-1 flex items-center justify-center">
-          <div className="py-8 text-center">
-            <span className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <TrendingUp className="h-3.5 w-3.5" />
-            </span>
-            <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
-              Nenhum dado disponível
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <p className="flex min-h-[160px] flex-1 items-center justify-center text-center text-[12px] font-light text-[var(--app-text-secondary)]">
+        Nenhum dado disponível para o período
+      </p>
     );
   }
 
-  const maxValue = Math.max(...data.map(d => Math.max(d.ganhos, d.perdas, d.abertos)), 1);
+  const maxValue = Math.max(...data.map((d) => d.ganhos + d.perdas + d.abertos), 1);
   const hourlyEvolution = isHourlyEvolution(data);
   const tickLayout = dashboardEvolutionTickLayout(data.map((point) => point.date), chartSize.width, isMobile, hourlyEvolution);
   const yTickCount = getYTickCount(chartSize.height, maxValue);
+  const barGap = data.length > 40 ? 1 : data.length > 20 ? 2 : 4;
 
   return (
-    <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-      <CardHeader className="px-4 pb-2 pt-4">
-        <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-            <TrendingUp className="h-3.5 w-3.5" />
-          </span>
-          Evolução de Negócios
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pb-3 flex-1 flex flex-col px-0">
-        {/* Chart */}
-        <div className="relative min-h-[180px] w-full flex-1">
-          <ResponsiveContainer
-            width="100%"
-            height="100%"
-            minWidth={1}
-            minHeight={1}
-            initialDimension={INITIAL_CHART_DIMENSION}
-            onResize={handleResize}
-          >
-            <AreaChart
-              data={data}
-              margin={{
-                top: 10,
-                right: isMobile ? 10 : 40,
-                left: isMobile ? -4 : 0,
-                bottom: 0
-              }}
-            >
-              <defs>
-                <linearGradient id="gradientGanhos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.won} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.won} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradientPerdas" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.lost} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.lost} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradientAbertos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.open} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.open} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--app-border)"
-                opacity={0.18}
-                vertical={false}
-              />
-              <XAxis
-                dataKey="date"
-                axisLine={false}
-                tickLine={false}
-                tick={<EvolutionAxisTick chartWidth={chartSize.width} hourly={hourlyEvolution} />}
-                tickMargin={6}
-                interval={tickLayout.interval}
-                height={tickLayout.height}
-                minTickGap={5}
-              />
-              <YAxis
-                axisLine={false}
-                tickLine={false}
-                tick={chartTickStyle}
-                tickMargin={4}
-                width={isMobile ? 32 : 45}
-                tickFormatter={(value: number) => value.toLocaleString('pt-BR', { notation: 'compact', maximumFractionDigits: 1 })}
-                allowDecimals={false}
-                tickCount={yTickCount}
-                domain={[0, 'auto']}
-              />
-              <Tooltip content={<CustomTooltip />} cursor={false} />
-              <Area
-                type="monotone"
-                dataKey="abertos"
-                name="abertos"
-                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.open}
-                strokeWidth={2}
-                fill="url(#gradientAbertos)"
-                dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
-              />
-              <Area
-                type="monotone"
-                dataKey="ganhos"
-                name="ganhos"
-                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.won}
-                strokeWidth={2}
-                fill="url(#gradientGanhos)"
-                dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
-              />
-              <Area
-                type="monotone"
-                dataKey="perdas"
-                name="perdas"
-                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.lost}
-                strokeWidth={2}
-                fill="url(#gradientPerdas)"
-                dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="relative min-h-[160px] w-full flex-1" role="img" aria-label={`Evolução de negócios em ${data.length} intervalos: cards em aberto, perdidos e ganhos.`}>
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={1}
+        minHeight={1}
+        initialDimension={INITIAL_CHART_DIMENSION}
+        onResize={handleResize}
+      >
+        <BarChart data={data} barCategoryGap={barGap} margin={{ top: 8, right: isMobile ? 4 : 8, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="var(--app-border)" opacity={0.5} vertical={false} />
+          <XAxis
+            dataKey="date"
+            axisLine={false}
+            tickLine={false}
+            tick={<EvolutionAxisTick chartWidth={chartSize.width} hourly={hourlyEvolution} />}
+            tickMargin={6}
+            interval={tickLayout.interval}
+            height={tickLayout.height}
+            minTickGap={5}
+          />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            tick={chartTickStyle}
+            tickMargin={4}
+            width={isMobile ? 30 : 36}
+            tickFormatter={(value: number) => value.toLocaleString('pt-BR', { notation: 'compact', maximumFractionDigits: 1 })}
+            allowDecimals={false}
+            tickCount={yTickCount}
+            domain={[0, 'auto']}
+          />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--app-surface-hover)' }} />
+          <Bar dataKey="ganhos" name="ganhos" stackId="cards" fill={EVOLUTION_FILLS.ganhos} isAnimationActive={false} />
+          <Bar dataKey="perdas" name="perdas" stackId="cards" fill={EVOLUTION_FILLS.perdas} isAnimationActive={false} />
+          <Bar dataKey="abertos" name="abertos" stackId="cards" fill={EVOLUTION_FILLS.abertos} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

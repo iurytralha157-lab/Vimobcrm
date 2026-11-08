@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -11,21 +11,24 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { AlertCircle, Loader2, Lock, Plus, Target, Trophy } from 'lucide-react';
+import { AlertCircle, Archive, Lock, Target, Trophy } from 'lucide-react';
 import { useCanEditCadences } from '@/hooks/use-can-edit-cadences';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { useRoundRobins } from '@/hooks/use-round-robins';
 import {
   canManagePipeline,
   canManageStageAutomations,
   canViewStageAutomations,
 } from '@/lib/access/pipeline-settings-access';
-import { useUpdateStage } from '@/hooks/use-stages';
+import { useStages, useUpdateStage } from '@/hooks/use-stages';
 import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
 import { toast } from 'sonner';
 import { AutomationForm } from '@/components/features/automations/AutomationForm';
 import { AutomationsList } from '@/components/features/automations/AutomationsList';
 import { StageOperationalRules } from '@/components/features/cadences';
+import { StageSettingsActions, StageSettingsFooterProvider } from './stage-settings-footer';
+import { useStageInactivityAlertEditor } from './stage-inactivity-alert';
 import { StageAutomation } from '@/hooks/use-stage-automations';
 import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { StageColorPicker } from './StageColorPicker';
@@ -81,17 +84,30 @@ export function StageSettingsDialog({
   const hasAutomationsModule = hasModule('automations');
   const canViewAutomations = canViewStageAutomations(hasPermission, hasAutomationsModule);
   const canEditAutomations = canManageStageAutomations(hasPermission, hasAutomationsModule);
+  const canManageDistribution = hasPermission('distribution_manage');
 
   // Automation state
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
   const [editingAutomation, setEditingAutomation] = useState<StageAutomation | null>(null);
   const [activeTab, setActiveTab] = useState<string>(initialTab);
+  const showDistributionNames = open && activeTab === 'automations' && canViewAutomations && canManageDistribution && !automationFormOpen && !editingAutomation;
+  const { data: distributions } = useRoundRobins({ enabled: showDistributionNames });
+  const distributionNames = useMemo(() => Object.fromEntries((distributions ?? []).map((item) => [item.id, item.name])), [distributions]);
   const [rulesState, setRulesState] = useState({ isDirty: false, isSaving: false });
   const [automationState, setAutomationState] = useState({ isDirty: false, isSaving: false });
   const [listSaving, setListSaving] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
+  const [footerNode, setFooterNode] = useState<HTMLDivElement | null>(null);
+  const stagesQuery = useStages(open ? stage?.pipeline_id : undefined);
+  const pipelineStages = stagesQuery.data;
+  const stageNames = useMemo(() => Object.fromEntries((pipelineStages ?? []).map((item) => [item.id, item.name])), [pipelineStages]);
+  // Move rules never send leads to this column, to Won/Lost or to archived columns.
+  const moveTargets = useMemo(() => pipelineStages
+    ?.filter((item) => item.id !== stage?.id && !item.is_won && !item.is_lost && item.is_active !== false)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((item) => ({ id: item.id, name: item.name })), [pipelineStages, stage?.id]);
   const handleRulesState = useCallback((state: { isDirty: boolean; isSaving: boolean }) => setRulesState(state), []);
   const handleAutomationState = useCallback((state: { isDirty: boolean; isSaving: boolean }) => setAutomationState(state), []);
   const isBusy = isSaving || rulesState.isSaving || automationState.isSaving || listSaving;
@@ -203,32 +219,37 @@ export function StageSettingsDialog({
   return (
     <>
     <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent side="right" className="w-[calc(100vw-16px)] sm:w-[650px] sm:max-w-[650px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-6 text-[var(--app-text-primary)] shadow-none flex flex-col overflow-y-auto"
+      <SheetContent side="right" className="flex w-[calc(100vw-16px)] flex-col gap-0 overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none sm:w-[650px] sm:max-w-[650px] [&>button]:grid [&>button]:size-7 [&>button]:place-items-center [&>button]:bg-[var(--app-surface-soft)] [&>button]:opacity-100 [&>button:hover]:bg-[var(--app-surface-hover)]"
         onCloseAutoFocus={(event) => {
           if (!returnFocusElement?.isConnected) return;
           event.preventDefault();
           returnFocusElement.focus();
         }}
       >
-        <SheetHeader>
-          <SheetTitle>Configurações da Coluna</SheetTitle>
+        <SheetHeader className="shrink-0 px-4 pb-0.5 pt-5 text-left sm:px-6">
+          <SheetTitle className="pr-10 text-[17px] font-normal">Configurações da coluna</SheetTitle>
         </SheetHeader>
 
-        <Tabs value={activeTab} onValueChange={(value) => requestAction(() => setActiveTab(value))} className="mt-4">
-          <TabsList className="mb-4 grid w-full grid-cols-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-1">
-            <TabsTrigger value="general" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Gerais</span><span className="hidden sm:inline">Configurações Gerais</span></TabsTrigger>
-            <TabsTrigger value="cadence" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Regras</span><span className="hidden sm:inline">Regras da etapa</span></TabsTrigger>
-            <TabsTrigger value="automations" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Automações</span><span className="hidden sm:inline">Automações</span></TabsTrigger>
-          </TabsList>
+        <StageSettingsFooterProvider value={{ node: footerNode, close: () => handleOpenChange(false) }}>
+        <Tabs value={activeTab} onValueChange={(value) => requestAction(() => setActiveTab(value))} className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 px-4 pt-4 sm:px-6">
+            <TabsList className="grid w-full grid-cols-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-1">
+              <TabsTrigger value="general" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)]">Geral</TabsTrigger>
+              <TabsTrigger value="cadence" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Regras</span><span className="hidden sm:inline">Regras da etapa</span></TabsTrigger>
+              <TabsTrigger value="automations" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)]">Automações</TabsTrigger>
+            </TabsList>
+          </div>
 
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6">
           {/* General Settings Tab */}
-          <TabsContent value="general" className="space-y-4">
+          <TabsContent value="general" className="mt-0 space-y-4">
             {!canEditPipeline && (
-              <Badge variant="secondary" className="gap-1 mb-4">
+              <Badge variant="secondary" className="gap-1">
                 <Lock className="h-3 w-3" />
                 Somente visualização
               </Badge>
             )}
+            <section className="space-y-4 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
             <div className="space-y-2">
               <Label htmlFor="stage-settings-name">Nome da coluna</Label>
               <Input
@@ -237,7 +258,7 @@ export function StageSettingsDialog({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Nome do estágio"
                 disabled={!canEditPipeline || isBusy}
-                className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+                className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-solid)]"
               />
             </div>
 
@@ -246,7 +267,7 @@ export function StageSettingsDialog({
               {canEditPipeline ? (
                 <fieldset disabled={isBusy}><StageColorPicker value={color} onChange={setColor} /></fieldset>
               ) : (
-                <div className="flex items-center gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-2">
+                <div className="flex items-center gap-3 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-2">
                   <div
                     className="w-6 h-6 rounded-[6px] border-0"
                     style={{ backgroundColor: color }}
@@ -255,7 +276,7 @@ export function StageSettingsDialog({
                 </div>
               )}
             </div>
-
+            </section>
             <section
               aria-labelledby="marketing-results-title"
               className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4"
@@ -276,9 +297,6 @@ export function StageSettingsDialog({
                       Por pipeline
                     </Badge>
                   </div>
-                  <p className="mt-1 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]">
-                    Defina como o avanço do lead será interpretado nos relatórios e nas integrações de Marketing.
-                  </p>
                 </div>
               </div>
 
@@ -288,7 +306,7 @@ export function StageSettingsDialog({
                     htmlFor="stage-is-qualified"
                     className="text-[12px] font-medium leading-5 text-[var(--app-text-primary)]"
                   >
-                    Esta é a etapa de lead qualificado
+                    Qualificar leads ao entrar nesta coluna
                   </Label>
                   <Switch
                     id="stage-is-qualified"
@@ -307,7 +325,7 @@ export function StageSettingsDialog({
                   id="stage-is-qualified-description"
                   className="mt-1.5 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]"
                 >
-                  Ao ativar, esta coluna substitui a outra etapa qualificada desta pipeline. O lead passa a contar como qualificado quando entrar aqui.
+                  A entrada nesta coluna conta como qualificação nos relatórios. Leads elegíveis da Meta também podem enviar esse evento pela integração ativa. Cada pipeline tem uma etapa de qualificação.
                 </p>
 
                 {qualificationRestriction ? (
@@ -328,58 +346,61 @@ export function StageSettingsDialog({
                 <div className="min-w-0">
                   <p className="text-[12px] font-medium text-[var(--app-text-primary)]">Convertido</p>
                   <p className="mt-0.5 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]">
-                    Automático ao marcar o lead como Ganho.
+                    O lead conta como convertido quando é marcado como Ganho.
                   </p>
                 </div>
               </div>
             </section>
 
-            {canEditPipeline && (
-              <>
-              {generalError && <p role="alert" className="text-xs text-destructive">{generalError}</p>}
-              <div className="flex gap-2 pt-4">
-                <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isBusy}>
-                  Cancelar
-                </Button>
-                <Button className="w-[60%] rounded-[6px]" onClick={handleSaveGeneral} disabled={isBusy || !generalDirty}>
-                  {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Salvar
-                </Button>
-              </div>
-              </>
-            )}
             {canEditPipeline && stage.is_active !== false && (
-              <section className="space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                <p className="text-xs text-muted-foreground">Arquive uma coluna vazia para ocultá-la no board e preservar seu histórico. Colunas com leads vinculados, mesmo fora dos filtros atuais, não podem ser arquivadas.</p>
-                <Button type="button" variant="outline" disabled={isBusy} onClick={() => requestAction(() => { setArchiveError(null); setArchiveOpen(true); })}>Arquivar coluna</Button>
+              <section aria-labelledby="stage-archive-title" className="flex flex-col gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-hover)] text-[var(--app-text-secondary)]">
+                    <Archive className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 id="stage-archive-title" className="text-sm font-medium text-[var(--app-text-primary)]">Arquivar coluna</h3>
+                    <p className="mt-1 text-[12px] font-light leading-4 text-[var(--app-text-tertiary)]">Oculta a coluna no board e preserva o histórico. Só colunas vazias, sem entradas ou regras de mudança apontando para ela, podem ser arquivadas.</p>
+                  </div>
+                </div>
+                <Button type="button" variant="ghost" className="h-9 shrink-0 rounded-[6px] bg-[var(--app-surface-solid)] px-4 text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]" disabled={isBusy} onClick={() => requestAction(() => { setArchiveError(null); setArchiveOpen(true); })}>Arquivar coluna</Button>
               </section>
             )}
+            {generalError && <p role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-xs text-destructive">{generalError}</p>}
+            <StageSettingsActions
+              status={canEditPipeline ? (generalDirty ? 'Alterações ainda não salvas' : 'Tudo salvo') : null}
+              cancelLabel={canEditPipeline ? 'Cancelar' : 'Fechar'}
+              cancelDisabled={isBusy}
+              primary={canEditPipeline ? { label: 'Salvar', onClick: () => void handleSaveGeneral(), loading: isSaving, disabled: isBusy || !generalDirty } : undefined}
+            />
           </TabsContent>
 
-          {/* Cadence Tab */}
-          <TabsContent
-            value="cadence"
-            className="space-y-4"
-          >
-            <StageOperationalRules
+          {/* Rules Tab */}
+          <TabsContent value="cadence" className="mt-0 space-y-4">
+            <StageRulesTab
               stageId={stage.id}
               stageName={stage.name}
-              canEdit={canEditRules}
+              canEditRules={canEditRules}
+              alertEnabled={canViewAutomations}
+              canEditAlert={canEditAutomations}
               onEditorStateChange={handleRulesState}
             />
           </TabsContent>
 
           {/* Automations Tab */}
-          <TabsContent value="automations" className="space-y-4">
+          <TabsContent value="automations" className="mt-0 space-y-4">
             {!canViewAutomations ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">
-                <Lock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>Você não tem acesso às automações desta organização</p>
-              </div>
+              <>
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <Lock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>Você não tem acesso às automações desta organização</p>
+                </div>
+                <StageSettingsActions cancelLabel="Fechar" />
+              </>
             ) : canEditAutomations && (automationFormOpen || editingAutomation) ? (
               <div className="rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-4">
-                <h4 className="font-medium mb-4">
-                  {editingAutomation ? 'Editar Automação' : 'Nova Automação'}
+                <h4 className="mb-4 text-sm font-normal">
+                  {editingAutomation ? 'Editar automação' : 'Nova automação'}
                 </h4>
                 <AutomationForm
                   key={`${stage.id}:${editingAutomation?.id || 'new'}`}
@@ -387,6 +408,9 @@ export function StageSettingsDialog({
                   pipelineId={stage.pipeline_id || ''}
                   automation={editingAutomation}
                   terminalStatus={stage.is_won ? 'won' : stage.is_lost ? 'lost' : null}
+                  moveTargets={moveTargets}
+                  moveTargetsLoading={stagesQuery.isPending}
+                  canManageDistribution={canManageDistribution}
                   onEditorStateChange={handleAutomationState}
                   onSuccess={() => {
                     closeAutomationForm();
@@ -398,30 +422,35 @@ export function StageSettingsDialog({
               </div>
             ) : (
               <>
-                <div className="flex items-center justify-between">
-                  <Label className="text-base">Automações do Estágio</Label>
-                  {canEditAutomations && (
-                    <Button
-                      size="sm"
-                      onClick={() => setAutomationFormOpen(true)}
-                      className="bg-primary hover:bg-primary/90"
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Adicionar
-                    </Button>
-                  )}
+                <div>
+                  <h3 className="text-sm font-normal text-[var(--app-text-primary)]">Automações da coluna</h3>
+                  <p className="mt-1 text-xs font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                    Escolha o que acontece na entrada do lead ou após um prazo sem atividade.
+                  </p>
                 </div>
                 <AutomationsList
                   stageId={stage.id}
                   pipelineId={stage.pipeline_id || ''}
                   canEdit={canEditAutomations}
+                  stageNames={stageNames}
+                  canManageDistribution={canManageDistribution}
+                  distributionNames={distributionNames}
+                  hideManagedAlert
                   onSavingChange={setListSaving}
                   onEdit={canEditAutomations ? (automation) => setEditingAutomation(automation) : undefined}
+                />
+                <StageSettingsActions
+                  cancelLabel="Fechar"
+                  cancelDisabled={isBusy}
+                  primary={canEditAutomations ? { label: 'Nova automação', onClick: () => setAutomationFormOpen(true), disabled: isBusy } : undefined}
                 />
               </>
             )}
           </TabsContent>
+          </div>
         </Tabs>
+        </StageSettingsFooterProvider>
+        <div ref={setFooterNode} className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3 sm:px-6" />
       </SheetContent>
     </Sheet>
     <AlertDialog open={archiveOpen} onOpenChange={(nextOpen) => { if (!isBusy) setArchiveOpen(nextOpen); }}>
@@ -460,5 +489,32 @@ export function StageSettingsDialog({
       </AlertDialogContent>
     </AlertDialog>
     </>
+  );
+}
+
+function StageRulesTab({
+  stageId,
+  stageName,
+  canEditRules,
+  alertEnabled,
+  canEditAlert,
+  onEditorStateChange,
+}: {
+  stageId: string;
+  stageName: string;
+  canEditRules: boolean;
+  alertEnabled: boolean;
+  canEditAlert: boolean;
+  onEditorStateChange: (state: { isDirty: boolean; isSaving: boolean }) => void;
+}) {
+  const alertEditor = useStageInactivityAlertEditor({ stageId, enabled: alertEnabled, canEdit: canEditAlert });
+  return (
+    <StageOperationalRules
+      stageId={stageId}
+      stageName={stageName}
+      canEdit={canEditRules}
+      onEditorStateChange={onEditorStateChange}
+      extraEditor={alertEditor}
+    />
   );
 }

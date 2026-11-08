@@ -189,7 +189,9 @@ test('hook entrega a primeira pagina antes de restaurar profundidade em backgrou
   const queryFnEnd = hookSource.indexOf('retry: shouldRetryPipelineQuery', queryFnStart);
   assert.ok(queryFnStart >= 0 && queryFnEnd > queryFnStart, 'queryFn do board nao encontrado');
 
-  const initialQuerySource = hookSource.slice(queryFnStart, queryFnEnd);
+  const initialQueryStart = hookSource.indexOf('const previousRestoreState', queryFnStart);
+  assert.ok(initialQueryStart > queryFnStart && initialQueryStart < queryFnEnd, 'ramo sem quadro em cache nao encontrado');
+  const initialQuerySource = hookSource.slice(initialQueryStart, queryFnEnd);
   assert.match(initialQuerySource, /return \(await getPipelineBoard\(/);
   assert.doesNotMatch(initialQuerySource, /buildPipelineStageRestorePlans|getPipelineStageLeads/);
 

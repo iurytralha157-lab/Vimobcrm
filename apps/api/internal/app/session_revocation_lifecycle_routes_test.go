@@ -135,3 +135,57 @@ func TestRevokedSessionLifecycleProtectsMeContactsAndPipelineAcrossRolesAndTenan
 		})
 	}
 }
+
+func TestTenantRoutesCheckRevocationBeforeAuthorization(t *testing.T) {
+	t.Setenv("FINANCIAL_ORGANIZATION_IDS", "")
+	const userB = "10000000-0000-0000-0000-000000000002"
+	const sessionB = "20000000-0000-0000-0000-000000000002"
+	const organizationA = "30000000-0000-4000-8000-000000000001"
+	const organizationB = "30000000-0000-4000-8000-000000000002"
+	checker := &revocationLifecycleChecker{active: map[string]string{sessionB: userB}}
+	resolver := &contactsP1TenantResolver{contexts: map[string]tenant.Context{
+		routeGuardTestUserID: contactsP1Tenant(routeGuardTestUserID, organizationA),
+		userB:                contactsP1Tenant(userB, organizationB),
+	}}
+	mux, tokenA := newActiveSessionRouteTestMux(t, checker, resolver)
+	tokenB := leadReadCanaryToken(t, userB, sessionB, "password")
+	wrongOwnerToken := leadReadCanaryToken(t, routeGuardTestUserID, sessionB, "password")
+
+	for _, route := range []struct {
+		pattern    string
+		activeCode string
+	}{
+		{"GET /v1/webhooks", "module_unavailable"},
+		{"GET /v1/integrations/portals/grupo-olx", "module_unavailable"},
+		{"PUT /v1/integrations/portals/chaves-na-mao", "module_unavailable"},
+		{"GET /v1/properties/{id}", "module_unavailable"},
+		{"PATCH /v1/properties/{id}", "module_unavailable"},
+		{"GET /v1/financial/entries", "financial_module_unavailable"},
+	} {
+		t.Run(route.pattern, func(t *testing.T) {
+			request := func(token, userID, sessionID, organizationID string, status int, code string, tenantLookups int) {
+				t.Helper()
+				beforeChecks, beforeTenant := len(checker.lookups), resolver.calls
+				response := contactsP1RouteRequest(mux, route.pattern, token, organizationID, "")
+				if response.Code != status || !strings.Contains(response.Body.String(), `"code":"`+code+`"`) {
+					t.Fatalf("status=%d, response=%s", response.Code, response.Body.String())
+				}
+				if len(checker.lookups) != beforeChecks+1 || checker.lookups[beforeChecks] != [2]string{userID, sessionID} ||
+					resolver.calls != beforeTenant+tenantLookups {
+					t.Fatalf("unexpected session/tenant calls: checks=%v, tenant lookups=%d", checker.lookups[beforeChecks:], resolver.calls-beforeTenant)
+				}
+				if status == http.StatusUnauthorized && strings.Contains(response.Body.String(), `"data"`) {
+					t.Fatal("revoked or mismatched session reached a protected response")
+				}
+			}
+
+			checker.active[routeGuardTestSessionID] = routeGuardTestUserID
+			request(tokenA, routeGuardTestUserID, routeGuardTestSessionID, organizationA, http.StatusForbidden, route.activeCode, 1)
+			request(tokenB, userB, sessionB, organizationA, http.StatusForbidden, "organization_access_denied", 1)
+			request(wrongOwnerToken, routeGuardTestUserID, sessionB, organizationA, http.StatusUnauthorized, "session_revoked", 0)
+			delete(checker.active, routeGuardTestSessionID)
+			request(tokenA, routeGuardTestUserID, routeGuardTestSessionID, organizationA, http.StatusUnauthorized, "session_revoked", 0)
+			request(tokenB, userB, sessionB, organizationB, http.StatusForbidden, route.activeCode, 1)
+		})
+	}
+}

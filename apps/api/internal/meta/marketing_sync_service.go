@@ -180,7 +180,7 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 	// A CRM owner count alone cannot prove exclusive ownership of an external
 	// agency account. Inspect the provider catalog on every run and switch to
 	// tenant-safe ad/form scope whenever any creative is foreign or ambiguous.
-	if marketingSyncCatalogRequiresPageScope(catalog, target) {
+	if !target.AccountWide && marketingSyncCatalogRequiresPageScope(catalog, target) {
 		target.PageScopedPaidData = true
 	}
 	if target.FormScopedPaidData {

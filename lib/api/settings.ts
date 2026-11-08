@@ -416,7 +416,7 @@ export const settingsAPI = {
   },
 
   async changePassword(
-    input: { password: string; source?: string },
+    input: { password: string; current_password?: string; source?: string },
     organizationId?: string | null,
     intent: VimobAPIRequestIntent = {},
   ) {

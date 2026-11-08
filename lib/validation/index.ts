@@ -25,6 +25,7 @@ export * from "./password";
 export * from "./pipelines";
 export * from "./presence";
 export * from "./properties";
+export * from "./property-portfolio-settings";
 export * from "./property-developments";
 export * from "./property-publications";
 export * from "./property-workspace";

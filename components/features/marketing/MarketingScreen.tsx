@@ -20,8 +20,10 @@ import { MarketingPeriodNotice } from "@/components/shared/filters/MarketingPeri
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useMarketingConnections,
   useMarketingDashboard,
   useMarketingScopeFilters,
+  useSyncMarketingConnection,
 } from "@/hooks/marketing";
 import { getDateRangeFromPreset } from "@/hooks/use-dashboard-filters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
@@ -41,7 +43,7 @@ import {
   type MarketingTabHrefs,
 } from "./marketing-tabs";
 
-const INTEGRATION_HREF = "/settings/integrations/meta";
+const MARKETING_CONNECTION_HREF = "/settings/integrations/meta-marketing";
 
 function uniqueScopeOptions(options: MarketingScopeFilterOption[]) {
   const unique = new Map<string, string>();
@@ -139,6 +141,26 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     ],
   );
   const model = useMarketingDashboard(dashboardFilters, { enabled: sharedFilters.isFiltersHydrated });
+  const connectionsQuery = useMarketingConnections({ enabled: model.canManageIntegration });
+  const connectionSync = useSyncMarketingConnection();
+  const marketingConnections = connectionsQuery.data?.enabled ? connectionsQuery.data.connections : [];
+  const usesMarketingConnection = connectionsQuery.data?.enabled === true;
+  const syncableConnection = marketingConnections.find((connection) =>
+    connection.assets.some((asset) => asset.is_selected && asset.type !== "page"),
+  );
+  const INTEGRATION_HREF = usesMarketingConnection ? MARKETING_CONNECTION_HREF : "/settings/integrations/meta";
+  const runSync = () => {
+    if (syncableConnection) {
+      connectionSync.mutate({
+        connectionId: syncableConnection.id,
+        dateStart: model.dateRange.from,
+        dateStop: model.dateRange.to,
+      });
+      return;
+    }
+    model.sync();
+  };
+  const isSyncing = connectionSync.isPending || model.syncMutation.isPending;
   const data = model.insightsQuery.data;
   const insightsError = model.insightsQuery.error;
   const errorState = getMarketingDashboardErrorState(insightsError);
@@ -146,7 +168,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const hasInvalidFilters = errorState.shouldClearFilters;
   const dataDependentTab = activeTab !== "social";
   // prettier-ignore
-  const canSyncIntegration = model.canManageIntegration && model.integrationState.isConnected && model.canSyncIntegration;
+  const canSyncIntegration = (model.canSyncIntegration && Boolean(syncableConnection)) || (model.canManageIntegration && model.integrationState.isConnected && model.canSyncIntegration);
   const hasSynchronizedData = Boolean(
     data?.lastSync ||
     data?.dataQuality.hasDailyFacts ||
@@ -393,15 +415,20 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={model.sync}
+                onClick={runSync}
                 disabled={
                   Boolean(model.insightsQuery.periodError) ||
-                  !model.integrationState.hasAdAccount ||
-                  !model.integrationState.hasMarketingToken ||
-                  model.syncMutation.isPending
+                  (!syncableConnection &&
+                    (!model.integrationState.hasAdAccount ||
+                      !model.integrationState.hasMarketingToken)) ||
+                  isSyncing
                 }
                 title={
-                  model.insightsQuery.periodError ?? (!model.integrationState.hasAdAccount
+                  model.insightsQuery.periodError ?? (syncableConnection
+                    ? isSyncing
+                      ? "Sincronização em andamento"
+                      : "Sincronizar o período selecionado com a Meta"
+                    : !model.integrationState.hasAdAccount
                     ? "Selecione uma conta de anúncios na integração Meta"
                     : !model.integrationState.hasMarketingToken
                       ? "Reconecte a Meta para liberar ads_read e sincronizar Marketing"
@@ -414,12 +441,12 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 <RefreshCw
                   className={cn(
                     "h-3.5 w-3.5",
-                    model.syncMutation.isPending && "animate-spin",
+                    isSyncing && "animate-spin",
                   )}
                   aria-hidden="true"
                 />
                 <span className="sr-only">
-                  {model.syncMutation.isPending
+                  {isSyncing
                     ? "Sincronizando"
                     : "Sincronizar"}
                 </span>
@@ -617,14 +644,22 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
           <MarketingDataState
             kind="empty"
             title={
-              model.integrationState.hasAdAccount
+              usesMarketingConnection && !syncableConnection
+                ? "Conecte a Meta para ver os dados"
+                : syncableConnection
+                  ? "Ainda não há dados sincronizados"
+                  : model.integrationState.hasAdAccount
                 ? model.integrationState.hasMarketingToken
                   ? "Ainda não há dados sincronizados"
                   : "Reconecte a Meta para Marketing"
                 : "Selecione uma conta de anúncio"
             }
             description={
-              model.integrationState.hasAdAccount
+              usesMarketingConnection && !syncableConnection
+                ? "Em Integrações, entre com a Meta Marketing e escolha as contas de anúncios e o Instagram."
+                : syncableConnection
+                  ? "Use Sincronizar para buscar o período selecionado."
+                  : model.integrationState.hasAdAccount
                 ? model.integrationState.hasMarketingToken
                   ? model.canSyncIntegration
                     ? "Use Sincronizar para buscar o período selecionado. Até lá, as métricas permanecem indisponíveis em vez de exibir zeros enganosos."
@@ -639,23 +674,24 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   : "Peça a um administrador para configurar uma conta de anúncio na integração Meta."
             }
             action={
-              !model.canManageIntegration ? undefined : model.integrationState
-                  .hasAdAccount &&
+              !model.canManageIntegration ? undefined : (syncableConnection && model.canSyncIntegration) ||
+                (!usesMarketingConnection &&
+                model.integrationState.hasAdAccount &&
                 model.integrationState.hasMarketingToken &&
-                model.canSyncIntegration ? (
+                model.canSyncIntegration) ? (
                 <Button
                   type="button"
-                  onClick={model.sync}
-                  disabled={model.syncMutation.isPending}
+                  onClick={runSync}
+                  disabled={isSyncing}
                   className="h-9 rounded-[6px] border-0 bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 >
                   <RefreshCw
                     className={cn(
                       "mr-1.5 h-3.5 w-3.5",
-                      model.syncMutation.isPending && "animate-spin",
+                      isSyncing && "animate-spin",
                     )}
                   />
-                  {model.syncMutation.isPending
+                  {isSyncing
                     ? "Sincronizando"
                     : "Sincronizar período"}
                 </Button>
@@ -665,7 +701,9 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   className="h-9 rounded-[6px] border-0 bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 >
                   <Link href={INTEGRATION_HREF}>
-                    {!model.integrationState.hasAdAccount
+                    {usesMarketingConnection
+                      ? "Conectar Meta Marketing"
+                      : !model.integrationState.hasAdAccount
                       ? "Configurar conta Meta"
                       : !model.integrationState.hasMarketingToken
                         ? "Reconectar Meta"

@@ -30,6 +30,7 @@ import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
 import { useStageDeleteIntent, type DeleteStageData } from '@/hooks/pipelines/use-stage-delete-intent';
 import { usePipelineCreateMutation, usePipelineDeleteMutation, usePipelineUpdateMutation, useStageCreateMutation, useStageUpdateMutation, useStagesReorderMutation } from '@/hooks/pipelines/use-pipeline-mutations';
 import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
+import { refreshExpandedPipelineBoard } from '@/hooks/pipelines/refresh-expanded-pipeline-board';
 import { capturePipelinePageLease } from '@/lib/pipeline-page-lease';
 import {
   buildPipelineStageRestorePlans,
@@ -195,7 +196,10 @@ export function useStagesWithLeads(
   const boardQuery = useQuery<StageWithLeads[]>({
     queryKey,
     staleTime: PIPELINE_BOARD_STALE_TIME_MS,
-    gcTime: PIPELINE_CACHE_TIME_MS,
+    // Keep manually expanded boards in the access-scoped tab cache.
+    gcTime: queryClient.getQueryData<StageWithLeads[]>(queryKey)?.some(stage => stage.leads?.length > LEADS_PER_STAGE)
+      ? Infinity
+      : PIPELINE_CACHE_TIME_MS,
     placeholderData: (previousData, previousQuery) =>
       reusePreviousDataWhenKeyPartsMatch(
         previousData,
@@ -204,7 +208,13 @@ export function useStagesWithLeads(
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
       ),
     enabled: isBoardEnabled,
-    refetchOnMount: true,
+    refetchOnMount: (query) => {
+      const board = query.state.data;
+      // A route change may have canceled a cold restore after page one was cached.
+      return board && buildPipelineStageRestorePlans(board, readPipelineStageLoadedCounts(paginationStorageKey)).length > 0
+        ? 'always'
+        : true;
+    },
     structuralSharing: (oldData, newData) =>
       reconcilePipelineBoardSnapshot(
         oldData as StageWithLeads[] | undefined,
@@ -218,6 +228,55 @@ export function useStagesWithLeads(
         readPipelineStageLoadedCounts(paginationStorageKey),
         getPipelineStageLoadedCountsFromBoard(cachedBoard),
       );
+      const restoreFilters = filters ? structuredClone(filters) : undefined;
+      const boardFilters = restoreFilters as PipelineBoardFilters | undefined;
+
+      if (cachedBoard && pipelineId && Object.keys(desiredLoadedCounts).length > 0) {
+        // Keep the current board visible until the fresh expanded snapshot is ready.
+        backgroundRestoreStateRef.current = null;
+        const operation = requestScope.capture();
+        const assertCurrent = () => {
+          signal.throwIfAborted();
+          if (!operation.isCurrent() || restoreVisitRef.current?.identity !== restoreIdentity) {
+            throw new DOMException('A atualização do quadro perdeu o escopo atual.', 'AbortError');
+          }
+        };
+        assertCurrent();
+        const freshBoard = (await getPipelineBoard({
+          organizationId: operation.organizationId,
+          pipelineId,
+          filterUserId,
+          filters: boardFilters,
+          limit: LEADS_PER_STAGE,
+          signal,
+          intent: operation.intent,
+        })) as StageWithLeads[];
+        assertCurrent();
+        const refreshedBoard = await refreshExpandedPipelineBoard({
+          freshBoard,
+          cachedBoard,
+          savedCounts: desiredLoadedCounts,
+          organizationId: operation.organizationId,
+          pipelineId,
+          readPage: async (plan) => {
+            assertCurrent();
+            const page = await getPipelineStageLeads({
+              ...plan,
+              organizationId: operation.organizationId,
+              pipelineId,
+              filterUserId,
+              filters: boardFilters,
+              intent: operation.intent,
+              signal,
+            });
+            assertCurrent();
+            return page as { stageId: string; leads: PipelineLead[]; hasMore?: boolean };
+          },
+        });
+        assertCurrent();
+        return refreshedBoard;
+      }
+
       const previousRestoreState = backgroundRestoreStateRef.current;
       backgroundRestoreStateRef.current = {
         queryKeyId,
@@ -226,7 +285,7 @@ export function useStagesWithLeads(
           previousRestoreState?.queryKeyId === queryKeyId
             ? previousRestoreState.generation + 1
             : 1,
-        filters: filters ? structuredClone(filters) : undefined,
+        filters: restoreFilters,
         desiredLoadedCounts,
         attemptedStageIds: new Set(),
       };
@@ -235,7 +294,7 @@ export function useStagesWithLeads(
         organizationId,
         pipelineId,
         filterUserId,
-        filters: filters as PipelineBoardFilters,
+        filters: boardFilters,
         limit: LEADS_PER_STAGE,
         signal,
       })) as StageWithLeads[];

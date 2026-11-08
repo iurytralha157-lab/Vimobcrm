@@ -7,6 +7,8 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 
+import type { ReactNode } from 'react'
+
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
@@ -29,11 +31,14 @@ export function BrokerPreview({
   stageName,
   globalAttention,
   attentionPolicies,
+  extraSummary,
 }: {
   draft: RulesDraft
   stageName: string
   globalAttention: GlobalAttentionState
   attentionPolicies: AttentionPoliciesState
+  /** Rules saved elsewhere that the broker also feels, e.g. the inactivity alert. */
+  extraSummary?: ReactNode | null
 }) {
   const sourceMode = draft.attention.source_mode ?? 'inherit'
   const tasks = draft.cadence.enabled ? draft.cadence.tasks : []
@@ -147,6 +152,13 @@ export function BrokerPreview({
           )}
         </div>
       )}
+
+      {extraSummary ? (
+        <div className="mt-3 flex items-start gap-2.5 rounded-[8px] bg-[var(--app-surface-solid)] px-3 py-2.5">
+          <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" strokeWidth={1.5} />
+          <p className="text-[12px] font-light leading-[17px] text-[var(--app-text-secondary)]">{extraSummary}</p>
+        </div>
+      ) : null}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <LifecycleLine

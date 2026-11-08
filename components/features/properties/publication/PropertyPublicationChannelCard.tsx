@@ -3,13 +3,10 @@
 import Link from 'next/link'
 import {
   AlertCircle,
-  CheckCircle2,
   CircleAlert,
   Clock3,
   ExternalLink,
-  Globe2,
   Loader2,
-  RadioTower,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -27,15 +24,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
-import { formatPropertyDate } from '@/lib/property-display-utils'
 import { cn } from '@/lib/utils'
 import type { PropertyChannelPublication } from '@/lib/validation'
 
-import { PropertyPublicationHistory } from './PropertyPublicationHistory'
+import { PROPERTY_PRIMARY_BUTTON_CLASS, PROPERTY_SECONDARY_BUTTON_CLASS, PropertyChip, type PropertyChipTone } from '../property-ui'
+import { PropertyPublicationChannelDetails } from './PropertyPublicationChannelDetails'
 import { PropertyPublicationPreview } from './PropertyPublicationPreview'
 import { publicationIsBusy, publicationPublishBlockReason, publicationUnavailableReason } from './publication-action'
 import { getSitePublicationState } from './site-publication-state'
@@ -65,12 +59,6 @@ const OBSERVED_STATE_LABELS: Record<PropertyChannelPublication['observed_state']
   error: 'Com erro',
 }
 
-const DESIRED_STATE_LABELS: Record<PropertyChannelPublication['desired_state'], string> = {
-  published: 'Manter publicado',
-  paused: 'Manter pausado',
-  unpublished: 'Manter fora do ar',
-}
-
 function observedStateLabel(publication: PropertyChannelPublication) {
   if (publication.channel === 'site') {
     return getSitePublicationState(publication, false, true).label
@@ -84,42 +72,10 @@ function observedStateLabel(publication: PropertyChannelPublication) {
   return OBSERVED_STATE_LABELS[publication.observed_state]
 }
 
-function desiredStateLabel(publication: PropertyChannelPublication) {
-  if (publication.channel === 'site' && !publication.id && publication.legacy_visible) {
-    return 'Complete as pendências e publique para confirmar a atualização.'
-  }
-  if (publication.channel !== 'grupo_olx') {
-    return DESIRED_STATE_LABELS[publication.desired_state]
-  }
-  if (publication.desired_state === 'published') return 'Manter no XML'
-  if (publication.desired_state === 'paused') return 'Manter pausado no XML'
-  return 'Manter fora do XML'
-}
-
-function versionLabel(publication: PropertyChannelPublication) {
-  const isGrupoOLXChannel = publication.channel === 'grupo_olx'
-
-  if (publication.channel === 'site' && !publication.id && publication.legacy_visible) {
-    return 'Publicação pelo fluxo anterior'
-  }
-
-  if (publication.published_version) {
-    return isGrupoOLXChannel
-      ? `${publication.published_version} disponível no XML de ${publication.current_version}`
-      : `${publication.published_version} publicada de ${publication.current_version}`
-  }
-  if (publication.current_version) {
-    return isGrupoOLXChannel
-      ? `${publication.current_version} ainda não disponibilizada no XML`
-      : `${publication.current_version} ainda não publicada`
-  }
-  return 'Nenhuma versão criada'
-}
-
-function statusClassName(state: PropertyChannelPublication['observed_state']) {
-  if (state === 'error') return 'bg-destructive/10 text-destructive hover:bg-destructive/10'
-  if (state === 'published') return 'bg-primary/15 text-primary hover:bg-primary/15'
-  return 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]'
+function statusTone(state: PropertyChannelPublication['observed_state']): PropertyChipTone {
+  if (state === 'error') return 'danger'
+  if (state === 'published') return 'success'
+  return 'neutral'
 }
 
 export function PropertyPublicationChannelCard({
@@ -139,49 +95,30 @@ export function PropertyPublicationChannelCard({
   const unresolvedChecks = publication.checks.filter((check) => !check.resolved)
   const blockingChecks = unresolvedChecks.filter((check) => (check.severity ?? 'error') === 'error')
   const warningChecks = unresolvedChecks.filter((check) => check.severity === 'warning')
-  const resolvedChecks = publication.checks.filter((check) => check.resolved)
   const publishDisabled = Boolean(pendingAction || !publication.capabilities.can_publish || !publication.available || isTransient)
   const publishBlockReason = publicationPublishBlockReason(publication)
   // A retirada que falhou deve continuar recuperável mesmo se o canal ficar
   // indisponível; o backend expõe can_retry exatamente para essa drenagem.
   const retryDisabled = Boolean(pendingAction || isTransient)
   const unpublishDisabled = Boolean(pendingAction || isTransient)
-  const ChannelIcon = isSiteChannel ? Globe2 : RadioTower
   const readinessHeadingId = `readiness-${publication.channel}-${publication.channel_account_key}`
 
   return (
-    <Card className="app-card overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-      <CardHeader className="border-0 bg-[var(--app-surface-soft)] px-3 py-3 sm:px-4">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <ChannelIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <CardTitle className="text-[14px] font-normal text-[var(--app-text-primary)]">{publication.label}</CardTitle>
-              <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                {desiredStateLabel(publication)}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {!publication.available && (
-              <Badge className="rounded-[5px] border-0 bg-warning/10 px-2 py-1 text-[10px] font-light text-warning shadow-none hover:bg-warning/10">Canal indisponível</Badge>
-            )}
-            {publication.is_outdated && (
-              <Badge className="rounded-[5px] border-0 bg-warning/10 px-2 py-1 text-[10px] font-light text-warning shadow-none hover:bg-warning/10">Atualização pendente</Badge>
-            )}
-            <Badge className={cn('rounded-[5px] border-0 px-2 py-1 text-[10px] font-light shadow-none', statusClassName(publication.last_error ? 'error' : siteState?.tone === 'success' ? 'published' : siteState?.tone === 'neutral' ? 'unpublished' : publication.observed_state))}>
-              {isTransient && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden="true" />}
-              {observedStateLabel(publication)}
-            </Badge>
-          </div>
+    <section className="flex min-w-0 flex-col gap-3 rounded-[12px] bg-[var(--app-surface-solid)] p-4" aria-label={publication.label}>
+      <header className="flex items-start justify-between gap-2">
+        <h2 className="min-w-0 text-[14px] font-normal text-[var(--app-text-primary)]">{publication.label}</h2>
+        <div className="flex flex-wrap justify-end gap-1">
+          {!publication.available && <PropertyChip tone="warning">Canal indisponível</PropertyChip>}
+          {publication.is_outdated && <PropertyChip tone="warning">Atualização pendente</PropertyChip>}
+          <PropertyChip tone={statusTone(publication.last_error ? 'error' : siteState?.tone === 'success' ? 'published' : siteState?.tone === 'neutral' ? 'unpublished' : publication.observed_state)}>
+            {isTransient && <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" />}
+            {observedStateLabel(publication)}
+          </PropertyChip>
         </div>
-      </CardHeader>
+      </header>
 
-      <CardContent className="space-y-3 p-3 sm:p-4">
         {!publication.available && (
-          <div role="status" className="flex flex-col gap-2 rounded-[7px] bg-warning/10 px-3 py-2.5 text-[11px] font-light text-warning sm:flex-row sm:items-center">
+          <div role="status" className="flex flex-col gap-2 rounded-[7px] bg-warning/10 px-3 py-2.5 text-[12px] font-light text-warning sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 items-start gap-2">
               <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>{publicationUnavailableReason(publication)}</span>
@@ -194,144 +131,72 @@ export function PropertyPublicationChannelCard({
           </div>
         )}
 
-        {isGrupoOLXChannel && (
-          <details className="group rounded-[7px] bg-[var(--app-surface-soft)] px-3 py-2 text-[11px] font-light text-[var(--app-text-secondary)]">
-            <summary className="cursor-pointer select-none text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30">
-              Disponível no XML não confirma publicação nos portais
-            </summary>
-            <p className="mt-2 leading-[17px]">
-              Um único feed XML distribui o imóvel para OLX, ZAP e Viva Real conforme o contrato da conta. O estado Disponível no XML confirma a geração pelo Vimob; a importação e a aceitação dependem do portal.
-            </p>
-          </details>
-        )}
-
-        {isGrupoOLXChannel && publication.provider_feedback && (
-          <details
-            open={publication.provider_feedback.severity === 'error'}
-            className={cn('rounded-[7px] px-3 py-2.5 text-[11px] font-light', publication.provider_feedback.severity === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]')}
-          >
-            <summary className="cursor-pointer select-none font-normal focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30">
-              Último retorno do portal · ListingID {publication.provider_feedback.listing_id}
-            </summary>
-            <div className="mt-2 space-y-2">
-              <ul className="list-disc space-y-1 pl-5">
-                {publication.provider_feedback.messages.slice(0, 5).map((message, index) => (
-                  <li key={`${index}-${message}`}>{message}</li>
-                ))}
-              </ul>
-              {publication.provider_feedback.messages.length > 5 && (
-                <p>Mais {publication.provider_feedback.messages.length - 5} apontamento(s) no relatório.</p>
-              )}
-              <p className="leading-[17px]">
-                Este retorno é vinculado ao ListingID, não a uma versão específica. Ele não altera a prontidão nem confirma rejeição da versão {publication.published_version ?? publication.current_version}.
-              </p>
-            </div>
-          </details>
-        )}
-
         {publication.last_error && (
-          <div role="alert" className="flex items-start gap-2 rounded-[7px] bg-destructive/10 px-3 py-2.5 text-[11px] font-light text-destructive">
+          <div role="alert" className="flex items-start gap-2 rounded-[7px] bg-destructive/10 px-3 py-2.5 text-[12px] font-light text-destructive">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <p><span className="font-normal">Falha no último processamento.</span> {publication.last_error.message}</p>
           </div>
         )}
 
         {actionError && (
-          <div role="alert" className="flex items-start gap-2 rounded-[7px] bg-destructive/10 px-3 py-2.5 text-[11px] font-light text-destructive">
+          <div role="alert" className="flex items-start gap-2 rounded-[7px] bg-destructive/10 px-3 py-2.5 text-[12px] font-light text-destructive">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <p><span className="font-normal">Ação não enviada.</span> {actionError}</p>
           </div>
         )}
 
-        <section className="space-y-2.5" aria-labelledby={readinessHeadingId}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 id={readinessHeadingId} className="text-[12px] font-normal text-[var(--app-text-primary)]">
-                Prontidão do canal
-              </h3>
-              <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                {publication.readiness_state === 'ready'
-                  ? 'Sem pendências obrigatórias.'
-                  : publication.readiness_state === 'blocked'
-                    ? blockingChecks.length > 0
-                      ? `${blockingChecks.length} pendência(s) obrigatória(s) impedem a publicação${warningChecks.length ? `; há também ${warningChecks.length} aviso(s)` : ''}.`
-                      : 'Há pendências que precisam ser revisadas antes da publicação.'
-                    : 'A prontidão ainda está sendo avaliada.'}
-              </p>
-            </div>
-            <span className="shrink-0 text-[12px] font-normal text-[var(--app-text-primary)]">{publication.readiness_score}%</span>
+        <div aria-labelledby={readinessHeadingId}>
+          <p id={readinessHeadingId} className="text-[12px] font-light text-[var(--app-text-secondary)]">
+            {publication.readiness_state === 'ready'
+              ? 'Sem pendências obrigatórias.'
+              : publication.readiness_state === 'blocked'
+                ? blockingChecks.length > 0
+                  ? `${blockingChecks.length} pendência(s) obrigatória(s) impedem a publicação${warningChecks.length ? `; há também ${warningChecks.length} aviso(s)` : ''}.`
+                  : 'Há pendências que precisam ser revisadas antes da publicação.'
+                : 'A prontidão ainda está sendo avaliada.'}
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-[3px] bg-[color-mix(in_srgb,var(--app-text-primary)_11%,transparent)]">
+              <span
+                className={cn('block h-full rounded-[3px]', publication.readiness_score >= 100 ? 'bg-primary' : 'bg-warning')}
+                style={{ width: `${publication.readiness_score}%` }}
+              />
+            </span>
+            <span className="shrink-0 text-[11px] font-light tabular-nums text-[var(--app-text-tertiary)]">{publication.readiness_score}%</span>
           </div>
-          <Progress value={publication.readiness_score} className="h-1.5" />
-
           {unresolvedChecks.length > 0 && (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <ul className="mt-2 space-y-1.5">
               {unresolvedChecks.map((check) => (
-                <div key={check.code} className="flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2.5">
+                <li key={check.code} className="flex items-start gap-2">
                   {check.severity === 'error' ? (
                     <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden="true" />
                   ) : (
                     <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
                   )}
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-normal text-[var(--app-text-primary)]">{check.label}</p>
-                    {check.message && <p className="mt-0.5 text-[11px] font-light leading-[17px] text-[var(--app-text-secondary)]">{check.message}</p>}
+                  <div className="min-w-0 text-[13px] font-light text-[var(--app-text-primary)]">
+                    {check.label}
+                    {check.message && <p className="text-[12px] leading-[18px] text-[var(--app-text-secondary)]">{check.message}</p>}
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
-          )}
-          {resolvedChecks.length > 0 && (
-            <details className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2.5">
-              <summary className="cursor-pointer select-none text-[11px] font-light text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30">
-                {resolvedChecks.length} verificação(ões) atendida(s)
-              </summary>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {resolvedChecks.map((check) => (
-                  <div key={check.code} className="flex items-start gap-2 text-[11px] font-light text-[var(--app-text-secondary)]">
-                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
-                    <div className="min-w-0">
-                      <p className="font-normal text-[var(--app-text-primary)]">{check.label}</p>
-                      {check.message && <p className="mt-0.5 leading-[17px]">{check.message}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
+            </ul>
           )}
           {publication.checks.length === 0 && (
-            <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Nenhuma verificação foi retornada para este canal.</p>
+            <p className="mt-2 text-[12px] font-light text-[var(--app-text-tertiary)]">Nenhuma verificação foi retornada para este canal.</p>
           )}
-        </section>
-
-        <div className="grid gap-2 rounded-[7px] bg-[var(--app-surface-soft)] p-3 text-[11px] font-light text-[var(--app-text-secondary)] sm:grid-cols-3">
-          <div>
-            <span className="block text-[10px] text-[var(--app-text-tertiary)]">Versão</span>
-            {versionLabel(publication)}
-          </div>
-          <div>
-            <span className="block text-[10px] text-[var(--app-text-tertiary)]">Última solicitação</span>
-            {formatPropertyDate(publication.last_requested_at, true, 'Ainda não processado')}
-          </div>
-          <div>
-            <span className="block text-[10px] text-[var(--app-text-tertiary)]">
-              {isGrupoOLXChannel ? 'Último processamento no Vimob' : 'Último sucesso'}
-            </span>
-            {formatPropertyDate(publication.last_succeeded_at, true, 'Ainda não processado')}
-          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+        <div className="mt-auto flex flex-wrap items-center gap-1.5">
           {canManage && (
             <Button
               type="button"
-              size="sm"
               disabled={publishDisabled}
               onClick={() => onPublish(publication)}
-              className="h-8 rounded-[6px] bg-primary/50 px-3 text-[11px] font-light text-primary-foreground shadow-none hover:bg-primary"
+              className={PROPERTY_PRIMARY_BUTTON_CLASS}
             >
               {pendingAction === 'publish'
-                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                : <Send className="mr-1.5 h-3.5 w-3.5" />}
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                : <Send className="h-3.5 w-3.5" aria-hidden="true" />}
               {isGrupoOLXChannel
                 ? publication.observed_state === 'published' ? 'Atualizar no XML' : 'Disponibilizar no XML'
                 : publication.observed_state === 'published'
@@ -344,7 +209,7 @@ export function PropertyPublicationChannelCard({
             <PropertyPublicationPreview publication={publication} imageUrls={previewImageUrls} />
           )}
           {!isGrupoOLXChannel && publication.public_url && siteState?.canOpenPublicSite && (
-            <Button asChild type="button" variant="ghost" size="sm" className="h-8 gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]">
+            <Button asChild type="button" variant="ghost" className={PROPERTY_SECONDARY_BUTTON_CLASS}>
               <a href={publication.public_url} target="_blank" rel="noopener noreferrer">
                 Abrir no canal
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -356,14 +221,13 @@ export function PropertyPublicationChannelCard({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               disabled={retryDisabled}
               onClick={() => onRetry(publication)}
-              className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+              className={PROPERTY_SECONDARY_BUTTON_CLASS}
             >
               {pendingAction === 'retry'
-                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                : <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
               Tentar novamente
             </Button>
           )}
@@ -371,10 +235,10 @@ export function PropertyPublicationChannelCard({
           {canManage && publication.capabilities.can_unpublish && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" disabled={unpublishDisabled} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]">
+                <Button type="button" variant="ghost" disabled={unpublishDisabled} className={PROPERTY_SECONDARY_BUTTON_CLASS}>
                   {pendingAction === 'unpublish'
-                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    : <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />}
                   {isGrupoOLXChannel ? 'Retirar do XML' : 'Retirar do ar'}
                 </Button>
               </AlertDialogTrigger>
@@ -417,15 +281,7 @@ export function PropertyPublicationChannelCard({
           </p>
         )}
 
-        <details className="rounded-[7px] bg-[var(--app-surface-soft)] px-3 py-2.5">
-          <summary className="cursor-pointer select-none text-[11px] font-normal text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30">
-            Processamentos recentes · {publication.recent_jobs.length}
-          </summary>
-          <div className="mt-3">
-            <PropertyPublicationHistory jobs={publication.recent_jobs} />
-          </div>
-        </details>
-      </CardContent>
-    </Card>
+        <PropertyPublicationChannelDetails publication={publication} />
+    </section>
   )
 }

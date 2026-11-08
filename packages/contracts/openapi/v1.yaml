@@ -1102,7 +1102,8 @@ paths:
     post:
       summary: Change the authenticated user's password and revoke sessions
       description: >-
-        A regular session uses source=settings and revokes other sessions.
+        A regular session uses source=settings, must prove the current
+        password, and revokes other sessions after proof succeeds.
         A password-recovery session uses source=recovery and revokes all sessions.
         Session revocation must be accepted by Supabase Auth before the password
         update; a missing sessionsRevoked field in a response from an older API
@@ -1127,9 +1128,16 @@ paths:
           $ref: "#/components/responses/APIError"
         "403":
           $ref: "#/components/responses/APIError"
+        "429":
+          description: Supabase Auth rate limited current password verification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
         "502":
           description: >-
-            Auth could not confirm session revocation
+            Auth was unavailable for current password verification or proof
+            session cleanup, could not confirm session revocation
             (password_session_revocation_unconfirmed), or revocation succeeded
             but the password update could not be confirmed
             (password_update_unconfirmed_after_revocation). The client must not
@@ -1994,6 +2002,65 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardExtraCountsResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/schedule/dashboard:
+    get:
+      summary: Get the Agenda dashboard report for the visible events of a period
+      description: >-
+        All series aggregate the same events, limited to the active organization,
+        Agenda event privacy and lead visibility. `hourly` exists only for
+        single-day periods; `hour_distribution` covers any period, without
+        all-day events on the scheduled-date basis. Fields documented here as
+        additive may be absent while an older API replica is still serving.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - {name: dateFrom, in: query, required: true, schema: {type: string, format: date}}
+        - {name: dateTo, in: query, required: true, schema: {type: string, format: date}, description: At most 366 days after dateFrom.}
+        - {name: dateBasis, in: query, schema: {type: string, enum: [start_time, created_at, completed_at], default: start_time}}
+        - {name: teamId, in: query, schema: {type: string, format: uuid}}
+        - {name: userId, in: query, schema: {type: string, format: uuid}}
+        - {name: source, in: query, schema: {type: string, maxLength: 160}}
+        - {name: eventType, in: query, schema: {type: string, enum: [call, email, meeting, task, message, visit]}}
+        - {name: status, in: query, schema: {type: string, enum: [scheduled, completed, cancelled, no_show, overdue, upcoming]}}
+      responses:
+        "200":
+          description: Agenda dashboard report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDashboardResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/schedule/dashboard/events:
+    get:
+      summary: List the events behind the Agenda dashboard, one page at a time
+      description: >-
+        Accepts the filters of /v1/schedule/dashboard. Lead stage and source are
+        present only when the viewer may see the linked lead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - {name: dateFrom, in: query, required: true, schema: {type: string, format: date}}
+        - {name: dateTo, in: query, required: true, schema: {type: string, format: date}}
+        - {name: dateBasis, in: query, schema: {type: string, enum: [start_time, created_at, completed_at], default: start_time}}
+        - {name: teamId, in: query, schema: {type: string, format: uuid}}
+        - {name: userId, in: query, schema: {type: string, format: uuid}}
+        - {name: source, in: query, schema: {type: string, maxLength: 160}}
+        - {name: eventType, in: query, schema: {type: string, enum: [call, email, meeting, task, message, visit]}}
+        - {name: status, in: query, schema: {type: string, enum: [scheduled, completed, cancelled, no_show, overdue, upcoming]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+      responses:
+        "200":
+          description: One page of events, ordered by start time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDashboardEventsResponse"
         "400":
           $ref: "#/components/responses/APIError"
         "403":
@@ -3836,6 +3903,12 @@ paths:
       summary: List properties in the current organization
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: portfolio_type
+          in: query
+          description: Portfolio classification. Launch follows the Lancamento deal type.
+          schema:
+            type: string
+            enum: [ready, launch, third_party]
         - name: limit
           in: query
           schema:
@@ -3955,6 +4028,62 @@ paths:
           $ref: "#/components/responses/APIError"
         "403":
           $ref: "#/components/responses/APIError"
+  /v1/properties/settings/portfolio:
+    get:
+      summary: Read the organization's property portfolio settings
+      description: >-
+        Returns every group and key, with defaults for anything never saved, and
+        revision 0 until the first save. These settings are stored only: they do
+        not change publication or edit behaviour yet.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Current settings.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioSettingsResponse"
+        "403":
+          $ref: "#/components/responses/APIError"
+    put:
+      summary: Save property portfolio settings
+      description: >-
+        Requires settings_organization. Merges by key, so omitted groups and keys
+        keep their stored value. Unknown groups or keys and out-of-range values
+        return 400. A revision other than the stored one returns 409
+        property_settings_conflict; use revision 0 for the first save.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePortfolioSettingsRequest"
+      responses:
+        "200":
+          description: Settings saved; revision advanced.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioSettingsResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
   /v1/properties/stats:
     get:
       summary: Get property KPIs for the current organization
@@ -3963,6 +4092,12 @@ paths:
         their own counter and are not included in the sale counter.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: portfolio_type
+          in: query
+          description: Portfolio classification. Launch follows the Lancamento deal type.
+          schema:
+            type: string
+            enum: [ready, launch, third_party]
         - name: tipo_de_negocio
           in: query
           schema:
@@ -5433,6 +5568,51 @@ paths:
         "404":
           $ref: "#/components/responses/APIError"
         "409":
+          $ref: "#/components/responses/APIError"
+  /v1/properties/{id}/keys/movements:
+    get:
+      summary: List the custody history across all keys of a property
+      description: >-
+        Newest first, paginated by an opaque cursor. Physical custody is visible
+        only to property managers, as in the workspace: other viewers of a visible
+        property receive an empty page with meta.can_view_key_custody false.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 512
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [registration, checkout, transfer, return, location_change, mark_lost, mark_found, deactivate, reactivate]
+      responses:
+        "200":
+          description: One page of movements.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyKeyMovementPage"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
           $ref: "#/components/responses/APIError"
   /v1/properties/{id}/keys/{keyId}/movements:
     post:
@@ -8177,6 +8357,163 @@ paths:
                 $ref: "#/components/schemas/APIErrorEnvelope"
         default:
           $ref: "#/components/responses/APIError"
+  /v1/public/marketing/oauth/meta/callback:
+    get:
+      summary: Complete the read-only Marketing login with Meta
+      description: Public callback registered in the Meta app. A single-use state that expires in 10 minutes is checked before any provider call. Redirects to the allowlisted CRM URL with a status and an error code, never a token.
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Back to the CRM with marketing_connection=success or error.
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/marketing/connections:
+    get:
+      summary: List read-only Marketing connections of the organization
+      responses:
+        "200":
+          description: Connections and their assets. Tokens are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, meta_configured, connections]
+                properties:
+                  enabled:
+                    type: boolean
+                  meta_configured:
+                    type: boolean
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/marketing/connections/meta/start:
+    post:
+      summary: Start the read-only Marketing login with Meta
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [return_url]
+              properties:
+                return_url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: Provider URL to open in the browser.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [auth_url]
+                properties:
+                  auth_url:
+                    type: string
+                    format: uri
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/marketing/connections/{id}/assets:
+    put:
+      summary: Choose which assets of a connection feed Marketing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [selected_asset_ids]
+              properties:
+                selected_asset_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "204":
+          description: Selection saved.
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/marketing/connections/{id}/sync:
+    post:
+      summary: Import Marketing data through a read-only connection
+      description: Owners and admins. Reads from the provider and writes only Marketing facts, up to 90 days per call.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [date_start, date_stop]
+              properties:
+                date_start:
+                  type: string
+                  format: date
+                date_stop:
+                  type: string
+                  format: date
+      responses:
+        "200":
+          description: Rows imported and per-source errors.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/marketing/connections/{id}:
+    delete:
+      summary: Forget a Marketing login in the CRM
+      description: Local only. Does not call the provider, so the lead intake keeps its access.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Connection and its stored token removed.
+        default:
+          $ref: "#/components/responses/APIError"
   /v1/public/integrations/meta/oauth/callback:
     get:
       summary: Complete the backend-owned Meta OAuth flow
@@ -9411,6 +9748,183 @@ components:
           schema:
             $ref: "#/components/schemas/ChavesNaMaoHomologationRequiredErrorEnvelope"
   schemas:
+    PropertyPortfolioType:
+      type: string
+      enum: [ready, launch, third_party]
+      description: >-
+        Create and update accept portfolio_type, third_party_kind (partner or
+        private_owner, required for third_party), partner_name (required for
+        partner), partner_contact (hidden like owner contacts),
+        commission_split_percent (0 to 100, managers only) and
+        third_party_authorized_until (YYYY-MM-DD, managers only). Fields a request
+        omits keep their stored value.
+    PortfolioSettings:
+      type: object
+      additionalProperties: false
+      description: Stored only; does not change publication or edit behaviour yet.
+      properties:
+        general: { type: object }
+        ready: { type: object }
+        launches: { type: object }
+        rentals: { type: object }
+        third_party: { type: object }
+        condominiums: { type: object }
+        locations: { type: object }
+        owners: { type: object }
+        keys: { type: object }
+        publication: { type: object }
+    PortfolioSettingsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [settings, revision, updated_at, updated_by]
+          properties:
+            settings:
+              $ref: "#/components/schemas/PortfolioSettings"
+            revision:
+              type: integer
+              minimum: 0
+            updated_at:
+              type: [string, "null"]
+              format: date-time
+            updated_by:
+              type: [string, "null"]
+              format: uuid
+    UpdatePortfolioSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [settings, revision]
+      properties:
+        settings:
+          $ref: "#/components/schemas/PortfolioSettings"
+        revision:
+          type: integer
+          minimum: 0
+    PropertyKeyMovementPage:
+      type: object
+      required: [data, next_cursor, meta]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            required: [id, property_key_id, key_name, movement_type, actor_name, holder_name, reason, notes, from_location, to_location, occurred_at, expected_return_at]
+            properties:
+              id: { type: string, format: uuid }
+              property_key_id: { type: string, format: uuid }
+              key_name: { type: string }
+              movement_type: { type: string }
+              actor_name: { type: [string, "null"] }
+              holder_name: { type: [string, "null"] }
+              reason: { type: [string, "null"] }
+              notes: { type: [string, "null"] }
+              from_location: { type: [string, "null"] }
+              to_location: { type: [string, "null"] }
+              occurred_at: { type: string, format: date-time }
+              expected_return_at: { type: [string, "null"], format: date-time }
+        next_cursor:
+          type: [string, "null"]
+        meta:
+          type: object
+          required: [can_view_key_custody]
+          properties:
+            can_view_key_custody:
+              type: boolean
+    ScheduleDashboardResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          required: [report_timezone, period, kpis, daily, hourly, weekly, by_type, by_source, by_outcome, upcoming_events, overdue_by_owner, performer_ranking, top_performers]
+          properties:
+            report_timezone: {type: string}
+            period: {type: object, additionalProperties: true}
+            kpis: {type: object, additionalProperties: true}
+            daily:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                properties:
+                  date: {type: string, format: date}
+                  total: {type: integer}
+                  eligible: {type: integer, description: Additive. Base of the completion rate on that day.}
+            hourly: {type: array, items: {type: object, additionalProperties: true}}
+            hour_distribution:
+              type: array
+              maxItems: 24
+              description: Additive. All 24 hours of the report timezone, over the whole period.
+              items:
+                type: object
+                required: [hour, total]
+                properties:
+                  hour: {type: integer, minimum: 0, maximum: 23}
+                  total: {type: integer}
+            weekly: {type: array, description: Kept for compatibility; always empty., items: {type: object, additionalProperties: true}}
+            by_type:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                required: [key, count]
+                properties:
+                  key: {type: string}
+                  count: {type: integer}
+                  completed: {type: integer, description: Additive.}
+            by_source:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                required: [key, label, count]
+                properties:
+                  key: {type: string}
+                  label: {type: string}
+                  count: {type: integer}
+                  appointment_completed: {type: integer, description: Additive. Completed visits and meetings.}
+                  appointment_eligible: {type: integer, description: Additive. Visits and meetings with a result or overdue.}
+            by_outcome:
+              type: array
+              description: >-
+                Now populated. Closed events by outcome, with `__none__` for a
+                completed event without one; rescheduled takes precedence, as in the Agenda.
+              items:
+                type: object
+                required: [key, count]
+                properties:
+                  key: {type: string}
+                  count: {type: integer}
+            upcoming_events: {type: array, description: Kept for compatibility; always empty. Use the events endpoint with status=upcoming., items: {type: object, additionalProperties: true}}
+            overdue_by_owner: {type: array, items: {type: object, additionalProperties: true}}
+            performer_ranking: {type: array, items: {type: object, additionalProperties: true}}
+            top_performers: {type: array, description: Kept for compatibility; always empty., items: {type: object, additionalProperties: true}}
+            data_quality: {type: object, additionalProperties: true}
+    ScheduleDashboardEventsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          required: [items, total, limit, offset, has_more]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                properties:
+                  lead_stage: {type: string, nullable: true, description: Additive. Current pipeline stage of the visible lead.}
+                  lead_source: {type: string, nullable: true, description: Additive. Historical source of the visible lead.}
+                  google_sync_status: {type: string, nullable: true, description: Additive.}
+            total: {type: integer}
+            limit: {type: integer}
+            offset: {type: integer}
+            has_more: {type: boolean}
     WhatsAppQuickReplyShortcutInput:
       type: string
       description: >-
@@ -10459,6 +10973,15 @@ components:
             At least 8 Unicode characters and at most 72 UTF-8 bytes, including
             an uppercase letter, a lowercase letter, a number, and a symbol.
             maxLength limits characters only; the API also checks byte length.
+          writeOnly: true
+        current_password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: >-
+            Required for settings (including when source is omitted). Enter the
+            existing password exactly, with at most 1024 UTF-8 bytes. Recovery
+            sessions prove identity through the recovery link.
           writeOnly: true
         source:
           type: string
@@ -18936,6 +19459,319 @@ components:
           $ref: "#/components/schemas/AnalyticsPercentage"
         liveVisitors:
           $ref: "#/components/schemas/AnalyticsCount"
+        insights:
+          description: Dashboard breakdowns derived from the same events. Null when the tracking schema lacks them or the query degraded.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SiteAnalyticsInsights"
+    SiteAnalyticsInsights:
+      type: object
+      additionalProperties: false
+      required: [pages, leadPages, properties, sources, devices, campaigns, contactPaths, daily, searchQueries, current, previous]
+      properties:
+        pages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightPage"
+        leadPages:
+          type: array
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightLeadPage"
+        properties:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightProperty"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightSource"
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightDevice"
+        campaigns:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightCampaign"
+        contactPaths:
+          type: array
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightContactPath"
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsInsightDaily"
+        searchQueries:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsSearchTerm"
+        current:
+          $ref: "#/components/schemas/SiteAnalyticsInsightCurrent"
+        previous:
+          $ref: "#/components/schemas/SiteAnalyticsInsightPrevious"
+    SiteAnalyticsInsightPage:
+      type: object
+      additionalProperties: false
+      description: Leads are credited to the landing page recorded on the form submission; bounce and conversion use sessions that entered on the page.
+      required: [page_path, title, views, sessions, entries, bounce_rate, measured_sessions, avg_duration, leads, conversion_rate]
+      properties:
+        page_path:
+          type: [string, "null"]
+        title:
+          type: [string, "null"]
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        entries:
+          $ref: "#/components/schemas/AnalyticsCount"
+        bounce_rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+        measured_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        avg_duration:
+          type: [number, "null"]
+          minimum: 0
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversion_rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+    SiteAnalyticsInsightLeadPage:
+      type: object
+      additionalProperties: false
+      required: [page_path, title, leads]
+      properties:
+        page_path:
+          type: [string, "null"]
+        title:
+          type: [string, "null"]
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightProperty:
+      type: object
+      additionalProperties: false
+      required: [property_id, title, code, business_type, property_type, neighborhood, city, bedrooms, sale_price, rent_price, photo_url, page_path, views, sessions, favorites, whatsapp_clicks, form_submits, leads, avg_duration, conversion_rate]
+      properties:
+        property_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        code:
+          type: string
+        business_type:
+          type: [string, "null"]
+        property_type:
+          type: [string, "null"]
+        neighborhood:
+          type: [string, "null"]
+        city:
+          type: [string, "null"]
+        bedrooms:
+          type: [number, "null"]
+          minimum: 0
+        sale_price:
+          type: [number, "null"]
+          minimum: 0
+        rent_price:
+          type: [number, "null"]
+          minimum: 0
+        photo_url:
+          type: [string, "null"]
+        page_path:
+          type: [string, "null"]
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        favorites:
+          $ref: "#/components/schemas/AnalyticsCount"
+        whatsapp_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        form_submits:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        avg_duration:
+          type: [number, "null"]
+          minimum: 0
+        conversion_rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+    SiteAnalyticsInsightSource:
+      type: object
+      additionalProperties: false
+      required: [source_type, sessions, prev_sessions, converted_sessions, leads]
+      properties:
+        source_type:
+          type: string
+          enum: [direct, search, social, campaign, referral]
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prev_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightDevice:
+      type: object
+      additionalProperties: false
+      required: [device_type, sessions, converted_sessions, leads]
+      properties:
+        device_type:
+          type: string
+          enum: [desktop, mobile, tablet, other]
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightCampaign:
+      type: object
+      additionalProperties: false
+      required: [campaign, source, medium, sessions, converted_sessions, leads]
+      properties:
+        campaign:
+          type: string
+        source:
+          type: string
+        medium:
+          type: [string, "null"]
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightContactPath:
+      type: object
+      additionalProperties: false
+      required: [path, sessions]
+      properties:
+        path:
+          type: string
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightDaily:
+      type: object
+      additionalProperties: false
+      required: [date, sessions, views, leads]
+      properties:
+        date:
+          type: string
+          format: date
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsInsightCurrent:
+      type: object
+      additionalProperties: false
+      properties:
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        property_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        search_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        interaction_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contact_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lead_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        pages_per_session:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        bounce_rate:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        median_seconds_to_contact:
+          type: [number, "null"]
+          minimum: 0
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        property_views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        searches:
+          $ref: "#/components/schemas/AnalyticsCount"
+        favorites:
+          $ref: "#/components/schemas/AnalyticsCount"
+        whatsapp_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        cta_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        form_submits:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contacts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        viewed_properties:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        returning_leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        avg_pages_to_contact:
+          type: [number, "null"]
+          minimum: 0
+    SiteAnalyticsInsightPrevious:
+      type: object
+      additionalProperties: false
+      properties:
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        property_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        search_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        interaction_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contact_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lead_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        pages_per_session:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        bounce_rate:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        median_seconds_to_contact:
+          type: [number, "null"]
+          minimum: 0
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        property_views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        searches:
+          $ref: "#/components/schemas/AnalyticsCount"
+        favorites:
+          $ref: "#/components/schemas/AnalyticsCount"
+        whatsapp_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        cta_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        form_submits:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contacts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        site_leads:
+          $ref: "#/components/schemas/AnalyticsCount"
     SiteAnalyticsTopProperty:
       type: object
       additionalProperties: false
@@ -19111,6 +19947,17 @@ components:
           type: [string, "null"]
         referrer:
           type: [string, "null"]
+        has_lead:
+          type: [boolean, "null"]
+          description: The session submitted a form that is linked to a CRM lead.
+        seconds_to_contact:
+          type: [number, "null"]
+          minimum: 0
+          description: Seconds from the first session event to the first form or WhatsApp contact.
+        pages_to_contact:
+          type: [number, "null"]
+          minimum: 0
+          description: Page views recorded up to the first contact.
     LeadAnalyticsFunnelStep:
       type: object
       additionalProperties: false

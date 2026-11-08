@@ -322,7 +322,7 @@ func marketingSyncAccountScopeFromBindingCounts(accountBindings, assetBindings i
 func (service *MarketingSyncService) upsertMarketingSyncAccount(ctx context.Context, row marketingSyncAccountRow) error {
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
-	_, err := service.db.Exec(dbCtx, `
+	_, err := service.db.Exec(dbCtx, marketingSyncScopeSQL(`
 		insert into public.marketing_accounts (
 		  organization_id, integration_id, provider, external_account_id,
 		  name, currency, timezone_name, account_status, is_active,
@@ -340,7 +340,7 @@ func (service *MarketingSyncService) upsertMarketingSyncAccount(ctx context.Cont
 		  last_synced_at = excluded.last_synced_at,
 		  last_error = excluded.last_error,
 		  updated_at = excluded.updated_at
-	`, row.OrganizationID, row.IntegrationID, row.ExternalAccountID,
+	`, row.IntegrationID), row.OrganizationID, nullableMarketingSyncText(row.IntegrationID), row.ExternalAccountID,
 		nullableMarketingSyncText(row.Name), nullableMarketingSyncText(row.Currency),
 		nullableMarketingSyncText(row.TimezoneName), nullableMarketingSyncText(row.AccountStatus),
 		row.IsActive, row.SyncedAt, nullableMarketingSyncText(row.LastError))
@@ -354,7 +354,7 @@ func (service *MarketingSyncService) recordMarketingSyncAccountError(ctx context
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
 	now := service.now().UTC()
-	_, err := service.db.Exec(dbCtx, `
+	_, err := service.db.Exec(dbCtx, marketingSyncScopeSQL(`
 		update public.marketing_accounts
 		set last_synced_at = $4,
 		    last_error = $5,
@@ -363,7 +363,7 @@ func (service *MarketingSyncService) recordMarketingSyncAccountError(ctx context
 		  and integration_id = $2::uuid
 		  and provider = 'meta'
 		  and external_account_id = $3
-	`, target.OrganizationID, target.IntegrationID, accountID, now, errorCode)
+	`, target.IntegrationID), target.OrganizationID, target.IntegrationID, accountID, now, errorCode)
 	if err != nil {
 		return newMarketingSyncFailure("marketing_accounts_write_failed", 500, err)
 	}
@@ -452,8 +452,8 @@ func (service *MarketingSyncService) upsertMarketingSyncPerformance(ctx context.
 	`
 	return service.sendMarketingSyncBatches(ctx, len(rows), "marketing_performance_daily_write_failed", func(batch *pgx.Batch, index int) {
 		row := rows[index]
-		batch.Queue(query,
-			row.OrganizationID, row.IntegrationID, row.ExternalAccountID,
+		batch.Queue(marketingSyncScopeSQL(query, row.IntegrationID),
+			row.OrganizationID, nullableMarketingSyncText(row.IntegrationID), row.ExternalAccountID,
 			row.Level, row.EntityID, row.MetricDate,
 			nullableMarketingSyncText(row.CampaignID), nullableMarketingSyncText(row.CampaignName),
 			nullableMarketingSyncText(row.AdsetID), nullableMarketingSyncText(row.AdsetName),
@@ -510,7 +510,7 @@ func (service *MarketingSyncService) reconcileMarketingSyncPerformance(
 	}
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
-	tag, err := service.db.Exec(dbCtx, `
+	tag, err := service.db.Exec(dbCtx, marketingSyncScopeSQL(`
 		delete from public.marketing_performance_daily as snapshot
 		where snapshot.organization_id = $1::uuid
 		  and snapshot.integration_id = $2::uuid
@@ -524,7 +524,7 @@ func (service *MarketingSyncService) reconcileMarketingSyncPerformance(
 		    where collected.entity_id = snapshot.entity_id
 		      and collected.metric_date = snapshot.metric_date
 		  )
-	`, target.OrganizationID, target.IntegrationID, accountID, level,
+	`, target.IntegrationID), target.OrganizationID, target.IntegrationID, accountID, level,
 		dateRange.From, dateRange.To, marketingSyncJSONString(keys))
 	if err != nil {
 		return 0, newMarketingSyncFailure("marketing_performance_daily_reconcile_failed", 500, err)
@@ -539,14 +539,14 @@ func (service *MarketingSyncService) deleteMarketingSyncUnscopedAggregateLevels(
 ) (int64, error) {
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
-	tag, err := service.db.Exec(dbCtx, `
+	tag, err := service.db.Exec(dbCtx, marketingSyncScopeSQL(`
 		delete from public.marketing_performance_daily as snapshot
 		where snapshot.organization_id = $1::uuid
 		  and snapshot.integration_id = $2::uuid
 		  and snapshot.provider = 'meta'
 		  and snapshot.external_account_id = $3
 		  and snapshot.level in ('account', 'campaign', 'adset')
-	`, target.OrganizationID, target.IntegrationID, accountID)
+	`, target.IntegrationID), target.OrganizationID, target.IntegrationID, accountID)
 	if err != nil {
 		return 0, newMarketingSyncFailure("marketing_unscoped_aggregate_cleanup_failed", 500, err)
 	}
@@ -597,8 +597,8 @@ func (service *MarketingSyncService) upsertMarketingSyncMedia(ctx context.Contex
 	`
 	return service.sendMarketingSyncBatches(ctx, len(rows), "marketing_media_assets_write_failed", func(batch *pgx.Batch, index int) {
 		row := rows[index]
-		batch.Queue(query,
-			row.OrganizationID, row.IntegrationID, row.Provider, nullableMarketingSyncText(row.ExternalAccountID),
+		batch.Queue(marketingSyncScopeSQL(query, row.IntegrationID),
+			row.OrganizationID, nullableMarketingSyncText(row.IntegrationID), row.Provider, nullableMarketingSyncText(row.ExternalAccountID),
 			row.ExternalMediaID, row.SourceKind, nullableMarketingSyncText(row.MediaType),
 			nullableMarketingSyncText(row.Title), nullableMarketingSyncText(row.Caption),
 			nullableMarketingSyncText(row.CampaignID), nullableMarketingSyncText(row.CampaignName),
@@ -660,8 +660,8 @@ func (service *MarketingSyncService) upsertMarketingSyncSocial(ctx context.Conte
 	`
 	return service.sendMarketingSyncBatches(ctx, len(rows), "marketing_social_daily_write_failed", func(batch *pgx.Batch, index int) {
 		row := rows[index]
-		batch.Queue(query,
-			row.OrganizationID, row.IntegrationID, row.ProfileID, nullableMarketingSyncText(row.ProfileName),
+		batch.Queue(marketingSyncScopeSQL(query, row.IntegrationID),
+			row.OrganizationID, nullableMarketingSyncText(row.IntegrationID), row.ProfileID, nullableMarketingSyncText(row.ProfileName),
 			row.MetricDate, row.Followers, row.FollowerGrowth, row.Posts, row.Impressions,
 			row.Reach, row.Interactions, row.Likes, row.Comments, row.Saves, row.Shares,
 			row.ProfileViews, row.WebsiteClicks, row.VideoViews, marketingSyncJSON(row.RawMetrics), row.FetchedAt,
@@ -710,7 +710,7 @@ func (service *MarketingSyncService) createMarketingSyncRun(ctx context.Context,
 		)
 		values ($1::uuid, $2::uuid, 'meta', 'running', $3::date, $4::date, $5::uuid)
 		returning id::text
-	`, target.OrganizationID, target.IntegrationID, dateRange.From, dateRange.To, userID).Scan(&runID)
+	`, target.OrganizationID, nullableMarketingSyncText(target.IntegrationID), dateRange.From, dateRange.To, userID).Scan(&runID)
 	if err != nil {
 		return "", newMarketingSyncFailure("marketing_sync_run_create_failed", 500, err)
 	}
@@ -734,7 +734,7 @@ func (service *MarketingSyncService) finishMarketingSyncRun(ctx context.Context,
 	errorMessage := truncateMarketingSyncText(strings.Join(errorsList, "; "), marketingSyncMaxErrorLength)
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
-	tag, err := service.db.Exec(dbCtx, `
+	tag, err := service.db.Exec(dbCtx, marketingSyncScopeSQL(`
 		update public.marketing_sync_runs
 		set status = $4,
 		    rows_synced = $5,
@@ -746,7 +746,7 @@ func (service *MarketingSyncService) finishMarketingSyncRun(ctx context.Context,
 		where id = $1::uuid
 		  and organization_id = $2::uuid
 		  and integration_id = $3::uuid
-	`, runID, target.OrganizationID, target.IntegrationID, status,
+	`, target.IntegrationID), runID, target.OrganizationID, target.IntegrationID, status,
 		result.Synced, result.MediaSynced, result.SocialSynced,
 		nullableMarketingSyncText(errorCode), nullableMarketingSyncText(errorMessage), service.now().UTC())
 	if err != nil || tag.RowsAffected() != 1 {

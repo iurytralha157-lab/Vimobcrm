@@ -202,7 +202,6 @@ func TestScheduleDashboardQueryUsesSafeScopedAggregates(t *testing.T) {
 	}
 	for _, obsoleteFragment := range []string{
 		"weekly_rows as (",
-		"by_outcome_rows as (",
 		"top_performer_rows as (",
 		"scheduler_ranking_rows as (",
 		"upcoming_event_rows as (",
@@ -279,6 +278,80 @@ func TestScheduleDashboardQueryBuildsHourlySeriesOnlyForOneDay(t *testing.T) {
 	}
 	if count := strings.Count(query, "hours.report_hour"); count < 3 {
 		t.Fatalf("hourly query must zero-fill and order all generated hours, found %d references", count)
+	}
+}
+
+func TestScheduleDashboardQueryDerivesAdditiveSeriesFromScopedEvents(t *testing.T) {
+	tenantContext := tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}
+	build := func(basis DashboardDateBasis) string {
+		query, _, err := buildScheduleDashboardQuery(tenantContext, DashboardFilter{
+			DateFrom:  time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC),
+			DateTo:    time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC),
+			DateBasis: basis,
+		})
+		if err != nil {
+			t.Fatalf("build dashboard query: %v", err)
+		}
+		return query
+	}
+	query := build(DashboardDateBasisStartTime)
+	for _, fragment := range []string{
+		"'hour_distribution', coalesce((",
+		"generate_series(0, 23) as generated(hour)\n\t\t\tleft join filtered_events",
+		"'by_outcome', coalesce((",
+		"'appointment_completed', appointment_completed",
+		"'appointment_eligible', appointment_eligible",
+		"'completed', completed) order by total desc",
+		"'eligible', daily_rows.eligible",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("dashboard query missing %q", fragment)
+		}
+	}
+	if !strings.Contains(query, "outcome is not distinct from 'no_show'") {
+		t.Fatal("a null outcome must not drop a completed event from the outcome breakdown")
+	}
+	if !strings.Contains(query, "and not filtered_events.is_all_day") {
+		t.Fatal("all-day events have no scheduled hour and must stay out of the hour distribution")
+	}
+	if strings.Contains(build(DashboardDateBasisCreatedAt), "and not filtered_events.is_all_day") {
+		t.Fatal("the creation instant of an all-day event is a real hour")
+	}
+	for _, source := range []string{scheduleDashboardOutcomeRowsCTE, scheduleDashboardHourDistributionCTE(DashboardDateBasisStartTime)} {
+		if !strings.Contains(source, "filtered_events") || strings.Contains(source, "public.schedule_events") {
+			t.Fatal("additive series must aggregate only the scoped filtered_events CTE")
+		}
+	}
+}
+
+func TestScheduleDashboardEventsQueryProjectsLeadStageThroughScopedLead(t *testing.T) {
+	query, _, err := buildScheduleDashboardEventsQuery(tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, DashboardEventsFilter{
+		DashboardFilter: DashboardFilter{
+			DateFrom:  time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC),
+			DateTo:    time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC),
+			DateBasis: DashboardDateBasisStartTime,
+		},
+		Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("build events query: %v", err)
+	}
+	for _, fragment := range []string{
+		"lead_stage.id = lead.stage_id",
+		"lead_stage.organization_id = filtered_events.organization_id",
+		"nullif(filtered_events.source_key, '__none__') as lead_source",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("events query missing %q", fragment)
+		}
 	}
 }
 
@@ -579,7 +652,7 @@ func TestScheduleDashboardResponseContract(t *testing.T) {
 		`"report_timezone"`, `"period"`, `"date_from"`, `"date_to"`, `"date_basis"`,
 		`"kpis"`, `"eligible"`, `"appointment_eligible"`, `"open"`, `"overdue"`,
 		`"upcoming"`, `"completion_rate"`, `"no_show_rate"`, `"daily"`, `"hourly"`, `"weekly"`, `"by_type"`, `"by_source"`,
-		`"by_outcome"`, `"upcoming_events"`, `"overdue_by_owner"`,
+		`"by_outcome"`, `"upcoming_events"`, `"overdue_by_owner"`, `"hour_distribution"`,
 		`"performer_ranking"`, `"top_performers"`,
 	} {
 		if !strings.Contains(serialized, key) {
@@ -627,7 +700,7 @@ func TestScheduleDashboardEventsResponseContract(t *testing.T) {
 		`"id"`, `"title"`, `"event_type"`, `"start_time"`, `"end_time"`, `"is_all_day"`,
 		`"user_id"`, `"user_name"`, `"user_avatar_url"`,
 		`"lead_id"`, `"lead_name"`, `"property_id"`, `"property_title"`, `"property_code"`,
-		`"status"`, `"outcome"`, `"is_overdue"`,
+		`"status"`, `"outcome"`, `"is_overdue"`, `"lead_stage"`, `"lead_source"`, `"google_sync_status"`,
 	} {
 		if !strings.Contains(serialized, key) {
 			t.Fatalf("dashboard events response missing %s: %s", key, serialized)

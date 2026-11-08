@@ -15,6 +15,9 @@ var (
 	ErrStorageOperation                         = errors.New("settings storage operation failed")
 	ErrAuthNotConfigured                        = errors.New("settings auth admin is not configured")
 	ErrAuthOperation                            = errors.New("settings auth admin operation failed")
+	ErrCurrentPasswordRequired                  = errors.New("current password is required")
+	ErrCurrentPasswordInvalid                   = errors.New("current password could not be verified")
+	ErrCurrentPasswordRateLimited               = errors.New("current password verification rate limited")
 	ErrPasswordSessionRevocationUnconfirmed     = errors.New("password session revocation outcome is unconfirmed")
 	ErrPasswordUpdateAfterRevocationUnconfirmed = errors.New("password update outcome is unconfirmed after session revocation")
 	ErrEmailOperation                           = errors.New("settings email notification failed")
@@ -177,8 +180,9 @@ type AssetUpload struct {
 }
 
 type ChangePasswordRequest struct {
-	Password string `json:"password"`
-	Source   string `json:"source"`
+	Password        string `json:"password"`
+	CurrentPassword string `json:"current_password,omitempty"`
+	Source          string `json:"source"`
 }
 
 type ChangePasswordResult struct {

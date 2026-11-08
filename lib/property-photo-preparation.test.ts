@@ -53,3 +53,15 @@ test('encoding that cannot meet the byte budget does not stage an oversized phot
   assert.equal(attempts, 7)
   assert.equal(engine.closed(), true)
 })
+
+test('a photo is not refused because its device reports an alias or no MIME type', async () => {
+  for (const [name, type] of [['camera.JPG', ''], ['camera.jpeg', 'image/jpg'], ['camera.jpg', 'image/pjpeg']] as const) {
+    const engine = runtime()
+    const result = await preparePropertyPhoto(new File(['photo'], name, { type }), engine.value)
+    assert.equal(result.type, 'image/jpeg', `${name} (${type || 'no type'})`)
+  }
+  const engine = runtime()
+  const png = await preparePropertyPhoto(new File(['png'], 'planta.PNG', { type: '' }), engine.value)
+  assert.equal(png.type, 'image/webp')
+  await assert.rejects(preparePropertyPhoto(new File(['doc'], 'contrato.pdf', { type: '' }), runtime().value), /use JPEG/)
+})

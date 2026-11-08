@@ -2,6 +2,7 @@ export const INTEGRATION_PROVIDER_IDS = [
   "whatsapp",
   "meta",
   "ai",
+  "meta-marketing",
   "grupo-olx",
   "zap",
   "viva-real",
@@ -84,7 +85,8 @@ export type IntegrationModuleKey =
   | "portals"
   | "webhooks"
   | "api"
-  | "site";
+  | "site"
+  | "campaigns";
 
 export type IntegrationPermissionKey =
   | "whatsapp_view"
@@ -118,6 +120,7 @@ export type IntegrationManagementSurface =
       kind: "route";
       href:
         | "/settings/integrations/meta"
+        | "/settings/integrations/meta-marketing"
         | "/settings/integrations/whatsapp";
     }>
   | Readonly<{ kind: "dialog" }>

@@ -122,12 +122,31 @@ export const FILTER_SIDEBAR_STYLE = String.raw`
 
 .vimob-filter-sidebar-dock { position: relative; width: 56px; height: 56px; flex: 0 0 56px; }
 .vimob-filter-sidebar-dock button[aria-controls="floating-whatsapp-chat"] { border-radius: 9999px !important; }
-.vimob-filter-sidebar-actions { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.vimob-filter-sidebar-actions > button { min-height: 36px; font-size: 12px; }
-.vimob-filter-sidebar-actions > button:not([data-filter-sidebar-complete]) { background: var(--filter-sidebar-control); color: var(--app-text-secondary); }
-.vimob-filter-sidebar-actions > button:not([data-filter-sidebar-complete]):hover { background: var(--filter-sidebar-hover); }
-.vimob-filter-sidebar [data-filter-sidebar-complete] { background: color-mix(in srgb, var(--primary) 50%, #303030) !important; color: #fff !important; }
-.vimob-filter-sidebar [data-filter-sidebar-complete]:is(:hover, :active) { background: color-mix(in srgb, var(--primary) 50%, #151515) !important; }
+.vimob-filter-sidebar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+}
+
+.vimob-filter-sidebar-actions > button {
+  min-height: 36px;
+  padding-inline: 8px;
+  font-size: 12px;
+  white-space: normal;
+  background: var(--filter-sidebar-control);
+  color: var(--app-text-secondary);
+}
+
+.vimob-filter-sidebar-actions > button:is(:hover, :active) { background: var(--filter-sidebar-hover); }
+
+.vimob-filter-sidebar-actions > button[data-filter-sidebar-complete] {
+  background: color-mix(in srgb, var(--primary) 50%, transparent);
+  color: #fff;
+}
+
+.vimob-filter-sidebar-actions > button[data-filter-sidebar-complete]:is(:hover, :active) { background: var(--primary); }
 
 @media (max-width: 767px) {
   .vimob-filter-sidebar-close { width: 44px; height: 44px; }

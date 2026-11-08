@@ -11,7 +11,10 @@ import type {
   PropertyAssetUploadDiscardInput,
   PropertyWorkspaceAsset,
 } from './validation/property-workspace'
-import { assertPropertyMediaExecution, type PropertyMediaExecutionOptions } from './property-media-execution'
+import { assertPropertyMediaExecution, isTransientPropertyUploadFailure, type PropertyMediaExecutionOptions } from './property-media-execution'
+
+const PROPERTY_MEDIA_UPLOAD_ATTEMPTS = 3
+const PROPERTY_MEDIA_UPLOAD_RETRY_MS = 400
 
 export type PropertyPhotoSelection = {
   mainImage: string
@@ -124,6 +127,18 @@ async function rollbackCreatedAssets(
   ]
 }
 
+async function uploadWithRetry(upload: () => Promise<{ storage_path: string }>, execution?: PropertyMediaExecutionOptions) {
+  for (let attempt = 1; ; attempt += 1) {
+    assertPropertyMediaExecution(execution)
+    try {
+      return await upload()
+    } catch (error) {
+      if (attempt >= PROPERTY_MEDIA_UPLOAD_ATTEMPTS || !isTransientPropertyUploadFailure(error)) throw error
+      await new Promise((resolve) => setTimeout(resolve, PROPERTY_MEDIA_UPLOAD_RETRY_MS * attempt))
+    }
+  }
+}
+
 export async function persistStagedPropertyPhotosWithClient(
   organizationId: string,
   propertyId: string,
@@ -149,13 +164,15 @@ export async function persistStagedPropertyPhotosWithClient(
       throw new Error('Uma foto selecionada não está mais disponível. Selecione o arquivo novamente.')
     }
 
-    const intent = await client.uploadAssetFile(
+    // One lost connection among 20 photos must not undo the whole selection.
+    // Only the upload repeats: a timed-out createAsset may have committed.
+    const intent = await uploadWithRetry(() => client.uploadAssetFile(
       organizationId,
       propertyId,
       'photo',
       staged.file,
       execution,
-    )
+    ), execution)
 
     try {
       assertPropertyMediaExecution(execution)

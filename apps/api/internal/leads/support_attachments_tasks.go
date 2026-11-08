@@ -441,13 +441,16 @@ func (repo Repository) ListLeadTasks(ctx context.Context, tenantContext tenant.C
 			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
 		from public.lead_tasks
 		where lead_id = $1::uuid
+		  and organization_id = $2::uuid
 		  and coalesce(status, case when coalesce(is_done, false) then 'completed' else 'pending' end) in ('pending', 'completed')
 		  and not exists (
 		    select 1 from public.cadence_enrollments ce
-		    where ce.id = lead_tasks.cadence_enrollment_id and ce.status = 'cancelled'
+		    where ce.id = lead_tasks.cadence_enrollment_id
+		      and ce.organization_id = lead_tasks.organization_id
+		      and ce.status = 'cancelled'
 		  )
 		order by day_offset asc, created_at asc
-	`, leadID)
+	`, leadID, tenantContext.OrganizationID)
 	if err != nil {
 		return nil, err
 	}

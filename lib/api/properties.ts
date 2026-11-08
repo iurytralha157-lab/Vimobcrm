@@ -4,22 +4,37 @@ import {
   apiPropertyHistoryResponseSchema,
   apiPropertyCreateResponseSchema,
   apiPropertyManagedTermsSchema,
+  apiPortfolioSettingsResponseSchema,
   apiPropertyListResponseSchema,
   apiPropertyResponseSchema,
   apiPropertyStatsSchema,
   apiPropertySitePublicationSchema,
   parseDomainInput,
+  portfolioSettingsUpdateInputSchema,
   propertyCreateInputSchema,
   propertyDeleteInputSchema,
   propertyListQuerySchema,
   propertyUpdateInputSchema,
   validateDomainResponse,
   uuidSchema,
+  type PortfolioSettingsUpdateInput,
 } from '@/lib/validation'
 import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 import { capturePropertyMutationIntent } from '@/lib/api/property-mutation-intent'
 
-export type PropertyRecord = Tables<'properties'>
+/** Generated Supabase types are refreshed separately from this migration. */
+export type PropertyPortfolioFields = {
+  portfolio_type: 'ready' | 'launch' | 'third_party'
+  third_party_kind: 'partner' | 'private_owner' | null
+  partner_name: string | null
+  /** Present only for viewers allowed to see owner contacts. */
+  partner_contact?: string | null
+  /** Present only for property managers. */
+  commission_split_percent?: number | null
+  /** Present only for property managers. */
+  third_party_authorized_until?: string | null
+}
+export type PropertyRecord = Tables<'properties'> & PropertyPortfolioFields
 export type PropertyManagedTerms = z.output<typeof apiPropertyManagedTermsSchema>
 export type PropertyWithCapabilities = PropertyRecord & {
   can_edit: boolean
@@ -34,6 +49,7 @@ type PropertyAPIOptions = {
   limit?: number
   offset?: number
   scope?: 'own'
+  portfolio_type?: 'ready' | 'launch' | 'third_party'
   search?: string
   status?: string
   tipo_de_negocio?: string
@@ -133,6 +149,24 @@ export const propertiesAPI = {
     })
     validateDomainResponse(apiPropertyStatsSchema, response, 'properties.stats')
     return response
+  },
+
+  /** Defaults with revision 0 until the first save. Stored only; nothing reads them yet. */
+  async getPortfolioSettings(organizationId: string, intent?: VimobAPIRequestIntent) {
+    const response = await vimobAPIRequest<unknown>('/v1/properties/settings/portfolio', { ...intent, organizationId })
+    return validateDomainResponse(apiPortfolioSettingsResponseSchema, response, 'properties.settings.get').data
+  },
+
+  /** Merges by key. Rejects with 409 property_settings_conflict on a stale revision. */
+  async updatePortfolioSettings(organizationId: string, input: PortfolioSettingsUpdateInput, intent?: VimobAPIRequestIntent) {
+    const body = parseDomainInput(portfolioSettingsUpdateInputSchema, input, 'properties.settings.update')
+    const response = await vimobAPIRequest<unknown>('/v1/properties/settings/portfolio', {
+      method: 'PUT',
+      ...capturePropertyMutationIntent(intent),
+      organizationId,
+      body,
+    })
+    return validateDomainResponse(apiPortfolioSettingsResponseSchema, response, 'properties.settings.update').data
   },
 
   async getProperty(propertyId: string, organizationId: string, intent?: VimobAPIRequestIntent & { creationRecovery?: boolean }) {

@@ -29,6 +29,7 @@ export interface StageAutomation {
   automation_type: string | null;
   trigger_days: number | null;
   target_stage_id: string | null;
+  target_round_robin_id?: string | null;
   whatsapp_template: string | null;
   alert_message: string | null;
   inactivity_policy?: StageAutomationRow['inactivity_policy'];
@@ -38,7 +39,9 @@ export interface StageAutomation {
 export type AutomationType =
   | "alert_on_inactivity"
   | "change_assignee_on_enter"
-  | "change_deal_status_on_enter";
+  | "change_deal_status_on_enter"
+  | "move_stage_on_inactivity"
+  | "redistribute_on_inactivity";
 
 export interface CreateAutomationData {
   stage_id: string;
@@ -92,7 +95,8 @@ function normalizeAutomation(row: StageAutomationRow): StageAutomation {
     updated_at: row.updated_at,
     automation_type: automationType,
     trigger_days: asNumber(config.trigger_days),
-    target_stage_id: asString(config.target_stage_id),
+    target_stage_id: asString(config.target_stage_id) || asString(row.inactivity_policy?.target_stage_id),
+    target_round_robin_id: asString(config.target_round_robin_id) || asString(row.inactivity_policy?.target_round_robin_id),
     whatsapp_template: asString(config.whatsapp_template),
     alert_message: asString(config.alert_message),
     inactivity_policy: row.inactivity_policy,
@@ -292,13 +296,32 @@ export const AUTOMATION_TYPE_LABELS: Record<AutomationType, string> = {
   alert_on_inactivity: "Alertar sobre inatividade",
   change_assignee_on_enter: "Mudar responsável ao entrar",
   change_deal_status_on_enter: "Alterar status (Ganho/Perdido)",
+  move_stage_on_inactivity: "Mudar etapa por tempo parado",
+  redistribute_on_inactivity: "Redistribuir por tempo parado",
 };
 
 export const AUTOMATION_TYPE_DESCRIPTIONS: Record<AutomationType, string> = {
   alert_on_inactivity: "Notifica o responsável quando o lead ficar sem interação humana pelo prazo definido",
   change_assignee_on_enter: "Muda o responsável do lead automaticamente quando ele entra neste estágio",
   change_deal_status_on_enter: "Altera o status do deal (Aberto, Ganho ou Perdido) quando o lead entra",
+  move_stage_on_inactivity: "Move o lead para outra coluna desta pipeline quando ele fica sem atividade humana pelo prazo definido",
+  redistribute_on_inactivity: "Envia o lead parado para a distribuição escolhida",
 };
+
+/**
+ * The inactivity alert edited in "Regras da etapa › Atenção e permanência":
+ * the oldest notify rule of the column. Older duplicates stay in Automações.
+ */
+export function managedInactivityAlert(automations: readonly StageAutomation[] | undefined) {
+  return automations
+    ?.filter((automation) => automation.automation_type === "alert_on_inactivity" && (automation.inactivity_policy?.action ?? "notify") === "notify")
+    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id.localeCompare(b.id))[0] ?? null;
+}
+
+/** Rules saved through the stage inactivity runtime (their own policy revision). */
+export function isInactivityAutomationType(type: string | null | undefined) {
+  return type === "alert_on_inactivity" || type === "move_stage_on_inactivity" || type === "redistribute_on_inactivity";
+}
 
 export const DEAL_STATUS_LABELS: Record<string, string> = {
   open: "Aberto",

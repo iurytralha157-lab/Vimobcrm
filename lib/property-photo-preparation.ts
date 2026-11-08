@@ -7,6 +7,18 @@ export const PROPERTY_PHOTO_DECODE_TIMEOUT_MS = 10_000
 export const PROPERTY_PHOTO_PICKER_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif'
 const SOURCE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif'])
 
+const SOURCE_TYPE_ALIASES: Record<string, string> = { 'image/jpg': 'image/jpeg', 'image/pjpeg': 'image/jpeg', 'image/x-png': 'image/png' }
+const SOURCE_TYPE_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heif',
+}
+
+/** Some devices and file providers report an alias or no MIME type for a real photo. */
+function propertyPhotoSourceType(file: Pick<File, 'name' | 'type'>) {
+  const reported = file.type.trim().toLowerCase()
+  if (reported) return SOURCE_TYPE_ALIASES[reported] ?? reported
+  return SOURCE_TYPE_BY_EXTENSION[file.name.split('.').pop()?.toLowerCase() ?? ''] ?? ''
+}
+
 type DecodedPhoto = { width: number; height: number; source: CanvasImageSource; close: () => void }
 export type PropertyPhotoPreparationRuntime = {
   decode: (file: File) => Promise<DecodedPhoto>
@@ -70,7 +82,7 @@ const browserRuntime: PropertyPhotoPreparationRuntime = {
 
 /** Prepare before staging/upload so every saved byte and MIME matches the preview. */
 export async function preparePropertyPhoto(file: File, runtime = browserRuntime): Promise<File> {
-  const sourceType = file.type || (/\.hei[cf]$/i.test(file.name) ? 'image/heic' : '')
+  const sourceType = propertyPhotoSourceType(file)
   if (!SOURCE_TYPES.has(sourceType)) throw new Error(`${file.name}: use JPEG, PNG, WebP, GIF ou HEIC compatível com o navegador.`)
   if (file.size <= 0) throw new Error(`${file.name}: o arquivo está vazio.`)
   if (file.size > PROPERTY_PHOTO_MAX_SOURCE_BYTES) throw new Error(`${file.name}: selecione uma imagem com até 30 MB.`)

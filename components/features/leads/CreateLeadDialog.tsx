@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useId, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useId, useMemo, useRef, type ReactNode } from 'react';
 import { maskCNPJ, maskCPF, maskRG } from '@/lib/masks';
 import { isValidE164Phone } from '@/lib/phone-utils';
 import { cn } from '@/lib/utils';
@@ -22,7 +22,7 @@ import { InternationalPhoneInput } from '@/components/shared/forms/International
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FormWizardLayout } from '@/components/shared/forms/FormWizardLayout';
 import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from '@/config/form-wizard';
 import { LeadDraftPreview } from '@/components/features/leads/LeadDraftPreview';
@@ -758,8 +758,10 @@ export function CreateLeadDialog({
   };
   const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
   const leadDialogSurfaceClass = cn(
-    FORM_WIZARD_DIALOG_CLASS_NAME,
-    "!left-1/2 !right-auto !top-1/2 !bottom-auto !max-w-[1440px] !w-[calc(100vw-24px)] !border-0 !p-0 text-[var(--app-text-primary)]",
+    isEditMode
+      ? cn(FORM_WIZARD_DIALOG_CLASS_NAME, "!max-w-[1440px] !w-[calc(100vw-24px)]")
+      : "!h-auto max-h-[88dvh] !w-[min(96vw,720px)] !max-w-[720px] rounded-[8px] bg-[var(--app-surface)] shadow-none",
+    "!left-1/2 !right-auto !top-1/2 !bottom-auto !border-0 !p-0 text-[var(--app-text-primary)]",
     "!duration-0 !transition-none flex flex-col overflow-hidden will-change-transform",
     "data-[state=open]:!animate-none data-[state=closed]:!animate-none data-[state=closed]:!slide-out-to-right data-[state=open]:!slide-in-from-right",
     "[&_label]:text-[12px] [&_label]:font-light [&_label]:text-[var(--app-text-secondary)]",
@@ -907,6 +909,109 @@ export function CreateLeadDialog({
   // Preserve form/attachment state in memory while Pipeline revalidates, without rendering private data.
   if (accessBlocked) return null;
 
+  const formSteps = [
+    { id: 'basic', label: 'Contato', icon: User, disabled: isSubmitting, tourId: 'lead-form-tab-basic', buttonId: `${fieldIdPrefix}-tab-basic`, panelId: `${fieldIdPrefix}-panel-basic` },
+    { id: 'profile', label: 'Pessoa', icon: Briefcase, disabled: isSubmitting, tourId: 'lead-form-tab-profile', buttonId: `${fieldIdPrefix}-tab-profile`, panelId: `${fieldIdPrefix}-panel-profile` },
+    { id: 'interest', label: 'Interesse', icon: Home, disabled: isSubmitting, tourId: 'lead-form-tab-interest', buttonId: `${fieldIdPrefix}-tab-interest`, panelId: `${fieldIdPrefix}-panel-interest` },
+    ...(!isEditMode ? [{ id: 'management', label: 'Gestão', icon: Building2, disabled: isSubmitting, tourId: 'lead-form-tab-management', buttonId: `${fieldIdPrefix}-tab-management`, panelId: `${fieldIdPrefix}-panel-management` }] : []),
+  ];
+  const editPanelLink = (step: string) => isEditMode
+    ? { id: `${fieldIdPrefix}-panel-${step}`, 'aria-labelledby': `${fieldIdPrefix}-tab-${step}` }
+    : {};
+  const createPrimaryButtonClassName = "h-10 rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90 disabled:opacity-40";
+  const formActions = (
+    <>
+      <Button type="button" className={isEditMode
+        ? FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME
+        : "h-10 border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"} disabled={isSubmitting} onClick={() => {
+        if (submissionAttemptRef.current || isSubmitting) return;
+        if (!isEditMode || activeTab === 'basic') handleOpenChange(false);
+        else if (activeTab === 'profile') setActiveTab('basic');
+        else if (activeTab === 'interest') setActiveTab('profile');
+        else setActiveTab('interest');
+      }}>
+        {!isEditMode || activeTab === 'basic' ? 'Cancelar' : 'Voltar'}
+      </Button>
+      {activeTab !== finalTab ? <Button
+        key="btn-avancar"
+        type="button"
+        className={isEditMode ? FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME : createPrimaryButtonClassName}
+        disabled={isSubmitting || isLoadingEditLead}
+        onClick={() => {
+          if (submissionAttemptRef.current || isSubmitting) return;
+          if (activeTab === 'basic' && validateBasicStep()) setActiveTab('profile');
+          else if (activeTab === 'profile' && validateProfileStep()) setActiveTab('interest');
+          else if (activeTab === 'interest' && !isEditMode) setActiveTab('management');
+        }}
+      >Avançar</Button> : <Button
+        key="btn-submit"
+        data-tour="lead-form-submit"
+        type="submit"
+        className={isEditMode ? FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME : createPrimaryButtonClassName}
+        disabled={accessPending || isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
+      >
+        {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        {isSubmitting ? isEditMode ? 'Salvando...' : 'Criando...' : isEditMode ? 'Salvar alterações' : 'Criar Lead'}
+      </Button>}
+    </>
+  );
+
+  const renderFormLayout = (fields: ReactNode) => {
+    if (!isEditMode) {
+      return (
+        <>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="px-6 pb-4 pt-3">{fields}</div>
+          </div>
+          <div className="grid shrink-0 grid-cols-[2fr_3fr] gap-2 px-6 pb-6 pt-3">{formActions}</div>
+        </>
+      );
+    }
+
+    return (
+      <FormWizardLayout
+        navTourId="lead-form-tabs"
+        steps={formSteps}
+        activeStep={activeTab}
+        onStepChange={handleStepChange}
+        asideTitle="Card do lead"
+        aside={<LeadDraftPreview
+          name={formData.name}
+          phone={formData.phone}
+          email={formData.email}
+          personType={formData.person_type}
+          corporateName={formData.corporate_name}
+          profileSummary={[
+            ...(formData.person_type === 'individual' ? [
+              { label: 'Nome social', value: formData.social_name },
+              { label: 'Profissão', value: formData.profissao },
+              { label: 'Renda', value: formData.renda_familiar },
+            ] : [{ label: 'Nome fantasia', value: formData.trade_name }]),
+            { label: 'Cargo', value: formData.cargo },
+            { label: 'Empresa', value: formData.empresa },
+          ]}
+          tagCount={formData.tag_ids.length}
+          source={formData.source}
+          feedback={formData.feedback}
+          value={formData.valor_interesse}
+          properties={canViewProperties ? selectedInterestProperties : []}
+          interestCount={canViewProperties ? formData.interest_property_ids.length : 0}
+          pipeline={pipelines.find((pipeline) => pipeline.id === formData.pipeline_id)?.name || ''}
+          stage={stages.find((stage) => stage.id === formData.stage_id)?.name || ''}
+          team={canSelectTeam ? selectedTeam?.name || (formData.team_id ? '' : 'Pessoal') : ''}
+          assignee={allAssignableUsers.find((user) => user.id === formData.assigned_user_id)?.name || ''}
+          dealStatus={dealStatusOptions.find((option) => option.value === formData.deal_status)?.label || 'Aberto'}
+          lostReason={formData.deal_status === 'lost' ? formData.lost_reason : ''}
+          attachmentNames={pendingAttachments.map((file) => file.name)}
+          isEditMode={isEditMode}
+        />}
+        footer={<div className="flex w-full items-center justify-end gap-2">{formActions}</div>}
+      >
+        {fields}
+      </FormWizardLayout>
+    );
+  };
+
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
@@ -968,85 +1073,21 @@ export function CreateLeadDialog({
         )}
 
         {editReadDenied ? <div role="alert" className="p-6 text-sm">Você não pode mais editar este contato ou ele foi excluído. Feche a edição e atualize a lista.</div> : attachmentRecovery ? <LeadAttachmentRecovery {...attachmentRecovery} canUpload={attachmentRecovery.canUpload && canUploadAttachments} onRunningChange={setIsSubmitting} /> : <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} aria-busy={isSubmitting} onPointerDownCapture={handleDraftInteractionCapture} onClickCapture={handleDraftInteractionCapture} onChangeCapture={handleDraftInteractionCapture} onKeyDownCapture={handleDraftInteractionCapture} className="flex flex-col flex-1 min-h-0">
-          <FormWizardLayout
-            navTourId="lead-form-tabs"
-            steps={[
-              { id: 'basic', label: 'Contato', icon: User, disabled: isSubmitting, tourId: 'lead-form-tab-basic', buttonId: `${fieldIdPrefix}-tab-basic`, panelId: `${fieldIdPrefix}-panel-basic` },
-              { id: 'profile', label: 'Pessoa', icon: Briefcase, disabled: isSubmitting, tourId: 'lead-form-tab-profile', buttonId: `${fieldIdPrefix}-tab-profile`, panelId: `${fieldIdPrefix}-panel-profile` },
-              { id: 'interest', label: 'Interesse', icon: Home, disabled: isSubmitting, tourId: 'lead-form-tab-interest', buttonId: `${fieldIdPrefix}-tab-interest`, panelId: `${fieldIdPrefix}-panel-interest` },
-              ...(!isEditMode ? [{ id: 'management', label: 'Gestão', icon: Building2, disabled: isSubmitting, tourId: 'lead-form-tab-management', buttonId: `${fieldIdPrefix}-tab-management`, panelId: `${fieldIdPrefix}-panel-management` }] : []),
-            ]}
-            activeStep={activeTab}
-            onStepChange={handleStepChange}
-            asideTitle="Card do lead"
-            aside={<LeadDraftPreview
-              name={formData.name}
-              phone={formData.phone}
-              email={formData.email}
-              personType={formData.person_type}
-              corporateName={formData.corporate_name}
-              profileSummary={[
-                ...(formData.person_type === 'individual' ? [
-                  { label: 'Nome social', value: formData.social_name },
-                  { label: 'Profissão', value: formData.profissao },
-                  { label: 'Renda', value: formData.renda_familiar },
-                ] : [{ label: 'Nome fantasia', value: formData.trade_name }]),
-                { label: 'Cargo', value: formData.cargo },
-                { label: 'Empresa', value: formData.empresa },
-              ]}
-              tagCount={formData.tag_ids.length}
-              source={formData.source}
-              feedback={formData.feedback}
-              value={formData.valor_interesse}
-              properties={canViewProperties ? selectedInterestProperties : []}
-              interestCount={canViewProperties ? formData.interest_property_ids.length : 0}
-              pipeline={pipelines.find((pipeline) => pipeline.id === formData.pipeline_id)?.name || ''}
-              stage={stages.find((stage) => stage.id === formData.stage_id)?.name || ''}
-              team={canSelectTeam ? selectedTeam?.name || (formData.team_id ? '' : 'Pessoal') : ''}
-              assignee={allAssignableUsers.find((user) => user.id === formData.assigned_user_id)?.name || ''}
-              dealStatus={dealStatusOptions.find((option) => option.value === formData.deal_status)?.label || 'Aberto'}
-              lostReason={formData.deal_status === 'lost' ? formData.lost_reason : ''}
-              attachmentNames={pendingAttachments.map((file) => file.name)}
-              isEditMode={isEditMode}
-            />}
-            footer={<div className="flex w-full items-center justify-end gap-2">
-              <Button type="button" className={FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME} disabled={isSubmitting} onClick={() => {
-                if (submissionAttemptRef.current || isSubmitting) return;
-                if (activeTab === 'basic') handleOpenChange(false);
-                else if (activeTab === 'profile') setActiveTab('basic');
-                else if (activeTab === 'interest') setActiveTab('profile');
-                else setActiveTab('interest');
-              }}>
-                {activeTab === 'basic' ? 'Cancelar' : 'Voltar'}
-              </Button>
-              {activeTab !== finalTab ? <Button
-                key="btn-avancar"
-                type="button"
-                className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
-                disabled={isSubmitting || isLoadingEditLead}
-                onClick={() => {
-                  if (submissionAttemptRef.current || isSubmitting) return;
-                  if (activeTab === 'basic' && validateBasicStep()) setActiveTab('profile');
-                  else if (activeTab === 'profile' && validateProfileStep()) setActiveTab('interest');
-                  else if (activeTab === 'interest' && !isEditMode) setActiveTab('management');
-                }}
-              >Avançar</Button> : <Button
-                key="btn-submit"
-                data-tour="lead-form-submit"
-                type="submit"
-                className={FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME}
-                disabled={accessPending || isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
-              >
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {isSubmitting ? isEditMode ? 'Salvando...' : 'Criando...' : isEditMode ? 'Salvar alterações' : 'Criar Lead'}
-              </Button>}
-            </div>}
-          >
+          {renderFormLayout(
               <fieldset disabled={isSubmitting} className="m-0 min-w-0 border-0 p-0">
               <Tabs value={activeTab} onValueChange={handleStepChange} className="w-full">
+                {!isEditMode && (
+                  <TabsList aria-label="Etapas do formulário" data-tour="lead-form-tabs" className="mb-5 grid h-8 w-full grid-cols-4 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
+                    {formSteps.map((step) => (
+                      <TabsTrigger key={step.id} value={step.id} disabled={step.disabled} data-tour={step.tourId} className="mx-0 h-6 rounded-[6px] px-1 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">
+                        {step.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                )}
 
                 {/* Basic Info Tab */}
-                <TabsContent id={`${fieldIdPrefix}-panel-basic`} aria-labelledby={`${fieldIdPrefix}-tab-basic`} data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
+                <TabsContent {...editPanelLink('basic')} data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1144,7 +1185,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Profile/Contract Tab */}
-                <TabsContent id={`${fieldIdPrefix}-panel-profile`} aria-labelledby={`${fieldIdPrefix}-tab-profile`} data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
+                <TabsContent {...editPanelLink('profile')} data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
                   <div className="space-y-2">
                     <Label>Tipo de pessoa</Label>
                     <div className="grid grid-cols-2 gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
@@ -1244,7 +1285,7 @@ export function CreateLeadDialog({
                   </div>
                 </TabsContent>
 
-                <TabsContent id={`${fieldIdPrefix}-panel-interest`} aria-labelledby={`${fieldIdPrefix}-tab-interest`} data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
+                <TabsContent {...editPanelLink('interest')} data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
                   <div className="space-y-2">
                     <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Valor de interesse</Label>
                     <Input value={formData.valor_interesse} onChange={(e) => updateField('valor_interesse', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
@@ -1361,7 +1402,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Management Tab */}
-                {!isEditMode && <TabsContent id={`${fieldIdPrefix}-panel-management`} aria-labelledby={`${fieldIdPrefix}-tab-management`} data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
+                {!isEditMode && <TabsContent {...editPanelLink('management')} data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
                   <div className="grid gap-4 sm:grid-cols-2">
                     {canSelectTeam && (
                       <div className="space-y-2">
@@ -1528,7 +1569,7 @@ export function CreateLeadDialog({
                 </TabsContent>}
               </Tabs>
               </fieldset>
-          </FormWizardLayout>
+          )}
         </form>}
         <AlertDialog open={reloadEditOpen} onOpenChange={setReloadEditOpen}>
           <AlertDialogContent>

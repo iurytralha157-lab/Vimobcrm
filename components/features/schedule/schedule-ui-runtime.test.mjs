@@ -43,6 +43,7 @@ export const useScheduleDashboard=()=>({data:window.fixtureDashboard,isPending:f
 export const useScheduleDashboardEvents=()=>({data:{pages:[scheduleDashboardEventsPageSchema.parse({items:window.fixtureEvents.slice(0,20).map(event=>({...event,user_name:own.name,user_avatar_url:null,lead_name:null,property_code:null,property_title:null,is_overdue:false})),total:51,limit:20,offset:0,has_more:true})]},isPending:false,isError:false,isFetching:false,hasNextPage:true,fetchNextPage:()=>{},refetch:()=>{}});
 export const scheduleAPI={getComments:async()=>{if(window.fixtureState.commentError)throw Error('synthetic failure');if(window.fixtureState.commentDelay)await new Promise(resolve=>window.releaseComments=resolve);return []},addComment:async(id,content,organizationId,requestId)=>{window.fixtureWrites.push({name:'comment',input:{id,content,organizationId,requestId}});if(window.fixtureState.writeFail)throw Error('synthetic failure');return {id:requestId,content}}};
 export const GoogleCalendarConnect=()=>null;
+export const MetaCreativePreview=()=>null;
 export const AppLayout=({children})=><main style={{height:'100vh',padding:12}}>{children}</main>;
 export const useRouter=()=>({push:()=>{},replace:()=>{}});export const useSearchParams=()=>new URLSearchParams();
 export default function Link({children,href,...props}){return <a href={href} {...props}>{children}</a>}
@@ -92,7 +93,7 @@ before(async () => {
   await writeFile(path.join(directory, "fixture.tsx"), fixture);
   await writeFile(path.join(directory, "synthetic.tsx"), synthetic);
   await writeFile(path.join(directory, "loader.cjs"), `const ts=require(${JSON.stringify(path.join(root,"node_modules/typescript"))});module.exports=source=>ts.transpileModule(source,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;`);
-  const names = ["contexts/AuthContext","hooks/use-user-permissions","hooks/use-organization-modules","hooks/use-schedule-users","hooks/use-teams","hooks/use-leads","hooks/use-properties","hooks/use-schedule-event-assignees","hooks/use-schedule-events","hooks/schedule/use-schedule-dashboard","hooks/schedule/use-schedule-dashboard-events","hooks/use-toast","lib/api/schedule","components/features/properties/PropertyPreviewDialog","components/features/properties/PropertyPickerDialog","components/features/schedule/GoogleCalendarConnect","components/shared/layout/AppLayout"];
+  const names = ["components/features/meta","contexts/AuthContext","hooks/use-user-permissions","hooks/use-organization-modules","hooks/use-schedule-users","hooks/use-teams","hooks/use-leads","hooks/use-properties","hooks/use-schedule-event-assignees","hooks/use-schedule-events","hooks/schedule/use-schedule-dashboard","hooks/schedule/use-schedule-dashboard-events","hooks/use-toast","lib/api/schedule","components/features/properties/PropertyPreviewDialog","components/features/properties/PropertyPickerDialog","components/features/schedule/GoogleCalendarConnect","components/shared/layout/AppLayout"];
   const alias = Object.fromEntries(names.map(name=>[`@/${name}$`,path.join(directory,"synthetic.tsx")]));
   // Same installed icons through the CJS entry, without thousands of ESM barrel modules.
   alias["lucide-react$"]=require.resolve("lucide-react");
@@ -107,7 +108,7 @@ before(async () => {
     compiler.run((error,stats)=>compiler.close(()=>error||stats?.hasErrors()?reject(error||Error(stats.toString({all:false,errors:true}))):resolve()));
   });
   const cssSource=(await readFile(path.join(root,"app/globals.css"),"utf8")).replace('@import "tailwindcss";','@import "tailwindcss" source(none);');
-  const sources=["components/features/schedule","components/ui","components/shared/SearchableFilterSelect.tsx","config/filter-ui.ts"];
+  const sources=["components/features/schedule","components/features/marketing/marketing-ui.tsx","components/ui","components/shared/SearchableFilterSelect.tsx","config/filter-ui.ts"];
   const css=await require("postcss")([require("@tailwindcss/postcss")({base:root})]).process(`${cssSource}\n${sources.map(source=>`@source "${path.join(root,source).replaceAll("\\","/")}";`).join("\n")}`,{from:path.join(root,"app/agenda-fixture.css")});
   browser=await chromium.launch({headless:true});
   page=await browser.newPage({viewport:{width:1024,height:768},timezoneId:"Europe/Lisbon"});
@@ -272,9 +273,9 @@ test("list deletion requires a confirmation before the write",async()=>{
 test("all source entries remain reachable and KPI columns use their container",async()=>{
   await show({mode:"sources"},390);
   await expect(page.getByText("Origem sintética 11",{exact:true})).toBeAttached();
-  for(const [width,columns] of [[480,2],[768,3],[1024,6]]){
+  for(const [width,columns] of [[480,2],[768,2],[1024,4]]){
     await show({mode:"kpis"},width);
-    const grid=page.locator('[data-fixture] section>div>div').first();
+    const grid=page.locator('[data-fixture] section>section').first();
     assert.equal(await grid.evaluate(element=>getComputedStyle(element).gridTemplateColumns.split(' ').length),columns);
   }
 });
@@ -396,16 +397,12 @@ test("dashboard retains controls and contains its panels across every audited wi
     const dashboard=page.getByRole("region",{name:"Dashboard da agenda"});
     await expect(page.getByRole("button",{name:"Demais filtros da agenda",exact:true})).toBeVisible();
     assert.ok(await dashboard.evaluate(element=>element.scrollWidth<=element.clientWidth+1));
-    await expect(page.getByText("Agendamentos",{exact:true}).first()).toBeVisible();
-    const sector=page.getByRole("img",{name:"Distribuição das atividades por tipo",exact:true}).locator(".recharts-sector").first();
-    await expect(sector).toBeVisible();
-    let previousPath,stableReads=0;
-    await expect.poll(async()=>{
-      const currentPath=await sector.getAttribute("d");
-      stableReads=currentPath&&currentPath===previousPath?stableReads+1:0;
-      previousPath=currentPath;
-      return stableReads;
-    },{timeout:5000,intervals:[100,100,100]}).toBeGreaterThan(2);
+    await expect(page.getByText("Por tipo",{exact:true}).first()).toBeVisible();
+    for(const [tab,heading] of [["Compromissos","Lista de compromissos"],["Equipe","Resultado por responsável"],["Resultados","Como terminaram"],["Visão geral","Próximo compromisso"]]){
+      await page.getByRole("button",{name:tab,exact:true}).click();
+      await expect(page.getByRole("heading",{name:heading,exact:true})).toBeVisible();
+      assert.ok(await dashboard.evaluate(element=>element.scrollWidth<=element.clientWidth+1),`${tab} at ${width}px`);
+    }
     if(screenshotDirectory)await page.screenshot({path:path.join(path.resolve(screenshotDirectory),`agenda-dashboard-${width}.png`),fullPage:true});
   }
   for(const width of [1024,1280,1440])for(const sidebar of [56,208]){

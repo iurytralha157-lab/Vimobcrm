@@ -326,6 +326,7 @@ func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.
 		tenantContext.UserID,
 		authorization,
 		request,
+		repo.verifyCurrentPassword,
 		repo.authAdmin.revokeSessions,
 		repo.authAdmin.updatePassword,
 		repo.recordPasswordChangeEvent,
@@ -333,6 +334,8 @@ func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.
 		slog.Default(),
 	)
 }
+
+type passwordVerifier func(context.Context, string, string) error
 
 type passwordUpdateFunc func(context.Context, string, string) error
 
@@ -347,6 +350,7 @@ func changePassword(
 	userID string,
 	authorization string,
 	request ChangePasswordRequest,
+	verifyPassword passwordVerifier,
 	revokeSessions passwordSessionRevoker,
 	updatePassword passwordUpdateFunc,
 	recordEvent passwordChangeEventRecorder,
@@ -366,6 +370,16 @@ func changePassword(
 	scope := "others"
 	if source == "recovery" {
 		scope = "global"
+	} else {
+		if request.CurrentPassword == "" {
+			return ChangePasswordResult{}, ErrCurrentPasswordRequired
+		}
+		if len(request.CurrentPassword) > 1024 {
+			return ChangePasswordResult{}, ErrInvalidInput
+		}
+		if err := verifyPassword(ctx, userID, request.CurrentPassword); err != nil {
+			return ChangePasswordResult{}, err
+		}
 	}
 	if err := revokeSessions(ctx, authorization, scope); err != nil {
 		return ChangePasswordResult{}, errors.Join(ErrPasswordSessionRevocationUnconfirmed, err)

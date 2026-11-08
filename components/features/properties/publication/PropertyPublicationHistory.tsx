@@ -1,18 +1,10 @@
-import {
-  CheckCircle2,
-  CircleAlert,
-  Clock3,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react'
+import { CircleAlert } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
+import { EmptyNote, Panel } from '@/components/features/marketing/marketing-ui'
 import { formatPropertyDate } from '@/lib/property-display-utils'
-import type { PropertyPublicationJob } from '@/lib/validation'
+import type { PropertyChannelPublication, PropertyPublicationJob } from '@/lib/validation'
 
-type PropertyPublicationHistoryProps = {
-  jobs: PropertyPublicationJob[]
-}
+import { PropertyChip, type PropertyChipTone } from '../property-ui'
 
 const ACTION_LABELS: Record<PropertyPublicationJob['action'], string> = {
   publish: 'Publicação solicitada',
@@ -21,63 +13,57 @@ const ACTION_LABELS: Record<PropertyPublicationJob['action'], string> = {
   revalidate: 'Revalidação solicitada',
 }
 
-const STATUS_LABELS: Record<PropertyPublicationJob['status'], string> = {
-  pending: 'Na fila',
-  processing: 'Processando',
-  retry: 'Nova tentativa agendada',
-  succeeded: 'Concluído',
-  superseded: 'Substituído',
-  dead: 'Falhou',
+const STATUS: Record<PropertyPublicationJob['status'], { label: string; tone: PropertyChipTone }> = {
+  pending: { label: 'Na fila', tone: 'neutral' },
+  processing: { label: 'Processando', tone: 'neutral' },
+  retry: { label: 'Nova tentativa agendada', tone: 'warning' },
+  succeeded: { label: 'Concluído', tone: 'success' },
+  superseded: { label: 'Substituído', tone: 'neutral' },
+  dead: { label: 'Falhou', tone: 'danger' },
 }
 
-function JobIcon({ status }: { status: PropertyPublicationJob['status'] }) {
-  if (status === 'succeeded') return <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-  if (status === 'dead') return <CircleAlert className="h-4 w-4 text-destructive" />
-  if (status === 'processing') return <Loader2 className="h-4 w-4 animate-spin text-primary" />
-  if (status === 'retry') return <RotateCcw className="h-4 w-4 text-amber-600" />
-  return <Clock3 className="h-4 w-4 text-muted-foreground" />
-}
-
-export function PropertyPublicationHistory({ jobs }: PropertyPublicationHistoryProps) {
-  if (jobs.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-        Nenhum processamento registrado para este canal.
-      </p>
-    )
-  }
+/** Latest sends across every channel, newest first. */
+export function PropertyPublicationHistory({ publications }: { publications: PropertyChannelPublication[] }) {
+  const rows = publications
+    .flatMap((publication) => publication.recent_jobs.map((job) => ({ job, channel: publication.label })))
+    .sort((left, right) => right.job.created_at.localeCompare(left.job.created_at))
+    .slice(0, 12)
 
   return (
-    <div className="space-y-3">
-      {jobs.map((job) => (
-        <div key={job.id} className="flex gap-3 rounded-lg border bg-muted/20 p-3">
-          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-background">
-            <JobIcon status={job.status} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-medium">{ACTION_LABELS[job.action]}</p>
-              <Badge variant={job.status === 'dead' ? 'destructive' : 'secondary'}>
-                {STATUS_LABELS[job.status]}
-              </Badge>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {formatPropertyDate(job.created_at, true, 'Data não informada')} · {job.attempts === 0
-                ? 'aguardando processamento'
-                : `tentativa ${Math.min(job.attempts, job.max_attempts)} de ${job.max_attempts}`}
-              {job.version ? ` · versão ${job.version}` : ''}
-            </p>
-            {job.next_attempt_at && job.status === 'retry' && (
-              <p className="mt-1 text-xs text-amber-700">
-                Próxima tentativa: {formatPropertyDate(job.next_attempt_at, true, 'Data não informada')}
-              </p>
-            )}
-            {job.last_error?.message && (
-              <p className="mt-2 text-xs text-destructive">{job.last_error.message}</p>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+    <Panel title="Últimos envios">
+      {rows.length === 0 ? (
+        <EmptyNote>Nenhum processamento registrado.</EmptyNote>
+      ) : (
+        <ul className="divide-y divide-[var(--app-border)]">
+          {rows.map(({ job, channel }) => (
+            <li key={job.id} className="grid gap-x-4 gap-y-0.5 py-2 first:pt-0 last:pb-0 sm:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-center">
+              <span className="text-[12px] font-light text-[var(--app-text-secondary)]">
+                {formatPropertyDate(job.created_at, true, 'Data não informada')}
+              </span>
+              <span className="min-w-0 truncate text-[13px] font-light text-[var(--app-text-primary)]">{channel}</span>
+              <span className="min-w-0 text-[13px] font-light text-[var(--app-text-primary)]">
+                {ACTION_LABELS[job.action]}
+                <span className="ml-1 text-[12px] text-[var(--app-text-tertiary)]">
+                  {job.attempts === 0 ? '· aguardando' : `· tentativa ${Math.min(job.attempts, job.max_attempts)} de ${job.max_attempts}`}
+                  {job.version ? ` · versão ${job.version}` : ''}
+                </span>
+                {job.next_attempt_at && job.status === 'retry' && (
+                  <span className="block text-[12px] text-warning">
+                    Próxima tentativa: {formatPropertyDate(job.next_attempt_at, true, 'Data não informada')}
+                  </span>
+                )}
+                {job.last_error?.message && (
+                  <span className="mt-0.5 flex items-start gap-1 text-[12px] text-destructive">
+                    <CircleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                    {job.last_error.message}
+                  </span>
+                )}
+              </span>
+              <PropertyChip tone={STATUS[job.status].tone} className="w-fit">{STATUS[job.status].label}</PropertyChip>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   )
 }

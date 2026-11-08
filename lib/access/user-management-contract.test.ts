@@ -190,7 +190,7 @@ test('filtros historicos incluem inativos sem liberar novas atribuicoes', () => 
   assert.match(sharedFiltersSource, /scope:\s*["']filters["']/)
   assert.match(propertiesSource, /useUsers\(\{ scope: ["']filters["'] \}\)/)
   assert.match(sharedFiltersSource, /getUserFilterLabel/)
-  assert.match(propertiesSource, /getUserFilterLabel/)
+  assert.match(readSource('components/features/properties/list/PropertyFiltersPanel.tsx'), /getUserFilterLabel/)
   assert.doesNotMatch(createLeadSource, /scope:\s*'filters'/)
   assert.doesNotMatch(propertyFormSource, /scope:\s*'filters'/)
 })

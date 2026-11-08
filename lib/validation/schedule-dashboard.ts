@@ -235,6 +235,8 @@ const scheduleDashboardDailyPointSchema = z
   .object({
     date: scheduleDashboardCalendarDateSchema,
     total: nonNegativeIntegerSchema,
+    // Optional for older replicas, like the other additive fields below.
+    eligible: nonNegativeIntegerSchema.optional(),
     open: nonNegativeIntegerSchema,
     overdue: nonNegativeIntegerSchema,
     completed: nonNegativeIntegerSchema,
@@ -255,10 +257,18 @@ const scheduleDashboardHourlyPointSchema = z
   })
   .passthrough();
 
+const scheduleDashboardHourDistributionPointSchema = z
+  .object({
+    hour: z.number().int().min(0).max(23),
+    total: nonNegativeIntegerSchema,
+  })
+  .passthrough();
+
 const scheduleDashboardBreakdownSchema = z
   .object({
     key: z.string().trim().min(1).max(120),
     count: nonNegativeIntegerSchema,
+    completed: nonNegativeIntegerSchema.optional(),
   })
   .passthrough();
 
@@ -266,6 +276,8 @@ const scheduleDashboardSourceSchema = scheduleDashboardBreakdownSchema
   .extend({
     key: z.string().trim().min(1).max(160),
     label: z.string().trim().min(1).max(160),
+    appointment_completed: nonNegativeIntegerSchema.optional(),
+    appointment_eligible: nonNegativeIntegerSchema.optional(),
   })
   .passthrough();
 
@@ -330,6 +342,9 @@ export const scheduleDashboardEventSchema = scheduleDashboardUpcomingEventSchema
     status: scheduleDashboardEventStatusSchema,
     outcome: scheduleOutcomeSchema.nullable(),
     is_overdue: z.boolean(),
+    lead_stage: nullableDashboardText(255).optional(),
+    lead_source: nullableDashboardText(160).optional(),
+    google_sync_status: nullableDashboardText(40).optional(),
   })
   .passthrough();
 
@@ -473,6 +488,10 @@ export const scheduleDashboardDataSchema = z
     period: scheduleDashboardPeriodSchema,
     kpis: scheduleDashboardKpisSchema,
     hourly: z.array(scheduleDashboardHourlyPointSchema).max(24),
+    hour_distribution: z
+      .array(scheduleDashboardHourDistributionPointSchema)
+      .max(24)
+      .optional(),
     daily: z.array(scheduleDashboardDailyPointSchema),
     weekly: z.array(scheduleDashboardWeeklyPointSchema),
     by_type: z.array(scheduleDashboardBreakdownSchema),

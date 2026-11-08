@@ -42,6 +42,7 @@ func TestInactivityAPIRejectsAmbiguousWrites(t *testing.T) {
 		{"oversized message", true, func(r *StageInactivityRequest) { r.AlertMessage = strings.Repeat("á", 1001) }},
 		{"unsupported clock", true, func(r *StageInactivityRequest) { r.Clock = InactivityClockStageEntry }},
 		{"retroactive start", true, func(r *StageInactivityRequest) { r.StartMode = InactivityIncludeOverdue }},
+		{"unknown start mode", true, func(r *StageInactivityRequest) { r.StartMode = "old_leads_now" }},
 		{"missing stage", true, func(r *StageInactivityRequest) { r.StageID = "" }},
 		{"invalid stage", true, func(r *StageInactivityRequest) { r.StageID = "other-stage" }},
 		{"create with timestamp", true, func(r *StageInactivityRequest) { r.ExpectedUpdatedAt = "2026-10-13T10:00:00Z" }},
@@ -68,6 +69,36 @@ func TestInactivityAPIRejectsAmbiguousWrites(t *testing.T) {
 		if err != nil || len([]rune(input.Message)) != 1000 || input.Enabled || input.Days != 2 {
 			t.Fatalf("valid explicit disabled request rejected: %#v %v", input, err)
 		}
+	}
+}
+
+func TestInactivityAPIValidatesAndPreservesEntryScope(t *testing.T) {
+	now := time.Now().UTC()
+	request := inactivityAPIRequestForTest(true)
+	request.StartMode = InactivityNewStageEntries
+	input, err := request.Validate(true)
+	if err != nil || input.StartMode != InactivityNewStageEntries {
+		t.Fatalf("entry scope was rejected: %#v %v", input, err)
+	}
+	current := nextInactivityPolicy(nil, time.Time{}, false, now, "first", input)
+	current.Enabled, current.AutomationUpdatedAt = true, now
+
+	request = inactivityAPIRequestForTest(false)
+	request.StartMode = ""
+	input, err = request.Validate(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Enabled = true
+	later := now.Add(time.Hour)
+	policy := nextInactivityPolicy(&current, now, true, later, "second", input)
+	if policy.StartMode != InactivityNewStageEntries || policy.Epoch != current.Epoch || !policy.ActivatedAt.Equal(now) {
+		t.Fatalf("omitted scope changed the active policy: %#v", policy)
+	}
+	input.StartMode = InactivityStartAtActivation
+	policy = nextInactivityPolicy(&current, now, true, later, "second", input)
+	if policy.StartMode != InactivityStartAtActivation || policy.Epoch != "second" || !policy.ActivatedAt.Equal(later) {
+		t.Fatalf("expanded scope did not start a full new clock: %#v", policy)
 	}
 }
 

@@ -12,6 +12,11 @@ function readDashboardFile(fileName: string) {
 
 const dashboardSource = readDashboardFile("AgendaDashboard.tsx");
 const kpisSource = readDashboardFile("AgendaDashboardKpis.tsx");
+const overviewSource = readDashboardFile("AgendaOverviewTab.tsx");
+const appointmentsSource = readDashboardFile("AgendaAppointmentsTab.tsx");
+const teamSource = readDashboardFile("AgendaTeamTab.tsx");
+const resultsSource = readDashboardFile("AgendaResultsTab.tsx");
+const nextEventSource = readDashboardFile("AgendaNextEventCard.tsx");
 const adaptiveChartSource = readDashboardFile("AgendaAdaptiveChart.tsx");
 const adaptiveModelSource = readDashboardFile("agenda-adaptive-chart-model.ts");
 const overdueSource = readDashboardFile("AgendaOverduePanel.tsx");
@@ -43,34 +48,53 @@ test("dashboard mantém filtros no topo sem repetir título ou subtítulo", () =
     dashboardSource,
     /<AgendaDashboardFilters\s+key=\{filterScopeKey\}/,
   );
-  assert.match(
-    dashboardSource,
-    /<AgendaResponsibleResultsPanel\s+key=\{effectiveFiltersKey\}/,
-  );
+  assert.match(dashboardSource, /resultsKey=\{effectiveFiltersKey\}/);
+  assert.match(teamSource, /<AgendaResponsibleResultsPanel\s+key=\{resultsKey\}/);
   assert.match(dashboardSource, /previousDashboardIdentityRef/);
   assert.match(dashboardSource, /teamId: undefined/);
   assert.match(dashboardSource, /userId: undefined/);
   assert.match(dashboardSource, /source: undefined/);
 });
 
-test("dashboard renderiza apenas os painéis definidos para a leitura executiva", () => {
-  assert.match(dashboardSource, /<AgendaAdaptiveChart/);
-  assert.match(dashboardSource, /hourly=\{data\.hourly\}/);
-  assert.match(dashboardSource, /daily=\{data\.daily\}/);
-  assert.doesNotMatch(dashboardSource, /weekly=\{data\.weekly\}/);
-  assert.match(dashboardSource, /<AgendaEventsPanel/);
-  assert.match(dashboardSource, /filters=\{effectiveFilters\}/);
-  assert.match(dashboardSource, /period=\{data\.period\}/);
+test("dashboard distribui os painéis em quatro abas sem perder o recorte da lista", () => {
+  for (const label of ["Visão geral", "Compromissos", "Equipe", "Resultados"]) {
+    assert.match(dashboardSource, new RegExp(`label: "${label}"`));
+  }
+  assert.match(dashboardSource, /TAB_URL_KEY = "ad_tab"/);
+  assert.match(overviewSource, /<AgendaAdaptiveChart/);
+  assert.match(overviewSource, /hourly=\{data\.hourly\}/);
+  assert.match(overviewSource, /daily=\{data\.daily\}/);
+  assert.doesNotMatch(overviewSource, /weekly=\{data\.weekly\}/);
+  assert.match(overviewSource, /<AgendaTypeDistributionPanel/);
+  assert.match(overviewSource, /<AgendaSourceDistributionPanel/);
+  assert.match(overviewSource, /<AgendaNextEventCard/);
+  assert.match(appointmentsSource, /<AgendaEventsPanel/);
+  assert.match(appointmentsSource, /filters=\{filters\}/);
+  assert.match(appointmentsSource, /period=\{data\.period\}/);
   assert.match(
     dashboardSource,
-    /enabled=\{!dashboardQuery\.isPlaceholderData\}/,
+    /eventsEnabled=\{!dashboardQuery\.isPlaceholderData\}/,
   );
-  assert.match(dashboardSource, /<AgendaTypeDistributionPanel/);
-  assert.match(dashboardSource, /<AgendaSourceDistributionPanel/);
-  assert.match(dashboardSource, /<AgendaResponsibleResultsPanel/);
-  assert.doesNotMatch(dashboardSource, /<AgendaOutcomeDistributionPanel/);
-  assert.doesNotMatch(dashboardSource, /<AgendaTeamPerformancePanel/);
+  assert.match(appointmentsSource, /enabled=\{eventsEnabled\}/);
+  assert.match(teamSource, /<AgendaResponsibleResultsPanel/);
+  assert.match(teamSource, /<AgendaOverduePanel/);
+  assert.match(resultsSource, /<AgendaOutcomeDistributionPanel/);
+  assert.match(resultsSource, /<AgendaDataQualityNotice/);
   assert.doesNotMatch(dashboardSource, /Datas agrupadas no fuso/);
+});
+
+test("nenhum cartão ou gráfico da agenda usa preenchimento preto", () => {
+  for (const source of [nextEventSource, overviewSource, adaptiveChartSource, panelsSource, teamSource, resultsSource, kpisSource]) {
+    assert.doesNotMatch(source, /\bINK\b|bg-black|bg-neutral-9|#000|#111|#151515/);
+  }
+});
+
+test("próximos compromissos não dependem do período selecionado nem ignoram os filtros de escopo", () => {
+  assert.match(dashboardSource, /status: "upcoming"/);
+  assert.match(dashboardSource, /dateFrom: upcomingWindow\.today/);
+  for (const key of ["teamId", "userId", "source", "eventType"]) {
+    assert.match(dashboardSource, new RegExp(`${key}: effectiveFilters\\.${key}`));
+  }
 });
 
 test("dados temporários do dashboard nunca atravessam organização ou acesso", () => {
@@ -83,41 +107,24 @@ test("dados temporários do dashboard nunca atravessam organização ou acesso",
   assert.match(dashboardHookSource, /previousKey\[3\] !== accessSignature/);
 });
 
-test("KPIs chegam a duas linhas de seis conforme a largura útil do dashboard", () => {
-  for (const label of [
-    "Realizados",
-    "Em aberto",
-    "Em atraso",
-    "No-show",
-    "Próximos agendamentos",
-    "Visitas",
-    "Reuniões",
-    "Ligações",
-    "E-mail",
-    "Mensagem",
-    "Tarefa",
-  ]) {
-    assert.match(kpisSource, new RegExp(`label: ['\"]${label}['\"]`));
+test("KPIs ficam em quatro por linha e dizem o que contam em cada base de data", () => {
+  for (const label of ["Taxa de realização", "Não compareceu", "Atrasados"]) {
+    assert.match(kpisSource, new RegExp(`label="${label}"`));
   }
-
+  assert.match(kpisSource, /<KpiRow>/);
   assert.match(kpisSource, /getAgendaDashboardTotalLabels\(dateBasis\)/);
-  assert.match(kpisSource, /label: totalLabels\.period/);
-  assert.match(kpisSource, /byType\?: ScheduleDashboardBreakdown\[]/);
-  assert.equal(kpisSource.match(/@\[960px\]\/agenda-dashboard:grid-cols-6/g)?.length, 2);
-  assert.equal(kpisSource.match(/@\[580px\]\/agenda-dashboard:grid-cols-3/g)?.length, 2);
+  assert.match(kpisSource, /dateBasis === "start_time" \? "Compromissos" : totalLabels\.period/);
   assert.match(dashboardSource, /@container\/agenda-dashboard/);
-  assert.doesNotMatch(kpisSource, /Todos os compromissos do recorte/);
-  assert.doesNotMatch(kpisSource, /Aguardando um desfecho/);
-  assert.doesNotMatch(kpisSource, /Agenda futura em aberto/);
-  assert.doesNotMatch(kpisSource, /label: ['\"]Cancelados['\"]/);
+  // Filtering by status from a KPI remains available.
+  assert.match(kpisSource, /onStatusSelect\("overdue"\)/);
+  assert.match(kpisSource, /onStatusSelect\("no_show"\)/);
 });
 
 test("evolução adapta horas, dias e meses sem seletor manual", () => {
   assert.match(adaptiveChartSource, /buildAgendaAdaptiveChartModel/);
-  assert.match(adaptiveChartSource, /Evolução dos agendamentos/);
-  assert.match(adaptiveChartSource, /Por hora/);
-  assert.match(adaptiveChartSource, /Por dia/);
-  assert.match(adaptiveChartSource, /Por mês/);
+  assert.match(adaptiveChartSource, /Compromissos por hora/);
+  assert.match(adaptiveChartSource, /Compromissos por dia/);
+  assert.match(adaptiveChartSource, /Compromissos por mês/);
   assert.doesNotMatch(adaptiveChartSource, /aria-pressed/);
   assert.match(adaptiveModelSource, /dayCount <= 1/);
   assert.match(adaptiveModelSource, /dayCount <= 92/);
@@ -130,15 +137,15 @@ test("lista de atrasos mantém todos os responsáveis em rolagem interna", () =>
   assert.doesNotMatch(overdueSource, /slice\(0,\s*8\)/);
 });
 
-test("painéis preservam origem, tipo e lista do período, sem recolocar Resultados", () => {
-  assert.match(panelsSource, /title=["']Origem do lead["']/);
-  assert.match(panelsSource, /title=["']Distribuição por tipo["']/);
+test("painéis preservam origem, tipo e lista do período", () => {
+  assert.match(panelsSource, /title=["']De onde veio o lead["']/);
+  assert.match(panelsSource, /title=["']Por tipo["']/);
+  assert.match(panelsSource, /title=["']Realizados por origem do lead["']/);
   assert.match(panelsSource, /__unknown__: ["']Outro["']/);
-  assert.match(panelsSource, /otherCount/);
-  assert.match(panelsSource, /h-\[190px\]/);
-  assert.match(panelsSource, /max-h-\[178px\][^"\n]*overflow-y-auto/);
-  assert.doesNotMatch(dashboardSource, /AgendaOutcomeDistributionPanel/);
-  assert.match(eventsSource, />\s*Agendamentos\s*</);
+  // Every source stays reachable.
+  assert.match(panelsSource, /SCROLL_LIST = "max-h-\[220px\][^"\n]*overflow-y-auto/);
+  assert.doesNotMatch(panelsSource, /visible\.slice\(0, \d+\)\.map/);
+  assert.match(eventsSource, />\s*Lista de compromissos\s*</);
   assert.doesNotMatch(eventsSource, /Próximos agendamentos/);
   assert.match(eventsSource, /overflow-y-auto/);
   assert.match(eventsSource, /fetchNextPage/);
@@ -146,13 +153,12 @@ test("painéis preservam origem, tipo e lista do período, sem recolocar Resulta
 
 test("resultado por responsável ocupa painel próprio sem auditoria ou autoria", () => {
   for (const label of [
-    "Agendamentos",
+    "Compromissos",
     "Realizados",
     "Em aberto",
-    "Em atraso",
-    "No-show",
-    "Realização",
-    "Taxa de no-show",
+    "Atrasados",
+    "Não compareceu",
+    "Taxa de realização",
   ]) {
     assert.match(responsibleSource, new RegExp(label));
   }

@@ -387,7 +387,7 @@ export function OwnersPanel({
 }: OwnersPanelProps) {
   return (
     <TabsContent value="owners" className="mt-4">
-      <section className="rounded-[8px] bg-card p-4">
+      <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <h2 className="text-base font-medium">Proprietários</h2>

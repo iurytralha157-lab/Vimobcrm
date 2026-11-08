@@ -206,7 +206,7 @@ test("menu de imoveis respeita as mesmas permissoes das paginas", () => {
   });
   assert.deepEqual(
     viewer[0]?.children?.map((item) => item.path),
-    ["/properties", "/properties/launches", "/properties/rentals"],
+    ["/properties", "/properties/ready", "/properties/launches", "/properties/rentals", "/properties/third-party"],
   );
 
   const propertyManager = filterNavigationItems(properties, {
@@ -217,8 +217,10 @@ test("menu de imoveis respeita as mesmas permissoes das paginas", () => {
     propertyManager[0]?.children?.map((item) => item.path),
     [
       "/properties",
+      "/properties/ready",
       "/properties/launches",
       "/properties/rentals",
+      "/properties/third-party",
       "/properties/condominiums",
       "/properties/locations",
       "/properties/owners",
@@ -246,8 +248,10 @@ test("menu de imoveis respeita as mesmas permissoes das paginas", () => {
     fullManager[0]?.children?.map((item) => item.path),
     [
       "/properties",
+      "/properties/ready",
       "/properties/launches",
       "/properties/rentals",
+      "/properties/third-party",
       "/properties/condominiums",
       "/properties/locations",
       "/properties/owners",

@@ -53,7 +53,7 @@ export function ContactExportPreview({ format, columnKeys, includeDynamicFields,
           <p>As colunas JSON respeitam as permissões e ocultam CPF e RG. O Excel aceita até 16.384 colunas e 32.767 caracteres por célula; para JSON longo, use CSV sem expansão.</p>
         </div>
       </details>
-      <p className="text-[10px] leading-4 text-[var(--app-text-tertiary)]">O arquivo será gerado ao clicar em Exportar.</p>
+      <p className="text-[10px] leading-4 text-[var(--app-text-tertiary)]">Ao concluir a revisão, prepare o arquivo e clique em Baixar arquivo.</p>
     </div>
   );
 }

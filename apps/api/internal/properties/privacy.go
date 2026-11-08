@@ -60,6 +60,7 @@ func redactPropertyOwnerContactValuesInContext(record map[string]any, ownerConte
 	}
 	ownerContext = ownerContext || propertyOwnerContextRecord(record)
 	redactMapFields(record, propertyOwnerContactFields)
+	redactMapFields(record, propertyPartnerContactFields)
 	if ownerContext {
 		redactMapFields(record, ownerContactFields)
 	}

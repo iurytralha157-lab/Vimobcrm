@@ -39,9 +39,9 @@ func (repo Repository) StartStageInactivityWorker(ctx context.Context, logger *s
 				result, err := repo.ProcessStageInactivityOnce(ctx)
 				if err != nil && ctx.Err() == nil {
 					// Deliberately no exception details or lead/user identifiers.
-					logger.Error("stage inactivity cycle failed", "code", "cycle_error", "scanned", result.Scanned, "enqueued", result.Enqueued, "notified", result.Notified, "failed", result.Failed, "dead", result.Dead)
-				} else if result.Enqueued+result.Notified+result.Failed > 0 {
-					logger.Info("stage inactivity cycle", "scanned", result.Scanned, "enqueued", result.Enqueued, "notified", result.Notified, "waiting", result.Waiting, "cancelled", result.Cancelled, "failed", result.Failed, "dead", result.Dead)
+					logger.Error("stage inactivity cycle failed", "code", "cycle_error", "scanned", result.Scanned, "enqueued", result.Enqueued, "notified", result.Notified, "moved", result.Moved, "redistributed", result.Redistributed, "failed", result.Failed, "dead", result.Dead)
+				} else if result.Enqueued+result.Notified+result.Moved+result.Redistributed+result.Failed > 0 {
+					logger.Info("stage inactivity cycle", "scanned", result.Scanned, "enqueued", result.Enqueued, "notified", result.Notified, "moved", result.Moved, "redistributed", result.Redistributed, "waiting", result.Waiting, "cancelled", result.Cancelled, "failed", result.Failed, "dead", result.Dead)
 				}
 				timer.Reset(config.Interval)
 			}

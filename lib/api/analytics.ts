@@ -84,6 +84,9 @@ export const analyticsAPI = {
       query: validatedQuery,
       organizationId: options?.organizationId,
       signal: options?.signal,
+      // Above the API's own budget for the optional breakdown, so a slow period
+      // loses that breakdown instead of the whole screen.
+      timeoutMs: 25_000,
     });
     return validateDomainResponse(
       apiSiteAnalyticsDetailedResponseSchema,

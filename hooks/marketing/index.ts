@@ -9,3 +9,10 @@ export type {
   MarketingOptionalMetrics,
 } from "./use-marketing-dashboard";
 export type { MarketingScopeSelection } from "./use-marketing-scope-filters";
+export {
+  useDisconnectMarketingConnection,
+  useMarketingConnections,
+  useStartMarketingMetaLogin,
+  useSyncMarketingConnection,
+  useUpdateMarketingConnectionAssets,
+} from "./use-marketing-connections";

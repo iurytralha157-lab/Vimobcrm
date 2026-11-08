@@ -163,6 +163,7 @@ var workspacePropertyBaseFields = []string{
 	"destaque", "is_featured", "super_destaque", "placa_no_local",
 	"aceita_permuta", "aceita_financiamento", "exclusividade",
 	"created_at", "updated_at", "can_edit", "managed_terms",
+	"portfolio_type", "third_party_kind", "partner_name",
 }
 
 var workspacePropertyInternalFields = []string{
@@ -176,6 +177,7 @@ var workspacePropertyInternalFields = []string{
 	"external_provider", "imoview_codigo", "vista_codigo", "created_by",
 	"aprovacao_ambiental", "projeto_aprovado", "status_descritivo",
 	"faixa_valor_imovel", "renda_familiar", "is_demo",
+	"commission_split_percent", "third_party_authorized_until",
 }
 
 func projectWorkspaceProperty(source Property, canManage bool, canViewContacts bool) Property {
@@ -183,6 +185,7 @@ func projectWorkspaceProperty(source Property, canManage bool, canViewContacts b
 	copyWorkspacePropertyFields(projected, source, workspacePropertyBaseFields)
 	if canViewContacts {
 		copyWorkspacePropertyFields(projected, source, propertyOwnerContactFields)
+		copyWorkspacePropertyFields(projected, source, propertyPartnerContactFields)
 	}
 	if canManage {
 		copyWorkspacePropertyFields(projected, source, workspacePropertyInternalFields)

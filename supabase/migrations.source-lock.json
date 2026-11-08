@@ -1038,6 +1038,38 @@
     {
       "file": "20261103141001_add_home_publication_mobile_image_variant.sql",
       "sha256": "9647c26f7d798cbf6f65f27f30f0feb52a18cb330d48c0b79f7cbf611151277b"
+    },
+    {
+      "file": "20261104120000_add_marketing_connections.sql",
+      "sha256": "22e10def23c54c9511be2551db94e39463abe76490dd93675ea4f2ab373852f1"
+    },
+    {
+      "file": "20261105120000_add_property_portfolio_and_settings.sql",
+      "sha256": "1fc622dc2129781a2f72e3eff532a58354ced225fc8d726d4e2d61f037af435e"
+    },
+    {
+      "file": "20261107091926_restrict_global_sla_and_financial_rpc_execution.sql",
+      "sha256": "d619fa3f72802f91dcba83eacd9c2639c36ad3a62ab07ae993bd0d6d290dff52"
+    },
+    {
+      "file": "20261107092324_restrict_lead_property_interest_tenant_writes.sql",
+      "sha256": "22af7299efd0b71e9eb9a7abc5eba193f4796ddcef5d6e4975936434ed1735c5"
+    },
+    {
+      "file": "20261107092518_scope_schedule_command_idempotency.sql",
+      "sha256": "b81fa48e0636d7a65d8748a1489724a2a4b62d9095db0a35b99204c4d34483c4"
+    },
+    {
+      "file": "20261107230000_stage_inactivity_move_action.sql",
+      "sha256": "1bd313c29c01bac778b545a23056eea3b04e78ce05688ba7c43c8b1b5b338174"
+    },
+    {
+      "file": "20261108085114_stage_inactivity_new_stage_entries.sql",
+      "sha256": "faeaf778964026d34a71651fd168baa927990a4d421f5ce217d3a36acf1a4141"
+    },
+    {
+      "file": "20261108085140_stage_inactivity_redistribution.sql",
+      "sha256": "800dbeb13f87bca0e755b6e5f8f01425bbe36affce157eeea0d2ac09aebb6aea"
     }
   ]
 }

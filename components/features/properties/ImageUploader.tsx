@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import {
   DragDropContext,
@@ -163,21 +163,16 @@ export function ImageUploader({
     [canContinue, canContinuePreparation, disabled, images, mainImage, onImagesChange, onPreparingChange, releasePendingPhotos, uploadFile, uploadingGallery, uploadingMain],
   );
 
-  const handleGalleryUpload = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files;
-      if (!files || files.length === 0 || disabled || uploadingMain || uploadingGallery) return;
+  const addGalleryFiles = useCallback(
+    async (selectedFiles: File[]) => {
+      if (selectedFiles.length === 0 || disabled || uploadingMain || uploadingGallery) return;
 
       const availableSlots = getRemainingPropertyPhotoSlots(images, mainImage);
-      const selectedFiles = Array.from(files);
       if (selectedFiles.length > availableSlots) {
         toast.error(`Cada imóvel pode ter no máximo ${PROPERTY_MEDIA_MAX_PHOTOS} fotos.`);
       }
       const validFiles = selectedFiles.slice(0, availableSlots);
-      if (validFiles.length === 0) {
-        event.target.value = '';
-        return;
-      }
+      if (validFiles.length === 0) return;
 
       setUploadingGallery(true);
       onPreparingChange?.(true);
@@ -212,7 +207,6 @@ export function ImageUploader({
         releasePendingPhotos();
         if (mountedRef.current) setUploadingGallery(false);
         if (!canContinue || canContinuePreparation()) onPreparingChange?.(false);
-        event.target.value = '';
       }
     },
     [
@@ -231,6 +225,28 @@ export function ImageUploader({
       uploadingMain,
     ],
   );
+
+  const handleGalleryUpload = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const selectedFiles = Array.from(input.files ?? []);
+      try {
+        await addGalleryFiles(selectedFiles);
+      } finally {
+        input.value = '';
+      }
+    },
+    [addGalleryFiles],
+  );
+
+  // Without these handlers the browser opens the dropped file and the form is lost.
+  const handleGalleryDragOver = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+  };
+  const handleGalleryDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    void addGalleryFiles(Array.from(event.dataTransfer.files));
+  };
 
   const preparing = uploadingMain || uploadingGallery;
   const controlsDisabled = disabled || preparing;
@@ -395,6 +411,8 @@ export function ImageUploader({
         </p>
 
         <label
+          onDragOver={handleGalleryDragOver}
+          onDrop={handleGalleryDrop}
           className={cn(
             'flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-[8px] border border-dashed',
             'border-[var(--app-border)] bg-[var(--app-surface-soft)] transition-colors hover:border-primary/35 hover:bg-[var(--app-surface-hover)]',

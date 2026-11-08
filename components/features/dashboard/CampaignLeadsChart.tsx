@@ -1,9 +1,8 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Megaphone, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,36 +74,34 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
     rows.forEach((campaign) => counts.set(campaign.name, (counts.get(campaign.name) ?? 0) + 1));
     return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
   }, [rows]);
-  const barHeight = campaignBarHeight(rows.length);
+  // Thick enough to read at a glance, without filling the 44px row.
+  const barHeight = Math.min(campaignBarHeight(rows.length), 16);
   const loading = !visibleData && (!filtersReady || !nearViewport || isPending);
   const unattributed = visibleData?.unattributed.leadCount ?? 0;
 
   return (
     <section ref={sectionRef} aria-labelledby="dashboard-campaigns-title" className="h-full min-w-0">
-      <Card className="h-full min-w-0 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-        <CardHeader className="px-3 pb-2 pt-3">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle id="dashboard-campaigns-title" className="flex min-w-0 items-center gap-2 text-[13px] font-light text-[var(--app-text-primary)]">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                <Megaphone className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
-              <span className="truncate">Leads por campanha</span>
-            </CardTitle>
+      <div className="flex h-full min-w-0 flex-col rounded-[12px] bg-[var(--app-surface-solid)] p-4">
+        <div className="mb-3 flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <h3 id="dashboard-campaigns-title" className="min-w-0 truncate text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
+            Leads por campanha
+          </h3>
+          <div className={`flex min-w-0 items-center gap-3 ${visibleData && rows.length > 25 ? "max-sm:w-full" : ""}`}>
+            {visibleData && rows.length > 25 ? (
+              <div className="relative min-w-0 flex-1 sm:w-[200px] sm:flex-none">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" aria-hidden="true" />
+                <Input aria-label="Buscar campanha pelo nome ou ID" placeholder="Buscar campanha" value={search} maxLength={180} onChange={(event) => setView({ scope: filterScope, search: event.target.value, page: 1 })} className="h-8 rounded-[8px] border-0 bg-[var(--app-surface-soft)] py-0 pl-8 text-[12px] font-light shadow-none md:h-8" />
+              </div>
+            ) : null}
             {visibleData ? (
-              <span className="shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)]">
+              <span className="shrink-0 text-[12px] font-light text-[var(--app-text-secondary)]">
                 {rows.length.toLocaleString("pt-BR")} {rows.length === 1 ? "campanha" : "campanhas"}
               </span>
             ) : null}
           </div>
-        </CardHeader>
-        <CardContent className="px-3 pb-3 pt-1">
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col">
           {failureState === "stale" ? <p role="status" className="mb-2 text-[11px] text-[var(--app-text-secondary)]">Não foi possível atualizar. Exibindo a última consulta. <button type="button" className="text-primary underline" onClick={() => void refetch()}>Tentar novamente</button></p> : null}
-          {visibleData && rows.length > 25 ? (
-            <div className="relative mb-2">
-              <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-[var(--app-text-tertiary)]" aria-hidden="true" />
-              <Input aria-label="Buscar campanha pelo nome ou ID" placeholder="Buscar campanha" value={search} maxLength={180} onChange={(event) => setView({ scope: filterScope, search: event.target.value, page: 1 })} className="h-8 pl-7 text-[11px]" />
-            </div>
-          ) : null}
           {failureState === "unavailable" ? (
             <DashboardChartError message={getDashboardStatsErrorDescription(error)} onRetry={() => void refetch()} />
           ) : loading ? (
@@ -118,9 +115,10 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
               role="region"
               aria-label="Leads por campanha, lista rolável"
               tabIndex={page.items.length > 7 ? 0 : undefined}
-              className="app-scrollbar max-h-[330px] overflow-y-auto overscroll-contain rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+              className="app-scrollbar flex max-h-[330px] flex-1 flex-col overflow-y-auto overscroll-contain rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:max-h-[420px]"
             >
-              <div role="list" className="space-y-1 pr-4 sm:pr-5">
+              {/* Few campaigns spread over the card instead of piling up at the top. */}
+              <div role="list" className={`pr-4 sm:pr-5 ${page.items.length <= 7 ? "flex min-h-full flex-1 flex-col justify-around" : "space-y-1"}`}>
                 {page.items.map((campaign) => {
                   const rowKey = campaign.key;
                   const expanded = expandedCampaignKey === rowKey;
@@ -148,9 +146,9 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
                         </span>
                       ) : null}
                     </button>
-                    <span className="block min-w-0 rounded-[6px] bg-[var(--app-surface-soft)]" style={{ height: barHeight, marginTop: expanded ? 4 : undefined }} aria-hidden="true">
+                    <span className="block min-w-0 rounded-[4px] bg-primary/10" style={{ height: barHeight, marginTop: expanded ? 4 : undefined }} aria-hidden="true">
                       <span
-                        className="block rounded-[6px] bg-primary"
+                        className="block rounded-[4px] bg-primary"
                         style={{
                           height: barHeight,
                           width: `${campaign.barPercent}%`,
@@ -158,7 +156,7 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
                         }}
                       />
                     </span>
-                    <span className="min-w-[44px] justify-self-end rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-center text-[11px] font-medium tabular-nums text-[var(--app-text-primary)] sm:text-[12px]">
+                    <span className="min-w-[44px] justify-self-end text-right text-[12px] font-light tabular-nums text-[var(--app-text-primary)]">
                       {campaign.leadCount.toLocaleString("pt-BR")}
                     </span>
                   </div>
@@ -182,13 +180,8 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
               Sem campanha: <span className="font-medium tabular-nums text-[var(--app-text-primary)]">{unattributed.toLocaleString("pt-BR")} {unattributed === 1 ? "lead" : "leads"}</span>
             </p>
           ) : null}
-          {visibleData && rows.length > 0 ? (
-            <p className="mt-2 text-[10px] font-light text-[var(--app-text-tertiary)]">
-              Um lead pode aparecer em campanhas diferentes quando há reentrada.
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </section>
   );
 }

@@ -12,11 +12,19 @@ import (
 
 const automationStageContract = "canonical_lead_stage_v1"
 
-type automationStageProvenance struct{ ExecutionID, NodeKey, EffectKey string }
+// automationStageProvenance marks a move as automated, either by a flow
+// execution node or by a stage rule (StageRuleID set).
+type automationStageProvenance struct {
+	ExecutionID, NodeKey, EffectKey string
+	StageRuleID, EpisodeKey         string
+}
 
 func movementProvenance(value *automationStageProvenance) map[string]any {
 	if value == nil {
 		return nil
+	}
+	if value.StageRuleID != "" {
+		return map[string]any{"origin": "stage_rule", "is_automated": true, "stage_automation_id": value.StageRuleID, "episode_key": value.EpisodeKey, "command_contract": stageInactivityMoveContract}
 	}
 	return map[string]any{"origin": "automation", "is_automated": true, "execution_id": value.ExecutionID, "node_key": value.NodeKey, "effect_key": value.EffectKey, "command_contract": automationStageContract}
 }
@@ -174,7 +182,7 @@ func (repo Repository) executeAutomationStageCommand(ctx context.Context, resolv
 		return automationStageResponse{}, err
 	}
 	stageInput.ExpectedStageID = patchString{Set: true, Value: optionalString(current.StageID, 36)}
-	provenance := automationStageProvenance{input.ExecutionID, input.NodeKey, input.EffectKey}
+	provenance := automationStageProvenance{ExecutionID: input.ExecutionID, NodeKey: input.NodeKey, EffectKey: input.EffectKey}
 	if _, err = tx.Exec(ctx, `select pg_catalog.set_config('vimob.automation_execution_id',$1,true)`, input.ExecutionID); err != nil {
 		return automationStageResponse{}, err
 	}

@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Star, Trash2 } from 'lucide-react'
+import { ExternalLink, Loader2, Plus } from 'lucide-react'
 
+import { EmptyNote, Panel, safeExternalUrl } from '@/components/features/marketing/marketing-ui'
 import { Button } from '@/components/ui/button'
 import {
   useCreatePropertyAsset,
@@ -19,11 +20,18 @@ import {
   reserveNextPropertyAssetSortOrder,
 } from '@/lib/property-asset-order'
 
+import { PROPERTY_PRIMARY_BUTTON_CLASS, PROPERTY_SECONDARY_BUTTON_CLASS, PropertyChipTabs } from '../property-ui'
 import { PropertyAssetDeleteDialog } from './PropertyAssetDeleteDialog'
 import { PropertyAssetDialog, type AssetSubmitCommand } from './PropertyAssetDialog'
-import { AssetCatalog } from './PropertyWorkspaceOverview'
+import { ASSET_CATEGORY_LABELS } from './media/property-asset-labels'
+import { PropertyAssetRows, PropertyPhotoGrid } from './media/PropertyMediaGrid'
+import { PropertyMediaSelection } from './media/PropertyMediaSelection'
 
-export function PropertyAssetManager({ propertyId, disabled = false }: { propertyId: string; disabled?: boolean }) {
+type AssetCategory = PropertyWorkspaceAsset['asset_type']
+const CATEGORIES: AssetCategory[] = ['photo', 'video', 'virtual_tour', 'floor_plan', 'document']
+const GRID_PAGE_SIZE = 12
+
+export function PropertyAssetManager({ propertyId, disabled = false, legacyPhotoCount = 0 }: { propertyId: string; disabled?: boolean; legacyPhotoCount?: number }) {
   const workspaceQuery = usePropertyWorkspace(propertyId)
   const createMutation = useCreatePropertyAsset(propertyId)
   const updateMutation = useUpdatePropertyAsset(propertyId)
@@ -33,6 +41,9 @@ export function PropertyAssetManager({ propertyId, disabled = false }: { propert
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingAsset, setEditingAsset] = useState<PropertyWorkspaceAsset | null>(null)
   const [deletingAsset, setDeletingAsset] = useState<PropertyWorkspaceAsset | null>(null)
+  const [category, setCategory] = useState<AssetCategory>('photo')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [visibleCount, setVisibleCount] = useState(GRID_PAGE_SIZE)
   const sortOrderReservations = useRef({
     propertyId,
     nextByType: new Map<string, number>(),
@@ -89,11 +100,10 @@ export function PropertyAssetManager({ propertyId, disabled = false }: { propert
     setEditingAsset(null)
   }
 
-  const moveAsset = async (asset: PropertyWorkspaceAsset, direction: -1 | 1) => {
+  const moveAssetTo = async (asset: PropertyWorkspaceAsset, targetIndex: number) => {
     const siblings = assets.filter((item) => item.asset_type === asset.asset_type)
     const currentIndex = siblings.findIndex((item) => item.id === asset.id)
-    const targetIndex = currentIndex + direction
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length) return
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length || targetIndex === currentIndex) return
 
     const reordered = [...siblings]
     const [moved] = reordered.splice(currentIndex, 1)
@@ -109,8 +119,8 @@ export function PropertyAssetManager({ propertyId, disabled = false }: { propert
 
   if (workspaceQuery.isLoading) {
     return (
-      <div className="flex min-h-28 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)] text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <div className="flex min-h-28 items-center justify-center rounded-[12px] bg-[var(--app-surface-solid)] text-[12px] font-light text-[var(--app-text-secondary)]">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
         Carregando mídias protegidas…
       </div>
     )
@@ -118,69 +128,117 @@ export function PropertyAssetManager({ propertyId, disabled = false }: { propert
 
   if (workspaceQuery.isError || !response) {
     return (
-      <div className="rounded-[8px] bg-destructive/10 p-4 text-[12px] text-destructive">
+      <div className="rounded-[12px] bg-destructive/10 p-4 text-[12px] font-light text-destructive">
         Não foi possível carregar as mídias. Atualize a ficha e tente novamente.
       </div>
     )
   }
 
+  const property = response.data.property
+  const categoryAssets = assets.filter((asset) => asset.asset_type === category)
+  const shownAssets = categoryAssets.slice(0, visibleCount)
+  const selectedIndex = categoryAssets.findIndex((asset) => asset.id === selectedId)
+  const safeIndex = selectedIndex >= 0 ? selectedIndex : 0
+  const selected = categoryAssets[safeIndex] ?? null
+  const legacyLink = category === 'video' && 'video_imovel' in property
+    ? safeExternalUrl(property.video_imovel)
+    : category === 'virtual_tour' && 'tour_virtual' in property
+      ? safeExternalUrl(property.tour_virtual)
+      : null
+  const legacyDocuments = category === 'document' ? property.documents ?? property.arquivos : null
+  const legacyDocumentCount = Array.isArray(legacyDocuments)
+    ? legacyDocuments.length
+    : legacyDocuments ? Object.keys(legacyDocuments).length : 0
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[12px] font-normal text-[var(--app-text-primary)]">Fotos e arquivos do imóvel</p>
-          <p className="mt-1 text-[11px] font-light text-muted-foreground">
-            Os arquivos ficam protegidos e as alterações desta área são salvas automaticamente.
-          </p>
-          {photoCreationDisabled && (
-            <p className="mt-2 max-w-xl text-[11px] leading-5 text-muted-foreground">
-              O limite de 20 vale para novas fotos. Fotos importadas existentes são preservadas e os outros dados do imóvel continuam editáveis.
-              Para substituir uma foto usada no site, confira a versão na <a className="underline" href={`/properties/${propertyId}?tab=publication`}>Central de Publicação</a> antes de remover ou reenviar arquivos.
-            </p>
-          )}
-          <p className="mt-1 text-[11px] font-light text-muted-foreground">
-            {photoCount} de {PROPERTY_MEDIA_MAX_PHOTOS} fotos
-            {photoCreationDisabled
-              ? ' — limite atingido; remova uma foto para adicionar outra.'
-              : ''}
-          </p>
-        </div>
+    <div className="min-w-0 space-y-3">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <PropertyChipTabs
+          value={category}
+          ariaLabel="Categorias de mídia"
+          onChange={(next) => {
+            setCategory(next)
+            setSelectedId(null)
+            setVisibleCount(GRID_PAGE_SIZE)
+          }}
+          options={CATEGORIES.map((value) => ({
+            value,
+            label: `${ASSET_CATEGORY_LABELS[value]} ${assets.filter((asset) => asset.asset_type === value).length}`,
+          }))}
+        />
         {canManage && (
-          <Button type="button" size="sm" onClick={openCreate} disabled={pending}>
-            <Plus className="mr-2 h-3.5 w-3.5" />
+          <Button type="button" onClick={openCreate} disabled={pending} className={PROPERTY_PRIMARY_BUTTON_CLASS}>
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             Adicionar mídia
           </Button>
         )}
       </div>
 
-      <AssetCatalog
-        assets={assets}
-        renderActions={canManage ? (asset) => {
-          const siblings = assets.filter((item) => item.asset_type === asset.asset_type)
-          const index = siblings.findIndex((item) => item.id === asset.id)
-          return (
-            <div className="mt-3 flex flex-wrap gap-1 border-t border-[var(--app-border)] pt-3">
-              {asset.asset_type === 'photo' && !asset.is_primary && asset.visibility === 'public' && (
-                <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => primaryMutation.mutate({ assetId: asset.id, input: { expected_updated_at: asset.updated_at } })}>
-                  <Star className="mr-1.5 h-3.5 w-3.5" />Principal
-                </Button>
-              )}
-              <Button type="button" variant="ghost" size="icon" aria-label="Mover para cima" title="Mover para cima" disabled={pending || index <= 0} onClick={() => void moveAsset(asset, -1).catch(() => undefined)}>
-                <ArrowUp className="h-3.5 w-3.5" />
+      {photoCreationDisabled && category === 'photo' && (
+        <p role="status" className="rounded-[8px] bg-warning/10 px-3 py-2 text-[12px] font-light leading-[18px] text-[var(--app-text-primary)]">
+          {photoCount} de {PROPERTY_MEDIA_MAX_PHOTOS} fotos: limite atingido, remova uma foto para adicionar outra. Fotos importadas existentes são preservadas e os outros dados do imóvel continuam editáveis.
+          Para substituir uma foto usada no site, confira a versão na <a className="underline" href={`/properties/${propertyId}?tab=publication`}>Central de Publicação</a> antes de remover ou reenviar arquivos.
+        </p>
+      )}
+
+      <div className="@container">
+        <div className="grid min-w-0 gap-3 @[720px]:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+          <Panel
+            title={ASSET_CATEGORY_LABELS[category]}
+            aside={category === 'photo'
+              ? `${photoCount} de ${PROPERTY_MEDIA_MAX_PHOTOS}${canManage ? ' · arraste para mudar a ordem' : ''}`
+              : category === 'document' ? 'Salvos automaticamente e protegidos' : undefined}
+          >
+            {categoryAssets.length === 0 && !legacyLink && legacyDocumentCount === 0 ? (
+              <EmptyNote>
+                {category === 'photo' && legacyPhotoCount > 0
+                  ? `${legacyPhotoCount} ${legacyPhotoCount === 1 ? 'foto do cadastro anterior aparece' : 'fotos do cadastro anterior aparecem'} na Visão geral. As que você enviar aqui passam a ser as fotos do imóvel.`
+                  : 'Nada cadastrado nesta categoria.'}
+              </EmptyNote>
+            ) : category === 'photo' || category === 'floor_plan' ? (
+              <PropertyPhotoGrid
+                assets={shownAssets}
+                selectedId={selected?.id ?? null}
+                canReorder={canManage && !pending}
+                onSelect={(asset) => setSelectedId(asset.id)}
+                onMove={(asset, targetIndex) => void moveAssetTo(asset, targetIndex).catch(() => undefined)}
+              />
+            ) : (
+              <PropertyAssetRows assets={shownAssets} selectedId={selected?.id ?? null} onSelect={(asset) => setSelectedId(asset.id)} />
+            )}
+            {legacyLink && (
+              <a href={legacyLink} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-2 rounded-[6px] px-2 py-2 text-[13px] font-light text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]">
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-secondary)]" aria-hidden="true" />
+                Link informado no cadastro
+              </a>
+            )}
+            {legacyDocumentCount > 0 && (
+              <p className="mt-2 px-2 text-[12px] font-light text-[var(--app-text-secondary)]">
+                {legacyDocumentCount} {legacyDocumentCount === 1 ? 'documento registrado' : 'documentos registrados'} no cadastro anterior.
+              </p>
+            )}
+            {shownAssets.length < categoryAssets.length && (
+              <Button type="button" variant="ghost" className={`${PROPERTY_SECONDARY_BUTTON_CLASS} mt-3`} onClick={() => setVisibleCount((count) => count + GRID_PAGE_SIZE)}>
+                Carregar mais ({shownAssets.length} de {categoryAssets.length})
               </Button>
-              <Button type="button" variant="ghost" size="icon" aria-label="Mover para baixo" title="Mover para baixo" disabled={pending || index >= siblings.length - 1} onClick={() => void moveAsset(asset, 1).catch(() => undefined)}>
-                <ArrowDown className="h-3.5 w-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => { setEditingAsset(asset); setDialogOpen(true) }}>
-                <Pencil className="mr-1.5 h-3.5 w-3.5" />Editar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={pending} onClick={() => setDeletingAsset(asset)}>
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />Remover
-              </Button>
-            </div>
-          )
-        } : undefined}
-      />
+            )}
+          </Panel>
+
+          {selected && (
+            <PropertyMediaSelection
+              asset={selected}
+              position={safeIndex + 1}
+              total={categoryAssets.length}
+              canManage={canManage}
+              pending={pending}
+              onSetPrimary={() => primaryMutation.mutate({ assetId: selected.id, input: { expected_updated_at: selected.updated_at } })}
+              onMove={(direction) => void moveAssetTo(selected, safeIndex + direction).catch(() => undefined)}
+              onEdit={() => { setEditingAsset(selected); setDialogOpen(true) }}
+              onDelete={() => setDeletingAsset(selected)}
+            />
+          )}
+        </div>
+      </div>
 
       {dialogOpen && (
         <PropertyAssetDialog

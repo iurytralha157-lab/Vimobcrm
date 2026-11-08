@@ -17,6 +17,8 @@ func addInactivityCycleResult(result *StageInactivityCycleResult, committed Stag
 	result.Scanned += committed.Scanned
 	result.Enqueued += committed.Enqueued
 	result.Notified += committed.Notified
+	result.Moved += committed.Moved
+	result.Redistributed += committed.Redistributed
 	result.Waiting += committed.Waiting
 	result.Cancelled += committed.Cancelled
 	result.Failed += committed.Failed
@@ -133,6 +135,10 @@ func (repo Repository) processInactivityJobTransaction(ctx context.Context, cand
 			switch outcome {
 			case "notified":
 				result.Notified = 1
+			case "moved":
+				result.Moved = 1
+			case "redistributed":
+				result.Redistributed = 1
 			case "waiting":
 				result.Waiting = 1
 			case "cancelled":

@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardContent } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { useStageAutomations, useDeleteStageAutomation, useToggleStageAutomation, AUTOMATION_TYPE_LABELS, DEAL_STATUS_LABELS, StageAutomation, type DeleteAutomationData } from "@/hooks/use-stage-automations";
+import { useStageAutomations, useDeleteStageAutomation, useToggleStageAutomation, AUTOMATION_TYPE_LABELS, DEAL_STATUS_LABELS, StageAutomation, isInactivityAutomationType, managedInactivityAlert, type DeleteAutomationData } from "@/hooks/use-stage-automations";
 import { useOrganizationUsers } from "@/hooks/use-users";
-import { Pencil, Trash2, Zap, Clock, Bell, User, Trophy, XCircle, Circle, Loader2 } from "lucide-react";
+import { Pencil, Trash2, Zap, Clock, Bell, User, Trophy, XCircle, Circle, Loader2, ArrowRight, Shuffle } from "lucide-react";
 import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { useStageInactivityAutomation } from '@/hooks/use-stage-inactivity-automation';
 
@@ -13,8 +12,14 @@ interface AutomationsListProps {
   stageId: string;
   pipelineId?: string;
   canEdit?: boolean;
+  canManageDistribution?: boolean;
   onEdit?: (automation: StageAutomation) => void;
   onSavingChange?: (saving: boolean) => void;
+  /** Column names of the pipeline, to describe move rules. */
+  stageNames?: Readonly<Record<string, string>>;
+  distributionNames?: Readonly<Record<string, string>>;
+  /** The managed inactivity alert is edited in Regras da etapa instead. */
+  hideManagedAlert?: boolean;
 }
 
 export function AutomationsList(props: AutomationsListProps) {
@@ -22,9 +27,14 @@ export function AutomationsList(props: AutomationsListProps) {
   return <AutomationsListEditor key={`${inactivityMutation.scopeKey}:${props.stageId}`} {...props} inactivityMutation={inactivityMutation} />;
 }
 
-function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChange, inactivityMutation }: AutomationsListProps & { inactivityMutation: ReturnType<typeof useStageInactivityAutomation> }) {
+function AutomationsListEditor({
+  stageId, canEdit = false, canManageDistribution = false, onEdit, onSavingChange, inactivityMutation,
+  stageNames, distributionNames, hideManagedAlert = false,
+}: AutomationsListProps & { inactivityMutation: ReturnType<typeof useStageInactivityAutomation> }) {
   const query = useStageAutomations(stageId);
-  const { data: automations, isLoading } = query;
+  const { isLoading } = query;
+  const managedAlert = hideManagedAlert ? managedInactivityAlert(query.data) : null;
+  const automations = managedAlert ? query.data?.filter((item) => item.id !== managedAlert.id) : query.data;
   const { data: users } = useOrganizationUsers();
   const deleteAutomation = useDeleteStageAutomation();
   const toggleAutomation = useToggleStageAutomation();
@@ -39,6 +49,8 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const isSaving = pendingAutomationId !== null;
   useEffect(() => { onSavingChange?.(isSaving); }, [isSaving, onSavingChange]);
+  const canEditAutomation = (automation: StageAutomation) =>
+    canEdit && (automation.automation_type !== 'redistribute_on_inactivity' || canManageDistribution);
 
   const runMutation = async (id: string, action: () => Promise<unknown>, afterSuccess?: () => void) => {
     if (mutationInFlight.current) return;
@@ -81,7 +93,7 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
   };
 
   const openDeletion = (automation: StageAutomation) => {
-    if (!canEdit || isSaving || query.isError || needsVersionRefresh) return;
+    if (!canEditAutomation(automation) || isSaving || query.isError || needsVersionRefresh) return;
     if (!automation.updated_at) {
       setNeedsVersionRefresh(true);
       setMutationError('Não foi possível confirmar a versão desta regra. Atualize a lista antes de excluir.');
@@ -100,7 +112,9 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
   };
 
   const confirmDeletion = (candidate: DeleteAutomationData | null) => {
-    if (!canEdit || !candidate || deletion.current !== candidate || deleteConflict || !deleteAutomation.isCurrent(candidate)) return;
+    if (!candidate || deletion.current !== candidate || deleteConflict || !deleteAutomation.isCurrent(candidate)) return;
+    const automation = automations?.find((item) => item.id === candidate.id);
+    if (!automation || !canEditAutomation(automation)) return;
     void runMutation(candidate.id, () => deleteAutomation.mutateAsync(candidate), () => closeDeletion(candidate));
   };
 
@@ -124,9 +138,12 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
   };
 
   const toggleInactivity = (automation: StageAutomation, checked: boolean) => {
+    if (!canEditAutomation(automation) || needsVersionRefresh || query.isError || mutationInFlight.current) return;
     const policy = automation.inactivity_policy;
-    if (checked && (!policy || policy.clock !== 'last_interaction' || policy.start_mode !== 'activation')) {
-      setMutationError('Configure esta regra antes de ativar. Salvar a configuração não envia alertas.');
+    const savedMode = policy?.start_mode;
+    const startMode = savedMode === 'activation' || savedMode === 'new_stage_entries' ? savedMode : undefined;
+    if (checked && (policy?.clock !== 'last_interaction' || !startMode)) {
+      setMutationError('Revise o prazo e escolha quais leads entram na regra antes de ativar.');
       onEdit?.(automation);
       return;
     }
@@ -134,10 +151,27 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
       setMutationError('Atualize e configure o prazo desta regra antes de continuar.');
       return;
     }
+    const moves = automation.automation_type === 'move_stage_on_inactivity';
+    const redistributes = automation.automation_type === 'redistribute_on_inactivity';
+    const targetStageId = automation.target_stage_id || policy?.target_stage_id || '';
+    const targetDistributionId = automation.target_round_robin_id || policy?.target_round_robin_id || '';
+    if (moves && !targetStageId) {
+      setMutationError('Escolha a coluna de destino desta regra.');
+      onEdit?.(automation);
+      return;
+    }
+    if (redistributes && !targetDistributionId) {
+      setMutationError('Escolha a distribuição desta regra.');
+      onEdit?.(automation);
+      return;
+    }
     void runMutation(automation.id, () => inactivityMutation.mutateAsync({
       id: automation.id,
-      input: { trigger_days: automation.trigger_days!, alert_message: automation.alert_message || '', is_enabled: checked,
-        clock: 'last_interaction', start_mode: 'activation', expected_updated_at: automation.updated_at!, expected_policy_revision: policy?.revision ?? 0 },
+      input: { trigger_days: automation.trigger_days!, alert_message: moves || redistributes ? '' : automation.alert_message || '', is_enabled: checked,
+        clock: 'last_interaction', start_mode: startMode ?? 'new_stage_entries',
+        expected_updated_at: automation.updated_at!, expected_policy_revision: policy?.revision ?? 0,
+        ...(moves ? { action: 'move_stage' as const, target_stage_id: targetStageId } : {}),
+        ...(redistributes ? { action: 'redistribute' as const, target_round_robin_id: targetDistributionId } : {}) },
       runtimeAvailable: automation.inactivity_runtime_available === true || policy?.runtime_available === true,
     }));
   };
@@ -150,6 +184,10 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
         return <User className="h-4 w-4" />;
       case 'change_deal_status_on_enter':
         return <Trophy className="h-4 w-4" />;
+      case 'move_stage_on_inactivity':
+        return <ArrowRight className="h-4 w-4" />;
+      case 'redistribute_on_inactivity':
+        return <Shuffle className="h-4 w-4" />;
       default:
         return <Zap className="h-4 w-4" />;
     }
@@ -179,6 +217,21 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
             {automation.trigger_days} dias - {automation.alert_message}
           </span>
         );
+      case 'move_stage_on_inactivity':
+      case 'redistribute_on_inactivity': {
+        const stageId = automation.target_stage_id || automation.inactivity_policy?.target_stage_id;
+        const distributionId = automation.target_round_robin_id || automation.inactivity_policy?.target_round_robin_id;
+        const destination = automation.automation_type === 'move_stage_on_inactivity'
+          ? (stageId && stageNames?.[stageId]) || 'Coluna indisponível'
+          : (distributionId && distributionNames?.[distributionId])
+            || (distributionId && !canManageDistribution ? 'Distribuição configurada' : 'Distribuição indisponível');
+        return (
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            {automation.trigger_days} {automation.trigger_days === 1 ? 'dia' : 'dias'} sem atividade → {destination}
+          </span>
+        );
+      }
       case 'change_assignee_on_enter':
         return (
           <span className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -221,6 +274,12 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
     );
   }
 
+  const activeInactivityTypes = new Set(automations
+    .filter((item) => item.inactivity_policy?.effective_enabled === true)
+    .map((item) => item.automation_type));
+  const hasBothInactivityActions = activeInactivityTypes.has('move_stage_on_inactivity')
+    && activeInactivityTypes.has('redistribute_on_inactivity');
+
   return (
     <div className="space-y-2">
       {query.isError && <div role="alert" className="space-y-2 rounded-[8px] bg-amber-500/10 p-3 text-xs">
@@ -229,34 +288,49 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
       </div>}
       {mutationError && <p role="alert" className="rounded-[6px] bg-destructive/10 p-3 text-xs text-destructive">{mutationError}</p>}
       {needsVersionRefresh && <Button type="button" variant="outline" onClick={() => void refreshVersion()} disabled={query.isFetching || isSaving}>Atualizar automações antes de continuar</Button>}
+      {hasBothInactivityActions && (
+        <p className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
+          As duas regras valem enquanto o lead estiver nesta coluna. Se uma delas mover o lead, a outra deixa de se aplicar.
+        </p>
+      )}
       {automations.filter((item) => item.automation_type === 'change_assignee_on_enter' && item.is_active === true).length > 1 && (
         <p role="alert" className="rounded-[6px] bg-amber-500/10 p-3 text-xs">Há várias automações ativas de responsável. A última criada, com desempate pelo identificador, prevalece. Desative as demais; novos salvamentos e ativações permitem apenas uma.</p>
       )}
       {automations.map((automation) => {
         const automationType = automation.automation_type as keyof typeof AUTOMATION_TYPE_LABELS | null;
-        const isInactivity = automationType === 'alert_on_inactivity';
+        const isInactivity = isInactivityAutomationType(automationType);
         const policy = automation.inactivity_policy;
         const runtimeAvailable = automation.inactivity_runtime_available === true || policy?.runtime_available === true;
         const effectiveActive = isInactivity ? policy?.effective_enabled === true && runtimeAvailable : automation.is_active === true;
+        const requiresReview = !policy || policy.clock !== 'last_interaction' || policy.start_mode === 'include_overdue';
+        const scopeDescription = policy?.start_mode === 'new_stage_entries'
+          ? 'Vale para quem entrar após a ativação.'
+          : 'Para quem já está na coluna, o prazo começa na ativação.';
 
         return (
-        <Card key={automation.id} className={!effectiveActive ? 'opacity-60' : ''} aria-busy={pendingAutomationId === automation.id}>
-          <CardContent className="p-3">
+        <div key={automation.id} className={`rounded-[8px] bg-[var(--app-surface-soft)] p-3 ${!effectiveActive ? 'opacity-70' : ''}`} aria-busy={pendingAutomationId === automation.id}>
+          <div>
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="p-1.5 rounded-md bg-primary/10 text-primary shrink-0">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/10 text-primary">
                   {getAutomationIcon(automation.automation_type)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-medium text-xs leading-tight truncate">
+                  <h4 className="truncate text-xs font-normal leading-tight text-[var(--app-text-primary)]">
                     {automationType ? AUTOMATION_TYPE_LABELS[automationType] || automationType : 'Automação'}
                   </h4>
                   <div className="break-words [&_span]:flex-wrap [&_span]:text-xs">{getAutomationDescription(automation)}</div>
-                  {isInactivity && <p className="mt-1 text-xs text-muted-foreground">{!policy ? 'Não configurada: configure antes de ativar.' : !runtimeAvailable ? 'Alertas indisponíveis neste ambiente.' : effectiveActive ? 'Ativada: conta a última interação humana após a ativação.' : 'Desativada: configurar não envia alertas.'}</p>}
+                  {isInactivity && <p className="mt-1 text-xs text-muted-foreground">{!policy
+                    ? 'Configure a regra antes de ativar.'
+                    : requiresReview
+                      ? 'Revise quais leads entram na regra antes de ativar.'
+                      : !runtimeAvailable
+                        ? 'Processamento indisponível neste ambiente.'
+                        : effectiveActive ? scopeDescription : 'Regra desativada.'}</p>}
                 </div>
               </div>
 
-              {canEdit && <div className="flex items-center gap-1 shrink-0">
+              {canEditAutomation(automation) && <div className="flex items-center gap-1 shrink-0">
                 <Switch
                   checked={effectiveActive}
                   aria-label={`Ativar ${automationType ? AUTOMATION_TYPE_LABELS[automationType] : 'automação'}`}
@@ -308,8 +382,8 @@ function AutomationsListEditor({ stageId, canEdit = false, onEdit, onSavingChang
                 </AlertDialog>
               </div>}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
         );
       })}
     </div>

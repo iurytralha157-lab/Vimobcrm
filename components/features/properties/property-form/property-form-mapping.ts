@@ -1,6 +1,7 @@
 import type { Property } from "@/hooks/use-properties";
 import { cleanPropertyDescription } from "@/lib/property-description";
 import { getPropertyMetadataString as metadataString } from "@/lib/property-display-utils";
+import { propertyPortfolioToFormFields } from "./property-form-portfolio";
 import {
   normalize,
   normalizePropertyStatus,
@@ -62,6 +63,7 @@ export function propertyToFormData(p: Property): PropertyFormData {
     title: p.title || "",
     tipo_de_imovel: propertyType,
     tipo_de_negocio: p.tipo_de_negocio || "Venda",
+    ...propertyPortfolioToFormFields(p),
     status: normalizePropertyStatus(p.status),
     destaque: p.destaque || false,
     endereco: p.endereco || "",

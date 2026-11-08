@@ -98,7 +98,7 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if event.ID != input.ClientRequestID || event.IsMasked {
+		if event.ID == "" || event.ID == input.ClientRequestID || event.IsMasked {
 			t.Fatalf("incorrect command confirmation: %#v", event)
 		}
 		if _, err := repo.Get(ctx, actor, event.ID); !errors.Is(err, ErrEventNotFound) {
@@ -114,7 +114,7 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 			t.Fatalf("cross-tenant read: %v", err)
 		}
 	})
-	t.Run("create retry is durable and rejects another payload actor or tenant", func(t *testing.T) {
+	t.Run("event commands are independent across actors and organizations", func(t *testing.T) {
 		before := notifications(event.ID)
 		replay, err := repo.Create(ctx, actor, input)
 		if err != nil || replay.ID != event.ID {
@@ -128,14 +128,61 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 		if _, err := repo.Create(ctx, actor, changed); !errors.Is(err, ErrScheduleConflict) {
 			t.Fatalf("changed payload: %v", err)
 		}
-		if _, err := repo.Create(ctx, ownerActor, input); !errors.Is(err, ErrScheduleConflict) {
-			t.Fatalf("another actor replay: %v", err)
+		otherActorInput := input
+		otherActorInput.CreatedBy = owner
+		otherActorEvent, err := repo.Create(ctx, ownerActor, otherActorInput)
+		if err != nil || otherActorEvent.ID == event.ID {
+			t.Fatalf("another actor's independent command: %v %v", otherActorEvent.ID, err)
 		}
-		changed = input
-		changed.UserID = otherTenantUser
-		changed.CreatedBy = otherTenantUser
-		if _, err := repo.Create(ctx, foreign, changed); !errors.Is(err, ErrScheduleConflict) {
-			t.Fatalf("another tenant reused command: %v", err)
+		foreignInput := input
+		foreignInput.UserID = otherTenantUser
+		foreignInput.CreatedBy = otherTenantUser
+		for _, key := range []string{input.ClientRequestID, event.ID, id()} {
+			foreignInput.ClientRequestID = key
+			independent, err := repo.Create(ctx, foreign, foreignInput)
+			if err != nil || independent.OrganizationID != otherOrg || independent.ID == key {
+				t.Fatalf("foreign create must not reveal a key collision: %#v %v", independent, err)
+			}
+			if retry, err := repo.Create(ctx, foreign, foreignInput); err != nil || retry.ID != independent.ID {
+				t.Fatalf("foreign retry: %v %v", retry.ID, err)
+			}
+		}
+	})
+	t.Run("legacy event and comment commands replay only within their scope", func(t *testing.T) {
+		legacyInput := input
+		legacyInput.ClientRequestID = ""
+		legacyInput.CreatedBy = owner
+		legacyEvent, err := repo.Create(ctx, ownerActor, legacyInput)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyInput.ClientRequestID = legacyEvent.ID
+		if retry, err := repo.Create(ctx, ownerActor, legacyInput); err != nil || retry.ID != legacyEvent.ID {
+			t.Fatalf("legacy event retry: %v %v", retry.ID, err)
+		}
+		legacyComment, err := repo.AddComment(ctx, ownerActor, legacyEvent.ID, "Synthetic legacy comment")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retry, err := repo.AddComment(ctx, ownerActor, legacyEvent.ID, legacyComment.Content, legacyComment.ID); err != nil || retry.ID != legacyComment.ID {
+			t.Fatalf("legacy comment retry: %v %v", retry.ID, err)
+		}
+
+		foreignInput := legacyInput
+		foreignInput.UserID = otherTenantUser
+		foreignInput.CreatedBy = otherTenantUser
+		foreignEvent, err := repo.Create(ctx, foreign, foreignInput)
+		if err != nil || foreignEvent.OrganizationID != otherOrg || foreignEvent.ID == legacyEvent.ID {
+			t.Fatalf("legacy event ID must be independent in another tenant: %#v %v", foreignEvent, err)
+		}
+		for _, key := range []string{legacyComment.ID, id()} {
+			independent, err := repo.AddComment(ctx, foreign, foreignEvent.ID, "Synthetic foreign comment", key)
+			if err != nil || independent.OrganizationID != otherOrg || independent.ID == key {
+				t.Fatalf("foreign comment must not reveal a key collision: %#v %v", independent, err)
+			}
+			if retry, err := repo.AddComment(ctx, foreign, foreignEvent.ID, independent.Content, key); err != nil || retry.ID != independent.ID {
+				t.Fatalf("foreign comment retry: %v %v", retry.ID, err)
+			}
 		}
 	})
 	t.Run("two concurrent identical create commands produce one event", func(t *testing.T) {
@@ -166,12 +213,13 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		firstID := <-results
 		for result := range results {
-			if result != concurrent.ClientRequestID {
+			if result != firstID || result == concurrent.ClientRequestID {
 				t.Fatal("concurrent replay created another ID")
 			}
 		}
-		if count(`select count(*) from public.schedule_events where id=$1`, concurrent.ClientRequestID) != 1 {
+		if count(`select count(*) from public.schedule_events where organization_id=$1 and created_by=$2 and client_request_id=$3`, org, owner, concurrent.ClientRequestID) != 1 {
 			t.Fatal("duplicate concurrent create")
 		}
 	})
@@ -377,10 +425,11 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 		}()
 		broken := input
 		broken.ClientRequestID = id()
+		before := count(`select count(*) from public.notifications where organization_id=$1`, org)
 		if _, err := repo.Create(ctx, actor, broken); err == nil {
 			t.Fatal("projection failure should abort creation")
 		}
-		if count(`select count(*) from public.schedule_events where id=$1`, broken.ClientRequestID) != 0 || notifications(broken.ClientRequestID) != 0 {
+		if count(`select count(*) from public.schedule_events where organization_id=$1 and client_request_id=$2`, org, broken.ClientRequestID) != 0 || count(`select count(*) from public.notifications where organization_id=$1`, org) != before {
 			t.Fatal("failed response left a committed event/notification")
 		}
 	})

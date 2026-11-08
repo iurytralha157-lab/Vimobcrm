@@ -28,7 +28,7 @@ type automationStageFixture struct {
 
 // Only an explicit local opt-in is read. The random database belongs to this
 // test and is the only database dropped; production env files are never loaded.
-func newAutomationStageFixture(t *testing.T) *automationStageFixture {
+func newAutomationStageFixture(t *testing.T, extraTables ...string) *automationStageFixture {
 	t.Helper()
 	if os.Getenv("VIMOB_RUN_AUTOMATION_STAGE_DB_TESTS") != "LOCAL_WRITE_TEST" {
 		t.Skip("opt in to the disposable local automation command fixture")
@@ -95,7 +95,7 @@ func newAutomationStageFixture(t *testing.T) *automationStageFixture {
 	}
 	// Use real table declarations for all columns consumed by the command. RLS,
 	// full production triggers and deployment state are outside this fixture.
-	for _, table := range []string{"users", "organizations", "organization_members", "organization_modules", "organization_roles", "organization_role_permissions", "available_permissions", "user_organization_roles", "user_permission_overrides", "teams", "team_members", "team_pipelines", "pipelines", "stages", "stage_automations", "leads", "properties", "events", "activities", "audit_logs", "assignments_log", "notifications", "notification_templates", "automations", "automation_flow_versions", "automation_executions", "automation_effect_dispatches"} {
+	for _, table := range append([]string{"users", "organizations", "organization_members", "organization_modules", "organization_roles", "organization_role_permissions", "available_permissions", "user_organization_roles", "user_permission_overrides", "teams", "team_members", "team_pipelines", "pipelines", "stages", "stage_automations", "leads", "properties", "events", "activities", "audit_logs", "assignments_log", "notifications", "notification_templates", "automations", "automation_flow_versions", "automation_executions", "automation_effect_dispatches"}, extraTables...) {
 		expression := regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS "public"\."` + table + `" \(.*?\n\);`)
 		statement := expression.FindString(string(source))
 		if statement == "" {

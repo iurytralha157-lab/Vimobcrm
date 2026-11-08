@@ -9,22 +9,14 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-// A client command UUID is also the entity UUID. Existing primary keys provide
-// durable replay protection without a second schema/ledger. Deleting the entity
-// ends this protection; this is not a permanent historical command ledger.
-func lockScheduleCreateCommand(ctx context.Context, tx pgx.Tx, commandID string) error {
+// Serialize retries within the same organization, author and operation. The
+// command key lives on the resource, so deleting it ends replay protection.
+func lockScheduleCommand(ctx context.Context, tx pgx.Tx, actor tenant.Context, operation, commandID string) error {
 	if commandID == "" {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('schedule:create:' || $1::text, 0))`, commandID)
-	return err
-}
-
-func lockScheduleCommentCommand(ctx context.Context, tx pgx.Tx, commandID string) error {
-	if commandID == "" {
-		return nil
-	}
-	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('schedule:comment:' || $1::text, 0))`, commandID)
+	scope := "schedule:" + operation + ":" + actor.OrganizationID + ":" + actor.UserID + ":" + commandID
+	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1::text, 0))`, scope)
 	return err
 }
 
@@ -32,22 +24,25 @@ func findScheduleCreateReplay(ctx context.Context, queryer queryRower, actor ten
 	if input.ClientRequestID == "" {
 		return Event{}, false, nil
 	}
-	var exists, owned bool
+	// Before scoped keys, the writer used the command UUID as the event ID.
+	var eventID string
 	err := queryer.QueryRow(ctx, `
-		select exists (select 1 from public.schedule_events where id = $2::uuid),
-		       exists (select 1 from public.schedule_events
-		               where organization_id = $1::uuid and id = $2::uuid and created_by = $3::uuid)
-	`, actor.OrganizationID, input.ClientRequestID, actor.UserID).Scan(&exists, &owned)
-	if err != nil || !exists {
+		select id::text from public.schedule_events
+		where organization_id = $1::uuid and created_by = $2::uuid
+		  and (client_request_id = $3::uuid or (client_request_id is null and id = $3::uuid))
+		order by client_request_id nulls last
+		limit 1
+	`, actor.OrganizationID, actor.UserID, input.ClientRequestID).Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Event{}, false, nil
+	}
+	if err != nil {
 		return Event{}, false, err
 	}
-	if !owned {
-		return Event{}, false, ErrScheduleConflict
-	}
-	if err := lockPristineScheduleCreateReplay(ctx, queryer, actor, input.ClientRequestID); err != nil {
+	if err := lockPristineScheduleCreateReplay(ctx, queryer, actor, eventID); err != nil {
 		return Event{}, false, err
 	}
-	event, err := loadScheduleCreateReplayEvent(ctx, queryer, actor, input.ClientRequestID)
+	event, err := loadScheduleCreateReplayEvent(ctx, queryer, actor, eventID)
 	if err != nil {
 		return Event{}, false, err
 	}
@@ -144,20 +139,26 @@ func findScheduleCommentReplay(ctx context.Context, queryer queryRower, actor te
 	if commandID == "" {
 		return Comment{}, false, nil
 	}
-	var exists, matches bool
+	var commentID string
+	var matches bool
 	err := queryer.QueryRow(ctx, `
-		select exists (select 1 from public.schedule_event_comments where id = $3::uuid),
-		       exists (select 1 from public.schedule_event_comments
-		               where organization_id = $1::uuid and event_id = $2::uuid and id = $3::uuid
-		                 and user_id = $4::uuid and content = $5)
-	`, actor.OrganizationID, eventID, commandID, actor.UserID, content).Scan(&exists, &matches)
-	if err != nil || !exists {
+		select id::text, event_id = $4::uuid and content = $5
+		from public.schedule_event_comments
+		where organization_id = $1::uuid and user_id = $2::uuid
+		  and (client_request_id = $3::uuid or (client_request_id is null and id = $3::uuid))
+		order by client_request_id nulls last
+		limit 1
+	`, actor.OrganizationID, actor.UserID, commandID, eventID, content).Scan(&commentID, &matches)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Comment{}, false, nil
+	}
+	if err != nil {
 		return Comment{}, false, err
 	}
 	if !matches {
 		return Comment{}, false, ErrScheduleConflict
 	}
-	comment, err := loadScheduleComment(ctx, queryer, actor.OrganizationID, commandID)
+	comment, err := loadScheduleComment(ctx, queryer, actor.OrganizationID, commentID)
 	return comment, err == nil, err
 }
 

@@ -41,6 +41,7 @@ type Config struct {
 	WhatsApp                 WhatsAppConfig
 	EvolutionGo              EvolutionGoConfig
 	Meta                     MetaConfig
+	Marketing                MarketingConfig
 	Asaas                    AsaasConfig
 }
 
@@ -126,6 +127,18 @@ type MetaConfig struct {
 	ConversionFeedbackRequestTimeout        time.Duration
 	ConversionFeedbackPartnerAgent          string
 	ConversionFeedbackAppSecretProofEnabled bool
+}
+
+// MarketingConfig is independent from MetaConfig on purpose. Setting only these
+// variables enables the read-only Marketing login and leaves the lead OAuth off.
+type MarketingConfig struct {
+	EnabledOrganizations []string
+	AllowedOrigins       []string
+	MetaAppID            string
+	MetaAppSecret        string
+	MetaLoginConfigID    string
+	MetaGraphVersion     string
+	MetaCallbackURL      string
 }
 
 type AsaasConfig struct {
@@ -346,6 +359,15 @@ func Load() (Config, error) {
 			ReconciliationInterval: parseDuration("ASAAS_RECONCILIATION_INTERVAL", 5*time.Minute),
 			ReconciliationBatch:    int(parseInt("ASAAS_RECONCILIATION_BATCH", 50)),
 			RequestTimeout:         parseDuration("ASAAS_REQUEST_TIMEOUT", 10*time.Second),
+		},
+		Marketing: MarketingConfig{
+			EnabledOrganizations: parseCSV(getEnv("MARKETING_CONNECTIONS_ENABLED_ORGS", "")),
+			AllowedOrigins:       parseCSV(getEnv("MARKETING_OAUTH_ALLOWED_ORIGINS", "")),
+			MetaAppID:            strings.TrimSpace(os.Getenv("MARKETING_META_APP_ID")),
+			MetaAppSecret:        os.Getenv("MARKETING_META_APP_SECRET"),
+			MetaLoginConfigID:    strings.TrimSpace(os.Getenv("MARKETING_META_LOGIN_CONFIG_ID")),
+			MetaGraphVersion:     getEnv("MARKETING_META_GRAPH_VERSION", "v25.0"),
+			MetaCallbackURL:      strings.TrimSpace(os.Getenv("MARKETING_META_CALLBACK_URL")),
 		},
 		Meta: MetaConfig{
 			AppID:                                   os.Getenv("META_APP_ID"),
@@ -595,6 +617,23 @@ func (cfg Config) Validate() error {
 	if cfg.Meta.GraphBaseURL != "" {
 		if err := validateMetaGraphBaseURL(cfg.Meta.GraphBaseURL, cfg.Environment == "production"); err != nil {
 			validationErrors = append(validationErrors, err)
+		}
+	}
+	if strings.TrimSpace(cfg.Marketing.MetaAppID) != "" {
+		if !isDecimalIdentifier(cfg.Marketing.MetaAppID, 32) {
+			validationErrors = append(validationErrors, errors.New("MARKETING_META_APP_ID must contain only digits"))
+		}
+		if length := len(strings.TrimSpace(cfg.Marketing.MetaAppSecret)); length < 8 || length > 512 {
+			validationErrors = append(validationErrors, errors.New("MARKETING_META_APP_SECRET must contain between 8 and 512 bytes"))
+		}
+		if !isMetaGraphVersion(cfg.Marketing.MetaGraphVersion) {
+			validationErrors = append(validationErrors, errors.New("MARKETING_META_GRAPH_VERSION must use the vN.N format"))
+		}
+		if err := validateMetaOAuthCallbackURL(cfg.Marketing.MetaCallbackURL, cfg.Environment == "production"); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("MARKETING_META_CALLBACK_URL: %w", err))
+		}
+		if err := validateMetaOAuthOrigins(append([]string{cfg.Email.AppURL}, cfg.Marketing.AllowedOrigins...)); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("MARKETING_OAUTH_ALLOWED_ORIGINS: %w", err))
 		}
 	}
 	if strings.TrimSpace(cfg.Meta.AppID) != "" {

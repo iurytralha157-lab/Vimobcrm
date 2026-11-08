@@ -153,13 +153,14 @@ func (q *unpristineReplayLookup) QueryRow(_ context.Context, query string, _ ...
 	return q
 }
 func (q *unpristineReplayLookup) Scan(dest ...any) error {
-	if len(dest) == 2 {
-		*dest[0].(*bool) = true
-		*dest[1].(*bool) = true
-		return nil
-	}
 	if len(dest) == 1 {
-		return pgx.ErrNoRows
+		switch len(q.queries) {
+		case 1:
+			*dest[0].(*string) = "22222222-2222-4222-8222-222222222222"
+			return nil
+		case 2:
+			return pgx.ErrNoRows
+		}
 	}
 	return errors.New("private command result must not be projected")
 }
@@ -179,10 +180,11 @@ func TestCreateReplayRejectsLaterPrivateArtifactsBeforeProjectingAnyDetails(t *t
 }
 
 type scheduleReplayLookup struct {
-	exists, owned bool
-	query         string
-	args          []any
-	calls         int
+	commentID string
+	err       error
+	query     string
+	args      []any
+	calls     int
 }
 
 func (q *scheduleReplayLookup) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
@@ -192,11 +194,17 @@ func (q *scheduleReplayLookup) QueryRow(_ context.Context, query string, args ..
 	return q
 }
 func (q *scheduleReplayLookup) Scan(dest ...any) error {
-	if len(dest) != 2 {
-		return errors.New("a mismatched actor must never load event details")
+	if q.calls != 1 {
+		return errors.New("a mismatched replay must never load details")
 	}
-	*dest[0].(*bool) = q.exists
-	*dest[1].(*bool) = q.owned
+	if q.err != nil {
+		return q.err
+	}
+	if len(dest) != 2 {
+		return errors.New("expected a comment ID and its payload match")
+	}
+	*dest[0].(*string) = q.commentID
+	*dest[1].(*bool) = false
 	return nil
 }
 
@@ -204,26 +212,32 @@ func TestScheduleCommandReplayIsBoundToOrganizationAndActorBeforeReadingDetails(
 	for _, organizationID := range []string{"organization-a", "organization-b"} {
 		for _, actorID := range []string{"broker", "leader", "admin"} {
 			actor := tenant.Context{OrganizationID: organizationID, UserID: actorID}
-			q := &scheduleReplayLookup{exists: true, owned: false}
+			q := &scheduleReplayLookup{err: pgx.ErrNoRows}
 			_, replay, err := findScheduleCreateReplay(context.Background(), q, actor, createInput{ClientRequestID: "11111111-1111-4111-8111-111111111111"})
-			if replay || !errors.Is(err, ErrScheduleConflict) || q.calls != 1 {
+			if replay || err != nil || q.calls != 1 {
 				t.Fatalf("foreign command replay: %v %v calls%d", replay, err, q.calls)
 			}
-			if q.args[0] != organizationID || q.args[2] != actorID || !strings.Contains(q.query, "organization_id = $1::uuid") || !strings.Contains(q.query, "created_by = $3::uuid") {
+			if q.args[0] != organizationID || q.args[1] != actorID || !strings.Contains(q.query, "where organization_id = $1::uuid and created_by = $2::uuid") || strings.Contains(q.query, "select exists") {
 				t.Fatal("command lookup lost its authorization binding")
 			}
 		}
 	}
 }
 
-func TestCommentCommandRejectsForeignActorEventTenantOrChangedContent(t *testing.T) {
+func TestCommentCommandIgnoresForeignKeysAndRejectsChangedPayload(t *testing.T) {
 	actor := tenant.Context{OrganizationID: "organization-a", UserID: "broker"}
-	q := &scheduleReplayLookup{exists: true, owned: false}
-	_, replay, err := findScheduleCommentReplay(context.Background(), q, actor, "event-a", "11111111-1111-4111-8111-111111111111", "Synthetic comment")
+	commandID := "11111111-1111-4111-8111-111111111111"
+	foreign := &scheduleReplayLookup{err: pgx.ErrNoRows}
+	_, replay, err := findScheduleCommentReplay(context.Background(), foreign, actor, "event-a", commandID, "Synthetic comment")
+	if replay || err != nil || foreign.calls != 1 {
+		t.Fatalf("foreign comment key: %v %v calls%d", replay, err, foreign.calls)
+	}
+	q := &scheduleReplayLookup{commentID: "22222222-2222-4222-8222-222222222222"}
+	_, replay, err = findScheduleCommentReplay(context.Background(), q, actor, "event-a", commandID, "Synthetic comment")
 	if replay || !errors.Is(err, ErrScheduleConflict) || q.calls != 1 {
 		t.Fatalf("unsafe comment retry: %v %v", replay, err)
 	}
-	if q.args[0] != actor.OrganizationID || q.args[1] != "event-a" || q.args[3] != actor.UserID || q.args[4] != "Synthetic comment" || !strings.Contains(q.query, "user_id = $4::uuid and content = $5") {
+	if q.args[0] != actor.OrganizationID || q.args[1] != actor.UserID || q.args[2] != commandID || q.args[3] != "event-a" || q.args[4] != "Synthetic comment" || !strings.Contains(q.query, "where organization_id = $1::uuid and user_id = $2::uuid") || !strings.Contains(q.query, "event_id = $4::uuid and content = $5") || strings.Contains(q.query, "select exists") {
 		t.Fatal("comment command lost identity/content binding")
 	}
 }

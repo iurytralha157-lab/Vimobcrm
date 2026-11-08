@@ -32,6 +32,9 @@ type stageAutomationQuery struct {
 }
 
 func (query *stageAutomationQuery) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	if sql == stageMoveRulesAvailableSQL {
+		return boolRow{value: false}
+	}
 	query.query, query.args = sql, args
 	return stageAutomationNamesRow{names: query.names, err: query.err}
 }

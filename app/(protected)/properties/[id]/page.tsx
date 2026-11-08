@@ -7,12 +7,16 @@ const WORKSPACE_TABS = new Set<PropertyWorkspaceTab>([
   'overview',
   'technical',
   'commercial',
-  'responsibles',
   'media',
   'publication',
   'keys',
   'history',
 ])
+
+/** Older links open the tab that replaced them. */
+const LEGACY_WORKSPACE_TABS: Record<string, PropertyWorkspaceTab> = {
+  responsibles: 'commercial',
+}
 
 type PropertyWorkspacePageProps = {
   searchParams: Promise<{ tab?: string | string[] }>
@@ -20,7 +24,8 @@ type PropertyWorkspacePageProps = {
 
 export default async function PropertyWorkspacePage({ searchParams }: PropertyWorkspacePageProps) {
   const requestedTab = (await searchParams).tab
-  const candidate = Array.isArray(requestedTab) ? requestedTab[0] : requestedTab
+  const requested = Array.isArray(requestedTab) ? requestedTab[0] : requestedTab
+  const candidate = requested ? LEGACY_WORKSPACE_TABS[requested] ?? requested : requested
   const initialTab = candidate && WORKSPACE_TABS.has(candidate as PropertyWorkspaceTab)
     ? candidate as PropertyWorkspaceTab
     : 'overview'

@@ -689,6 +689,20 @@ export const marketingCampaignInsightsSchema = z
       .max(10_000)
       .optional()
       .default([]),
+    socialDaily: z
+      .array(
+        z
+          .object({
+            date: z.string(),
+            reach: nonNegativeIntegerSchema,
+            interactions: nonNegativeIntegerSchema,
+            posts: nonNegativeIntegerSchema,
+          })
+          .passthrough(),
+      )
+      .max(2_000)
+      .optional()
+      .default([]),
     social: marketingSocialSchema.optional().default(EMPTY_SOCIAL),
     summary: marketingSummarySchema,
     connection: marketingConnectionSchema.optional().default(EMPTY_CONNECTION),

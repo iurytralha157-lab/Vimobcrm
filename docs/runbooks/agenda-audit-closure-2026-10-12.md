@@ -64,11 +64,22 @@ atividade antes de tentar novamente. Um 409 não é interpretado automaticamente
 como conflito de versão. Crash após preparar disconnect exige revisão do marker;
 não há desbloqueio automático que presuma se o Google revogou o token.
 
-A idempotência de criação/comentário usa a identidade durável do próprio objeto.
-Ela não é um ledger eterno de comandos: depois de exclusão, a identidade pode
-ser usada novamente. Replay com objeto alterado, outro autor/tenant ou conteúdo
-diferente retorna conflito. Não se promete execução exatamente uma vez após
-exclusão. Remarcação valida também as notas da tentativa original.
+A criação de eventos e comentários usa IDs gerados pelo banco. Cada chave de
+idempotência é vinculada à organização e ao autor dentro da operação. Tentativas
+com a mesma chave em outro escopo são independentes. Uma nova tentativa no mesmo
+escopo com conteúdo diferente ou objeto alterado retorna conflito. Eventos e
+comentários legados continuam a aceitar a chave antiga no escopo original.
+Depois da exclusão, a chave pode ser usada novamente. Remarcação valida também
+as notas da tentativa original.
+
+Para publicar a separação dos IDs, aplique primeiro a migration
+`20261107092518_scope_schedule_command_idempotency.sql`. Suspenda a criação de
+eventos e comentários e drene as requisições em curso nas réplicas antigas.
+Retome essas escritas quando só houver réplicas com o novo código. Uma réplica
+antiga que receber uma nova tentativa pode criar outro registro para um comando
+já aceito pelo novo código. Se precisar voltar à API anterior após a troca,
+preserve as colunas e os índices e mantenha as duas escritas suspensas até
+restabelecer a versão que reconhece as novas chaves.
 
 PATCH de formulário omite relações e participantes que não mudaram. Isso evita
 exigir permissão sobre imóvel/lead apenas para editar o título; alterações reais

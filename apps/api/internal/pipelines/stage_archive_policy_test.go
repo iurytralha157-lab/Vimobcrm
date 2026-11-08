@@ -20,11 +20,27 @@ type archiveQuery struct {
 	args        []any
 	err         error
 	automations []string
+	// Stages whose active move rule targets the archived stage; nil means the
+	// move-rule migration is not applied in this environment.
+	moveRuleSources []string
+}
+
+type boolRow struct{ value bool }
+
+func (row boolRow) Scan(dest ...any) error {
+	*dest[0].(*bool) = row.value
+	return nil
 }
 
 func (query *archiveQuery) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	if sql == stageAutomationReferencesSQL {
 		return stageAutomationNamesRow{names: query.automations, err: query.err}
+	}
+	if sql == stageMoveRulesAvailableSQL {
+		return boolRow{value: query.moveRuleSources != nil}
+	}
+	if sql == stageMoveRuleSourcesSQL {
+		return stageAutomationNamesRow{names: query.moveRuleSources}
 	}
 	query.sql, query.args = sql, args
 	metaJSON, _ := json.Marshal(archiveRoutingSnapshot{Meta: query.meta, Portals: query.portals})
@@ -110,5 +126,20 @@ func TestArchiveReadFailureDoesNotPermitMutation(t *testing.T) {
 	err := (Repository{}).ensureStageArchiveRoutingSafe(context.Background(), &archiveQuery{err: want}, "org", "pipeline", "stage")
 	if !errors.Is(err, want) {
 		t.Fatalf("read error was hidden: %v", err)
+	}
+}
+
+func TestArchiveIsBlockedByActiveMoveRulesIntoTheStage(t *testing.T) {
+	query := &archiveQuery{moveRuleSources: []string{"Em atendimento"}}
+	err := (Repository{}).ensureStageArchiveRoutingSafe(context.Background(), query, "organization-A", "pipeline", "stage")
+	var dependency *StageMoveRuleDependenciesError
+	if !errors.As(err, &dependency) || !errors.Is(err, ErrHasDependencies) || !strings.Contains(err.Error(), "Em atendimento") {
+		t.Fatalf("move rule into the stage did not block archiving: %v", err)
+	}
+	for _, sources := range [][]string{nil, {}} {
+		query := &archiveQuery{moveRuleSources: sources}
+		if err := (Repository{}).ensureStageArchiveRoutingSafe(context.Background(), query, "organization-A", "pipeline", "stage"); err != nil {
+			t.Fatalf("no move rule (%v) still blocked: %v", sources, err)
+		}
 	}
 }

@@ -118,6 +118,24 @@ func TestStageInactivityPostgres(t *testing.T) {
 				f.t.Fatal("explicit fresh activation alerted the historical backlog immediately")
 			}
 		}},
+		{"new entries scope skips historical pages and still reaches new entries", func(f inactivityPostgresFixture) {
+			f.seed(true, InactivityClockLastInteraction, InactivityNewStageEntries)
+			f.exec(`insert into public.leads(id,organization_id,stage_id,pipeline_id,stage_entered_at,assigned_user_id)
+ select ('00000000-0000-4000-8000-'||lpad(id::text,12,'0'))::uuid,$1::uuid,$2::uuid,$3::uuid,now()-interval '10 days',$4::uuid
+ from generate_series(503,602) id`, inactivityFixtureID(1), inactivityFixtureID(201), inactivityFixtureID(101), inactivityFixtureID(401))
+			f.exec(`insert into public.leads(id,organization_id,stage_id,pipeline_id,stage_entered_at,assigned_user_id)
+ values ($1,$2,$3,$4,now()-interval '2 days',$5)`, inactivityFixtureID(801), inactivityFixtureID(1), inactivityFixtureID(201), inactivityFixtureID(101), inactivityFixtureID(401))
+			if result := f.cycle(); result.Scanned != inactivityLeadBatch || result.Enqueued != 0 {
+				f.t.Fatalf("historical page did not advance without jobs: %#v", result)
+			}
+			f.scanNow()
+			if result := f.cycle(); result.Enqueued != 1 || result.Notified != 1 {
+				f.t.Fatalf("new entry was missed after skipping historical page: %#v", result)
+			}
+			if f.count(`select count(*) from private.stage_inactivity_jobs where lead_id=$1::uuid`, inactivityFixtureID(801)) != 1 {
+				f.t.Fatal("new scope enrolled a lead already in the column")
+			}
+		}},
 		{"tenant and fact scope are enforced", func(f inactivityPostgresFixture) {
 			f.seed(true, InactivityClockLastInteraction, InactivityIncludeOverdue)
 			f.exec(`insert into public.lead_action_facts(organization_id,lead_id,occurred_at,qualifies_stage_inactivity) values ($1,$2,now(),true)`, inactivityFixtureID(2), inactivityFixtureID(501))

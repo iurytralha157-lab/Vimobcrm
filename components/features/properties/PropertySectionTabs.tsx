@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import {
+  ArrowUpRight,
   Building2,
+  Check,
   Construction,
   KeyRound,
   MapPinned,
@@ -17,8 +19,10 @@ import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 export type PropertySection =
   | "all"
+  | "ready"
   | "developments"
   | "rentals"
+  | "third_party"
   | "condominiums"
   | "locations"
   | "owners"
@@ -41,6 +45,12 @@ const PROPERTY_SECTIONS: PropertySectionItem[] = [
     icon: Building2,
   },
   {
+    value: "ready",
+    label: "Prontos",
+    href: "/properties/ready",
+    icon: Check,
+  },
+  {
     value: "developments",
     label: "Lançamentos",
     href: "/properties/launches",
@@ -51,6 +61,12 @@ const PROPERTY_SECTIONS: PropertySectionItem[] = [
     label: "Aluguel",
     href: "/properties/rentals",
     icon: KeyRound,
+  },
+  {
+    value: "third_party",
+    label: "Terceiros",
+    href: "/properties/third-party",
+    icon: ArrowUpRight,
   },
   {
     value: "condominiums",

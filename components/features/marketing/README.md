@@ -26,7 +26,17 @@ consultas Supabase dentro dos componentes.
 - Valores monetários só são somados quando há uma única moeda; múltiplas moedas
   permanecem separadas no contrato de qualidade.
 
+## Telas
+
+As abas ficam em `Marketing*Tab.tsx`, despachadas por `MarketingTabViews`.
+`MarketingOverviewDashboard`, `MarketingPaidTable`, `MarketingFunnel`,
+`MarketingMediaGallery`, `MarketingTrendChart`, `MarketingMetricCard`,
+`MarketingSectionCard` e `MarketingCampaignDetailTable` não são mais usados por
+elas e podem ser removidos depois de validar a homologação.
+
 ## Integração
+
+A conexão somente leitura de Marketing está em `docs/marketing-connections.md`.
 
 Uma conexão pronta para Marketing exige Page token e long-lived User token em
 segredos Vault distintos, além de ao menos uma conta de anúncios selecionada.

@@ -82,6 +82,7 @@ import type { PipelineDeleteData } from '@/hooks/pipelines/use-pipeline-mutation
 import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
 import { usePipelineCriticalLoadRetry } from '@/hooks/pipelines/use-pipeline-critical-load-retry';
 import { usePipelineRefresh } from '@/hooks/pipelines/use-pipeline-refresh';
+import { getPipelineBoardScrollMemory } from '@/hooks/pipelines/use-pipeline-board-scroll';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { useTags } from '@/hooks/use-tags';
 import { useAssignLeadRoundRobin } from '@/hooks/use-assign-lead-roundrobin';
@@ -813,7 +814,17 @@ export default function Pipelines() {
     hasPermission('pipeline_manage') || hasPermission('automations_manage')
   );
   const isMobile = useIsMobile();
-  const [activeMobileStageId, setActiveMobileStageId] = useState<string | null>(null);
+  const scrollMemory = useMemo(
+    () => shouldLoadPipelineLeads ? getPipelineBoardScrollMemory(queryClient, pipelineBoardQueryKeyId, isMobile) : null,
+    [isMobile, pipelineBoardQueryKeyId, queryClient, shouldLoadPipelineLeads],
+  );
+  const [mobileStageSelection, setMobileStageSelection] = useState<{
+    memory: typeof scrollMemory;
+    stageId: string;
+  } | null>(null);
+  const activeMobileStageId = mobileStageSelection?.memory === scrollMemory
+    ? mobileStageSelection?.stageId
+    : scrollMemory?.mobileStageId;
 
   const currentPipeline = pipelines.find(p => p.id === selectedPipelineId);
   const isLoading =
@@ -1658,22 +1669,6 @@ export default function Pipelines() {
     [deferredSearch, searchQuery, stages],
   );
 
-  useEffect(() => {
-    if (!isMobile || filteredStages.length === 0) return;
-    const activeExists = activeMobileStageId && filteredStages.some((stage) => stage.id === activeMobileStageId);
-    if (activeExists) return;
-
-    let isActive = true;
-    const nextStageId = filteredStages[0].id;
-    queueMicrotask(() => {
-      if (isActive) setActiveMobileStageId(nextStageId);
-    });
-
-    return () => {
-      isActive = false;
-    };
-  }, [isMobile, filteredStages, activeMobileStageId]);
-
   const visibleStages = useMemo<StageWithLeads[]>(() => {
     if (!isMobile) return filteredStages;
     const activeStage = filteredStages.find((stage) => stage.id === activeMobileStageId);
@@ -1699,8 +1694,10 @@ export default function Pipelines() {
       : Math.min(filteredStages.length - 1, activeMobileStageIndex + 1);
 
     if (nextIndex === activeMobileStageIndex) return;
-    setActiveMobileStageId(filteredStages[nextIndex].id);
-  }, [activeMobileStageIndex, filteredStages, isMobile]);
+    const stageId = filteredStages[nextIndex].id;
+    scrollMemory?.rememberMobileStage(stageId);
+    setMobileStageSelection({ memory: scrollMemory, stageId });
+  }, [activeMobileStageIndex, filteredStages, isMobile, scrollMemory]);
 
   const settingsStageForDialog = useMemo<PipelineStageSettingsValue | null>(() => {
     if (!settingsStage) return null;
@@ -1946,6 +1943,7 @@ export default function Pipelines() {
         />
 
         <PipelineBoard
+          scrollMemory={scrollMemory}
           stages={stages}
           filteredStages={filteredStages}
           visibleStages={visibleStages}

@@ -560,11 +560,18 @@ test("property workspace keeps compatibility details internal and exposes carous
     "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
     "utf8",
   );
-  const sectionsSource = readFileSync(
-    "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-    "utf8",
+  const tabSources = [
+    "OverviewTab",
+    "TechnicalTab",
+    "CommercialTab",
+    "CommercialPeople",
+    "KeysTab",
+    "KeyMovementTimeline",
+    "HistoryTab",
+  ].map((name) =>
+    readFileSync(`components/features/properties/detail/tabs/${name}.tsx`, "utf8"),
   );
-  const visibleSources = [screenSource, overviewSource, sectionsSource];
+  const visibleSources = [screenSource, overviewSource, ...tabSources];
 
   for (const technicalCopy of [
     "Cadastro legado",

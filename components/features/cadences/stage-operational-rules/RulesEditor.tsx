@@ -1,7 +1,7 @@
 'use client'
 
-import { type FormEvent, useEffect, useLayoutEffect, useState, useRef } from 'react'
-import { AlertCircle, Loader2, Lock, RefreshCw, Save } from 'lucide-react'
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useState, useRef } from 'react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -14,8 +14,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { StageSettingsActions } from '@/components/features/pipelines/stage-settings-footer'
 import { useUpdateStageOperationalRules } from '@/hooks/cadences'
 import { stageOperationalRulesErrorMessage } from '@/hooks/cadences/use-stage-operational-rules'
 import type {
@@ -40,6 +40,20 @@ import {
   toPayload,
 } from './model'
 
+/**
+ * A rule saved by another service but edited and saved together with the stage
+ * rules (the inactivity alert inside "Atenção e permanência").
+ */
+export type RulesExtraEditor = {
+  node: ReactNode
+  /** Line added to "O que o corretor verá"; null when it changes nothing. */
+  summary: ReactNode | null
+  isDirty: boolean
+  isSaving: boolean
+  /** Resolves false when the error is already shown inside the node. */
+  save: () => Promise<boolean>
+}
+
 const CONFLICT_MESSAGE = 'Outra pessoa alterou esta etapa. Seu rascunho foi preservado. Carregar a versão atual substituirá suas alterações não salvas.'
 
 export function RulesEditor({
@@ -50,6 +64,7 @@ export function RulesEditor({
   attentionPolicies,
   onReloadCurrent,
   onEditorStateChange,
+  extraEditor,
 }: {
   initialRules: StageOperationalRulesContract
   stageName: string
@@ -58,6 +73,7 @@ export function RulesEditor({
   attentionPolicies: AttentionPoliciesState
   onReloadCurrent: () => Promise<StageOperationalRulesContract>
   onEditorStateChange?: (state: { isDirty: boolean; isSaving: boolean }) => void
+  extraEditor?: RulesExtraEditor
 }) {
   const [draft, setDraft] = useState<RulesDraft>(() => toDraft(initialRules))
   const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(
@@ -73,7 +89,11 @@ export function RulesEditor({
   const mounted = useRef(true)
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const updateRules = useUpdateStageOperationalRules(initialRules.stage_id)
-  useEffect(() => { onEditorStateChange?.({ isDirty, isSaving: updateRules.isPending }) }, [isDirty, updateRules.isPending, onEditorStateChange])
+  const extraDirty = extraEditor?.isDirty === true
+  const extraSaving = extraEditor?.isSaving === true
+  const anyDirty = isDirty || extraDirty
+  const isSaving = updateRules.isPending || extraSaving
+  useEffect(() => { onEditorStateChange?.({ isDirty: anyDirty, isSaving }) }, [anyDirty, isSaving, onEditorStateChange])
 
   /* eslint-disable react-hooks/set-state-in-effect -- External revisions are adopted only when the local editor has no unsaved changes. */
   useEffect(() => {
@@ -207,7 +227,14 @@ export function RulesEditor({
     event.preventDefault()
     const isCurrent = updateRules.captureScopeGuard()
     if (!mounted.current || !isCurrent() || isReloading) return
-    if (hasConflict || updateRules.isPending || saveInFlight.current || !canEdit) return
+    if (saveInFlight.current || isSaving) return
+    if (!isDirty) {
+      if (!extraDirty || !extraEditor) return
+      saveInFlight.current = true
+      try { await extraEditor.save() } finally { if (mounted.current) saveInFlight.current = false }
+      return
+    }
+    if (hasConflict || !canEdit) return
     const payload = toPayload(draft)
     const validation = updateStageOperationalRulesInputSchema.safeParse(payload)
 
@@ -232,6 +259,7 @@ export function RulesEditor({
       setIsDirty(false)
       setFormError(null)
       setHasConflict(false)
+      if (extraEditor?.isDirty) await extraEditor.save()
     } catch (error) {
       if (!mounted.current || !isCurrent()) return
       if (
@@ -249,10 +277,12 @@ export function RulesEditor({
     } finally {
       if (mounted.current && isCurrent()) {
         saveInFlight.current = false
-        onEditorStateChange?.({ isDirty: saved ? false : isDirty, isSaving: false })
+        onEditorStateChange?.({ isDirty: (saved ? false : isDirty) || extraDirty, isSaving: false })
       }
     }
   }
+
+  const formId = `stage-rules-form-${initialRules.stage_id}`
 
   const handleReloadCurrent = async () => {
     const isCurrent = updateRules.captureScopeGuard()
@@ -283,27 +313,7 @@ export function RulesEditor({
 
   return (
     <>
-      <form onSubmit={handleSubmit} className="space-y-4 pb-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-[15px] font-light text-[var(--app-text-primary)]">
-              Regras da etapa
-            </h3>
-            <p className="mt-1 text-xs font-light leading-[18px] text-[var(--app-text-tertiary)]">
-              Defina o que precisa ser feito e quando esta coluna exige atenção.
-            </p>
-          </div>
-          {!canEdit && (
-            <Badge
-              variant="secondary"
-              className="h-7 gap-1.5 rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light"
-            >
-              <Lock className="h-3 w-3" strokeWidth={1.5} />
-              Somente visualização
-            </Badge>
-          )}
-        </div>
-
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4 pb-2">
         <fieldset disabled={updateRules.isPending || isReloading} className="space-y-4">
         <CadenceSection
           draft={draft}
@@ -323,6 +333,7 @@ export function RulesEditor({
           globalAttention={globalAttention}
           onUpdateDraft={updateDraft}
           onUpdateDeadline={updateAttentionDeadline}
+          extra={extraEditor?.node}
         />
 
         <BrokerPreview
@@ -330,6 +341,7 @@ export function RulesEditor({
           stageName={stageName}
           globalAttention={globalAttention}
           attentionPolicies={attentionPolicies}
+          extraSummary={extraEditor?.summary}
         />
         </fieldset>
 
@@ -356,25 +368,17 @@ export function RulesEditor({
           </Button>
         )}
 
-        {canEdit && (
-          <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-3 bg-[var(--app-surface-solid)] px-1 pb-1 pt-3">
-            <p className="hidden text-[12px] font-light text-[var(--app-text-tertiary)] sm:block">
-              {isDirty ? 'Alterações ainda não salvas' : 'Tudo salvo'}
-            </p>
-            <Button
-              type="submit"
-              className="h-10 w-full rounded-[6px] bg-primary px-5 text-xs font-light text-primary-foreground shadow-none hover:bg-primary/90 sm:w-auto"
-              disabled={!isDirty || hasConflict || updateRules.isPending || isReloading}
-            >
-              {updateRules.isPending ? (
-                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
-              ) : (
-                <Save className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
-              )}
-              Salvar regras
-            </Button>
-          </div>
-        )}
+        <StageSettingsActions
+          status={canEdit ? (anyDirty ? 'Alterações ainda não salvas' : 'Tudo salvo') : null}
+          cancelLabel={canEdit ? 'Cancelar' : 'Fechar'}
+          cancelDisabled={isSaving}
+          primary={canEdit ? {
+            label: 'Salvar regras',
+            form: formId,
+            loading: isSaving,
+            disabled: !anyDirty || (isDirty && hasConflict) || isSaving || isReloading,
+          } : undefined}
+        />
       </form>
 
       <AlertDialog
@@ -387,13 +391,8 @@ export function RulesEditor({
               Desativar a cadência desta etapa?
             </AlertDialogTitle>
             <AlertDialogDescription className="font-light leading-5">
-              {draft.cadence.tasks.length === 1
-                ? 'A tarefa configurada será preservada'
-                : `As ${draft.cadence.tasks.length} tarefas configuradas serão preservadas`}
-              {' '}para uma futura reativação. As obrigações ainda pendentes dos leads
-              que estão nesta etapa, inclusive cadências escolhidas individualmente,
-              serão canceladas ao clicar em Salvar regras. Novos ciclos não criarão
-              tarefas enquanto a cadência estiver desativada. Esta confirmação apenas altera o rascunho.
+              A configuração fica guardada para reativação. Ao salvar as regras, as tarefas
+              pendentes de cadência nesta coluna serão canceladas, inclusive as de cadências individuais.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -413,7 +412,7 @@ export function RulesEditor({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remover a última tarefa desta cadência?</AlertDialogTitle>
-            <AlertDialogDescription>Ao salvar sem tarefas, as obrigações pendentes dos leads nesta coluna serão canceladas, inclusive cadências escolhidas individualmente. Os registros concluídos serão preservados. A remoção só será aplicada em Salvar regras.</AlertDialogDescription>
+            <AlertDialogDescription>Ao salvar sem tarefas, as tarefas pendentes de cadência nesta coluna serão canceladas, inclusive as de cadências individuais.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Manter tarefa</AlertDialogCancel>

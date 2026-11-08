@@ -16,6 +16,11 @@ type SaveInactivity =
 type Scope = { client: ReturnType<typeof useQueryClient>; scopeKey: string; stageId: string; organizationId: string | null; actorId: string | null; sessionId: string | null }
 type MutationScope = { scope: Scope; controller: AbortController }
 const scopeChanged = () => new VimobAPIError('A sessão mudou. Reabra a configuração antes de continuar.', { code: 'inactivity_scope_changed', status: 409 })
+const ruleLabels = {
+  notify: 'Regra de aviso por inatividade',
+  move_stage: 'Mudança de etapa por tempo parado',
+  redistribute: 'Redistribuição por tempo parado',
+} as const
 
 export function useStageInactivityAutomation(stageId: string) {
   const client = useQueryClient()
@@ -51,7 +56,9 @@ export function useStageInactivityAutomation(stageId: string) {
       if (!captured?.scope.organizationId || !captured.scope.actorId || !captured.scope.sessionId || !isCurrent(captured)) throw scopeChanged()
       if (variables.id === undefined && variables.input.stage_id !== captured.scope.stageId) throw scopeChanged()
       if (input.is_enabled && runtimeAvailable !== true) {
-        throw new VimobAPIError('Os alertas de inatividade estão indisponíveis. A regra permanece desativada.', { code: 'inactivity_runtime_unavailable', status: 503 })
+        throw new VimobAPIError('O processamento de inatividade está indisponível neste ambiente.', {
+          code: 'inactivity_runtime_unavailable', status: 503,
+        })
       }
       const intent = { expectedUserId: captured.scope.actorId, expectedSessionId: captured.scope.sessionId, signal: captured.controller.signal }
       const result = variables.id !== undefined
@@ -63,10 +70,15 @@ export function useStageInactivityAutomation(stageId: string) {
       }
       return result
     },
-    onSuccess: (result, _, captured) => {
+    onSuccess: (result, variables, captured) => {
       if (!captured || !isCurrent(captured)) return
       const policy = result.inactivity_policy
-      toast.success(policy?.effective_enabled === true ? 'Alerta de inatividade ativado' : policy?.is_enabled === true ? 'Regra salva; os alertas estão indisponíveis' : 'Regra de inatividade salva desativada')
+      const label = ruleLabels[variables.input.action ?? 'notify']
+      toast.success(policy?.effective_enabled === true
+        ? `${label} ativada`
+        : policy?.is_enabled === true
+          ? 'Regra salva. O processamento de inatividade está indisponível.'
+          : `${label} salva desativada`)
     },
     onSettled: (_, __, variables, captured) => {
       captured = captured ?? operationScopes.current.get(variables)

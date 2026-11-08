@@ -1,19 +1,10 @@
 "use client";
 
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDashboardQuery } from "@/hooks/dashboard/use-dashboard-query";
 import { useRouter } from "next/navigation";
 import {
-  type LucideIcon,
-  Users,
-  DollarSign,
-  Building2,
-  Clock,
   Eye,
-  TrendingUp,
-  TrendingDown,
-  CalendarCheck,
-  CircleDot,
   XCircle,
   Trophy,
   PieChart as PieChartIcon,
@@ -32,11 +23,7 @@ import { cn } from "@/lib/utils";
 // Componentes de Layout e UI
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 
-import { KPICards } from "@/components/features/dashboard/KPICards";
-import {
-  getDashboardKPIValueStyle,
-  type DashboardKPIAccent,
-} from "@/components/features/dashboard/dashboard-kpi-theme";
+import { DashboardKpiGrid } from "@/components/features/dashboard/DashboardKpis";
 import { SalesFunnelWithPipeline } from "@/components/features/dashboard/SalesFunnelWithPipeline";
 import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolutionChart";
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
@@ -105,29 +92,6 @@ const DASHBOARD_DESKTOP_BREAKPOINT_PX = DASHBOARD_LAYOUT.desktopBreakpointPx;
 const DIALOG_CHART_INITIAL_DIMENSION = { width: 180, height: 180 };
 
 type KPIFormat = "number" | "currency" | "percent" | "time";
-
-type KPIRateVariant = "negative" | "auto";
-
-type DashboardKPI = {
-  title: string;
-  value: string | number;
-  breakdown?: string;
-  rate?: number;
-  rateLabel?: string;
-  rateVariant?: KPIRateVariant;
-  trend?: number;
-  icon: LucideIcon;
-  tooltip: string;
-  format: KPIFormat;
-  color: DashboardKPIAccent;
-  iconColor?: string;
-  iconBgColor?: string;
-  hideIconOnDesktop?: boolean;
-  onClick?: (trigger: HTMLElement) => void;
-  interactive?: boolean;
-  compact?: boolean;
-  tourTarget: string;
-};
 
 function useIsDashboardDesktop() {
   const [isDashboardDesktop, setIsDashboardDesktop] = useState<boolean | null>(
@@ -483,6 +447,7 @@ export default function Dashboard() {
     totalSalesValue: 0,
     pendingCommissions: 0,
     leadsTrend: 0,
+    entriesTrend: 0,
     openTrend: 0,
     lostTrend: 0,
     conversionTrend: 0,
@@ -615,14 +580,15 @@ export default function Dashboard() {
                   {kpisError ? (
                     <DashboardDataError message={statsErrorDescription} onRetry={retryKpis} isRetrying={statsFetching} />
                   ) : (
-                    <KPICardsGrid
+                    <DashboardKpiGrid
+                      layout="desktop"
                       data={kpiData}
                       isLoading={kpisLoading}
                       periodLabel={periodLabel}
+                      evolution={evolutionError ? [] : evolutionData}
                       propertyCount={propertyCount}
                       siteVisits={siteVisits}
                       scheduledVisits={scheduledVisitsCount}
-                      layout="top"
                       onLeadsClick={dashboardQueryScope.isReady && isFiltersHydrated ? openLeadEntriesDialog : undefined}
                       onLostClick={openLostDialog}
                       onWonClick={openWonDialog}
@@ -732,10 +698,12 @@ export default function Dashboard() {
               {kpisError ? (
                 <DashboardDataError message={statsErrorDescription} onRetry={retryKpis} isRetrying={statsFetching} />
               ) : (
-                <KPICards
+                <DashboardKpiGrid
+                  layout="mobile"
                   data={kpiData}
                   isLoading={kpisLoading}
                   periodLabel={periodLabel}
+                  evolution={evolutionError ? [] : evolutionData}
                   scheduledVisits={scheduledVisitsCount}
                   propertyCount={propertyCount}
                   siteVisits={siteVisits}
@@ -775,7 +743,7 @@ export default function Dashboard() {
 
             <section>
               <Tabs value={mobileChartTab === "sources" ? "sources" : "funnel"} onValueChange={setMobileChartTab}>
-                <TabsList className="grid h-10 w-full grid-cols-2 gap-1 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">
+                <TabsList className="grid h-10 w-full grid-cols-2 gap-1 rounded-[10px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">
                   <TabsTrigger
                     value="funnel"
                     className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
@@ -956,7 +924,7 @@ function DashboardDataError({
   isRetrying: boolean;
 }) {
   return (
-    <Card role="alert" className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+    <Card role="alert" className="rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none">
       <CardContent className="flex min-h-[96px] flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-destructive/10 text-destructive">
@@ -981,331 +949,6 @@ function DashboardDataError({
         </button>
       </CardContent>
     </Card>
-  );
-}
-
-interface KPICardsGridProps {
-  data: EnhancedDashboardStats;
-  isLoading?: boolean;
-  periodLabel: string;
-  propertyCount?: number | string;
-  siteVisits?: number | string;
-  scheduledVisits?: number | string;
-  layout?: "top" | "side";
-  onLeadsClick?: (trigger: HTMLElement) => void;
-  onLostClick?: (trigger: HTMLElement) => void;
-  onWonClick?: (trigger: HTMLElement) => void;
-  onFirstContactClick?: (trigger: HTMLElement) => void;
-  onVisitsClick?: (trigger: HTMLElement) => void;
-}
-
-function KPICardsGrid({
-  data,
-  isLoading,
-  periodLabel,
-  propertyCount,
-  siteVisits,
-  scheduledVisits,
-  layout = "top",
-  onLeadsClick,
-  onLostClick,
-  onWonClick,
-  onFirstContactClick,
-  onVisitsClick,
-}: KPICardsGridProps) {
-  if (isLoading) {
-    const isSide = layout === "side";
-    const skeletonTours = [
-      "dashboard-kpi-leads",
-      "dashboard-kpi-open",
-      "dashboard-kpi-lost",
-      "dashboard-kpi-won",
-      "dashboard-kpi-visits",
-      "dashboard-kpi-vgv",
-      "dashboard-kpi-first-contact",
-      "dashboard-kpi-properties",
-      "dashboard-kpi-site-visits",
-    ];
-
-    return (
-      <div className={cn("grid gap-2", isSide ? "grid-cols-2" : "grid-cols-5")}>
-        {Array.from({ length: 9 }).map((_, i) => (
-          <Card
-            key={`skeleton-${i}`}
-            data-tour={skeletonTours[i]}
-            className={cn(
-              "rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none",
-              i === 5 && !isSide ? "col-span-2" : "",
-            )}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between">
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-3 w-16" />
-                  <Skeleton className="h-6 w-12" />
-                  <Skeleton className="h-3 w-10" />
-                </div>
-                <Skeleton className="h-8 w-8 rounded-[6px]" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  }
-
-  const allKpis: DashboardKPI[] = [
-    {
-      title: "Leads",
-      value: data.totalEntries,
-      breakdown: data.entryBreakdownAvailable
-        ? `${data.uniqueLeads.toLocaleString("pt-BR")} entradas iniciais + ${data.reentries.toLocaleString("pt-BR")} reentradas`
-        : undefined,
-      icon: Users,
-      tooltip: data.entryBreakdownAvailable
-        ? `Entradas no período: ${data.uniqueLeads.toLocaleString("pt-BR")} entradas iniciais + ${data.reentries.toLocaleString("pt-BR")} reentradas. Cada reentrada soma uma nova entrada, mesmo quando continua no mesmo card. ${periodLabel}.`
-        : `Leads únicos no período. A contagem de reentradas ainda não está disponível nesta versão da API. ${periodLabel}.`,
-      format: "number",
-      color: "leads",
-      onClick: onLeadsClick,
-      interactive: Boolean(onLeadsClick),
-      tourTarget: "dashboard-kpi-leads",
-    },
-    {
-      title: "Em aberto",
-      value: data.openLeads ?? 0,
-      rate:
-        data.totalLeads > 0
-          ? ((data.openLeads ?? 0) / data.totalLeads) * 100
-          : 0,
-      icon: CircleDot,
-      tooltip: `Cards únicos do período que estão em aberto; percentual sobre os cards únicos. ${periodLabel}.`,
-      format: "number",
-      color: "open",
-      tourTarget: "dashboard-kpi-open",
-    },
-    {
-      title: "Perdidos",
-      value: data.lostLeads ?? 0,
-      rate:
-        data.totalLeads > 0
-          ? ((data.lostLeads ?? 0) / data.totalLeads) * 100
-          : 0,
-      rateVariant: "negative",
-      icon: XCircle,
-      tooltip: `Cards únicos do período que estão perdidos; percentual sobre os cards únicos. ${periodLabel}.`,
-      format: "number",
-      color: "lost",
-      onClick: onLostClick,
-      interactive: Boolean(onLostClick),
-      tourTarget: "dashboard-kpi-lost",
-    },
-    {
-      title: "Ganhos",
-      value: data.closedLeads,
-      rate: data.totalLeads > 0 ? (data.closedLeads / data.totalLeads) * 100 : 0,
-      rateLabel: "conversão",
-      rateVariant: "auto",
-      icon: Trophy,
-      tooltip: `Cards únicos do período que estão ganhos; conversão sobre os cards únicos. ${periodLabel}.`,
-      format: "number",
-      color: "won",
-      iconColor: "rgb(16, 185, 129)",
-      iconBgColor: "rgba(16, 185, 129, 0.1)",
-      onClick: onWonClick,
-      interactive: true,
-      tourTarget: "dashboard-kpi-won",
-    },
-    {
-      title: "Visitas",
-      value: scheduledVisits ?? 0,
-      icon: CalendarCheck,
-      tooltip: `Visitas e reuniões criadas no período - ${periodLabel}. O filtro usa a data de criação da marcação, independente do dia da visita e da entrada do lead.`,
-      format: "number",
-      color: "visits",
-      onClick: onVisitsClick,
-      interactive: Boolean(onVisitsClick),
-      tourTarget: "dashboard-kpi-visits",
-    },
-    {
-      title: "VGV",
-      value: data.totalSalesValue,
-      icon: DollarSign,
-      tooltip: `VGV estimado dos cards ganhos captados no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`,
-      format: "currency",
-      color: "vgv",
-      hideIconOnDesktop: true,
-      compact: true,
-      tourTarget: "dashboard-kpi-vgv",
-    },
-    {
-      title: "1º Contato",
-      value: data.avgResponseTime,
-      icon: Clock,
-      tooltip: "Média da primeira resposta humana registrada. Ao filtrar por usuário, considera quem respondeu; os demais indicadores usam o responsável atual do lead.",
-      format: "time",
-      color: "response",
-      onClick: onFirstContactClick,
-      interactive: Boolean(onFirstContactClick),
-      compact: true,
-      tourTarget: "dashboard-kpi-first-contact",
-    },
-    {
-      title: "Imóveis",
-      value: propertyCount ?? 0,
-      icon: Building2,
-      tooltip: "Total de imóveis cadastrados",
-      format: "number",
-      color: "properties",
-      compact: true,
-      tourTarget: "dashboard-kpi-properties",
-    },
-    {
-      title: "Visitas no site",
-      value: siteVisits ?? 0,
-      icon: Eye,
-      tooltip: `Sessões únicas no site no período - ${periodLabel}`,
-      format: "number",
-      color: "site",
-      compact: true,
-      tourTarget: "dashboard-kpi-site-visits",
-    },
-  ];
-
-  const renderKPI = (kpi: DashboardKPI, className?: string) => {
-    const Icon = kpi.icon;
-    const hasTrend = kpi.trend !== undefined && kpi.trend !== 0;
-    const isPositive = (kpi.trend ?? 0) >= 0;
-    const isCurrency = kpi.format === "currency";
-    const showIcon = !kpi.hideIconOnDesktop || isSide;
-    const rateColorClass =
-      kpi.rateVariant === "negative"
-        ? "text-destructive"
-        : kpi.rateVariant === "auto"
-          ? (kpi.rate ?? 0) > 0
-            ? "text-[var(--lead-status-won-fg)]"
-            : "text-destructive"
-          : "text-[var(--lead-status-won-fg)]";
-
-    const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-      if (!kpi.onClick) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        kpi.onClick(event.currentTarget);
-      }
-    };
-
-    return (
-      <div key={kpi.title} className={cn("h-full", className)}>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Card
-                data-tour={kpi.tourTarget}
-                className={cn(
-                  "group h-full rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none transition-colors",
-                  kpi.interactive
-                    ? "cursor-pointer hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
-                    : "cursor-default",
-                )}
-                role={kpi.interactive ? "button" : undefined}
-                tabIndex={kpi.interactive ? 0 : undefined}
-                onClick={(event) => kpi.onClick?.(event.currentTarget)}
-                onKeyDown={handleKeyDown}
-              >
-                <CardContent
-                  className={cn(
-                    "relative h-full p-3 min-[1441px]:p-4",
-                    kpi.compact
-                      ? "min-h-[74px] min-[1441px]:min-h-[82px]"
-                      : "min-h-[84px] min-[1441px]:min-h-[96px]",
-                  )}
-                >
-                  <div className="min-w-0">
-                    <p className="mb-1 truncate pr-7 text-[11px] font-light leading-tight text-[var(--app-text-tertiary)] min-[1441px]:pr-11 min-[1441px]:text-[12px]" title={kpi.title}>
-                      {kpi.title}
-                    </p>
-                    <p
-                      className={cn(
-                        "font-normal leading-tight text-[var(--app-text-primary)]",
-                        isCurrency
-                          ? "text-lg min-[1441px]:text-xl break-words"
-                          : "text-xl min-[1441px]:text-2xl break-all",
-                      )}
-                      style={getDashboardKPIValueStyle(kpi.color)}
-                    >
-                      {formatKPIValue(kpi.value, kpi.format)}
-                    </p>
-                    {kpi.breakdown && (
-                      <p className="mt-1 text-[10px] font-light leading-tight text-[var(--app-text-tertiary)]">
-                        {kpi.breakdown}
-                      </p>
-                    )}
-                    {hasTrend && (
-                      <div className="flex items-center gap-0.5 mt-1">
-                        {isPositive ? (
-                          <TrendingUp className="h-3 w-3 text-[var(--lead-status-won-fg)]" />
-                        ) : (
-                          <TrendingDown className="h-3 w-3 text-destructive" />
-                        )}
-                        <span
-                          className={cn(
-                            "text-[10px] font-light",
-                            isPositive
-                              ? "text-[var(--lead-status-won-fg)]"
-                              : "text-destructive",
-                          )}
-                        >
-                          {kpi.trend! > 0 ? "+" : ""}
-                          {kpi.trend}%
-                        </span>
-                      </div>
-                    )}
-                    {kpi.rate !== undefined && (
-                      <div
-                        className={cn(
-                          "mt-1 max-w-full text-[10px] font-light leading-tight",
-                          rateColorClass,
-                        )}
-                      >
-                        {formatKPIValue(kpi.rate, "percent")}
-                        {kpi.rateLabel ? ` ${kpi.rateLabel}` : ""}
-                      </div>
-                    )}
-                    {showIcon && (
-                      <div
-                        className={cn(
-                          "absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors min-[1441px]:right-4 min-[1441px]:top-4 min-[1441px]:h-8 min-[1441px]:w-8",
-                          kpi.interactive && "group-hover:bg-primary",
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </TooltipTrigger>
-            <TooltipContent className="app-header-popover rounded-[8px] border-0 text-[var(--app-text-primary)]">
-              <p className="text-[11px] font-light leading-snug">
-                {kpi.tooltip}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
-    );
-  };
-
-  const isSide = layout === "side";
-
-  return (
-    <div className={cn("grid gap-2", isSide ? "grid-cols-2" : "grid-cols-5")}>
-      {allKpis.map((kpi) => {
-        const isVgv = kpi.title === "VGV";
-        return renderKPI(kpi, isVgv && !isSide ? "col-span-2" : undefined);
-      })}
-    </div>
   );
 }
 

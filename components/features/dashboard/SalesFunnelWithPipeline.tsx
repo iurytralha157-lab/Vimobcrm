@@ -89,13 +89,10 @@ export function SalesFunnelWithPipeline({
   const maxStages = Math.max(funnelData.length, 1);
 
   return (
-    <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+    <Card className="flex h-full flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none">
       <CardHeader className="shrink-0 px-4 pb-3 pt-4">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-white">
-              <TrendingDown className="h-3.5 w-3.5" />
-            </span>
+          <CardTitle className="text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
             Funil de vendas
           </CardTitle>
           <div className="ml-auto flex shrink-0 items-center">
@@ -110,7 +107,7 @@ export function SalesFunnelWithPipeline({
                   }
                 }}
               >
-                <SelectTrigger className="h-8 w-[140px] rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-1 focus:ring-primary/30">
+                <SelectTrigger className="h-8 w-[140px] rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-1 focus:ring-primary/30">
                   <SelectValue placeholder="Pipeline" />
                 </SelectTrigger>
                 <SelectContent className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">

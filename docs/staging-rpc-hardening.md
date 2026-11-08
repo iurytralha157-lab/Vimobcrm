@@ -10,6 +10,11 @@ foi observada em `2026-10-24T17:40:20.162Z`. O preparador continua offline,
 com `ready=false`; a aplicação é comprovada por essa evidência separada.
 Produção não foi acessada.
 
+A [migration canônica de SLA e Financeiro](../supabase/migrations/20261107091926_restrict_global_sla_and_financial_rpc_execution.sql)
+leva a restrição dessas duas RPCs aos próximos provisionamentos que aplicarem
+a cauda de migrations. O `service_role` mantém a execução. O registro acima
+continua sendo a evidência específica da aplicação em homologação.
+
 O catálogo inicial somente leitura fornecido pelo root em
 `D:/Vimob/_safety/cloud-rpc-preflight-20261024.json` continha 75 funções públicas
 SECURITY DEFINER com EXECUTE efetivo para anon/authenticated: 39 não retornam

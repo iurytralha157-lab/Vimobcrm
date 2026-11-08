@@ -1,5 +1,23 @@
 # Contatos: correções locais de 12/10/2026
 
+## Entrega do arquivo de exportação — 27/10/2026
+
+O diálogo prepara CSV ou Excel e mantém o arquivo disponível na ação
+`Baixar arquivo`. O clique nessa ação inicia o download e pode ser repetido
+sem consultar novamente os contatos. A mensagem `Arquivo pronto` confirma
+somente a geração; a aplicação não afirma que o navegador salvou o arquivo.
+
+O arquivo e sua URL são descartados ao fechar o diálogo, mudar opções/filtros,
+trocar organização/usuário/sessão ou desmontar a tela. Respostas de operações
+anteriores não podem criar um arquivo disponível no novo contexto.
+As validações de integridade e as permissões de exportação são preservadas.
+
+Este ajuste local não muda a API nem o banco. A Web atualmente publicada
+(`ef1cefca`) usa um contrato de paginação anterior ao deste checkout; o hotfix
+de produção deve partir dessa versão e preservar a API `7e490c7`, levando
+somente a entrega do arquivo e seus testes. Não publicar a homologação inteira
+como correção deste incidente.
+
 As seções seguintes registram a etapa P1. A etapa P2/P3 está documentada ao
 final e no runbook, incluindo a nova migration de recibos de importação.
 

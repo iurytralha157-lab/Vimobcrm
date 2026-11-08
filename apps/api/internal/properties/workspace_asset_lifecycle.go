@@ -14,7 +14,17 @@ const (
 	propertyAssetCleanupWorkerInterval = 30 * time.Second
 	propertyAssetCleanupWorkerBatch    = 100
 	propertyAssetUploadExpiryMargin    = 5 * time.Minute
+	// The browser allows the upload intent request a limited time, and the worker
+	// finishes anything this opportunistic pass leaves behind.
+	propertyAssetRequestCleanupBudget = 1500 * time.Millisecond
 )
+
+func (repo Repository) cleanupPropertyAssetsWithinBudget(ctx context.Context, organizationID string) {
+	cleanupContext, cancel := context.WithTimeout(ctx, propertyAssetRequestCleanupBudget)
+	defer cancel()
+	_ = repo.cleanupExpiredPropertyAssetUploads(cleanupContext, organizationID, propertyAssetCleanupBatchSize)
+	_ = repo.cleanupQueuedPropertyAssetStorage(cleanupContext, organizationID, propertyAssetCleanupBatchSize)
+}
 
 func consumePropertyAssetUploadIntent(
 	ctx context.Context,

@@ -914,6 +914,28 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			    )
 			  )
 		),
+		social_daily as (
+			select
+				social_day.metric_date,
+				coalesce(sum(social_day.reach), 0) as reach,
+				coalesce(sum(social_day.interactions), 0) as interactions,
+				coalesce(sum(social_day.posts), 0) as posts
+			from public.marketing_social_daily as social_day
+			cross join params
+			where social_day.organization_id = $1::uuid
+			  and (params.date_from is null or social_day.metric_date >= params.date_from)
+			  and (params.date_to is null or social_day.metric_date <= params.date_to)
+			  and (
+			    params.page_id is null
+			    or exists (
+			      select 1 from public.meta_integrations as integration
+			      where integration.organization_id = $1::uuid
+			        and integration.id = social_day.integration_id
+			        and integration.page_id = params.page_id
+			    )
+			  )
+			group by social_day.metric_date
+		),
 		latest_social_profiles as (
 			select distinct on (social_day.provider, social_day.profile_id)
 				social_day.provider,
@@ -1454,6 +1476,18 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					order by asset.published_at desc nulls last, asset.last_synced_at desc
 					limit 240
 				) as media_row
+			), '[]'::jsonb),
+			'socialDaily', coalesce((
+				select jsonb_agg(
+					jsonb_build_object(
+						'date', metric_date,
+						'reach', reach,
+						'interactions', interactions,
+						'posts', posts
+					)
+					order by metric_date
+				)
+				from social_daily
 			), '[]'::jsonb),
 			'social', jsonb_build_object(
 				'provider', (select provider from latest_social),

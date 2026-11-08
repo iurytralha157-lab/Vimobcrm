@@ -27,6 +27,11 @@ const fields: Record<string, ValidationIssue> = {
   owner_name: { label: "Nome do proprietário", tab: "owner", fieldId: "property-owner-name" },
   cadastrado_por: { label: "Responsável pela captação", tab: "owner", fieldId: "property-captor" },
   descricao_site: { label: "Descrição pública", tab: "media", fieldId: "property-public-description" },
+  third_party_kind: { label: "Parceiro ou proprietário particular", tab: "structure", fieldId: "property-third-party-kind" },
+  partner_name: { label: "Nome do parceiro", tab: "structure", fieldId: "property-partner-name" },
+  partner_contact: { label: "Contato do parceiro", tab: "structure", fieldId: "property-partner-contact" },
+  commission_split_percent: { label: "Divisão de comissão", tab: "structure", fieldId: "property-commission-split" },
+  third_party_authorized_until: { label: "Autorização válida até", tab: "structure", fieldId: "property-third-party-authorized-until" },
   comissao_venda: { label: "Comissão de venda", tab: "commissions", fieldId: "property-sale-commission" },
   comissao_locacao: { label: "Comissão de locação", tab: "commissions", fieldId: "property-rental-commission" },
 };

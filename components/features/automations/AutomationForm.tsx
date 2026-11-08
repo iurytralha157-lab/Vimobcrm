@@ -3,11 +3,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCreateStageAutomation, useUpdateStageAutomation, useStageAutomations, AutomationType, AUTOMATION_TYPE_LABELS, AUTOMATION_TYPE_DESCRIPTIONS, DEAL_STATUS_LABELS, StageAutomation, type CreateAutomationData } from "@/hooks/use-stage-automations";
+import { useCreateStageAutomation, useUpdateStageAutomation, useStageAutomations, AutomationType, AUTOMATION_TYPE_LABELS, AUTOMATION_TYPE_DESCRIPTIONS, DEAL_STATUS_LABELS, StageAutomation, isInactivityAutomationType, type CreateAutomationData } from "@/hooks/use-stage-automations";
 import { useOrganizationUsers } from "@/hooks/use-users";
-import { Loader2, Info, User, Trophy, XCircle, Circle } from "lucide-react";
+import { useRoundRobins } from '@/hooks/use-round-robins';
+import { User, Trophy, XCircle, Circle } from "lucide-react";
 import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { useStageInactivityAutomation } from '@/hooks/use-stage-inactivity-automation';
+import { StageSettingsActions } from '@/components/features/pipelines/stage-settings-footer';
+import { StageInactivityScopeField } from '@/components/features/pipelines/StageInactivityScopeField';
+import type { StageInactivityStartMode } from '@/lib/validation/stage-inactivity';
+
+export type StageMoveTarget = { id: string; name: string };
 
 interface AutomationFormProps {
   stageId: string;
@@ -17,18 +23,27 @@ interface AutomationFormProps {
   onCancel?: () => void;
   terminalStatus?: 'won' | 'lost' | null;
   onEditorStateChange?: (state: { isDirty: boolean; isSaving: boolean }) => void;
+  /** Open columns of the same pipeline (never this one, Won or Lost). */
+  moveTargets?: readonly StageMoveTarget[];
+  moveTargetsLoading?: boolean;
+  canManageDistribution?: boolean;
 }
+
+const CREATABLE_TYPES: AutomationType[] = ['change_assignee_on_enter', 'change_deal_status_on_enter', 'move_stage_on_inactivity', 'redistribute_on_inactivity'];
 
 export function AutomationForm(props: AutomationFormProps) {
   const inactivityMutation = useStageInactivityAutomation(props.stageId);
   return <AutomationFormEditor key={`${inactivityMutation.scopeKey}:${props.stageId}:${props.automation?.id || 'new'}`} {...props} inactivityMutation={inactivityMutation} />;
 }
 
-function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, terminalStatus, onEditorStateChange, inactivityMutation }: AutomationFormProps & { inactivityMutation: ReturnType<typeof useStageInactivityAutomation> }) {
+function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, terminalStatus, onEditorStateChange, inactivityMutation, moveTargets, moveTargetsLoading, canManageDistribution }: AutomationFormProps & { inactivityMutation: ReturnType<typeof useStageInactivityAutomation> }) {
   // Every automation type keeps the editor's original revision until explicit review.
   const [automationSnapshot, setAutomationSnapshot] = useState(automation);
   const config = automationSnapshot?.action_config as Record<string, unknown> | null;
-  const [automationType, setAutomationType] = useState<AutomationType>((automationSnapshot?.automation_type as AutomationType) || 'alert_on_inactivity');
+  const [automationType, setAutomationType] = useState<AutomationType>((automationSnapshot?.automation_type as AutomationType) || 'change_assignee_on_enter');
+  const [targetStageId, setTargetStageId] = useState<string>(automationSnapshot?.target_stage_id || automationSnapshot?.inactivity_policy?.target_stage_id || '');
+  const [queueId, setQueueId] = useState(automationSnapshot?.inactivity_policy?.target_round_robin_id || '');
+  const [startMode, setStartMode] = useState<StageInactivityStartMode>(automationSnapshot && automationSnapshot.inactivity_policy?.start_mode !== 'new_stage_entries' ? 'activation' : 'new_stage_entries');
   const [triggerDays, setTriggerDays] = useState<number>(automationSnapshot?.trigger_days || 7);
   const [alertMessage, setAlertMessage] = useState<string>(automationSnapshot?.alert_message || '');
   const [targetUserId, setTargetUserId] = useState<string>((config?.target_user_id as string) || '');
@@ -40,7 +55,7 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
   const [needsVersionRefresh, setNeedsVersionRefresh] = useState(false);
   const [versionReview, setVersionReview] = useState<StageAutomation | null>(null);
   const [isRefreshingVersion, setIsRefreshingVersion] = useState(false);
-  const fingerprint = JSON.stringify([automationType, triggerDays, alertMessage, targetUserId, dealStatus]);
+  const fingerprint = JSON.stringify([automationType, triggerDays, alertMessage, targetUserId, dealStatus, targetStageId, queueId, startMode]);
   const [initialFingerprint] = useState(fingerprint);
   const isDirty = fingerprint !== initialFingerprint;
 
@@ -51,6 +66,19 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
   const updateAutomation = useUpdateStageAutomation();
 
   const isEditing = !!automationSnapshot;
+  const editingInactivity = isEditing && isInactivityAutomationType(automationSnapshot?.automation_type);
+  const isMoveRule = automationType === 'move_stage_on_inactivity';
+  const isRedistribution = automationType === 'redistribute_on_inactivity';
+  const countsInactivity = isInactivityAutomationType(automationType);
+  const queueQuery = useRoundRobins({ enabled: Boolean(isRedistribution && canManageDistribution) });
+  const queues = queueQuery.data?.filter((queue) => queue.is_active === true) ?? [];
+  const selectedQueue = queues.find((queue) => queue.id === queueId);
+  // Inactivity rules keep their type. On-enter rules use a different save path.
+  const typeOptions: AutomationType[] = editingInactivity
+    ? [automationSnapshot!.automation_type as AutomationType]
+    : CREATABLE_TYPES.filter((type) => !(isInactivityAutomationType(type) && (isEditing || terminalStatus)) && (type !== 'redistribute_on_inactivity' || canManageDistribution));
+  const targetName = moveTargets?.find((target) => target.id === targetStageId)?.name;
+  const formId = `stage-automation-form-${stageId}`;
   const isLoading = createAutomation.isPending || updateAutomation.isPending || inactivityMutation.isPending || isRefreshingVersion;
 
 
@@ -69,12 +97,24 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
       setFormError('Não foi possível confirmar a versão desta regra. Carregue a versão atual para revisar; seu rascunho foi mantido.');
       return;
     }
-    if (automationType === 'alert_on_inactivity' && (!Number.isInteger(triggerDays) || triggerDays < 1 || triggerDays > 3650)) {
+    if (countsInactivity && (!Number.isInteger(triggerDays) || triggerDays < 1 || triggerDays > 3650)) {
       setFormError('Informe um prazo entre 1 e 3650 dias.');
       return;
     }
     if (automationType === 'alert_on_inactivity' && alertMessage.trim().length > 1000) {
       setFormError('A mensagem do alerta deve ter até 1000 caracteres.');
+      return;
+    }
+    if (isMoveRule && !targetStageId) {
+      setFormError('Escolha para qual coluna o lead será movido.');
+      return;
+    }
+    if (isMoveRule && moveTargets && !targetName) {
+      setFormError('A coluna de destino não está mais disponível. Escolha outra coluna aberta desta pipeline.');
+      return;
+    }
+    if (isRedistribution && (!canManageDistribution || !selectedQueue || queueQuery.isError)) {
+      setFormError('Escolha uma distribuição ativa antes de salvar.');
       return;
     }
     if (automationType === 'change_assignee_on_enter' && !targetUserId) {
@@ -104,8 +144,15 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
     setFormError(null);
     let saved = false;
     try {
-      if (automationType === 'alert_on_inactivity') {
-        const input = { trigger_days: triggerDays, alert_message: alertMessage, clock: 'last_interaction' as const, start_mode: 'activation' as const };
+      if (countsInactivity) {
+        const input = {
+          trigger_days: triggerDays,
+          alert_message: automationType === 'alert_on_inactivity' ? alertMessage : '',
+          clock: 'last_interaction' as const,
+          start_mode: startMode,
+          ...(isMoveRule ? { action: 'move_stage' as const, target_stage_id: targetStageId } : {}),
+          ...(isRedistribution ? { action: 'redistribute' as const, target_round_robin_id: queueId } : {}),
+        };
         if (isEditing && automationSnapshot) {
           if (!automationSnapshot.updated_at) throw new Error('Atualize a versão da regra antes de salvar.');
           await inactivityMutation.mutateAsync({
@@ -123,7 +170,7 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
     } catch (error) {
       if (!mounted.current || !isCurrent()) return;
       const conflict = typeof error === 'object' && error !== null && 'status' in error && error.status === 409 &&
-        (automationType === 'alert_on_inactivity' || ('code' in error && error.code === 'stage_automation_changed'));
+        (countsInactivity || ('code' in error && error.code === 'stage_automation_changed'));
       if (conflict) setNeedsVersionRefresh(true);
       setFormError(conflict
         ? 'Esta regra foi atualizada em outra sessão. Seu rascunho foi preservado. Carregue a versão atual e revise antes de salvar novamente.'
@@ -146,7 +193,8 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
       if (!mounted.current || !isCurrent()) return;
       if (result.error) throw result.error;
       const latest = result.data?.find((item) => item.id === automationSnapshot.id && item.stage_id === stageId);
-      if (!latest?.updated_at || (latest.automation_type === 'alert_on_inactivity') !== (automationSnapshot.automation_type === 'alert_on_inactivity')) throw new Error('Esta regra foi removida ou mudou de configuração. Reabra a lista de automações.');
+      const inactivityType = (type: string | null) => isInactivityAutomationType(type) ? type : null;
+      if (!latest?.updated_at || inactivityType(latest.automation_type) !== inactivityType(automationSnapshot.automation_type)) throw new Error('Esta regra foi removida ou mudou de configuração. Reabra a lista de automações.');
       setAutomationSnapshot(latest);
       setVersionReview(latest);
       setNeedsVersionRefresh(false);
@@ -157,47 +205,25 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4" aria-busy={isLoading}>
+    <form id={formId} onSubmit={handleSubmit} className="space-y-4" aria-busy={isLoading}>
       <fieldset disabled={isLoading} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="stage-automation-type">Tipo de Automação</Label>
-        <Select value={automationType} onValueChange={(v) => setAutomationType(v as AutomationType)} disabled={isEditing && automationSnapshot?.automation_type === 'alert_on_inactivity'}>
+        <Select value={automationType} onValueChange={(v) => setAutomationType(v as AutomationType)} disabled={editingInactivity}>
           <SelectTrigger id="stage-automation-type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {(Object.keys(AUTOMATION_TYPE_LABELS) as AutomationType[]).map(type => (
-              <SelectItem key={type} value={type} disabled={isEditing && type === 'alert_on_inactivity' && automationSnapshot?.automation_type !== 'alert_on_inactivity'}>
+            {typeOptions.map(type => (
+              <SelectItem key={type} value={type}>
                 {AUTOMATION_TYPE_LABELS[type]}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground flex items-center gap-1">
-          <Info className="h-3 w-3" />
-          {AUTOMATION_TYPE_DESCRIPTIONS[automationType]}
-        </p>
+        <p className="text-xs text-muted-foreground">{AUTOMATION_TYPE_DESCRIPTIONS[automationType]}</p>
       </div>
 
-      {/* Trigger Days - for inactivity alert */}
-      {automationType === 'alert_on_inactivity' && (
-        <div className="space-y-2">
-          <Label htmlFor="stage-automation-days">Dias de Inatividade</Label>
-          <Input
-            type="number"
-            id="stage-automation-days"
-            min={1}
-            max={3650}
-            value={triggerDays}
-            onChange={(e) => setTriggerDays(parseInt(e.target.value) || 1)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Conta a última interação humana a partir da ativação. Interações automáticas não reiniciam o prazo. Leads antigos não geram alertas imediatos.
-          </p>
-          <p className="text-xs text-muted-foreground">{isEditing ? 'Configurar a regra não envia alertas. Ative ou desative pela lista de automações.' : 'A regra será criada desativada. Depois de configurar, ative pela lista de automações.'}</p>
-          {isEditing && automationSnapshot?.inactivity_runtime_available !== true && automationSnapshot?.inactivity_policy?.runtime_available !== true && <p role="status" className="text-xs text-muted-foreground">Os alertas de inatividade estão indisponíveis neste ambiente. Uma regra desativada pode ser configurada quando o serviço estiver preparado.</p>}
-        </div>
-      )}
       {/* Alert Message */}
       {automationType === 'alert_on_inactivity' && (
         <div className="space-y-2">
@@ -209,6 +235,57 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
             placeholder="Lead está há X dias sem atendimento"
             maxLength={1000}
           />
+        </div>
+      )}
+
+      {countsInactivity && (
+        <div className="space-y-4">
+          <div className="grid items-end gap-3 sm:grid-cols-[150px_minmax(0,1fr)]">
+            <div className="space-y-2">
+              <Label htmlFor="stage-automation-days">Dias sem atividade</Label>
+              <Input
+                type="number"
+                id="stage-automation-days"
+                min={1}
+                max={3650}
+                value={triggerDays}
+                className="h-10"
+                onChange={(e) => setTriggerDays(parseInt(e.target.value) || 1)}
+              />
+            </div>
+            {isMoveRule && <div className="space-y-2">
+              <Label htmlFor="stage-automation-target">Mover para a coluna</Label>
+              <Select value={targetStageId} onValueChange={setTargetStageId} disabled={moveTargetsLoading || !moveTargets?.length}>
+                <SelectTrigger id="stage-automation-target">
+                  <SelectValue placeholder={moveTargetsLoading ? 'Carregando colunas...' : 'Selecione a coluna'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {moveTargets?.map(target => (
+                    <SelectItem key={target.id} value={target.id}>{target.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>}
+            {isRedistribution && <div className="space-y-2">
+              <Label htmlFor="stage-automation-queue">Distribuição</Label>
+              <Select value={queueId} onValueChange={setQueueId} disabled={!canManageDistribution || queueQuery.isPending || queueQuery.isError || !queues.length}>
+                <SelectTrigger id="stage-automation-queue" className="w-full">
+                  <SelectValue placeholder={queueQuery.isPending ? 'Carregando distribuições…' : 'Selecione uma distribuição'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {queues.map(queue => <SelectItem key={queue.id} value={queue.id}>{queue.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>}
+          </div>
+          {isMoveRule && !moveTargetsLoading && moveTargets && !moveTargets.length && <p role="status" className="text-xs text-muted-foreground">Este pipeline precisa de outra coluna aberta para receber os leads.</p>}
+          {isRedistribution && queueQuery.isError && <div role="alert" className="flex items-center gap-2 text-xs">Falha ao carregar distribuições. <Button type="button" variant="outline" size="sm" onClick={() => void queueQuery.refetch()}>Tentar novamente</Button></div>}
+          {isRedistribution && queueQuery.isSuccess && !queues.length && <p role="status" className="text-xs text-muted-foreground">Ative uma distribuição para usar esta automação.</p>}
+          {isRedistribution && selectedQueue?.target_stage && <p className="text-xs text-muted-foreground">A distribuição também envia o lead para {selectedQueue.target_stage.name}.</p>}
+          <StageInactivityScopeField id="stage-automation-scope" value={startMode} onChange={setStartMode} disabled={isLoading} />
+          <p className="text-xs text-muted-foreground">Atividades registradas, como feedback, mensagens de atendimento e tarefas concluídas, reiniciam o prazo.</p>
+          {!isEditing && <p className="text-xs text-muted-foreground">A regra fica desativada até você ligá-la na lista.</p>}
+          {isEditing && automationSnapshot?.inactivity_runtime_available !== true && automationSnapshot?.inactivity_policy?.runtime_available !== true && <p role="status" className="text-xs text-muted-foreground">O serviço de inatividade está indisponível neste ambiente.</p>}
         </div>
       )}
 
@@ -243,7 +320,7 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
       {/* Deal Status - for change status automation */}
       {automationType === 'change_deal_status_on_enter' && (
         <div className="space-y-2">
-          <Label htmlFor="stage-automation-status">Novo Status do Deal</Label>
+          <Label htmlFor="stage-automation-status">Novo status do lead</Label>
           <Select value={dealStatus} onValueChange={(v) => setDealStatus(v as 'open' | 'won' | 'lost')}>
             <SelectTrigger id="stage-automation-status">
               <SelectValue />
@@ -283,20 +360,21 @@ function AutomationFormEditor({ stageId, automation, onSuccess, onCancel, termin
         {' '}{versionReview.automation_type === 'change_assignee_on_enter'
           ? `Responsável: ${users?.find(user => user.id === versionReview.action_config?.target_user_id)?.name || 'Usuário não disponível'}.`
           : versionReview.automation_type === 'change_deal_status_on_enter' ? `Status: ${DEAL_STATUS_LABELS[String(versionReview.action_config?.deal_status || 'open')] || 'Não definido'}.`
+          : versionReview.automation_type === 'move_stage_on_inactivity' ? `Prazo: ${versionReview.trigger_days} dias. Destino: ${moveTargets?.find((target) => target.id === (versionReview.target_stage_id || versionReview.inactivity_policy?.target_stage_id))?.name || 'coluna indisponível'}.`
+          : versionReview.automation_type === 'redistribute_on_inactivity' ? `Prazo: ${versionReview.trigger_days} dias. Distribuição: ${queues.find((queue) => queue.id === versionReview.inactivity_policy?.target_round_robin_id)?.name || 'indisponível'}.`
           : `Prazo: ${versionReview.trigger_days} dias. Mensagem: ${versionReview.alert_message || 'Sem mensagem'}.`}
         {' '}Seu rascunho foi mantido. Confira as diferenças antes de salvar.
       </p>}
-      <div className="flex gap-2 pt-4">
-        {onCancel && (
-          <Button type="button" variant="outline" className="w-[40%] rounded-[6px]" onClick={onCancel} disabled={isLoading}>
-            Cancelar
-          </Button>
-        )}
-        <Button type="submit" disabled={isLoading || needsVersionRefresh || assigneeConflict || (automationType === 'change_assignee_on_enter' && (usersQuery.isPending || usersQuery.isError))} className={`rounded-[6px] ${onCancel ? 'w-[60%]' : 'w-full'}`}>
-          {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          {isEditing ? 'Salvar' : 'Criar Automação'}
-        </Button>
-      </div>
+      <StageSettingsActions
+        onCancel={onCancel}
+        cancelDisabled={isLoading}
+        primary={{
+          label: isEditing ? 'Salvar' : 'Criar Automação',
+          form: formId,
+          loading: isLoading,
+          disabled: isLoading || needsVersionRefresh || assigneeConflict || (automationType === 'change_assignee_on_enter' && (usersQuery.isPending || usersQuery.isError)) || (isMoveRule && (moveTargetsLoading || !targetStageId)) || (isRedistribution && (!canManageDistribution || !selectedQueue || queueQuery.isError)),
+        }}
+      />
     </form>
   );
 }

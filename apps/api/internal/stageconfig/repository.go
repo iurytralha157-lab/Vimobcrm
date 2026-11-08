@@ -19,6 +19,8 @@ import (
 type Repository struct {
 	db                       *dbpkg.Postgres
 	inactivityRuntimeEnabled bool
+	inactivityMover          StageInactivityMover
+	inactivityRedistributor  StageInactivityRedistributor
 }
 
 type scanner interface {
@@ -220,6 +222,9 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return StageAutomation{}, err
 	}
+	if err := rejectGenericInactivityActionChange(ctx, tx, tenantContext.OrganizationID, automationID); err != nil {
+		return StageAutomation{}, err
+	}
 	if err := repo.validateAutomationReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
 		return StageAutomation{}, err
 	}
@@ -315,6 +320,18 @@ func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenan
 	if _, err := readLockedAutomationRevision(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input.ExpectedUpdatedAt); err != nil {
 		return err
 	}
+	if !tenantContext.HasPermission(permissions.DistributionManage) {
+		var redistribution bool
+		if err := tx.QueryRow(ctx, `select coalesce(to_jsonb(automation)->>'automation_type', to_jsonb(automation)->>'action_type',
+ to_jsonb(automation)#>>'{config,automation_type}', '')=$3
+ from public.stage_automations automation where organization_id=$1::uuid and id=$2::uuid`,
+			tenantContext.OrganizationID, automationID, stageAutomationRedistributeOnInactivity).Scan(&redistribution); err != nil {
+			return err
+		}
+		if redistribution {
+			return tenant.ErrOrganizationAccessDenied
+		}
+	}
 	tag, err := tx.Exec(ctx, `
 		delete from public.stage_automations
 		where organization_id = $1::uuid
@@ -365,6 +382,9 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 		return StageAutomation{}, err
 	}
 	if _, err := readLockedAutomationRevision(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input.ExpectedUpdatedAt); err != nil {
+		return StageAutomation{}, err
+	}
+	if err := rejectGenericInactivityActionChange(ctx, tx, tenantContext.OrganizationID, automationID); err != nil {
 		return StageAutomation{}, err
 	}
 	if input.IsActive {

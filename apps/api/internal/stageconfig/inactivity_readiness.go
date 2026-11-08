@@ -26,6 +26,9 @@ const inactivityRuntimeReadySQL = `select
  to_regclass('private.stage_inactivity_policies') is not null
  and to_regclass('private.stage_inactivity_jobs') is not null
  and to_regclass('private.stage_inactivity_lead_scopes') is not null
+ and exists (select 1 from pg_catalog.pg_attribute attribute
+   where attribute.attrelid=to_regclass('private.stage_inactivity_policies')
+     and attribute.attname='target_round_robin_id' and not attribute.attisdropped)
  and exists (
  select 1 from pg_catalog.pg_index definition
  join pg_catalog.pg_class index_relation on index_relation.oid=definition.indexrelid

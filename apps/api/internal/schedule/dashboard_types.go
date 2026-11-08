@@ -41,20 +41,21 @@ type DashboardEventsFilter struct {
 }
 
 type DashboardReport struct {
-	ReportTimezone   string                      `json:"report_timezone"`
-	Period           DashboardPeriod             `json:"period"`
-	KPIs             DashboardKPIs               `json:"kpis"`
-	Daily            []DashboardDailyPoint       `json:"daily"`
-	Hourly           []DashboardHourlyPoint      `json:"hourly"`
-	Weekly           []DashboardWeeklyPoint      `json:"weekly"`
-	ByType           []DashboardCount            `json:"by_type"`
-	BySource         []DashboardSourceCount      `json:"by_source"`
-	ByOutcome        []DashboardCount            `json:"by_outcome"`
-	UpcomingEvents   []DashboardUpcomingEvent    `json:"upcoming_events"`
-	OverdueByOwner   []DashboardOverdueOwner     `json:"overdue_by_owner"`
-	PerformerRanking []DashboardPerformerRanking `json:"performer_ranking"`
-	TopPerformers    []DashboardTopPerformer     `json:"top_performers"`
-	DataQuality      *DashboardDataQuality       `json:"data_quality,omitempty"`
+	ReportTimezone   string                           `json:"report_timezone"`
+	Period           DashboardPeriod                  `json:"period"`
+	KPIs             DashboardKPIs                    `json:"kpis"`
+	Daily            []DashboardDailyPoint            `json:"daily"`
+	Hourly           []DashboardHourlyPoint           `json:"hourly"`
+	HourDistribution []DashboardHourDistributionPoint `json:"hour_distribution"`
+	Weekly           []DashboardWeeklyPoint           `json:"weekly"`
+	ByType           []DashboardCount                 `json:"by_type"`
+	BySource         []DashboardSourceCount           `json:"by_source"`
+	ByOutcome        []DashboardCount                 `json:"by_outcome"`
+	UpcomingEvents   []DashboardUpcomingEvent         `json:"upcoming_events"`
+	OverdueByOwner   []DashboardOverdueOwner          `json:"overdue_by_owner"`
+	PerformerRanking []DashboardPerformerRanking      `json:"performer_ranking"`
+	TopPerformers    []DashboardTopPerformer          `json:"top_performers"`
+	DataQuality      *DashboardDataQuality            `json:"data_quality,omitempty"`
 }
 
 type DashboardDataQuality struct {
@@ -92,11 +93,19 @@ type DashboardKPIs struct {
 type DashboardDailyPoint struct {
 	Date      string `json:"date"`
 	Total     int64  `json:"total"`
+	Eligible  int64  `json:"eligible"`
 	Open      int64  `json:"open"`
 	Overdue   int64  `json:"overdue"`
 	Completed int64  `json:"completed"`
 	Cancelled int64  `json:"cancelled"`
 	NoShow    int64  `json:"no_show"`
+}
+
+// DashboardHourDistributionPoint covers the whole period, unlike Hourly, which
+// exists only for single-day reads.
+type DashboardHourDistributionPoint struct {
+	Hour  int   `json:"hour"`
+	Total int64 `json:"total"`
 }
 
 type DashboardHourlyPoint struct {
@@ -121,14 +130,17 @@ type DashboardWeeklyPoint struct {
 }
 
 type DashboardCount struct {
-	Key   string `json:"key"`
-	Count int64  `json:"count"`
+	Key       string `json:"key"`
+	Count     int64  `json:"count"`
+	Completed *int64 `json:"completed,omitempty"`
 }
 
 type DashboardSourceCount struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	Count int64  `json:"count"`
+	Key                  string `json:"key"`
+	Label                string `json:"label"`
+	Count                int64  `json:"count"`
+	AppointmentCompleted int64  `json:"appointment_completed"`
+	AppointmentEligible  int64  `json:"appointment_eligible"`
 }
 
 type DashboardTopPerformer struct {
@@ -155,23 +167,26 @@ type DashboardUpcomingEvent struct {
 }
 
 type DashboardEventItem struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	EventType     string    `json:"event_type"`
-	StartTime     time.Time `json:"start_time"`
-	EndTime       time.Time `json:"end_time"`
-	IsAllDay      bool      `json:"is_all_day"`
-	UserID        string    `json:"user_id"`
-	UserName      string    `json:"user_name"`
-	UserAvatarURL *string   `json:"user_avatar_url"`
-	LeadID        *string   `json:"lead_id"`
-	LeadName      *string   `json:"lead_name"`
-	PropertyID    *string   `json:"property_id"`
-	PropertyTitle *string   `json:"property_title"`
-	PropertyCode  *string   `json:"property_code"`
-	Status        string    `json:"status"`
-	Outcome       *string   `json:"outcome"`
-	IsOverdue     bool      `json:"is_overdue"`
+	ID               string    `json:"id"`
+	Title            string    `json:"title"`
+	EventType        string    `json:"event_type"`
+	StartTime        time.Time `json:"start_time"`
+	EndTime          time.Time `json:"end_time"`
+	IsAllDay         bool      `json:"is_all_day"`
+	UserID           string    `json:"user_id"`
+	UserName         string    `json:"user_name"`
+	UserAvatarURL    *string   `json:"user_avatar_url"`
+	LeadID           *string   `json:"lead_id"`
+	LeadName         *string   `json:"lead_name"`
+	PropertyID       *string   `json:"property_id"`
+	PropertyTitle    *string   `json:"property_title"`
+	PropertyCode     *string   `json:"property_code"`
+	LeadStage        *string   `json:"lead_stage"`
+	LeadSource       *string   `json:"lead_source"`
+	GoogleSyncStatus *string   `json:"google_sync_status"`
+	Status           string    `json:"status"`
+	Outcome          *string   `json:"outcome"`
+	IsOverdue        bool      `json:"is_overdue"`
 }
 
 type DashboardEventsPage struct {

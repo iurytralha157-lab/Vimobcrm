@@ -44,6 +44,7 @@ export const usePathname=()=>'/marketing', useRouter=()=>({replace:noop,push:noo
 export default function Link({children,href,...props}){return <a href={href} {...props}>{children}</a>;}
 window.searchFixtureRequests=[];
 export async function vimobAPIRequest(path,options){
+  if(path==='/v1/marketing/connections')return {enabled:false,meta_configured:false,connections:[]};
   if(path!=='/v1/analytics/campaign-insights')throw Error('Unexpected transport '+path);
   window.searchFixtureRequests.push({path,query:options.query,organizationId:options.organizationId});
   const data=createEmptyMarketingCampaignInsights();data.summary.totalLeads=42;data.lastSync='2026-10-01T12:00:00Z';return {data};

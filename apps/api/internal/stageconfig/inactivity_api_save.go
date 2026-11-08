@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -27,6 +28,22 @@ func (repo Repository) SaveInactivityAutomation(ctx context.Context, tenantConte
 	if input.Enabled && !repo.inactivityRuntimeEnabled {
 		return StageAutomation{}, ErrInactivityRuntimeNotReady
 	}
+	if input.Enabled && input.Action == InactivityActionMoveStage && repo.inactivityMover == nil {
+		return StageAutomation{}, ErrInactivityRuntimeNotReady
+	}
+	if input.Action == InactivityActionRedistribute {
+		if !tenantContext.HasPermission(permissions.DistributionManage) {
+			return StageAutomation{}, tenant.ErrOrganizationAccessDenied
+		}
+		if input.Enabled && repo.inactivityRedistributor == nil {
+			return StageAutomation{}, ErrInactivityRuntimeNotReady
+		}
+	}
+	if input.Action != InactivityActionNotify {
+		if _, valid := normalizeUUID(tenantContext.UserID); !valid {
+			return StageAutomation{}, tenant.ErrOrganizationAccessDenied
+		}
+	}
 	if !create {
 		var valid bool
 		automationID, valid = normalizeUUID(automationID)
@@ -38,6 +55,18 @@ func (repo Repository) SaveInactivityAutomation(ctx context.Context, tenantConte
 	defer cancel()
 	if err := repo.VerifyStageInactivityRuntime(operationCtx); err != nil {
 		return StageAutomation{}, err
+	}
+	if input.StartMode == InactivityNewStageEntries {
+		var entryScopeReady bool
+		err := repo.db.Pool().QueryRow(operationCtx, `select exists (select 1 from pg_catalog.pg_constraint
+ where conrelid='private.stage_inactivity_policies'::regclass
+   and conname='stage_inactivity_policies_entry_scope_check' and convalidated)`).Scan(&entryScopeReady)
+		if err != nil {
+			return StageAutomation{}, err
+		}
+		if !entryScopeReady {
+			return StageAutomation{}, ErrInactivityRuntimeNotReady
+		}
 	}
 	hasConfig, err := repo.hasStageAutomationConfigSchema(operationCtx)
 	if err != nil {
@@ -90,7 +119,7 @@ func (repo Repository) SaveInactivityAutomation(ctx context.Context, tenantConte
 		if err != nil {
 			return StageAutomation{}, err
 		}
-		if err := validateInactivityAlertEdit(currentAutomation); err != nil {
+		if err := validateInactivityEdit(currentAutomation, input.Action); err != nil {
 			return StageAutomation{}, err
 		}
 		current, err = readInactivityPolicyForUpdate(operationCtx, tx, tenantContext.OrganizationID, automationID)
@@ -110,6 +139,16 @@ func (repo Repository) SaveInactivityAutomation(ctx context.Context, tenantConte
 	if err := lockInactivityWriteModule(operationCtx, tx, tenantContext.OrganizationID); err != nil {
 		return StageAutomation{}, err
 	}
+	if input.Action == InactivityActionMoveStage {
+		if err := validateInactivityMoveRule(operationCtx, tx, tenantContext.OrganizationID, stageID, automationID, input); err != nil {
+			return StageAutomation{}, err
+		}
+	}
+	if input.Action == InactivityActionRedistribute {
+		if err := validateInactivityRedistributionRule(operationCtx, tx, tenantContext, stageID, automationID, current, input); err != nil {
+			return StageAutomation{}, err
+		}
+	}
 	var now time.Time
 	var epoch string
 	if err := tx.QueryRow(operationCtx, `select clock_timestamp(), gen_random_uuid()::text`).Scan(&now, &epoch); err != nil {
@@ -128,6 +167,15 @@ func (repo Repository) SaveInactivityAutomation(ctx context.Context, tenantConte
 	}
 	policy := nextInactivityPolicy(current, previousUpdatedAt, previousActive, now, epoch, input)
 	policy.AutomationID, policy.OrganizationID, policy.StageID = automation.ID, tenantContext.OrganizationID, stageID
+	policy.ActionKind = input.Action
+	if input.Action == InactivityActionMoveStage {
+		target, actor := input.TargetStageID, tenantContext.UserID
+		policy.TargetStageID, policy.ActingUserID = &target, &actor
+	}
+	if input.Action == InactivityActionRedistribute {
+		target, actor := input.TargetRoundRobinID, tenantContext.UserID
+		policy.TargetRoundRobinID, policy.ActingUserID = &target, &actor
+	}
 	policy.AutomationUpdatedAt = updatedAt
 	if err := policy.Validate(); err != nil {
 		return StageAutomation{}, err
@@ -155,17 +203,24 @@ func validateInactivityPolicyCAS(current *StageInactivityPolicy, expectedRevisio
 
 func nextInactivityPolicy(current *StageInactivityPolicy, previousUpdatedAt time.Time, previousActive bool, now time.Time, epoch string, input stageInactivityInput) StageInactivityPolicy {
 	policy := StageInactivityPolicy{Epoch: epoch, Revision: 1, ActivatedAt: now, InteractionCoverageFrom: &now}
+	startMode := input.StartMode
+	if startMode == "" {
+		startMode = InactivityStartAtActivation
+		if current != nil && current.StartMode == InactivityNewStageEntries {
+			startMode = current.StartMode
+		}
+	}
 	if current != nil {
 		policy.Revision = current.Revision + 1
-		// Continuous enabled edits retain identity, so an already-notified
-		// episode is not duplicated by message/threshold changes.
-		if current.Enabled && previousActive && current.AutomationUpdatedAt.Equal(previousUpdatedAt) && current.Clock == InactivityClockLastInteraction && current.StartMode == InactivityStartAtActivation {
+		// Continuous edits retain episode identity. A scope change starts a
+		// new clock so newly eligible leads receive the full deadline.
+		if current.Enabled && previousActive && current.AutomationUpdatedAt.Equal(previousUpdatedAt) && current.Clock == InactivityClockLastInteraction && current.StartMode == startMode {
 			policy.Epoch = current.Epoch
 			policy.ActivatedAt = current.ActivatedAt
 			policy.InteractionCoverageFrom = current.InteractionCoverageFrom
 		}
 	}
-	policy.Clock, policy.StartMode = InactivityClockLastInteraction, InactivityStartAtActivation
+	policy.Clock, policy.StartMode = InactivityClockLastInteraction, startMode
 	policy.Days, policy.Message, policy.Enabled = input.Days, input.Message, input.Enabled
 	return policy
 }

@@ -735,3 +735,26 @@ func TestConfigValidateAllowsUnprovisionedGrupoOLXSecretButRejectsUnsafeFormat(t
 		t.Fatalf("expected unsafe global Grupo OLX webhook secret format error, got %v", err)
 	}
 }
+
+func TestConfigValidateChecksMarketingMetaLoginSeparately(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.Email.AppURL = "https://app.vimobcrm.com.br"
+	cfg.Marketing = MarketingConfig{
+		MetaAppID:        "123456789012345",
+		MetaAppSecret:    "server-only-secret",
+		MetaGraphVersion: "v25.0",
+		MetaCallbackURL:  "https://api.vimobcrm.com.br/v1/public/marketing/oauth/meta/callback",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Marketing must not require the lead OAuth variables: %v", err)
+	}
+	if cfg.Meta.AppID != "" {
+		t.Fatal("Marketing variables must not enable the lead OAuth")
+	}
+
+	cfg.Marketing.MetaAppSecret = ""
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "MARKETING_META_APP_SECRET") {
+		t.Fatalf("expected Marketing secret error, got %v", err)
+	}
+}

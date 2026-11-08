@@ -208,13 +208,30 @@ Faça um canário com uma conta dedicada antes de liberar produção:
 
 ### Auth: sessões e limites de tentativas
 
-O código local da API consulta `auth.sessions` antes de trocar senha ou trocar
-organização. Uma sessão revogada recebe 401;
-se a consulta falhar, a operação recebe 503. Isso depende de o papel usado por
-`DATABASE_URL` ter acesso de leitura a `auth.sessions`. Confirme esse privilégio
-na stack de destino e faça um canário com sessão revogada antes de publicar a
-API. O guard não se aplica a acessos diretos ao Data API do Supabase; as
-políticas RLS continuam sendo a proteção dessas rotas.
+O código da API Go consulta `auth.sessions` antes de resolver a organização e
+as permissões de uma requisição de usuário. Uma sessão revogada recebe 401.
+Uma falha nessa consulta retorna 503. Confirme a leitura de `auth.sessions`
+pelo papel de `DATABASE_URL` na stack de destino e teste sessões ativas e
+revogadas antes de publicar a API. Entradas autenticadas por chave de API,
+webhooks e workers continuam usando suas credenciais próprias. Na Data API do
+Supabase, o isolamento depende dos grants e das políticas RLS.
+
+Em Configurações, a API exige a senha atual da conta e valida o identificador
+retornado pelo Supabase Auth. O papel de `DATABASE_URL` precisa ler o e-mail
+canônico em `auth.users`. A sessão temporária usada para a confirmação
+precisa ser encerrada antes de a API atualizar a senha. A recuperação por link
+continua usando a sessão de recuperação. Publique a API e o formulário
+compatível na mesma janela e drene as réplicas antigas da API. Formulários
+abertos na versão anterior precisam ser recarregados para enviar a senha atual.
+Se for necessário voltar à API anterior, suspenda a rota de troca de senha
+até restabelecer a verificação. A recuperação fica indisponível nesse intervalo.
+
+O endpoint direto `PUT /auth/v1/user` do GoTrue segue a configuração da
+própria stack. Verifique na versão implantada se
+`GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` está habilitada e
+teste em ambiente isolado a recusa de uma troca sem senha atual em contas
+com senha, a criação de senha em contas sem senha e a recuperação por link.
+Esta alteração no CRM não ativa a opção no GoTrue.
 
 O Auth do Supabase possui [limites para `/auth/v1/token`, envio de e-mail e
 verificação](https://supabase.com/docs/guides/auth/rate-limits). O repositório oferece o overlay **opcional**

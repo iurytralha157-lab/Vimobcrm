@@ -48,6 +48,7 @@ import {
 import { toast } from "sonner";
 
 import { AssignmentDialog } from "./property-locations/AssignmentDialog";
+import { LocationsKpis } from "./property-locations/LocationsKpis";
 import { DeletionDialog } from "./property-locations/DeletionDialog";
 import {
   CitiesPanel,
@@ -648,18 +649,25 @@ export default function PropertyLocations({
       <div className="space-y-3 animate-in">
         <PropertySectionTabs activeSection={activePropertySection} />
 
+        <LocationsKpis
+          tab={tab}
+          cities={cities}
+          neighborhoods={neighborhoods}
+          condominiums={condominiums}
+          owners={filteredOwners}
+          ownerTotalCount={ownerTotalCount}
+          canSeeOwnerContact={canSeeOwnerContact}
+        />
+
         <Tabs value={tab} onValueChange={handleTabChange}>
           <LocationsNavigation
+            tab={tab}
             search={search}
             onSearchChange={setSearch}
             citiesCount={cities.length}
             neighborhoodsCount={neighborhoods.length}
-            condominiumsCount={condominiums.length}
-            ownersCount={ownerTotalCount}
             loadingCities={loadingCities}
             loadingNeighborhoods={loadingNeighborhoods}
-            loadingCondominiums={loadingCondominiums}
-            loadingOwners={loadingOwners}
           />
 
           <CitiesPanel

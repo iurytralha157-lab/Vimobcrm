@@ -165,6 +165,12 @@ export const propertyWorkspacePropertySchema = z
     faixa_valor_imovel: nullableStringSchema.optional(),
     renda_familiar: nullableNumberSchema.optional(),
     is_demo: nullableBooleanSchema.optional(),
+    portfolio_type: z.enum(["ready", "launch", "third_party"]).optional(),
+    third_party_kind: z.enum(["partner", "private_owner"]).nullable().optional(),
+    partner_name: nullableStringSchema.optional(),
+    partner_contact: nullableStringSchema.optional(),
+    commission_split_percent: nullableNumberSchema.optional(),
+    third_party_authorized_until: nullableStringSchema.optional(),
   })
   .strip();
 
@@ -176,11 +182,14 @@ const propertyOwnerContactKeys = [
   "owner_notify_email",
   "owner_media_source",
   "origin_media",
+  "partner_contact",
 ] as const satisfies ReadonlyArray<
   keyof z.infer<typeof propertyWorkspacePropertySchema>
 >;
 
 const propertyManagerOnlyKeys = [
+  "commission_split_percent",
+  "third_party_authorized_until",
   "commission_percentage",
   "comissao_venda",
   "comissao_locacao",
@@ -847,6 +856,39 @@ export const propertyKeyCreateInputSchema = z
     metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
+
+export const propertyKeyMovementListQuerySchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).optional(),
+    cursor: z.string().trim().min(1).max(512).optional(),
+    type: propertyKeyMovementTypeSchema.optional(),
+  })
+  .strict();
+
+export const propertyKeyMovementHistoryItemSchema = z.object({
+  id: uuidSchema,
+  property_key_id: uuidSchema,
+  key_name: z.string(),
+  movement_type: propertyKeyMovementTypeSchema,
+  actor_name: z.string().nullable(),
+  holder_name: z.string().nullable(),
+  reason: z.string().nullable(),
+  notes: z.string().nullable(),
+  from_location: z.string().nullable(),
+  to_location: z.string().nullable(),
+  occurred_at: z.string(),
+  expected_return_at: z.string().nullable(),
+});
+
+export const apiPropertyKeyMovementPageSchema = z.object({
+  data: z.array(propertyKeyMovementHistoryItemSchema),
+  next_cursor: z.string().nullable(),
+  meta: z.object({ can_view_key_custody: z.boolean() }),
+});
+
+export type PropertyKeyMovementListQuery = z.input<typeof propertyKeyMovementListQuerySchema>;
+export type PropertyKeyMovementHistoryItem = z.infer<typeof propertyKeyMovementHistoryItemSchema>;
+export type PropertyKeyMovementPage = z.infer<typeof apiPropertyKeyMovementPageSchema>;
 
 export const propertyKeyMovementInputSchema = z
   .object({

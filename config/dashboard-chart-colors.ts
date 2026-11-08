@@ -9,9 +9,3 @@ export const DASHBOARD_CHART_COLORS = Object.freeze([
   '#8B5CF6',
   '#14B8A6',
 ]);
-
-export const DASHBOARD_DEAL_EVOLUTION_COLORS = Object.freeze({
-  open: '#3B82F6',
-  won: '#22C55E',
-  lost: '#EF4444',
-});

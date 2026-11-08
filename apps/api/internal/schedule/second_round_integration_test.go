@@ -311,7 +311,7 @@ func runScheduleSecondRoundChecks(t *testing.T, f scheduleHardeningFixtureContex
 		w := httptest.NewRecorder()
 		NewHandler(f.repo).CreateEvent(w, r)
 		var persisted int
-		if err := f.pool.QueryRow(f.ctx, `select count(*) from public.schedule_events where id=$1`, command).Scan(&persisted); err != nil {
+		if err := f.pool.QueryRow(f.ctx, `select count(*) from public.schedule_events where client_request_id=$1`, command).Scan(&persisted); err != nil {
 			t.Fatal(err)
 		}
 		if w.Code != http.StatusBadRequest || persisted != 0 {

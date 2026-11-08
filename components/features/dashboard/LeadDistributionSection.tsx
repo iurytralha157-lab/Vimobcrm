@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { Building2, ChevronDown, RefreshCw, UserRoundX, UsersRound, X } from "lucide-react";
+import { Building2, ChevronDown, RefreshCw, UserRoundX, X } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -127,39 +127,11 @@ function DistributionBars({
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const isBrokerChart = variant === "user";
   const selectedId = isBrokerChart && onBrokerSelect ? selectedBrokerId : localSelectedId;
-  const expandBrokers = isBrokerChart && rows.length <= 5;
-  const spreadBrokers = isBrokerChart && rows.length <= 8;
+  // Brokers keep one compact column width whatever their number, and each bar fills
+  // its column, so bars sit close together and more of the team fits on screen.
+  const brokerColumnWidthClass = "w-[56px] sm:w-[62px]";
+  const brokerBarWidthClass = "w-full";
   const spreadTeams = !isBrokerChart && rows.length <= 5;
-  const brokerColumnWidthClass = rows.length <= 2
-    ? "min-w-[128px] flex-1"
-    : rows.length === 3
-      ? "min-w-[100px] flex-1"
-      : rows.length === 4
-        ? "min-w-[90px] flex-1"
-        : rows.length === 5
-          ? "min-w-[80px] flex-1"
-          : rows.length === 6
-            ? "w-[80px] sm:w-[112px]"
-            : rows.length === 7
-              ? "w-[76px] sm:w-[100px]"
-              : spreadBrokers
-                ? "w-[70px] sm:w-[92px]"
-                : "min-w-[64px] flex-1 sm:min-w-[72px]";
-  const brokerBarWidthClass = rows.length <= 2
-    ? "w-full max-w-[176px]"
-    : rows.length === 3
-      ? "w-full max-w-[152px]"
-      : rows.length === 4
-        ? "w-full max-w-[136px]"
-        : rows.length === 5
-          ? "w-full max-w-[120px]"
-          : rows.length === 6
-            ? "w-[72px] sm:w-[100px]"
-            : rows.length === 7
-              ? "w-[68px] sm:w-[88px]"
-              : spreadBrokers
-                ? "w-[62px] sm:w-[80px]"
-                : "min-w-[44px] w-[78%] max-w-[88px]";
   const teamColumnWidthClass = rows.length === 1
     ? "min-w-[132px] flex-1"
     : rows.length === 2
@@ -215,7 +187,7 @@ function DistributionBars({
           : "Leads por equipe"}
         tabIndex={0}
       >
-        <div className={`flex min-w-full items-end border-b border-[var(--app-border)] px-2 ${isBrokerChart ? expandBrokers ? "h-full w-full gap-2" : `h-full w-max gap-1.5 sm:gap-2 ${spreadBrokers ? "justify-evenly" : "justify-center"}` : spreadTeams ? "w-full gap-2" : "w-max justify-center gap-2"}`}>
+        <div className={`flex min-w-full items-end border-b border-[var(--app-border)] px-2 ${isBrokerChart ? "h-full w-max gap-1" : spreadTeams ? "w-full gap-2" : "w-max justify-center gap-2"}`}>
           <TooltipProvider delayDuration={120}>
             {rows.map((row) => {
               const leadCount = Math.max(0, row.leadCount ?? 0);
@@ -243,7 +215,7 @@ function DistributionBars({
                           }
                           setLocalSelectedId((current) => current === row.id ? null : row.id);
                         }}
-                        className={`group flex w-full flex-col items-center justify-end rounded-t-[6px] px-1 pb-1 focus-visible:bg-[var(--app-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isBrokerChart ? "absolute bottom-0 left-0" : ""}`}
+                        className={`group flex w-full flex-col items-center justify-end rounded-t-[6px] ${isBrokerChart ? "px-0.5" : "px-1"} pb-1 focus-visible:bg-[var(--app-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isBrokerChart ? "absolute bottom-0 left-0" : ""}`}
                         style={isBrokerChart ? {
                           height: `calc(${brokerBarRatio * 100}% + ${brokerFixedContentHeight * (1 - brokerBarRatio)}px)`,
                           minHeight: brokerFixedContentHeight + brokerMinimumBarHeight,
@@ -352,16 +324,12 @@ function DistributionCard({
   selectedBrokerId?: string | null;
   onBrokerSelect?: (brokerId: string | null) => void;
 }) {
-  const Icon = variant === "user" ? UsersRound : Building2;
   return (
-    <Card className={`flex min-w-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none ${fillHeight ? "min-h-[320px] lg:h-full" : "min-h-[360px]"}`}>
+    <Card className={`flex min-w-0 flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none ${fillHeight ? "min-h-[320px] lg:h-full" : "min-h-[360px]"}`}>
       <CardHeader className="shrink-0 px-4 pb-2 pt-4">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="flex min-w-0 items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-            </span>
-            <span className="truncate">{title}</span>
+          <CardTitle className="min-w-0 truncate text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
+            {title}
           </CardTitle>
           {variant === "user" && selectedBrokerId && onBrokerSelect ? (
             <button
@@ -374,7 +342,7 @@ function DistributionCard({
               <span>Limpar filtro</span>
             </button>
           ) : trailing ?? (!isLoading ? (
-            <span className="shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)]">
+            <span className="shrink-0 text-[12px] font-light text-[var(--app-text-secondary)]">
               {rows.some((row) => row.kind === "unassigned")
                 ? "Sem responsável"
                 : `${rows.length} ${rows.length === 1 ? (variant === "user" ? "corretor" : "equipe") : (variant === "user" ? "corretores" : "equipes")}`}
@@ -560,7 +528,7 @@ export function LeadDistributionSection({
 
   if (isError) {
     return (
-      <Card className={`rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none ${display === "both" ? "" : "flex min-h-[320px] flex-col lg:h-full"}`}>
+      <Card className={`rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none ${display === "both" ? "" : "flex min-h-[320px] flex-col lg:h-full"}`}>
         <CardContent className="flex min-h-[112px] flex-1 flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
           <div>
             <p className="text-[14px] font-normal text-[var(--app-text-primary)]">Não foi possível carregar a distribuição de leads.</p>

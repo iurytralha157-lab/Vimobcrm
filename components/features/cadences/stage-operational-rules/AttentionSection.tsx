@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 import { Label } from '@/components/ui/label'
 import {
@@ -43,12 +44,15 @@ export function AttentionSection({
   globalAttention,
   onUpdateDraft,
   onUpdateDeadline,
+  extra,
 }: {
   draft: RulesDraft
   canEdit: boolean
   globalAttention: GlobalAttentionState
   onUpdateDraft: (updater: (current: RulesDraft) => RulesDraft) => void
   onUpdateDeadline: (field: AttentionDeadlineField, minutes: number | undefined) => void
+  /** Independent rules shown with attention, such as the inactivity alert. */
+  extra?: ReactNode
 }) {
   const sourceMode = draft.attention.source_mode ?? 'inherit'
 
@@ -57,18 +61,20 @@ export function AttentionSection({
       aria-labelledby="stage-attention-title"
       className="rounded-[8px] bg-[var(--app-surface-soft)] p-3.5 text-[var(--app-text-primary)] sm:p-4"
     >
-      <div className="flex min-w-0 gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <AccentIcon icon={BellRing} />
         <div className="min-w-0">
           <h4 id="stage-attention-title" className="text-sm font-light">
-            Atenção e permanência
+            Avisos da etapa
           </h4>
-          <p className="mt-1 text-xs font-light leading-[18px] text-[var(--app-text-tertiary)]">
-            Mostra quando o lead precisa de ação ou de mudança de etapa.
-          </p>
         </div>
       </div>
 
+      {extra ? <div className="mt-3">{extra}</div> : null}
+      <details className="mt-3 rounded-[8px] bg-[var(--app-surface-solid)] px-3 py-2.5">
+      <summary className="cursor-pointer text-xs text-[var(--app-text-secondary)]">
+        Outros prazos de atendimento
+      </summary>
       <div
         role="radiogroup"
         aria-label="Origem das regras de atenção"
@@ -104,10 +110,10 @@ export function AttentionSection({
           </span>
           <span className="min-w-0">
             <span className="block text-xs font-light text-[var(--app-text-primary)]">
-              Herdar do pipeline
+              Usar regras padrão
             </span>
             <span className="mt-0.5 block text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
-              Usa, por tipo, a regra mais específica da etapa, do pipeline ou da organização.
+              Segue os prazos já definidos para a etapa, o pipeline ou a organização.
             </span>
           </span>
         </button>
@@ -142,10 +148,10 @@ export function AttentionSection({
           </span>
           <span className="min-w-0">
             <span className="block text-xs font-light text-[var(--app-text-primary)]">
-              Configurar nesta etapa
+              Personalizar nesta etapa
             </span>
             <span className="mt-0.5 block text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)]">
-              Substitui a herança e permite definir ou bloquear cada tipo de alerta aqui.
+              Escolha quais prazos de atendimento valem só nesta coluna.
             </span>
           </span>
         </button>
@@ -328,6 +334,7 @@ export function AttentionSection({
           )}
         </>
       )}
+      </details>
     </section>
   )
 }

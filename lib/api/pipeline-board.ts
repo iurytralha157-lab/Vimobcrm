@@ -72,11 +72,13 @@ export async function getPipelineBoard(params: {
   filters?: PipelineBoardFilters
   limit?: number
   signal?: AbortSignal
+  intent?: VimobAPIRequestIntent
 }) {
   const response = await vimobAPIRequest<BoardResponse>('/v1/pipeline-board', {
     organizationId: params.organizationId,
     query: buildPipelineBoardQuery(params),
-    signal: params.signal,
+    ...params.intent,
+    signal: params.signal ?? params.intent?.signal,
     timeoutMs: PIPELINE_READ_TIMEOUT_MS,
     retry: false,
   })

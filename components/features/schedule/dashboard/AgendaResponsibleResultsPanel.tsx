@@ -1,35 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, UsersRound } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { EmptyNote, Panel } from "@/components/features/marketing/marketing-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ScheduleDashboardPerformerRanking } from "@/lib/validation/schedule-dashboard";
+import type {
+  ScheduleDashboardKpis,
+  ScheduleDashboardPerformerRanking,
+} from "@/lib/validation/schedule-dashboard";
 
 import {
   AGENDA_RESPONSIBLE_RESULTS_PAGE_SIZE,
   paginateAgendaResponsibleResults,
 } from "./agenda-responsible-results-pagination";
+import { PersonAvatar } from "./agenda-dashboard-ui";
 
 const integerFormatter = new Intl.NumberFormat("pt-BR");
 const percentFormatter = new Intl.NumberFormat("pt-BR", {
-  minimumFractionDigits: 0,
+  minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
-
-function getInitials(name: string) {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "?"
-  );
-}
+const NUMERIC = "text-right tabular-nums";
 
 function sortPerformers(ranking: ScheduleDashboardPerformerRanking[]) {
   return ranking.slice().sort((left, right) => {
@@ -50,72 +43,25 @@ function sortPerformers(ranking: ScheduleDashboardPerformerRanking[]) {
   });
 }
 
-function PersonAvatar({
-  name,
-  avatarUrl,
-}: {
-  name: string;
-  avatarUrl: string | null;
-}) {
-  return (
-    <Avatar className="h-8 w-8 shrink-0">
-      {avatarUrl ? <AvatarImage src={avatarUrl} alt={name} /> : null}
-      <AvatarFallback className="bg-primary/10 text-[9px] font-medium text-primary">
-        {getInitials(name)}
-      </AvatarFallback>
-    </Avatar>
-  );
-}
+const COLUMNS =
+  "grid grid-cols-[minmax(0,1fr)_56px_56px_56px] items-center gap-2 @[720px]/agenda-dashboard:grid-cols-[minmax(0,1.6fr)_repeat(6,minmax(0,1fr))]";
+const WIDE_ONLY = "hidden @[720px]/agenda-dashboard:block";
 
-function RateCell({
-  value,
-  available,
-  tone = "primary",
-}: {
-  value: number;
-  available: boolean;
-  tone?: "primary" | "warning";
-}) {
-  if (!available) {
-    return (
-      <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
-        —
-      </span>
-    );
-  }
-
+function HeaderLabel({ wide, narrow }: { wide: string; narrow: string }) {
   return (
-    <div className="ml-auto w-[76px]">
-      <span
-        className={cn(
-          "block text-right text-[10px] font-medium tabular-nums",
-          tone === "warning"
-            ? "text-amber-600 dark:text-amber-400"
-            : "text-primary",
-        )}
-      >
-        {percentFormatter.format(value)}%
-      </span>
-      <span
-        className="mt-1 block h-1 overflow-hidden rounded-full bg-[var(--app-surface-soft)]"
-        aria-hidden="true"
-      >
-        <span
-          className={cn(
-            "block h-full rounded-full",
-            tone === "warning" ? "bg-amber-500" : "bg-primary",
-          )}
-          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-        />
-      </span>
-    </div>
+    <span role="columnheader" className={NUMERIC} title={wide}>
+      <span className="hidden truncate @[720px]/agenda-dashboard:inline">{wide}</span>
+      <span className="@[720px]/agenda-dashboard:hidden">{narrow}</span>
+    </span>
   );
 }
 
 export function AgendaResponsibleResultsPanel({
   performers,
+  totals,
 }: {
   performers: ScheduleDashboardPerformerRanking[];
+  totals?: ScheduleDashboardKpis;
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
   const orderedPerformers = useMemo(
@@ -128,154 +74,64 @@ export function AgendaResponsibleResultsPanel({
   );
 
   return (
-    <section
-      aria-labelledby="agenda-responsible-results-title"
-      className="min-w-0 overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none"
+    <Panel
+      title="Resultado por responsável"
+      aside={totals ? `${integerFormatter.format(totals.total)} compromissos` : undefined}
     >
-      <div className="flex items-center gap-2.5 px-4 py-4">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-primary/10 text-primary">
-          <UsersRound className="h-4 w-4" aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 id="agenda-responsible-results-title" className="text-[13px] font-normal text-[var(--app-text-primary)]">
-            Resultado por responsável
-          </h2>
-          <p className="mt-0.5 text-[10px] leading-4 text-[var(--app-text-tertiary)]">
+      {orderedPerformers.length === 0 ? (
+        <EmptyNote>Nenhum responsável encontrado neste período.</EmptyNote>
+      ) : (
+        <div role="table" aria-label="Resultado por responsável" className="text-[12px] font-light">
+          <div role="row" className={cn(COLUMNS, "border-b border-[var(--app-border)] pb-2 text-[var(--app-text-tertiary)]")}>
+            <span role="columnheader">Responsável</span>
+            <HeaderLabel wide="Compromissos" narrow="Compr." />
+            <HeaderLabel wide="Realizados" narrow="Real." />
+            <span role="columnheader" className={cn(NUMERIC, WIDE_ONLY)}>Em aberto</span>
+            <span role="columnheader" className={cn(NUMERIC, WIDE_ONLY)}>Não compareceu</span>
+            <span role="columnheader" className={cn(NUMERIC, WIDE_ONLY)}>Atrasados</span>
+            <HeaderLabel wide="Taxa de realização" narrow="Taxa" />
+          </div>
+          {pagination.items.map((person, index) => {
+            const rankingIndex = pagination.startIndex + index;
+            return (
+              <div key={person.user_id} role="row" className={cn(COLUMNS, "border-b border-[var(--app-border)] py-2 text-[var(--app-text-primary)]")}>
+                <span role="cell" className="flex min-w-0 items-center gap-2" title={`${rankingIndex + 1}º na taxa de realização`}>
+                  <PersonAvatar name={person.name} avatarUrl={person.avatar_url} />
+                  <span className="truncate">{person.name}</span>
+                </span>
+                <span role="cell" className={NUMERIC}>{integerFormatter.format(person.total)}</span>
+                <span role="cell" className={NUMERIC}>{integerFormatter.format(person.completed)}</span>
+                <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(person.open)}</span>
+                <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(person.no_show)}</span>
+                <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(person.overdue)}</span>
+                <span role="cell" className={NUMERIC}>
+                  {person.eligible > 0 ? `${percentFormatter.format(person.completion_rate)}%` : "—"}
+                </span>
+              </div>
+            );
+          })}
+          {totals ? (
+            <div role="row" className={cn(COLUMNS, "pt-2.5 text-[var(--app-text-primary)]")} title="Cada compromisso conta uma vez, mesmo com vários participantes">
+              <span role="cell">Total</span>
+              <span role="cell" className={NUMERIC}>{integerFormatter.format(totals.total)}</span>
+              <span role="cell" className={NUMERIC}>{integerFormatter.format(totals.completed)}</span>
+              <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(totals.open)}</span>
+              <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(totals.no_show)}</span>
+              <span role="cell" className={cn(NUMERIC, WIDE_ONLY)}>{integerFormatter.format(totals.overdue)}</span>
+              <span role="cell" className={NUMERIC}>
+                {totals.eligible > 0 ? `${percentFormatter.format(totals.completion_rate)}%` : "—"}
+              </span>
+            </div>
+          ) : null}
+          <p className="mt-2.5 text-[10px] leading-4 text-[var(--app-text-tertiary)]">
             Responsável principal e participantes; autoria da execução é separada.
           </p>
-        </div>
-        {orderedPerformers.length > 0 ? (
-          <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[9px] font-medium tabular-nums text-primary">
-            {integerFormatter.format(orderedPerformers.length)} responsáve
-            {orderedPerformers.length === 1 ? "l" : "is"}
-          </span>
-        ) : null}
-      </div>
-
-      {orderedPerformers.length === 0 ? (
-        <div className="flex min-h-[180px] items-center justify-center px-5 py-10 text-center">
-          <p className="max-w-[280px] text-[11px] font-light leading-5 text-[var(--app-text-tertiary)]">
-            Nenhum responsável encontrado neste período.
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto [scrollbar-width:thin]">
-          <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-left">
-            <thead>
-              <tr className="bg-[var(--app-surface-soft)] text-[8px] font-medium uppercase tracking-[0.06em] text-[var(--app-text-tertiary)]">
-                <th className="w-[260px] px-4 py-2.5 font-medium">
-                  Responsável
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">
-                  Agendamentos
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">
-                  Visitas e reuniões
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">
-                  Realizados
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">
-                  Em aberto
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">
-                  Em atraso
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">No-show</th>
-                <th className="w-[112px] px-3 py-2.5 text-right font-medium">
-                  Realização
-                </th>
-                <th className="w-[112px] px-4 py-2.5 text-right font-medium">
-                  Taxa de no-show
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagination.items.map((person, index) => {
-                const rankingIndex = pagination.startIndex + index;
-
-                return (
-                  <tr
-                    key={person.user_id}
-                    className="group text-[10px] text-[var(--app-text-secondary)]"
-                  >
-                    <td className="border-t border-[var(--app-border)] px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span
-                          className={cn(
-                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-medium tabular-nums",
-                            rankingIndex === 0
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]",
-                          )}
-                        >
-                          {rankingIndex + 1}
-                        </span>
-                        <PersonAvatar
-                          name={person.name}
-                          avatarUrl={person.avatar_url}
-                        />
-                        <span className="min-w-0 truncate text-[10px] font-medium text-[var(--app-text-primary)]">
-                          {person.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-3 py-3 text-right font-medium tabular-nums text-primary">
-                      {integerFormatter.format(person.total)}
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-3 py-3 text-right tabular-nums">
-                      {integerFormatter.format(person.appointments)}
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-3 py-3 text-right font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {integerFormatter.format(person.completed)}
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-3 py-3 text-right tabular-nums">
-                      {integerFormatter.format(person.open)}
-                    </td>
-                    <td
-                      className={cn(
-                        "border-t border-[var(--app-border)] px-3 py-3 text-right font-medium tabular-nums",
-                        person.overdue > 0
-                          ? "text-rose-600 dark:text-rose-400"
-                          : "text-[var(--app-text-secondary)]",
-                      )}
-                    >
-                      {integerFormatter.format(person.overdue)}
-                    </td>
-                    <td
-                      className={cn(
-                        "border-t border-[var(--app-border)] px-3 py-3 text-right font-medium tabular-nums",
-                        person.no_show > 0
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-[var(--app-text-secondary)]",
-                      )}
-                    >
-                      {integerFormatter.format(person.no_show)}
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-3 py-3 text-right">
-                      <RateCell
-                        value={person.completion_rate}
-                        available={person.eligible > 0}
-                      />
-                    </td>
-                    <td className="border-t border-[var(--app-border)] px-4 py-3 text-right">
-                      <RateCell
-                        value={person.no_show_rate}
-                        available={person.appointment_eligible > 0}
-                        tone="warning"
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
         </div>
       )}
 
       {pagination.totalItems > AGENDA_RESPONSIBLE_RESULTS_PAGE_SIZE ? (
         <nav
-          className="flex min-h-12 flex-col gap-2 border-t border-[var(--app-border)] px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+          className="mt-2.5 flex min-h-10 flex-col gap-2 border-t border-[var(--app-border)] pt-2.5 sm:flex-row sm:items-center sm:justify-between"
           aria-label="Paginação do resultado por responsável"
         >
           <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
@@ -322,6 +178,6 @@ export function AgendaResponsibleResultsPanel({
           </div>
         </nav>
       ) : null}
-    </section>
+    </Panel>
   );
 }

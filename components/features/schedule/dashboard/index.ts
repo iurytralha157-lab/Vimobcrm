@@ -32,6 +32,7 @@ export type {
   AgendaDashboardUserOption,
 } from "./AgendaDashboardFilters";
 export { AgendaDashboardKpis } from "./AgendaDashboardKpis";
+export { AgendaNextEventCard } from "./AgendaNextEventCard";
 export { AgendaOverduePanel } from "./AgendaOverduePanel";
 export { AgendaResponsibleResultsPanel } from "./AgendaResponsibleResultsPanel";
 export { AgendaUpcomingEventsPanel } from "./AgendaUpcomingEventsPanel";

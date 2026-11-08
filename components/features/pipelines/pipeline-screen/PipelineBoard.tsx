@@ -24,6 +24,7 @@ import {
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 import { getPipelineBoardLayout, PIPELINE_LAYOUT } from '@/config/pipeline-layout';
 import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
+import { usePipelineBoardScroll, type PipelineBoardScrollMemory } from '@/hooks/pipelines/use-pipeline-board-scroll';
 import { cn } from '@/lib/utils';
 
 import { type StageCountMeta } from './model';
@@ -33,6 +34,7 @@ import { StageColumnMenu } from './StageColumnMenu';
 import type { StageSettingsTab } from '@/components/features/pipelines/StageSettingsDialog';
 
 type PipelineBoardProps = {
+  scrollMemory?: PipelineBoardScrollMemory | null;
   stages: StageWithLeads[];
   filteredStages: StageWithLeads[];
   visibleStages: StageWithLeads[];
@@ -82,6 +84,7 @@ type PipelineBoardProps = {
 };
 
 export function PipelineBoard({
+  scrollMemory = null,
   stages,
   filteredStages,
   visibleStages,
@@ -132,6 +135,14 @@ export function PipelineBoard({
   const draggingRef = useRef(false);
   const pendingSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
+  const { viewportRef, onScrollCapture } = usePipelineBoardScroll(
+    scrollMemory,
+    !isLoading && !isInitialLeadsLoading && !isPipelineBoardTransitioning && !leadsPlaceholderData
+      && !hasCriticalLoadError && (boardSize.width > 0 || typeof ResizeObserver === 'undefined'),
+    visibleStages,
+    boardSize.width,
+    boardSize.height,
+  );
 
   useEffect(() => {
     // CSS containment would change the fixed-position coordinate system used
@@ -281,6 +292,9 @@ export function PipelineBoard({
           }}
         >
           <div
+            ref={viewportRef}
+            data-pipeline-scroll-viewport
+            onScrollCapture={onScrollCapture}
             className={cn(
               'min-h-0 flex-1 scrollbar-thin',
               isMobile

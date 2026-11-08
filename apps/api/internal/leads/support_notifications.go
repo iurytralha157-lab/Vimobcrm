@@ -268,11 +268,13 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 		return Notification{}, err
 	}
 	metadata = applyNotificationDispatchMetadata(metadata, eventKey, nil)
-	return scanNotification(repo.db.Pool().QueryRow(ctx, `
-		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
-		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
-	`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, request.LeadID, jsonb(metadata)))
+	return repo.writeWithVisibleNotificationLead(ctx, tenantContext, request.LeadID, func(queryer notificationQueryer, leadID *string) (Notification, error) {
+		return scanNotification(queryer.QueryRow(ctx, `
+			insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
+			values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
+			returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
+		`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, leadID, jsonb(metadata)))
+	})
 }
 
 func (repo Repository) DispatchNotification(ctx context.Context, tenantContext tenant.Context, request DispatchNotificationRequest) (DispatchNotificationResult, error) {
@@ -303,7 +305,7 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 
 	request.EventKey = eventKey
 	request.UserID = normalizedUserID
-	notification, err := repo.enqueueDispatchNotification(ctx, tenantContext.OrganizationID, normalizedUserID, request)
+	notification, err := repo.enqueueDispatchNotification(ctx, tenantContext, normalizedUserID, request)
 	if err != nil {
 		return DispatchNotificationResult{}, err
 	}
@@ -315,8 +317,36 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 	}, nil
 }
 
-func (repo Repository) enqueueDispatchNotification(ctx context.Context, organizationID string, userID string, request DispatchNotificationRequest) (Notification, error) {
-	return repo.enqueueDispatchNotificationWithQueryer(ctx, repo.db.Pool(), organizationID, userID, request)
+func (repo Repository) enqueueDispatchNotification(ctx context.Context, tenantContext tenant.Context, userID string, request DispatchNotificationRequest) (Notification, error) {
+	return repo.writeWithVisibleNotificationLead(ctx, tenantContext, request.LeadID, func(queryer notificationQueryer, leadID *string) (Notification, error) {
+		request.LeadID = leadID
+		return repo.enqueueDispatchNotificationWithQueryer(ctx, queryer, tenantContext.OrganizationID, userID, request)
+	})
+}
+
+func (repo Repository) writeWithVisibleNotificationLead(ctx context.Context, tenantContext tenant.Context, leadID *string, write func(notificationQueryer, *string) (Notification, error)) (Notification, error) {
+	if leadID == nil {
+		return write(repo.db.Pool(), nil)
+	}
+	normalizedID, ok := normalizeUUID(*leadID)
+	if !ok {
+		return Notification{}, ErrInvalidInput
+	}
+
+	var notification Notification
+	err := pgx.BeginFunc(ctx, repo.db.Pool(), func(tx pgx.Tx) error {
+		// Keep the scoped lead stable until the notification and its outbox are saved.
+		if err := ensureLeadVisibleWithQueryer(ctx, tx, tenantContext, normalizedID, true); err != nil {
+			return err
+		}
+		var err error
+		notification, err = write(tx, &normalizedID)
+		return err
+	})
+	if err != nil {
+		return Notification{}, err
+	}
+	return notification, nil
 }
 
 func (repo Repository) enqueueDispatchNotificationWithQueryer(ctx context.Context, queryer notificationQueryer, organizationID string, userID string, request DispatchNotificationRequest) (Notification, error) {

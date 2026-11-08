@@ -157,6 +157,12 @@ import {
 } from "./property-locations/model";
 import { PropertyFormDialog } from "@/components/features/properties/property-form/PropertyFormDialog";
 import { PropertyFormAside } from "@/components/features/properties/property-form/PropertyFormAside";
+import {
+  dealForPortfolioType,
+  getPortfolioLocks,
+  portfolioTypeForDeal,
+  type PropertyFormPortfolioType,
+} from "@/components/features/properties/property-form/property-form-portfolio";
 import { usePropertyFormNavigationGuard } from "@/hooks/properties/use-property-form-navigation-guard";
 import {
   PropertyFormSectionsProvider,
@@ -181,6 +187,22 @@ type PropertyFormTab = {
 };
 
 type CreatedPropertyForMediaRetry = ConfirmedPropertyReceipt;
+
+
+/** A deal type change also keeps the portfolio type in a pair the API accepts. */
+function withDealType(prev: PropertyFormData, value: string): PropertyFormData {
+  const supportsTerms = isSaleType(value);
+  const isSeasonal = normalize(value) === "temporada";
+  return {
+    ...prev,
+    tipo_de_negocio: value,
+    portfolio_type: portfolioTypeForDeal(prev.portfolio_type, value),
+    financing_mode: supportsTerms ? prev.financing_mode || "sim" : "nao",
+    aceita_financiamento: supportsTerms ? prev.financing_mode !== "nao" : false,
+    aceita_permuta: supportsTerms ? prev.aceita_permuta : false,
+    iptu_isento: isSeasonal ? true : prev.iptu_isento,
+  };
+}
 
 export default function PropertyForm() {
   const router = useRouter();
@@ -1377,19 +1399,15 @@ export default function PropertyForm() {
   };
 
   const handleDealTypeChange = (value: string) => {
-    const supportsTerms = isSaleType(value);
-    const isSeasonal = normalize(value) === "temporada";
+    setFormData((prev) => withDealType(prev, value));
+  };
 
-    setFormData((prev) => ({
-      ...prev,
-      tipo_de_negocio: value,
-      financing_mode: supportsTerms ? prev.financing_mode || "sim" : "nao",
-      aceita_financiamento: supportsTerms
-        ? prev.financing_mode !== "nao"
-        : false,
-      aceita_permuta: supportsTerms ? prev.aceita_permuta : false,
-      iptu_isento: isSeasonal ? true : prev.iptu_isento,
-    }));
+  const handlePortfolioTypeChange = (value: PropertyFormPortfolioType) => {
+    setFormData((prev) => {
+      const nextDeal = dealForPortfolioType(value, prev.tipo_de_negocio);
+      const next = nextDeal ? withDealType(prev, nextDeal) : prev;
+      return { ...next, portfolio_type: value };
+    });
   };
 
   const handleCreateCity = async () => {
@@ -1645,6 +1663,13 @@ export default function PropertyForm() {
     handleAddPurpose,
     handleAddPropertyType,
     handleDealTypeChange,
+    handlePortfolioTypeChange,
+    portfolioLocks: getPortfolioLocks({
+      storedType: isEditing ? property?.portfolio_type : null,
+      storedKind: isEditing ? property?.third_party_kind : null,
+      canManage: canManagePropertyCatalogs,
+      canEditOwnerDetails,
+    }),
     createPropertyType,
     cities: catalogCities,
     neighborhoods: catalogNeighborhoods,
@@ -1930,7 +1955,7 @@ export default function PropertyForm() {
             contentClassName="@container space-y-4"
             asideTitle={isEditing ? "Histórico do imóvel" : "Prévia pública"}
             aside={
-              <PropertyFormAside property={isEditing ? property : null} formData={formData} onOpenHistory={() => setHistoryOpen(true)} />
+              <PropertyFormAside property={isEditing ? property : null} formData={formData} validationIssues={validationIssues} onOpenHistory={() => setHistoryOpen(true)} />
             }
             footer={
               <>
@@ -1968,7 +1993,7 @@ export default function PropertyForm() {
             <details className="app-card-soft p-3 sm:hidden">
               <summary className="cursor-pointer text-[12px] font-normal">{isEditing ? "Histórico do imóvel" : "Prévia pública"}</summary>
               <div className="mt-3">
-                <PropertyFormAside property={isEditing ? property : null} formData={formData} onOpenHistory={() => setHistoryOpen(true)} />
+                <PropertyFormAside property={isEditing ? property : null} formData={formData} validationIssues={validationIssues} onOpenHistory={() => setHistoryOpen(true)} />
               </div>
             </details>
           </FormWizardLayout>

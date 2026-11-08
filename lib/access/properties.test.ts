@@ -55,15 +55,17 @@ test("papel manager nao ignora uma permissao efetiva negada", () => {
 const readWorkspaceFile = (path: string) =>
   readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n?/g, "\n");
 
-test("navegacao segmentada de imoveis cobre as sete rotas e destaca a rota ativa", () => {
+test("navegacao segmentada de imoveis cobre as nove rotas e destaca a rota ativa", () => {
   const source = readWorkspaceFile(
     "components/features/properties/PropertySectionTabs.tsx",
   );
 
   for (const href of [
     "/properties",
+    "/properties/ready",
     "/properties/launches",
     "/properties/rentals",
+    "/properties/third-party",
     "/properties/condominiums",
     "/properties/locations",
     "/properties/owners",
@@ -445,14 +447,17 @@ test("locacao reúne aluguel e temporada no catalogo completo com uma unica cons
     1,
   );
   assert.ok(catalogSource.includes('preset === "rentals"'));
-  assert.ok(catalogSource.includes('tipo_de_negocio: "rental_catalog"'));
-  assert.ok(catalogSource.includes('<SelectItem value="rental_catalog">'));
-  assert.ok(catalogSource.includes("Locação e temporada"));
+  assert.ok(readWorkspaceFile("components/features/properties/list/property-catalog-presets.ts").includes('tipo_de_negocio: "rental_catalog"'));
+  const filterPanelSource = readWorkspaceFile(
+    "components/features/properties/list/PropertyFiltersPanel.tsx",
+  );
+  assert.ok(filterPanelSource.includes('<SelectItem value="rental_catalog">'));
+  assert.ok(filterPanelSource.includes("Locação e temporada"));
   assert.ok(
-    catalogSource.includes('<SelectItem value="Aluguel">Locação</SelectItem>'),
+    filterPanelSource.includes('<SelectItem value="Aluguel">Locação</SelectItem>'),
   );
   assert.ok(
-    catalogSource.includes(
+    filterPanelSource.includes(
       '<SelectItem value="Temporada">Temporada</SelectItem>',
     ),
   );
@@ -463,13 +468,16 @@ test("lancamentos reutilizam o catalogo de imoveis com modalidade predefinida", 
   const catalogSource = readWorkspaceFile(
     "components/features/properties/PropertiesScreen.tsx",
   );
+  const presetsSource = readWorkspaceFile(
+    "components/features/properties/list/property-catalog-presets.ts",
+  );
   const launchesRouteSource = readWorkspaceFile(
     "app/(protected)/properties/launches/page.tsx",
   );
 
   assert.ok(launchesRouteSource.includes('<PropertiesScreen preset="launches" />'));
   assert.ok(catalogSource.includes('preset === "launches"'));
-  assert.ok(catalogSource.includes('tipo_de_negocio: "Lançamento"'));
+  assert.ok(presetsSource.includes('tipo_de_negocio: "Lançamento"'));
   assert.ok(catalogSource.includes('? "developments"'));
   assert.ok(catalogSource.includes('isLaunchCatalog ? "imóveis em lançamento"'));
 });
@@ -667,7 +675,7 @@ test("vinculo unidade ficha bloqueia estados terminais e rotula desvinculo no hi
   assert.ok(workspaceModelSource.includes("Ficha de imóvel desvinculada"));
 });
 
-test("cards de imóveis usam selos sólidos para código, modalidade e status", () => {
+test("cards de imóveis usam selos claros, sem preto, para código, modalidade e status", () => {
   const cardSource = readWorkspaceFile(
     "components/features/properties/PropertyCard.tsx",
   );
@@ -675,15 +683,8 @@ test("cards de imóveis usam selos sólidos para código, modalidade e status", 
   assert.ok(cardSource.includes("data-property-card-code"));
   assert.ok(cardSource.includes("data-property-card-deal-type"));
   assert.ok(cardSource.includes("data-property-card-status"));
-  assert.ok(
-    /data-property-card-code[\s\S]*?className="[^"]*rounded-br-\[6px\] bg-primary px-3 py-1\.5/.test(cardSource),
-  );
-  assert.ok(
-    /data-property-card-deal-type[\s\S]*?className="[^"]*rounded-\[6px\] border-0 bg-primary px-2 py-1/.test(cardSource),
-  );
-  assert.ok(cardSource.includes('"bg-zinc-900 text-white'));
-  assert.ok(cardSource.includes('"bg-sky-950 text-white'));
-  assert.ok(cardSource.includes('"bg-amber-950 text-white'));
-  assert.ok(cardSource.includes('"bg-black text-white'));
+  for (const blackFill of ["bg-black", "bg-zinc-900", "bg-sky-950", "bg-amber-950"]) {
+    assert.equal(cardSource.includes(blackFill), false, blackFill);
+  }
   assert.equal(cardSource.includes("bg-[var(--app-surface-solid)]/90"), false);
 });

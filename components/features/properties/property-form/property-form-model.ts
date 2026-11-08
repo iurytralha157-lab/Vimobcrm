@@ -11,12 +11,24 @@ import {
 import { formatFixedBRLCurrency } from "@/lib/utils/formatting";
 import { parseLocaleNumber } from "@/components/features/properties/property-form/property-form-numbers";
 import { createPropertyCreationDraftStore } from "@/components/features/properties/property-form/property-creation-draft";
+import {
+  buildPropertyPortfolioInput,
+  getPortfolioValidationIssues,
+  type PropertyFormPortfolioType,
+  type PropertyFormThirdPartyKind,
+} from "@/components/features/properties/property-form/property-form-portfolio";
 export { normalizeLocaleNumberString, parseLocaleNumber, parseCurrencyInput, parseDecimalInput, formatCurrencyEditable } from "@/components/features/properties/property-form/property-form-numbers";
 export interface PropertyFormData {
   // Existing fields
   title: string;
   tipo_de_imovel: string;
   tipo_de_negocio: string;
+  portfolio_type: PropertyFormPortfolioType;
+  third_party_kind: PropertyFormThirdPartyKind;
+  partner_name: string;
+  partner_contact: string;
+  commission_split_percent: string;
+  third_party_authorized_until: string;
   status: string;
   destaque: boolean;
   endereco: string;
@@ -130,6 +142,12 @@ export const initialFormData: PropertyFormData = {
   title: "",
   tipo_de_imovel: "",
   tipo_de_negocio: "Venda",
+  portfolio_type: "ready",
+  third_party_kind: "",
+  partner_name: "",
+  partner_contact: "",
+  commission_split_percent: "",
+  third_party_authorized_until: "",
   status: "ativo",
   destaque: false,
   endereco: "",
@@ -415,6 +433,8 @@ const PROPERTY_MANAGER_ONLY_MUTATION_FIELDS = [
   "faixa_valor_imovel",
   "renda_familiar",
   "is_demo",
+  "commission_split_percent",
+  "third_party_authorized_until",
 ] as const;
 
 const PROPERTY_MANAGER_ONLY_MEDIA_MUTATION_FIELDS = [
@@ -580,6 +600,7 @@ export function getPropertyValidationIssues(
           fieldId: "property-bedrooms",
         }
       : null,
+    ...getPortfolioValidationIssues(formData),
     !options.isEditing && selectedPhotoCount === 0
       ? { label: "Ao menos uma foto do imóvel", tab: "media" }
       : null,
@@ -797,6 +818,10 @@ export function buildPropertyMutationInput(
     aprovacao_ambiental: formData.aprovacao_ambiental || null,
     projeto_aprovado: formData.projeto_aprovado,
     observacoes_documentacao: formData.observacoes_documentacao || null,
+    ...buildPropertyPortfolioInput(formData, {
+      canManage: options.canManagePropertyCatalogs,
+      canEditOwnerDetails: options.canEditOwnerDetails,
+    }),
   };
 
   // The catalog row is authoritative for a selected owner. Echoing its contact

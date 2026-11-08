@@ -126,6 +126,9 @@ type marketingSyncTarget struct {
 	SelectedAdAccounts         []any
 	ActiveLeadFormIDs          []string
 	AccessToken                string
+	// AccountWide marks a Marketing connection: the person explicitly chose this
+	// ad account, and no lead intake Page binds its facts to a tenant.
+	AccountWide bool
 	// PageScopedPaidData enables tenant-safe ad-level synchronization. In this
 	// mode an ad must belong to this integration's Page/Instagram asset before
 	// any provider fact is persisted.

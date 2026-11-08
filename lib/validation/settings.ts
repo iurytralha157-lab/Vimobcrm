@@ -217,9 +217,17 @@ export const propertySettingsUpdateResponseSchema = z
 export const changePasswordInputSchema = z
   .object({
     password: strongPasswordSchema,
+    current_password: z.string().min(1).refine(
+      (value) => new TextEncoder().encode(value).length <= 1024,
+      "A senha atual excede o limite de tamanho",
+    ).optional(),
     source: z.string().trim().max(80).optional(),
   })
-  .strict();
+  .strict()
+  .refine((input) => input.source?.toLowerCase() === "recovery" || input.current_password !== undefined, {
+    path: ["current_password"],
+    message: "Informe a senha atual",
+  });
 export const setupGuideProgressInputSchema = z
   .object({
     completed_steps: z.record(z.string(), z.boolean()).optional(),

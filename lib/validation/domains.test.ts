@@ -1841,6 +1841,8 @@ test("dashboard valida os detalhes que a UI consome e preserva extensoes", () =>
     assert.equal(result.data.data.uniqueLeads, 3);
     assert.equal(result.data.data.reentries, 2);
     assert.equal(result.data.data.entryBreakdownAvailable, true);
+    // Older APIs omit the entries comparison; the Dashboard then shows none.
+    assert.equal(result.data.data.entriesTrend, 0);
     assert.equal(
       result.data.data.wonConversionBuckets[0].futureBucketField,
       true,
@@ -1853,6 +1855,8 @@ test("dashboard valida os detalhes que a UI consome e preserva extensoes", () =>
     }).success,
     false,
   );
+  const withEntriesTrend = apiDashboardStatsResponseSchema.parse({ data: { ...stats, entriesTrend: 12 } });
+  assert.equal(withEntriesTrend.data.entriesTrend, 12);
   assert.equal(
     apiDashboardStatsResponseSchema.safeParse({
       data: { ...stats, totalEntries: 4 },

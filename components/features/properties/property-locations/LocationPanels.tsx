@@ -77,11 +77,11 @@ export function CitiesPanel({
   onDelete,
 }: CitiesPanelProps) {
   return (
-    <TabsContent value="cities" className="mt-4">
-      <section className="rounded-[8px] bg-card p-4">
+    <TabsContent value="cities" className="mt-3">
+      <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
-            <h2 className="text-base font-medium">Cidades</h2>
+            <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">Cidades</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Itens marcados como “Da carteira” vêm dos imóveis já cadastrados e
               são somente leitura.
@@ -159,11 +159,11 @@ export function NeighborhoodsPanel({
   onDelete,
 }: NeighborhoodsPanelProps) {
   return (
-    <TabsContent value="neighborhoods" className="mt-4">
-      <section className="rounded-[8px] bg-card p-4">
+    <TabsContent value="neighborhoods" className="mt-3">
+      <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
           <div className="flex w-full flex-col items-start gap-3 sm:flex-row sm:items-center md:w-auto">
-            <h2 className="text-base font-medium">Bairros</h2>
+            <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">Bairros</h2>
             <Select
               value={selectedCityId || '__all__'}
               onValueChange={(value) =>
@@ -258,11 +258,11 @@ export function CondominiumsPanel({
   onDelete,
 }: CondominiumsPanelProps) {
   return (
-    <TabsContent value="condominiums" className="mt-4">
-      <section className="rounded-[8px] bg-card p-4">
+    <TabsContent value="condominiums" className="mt-3">
+      <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
           <div className="flex w-full flex-col items-start gap-3 sm:flex-row sm:items-center md:w-auto">
-            <h2 className="text-base font-medium">Condomínios</h2>
+            <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">Condomínios</h2>
             <Select
               value={selectedNeighborhoodId || '__all__'}
               onValueChange={(value) =>

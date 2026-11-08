@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TabsContent } from "@/components/ui/tabs";
 import { Lock, Plus } from "lucide-react";
 import { RequiredMark } from "../PropertyFormFields";
+import { PortfolioFields } from "./PortfolioFields";
 import { isSupportedDealType } from "../property-form-model";
 import { usePropertyFormSections } from "../PropertyFormSectionsContext";
 
@@ -47,6 +48,7 @@ export function StructureSection() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        <PortfolioFields />
         <div className="space-y-2">
           <Label htmlFor="property-title">
             Título do Imóvel <RequiredMark />

@@ -55,3 +55,24 @@ func TestMetaIntegrationRoutesAreOwnedByGoBackend(t *testing.T) {
 		}
 	}
 }
+
+// Marketing connections need the Marketing module and the integrations
+// permission; only the OAuth callback may be public.
+func TestMarketingConnectionRoutesAreGuarded(t *testing.T) {
+	source := readAppWiringSource(t)
+	for _, route := range []string{
+		`GET /v1/marketing/connections"`,
+		`POST /v1/marketing/connections/meta/start"`,
+		`PUT /v1/marketing/connections/{id}/assets"`,
+		`POST /v1/marketing/connections/{id}/sync"`,
+		`DELETE /v1/marketing/connections/{id}"`,
+	} {
+		guarded := route + `, withActiveModulePermission("campaigns", permissions.SettingsIntegrations,`
+		if !strings.Contains(source, guarded) {
+			t.Errorf("route %s is missing its guard", route)
+		}
+	}
+	if !strings.Contains(source, `"GET /v1/public/marketing/oauth/meta/callback"`) {
+		t.Error("Marketing OAuth callback is not registered")
+	}
+}

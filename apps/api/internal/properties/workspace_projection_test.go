@@ -94,6 +94,7 @@ func TestEveryWritablePropertyFieldHasAnExplicitResponsePrivacyClass(t *testing.
 		workspacePropertyBaseFields,
 		workspacePropertyInternalFields,
 		propertyOwnerContactFields,
+		propertyPartnerContactFields,
 	} {
 		for _, field := range fields {
 			classified[field] = struct{}{}
@@ -127,7 +128,7 @@ func TestPropertyListIncludesRevisionAndAppliesRoleAwareProjection(t *testing.T)
 		"activePropertyAssetSQL(\"asset\")",
 		"'image_urls', case",
 		"'fotos', case",
-		"repo.attachSignedPropertyCoverURLs(ctx, properties)",
+		"repo.attachSignedPropertyCoverURLs(ctx, tenantContext.OrganizationID, properties)",
 		"properties[index] = projectWorkspaceProperty(",
 		"canManageProperties(tenantContext)",
 	} {
@@ -138,7 +139,7 @@ func TestPropertyListIncludesRevisionAndAppliesRoleAwareProjection(t *testing.T)
 	if count := strings.Count(method, "activePropertyAssetSQL(\"asset\")"); count != 1 {
 		t.Fatalf("property List must filter retirement only from the cover lookup, got %d filters", count)
 	}
-	if strings.Index(method, "repo.attachSignedPropertyCoverURLs(ctx, properties)") >
+	if strings.Index(method, "repo.attachSignedPropertyCoverURLs(ctx, tenantContext.OrganizationID, properties)") >
 		strings.Index(method, "properties[index] = projectWorkspaceProperty(") {
 		t.Fatal("list projection must run after cover signing so it can remove the private storage-path helper")
 	}

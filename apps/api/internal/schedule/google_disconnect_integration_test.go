@@ -36,7 +36,7 @@ func runScheduleGoogleDisconnectRollbackChecks(t *testing.T, f scheduleHardening
 		if _, err := f.repo.Create(f.ctx, f.ownerActor, input); !isGoogleCalendarDisconnectingError(err) {
 			t.Fatalf("create fence: %v", err)
 		}
-		if queryCount(`select count(*) from public.schedule_events where id=$1`, input.ClientRequestID) != 0 {
+		if queryCount(`select count(*) from public.schedule_events where client_request_id=$1`, input.ClientRequestID) != 0 {
 			t.Fatal("blocked create was committed")
 		}
 		title := "Blocked update"

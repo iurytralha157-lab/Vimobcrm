@@ -6,6 +6,7 @@ import { captureLeadRequestIntent } from '../../lib/lead-request-intent.ts';
 import { captureQueryClientAccess } from '../../lib/access/query-client-access.ts';
 import { stageWithLeadsQueryKey } from '../../lib/pipeline-query-key.ts';
 import { capturePipelinePageLease } from '../../lib/pipeline-page-lease.ts';
+import { refreshExpandedPipelineBoard } from './refresh-expanded-pipeline-board.ts';
 import { getPipelineBoardQueryKeyId, getPendingPipelineMoves, registerPendingPipelineMove, clearPendingPipelineMoves } from '../../lib/pipeline-board-cache.ts';
 import { buildPipelineStageRestorePlans, createPipelinePaginationStorageKey, getPipelineStageLoadedCountsFromBoard, getPipelineStagePaginationAfterPage, hasMorePipelineStageLeadsAfterPage, mergePipelineStageLoadedCounts } from '../../lib/pipeline-pagination-state.ts';
 import { evaluateProduction, productionDeclaration, deferred, turn } from '../leads/lead-request-runtime-fixture.mjs';
@@ -43,7 +44,7 @@ function runtime({ desired = { 'stage-a': 24 }, stages = ['stage-a'] } = {}) {
     },
     getGlobalSignOutSessionId: session => session?.sid, captureLeadRequestIntent, captureQueryClientAccess,
     getVimobAPIAccessTokenUserId: () => auth.user?.id, getVimobAPIAccessTokenSessionId: () => auth.session?.sid,
-    stageWithLeadsQueryKey, capturePipelinePageLease, getPipelineBoardQueryKeyId, getPendingPipelineMoves,
+    stageWithLeadsQueryKey, capturePipelinePageLease, getPipelineBoardQueryKeyId, getPendingPipelineMoves, refreshExpandedPipelineBoard,
     buildPipelineStageRestorePlans, createPipelinePaginationStorageKey, getPipelineStageLoadedCountsFromBoard,
     hasMorePipelineStageLeadsAfterPage, mergePipelineStageLoadedCounts,
     getPipelineStagePaginationAfterPage,
@@ -64,7 +65,8 @@ function runtime({ desired = { 'stage-a': 24 }, stages = ['stage-a'] } = {}) {
     start: async () => { render(); await turn(); return render(); },
     pageResponse: callback => { stageResponse = callback; }, boardResponse: callback => { boardResponse = callback; },
     replaceClient: () => { client = newClient(); clients.push(client); },
-    unmount, close: () => { unmount(); clients.forEach(item => item.clear()); },
+    unmount, remount: () => { unmount(); slots.length = 0; return render(); },
+    close: () => { unmount(); clients.forEach(item => item.clear()); },
   };
 }
 
@@ -200,6 +202,55 @@ test('a refreshed canonical read gets one new bounded restoration generation', a
     assert.equal(h.requests.length, 2); assert.equal(h.client().getQueryData(h.key())[0].leads.length, 24);
     assert.equal(h.boardRequests.length, 2); assert.equal(h.errors.length, 0);
   } finally { h.close(); }
+});
+
+test('an expanded column stays visible across navigation and refresh, then uses only freshly read leads', async () => {
+  const h = runtime({ desired: {}, stages: ['stage-a', 'stage-b'] });
+  const gate = deferred();
+  try {
+    await h.start();
+    const key = h.key();
+    h.client().setQueryData(key, board(['stage-a', 'stage-b']).map(stage =>
+      stage.id === 'stage-a' ? { ...stage, leads: leads(1000, 132) } : stage));
+    h.render();
+    assert.equal(h.remount().data[0].leads.length, 132);
+    assert.equal(h.boardRequests.length, 1, 'returning to the route does not reread a fresh board');
+
+    h.pageResponse(p => p.offset === 12 ? gate.promise : Promise.resolve(page(p.stageId, p.limit, p.offset)));
+    const refresh = h.client().refetchQueries({ queryKey: key, exact: true });
+    await turn();
+    assert.equal(h.render().data[0].leads[0].id, 'stage-a-lead-1000');
+    assert.equal(h.render().data[0].leads.length, 132);
+    assert.equal(h.requests[0].limit, 100);
+    assert.equal(h.requests[0].intent.expectedSessionId, 'sid-a');
+
+    gate.resolve(page('stage-a', 100));
+    await refresh;
+    const refreshed = h.render().data;
+    assert.deepEqual(refreshed.map(stage => stage.leads.length), [132, 12]);
+    assert.equal(refreshed[0].leads[0].id, 'stage-a-lead-0');
+    assert.deepEqual(h.requests.map(p => [p.stageId, p.offset, p.limit]), [
+      ['stage-a', 12, 100], ['stage-a', 112, 20],
+    ]);
+  } finally { gate.resolve(page('stage-a', 100)); h.close(); }
+});
+
+test('remount resumes an interrupted cold restore even when the partial cache is fresh', async () => {
+  const h = runtime();
+  const first = deferred();
+  try {
+    h.pageResponse(() => first.promise);
+    await h.start();
+    assert.equal(h.render().data[0].leads.length, 12);
+    h.pageResponse(p => Promise.resolve(page(p.stageId, p.limit, p.offset)));
+    h.remount();
+    first.resolve(page());
+    await turn();
+    assert.equal(h.render().data[0].leads.length, 24);
+    assert.equal(h.boardRequests.length, 2);
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests[0].signal.aborted, true);
+  } finally { first.resolve(page()); h.close(); }
 });
 
 for (const version of ['explicit continuation', 'legacy response']) {

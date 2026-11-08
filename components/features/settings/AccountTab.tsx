@@ -35,6 +35,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { usePasswordChangeStatus } from "@/hooks/use-password-change-status";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { authAPI } from "@/lib/api/auth";
 import { settingsAPI } from "@/lib/api/settings";
 import { supabase } from "@/lib/supabase/client";
 import { getErrorMessageOrFallback as getErrorMessage, VimobAPIError } from "@/lib/api/vimob-error";
@@ -44,6 +45,8 @@ import { toast } from "sonner";
 import { Language, languageNames } from "@/i18n";
 
 type ThemeMode = "light" | "dark" | "system";
+
+const EMPTY_PASSWORD_FIELDS = { currentPassword: "", newPassword: "", confirmPassword: "" };
 
 const themeModeLabels: Record<ThemeMode, string> = {
   system: "Sistema",
@@ -101,7 +104,7 @@ interface OrganizationFormData {
 }
 
 export function AccountTab() {
-  const { activeOrganization, profile, organization, refreshProfile, isSuperAdmin, userOrganizations, signOut } = useAuth();
+  const { activeOrganization, profile, organization, refreshProfile, isSuperAdmin, userOrganizations, signOut, user } = useAuth();
   const queryClient = useQueryClient();
   const { language, setLanguage, t } = useLanguage();
   const { setTheme } = useTheme();
@@ -111,7 +114,8 @@ export function AccountTab() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordData, setPasswordData] = useState({ newPassword: "", confirmPassword: "" });
+  const [passwordData, setPasswordData] = useState(EMPTY_PASSWORD_FIELDS);
+  const [requestingPasswordRecovery, setRequestingPasswordRecovery] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [showCpf, setShowCpf] = useState(false);
@@ -339,6 +343,10 @@ export function AccountTab() {
       toast.error(`Por segurança, nova alteração disponível em ${passwordStatus.remainingText}.`);
       return;
     }
+    if (!passwordData.currentPassword) {
+      toast.error("Informe a senha atual.");
+      return;
+    }
     if (!passwordStrength.isValid) {
       toast.error("A senha não atende aos critérios mínimos de segurança");
       return;
@@ -352,6 +360,7 @@ export function AccountTab() {
     try {
       const data = await settingsAPI.changePassword({
         password: passwordData.newPassword,
+        current_password: passwordData.currentPassword,
         source: "settings",
       }, activeOrganizationId);
       if (data?.allowed === false) {
@@ -367,7 +376,7 @@ export function AccountTab() {
       } else {
         toast.error("A senha foi alterada, mas não conseguimos confirmar o encerramento das outras sessões. Contate o suporte se notar atividade desconhecida.");
       }
-      setPasswordData({ newPassword: "", confirmPassword: "" });
+      setPasswordData(EMPTY_PASSWORD_FIELDS);
       setEditingPassword(false);
       let currentSessionValid = false;
       try {
@@ -382,7 +391,6 @@ export function AccountTab() {
       }
       await passwordStatus.refetch();
     } catch (error: unknown) {
-      console.error("Error changing password:", error);
       if (error instanceof VimobAPIError && error.code === "password_update_unconfirmed_after_revocation") {
         toast.error("A revogação das outras sessões foi aceita, mas não conseguimos confirmar se a nova senha foi salva. Verifique o acesso e solicite a recuperação de senha se necessário.");
       } else if (error instanceof VimobAPIError && error.code === "password_session_revocation_unconfirmed") {
@@ -392,6 +400,20 @@ export function AccountTab() {
       }
     } finally {
       setChangingPassword(false);
+    }
+  };
+
+  const handleRequestPasswordRecovery = async () => {
+    if (!user?.email || requestingPasswordRecovery) return;
+    setRequestingPasswordRecovery(true);
+    try {
+      const { error } = await authAPI.resetPassword(user.email);
+      if (error) throw error;
+      toast.success("Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha.");
+    } catch {
+      toast.error("Não foi possível solicitar o link agora. Aguarde um pouco e tente novamente.");
+    } finally {
+      setRequestingPasswordRecovery(false);
     }
   };
 
@@ -475,6 +497,7 @@ export function AccountTab() {
   const isPasswordSubmitDisabled =
     changingPassword ||
     passwordStatus.isLocked ||
+    !passwordData.currentPassword ||
     !passwordData.newPassword ||
     !passwordData.confirmPassword ||
     !passwordStrength.isValid ||
@@ -713,7 +736,7 @@ export function AccountTab() {
                 className="h-8 gap-2 self-start sm:self-auto"
                 onClick={() => {
                   setEditingPassword((value) => !value);
-                  setPasswordData({ newPassword: "", confirmPassword: "" });
+                  setPasswordData(EMPTY_PASSWORD_FIELDS);
                 }}
                 disabled={passwordStatus.isLocked && !editingPassword}
               >
@@ -724,6 +747,29 @@ export function AccountTab() {
 
             {editingPassword && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="account-current-password" className="text-xs">Senha atual</Label>
+                  <Input
+                    id="account-current-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={passwordData.currentPassword}
+                    onChange={(e) => setPasswordData((prev) => ({ ...prev, currentPassword: e.target.value }))}
+                    className="h-9"
+                    disabled={passwordStatus.isLocked || changingPassword}
+                  />
+                  {user?.email && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto p-0 text-xs"
+                      disabled={requestingPasswordRecovery || changingPassword}
+                      onClick={handleRequestPasswordRecovery}
+                    >
+                      {requestingPasswordRecovery ? "Solicitando link..." : "Esqueci minha senha ou entro sem senha"}
+                    </Button>
+                  )}
+                </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="account-new-password" className="text-xs">Nova senha</Label>
                   <div className="relative">

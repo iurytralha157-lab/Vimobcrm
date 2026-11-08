@@ -1,5 +1,10 @@
 -- Minimal SQL fixture for the dedicated loopback agenda_schedule database.
 -- This is not a production migration or a Supabase/RLS baseline.
+create schema if not exists private;
+-- The fixture has no managed pool rows. The real helper returns NULL for
+-- unmanaged leads so the repository applies its ordinary visibility predicate.
+create or replace function private.queue_pool_read_access(uuid, uuid, uuid) returns boolean
+  language sql stable as 'select null::boolean';
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(), name text not null, is_active boolean default true
 );
@@ -61,6 +66,12 @@ create table if not exists public.schedule_event_comments (
   event_id uuid not null references public.schedule_events(id) on delete cascade, user_id uuid not null references public.users(id),
   content text not null, created_at timestamptz not null default now()
 );
+alter table public.schedule_events add column if not exists client_request_id uuid;
+alter table public.schedule_event_comments add column if not exists client_request_id uuid;
+create unique index if not exists schedule_events_client_request_scope_uidx
+  on public.schedule_events (organization_id, created_by, client_request_id) where client_request_id is not null;
+create unique index if not exists schedule_event_comments_client_request_scope_uidx
+  on public.schedule_event_comments (organization_id, user_id, client_request_id) where client_request_id is not null;
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
   user_id uuid, title text, content text, body text, type text, channel text, target_url text, metadata jsonb, lead_id uuid,

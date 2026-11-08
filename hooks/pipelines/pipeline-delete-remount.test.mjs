@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { QueryClient, QueryObserver } from '@tanstack/query-core';
+import { buildPipelineStageRestorePlans } from '../../lib/pipeline-pagination-state.ts';
 
 // Execute the actual production query options/queryFn with real QueryObserver.
 // Auth and APIs are synthetic; the global cache policy remains refetchOnMount:false.
@@ -40,6 +41,7 @@ for (const [hook, file, family] of [
     shouldRetryPipelineQuery: () => false, reusePreviousDataWhenKeyPartsMatch: previous => previous,
     reconcilePipelineBoardSnapshot: (_old, next) => next, getPendingPipelineMoves: () => [],
     setRestoreError: () => {}, queryClient: client, paginationStorageKey: null, queryKeyId: 'synthetic',
+    buildPipelineStageRestorePlans,
     readPipelineStageLoadedCounts: () => ({}), mergePipelineStageLoadedCounts: () => ({}), restoreIdentity: {},
     getPipelineStageLoadedCountsFromBoard: () => ({}), backgroundRestoreStateRef: { current: null }, filterUserId: undefined, filters: undefined,
   });

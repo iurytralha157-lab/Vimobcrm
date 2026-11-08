@@ -19,6 +19,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/marketing"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/me"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/meta"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
@@ -63,6 +64,7 @@ type routeDependencies struct {
 	integrationsHandler      integrations.Handler
 	leadsHandler             leads.Handler
 	automationStageHandler   leads.AutomationStageCommandHandler
+	marketingHandler         *marketing.Handler
 	meHandler                me.Handler
 	metaHandler              meta.Handler
 	metaMarketingSyncHandler meta.MarketingSyncHTTPHandler
@@ -157,14 +159,6 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 		"GET /v1/help/articles/{slug}",
 		"POST /v1/help/search",
 	)
-	withAuthTenant := func(handler http.Handler) http.Handler {
-		return withAuth(
-			tenant.Attach(
-				tenantRepository,
-				tenant.RequireBillingAccess(billingAccessAllowlist, handler),
-			),
-		)
-	}
 	withActiveAuthTenant := func(handler http.Handler) http.Handler {
 		return withActiveAuth(
 			tenant.Attach(
@@ -173,6 +167,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 			),
 		)
 	}
+	// Tenant routes reject revoked sessions before resolving organization access.
+	withAuthTenant := withActiveAuthTenant
 
 	withOrganization := func(handler http.Handler) http.Handler {
 		return withAuthTenant(tenant.RequireOrganization(handler))
@@ -466,6 +462,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("POST /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("GET /v1/public/integrations/meta/oauth/callback", metaOAuthCallbackHandler)
+	mux.HandleFunc("GET /v1/public/marketing/oauth/meta/callback", dependencies.marketingHandler.CallbackMeta)
 	mux.HandleFunc("GET /v1/public/integrations/portals/grupo-olx/feed/{token}", portalsHandler.GrupoOLXFeed)
 	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/leads/{token}", portalsHandler.GrupoOLXLeadWebhook)
 	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/import-reports/{token}", portalsHandler.GrupoOLXImportReportWebhook)
@@ -506,6 +503,11 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/integrations/meta", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaIntegrations)))
 	mux.Handle("PUT /v1/integrations/meta/conversion-feedback", withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveMetaConversionFeedback)))
 	mux.Handle("POST /v1/integrations/meta/oauth/actions", withActivePermission(permissions.SettingsIntegrations, metaOAuthActionHandler))
+	mux.Handle("GET /v1/marketing/connections", withActiveModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(dependencies.marketingHandler.List)))
+	mux.Handle("POST /v1/marketing/connections/meta/start", withActiveModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(dependencies.marketingHandler.StartMeta)))
+	mux.Handle("PUT /v1/marketing/connections/{id}/assets", withActiveModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(dependencies.marketingHandler.UpdateAssets)))
+	mux.Handle("POST /v1/marketing/connections/{id}/sync", withActiveModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(dependencies.marketingHandler.Sync)))
+	mux.Handle("DELETE /v1/marketing/connections/{id}", withActiveModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(dependencies.marketingHandler.Disconnect)))
 	mux.Handle("POST /v1/integrations/meta/marketing/sync", withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(metaMarketingSyncHandler.Sync)))
 	mux.Handle("GET /v1/integrations/meta/pages/{pageId}/forms", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaPageForms)))
 	mux.Handle("GET /v1/integrations/meta/oauth-flows/{id}", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ShowMetaOAuthFlow)))
@@ -725,6 +727,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("POST /v1/property-developments/{id}/price-tables/{priceTableId}/activate", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.ActivatePriceTable)))
 	mux.Handle("GET /v1/properties", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.List)))
 	mux.Handle("GET /v1/properties/stats", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.Stats)))
+	mux.Handle("GET /v1/properties/settings/portfolio", withModuleAnyPermission("properties", []string{permissions.PropertyView, permissions.PropertyManage}, http.HandlerFunc(propertiesHandler.ShowPortfolioSettings)))
+	mux.Handle("PUT /v1/properties/settings/portfolio", withPermission(permissions.SettingsOrganization, http.HandlerFunc(propertiesHandler.UpdatePortfolioSettings)))
 	mux.Handle("POST /v1/properties", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Create)))
 	mux.Handle("GET /v1/properties/{id}", withModuleAnyPermission("properties", []string{permissions.PropertyView, permissions.PropertyManage}, http.HandlerFunc(propertiesHandler.Show)))
 	mux.Handle("GET /v1/properties/{id}/workspace", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowWorkspace)))
@@ -747,6 +751,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("PATCH /v1/properties/{id}/assets/{assetId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpdateAsset)))
 	mux.Handle("DELETE /v1/properties/{id}/assets/{assetId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteAsset)))
 	mux.Handle("PUT /v1/properties/{id}/assets/{assetId}/primary", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SetPrimaryAsset)))
+	mux.Handle("GET /v1/properties/{id}/keys/movements", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListKeyMovements)))
 	mux.Handle("POST /v1/properties/{id}/keys", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateKey)))
 	mux.Handle("POST /v1/properties/{id}/keys/{keyId}/movements", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.MoveKey)))
 	mux.Handle("PATCH /v1/properties/{id}", withModuleAnyPermission("properties", []string{permissions.PropertyView, permissions.PropertyManage}, http.HandlerFunc(propertiesHandler.Update)))

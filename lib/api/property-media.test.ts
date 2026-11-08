@@ -329,3 +329,59 @@ test('property media persistence reports an upload object that could not be disc
     },
   )
 })
+
+function transientUploadClient(failures: Map<string, unknown[]>) {
+  const uploads: string[] = []
+  let deletes = 0
+  let sequence = 0
+  return {
+    uploads,
+    deletes: () => deletes,
+    client: {
+      async uploadAssetFile(_organizationId: string, _propertyId: string, _type: 'photo', staged: File) {
+        uploads.push(staged.name)
+        const pending = failures.get(staged.name)
+        if (pending?.length) throw pending.shift()
+        return { storage_path: `pending/${staged.name}` }
+      },
+      async createAsset() { sequence += 1; return asset(`asset-${sequence}`, sequence) },
+      async deleteAsset() { deletes += 1; return {} },
+      async discardAssetUpload() { return {} },
+    },
+  }
+}
+
+test('one transient upload failure does not discard a whole 20-photo selection', async () => {
+  const names = Array.from({ length: 20 }, (_, index) => `retry-${index}.jpg`)
+  const previews = names.map((name) => stagePropertyPhoto(file(name), () => `blob:${name}`))
+  const fake = transientUploadClient(new Map([
+    ['retry-7.jpg', [Object.assign(new Error('Falha ao enviar arquivo: Failed to fetch'), { transient: true })]],
+    ['retry-12.jpg', [Object.assign(new Error('Bad gateway'), { status: 502 })]],
+  ]))
+  const created = await persistStagedPropertyPhotosWithClient(ORGANIZATION_ID, PROPERTY_ID, {
+    mainImage: previews[0], galleryImages: previews.slice(1),
+  }, fake.client)
+  assert.equal(created.length, 20)
+  assert.equal(fake.deletes(), 0)
+})
+
+test('a definitive upload rejection is not retried', async () => {
+  const preview = stagePropertyPhoto(file('rejected.jpg'), () => 'blob:rejected')
+  const fake = transientUploadClient(new Map([
+    ['rejected.jpg', [Object.assign(new Error('mime_type is not allowed'), { status: 400 })]],
+  ]))
+  await assert.rejects(persistStagedPropertyPhotosWithClient(ORGANIZATION_ID, PROPERTY_ID, {
+    mainImage: preview, galleryImages: [],
+  }, fake.client), /mime_type/)
+  assert.deepEqual(fake.uploads, ['rejected.jpg'])
+})
+
+test('a persistent transient failure stops after a bounded number of attempts', async () => {
+  const preview = stagePropertyPhoto(file('down.jpg'), () => 'blob:down')
+  const failure = () => Object.assign(new Error('Service unavailable'), { status: 503 })
+  const fake = transientUploadClient(new Map([['down.jpg', Array.from({ length: 9 }, failure)]]))
+  await assert.rejects(persistStagedPropertyPhotosWithClient(ORGANIZATION_ID, PROPERTY_ID, {
+    mainImage: preview, galleryImages: [],
+  }, fake.client), /unavailable/)
+  assert.equal(fake.uploads.length, 3)
+})

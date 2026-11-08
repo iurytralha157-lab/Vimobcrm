@@ -736,6 +736,7 @@ test("catalogo de integracoes exibe todos os provedores em uma grade unica", () 
     "WhatsApp",
     "Meta",
     "IA de atendimento",
+    "Meta Marketing",
     "Canal Pro",
     "ZAP Imóveis",
     "Viva Real",

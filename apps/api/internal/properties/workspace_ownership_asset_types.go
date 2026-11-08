@@ -14,12 +14,16 @@ import (
 )
 
 const (
-	propertyPrivateBucket          = "property-private"
-	propertyAssetMaxFileBytes      = int64(10 << 20)
-	propertyAssetAccessTTL         = 90 * time.Second
-	propertyAssetUploadTokenTTL    = 2 * time.Hour
-	propertyAssetMaxPhotos         = 20
-	propertyAssetMaxPendingUploads = 20
+	propertyPrivateBucket       = "property-private"
+	propertyAssetMaxFileBytes   = int64(10 << 20)
+	propertyAssetAccessTTL      = 90 * time.Second
+	propertyAssetUploadTokenTTL = 2 * time.Hour
+	propertyAssetMaxPhotos      = 20
+	// Bounds live signed tokens per property, including discarded attempts, whose
+	// token cannot be revoked and stays counted for about two hours. It must cover
+	// repeated failed batches of propertyAssetMaxPhotos, otherwise a property on a
+	// bad connection is locked out of new photos until those tokens expire.
+	propertyAssetMaxPendingUploads = 100
 	propertyAssetCleanupBatchSize  = 20
 	propertyAssetMaxUploadFileName = 240
 )

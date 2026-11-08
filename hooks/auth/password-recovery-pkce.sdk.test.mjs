@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -13,17 +14,20 @@ const user = { id: '11111111-1111-4111-8111-111111111111', aud: 'authenticated',
   role: 'authenticated', email: 'synthetic@example.invalid', app_metadata: {}, user_metadata: {},
   created_at: '2026-01-01T00:00:00Z' };
 let caseId = 0;
-function session(method = 'recovery') {
-  const claims = { sub: user.id, session_id: '22222222-2222-4222-8222-222222222222',
+function session(method = 'recovery', identity = user, sessionId = '22222222-2222-4222-8222-222222222222') {
+  const claims = { sub: identity.id, session_id: sessionId,
     exp: Math.floor(Date.now() / 1000) + 3600, amr: [{ method }] };
-  return { user, access_token: 'e30.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.synthetic',
+  const unsigned = 'eyJhbGciOiJIUzI1NiJ9.' + Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const signature = createHmac('sha256', 'synthetic-sdk-test-secret').update(unsigned).digest('base64url');
+  return { user: identity, access_token: unsigned + '.' + signature,
     refresh_token: 'synthetic-refresh', expires_in: 3600, expires_at: claims.exp, token_type: 'bearer' };
 }
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 const cookieValue = value => 'base64-' + Buffer.from(JSON.stringify(value)).toString('base64url');
 
 async function harness({ url = 'https://app.test/reset-password?code=synthetic-code',
-  verifier = true, method = 'recovery', storedSession = null, initializeBeforeMount = false } = {}) {
+  verifier = true, method = 'recovery', storedSession = null, initializeBeforeMount = false,
+  fragmentSession = null } = {}) {
   const storageKey = 'sb-synthetic-' + ++caseId + '-auth-token';
   const previous = new Map(['window', 'document', 'BroadcastChannel'].map(key =>
     [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -73,7 +77,10 @@ async function harness({ url = 'https://app.test/reset-password?code=synthetic-c
         await tokenReply.promise;
         return new Response(JSON.stringify(session(method)), { status: 200, headers: { 'content-type': 'application/json' } });
       }
-      if (parsed.pathname === '/auth/v1/user') return new Response(JSON.stringify(user), { status: 200 });
+      if (parsed.pathname === '/auth/v1/user') {
+        assert.equal(new Headers(init.headers).get('authorization'), 'Bearer ' + fragmentSession.access_token);
+        return new Response(JSON.stringify(fragmentSession.user), { status: 200 });
+      }
       throw new Error('Network is forbidden: unexpected synthetic request path');
     } },
   });
@@ -192,5 +199,25 @@ test('a normal OTP cookie plus recovery query cannot become recovery proof', asy
     assert.equal(h.result.captureGuard(), null);
     assert.equal(h.recovery.hasPasswordRecoveryProof(h.storage, user.id), false);
     assert.equal(h.requests.length, 0);
+  } finally { await h.dispose(); }
+});
+
+test('a recovery fragment cannot replace a signed-in account with another normal session', async () => {
+  const existing = session('password');
+  const otherUser = { ...user, id: '44444444-4444-4444-8444-444444444444', email: 'other@example.invalid' };
+  const injected = session('password', otherUser, '55555555-5555-4555-8555-555555555555');
+  injected.refresh_token = 'synthetic-other-refresh';
+  const hash = new URLSearchParams({ access_token: injected.access_token, refresh_token: injected.refresh_token, type: 'recovery' });
+  const h = await harness({ url: 'https://app.test/reset-password#' + hash, verifier: false,
+    storedSession: existing, fragmentSession: injected });
+  try {
+    h.release(); await h.settle();
+    assert.equal(h.states[0], 'invalid');
+    assert.equal(h.result.captureGuard(), null);
+    assert.equal((await h.client.auth.getSession()).data.session?.user.id, existing.user.id);
+    assert.equal(h.cookies.get(h.storageKey), cookieValue(existing));
+    assert(!h.events.includes('SIGNED_IN'));
+    assert.equal(h.requests.length, 0);
+    assert.equal(new URL(globalThis.window.location.href).hash, '');
   } finally { await h.dispose(); }
 });

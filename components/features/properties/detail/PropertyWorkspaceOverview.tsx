@@ -1,136 +1,21 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import {
-  Bath,
-  BedDouble,
-  Building2,
-  Car,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  FileText,
-  Globe2,
-  ImageIcon,
-  MapPin,
-  Ruler,
-} from 'lucide-react'
+import { Building2, Camera, ChevronLeft, ChevronRight } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { cleanPropertyDescription } from '@/lib/property-description'
-import {
-  formatPropertyArea as formatArea,
-  formatPropertyBoolean as formatBoolean,
-  formatPropertyCurrency as formatCurrency,
-  formatPropertyDate as formatDate,
-} from '@/lib/property-display-utils'
-import type { PropertyWorkspaceAsset, PropertyWorkspacePayload } from '@/lib/validation'
 import { cn } from '@/lib/utils'
-import { getAssetPreviewSource } from './property-asset-preview'
 
-type WorkspaceProperty = PropertyWorkspacePayload['property']
-
-type PropertyWorkspaceOverviewProps = {
-  property: WorkspaceProperty
-  assets: PropertyWorkspaceAsset[]
+/** Gallery of the property file: large photo, arrows and a scrollable thumbnail strip. */
+export function PropertyGallery({
+  images,
+  title,
+  onViewAll,
+}: {
   images: string[]
   title: string
-}
-
-type DetailItem = {
-  label: string
-  value: string | number | null | undefined
-}
-
-const ASSET_TYPE_LABELS: Record<PropertyWorkspaceAsset['asset_type'], string> = {
-  photo: 'Foto',
-  video: 'Vídeo',
-  virtual_tour: 'Tour virtual',
-  floor_plan: 'Planta',
-  document: 'Documento',
-}
-
-const ASSET_VISIBILITY_LABELS: Record<PropertyWorkspaceAsset['visibility'], string> = {
-  public: 'Pode ser publicada',
-  internal: 'Uso interno',
-  confidential: 'Confidencial',
-}
-
-function AssetPhotoPreview({
-  asset,
-  name,
-  position,
-  total,
-}: {
-  asset: PropertyWorkspaceAsset
-  name: string
-  position: number
-  total: number
+  onViewAll?: () => void
 }) {
-  const source = getAssetPreviewSource(asset)
-  const [failedSource, setFailedSource] = useState<string | null>(null)
-
-  return (
-    <div className="relative aspect-[4/3] overflow-hidden rounded-[6px] bg-[var(--app-surface-solid)]">
-      {source && failedSource !== source ? (
-        <Image
-          src={source}
-          alt={name}
-          fill
-          sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 33vw"
-          loading="lazy"
-          className="object-cover"
-          unoptimized
-          referrerPolicy="no-referrer"
-          onError={() => setFailedSource(source)}
-        />
-      ) : (
-        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
-          <ImageIcon aria-hidden="true" className="h-6 w-6 opacity-50" />
-          <span className="text-[11px] font-light">
-            {source ? 'Não foi possível carregar a foto' : 'Prévia da foto indisponível'}
-          </span>
-        </div>
-      )}
-      <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-2">
-        {asset.is_primary ? (
-          <Badge className="rounded-[4px] border-0 text-[10px] font-normal shadow-sm">Principal</Badge>
-        ) : <span />}
-        <span className="rounded-[4px] bg-black/65 px-2 py-1 text-[10px] font-normal text-white">
-          {position} / {total}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function formatFileSize(value: number | null) {
-  if (value == null) return 'Não informado'
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function DetailGrid({ items, columns = 2 }: { items: DetailItem[]; columns?: 2 | 3 }) {
-  return (
-    <dl className={cn('grid gap-2', columns === 3 ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2')}>
-      {items.map((item) => (
-        <div key={item.label} className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2.5">
-          <dt className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">
-            {item.label}
-          </dt>
-          <dd className="mt-1 break-words text-[12px] font-normal text-[var(--app-text-primary)]">
-            {item.value === '' || item.value == null ? 'Não informado' : item.value}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-export function PropertyGallery({ images, title }: { images: string[]; title: string }) {
   const [activeIndex, setActiveIndex] = useState(0)
   const thumbnailButtons = useRef<Array<HTMLButtonElement | null>>([])
   const safeIndex = images.length === 0 ? 0 : Math.min(activeIndex, images.length - 1)
@@ -159,388 +44,94 @@ export function PropertyGallery({ images, title }: { images: string[]; title: st
   }
 
   return (
-    <Card className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-      <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 px-4 pb-3 pt-4 sm:px-5 sm:pt-5">
-        <CardTitle id="property-gallery-title" className="text-[14px] font-normal">
-          Galeria do imóvel
-        </CardTitle>
-        <Badge variant="secondary" className="rounded-[4px] border-0 text-[10px] font-light">
-          <ImageIcon className="mr-1 h-3 w-3" />
-          {images.length}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
-        <div className="relative aspect-[16/10] overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)] sm:aspect-[16/9]">
-          {activeImage ? (
-            <Image
-              src={activeImage}
-              alt={`${title} — foto ${safeIndex + 1}`}
-              fill
-              loading="eager"
-              sizes="(max-width: 1024px) 100vw, 66vw"
-              className="object-cover"
-              unoptimized
-            />
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-              <span className="flex h-14 w-14 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]">
-                <Building2 className="h-6 w-6 opacity-50" />
-              </span>
-              <span className="text-[12px] font-light">Imagem não cadastrada</span>
-            </div>
-          )}
-          {images.length > 0 && (
-            <span className="absolute bottom-3 right-3 rounded-[4px] bg-[var(--app-surface-solid)]/90 px-2 py-1 text-[10px] font-normal text-[var(--app-text-primary)]">
-              {safeIndex + 1} / {images.length}
-            </span>
-          )}
-          {images.length > 1 && (
-            <>
-              <button
-                type="button"
-                aria-label="Foto anterior"
-                onClick={showPreviousImage}
-                className="absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/90 text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-solid)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-              >
-                <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                aria-label="Próxima foto"
-                onClick={showNextImage}
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)]/90 text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-solid)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-              >
-                <ChevronRight aria-hidden="true" className="h-4 w-4" />
-              </button>
-            </>
-          )}
-        </div>
-
-        {images.length > 1 && (
-          <div
-            className="flex max-w-full gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            aria-label="Miniaturas do imóvel"
-          >
-            {images.map((image, index) => (
-              <button
-                key={`${image}-${index}`}
-                ref={(node) => {
-                  thumbnailButtons.current[index] = node
-                }}
-                type="button"
-                aria-label={`Ver foto ${index + 1} de ${images.length}`}
-                aria-pressed={safeIndex === index}
-                onClick={() => setActiveIndex(index)}
-                className={cn(
-                  'relative aspect-[4/3] w-[88px] shrink-0 overflow-hidden rounded-[6px] border-2 bg-[var(--app-surface-soft)] transition-colors sm:w-[104px]',
-                  safeIndex === index
-                    ? 'border-primary'
-                    : 'border-transparent hover:border-primary/35',
-                )}
-              >
-                <Image
-                  src={image}
-                  alt=""
-                  fill
-                  loading={safeIndex === index ? 'eager' : 'lazy'}
-                  sizes="104px"
-                  className="object-cover"
-                  unoptimized
-                />
-              </button>
-            ))}
+    <section aria-label="Galeria do imóvel" className="min-w-0 space-y-2 rounded-[12px] bg-[var(--app-surface-solid)] p-3 sm:p-4">
+      <div className="relative aspect-[16/10] overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
+        {activeImage ? (
+          <Image
+            src={activeImage}
+            alt={`${title} — foto ${safeIndex + 1}`}
+            fill
+            loading="eager"
+            sizes="(max-width: 1024px) 100vw, 60vw"
+            className="object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-[var(--app-text-tertiary)]">
+            <Building2 className="h-8 w-8 opacity-50" aria-hidden="true" />
+            <span className="text-[12px] font-light">Imagem não cadastrada</span>
           </div>
         )}
-      </CardContent>
-    </Card>
-  )
-}
-
-export function AssetCatalog({
-  assets,
-  renderActions,
-}: {
-  assets: PropertyWorkspaceAsset[]
-  renderActions?: (asset: PropertyWorkspaceAsset) => ReactNode
-}) {
-  const propertyId = assets[0]?.property_id ?? null
-  const [expanded, setExpanded] = useState({ propertyId, count: 12 })
-  const visibleCount = expanded.propertyId === propertyId ? expanded.count : 12
-  const visibleAssets = assets.slice(0, visibleCount)
-  if (assets.length === 0) {
-    return (
-      <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-5 text-center text-[12px] font-light text-muted-foreground">
-        Nenhuma mídia ou documento cadastrado.
+        {onViewAll && (
+          <button
+            type="button"
+            onClick={onViewAll}
+            className="absolute bottom-3 left-3 inline-flex h-7 items-center gap-1.5 rounded-[6px] bg-[var(--app-surface-solid)] px-2 text-[12px] font-light text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
+          >
+            <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+            Ver todas
+          </button>
+        )}
+        {images.length > 0 && (
+          <span className="absolute bottom-3 right-3 rounded-[4px] bg-[var(--app-surface-solid)] px-2 py-1 text-[11px] font-light text-[var(--app-text-primary)]">
+            {safeIndex + 1} / {images.length}
+          </span>
+        )}
+        {images.length > 1 && (
+          <>
+            <button
+              type="button"
+              aria-label="Foto anterior"
+              onClick={showPreviousImage}
+              className="absolute left-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Próxima foto"
+              onClick={showNextImage}
+              className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <ChevronRight aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </>
+        )}
       </div>
-    )
-  }
 
-  const photos = assets.filter((asset) => asset.asset_type === 'photo')
-  const photoPositionById = new Map(photos.map((asset, index) => [asset.id, index + 1]))
-
-  return (
-    <div className="@container space-y-3">
-    <div className="grid gap-3 @[480px]:grid-cols-2 @[760px]:grid-cols-3">
-      {visibleAssets.map((asset) => {
-        const href = asset.access_url || asset.external_url
-        const displayName = asset.title || asset.file_name || ASSET_TYPE_LABELS[asset.asset_type]
-        const visibilityLabel = asset.external_url && asset.visibility !== 'public'
-          ? 'Oculta dos canais · origem externa não protegida'
-          : ASSET_VISIBILITY_LABELS[asset.visibility]
-
-        return (
-          <article key={asset.id} className="min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-            {asset.asset_type === 'photo' && (
-              <AssetPhotoPreview asset={asset} name={displayName} position={photoPositionById.get(asset.id) ?? 1} total={photos.length} />
-            )}
-            <div className="mt-3 flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                {asset.asset_type !== 'photo' && (
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)] text-primary">
-                    <FileText className="h-4 w-4" />
-                  </span>
-                )}
-                <div className="min-w-0">
-                  <h4 className="break-words text-[12px] font-normal text-[var(--app-text-primary)]">{displayName}</h4>
-                  <p className="mt-0.5 text-[10px] font-light text-muted-foreground">
-                    {ASSET_TYPE_LABELS[asset.asset_type]} · {visibilityLabel}
-                  </p>
-                </div>
-              </div>
-              {asset.asset_type !== 'photo' && asset.is_primary && (
-                <Badge className="shrink-0 rounded-[4px] border-0 text-[9px] font-light">Principal</Badge>
+      {images.length > 1 && (
+        <div
+          className="flex max-w-full gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          aria-label="Miniaturas do imóvel"
+        >
+          {images.map((image, index) => (
+            <button
+              key={`${image}-${index}`}
+              ref={(node) => {
+                thumbnailButtons.current[index] = node
+              }}
+              type="button"
+              aria-label={`Ver foto ${index + 1} de ${images.length}`}
+              aria-pressed={safeIndex === index}
+              onClick={() => setActiveIndex(index)}
+              className={cn(
+                'relative aspect-[2/1] w-[88px] shrink-0 overflow-hidden rounded-[6px] border-2 bg-[var(--app-surface-soft)] transition-colors sm:w-[116px]',
+                safeIndex === index ? 'border-primary' : 'border-transparent hover:border-primary/35',
               )}
-            </div>
-
-            {asset.description && (
-              <p className="mt-3 whitespace-pre-wrap text-[11px] font-light leading-4 text-muted-foreground">
-                {asset.description}
-              </p>
-            )}
-
-            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--app-border)] pt-2 text-[10px] font-light text-muted-foreground">
-              <span>{formatFileSize(asset.file_size_bytes)}</span>
-              {href && (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-[4px] font-normal text-primary hover:underline"
-                >
-                  Abrir arquivo <ExternalLink aria-hidden="true" className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-
-            <details className="mt-2 text-[10px] font-light">
-              <summary className="w-fit cursor-pointer rounded-[4px] text-muted-foreground hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                Detalhes do arquivo
-              </summary>
-              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--app-border)] pt-2">
-                <div>
-                  <dt className="text-muted-foreground">Arquivo</dt>
-                  <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.file_name || 'Não informado'}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Formato</dt>
-                  <dd className="mt-0.5 break-words text-[var(--app-text-primary)]">{asset.mime_type || 'Não informado'}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Tamanho</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatFileSize(asset.file_size_bytes)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Ordem</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.sort_order + 1}</dd>
-                </div>
-                {asset.asset_type === 'document' && (
-                  <>
-                    <div>
-                      <dt className="text-muted-foreground">Categoria</dt>
-                      <dd className="mt-0.5 text-[var(--app-text-primary)]">{asset.document_category || 'Não informada'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Validade</dt>
-                      <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.expires_at)}</dd>
-                    </div>
-                  </>
-                )}
-                <div>
-                  <dt className="text-muted-foreground">Criado em</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.created_at, true)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Atualizado em</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{formatDate(asset.updated_at, true)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Origem do arquivo</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">
-                    {asset.storage_path ? 'Armazenamento protegido' : asset.external_url ? 'Link externo' : 'Não informada'}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Metadados</dt>
-                  <dd className="mt-0.5 text-[var(--app-text-primary)]">{Object.keys(asset.metadata).length} campos registrados</dd>
-                </div>
-              </dl>
-              <p className="mt-3 break-all font-mono text-[9px] text-muted-foreground">ID: {asset.id}</p>
-            </details>
-            {renderActions?.(asset)}
-          </article>
-        )
-      })}
-    </div>
-    {visibleAssets.length < assets.length && (
-      <button type="button" className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] hover:bg-[var(--app-surface-hover)]" onClick={() => setExpanded({ propertyId, count: visibleCount + 12 })}>
-        Carregar mais arquivos ({visibleAssets.length} de {assets.length})
-      </button>
-    )}
-    </div>
-  )
-}
-
-export function PropertyWorkspaceOverview({
-  property,
-  assets,
-  images,
-  title,
-}: PropertyWorkspaceOverviewProps) {
-  const propertyType = property.tipo_de_imovel || property.tipo
-  const hasManagerRegistration = Object.prototype.hasOwnProperty.call(property, 'numero_matricula')
-
-  return (
-    <div className="space-y-4 sm:space-y-5">
-      <section aria-labelledby="property-gallery-title" className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.75fr)]">
-        <PropertyGallery images={images} title={title} />
-
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-[14px] font-normal">Características principais</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-2">
-            {[
-              { icon: BedDouble, label: 'Quartos', value: property.quartos ?? 'Não informado' },
-              { icon: Bath, label: 'Banheiros', value: property.banheiros ?? 'Não informado' },
-              { icon: Car, label: 'Vagas', value: property.vagas ?? 'Não informado' },
-              { icon: Ruler, label: 'Área útil', value: formatArea(property.area_util) },
-              { icon: Ruler, label: 'Área total', value: formatArea(property.area_total) },
-              { icon: Building2, label: 'Tipo', value: propertyType || 'Não informado' },
-            ].map((item) => (
-              <div key={item.label} className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-                <item.icon className="mb-2 h-4 w-4 text-primary" />
-                <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">
-                  {item.label}
-                </p>
-                <p className="mt-1 break-words text-[12px] font-normal text-[var(--app-text-primary)]">{item.value}</p>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section aria-labelledby="property-registration-title" className="grid gap-4 lg:grid-cols-2">
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle id="property-registration-title" className="flex items-center gap-2 text-[14px] font-normal">
-              <Building2 className="h-4 w-4 text-primary" />
-              Dados do cadastro
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DetailGrid
-              items={[
-                { label: 'Tipo do imóvel', value: property.tipo_de_imovel || property.tipo },
-                { label: 'Preço de venda cadastrado', value: formatCurrency(property.preco) },
-                { label: 'Valor de locação cadastrado', value: formatCurrency(property.valor_locacao) },
-                { label: 'IPTU', value: formatCurrency(property.iptu) },
-                ...(hasManagerRegistration
-                  ? [{ label: 'Matrícula', value: property.numero_matricula }]
-                  : []),
-              ]}
-              columns={3}
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
-              <MapPin className="h-4 w-4 text-primary" />
-              Localização
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DetailGrid
-              items={[
-                { label: 'Logradouro', value: property.endereco },
-                { label: 'Número', value: property.numero },
-                { label: 'Bairro', value: property.bairro },
-                { label: 'Cidade', value: property.cidade },
-                { label: 'UF', value: property.uf },
-                { label: 'CEP', value: property.cep },
-                { label: 'Visibilidade do endereço', value: property.address_visibility || property.public_address_visibility },
-              ]}
-            />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section aria-labelledby="property-description-title" className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)]">
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle id="property-description-title" className="text-[14px] font-normal">Descrição e divulgação</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-              <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição pública</p>
-              <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-                {cleanPropertyDescription(property.descricao_site) || 'Nenhuma descrição pública cadastrada.'}
-              </p>
-            </div>
-            <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-              <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição do cadastro</p>
-              <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-                {cleanPropertyDescription(property.descricao) || 'Nenhuma descrição cadastrada.'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
-              <Globe2 className="h-4 w-4 text-primary" />
-              Origem e publicação
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <DetailGrid
-              items={[
-                { label: 'Publicado no site', value: formatBoolean(property.published_on_site ?? property.anunciar) },
-                ...(property.owner_name ? [{ label: 'Proprietário', value: property.owner_name }] : []),
-              ]}
-            />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section aria-labelledby="property-assets-title">
-        <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle id="property-assets-title" className="flex items-center justify-between gap-3 text-[14px] font-normal">
-              <span className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-primary" />
-                Mídias e documentos
-              </span>
-              <Badge variant="secondary" className="rounded-[4px] border-0 text-[10px] font-light">{assets.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <AssetCatalog assets={assets} />
-          </CardContent>
-        </Card>
-      </section>
-    </div>
+            >
+              <Image
+                src={image}
+                alt=""
+                fill
+                loading={safeIndex === index ? 'eager' : 'lazy'}
+                sizes="116px"
+                className="object-cover"
+                unoptimized
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }

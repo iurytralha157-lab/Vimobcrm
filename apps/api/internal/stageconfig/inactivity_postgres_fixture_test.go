@@ -101,6 +101,24 @@ func openInactivityPostgresFixtureAtFactPolicyGate(t *testing.T, applyFactPolicy
 	if applyFactPolicyGate {
 		installInactivityFactPolicyGate(fixture)
 	}
+	moveAction, err := os.ReadFile("../../../../supabase/migrations/20261107230000_stage_inactivity_move_action.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("synthetic setup: move-stage action migration")
+	fixture.exec(string(moveAction))
+	stageEntries, err := os.ReadFile("../../../../supabase/migrations/20261108085114_stage_inactivity_new_stage_entries.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("synthetic setup: inactivity stage entries migration")
+	fixture.exec(string(stageEntries))
+	redistribution, err := os.ReadFile("../../../../supabase/migrations/20261108085140_stage_inactivity_redistribution.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("synthetic setup: inactivity redistribution migration")
+	fixture.exec(string(redistribution))
 	index, err := os.ReadFile("../../../../supabase/cutovers/20261013_prepare_simple_stage_inactivity_index.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +277,7 @@ const inactivityPostgresSchema = `
 create schema private;
 create table public.organizations(id uuid primary key,is_active boolean default true);
 create table public.pipelines(id uuid primary key,organization_id uuid not null,is_active boolean default true);
-create table public.stages(id uuid primary key,organization_id uuid not null,pipeline_id uuid not null,is_active boolean default true);
+create table public.stages(id uuid primary key,organization_id uuid not null,pipeline_id uuid not null,is_active boolean default true,position integer default 0);
 create table public.stage_automations(id uuid primary key,organization_id uuid not null,stage_id uuid not null,trigger_type text not null default 'inactivity',is_active boolean default true,updated_at timestamptz not null default now());
 create table public.users(id uuid primary key,is_active boolean default true);
 create table public.organization_members(organization_id uuid not null,user_id uuid not null,membership_generation bigint not null default 1,is_active boolean default true,deleted_at timestamptz,primary key(organization_id,user_id));

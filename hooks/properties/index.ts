@@ -1,4 +1,7 @@
 export * from './use-property-developments'
 export * from './use-property-publications'
 export * from './use-property-workspace'
+export * from './use-property-catalog-stats'
+export * from './use-property-key-movements'
+export * from './use-portfolio-settings'
 export * from './use-property-form-navigation-guard'

@@ -44,6 +44,54 @@ func (repo Repository) ensureStageAutomationReferencesSafe(ctx context.Context, 
 	if len(names) > 0 {
 		return &StageAutomationDependenciesError{Automations: names}
 	}
+	if stageID != "" {
+		return ensureNoActiveMoveRulesInto(ctx, tx, organizationID, stageID)
+	}
+	return nil
+}
+
+// StageMoveRuleDependenciesError lists the columns whose active "move after X
+// days without interaction" rule sends leads into the column being archived.
+type StageMoveRuleDependenciesError struct{ Stages []string }
+
+func (err *StageMoveRuleDependenciesError) Error() string {
+	names := make([]string, 0, len(err.Stages))
+	for _, name := range err.Stages {
+		if name = strings.Join(strings.Fields(name), " "); name != "" {
+			names = append(names, name)
+		}
+	}
+	return "Não é possível arquivar: a regra de mudança de etapa das colunas " + strings.Join(names, ", ") + " envia leads para esta coluna. Pause ou altere essas regras antes de arquivar."
+}
+
+func (err *StageMoveRuleDependenciesError) Unwrap() error { return ErrHasDependencies }
+
+// Environments without the move-rule migration have no such rules.
+const stageMoveRulesAvailableSQL = `select exists (select 1 from pg_catalog.pg_attribute attribute
+ where attribute.attrelid=to_regclass('private.stage_inactivity_policies')
+   and attribute.attname='target_stage_id' and not attribute.attisdropped)`
+
+const stageMoveRuleSourcesSQL = `select coalesce(array_agg(distinct source.name order by source.name), '{}'::text[])
+ from private.stage_inactivity_policies policy
+ join public.stage_automations automation on automation.id=policy.automation_id
+  and automation.organization_id=policy.organization_id and coalesce(automation.is_active,true)=true
+ join public.stages source on source.id=policy.stage_id and source.organization_id=policy.organization_id
+  and coalesce(source.is_active,true)=true
+ where policy.organization_id=$1::uuid and policy.target_stage_id=$2::uuid
+   and policy.is_enabled=true and policy.action_kind='move_stage'`
+
+func ensureNoActiveMoveRulesInto(ctx context.Context, tx stageArchiveQueryer, organizationID, stageID string) error {
+	var hasMoveRules bool
+	if err := tx.QueryRow(ctx, stageMoveRulesAvailableSQL).Scan(&hasMoveRules); err != nil || !hasMoveRules {
+		return err
+	}
+	var sources []string
+	if err := tx.QueryRow(ctx, stageMoveRuleSourcesSQL, organizationID, stageID).Scan(&sources); err != nil {
+		return err
+	}
+	if len(sources) > 0 {
+		return &StageMoveRuleDependenciesError{Stages: sources}
+	}
 	return nil
 }
 

@@ -41,7 +41,11 @@ func (repo Repository) attachInactivityPolicies(ctx context.Context, organizatio
 		byID[automations[index].ID] = index
 	}
 	var hasPolicies bool
-	if err := repo.db.Pool().QueryRow(ctx, `select to_regclass('private.stage_inactivity_policies') is not null`).Scan(&hasPolicies); err != nil || !hasPolicies {
+	// The action columns arrive with a later migration; without them, list the
+	// automations without policy details rather than failing the whole sheet.
+	if err := repo.db.Pool().QueryRow(ctx, `select exists (select 1 from pg_catalog.pg_attribute attribute
+ where attribute.attrelid=to_regclass('private.stage_inactivity_policies')
+   and attribute.attname='action_kind' and not attribute.attisdropped)`).Scan(&hasPolicies); err != nil || !hasPolicies {
 		return err
 	}
 	rows, err := repo.db.Pool().Query(ctx, inactivityPolicyViewsSQL, organizationID, ids)

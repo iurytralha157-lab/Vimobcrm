@@ -21,13 +21,12 @@ type SiteDetailed = {
   topPages: Array<{ page_path: string; views: number }>;
 };
 
-function metricCard(page: Page, label: string) {
-  return page
-    .getByText(label, { exact: true })
-    .first()
-    .locator(
-      'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " app-card ")][1]',
-    );
+function metricCard(page: Page, id: string) {
+  return page.getByTestId(`site-kpi-${id}`);
+}
+
+function formatPtBrCount(value: number) {
+  return value.toLocaleString("pt-BR");
 }
 
 test("renderiza as métricas reais da API na dashboard do site", async ({
@@ -200,18 +199,22 @@ test("renderiza as métricas reais da API na dashboard do site", async ({
     await expect(
       page.getByText("Não foi possível carregar o dashboard do site"),
     ).toHaveCount(0);
-    await expect(
-      metricCard(page, "Sessões").getByTestId("metric-value"),
-    ).toHaveText(String(summary.uniqueSessions));
-    await expect(
-      metricCard(page, "Páginas vistas").getByTestId("metric-value"),
-    ).toHaveText(String(summary.totalPages));
-    await expect(
-      metricCard(page, "Conversão por sessão").getByTestId("metric-value"),
-    ).toHaveText(`${detailed.conversionRate}%`);
+    await expect(metricCard(page, "sessoes")).toContainText(
+      formatPtBrCount(summary.uniqueSessions),
+    );
+    await expect(metricCard(page, "paginas-vistas")).toContainText(
+      formatPtBrCount(summary.totalPages),
+    );
+    await expect(metricCard(page, "conversao")).toContainText(
+      `${detailed.conversionRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
+    );
+
+    await page.getByRole("link", { name: "Páginas", exact: true }).click();
     await expect(
       page.getByText(DASHBOARD_PAGE_PATH, { exact: true }),
     ).toBeVisible();
+
+    await page.getByRole("link", { name: "Origens", exact: true }).click();
     const originsCard = page.getByTestId("site-visitor-origins-card");
     await expect(originsCard).toBeVisible();
     await expect(originsCard).toContainText("São Paulo, SP, Brasil");
@@ -229,12 +232,8 @@ test("renderiza as métricas reais da API na dashboard do site", async ({
       "São Paulo, SP, Brasil",
     );
 
-    await page
-      .getByRole("tab", { name: "Percurso dos Leads", exact: true })
-      .click();
-    await expect(
-      page.getByText("Envios de formulário", { exact: true }),
-    ).toBeVisible();
+    await page.getByRole("link", { name: "Jornadas", exact: true }).click();
+    await expect(page.getByText("Percurso dos leads", { exact: true })).toBeVisible();
     const journeyButton = page.getByRole("button", {
       name: `Ver jornada da sessão ${DASHBOARD_SESSIONS[0]}`,
       exact: true,

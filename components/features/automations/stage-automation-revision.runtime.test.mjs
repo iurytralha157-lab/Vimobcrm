@@ -29,6 +29,7 @@ before(async () => {
     import{VimobAPIError}from${JSON.stringify(path.join(root, 'lib/api/vimob-error.ts'))};export{VimobAPIError};
     export const Auth=createContext(null),useAuth=()=>useContext(Auth);
     export const useOrganizationUsers=()=>({data:[{id:'44444444-4444-4444-8444-444444444444',name:'Corretor A'},{id:'55555555-5555-4555-8555-555555555555',name:'Corretor B'}],isPending:false,isError:false});
+    export const useRoundRobins=()=>({data:[],isPending:false,isError:false});
     export const toast=Object.fromEntries(['success','error','warning','info'].map(kind=>[kind,message=>window.h.toasts.push({kind,message})]));
     export const vimobAPIRequest=async(path,options={})=>window.h.request(path,options);
     export const useStageInactivityAutomation=stage=>{const auth=useAuth();return{scopeKey:JSON.stringify([stage,auth.activeOrganization.organizationId,auth.user.id,auth.session.access_token]),isPending:false,mutateAsync:async payload=>{window.h.inactivity.push(payload);return window.h.server}}};
@@ -62,7 +63,7 @@ before(async () => {
       return <Auth.Provider value={auth}><QueryClientProvider client={client}>{shown&&<Content/>}</QueryClientProvider></Auth.Provider>}
     const reactRoot=createRoot(document.getElementById('app'));h.mount=()=>reactRoot.render(<Fixture/>);
   `);
-  const aliases = Object.fromEntries(['contexts/AuthContext','hooks/use-users','lib/api/vimob-client','hooks/use-stage-inactivity-automation'].map(name=>['@/'+name+'$',stub]));
+  const aliases = Object.fromEntries(['contexts/AuthContext','hooks/use-users','hooks/use-round-robins','lib/api/vimob-client','hooks/use-stage-inactivity-automation'].map(name=>['@/'+name+'$',stub]));
   const { webpack } = require('next/dist/compiled/webpack/webpack');
   await new Promise((resolve,reject)=>{
     const compiler=webpack({mode:'development',target:'web',devtool:false,entry,output:{path:directory,filename:'fixture.js'},
@@ -94,7 +95,7 @@ async function scope(patch) {await page.evaluate(patch=>window.h.changeScope(pat
 
 for(const kind of ['change_deal_status_on_enter','change_assignee_on_enter']) test('editor freezes the original revision through refetch and preserves draft on conflict: '+kind,async()=>{
   await mount('edit',kind);
-  const label=kind==='change_assignee_on_enter'?'Novo Responsável':'Novo Status do Deal',draft=kind==='change_assignee_on_enter'?'Corretor B':'Perdido';
+  const label=kind==='change_assignee_on_enter'?'Novo Responsável':'Novo status do lead',draft=kind==='change_assignee_on_enter'?'Corretor B':'Perdido';
   await select(label,draft);await refresh({updated_at:revision2,is_active:false});
   await page.getByRole('button',{name:'Salvar',exact:true}).click();const first=(await requests(1))[0];
   assert.equal(first.options.body.expected_updated_at,revision1);assert.equal(first.options.retry,false);assert.equal(first.options.expectedSessionId,'sid-a');

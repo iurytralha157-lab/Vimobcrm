@@ -1,5 +1,56 @@
 # Executor de inatividade das etapas da Pipeline
 
+## Redistribuição por inatividade
+
+O writer aceita `action=redistribute` com `target_round_robin_id` para uma
+distribuição ativa acessível no mesmo tenant. Exige permissões de automações e
+distribuição. Cada coluna pode ter uma redistribuição ativa junto de uma regra
+de mudança de etapa. As duas revalidam o estágio atual e o ciclo do lead no
+momento da execução. Sair da coluna encerra a elegibilidade das regras dela.
+
+O worker revalida o gestor, o lead aberto e a distribuição. Usa o alocador
+canônico e aceita uma atribuição diferente na distribuição escolhida. O destino
+definido pela distribuição pode mover o lead para outra coluna aberta. O
+trabalho rejeita destinos terminais e trajetos que voltem para a coluna de
+origem por outras automações de inatividade. Atribuições protegidas pela fila
+continuam protegidas. Fila sem disponibilidade ou seleção do mesmo
+responsável preservam a atribuição e a coluna e seguem as tentativas limitadas
+do executor. Alterações no lead, efeitos do alocador e conclusão da tarefa
+confirmam na mesma transação.
+
+Aplique `20261108085140_stage_inactivity_redistribution.sql` após a migração
+do escopo de novas entradas e antes do binário da API. Ative a ação somente
+depois de atualizar todas as réplicas do worker. Para reverter o binário,
+pause as regras de redistribuição e desligue o worker em todas as réplicas.
+As colunas e o índice adicionados podem ficar no schema para conservar o
+histórico. A reversão de schema exige uma revisão separada que preserve os
+registros de execução e trate as políticas com o novo tipo de ação.
+
+## Escopo de leads na ativação
+
+A API de configuração aceita `start_mode` com dois valores:
+
+| Valor | Leads considerados |
+| --- | --- |
+| `new_stage_entries` | Leads que entram na coluna após a ativação. Inclui um lead existente que entrar depois e exclui um lead antigo que apenas seja reaberto na mesma coluna. |
+| `activation` | Inclui leads já na coluna. A contagem completa começa na ativação ou na última atividade posterior. |
+
+Uma criação pela API sem esse campo conserva o comportamento `activation`. Uma
+edição que omita o campo preserva o escopo gravado quando ele é uma dessas
+opções. Alterar o escopo inicia uma nova época e contagem, e os jobs da época
+anterior são invalidados. O editor pode oferecer `new_stage_entries` como
+seleção inicial segura. A API continua recusando `include_overdue` para
+novas configurações. O worker pagina por ID mesmo quando uma página inteira
+contém somente leads fora do escopo e revalida o escopo antes de executar a ação.
+
+Aplique `20261108085114_stage_inactivity_new_stage_entries.sql` antes de usar
+esse escopo e atualize todas as réplicas do worker antes de ativar regras com
+ele. Versões anteriores reconhecem apenas os escopos originais. Para reverter
+o binário do worker, desligue-o em todas as réplicas e pause as regras de
+novas entradas primeiro. O constraint ampliado aceita as gravações antigas
+e pode permanecer. Reverter a migration requer uma nova revisão de schema
+depois de resolver explicitamente todas as políticas com o novo valor.
+
 ## Atualização local de 16/10: vínculo da captura com a regra atual
 
 O registro original abaixo descreve o candidato de 13/10; não deve ser usado

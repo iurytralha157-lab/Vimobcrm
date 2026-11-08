@@ -8,7 +8,7 @@ import (
 )
 
 // ActiveSessionChecker checks whether a signed Supabase session still belongs
-// to the authenticated user. Use it only on security-sensitive operations.
+// to the authenticated user before a user route authorizes access.
 type ActiveSessionChecker interface {
 	IsActive(ctx context.Context, userID, sessionID string) (bool, error)
 }

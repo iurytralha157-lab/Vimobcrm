@@ -169,6 +169,12 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
       },
       {
         icon: "building",
+        labelKey: "propertiesReady",
+        path: "/properties/ready",
+        anyPermissions: ["property_view", "property_manage"],
+      },
+      {
+        icon: "building",
         labelKey: "propertiesDevelopments",
         path: "/properties/launches",
         anyPermissions: ["property_view", "property_manage"],
@@ -177,6 +183,12 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
         icon: "home",
         labelKey: "propertiesRentals",
         path: "/properties/rentals",
+        anyPermissions: ["property_view", "property_manage"],
+      },
+      {
+        icon: "users",
+        labelKey: "propertiesThirdParty",
+        path: "/properties/third-party",
         anyPermissions: ["property_view", "property_manage"],
       },
       {

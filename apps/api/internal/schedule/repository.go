@@ -270,7 +270,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.validateAssignees(ctx, tx, tenantContext, input.AssigneeIDs); err != nil {
 		return Event{}, err
 	}
-	if err := lockScheduleCreateCommand(ctx, tx, input.ClientRequestID); err != nil {
+	if err := lockScheduleCommand(ctx, tx, tenantContext, "create", input.ClientRequestID); err != nil {
 		return Event{}, err
 	}
 	if existing, replay, err := findScheduleCreateReplay(ctx, tx, tenantContext, input); err != nil {
@@ -299,7 +299,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	var eventID string
 	err = tx.QueryRow(ctx, `
 		insert into public.schedule_events (
-			id,
+			client_request_id,
 			organization_id,
 			user_id,
 			lead_id,
@@ -321,7 +321,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			recurrence_count
 		)
 		values (
-			coalesce($19::uuid, gen_random_uuid()),
+			$19::uuid,
 			$1::uuid,
 			$2::uuid,
 			$3::uuid,
@@ -895,7 +895,7 @@ func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Cont
 	} else if !ok {
 		return Comment{}, tenant.ErrOrganizationAccessDenied
 	}
-	if err := lockScheduleCommentCommand(ctx, tx, commandID); err != nil {
+	if err := lockScheduleCommand(ctx, tx, tenantContext, "comment", commandID); err != nil {
 		return Comment{}, err
 	}
 	if existing, replay, err := findScheduleCommentReplay(ctx, tx, tenantContext, eventID, commandID, content); err != nil {
@@ -907,14 +907,14 @@ func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Cont
 	var commentID string
 	err = tx.QueryRow(ctx, `
 		insert into public.schedule_event_comments (
-			id,
+			client_request_id,
 			organization_id,
 			event_id,
 			user_id,
 			content
 		)
 		values (
-			coalesce($5::uuid, gen_random_uuid()),
+			$5::uuid,
 			$1::uuid,
 			$2::uuid,
 			$3::uuid,

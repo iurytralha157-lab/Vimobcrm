@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { PieChart as PieChartIcon, Search, X } from 'lucide-react';
+import { List, Search, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { DASHBOARD_CHART_COLORS } from '@/config/dashboard-chart-colors';
 import { DashboardChartError } from '@/components/features/dashboard/DashboardChartError';
@@ -72,7 +72,7 @@ export function LeadSourcesChart({ data, countEntries, isLoading, isError, onRet
     setDetailOpen(true);
   };
   const selectSource = (source: DashboardSourceSlice, trigger?: HTMLElement) => {
-    // SVG slices are not keyboard launchers; return to the equivalent legend button.
+    // SVG slices are not keyboard launchers; return to the button that opens the list.
     if (source.isOther) { openDetail(trigger ?? otherSourcesTrigger.current); return; }
     const rawSource = source.rawSource ?? source.name;
     const canFilter = Boolean(onSourceChange && !getSourceFilterUnavailableReason(rawSource));
@@ -80,14 +80,37 @@ export function LeadSourcesChart({ data, countEntries, isLoading, isError, onRet
   };
 
   return (
-    <Card className="flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-      <CardHeader className="shrink-0 px-3 pb-1 pt-3">
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+      <CardHeader className="shrink-0 px-4 pb-1 pt-4">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <CardTitle className="flex min-w-0 items-center gap-2 text-[13px] font-light text-[var(--app-text-primary)]">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground"><PieChartIcon className="h-3.5 w-3.5" aria-hidden="true" /></span>
-            <span className="truncate">{title}</span>
+          <CardTitle className="min-w-0 truncate text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
+            {title}
           </CardTitle>
-          {selectedSource ? <button type="button" onClick={() => onSourceChange?.(null)} aria-label="Limpar filtro de origem" className="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] bg-[var(--app-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><X className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {selectedSource ? (
+              <button
+                type="button"
+                onClick={() => onSourceChange?.(null)}
+                aria-label="Limpar filtro de origem"
+                className="grid size-9 place-items-center rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            ) : null}
+            {!isLoading && !isError && model.total > 0 ? (
+              <button
+                ref={otherSourcesTrigger}
+                type="button"
+                onClick={(event) => openDetail(event.currentTarget)}
+                aria-label={`Ver ${model.sources.length.toLocaleString('pt-BR')} origens`}
+                aria-haspopup="dialog"
+                className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-[var(--app-surface-soft)] px-2.5 text-[12px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <List className="size-4" aria-hidden="true" />
+                Origens
+              </button>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-1">
@@ -95,8 +118,8 @@ export function LeadSourcesChart({ data, countEntries, isLoading, isError, onRet
           : isError ? <DashboardChartError message="Não foi possível carregar a origem dos leads." onRetry={onRetry} />
           : model.total === 0 ? <p className="my-auto py-6 text-center text-[12px] text-[var(--app-text-secondary)]">Nenhum dado de origem disponível para este período</p>
           : <>
-            <div className="flex min-h-0 flex-1 items-center justify-center" role="img" aria-label={`${title}: ${model.total.toLocaleString('pt-BR')} leads. Valores e filtros na legenda e na lista de origens.`}>
-              <div className="relative h-full max-h-[180px] min-h-[84px] w-full max-w-[180px]">
+            <div className="flex min-h-0 flex-1 items-center justify-center" role="img" aria-label={`${title}: ${model.total.toLocaleString('pt-BR')} leads. Valores e filtros na lista de origens.`}>
+              <div className="relative h-full max-h-[240px] min-h-[120px] w-full max-w-[240px]">
                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={INITIAL_CHART_DIMENSION}>
                   <PieChart>
                     <Pie data={chartData} cx="50%" cy="50%" innerRadius="60%" outerRadius="95%" paddingAngle={3} dataKey="value" isAnimationActive={false} stroke="transparent">
@@ -111,22 +134,19 @@ export function LeadSourcesChart({ data, countEntries, isLoading, isError, onRet
                 </div>
               </div>
             </div>
-            <ul className="mt-1 grid shrink-0 grid-cols-2 gap-x-2 gap-y-0.5">
-              {chartData.map((source) => <li key={source.key} className="min-w-0">
-                <button ref={source.isOther ? otherSourcesTrigger : undefined} type="button" disabled={!source.isOther && (!onSourceChange || Boolean(getSourceFilterUnavailableReason(source.rawSource)))} title={source.isOther ? undefined : getSourceFilterUnavailableReason(source.rawSource) ?? undefined} onClick={(event) => selectSource(source, event.currentTarget)} aria-pressed={Boolean(source.rawSource && selectedSource === source.rawSource)} aria-label={`${source.name}: ${source.value.toLocaleString('pt-BR')} leads, ${source.percentage}${source.isOther ? '. Ver todas as origens' : getSourceFilterUnavailableReason(source.rawSource) ? `. ${getSourceFilterUnavailableReason(source.rawSource)}` : ''}`} className="flex min-h-7 w-full items-center gap-1.5 rounded-[4px] px-1 text-[11px] text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default aria-pressed:bg-primary/10 lg:min-h-6 lg:text-[10px]">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: source.color }} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate text-left" title={source.name}>{source.name}</span>
-                  <span className="shrink-0 tabular-nums">{source.value.toLocaleString('pt-BR')}</span>
-                </button>
-              </li>)}
-            </ul>
-            <button type="button" onClick={(event) => openDetail(event.currentTarget)} className="mt-1 min-h-7 shrink-0 rounded-[6px] text-[11px] text-primary hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Ver {model.sources.length.toLocaleString('pt-BR')} origens</button>
           </>}
       </CardContent>
       <Dialog open={detailOpen && !isError && !isLoading} onOpenChange={setDetailOpen}>
-        <DialogContent onCloseAutoFocus={dialogFocus.onCloseAutoFocus} aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[520px] flex-col gap-3 overflow-hidden rounded-[8px] p-4 sm:p-5">
-          <DialogHeader className="pr-7 text-left"><DialogTitle className="text-[15px] font-normal">{title}</DialogTitle></DialogHeader>
-          <p className="text-[12px] text-[var(--app-text-secondary)]">{model.total.toLocaleString('pt-BR')} {countEntries ? 'entradas e reentradas' : 'leads únicos'} nos filtros atuais. Escolha uma origem para filtrar a Dashboard.</p>
+        <DialogContent
+          onCloseAutoFocus={dialogFocus.onCloseAutoFocus}
+          className="flex max-h-[min(680px,calc(100dvh-24px))] w-[calc(100vw-24px)] max-w-[600px] flex-col gap-3 overflow-hidden rounded-[8px] p-4 sm:p-5"
+        >
+          <DialogHeader className="shrink-0 pr-7 text-left">
+            <DialogTitle className="text-[15px] font-normal">{title}</DialogTitle>
+            <DialogDescription className="text-[12px] text-[var(--app-text-secondary)]">
+              {model.total.toLocaleString('pt-BR')} {countEntries ? 'entradas e reentradas' : 'leads únicos'} nos filtros atuais. Escolha uma origem para filtrar a Dashboard.
+            </DialogDescription>
+          </DialogHeader>
           <div className="relative shrink-0"><Search className="absolute left-3 top-3 h-4 w-4 text-[var(--app-text-secondary)]" aria-hidden="true" /><Input value={search} onChange={(event) => { setSearch(event.target.value); setVisibleCount(DASHBOARD_SOURCE_PAGE_SIZE); }} aria-label="Buscar origem" placeholder="Buscar origem" className="h-10 pl-9" /></div>
           <div className="app-scrollbar min-h-0 overflow-y-auto overscroll-contain">
             <LeadSourceRows sources={matchingSources.slice(0, visibleCount)} total={model.total} selectedSource={selectedSource} onSelect={onSourceChange ? (source) => { selectSource(source); setDetailOpen(false); } : undefined} />

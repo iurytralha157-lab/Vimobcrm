@@ -54,6 +54,22 @@ func TestStageInactivitySupportsBothActivationContracts(t *testing.T) {
 	}
 }
 
+func TestStageInactivityNewStageEntriesRequireEntryAfterActivation(t *testing.T) {
+	policy, lead := explicitInactivityFixture()
+	policy.StartMode = InactivityNewStageEntries
+	lead.ScopeStartedAt = policy.ActivatedAt.Add(time.Hour)
+	if _, applicable, err := evaluateInactivityEpisode(policy, lead); err != nil || applicable {
+		t.Fatalf("reopening a preexisting entry included it in the new-entry scope: applicable=%v err=%v", applicable, err)
+	}
+	lead.StageEnteredAt = lead.ScopeStartedAt
+	interaction := lead.StageEnteredAt.Add(2 * time.Hour)
+	lead.LastActionAt = &interaction
+	episode, applicable, err := evaluateInactivityEpisode(policy, lead)
+	if err != nil || !applicable || !episode.DueAt.Equal(interaction.Add(7*24*time.Hour)) {
+		t.Fatalf("new entry did not count from its last interaction: %#v, applicable=%v, err=%v", episode, applicable, err)
+	}
+}
+
 func TestStageInactivityClockAndSameTimestampFacts(t *testing.T) {
 	policy, lead := explicitInactivityFixture()
 	interaction := policy.ActivatedAt.Add(time.Hour)

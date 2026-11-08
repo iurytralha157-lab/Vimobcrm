@@ -4,11 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
-  Building2,
   CalendarDays,
-  CalendarX2,
-  ChevronRight,
-  Clock3,
   ClipboardList,
   Home,
   LoaderCircle,
@@ -16,11 +12,10 @@ import {
   MessageSquare,
   Phone,
   RefreshCw,
-  UserRound,
   Video,
 } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { EmptyNote } from "@/components/features/marketing/marketing-ui";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleDashboardEvents } from "@/hooks/schedule/use-schedule-dashboard-events";
@@ -33,6 +28,8 @@ import type {
   ScheduleDashboardQuery,
 } from "@/lib/validation/schedule-dashboard";
 
+import { AgendaTableHeader, EventTypePill, formatEventWhen } from "./agenda-dashboard-ui";
+
 const EVENT_TYPE_PRESENTATION = {
   call: { label: "Ligação", icon: Phone },
   email: { label: "E-mail", icon: Mail },
@@ -44,35 +41,30 @@ const EVENT_TYPE_PRESENTATION = {
 } as const;
 
 const STATUS_PRESENTATION = {
-  open: {
-    label: "Em aberto",
-    className: "bg-primary/10 text-primary",
-  },
-  overdue: {
-    label: "Em atraso",
-    className: "bg-rose-500/10 text-rose-600 dark:text-rose-300",
-  },
-  completed: {
-    label: "Realizado",
-    className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
-  no_show: {
-    label: "No-show",
-    className: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
-  },
-  cancelled: {
-    label: "Cancelado",
-    className: "bg-[var(--app-surface-muted)] text-[var(--app-text-secondary)]",
-  },
-  rescheduled: {
-    label: "Remarcado",
-    className: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  unclassified: {
-    label: "Não classificado",
-    className: "bg-[var(--app-surface-muted)] text-[var(--app-text-secondary)]",
-  },
+  open: { label: "Em aberto", className: "text-[var(--app-text-primary)]" },
+  overdue: { label: "Em atraso", className: "text-rose-600 dark:text-rose-400" },
+  completed: { label: "Realizado", className: "text-[var(--app-text-primary)]" },
+  no_show: { label: "Não compareceu", className: "text-[var(--app-text-primary)]" },
+  cancelled: { label: "Cancelado", className: "text-[var(--app-text-secondary)]" },
+  rescheduled: { label: "Remarcado", className: "text-[var(--app-text-secondary)]" },
+  unclassified: { label: "Não classificado", className: "text-[var(--app-text-secondary)]" },
 } as const;
+
+const LIST_SEGMENTS = [
+  { key: "all", label: "Todos", status: undefined },
+  { key: "open", label: "Em aberto", status: "scheduled" },
+  { key: "overdue", label: "Atrasado", status: "overdue" },
+  { key: "completed", label: "Realizado", status: "completed" },
+] as const;
+
+type ListSegment = (typeof LIST_SEGMENTS)[number]["key"];
+
+function segmentOfStatus(status: ScheduleDashboardQuery["status"]): ListSegment {
+  return LIST_SEGMENTS.find((segment) => segment.status === status)?.key ?? "all";
+}
+
+const ROW_COLUMNS =
+  "@[720px]/agenda-dashboard:grid @[720px]/agenda-dashboard:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px_120px]";
 
 type EventDisplayStatus = keyof typeof STATUS_PRESENTATION;
 
@@ -82,20 +74,10 @@ export type AgendaEventsPanelProps = {
   reportTimezone: string;
   enabled?: boolean;
   lifecycleRevision?: number;
+  /** Refreshes the list when the local "Atrasado" segment is on. */
+  overdueRevision?: number;
   className?: string;
 };
-
-function getInitials(name: string) {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "?"
-  );
-}
 
 function formatEventDate(isoDate: string, timeZone: string) {
   const value = new Date(isoDate);
@@ -224,9 +206,20 @@ export function AgendaEventsPanel({
   period,
   reportTimezone,
   enabled,
-  lifecycleRevision,
+  lifecycleRevision: filterRevision = 0,
+  overdueRevision = 0,
   className,
 }: AgendaEventsPanelProps) {
+  const [segment, setSegment] = useState<ListSegment>(() => segmentOfStatus(filters.status));
+  // Picking a segment overrides the status filter set by a KPI, "Todos" included,
+  // until a new KPI is chosen.
+  const [segmentOverridesFilter, setSegmentOverridesFilter] = useState(false);
+  const [syncedStatus, setSyncedStatus] = useState(filters.status);
+  if (syncedStatus !== filters.status) {
+    setSyncedStatus(filters.status);
+    setSegment(segmentOfStatus(filters.status));
+    setSegmentOverridesFilter(false);
+  }
   const [lifecycleNow, setLifecycleNow] = useState(() => Date.now());
   useEffect(() => {
     let intervalId: number | undefined;
@@ -246,14 +239,18 @@ export function AgendaEventsPanel({
     };
   }, []);
 
+  const segmentStatus = LIST_SEGMENTS.find((item) => item.key === segment)?.status;
+  const lifecycleRevision = segment === "overdue" ? overdueRevision : filterRevision;
   const eventsFilters = useMemo<ScheduleDashboardQuery>(
     () => ({
       ...filters,
       dateFrom: period.date_from,
       dateTo: period.date_to,
-      dateBasis: period.date_basis,
+      // "Em atraso" only exists on the scheduled date, as in the dashboard filter.
+      dateBasis: segmentStatus === "overdue" ? "start_time" : period.date_basis,
+      status: segmentStatus ?? (segmentOverridesFilter ? undefined : filters.status),
     }),
-    [filters, period.date_basis, period.date_from, period.date_to],
+    [filters, period.date_basis, period.date_from, period.date_to, segmentOverridesFilter, segmentStatus],
   );
   const eventsQuery = useScheduleDashboardEvents(eventsFilters, {
     enabled,
@@ -272,50 +269,57 @@ export function AgendaEventsPanel({
 
   return (
     <section
-      aria-label="Agendamentos do período"
+      aria-label="Compromissos do período"
       aria-busy={eventsQuery.isFetching}
       className={cn(
-        "flex h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] shadow-none @[960px]/agenda-dashboard:h-[440px]",
+        "min-w-0 rounded-[12px] bg-[var(--app-surface-solid)] p-4",
         className,
       )}
     >
-      <div className="flex min-h-16 items-center justify-between gap-3 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
-            <CalendarDays className="h-4 w-4" aria-hidden="true" />
-          </span>
-          <h2 className="truncate text-[13px] font-medium tracking-[-0.01em] text-[var(--app-text-primary)]">
-            Agendamentos
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">
+            Lista de compromissos
           </h2>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1.5">
+          <span aria-live="polite" className="shrink-0 text-[12px] font-light tabular-nums text-[var(--app-text-tertiary)]">
+            {events.length < total ? `${events.length} de ${total}` : total}
+          </span>
           <Button
             type="button"
             variant="ghost"
             size="icon"
             disabled={eventsQuery.isFetching || enabled === false}
             onClick={() => void eventsQuery.refetch()}
-            aria-label="Atualizar lista de agendamentos"
-            title="Atualizar lista de agendamentos"
-            className="h-7 w-7 rounded-[6px] text-[var(--app-text-tertiary)] shadow-none hover:bg-primary/10 hover:text-primary"
+            aria-label="Atualizar lista de compromissos"
+            title="Atualizar lista de compromissos"
+            className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
           >
             <RefreshCw
-              className={cn(
-                "h-3.5 w-3.5",
-                eventsQuery.isFetching && "animate-spin",
-              )}
+              className={cn("h-3.5 w-3.5", eventsQuery.isFetching && "animate-spin")}
               aria-hidden="true"
             />
           </Button>
-          <span
-            aria-live="polite"
-            className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[9px] font-medium tabular-nums text-primary"
-          >
-            {events.length < total ? `${events.length} de ${total}` : total}
-          </span>
         </div>
-      </div>
+        <div role="group" aria-label="Situação na lista" className="flex max-w-full gap-1 overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 [scrollbar-width:none]">
+          {LIST_SEGMENTS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              aria-pressed={segment === item.key}
+              onClick={() => {
+                setSegment(item.key);
+                setSegmentOverridesFilter(true);
+              }}
+              className={cn(
+                "h-6 shrink-0 rounded-[6px] px-2.5 text-[11px] font-light text-[var(--app-text-secondary)] transition-colors hover:text-[var(--app-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30 sm:text-[12px]",
+                segment === item.key && "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </header>
 
       {eventsQuery.isPending ? (
         <AgendaEventsLoading />
@@ -323,35 +327,40 @@ export function AgendaEventsPanel({
         <AgendaEventsError
           message={getPublicErrorMessage(
             eventsQuery.error,
-            "Não foi possível carregar os agendamentos deste período.",
+            "Não foi possível carregar os compromissos deste período.",
           )}
           onRetry={() => void eventsQuery.refetch()}
         />
       ) : events.length === 0 ? (
-        <AgendaEventsEmpty />
+        <EmptyNote>Nenhum compromisso encontrado para o período e os filtros selecionados.</EmptyNote>
       ) : (
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        <div className="text-[12px] font-light">
           {eventsQuery.isError && !eventsQuery.isFetchNextPageError ? (
             <div
               role="status"
-              className="mb-2 flex items-center justify-between gap-2 rounded-[7px] bg-amber-500/10 px-3 py-2 text-[9px] text-amber-800 dark:text-amber-300"
+              className="mb-2 flex items-center justify-between gap-2 rounded-[7px] bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300"
             >
-              <span>
-                A atualização falhou; exibindo a última leitura válida.
-              </span>
+              <span>A atualização falhou; exibindo a última leitura válida.</span>
               <button
                 type="button"
                 onClick={() => void eventsQuery.refetch()}
-                className="shrink-0 font-medium underline underline-offset-2"
+                className="shrink-0 underline underline-offset-2"
               >
                 Atualizar
               </button>
             </div>
           ) : null}
 
-          <ol className="space-y-2">
+          <AgendaTableHeader className={ROW_COLUMNS}>
+            <span>Compromisso</span>
+            <span className="text-right">Lead</span>
+            <span className="text-right">Responsável</span>
+            <span className="text-right">Quando</span>
+            <span className="text-right">Situação</span>
+          </AgendaTableHeader>
+          <ol className="max-h-[560px] overflow-y-auto overscroll-contain">
             {events.map((event) => (
-              <AgendaEventCard
+              <AgendaEventRow
                 key={event.id}
                 event={event}
                 reportTimezone={reportTimezone}
@@ -361,20 +370,17 @@ export function AgendaEventsPanel({
           </ol>
 
           {eventsQuery.hasNextPage || eventsQuery.isFetchNextPageError ? (
-            <div className="flex justify-center pb-1 pt-3">
+            <div className="flex justify-center pt-3">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 disabled={eventsQuery.isFetchingNextPage}
                 onClick={() => void eventsQuery.fetchNextPage()}
-                className="h-8 gap-1.5 rounded-[6px] border-primary/15 bg-primary/[0.04] px-3 text-[10px] font-medium text-primary shadow-none hover:bg-primary/10 hover:text-primary"
+                className="h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[11px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
               >
                 {eventsQuery.isFetchingNextPage ? (
-                  <LoaderCircle
-                    className="h-3.5 w-3.5 animate-spin"
-                    aria-hidden="true"
-                  />
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 ) : (
                   <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                 )}
@@ -392,7 +398,7 @@ export function AgendaEventsPanel({
   );
 }
 
-function AgendaEventCard({
+function AgendaEventRow({
   event,
   reportTimezone,
   lifecycleNow,
@@ -402,7 +408,6 @@ function AgendaEventCard({
   lifecycleNow: number;
 }) {
   const presentation = getEventTypePresentation(event.event_type);
-  const Icon = presentation.icon;
   const startDate = formatEventDate(event.start_time, reportTimezone);
   const occupiedEnd = event.is_all_day
     ? getScheduleAllDayLastOccupiedInstant(event.start_time, event.end_time, reportTimezone)
@@ -412,116 +417,49 @@ function AgendaEventCard({
   const statusPresentation = STATUS_PRESENTATION[displayStatus];
   const statusLabel = getStatusLabel(event, displayStatus);
   const timingLabel = getEventTimingLabel(event, startDate, endDate);
-  const propertyLabel =
-    [event.property_code, event.property_title]
-      .filter((value): value is string => Boolean(value))
-      .join(" · ") || "Sem imóvel vinculado";
+  const propertyLabel = [event.property_code, event.property_title]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+  const leadLabel = event.lead_name || "Sem lead vinculado";
 
   return (
-    <li>
+    <li className="border-b border-[var(--app-border)] last:border-b-0">
       <Link
         href={`/agenda?event=${encodeURIComponent(event.id)}`}
-        className="group grid min-w-0 grid-cols-[50px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-transparent bg-[var(--app-surface-soft)] px-3 py-3 transition-[background-color,border-color] hover:border-primary/20 hover:bg-primary/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
         aria-label={`Abrir ${presentation.label.toLowerCase()} ${event.title}`}
+        className={cn(
+          "block gap-3 py-2 text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 @[720px]/agenda-dashboard:items-center",
+          ROW_COLUMNS,
+        )}
       >
-        <span className="flex h-[58px] w-[50px] shrink-0 flex-col items-center justify-center rounded-[7px] bg-primary/12 text-center text-primary">
-          <span className="text-[18px] font-medium leading-none tracking-[-0.03em] tabular-nums">
-            {startDate.day}
-          </span>
-          <span className="mt-1.5 text-[8px] font-medium uppercase leading-none">
-            {startDate.month}
-          </span>
-        </span>
-
-        <span className="min-w-0">
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] bg-primary/10 text-primary">
-              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[12px] font-medium tracking-[-0.01em] text-[var(--app-text-primary)]">
-              {event.title}
-            </span>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2 py-0.5 text-[8px] font-medium",
-                statusPresentation.className,
-              )}
-            >
-              {statusLabel}
-            </span>
-          </span>
-
-          <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[9px] font-light text-[var(--app-text-tertiary)]">
-            <time
-              dateTime={event.start_time}
-              title={startDate.fullDate}
-              className="inline-flex items-center gap-1 text-[var(--app-text-secondary)]"
-            >
-              <Clock3
-                className="h-3 w-3 shrink-0 text-primary"
-                aria-hidden="true"
-              />
-              {timingLabel}
-            </time>
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[8px] font-medium text-primary">
-              {presentation.label}
-            </span>
-          </span>
-
-          <span className="mt-2 grid min-w-0 gap-1.5 text-[8px] font-light text-[var(--app-text-tertiary)] sm:grid-cols-2">
-            <span
-              className="inline-flex min-w-0 items-center gap-1.5"
-              title={event.lead_name || "Sem lead vinculado"}
-            >
-              <UserRound className="h-3 w-3 shrink-0 text-primary" />
-              <span className="truncate">
-                {event.lead_name || "Sem lead vinculado"}
-              </span>
-            </span>
-            <span
-              className="inline-flex min-w-0 items-center gap-1.5"
-              title={propertyLabel}
-            >
-              <Building2 className="h-3 w-3 shrink-0 text-primary" />
-              <span className="truncate">{propertyLabel}</span>
-            </span>
-          </span>
-
-          <span className="mt-2 flex min-w-0 items-center gap-1.5">
-            <Avatar className="h-5 w-5 shrink-0">
-              {event.user_avatar_url ? (
-                <AvatarImage
-                  src={event.user_avatar_url}
-                  alt={event.user_name}
-                />
-              ) : null}
-              <AvatarFallback className="bg-primary/10 text-[7px] font-medium text-primary">
-                {getInitials(event.user_name)}
-              </AvatarFallback>
-            </Avatar>
-            <span
-              className="truncate text-[8px] font-light text-[var(--app-text-secondary)]"
-              title={`Responsável principal: ${event.user_name}`}
-            >
-              Responsável principal: {event.user_name}
-            </span>
+        <span className="flex min-w-0 items-center gap-2">
+          <EventTypePill type={event.event_type} />
+          <span className="truncate" title={propertyLabel ? `${event.title} · ${propertyLabel}` : event.title}>
+            {event.title}
+            {propertyLabel ? <span className="text-[var(--app-text-secondary)]"> · {propertyLabel}</span> : null}
           </span>
         </span>
-
-        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--app-text-tertiary)] transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-primary" />
+        <span className={SECONDARY_CELL} title={leadLabel}>{leadLabel}</span>
+        <span className={SECONDARY_CELL} title={`Responsável principal: ${event.user_name}`}>{event.user_name}</span>
+        <time dateTime={event.start_time} title={timingLabel} className={cn(SECONDARY_CELL, "tabular-nums")}>
+          {formatEventWhen(event.start_time, reportTimezone, event.is_all_day)}
+        </time>
+        <span className={cn("block truncate @[720px]/agenda-dashboard:text-right", statusPresentation.className)} title={statusLabel}>
+          {statusLabel}
+        </span>
       </Link>
     </li>
   );
 }
 
+const SECONDARY_CELL =
+  "block truncate text-[var(--app-text-secondary)] @[720px]/agenda-dashboard:text-right @[720px]/agenda-dashboard:text-[var(--app-text-primary)]";
+
 function AgendaEventsLoading() {
   return (
-    <div
-      aria-label="Carregando agendamentos"
-      className="min-h-0 flex-1 space-y-2 overflow-hidden px-3 pb-3"
-    >
-      {Array.from({ length: 3 }, (_, index) => (
-        <Skeleton key={index} className="h-[128px] rounded-[8px]" />
+    <div aria-label="Carregando compromissos" className="space-y-2">
+      {Array.from({ length: 5 }, (_, index) => (
+        <Skeleton key={index} className="h-9 rounded-[6px]" />
       ))}
     </div>
   );
@@ -535,7 +473,7 @@ function AgendaEventsError({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8 text-center">
+    <div className="flex flex-col items-center justify-center px-5 py-8 text-center">
       <span className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-destructive/10 text-destructive">
         <AlertCircle className="h-4 w-4" aria-hidden="true" />
       </span>
@@ -552,19 +490,6 @@ function AgendaEventsError({
         <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
         Tentar novamente
       </Button>
-    </div>
-  );
-}
-
-function AgendaEventsEmpty() {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8 text-center">
-      <span className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-primary/10 text-primary">
-        <CalendarX2 className="h-4 w-4" aria-hidden="true" />
-      </span>
-      <p className="mt-2 max-w-[280px] text-[10px] font-light leading-5 text-[var(--app-text-tertiary)]">
-        Nenhum agendamento encontrado para o período e os filtros selecionados.
-      </p>
     </div>
   );
 }

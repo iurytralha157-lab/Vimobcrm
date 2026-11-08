@@ -97,6 +97,7 @@ func TestChangePasswordRejectsInvalidSourceBeforeAuthMutation(t *testing.T) {
 		"user-123",
 		"Bearer test-token",
 		ChangePasswordRequest{Password: "Valid-password1!", Source: "untrusted"},
+		nil,
 		func(context.Context, string, string) error {
 			revokeCalled = true
 			return nil
@@ -138,6 +139,7 @@ func TestChangePasswordRejectsWeakPasswordBeforeSideEffects(t *testing.T) {
 		"user-weak-password",
 		"Bearer test-token",
 		ChangePasswordRequest{Password: "somente-minusculas", Source: "settings"},
+		nil,
 		func(context.Context, string, string) error {
 			revokeCalled = true
 			return nil
@@ -179,6 +181,7 @@ func TestChangePasswordReturnsSuccessWhenAuditPersistenceFailsAfterAuthMutation(
 		"user-456",
 		"Bearer test-token",
 		ChangePasswordRequest{Password: "Valid-password1!", Source: " RECOVERY "},
+		nil,
 		func(_ context.Context, authorization string, scope string) error {
 			callOrder = append(callOrder, "revoke")
 			if authorization != "Bearer test-token" || scope != "global" {
@@ -249,7 +252,8 @@ func TestChangePasswordStopsWhenAuthMutationFails(t *testing.T) {
 		context.Background(),
 		"user-789",
 		"Bearer test-token",
-		ChangePasswordRequest{Password: "Valid-password1!"},
+		ChangePasswordRequest{Password: "Valid-password1!", CurrentPassword: "existing-password"},
+		func(context.Context, string, string) error { return nil },
 		func(_ context.Context, _ string, scope string) error {
 			if scope != "others" {
 				t.Fatalf("settings scope = %q, want others", scope)
@@ -292,6 +296,7 @@ func TestChangePasswordStopsBeforeAuthMutationWhenRevocationFails(t *testing.T) 
 		"user-123",
 		"Bearer test-token",
 		ChangePasswordRequest{Password: "Valid-password1!", Source: "recovery"},
+		nil,
 		func(_ context.Context, authorization string, scope string) error {
 			if authorization != "Bearer test-token" || scope != "global" {
 				t.Fatalf("unexpected revocation arguments: authorization=%q scope=%q", authorization, scope)
@@ -326,7 +331,8 @@ func TestChangePasswordReportsNotificationFailureAfterConfirmedPasswordUpdate(t 
 		context.Background(),
 		"user-123",
 		"Bearer test-token",
-		ChangePasswordRequest{Password: "Valid-password1!", Source: "settings"},
+		ChangePasswordRequest{Password: "Valid-password1!", CurrentPassword: "existing-password", Source: "settings"},
+		func(context.Context, string, string) error { return nil },
 		func(context.Context, string, string) error { return nil },
 		func(context.Context, string, string) error { return nil },
 		func(context.Context, string, string) error { return nil },
@@ -404,7 +410,13 @@ func TestChangePasswordPreservesPasswordExactlyAsEntered(t *testing.T) {
 		context.Background(),
 		"user-exact-password",
 		"Bearer test-token",
-		ChangePasswordRequest{Password: wantPassword, Source: "settings"},
+		ChangePasswordRequest{Password: wantPassword, CurrentPassword: " Existing password 42! ", Source: "settings"},
+		func(_ context.Context, userID string, password string) error {
+			if userID != "user-exact-password" || password != " Existing password 42! " {
+				t.Fatal("current password or authenticated subject was changed before proof")
+			}
+			return nil
+		},
 		func(context.Context, string, string) error { return nil },
 		func(_ context.Context, _ string, password string) error {
 			receivedPassword = password

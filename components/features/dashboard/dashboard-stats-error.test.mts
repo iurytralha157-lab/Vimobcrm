@@ -42,13 +42,12 @@ test("dados anteriores só podem continuar visíveis quando o acesso segue váli
   assert.match(getDashboardStatsErrorDescription({ code: "session_check_unavailable", status: 503 }), /validar sua sessão/);
 });
 
-test("desktop e mobile usam cards da coorte para taxas de status", () => {
-  for (const filename of ["DashboardScreen.tsx", "KPICards.tsx"]) {
-    const source = readFileSync(new URL(`./${filename}`, import.meta.url), "utf8");
-    assert.match(source, /\(\(data\.openLeads \?\? 0\) \/ data\.totalLeads\)/);
-    assert.match(source, /\(\(data\.lostLeads \?\? 0\) \/ data\.totalLeads\)/);
-    assert.match(source, /data\.closedLeads \/ data\.totalLeads/);
-    assert.doesNotMatch(source, /\/ data\.uniqueLeads/);
-    assert.match(source, /entradas iniciais \+ \$\{data\.reentries/);
-  }
+test("os KPIs usam cards da coorte para taxas de status", () => {
+  const model = readFileSync(new URL("./dashboard-kpi-model.ts", import.meta.url), "utf8");
+  const kpis = readFileSync(new URL("./DashboardKpis.tsx", import.meta.url), "utf8");
+  assert.match(model, /\(\(data\.openLeads \?\? 0\) \/ data\.totalLeads\)/);
+  assert.match(model, /\(\(data\.lostLeads \?\? 0\) \/ data\.totalLeads\)/);
+  assert.match(model, /data\.closedLeads \/ data\.totalLeads/);
+  for (const source of [model, kpis]) assert.doesNotMatch(source, /\/ data\.uniqueLeads/);
+  assert.match(kpis, /entradas iniciais \+ \$\{data\.reentries/);
 });

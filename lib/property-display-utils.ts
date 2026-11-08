@@ -47,7 +47,8 @@ export function formatPropertyDate(
   missingLabel = 'Não informado',
 ) {
   if (!value) return missingLabel;
-  const date = new Date(value);
+  // A date without time is a calendar day, not midnight UTC of the previous local day.
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(
     'pt-BR',

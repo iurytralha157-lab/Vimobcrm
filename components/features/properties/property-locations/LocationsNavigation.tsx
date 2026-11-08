@@ -1,16 +1,11 @@
 'use client'
 
-import {
-  Building2,
-  Loader2,
-  Map,
-  MapPinned,
-  Search,
-  UserRound,
-} from 'lucide-react'
+import { Loader2, Map, MapPinned, Search } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { TabsList, TabsTrigger } from '@/components/ui/tabs'
+
+import type { PropertyLocationsTab } from './model'
 
 function CounterBadge({
   count,
@@ -22,7 +17,7 @@ function CounterBadge({
   return (
     <span
       data-responsive-tab-badge
-      className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-[6px] bg-primary px-1.5 text-[11px] font-medium text-primary-foreground"
+      className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-[6px] bg-[color-mix(in_srgb,var(--app-text-primary)_10%,transparent)] px-1.5 text-[11px] font-light text-[var(--app-text-secondary)]"
     >
       {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : count}
     </span>
@@ -30,33 +25,28 @@ function CounterBadge({
 }
 
 type LocationsNavigationProps = {
+  tab: PropertyLocationsTab
   search: string
   onSearchChange: (value: string) => void
   citiesCount: number
   neighborhoodsCount: number
-  condominiumsCount: number
-  ownersCount: number
   loadingCities: boolean
   loadingNeighborhoods: boolean
-  loadingCondominiums: boolean
-  loadingOwners: boolean
 }
 
 export function LocationsNavigation({
+  tab,
   search,
   onSearchChange,
   citiesCount,
   neighborhoodsCount,
-  condominiumsCount,
-  ownersCount,
   loadingCities,
   loadingNeighborhoods,
-  loadingCondominiums,
-  loadingOwners,
 }: LocationsNavigationProps) {
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <div
+      {/* Condomínios and Proprietários already have their own section tab. */}
+      {(tab === 'cities' || tab === 'neighborhoods') ? <div
         data-collapse="compact"
         className="app-responsive-tab-list min-w-0 flex-1"
       >
@@ -90,35 +80,10 @@ export function LocationsNavigation({
               loading={loadingNeighborhoods}
             />
           </TabsTrigger>
-          <TabsTrigger
-            value="condominiums"
-            data-responsive-tab
-            aria-label="Condomínios"
-            title="Condomínios"
-            className="mx-0 h-6 shrink-0 gap-1 rounded-[6px] px-2.5 text-[10px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none sm:text-[12px]"
-          >
-            <Building2 aria-hidden="true" className="h-3 w-3 shrink-0" />
-            <span className="app-responsive-tab-label">Condomínios</span>
-            <CounterBadge
-              count={condominiumsCount}
-              loading={loadingCondominiums}
-            />
-          </TabsTrigger>
-          <TabsTrigger
-            value="owners"
-            data-responsive-tab
-            aria-label="Proprietários"
-            title="Proprietários"
-            className="mx-0 h-6 shrink-0 gap-1 rounded-[6px] px-2.5 text-[10px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none sm:text-[12px]"
-          >
-            <UserRound aria-hidden="true" className="h-3 w-3 shrink-0" />
-            <span className="app-responsive-tab-label">Proprietários</span>
-            <CounterBadge count={ownersCount} loading={loadingOwners} />
-          </TabsTrigger>
         </TabsList>
-      </div>
-      <div className="relative w-[min(42vw,280px)] min-w-[120px] shrink-0 sm:w-64">
-        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      </div> : null}
+      <div className={tab === 'cities' || tab === 'neighborhoods' ? 'relative w-[min(42vw,280px)] min-w-[120px] shrink-0 sm:w-64' : 'relative min-w-0 flex-1 rounded-[12px] bg-[var(--app-surface-solid)] p-2'}>
+        <Search className={tab === 'cities' || tab === 'neighborhoods' ? 'absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' : 'absolute left-5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground'} aria-hidden="true" />
         <Input
           placeholder="Buscar..."
           value={search}

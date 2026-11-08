@@ -283,6 +283,8 @@ func writePropertyError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "property_asset_published", "A mídia integra uma versão publicada. Despublique os canais antes de alterar sua visibilidade, conteúdo ou excluí-la.")
 	case errors.Is(err, ErrPropertyWorkspaceConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "property_workspace_conflict", "O imóvel foi alterado por outra pessoa. Atualize a página e tente novamente.")
+	case errors.Is(err, ErrPropertySettingsConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_settings_conflict", "As configura\u00e7\u00f5es foram alteradas por outra pessoa. Atualize a p\u00e1gina e tente novamente.")
 	case errors.Is(err, ErrPropertyCreationKeyConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "property_creation_key_conflict", "Esta tentativa de cadastro já foi usada com outros dados. Inicie uma nova tentativa.")
 	case errors.Is(err, ErrPropertyCreationResourceRemoved):

@@ -63,6 +63,7 @@ type PropertyDeleteInput = {
 export interface PropertyFilters {
   scope?: "own";
   status?: string;
+  portfolio_type?: "ready" | "launch" | "third_party";
   tipo_de_negocio?: string;
   tipo_de_imovel?: string;
   cidade?: string;
@@ -106,10 +107,11 @@ async function refreshPropertyAfterConflict(
   );
 }
 
-function normalizeFilters(filters: PropertyFilters = {}) {
+export function normalizeFilters(filters: PropertyFilters = {}) {
   return {
     scope: filters.scope,
     status: filters.status || undefined,
+    portfolio_type: filters.portfolio_type || undefined,
     tipo_de_negocio: filters.tipo_de_negocio || undefined,
     tipo_de_imovel: filters.tipo_de_imovel || undefined,
     cidade: sanitizeSearchTerm(filters.cidade),

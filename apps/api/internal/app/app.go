@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/admin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/ai"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/analytics"
@@ -25,6 +26,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/marketing"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/me"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/meta"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pipelines"
@@ -94,6 +96,25 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		authVerifier.Close()
 		return nil, err
 	}
+
+	marketingHandler := marketing.NewHandler(marketing.NewService(marketing.Config{
+		EnabledOrganizations: cfg.Marketing.EnabledOrganizations,
+		AllowedOrigins:       append([]string{cfg.Email.AppURL}, cfg.Marketing.AllowedOrigins...),
+		Meta: marketing.MetaConfig{
+			AppID:         cfg.Marketing.MetaAppID,
+			AppSecret:     cfg.Marketing.MetaAppSecret,
+			LoginConfigID: cfg.Marketing.MetaLoginConfigID,
+			GraphVersion:  cfg.Marketing.MetaGraphVersion,
+			GraphBaseURL:  cfg.Meta.GraphBaseURL,
+			CallbackURL:   cfg.Marketing.MetaCallbackURL,
+		},
+	}, marketing.NewPostgresStore(postgres.Pool()), marketingConnectionSyncer{
+		service: meta.NewMarketingSyncService(postgres, meta.Config{
+			AppSecret:    cfg.Marketing.MetaAppSecret,
+			GraphVersion: cfg.Marketing.MetaGraphVersion,
+			GraphBaseURL: cfg.Meta.GraphBaseURL,
+		}, nil),
+	}))
 
 	var metaOAuthHandler *meta.OAuthHandler
 	if strings.TrimSpace(cfg.Meta.AppID) != "" {
@@ -296,7 +317,20 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	developmentsHandler := developments.NewHandler(developmentsRepository)
 	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres), realtimeHub)
 	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository, cfg.GoogleCalendar.ImmediateDispatchEnabled), realtimeHub)
-	stageInactivityRepository := stageconfig.NewRepository(postgres).WithStageInactivityRuntime(cfg.StageInactivityEnabled && cfg.BackgroundWorkersEnabled)
+	stageInactivityRepository := stageconfig.NewRepository(postgres).WithStageInactivityRuntime(cfg.StageInactivityEnabled && cfg.BackgroundWorkersEnabled).
+		// "Move after X days without interaction" rules reuse the board's
+		// canonical move, run as the manager who saved the rule.
+		WithStageInactivityMover(func(ctx context.Context, tx pgx.Tx, move stageconfig.StageInactivityMoveRequest) (string, error) {
+			outcome, err := leadsRepository.MoveLeadForStageInactivity(ctx, tx, tenantRepository, leads.StageInactivityMove{
+				OrganizationID: move.OrganizationID, ActorID: move.ActorID, LeadID: move.LeadID,
+				FromStageID: move.FromStageID, ToStageID: move.ToStageID,
+				AutomationID: move.AutomationID, EpisodeKey: move.EpisodeKey,
+			})
+			return string(outcome), err
+		}).
+		WithStageInactivityRedistributor(func(ctx context.Context, tx pgx.Tx, request stageconfig.StageInactivityRedistributionRequest) (string, error) {
+			return leadsRepository.RedistributeLeadForStageInactivity(ctx, tx, tenantRepository, leads.StageInactivityRedistribution(request))
+		})
 	stageConfigHandler := stageconfig.NewHandler(stageInactivityRepository)
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
 		ProjectURL:          cfg.Storage.ProjectURL,
@@ -483,6 +517,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		integrationsHandler:      integrationsHandler,
 		leadsHandler:             leadsHandler,
 		automationStageHandler:   leads.NewAutomationStageCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
+		marketingHandler:         marketingHandler,
 		meHandler:                meHandler,
 		metaHandler:              metaHandler,
 		metaMarketingSyncHandler: metaMarketingSyncHandler,

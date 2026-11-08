@@ -10,7 +10,7 @@ import { useUserPermissions } from '@/hooks/use-user-permissions'
 import { isLocalReadOnlyMode } from '@/lib/local-read-only'
 import { cn } from '@/lib/utils'
 
-import { RulesEditor } from './stage-operational-rules/RulesEditor'
+import { RulesEditor, type RulesExtraEditor } from './stage-operational-rules/RulesEditor'
 import { RulesSkeleton } from './stage-operational-rules/RuleFields'
 
 interface StageOperationalRulesProps {
@@ -18,6 +18,7 @@ interface StageOperationalRulesProps {
   stageName: string
   canEdit: boolean
   onEditorStateChange?: (state: { isDirty: boolean; isSaving: boolean }) => void
+  extraEditor?: RulesExtraEditor
 }
 
 export function StageOperationalRules({
@@ -25,6 +26,7 @@ export function StageOperationalRules({
   stageName,
   canEdit,
   onEditorStateChange,
+  extraEditor,
 }: StageOperationalRulesProps) {
   const { hasPermission } = useUserPermissions()
   const canViewAttention = hasPermission('attention_view')
@@ -72,9 +74,11 @@ export function StageOperationalRules({
 
   return (
     <>
-      {localReadOnly && canEdit && (
-        <p role="status" className="mb-3 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-[var(--app-text-secondary)]">
-          Ambiente local de consulta: a edição de cadências está bloqueada.
+      {(!canEdit || localReadOnly) && (
+        <p role="status" className="mb-3 text-xs text-[var(--app-text-secondary)]">
+          {localReadOnly
+            ? 'Neste ambiente local, as regras estão disponíveis para consulta.'
+            : 'Seu perfil pode consultar as regras desta etapa.'}
         </p>
       )}
       <RulesEditor
@@ -83,6 +87,7 @@ export function StageOperationalRules({
         stageName={stageName}
         canEdit={canEdit && !localReadOnly}
         onEditorStateChange={onEditorStateChange}
+        extraEditor={extraEditor}
         onReloadCurrent={async () => {
           const result = await rulesQuery.refetch()
           if (result.isError || !result.data) {
