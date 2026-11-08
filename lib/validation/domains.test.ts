@@ -1076,33 +1076,42 @@ test("financeiro valida categoria, lancamento e contrato", () => {
 });
 
 test("configuracoes rejeitam senha curta, percentual excessivo e papel invalido", () => {
+  const passwordProof = { current_password: "senha-anterior-sintetica" };
   assert.equal(
-    changePasswordInputSchema.safeParse({ password: "1234567" }).success,
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "1234567" }).success,
     false,
   );
   assert.equal(
-    changePasswordInputSchema.safeParse({ password: "somente-minusculas" })
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "somente-minusculas" })
+      .success,
+    false,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "SenhaForte1!" }).success,
+    true,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "Aa1!" + "x".repeat(68) })
+      .success,
+    true,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "Aa1!" + "x".repeat(69) })
+      .success,
+    false,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ ...passwordProof, password: "Aa1!" + "á".repeat(35) })
       .success,
     false,
   );
   assert.equal(
     changePasswordInputSchema.safeParse({ password: "SenhaForte1!" }).success,
-    true,
-  );
-  assert.equal(
-    changePasswordInputSchema.safeParse({ password: "Aa1!" + "x".repeat(68) })
-      .success,
-    true,
-  );
-  assert.equal(
-    changePasswordInputSchema.safeParse({ password: "Aa1!" + "x".repeat(69) })
-      .success,
     false,
   );
   assert.equal(
-    changePasswordInputSchema.safeParse({ password: "Aa1!" + "á".repeat(35) })
-      .success,
-    false,
+    changePasswordInputSchema.safeParse({ password: "SenhaForte1!", source: "recovery" }).success,
+    true,
   );
   assert.equal(
     updateOrganizationInputSchema.safeParse({
