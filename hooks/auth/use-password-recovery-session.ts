@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ROUTES } from '@/config/constants'
-import { supabase } from '@/lib/supabase/client'
+import { preparePasswordRecoveryFragment, supabase } from '@/lib/supabase/client'
 import { setVimobAPIAccessToken } from '@/lib/api/vimob-client'
 import {
   captureGlobalSignOutGuard, getGlobalSignOutSessionKey, trackGlobalSignOutSession,
@@ -13,7 +13,7 @@ import { exitPasswordRecovery, type PasswordRecoveryGuard } from '@/lib/auth/pas
 import {
   capturePasswordRecoveryIntent, clearPasswordRecoveryEvidence, getPasswordRecoveryStorage,
   grantPasswordRecoveryProof, hasPasswordRecoveryProof, isPasswordRecoveryAccessToken,
-  readPasswordRecoveryUrlEvidence,
+  readPasswordRecoveryFragmentIdentity, readPasswordRecoveryUrlEvidence,
 } from '@/lib/auth/password-recovery'
 
 export type RecoveryState = 'checking' | 'ready' | 'invalid' | 'incomplete' | 'success'
@@ -137,7 +137,9 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
     recoveryGuardRef.current = null
     closingRef.current = false
     const current = () => mounted && lifecycleRef.current.mounted && visitRef.current === visit
-    if (readPasswordRecoveryUrlEvidence(new URL(window.location.href)).kind !== 'none') {
+    const initialEvidence = readPasswordRecoveryUrlEvidence(new URL(window.location.href))
+    let awaitingInitialFragmentSession = initialEvidence.kind === 'implicit'
+    if (initialEvidence.kind !== 'none') {
       recoverySessionRef.current = null
       recoveryGuardRef.current = null
     }
@@ -213,7 +215,29 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
           if (error) throw error
           session = data.session
         } else if (evidence.kind === 'implicit') {
-          const { data, error } = await supabase.auth.setSession({ access_token: evidence.accessToken, refresh_token: evidence.refreshToken })
+          const identity = readPasswordRecoveryFragmentIdentity(evidence.accessToken)
+          if (!identity) throw new Error('invalid_recovery')
+
+          const initial = await supabase.auth.getSession()
+          awaitingInitialFragmentSession = false
+          if (!current()) return
+          const initialKey = getGlobalSignOutSessionKey(initial.data.session)
+          if (initial.error || (initial.data.session && initial.data.session.user.id !== identity.userId)
+            || (lifecycle.sessionKey !== null && lifecycle.sessionKey !== initialKey)) {
+            throw new Error('invalid_recovery')
+          }
+          trackGlobalSignOutSession(lifecycle, initial.data.session)
+          const generation = lifecycle.generation
+          const verified = await preparePasswordRecoveryFragment(evidence)
+          if (!current() || window.location.href !== url.href) return
+          if (!verified) throw new Error('invalid_recovery')
+
+          const latest = await supabase.auth.getSession()
+          if (!current() || window.location.href !== url.href) return
+          if (latest.error || lifecycle.generation !== generation
+            || getGlobalSignOutSessionKey(latest.data.session) !== initialKey) throw new Error('invalid_recovery')
+
+          const { data, error } = await supabase.auth.setSession(verified)
           if (!current()) return
           if (error) throw error
           session = data.session
@@ -221,11 +245,12 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
         if (!current()) return
         if (session && await authorize(session)) return
         if (!current()) return
+        if (evidence.kind === 'implicit') throw new Error('invalid_recovery')
         if (await recordedRecovery()) return
         if (current()) invalid(invalidLinkMessage)
       } catch {
         if (!current()) return
-        if (await recordedRecovery().catch(() => false)) return
+        if (evidence.kind !== 'implicit' && await recordedRecovery().catch(() => false)) return
         if (!current()) return
         if (storage) clearPasswordRecoveryEvidence(storage)
         cleanRecoveryUrl()
@@ -239,7 +264,10 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       const key = getGlobalSignOutSessionKey(session)
       trackGlobalSignOutSession(lifecycleRef.current, session)
       if (!current()) return
-      if (event === 'INITIAL_SESSION') return
+      // SDK startup can announce its unchanged cookie as SIGNED_IN. The
+      // fragment must first read that session before treating later events
+      // as replacements.
+      if (event === 'INITIAL_SESSION' || (event === 'SIGNED_IN' && awaitingInitialFragmentSession)) return
       if (event === 'SIGNED_OUT') {
         if (!closingRef.current) invalid(changedSessionMessage, true)
         return

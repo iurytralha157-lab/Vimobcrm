@@ -8,10 +8,16 @@ const RECOVERY_TOKEN_HASH_MAX_LENGTH = 4 * 1024
 const RECOVERY_SESSION_TOKEN_MAX_LENGTH = 16 * 1024
 const UNSAFE_RECOVERY_VALUE = /[\u0000-\u001f\u007f]/
 
+export type PasswordRecoveryFragment = {
+  kind: 'implicit'
+  accessToken: string
+  refreshToken: string
+}
+
 export type PasswordRecoveryUrlEvidence =
   | { kind: 'pkce'; code: string }
   | { kind: 'token_hash'; tokenHash: string }
-  | { kind: 'implicit'; accessToken: string; refreshToken: string }
+  | PasswordRecoveryFragment
   | { kind: 'none' }
 
 type RecoveryIntent = {
@@ -51,9 +57,8 @@ export function isPublicAuthRoute(pathname: string) {
   return PUBLIC_AUTH_ROUTES.some((route) => pathname.startsWith(route))
 }
 
-function normalizeRecoveryPath(pathname: string) {
-  const normalized = pathname.replace(/\/+$/, '')
-  return normalized || '/'
+export function isPasswordRecoveryPath(pathname: string) {
+  return pathname.replace(/\/+$/, '') === '/reset-password'
 }
 
 function parseHashParams(hash: string) {
@@ -131,8 +136,19 @@ export function isPasswordRecoveryAccessToken(accessToken: string | null | undef
     && hasPasswordRecoveryAuthenticationMethod(readAccessTokenClaims(accessToken)),
   )
 }
+export function readPasswordRecoveryFragmentIdentity(accessToken: string) {
+  const claims = readAccessTokenClaims(accessToken)
+  if (!claims || !hasPasswordRecoveryAuthenticationMethod(claims)
+    || typeof claims.sub !== 'string' || !claims.sub
+    || typeof claims.session_id !== 'string' || !claims.session_id
+    || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)
+    || claims.exp <= Date.now() / 1000) return null
+
+  return { userId: claims.sub, sessionId: claims.session_id }
+}
+
 export function readPasswordRecoveryUrlEvidence(url: URL): PasswordRecoveryUrlEvidence {
-  if (normalizeRecoveryPath(url.pathname) !== '/reset-password') {
+  if (!isPasswordRecoveryPath(url.pathname)) {
     return { kind: 'none' }
   }
 

@@ -114,6 +114,13 @@ assinado `recovery` para a troca de senha. Não trate qualquer OTP como prova de
 recuperação. Uma solicitação feita no navegador interno e aberta no Chrome não
 valida o fluxo PKCE; faça solicitação e abertura no mesmo navegador e perfil.
 
+O envio administrativo de recuperação usa o Auth sem um verifier do navegador
+destinatário. Ao abrir esse link por fragmento, o Vimob valida o access token
+no Auth e renova o par em memória antes de gravar a sessão do navegador. O Auth
+precisa devolver a mesma conta e sessão com o método `recovery`. Se o navegador
+já estiver autenticado em outra conta, use um perfil separado ou saia dessa
+conta antes de reabrir o link. Solicite outro link se ele já tiver expirado.
+
 O override implantável é
 `deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml`. Ele preserva
 os mapeamentos SMTP/URL, acrescenta assunto e template de recovery e sobe um

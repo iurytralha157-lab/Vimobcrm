@@ -7,7 +7,7 @@ import ts from 'typescript';
 const repo = new URL('../../', import.meta.url);
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { resolve, promise }; }
 const session = (user = 'a', sid = 'sid-a', recovery = true) => ({ user: { id: user }, access_token:
-  `e30.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, amr: [{ method: typeof recovery === 'string' ? recovery : recovery ? 'recovery' : 'password' }] })).toString('base64url')}.synthetic` });
+  `e30.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, exp: Math.floor(Date.now() / 1000) + 3600, amr: [{ method: typeof recovery === 'string' ? recovery : recovery ? 'recovery' : 'password' }] })).toString('base64url')}.synthetic` });
 const tick = () => new Promise(setImmediate);
 
 function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) {
@@ -49,7 +49,7 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
       : h.fresh?.promise || Promise.resolve({ data: { session: h.sdkSession }, error: null }),
     exchangeCodeForSession: () => { h.calls.push('pkce'); return h.auth.promise; },
     verifyOtp: () => { h.calls.push('token_hash'); return h.auth.promise; },
-    setSession: () => { h.calls.push('implicit'); return h.auth.promise; },
+    setSession: () => { h.calls.push('install'); return h.auth.promise; },
     onAuthStateChange: callback => { h.callback = callback; return { data: { subscription: { unsubscribe: () => {} } } }; },
     signOut: async () => { effects.push(['logout']); h.transition(null, 'SIGNED_OUT'); return { error: null }; },
     admin: { signOut: async () => { effects.push(['global']); return { error: null }; } },
@@ -63,7 +63,10 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
   };
   const hook = load('hooks/auth/use-password-recovery-session.ts', { react,
     '@/config/constants': { ROUTES: { LOGIN: '/login', SIGNUP: '/cadastro', RESET_PASSWORD: '/reset-password' } },
-    '@/lib/supabase/client': { supabase }, '@/lib/api/vimob-client': { setVimobAPIAccessToken: () => effects.push(['api-token']) },
+    '@/lib/supabase/client': { supabase, preparePasswordRecoveryFragment: () => {
+      h.calls.push('implicit');
+      return h.auth.promise.then(result => ({ access_token: result.data.session.access_token, refresh_token: 'verified' }));
+    } }, '@/lib/api/vimob-client': { setVimobAPIAccessToken: () => effects.push(['api-token']) },
     '@/lib/auth/global-sign-out': globalSignOut, '@/lib/auth/password-recovery-exit': exit,
     '@/lib/auth/password-recovery': recovery,
   });
@@ -116,17 +119,19 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
 
 for (const kind of ['pkce', 'token_hash', 'implicit']) {
   test(`${kind} completion after unmount cannot grant proof, clean the URL or update UI`, async () => {
-    const h = harness(kind); assert.deepEqual(h.calls, [kind]);
+    const h = harness(kind); await tick(); assert.deepEqual(h.calls, [kind]);
     h.unmount(); const writes = h.storageWrites.length, updates = h.updates.length;
     h.resolve(session()); await tick(); await tick();
     assert.equal(h.storageWrites.length, writes); assert.equal(h.updates.length, updates); assert.deepEqual(h.effects, []);
+    assert(!h.calls.includes('install'));
   });
   test(`${kind} response cannot revive the page after another actor signs in`, async () => {
-    const h = harness(kind); h.transition(session('b', 'sid-b', false), 'SIGNED_IN');
+    const h = harness(kind); await tick(); h.transition(session('b', 'sid-b', false), 'SIGNED_IN');
     const writes = h.storageWrites.length, updates = h.updates.length;
     h.resolve(session()); await tick(); await tick();
     assert.equal(h.storageWrites.length, writes); assert.equal(h.updates.length, updates); assert.deepEqual(h.effects, []);
     assert.equal(h.states[0], 'invalid');
+    assert(!h.calls.includes('install'));
   });
 }
 test('a same-user new recovery session invalidates the original pending visit', async () => {
