@@ -15,6 +15,10 @@ const propertyPrivacySource = readFileSync(
   "apps/api/internal/properties/privacy.go",
   "utf8",
 );
+const propertyPortfolioSource = readFileSync(
+  "apps/api/internal/properties/portfolio.go",
+  "utf8",
+);
 const meRepositorySource = readFileSync(
   "apps/api/internal/me/repository.go",
   "utf8",
@@ -149,7 +153,7 @@ test("property list, detail and update require edit capability while create stay
 
 function goStringSlice(source, name) {
   const match = source.match(
-    new RegExp(`var ${name} = \\[\\]string\\{([\\s\\S]*?)\\n\\}`),
+    new RegExp(`var ${name} = \\[\\]string\\{([^}]*)\\}`),
   );
   assert.ok(match, `${name} não foi encontrado`);
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
@@ -160,6 +164,7 @@ test("workspace OpenAPI enumerates every role-aware property projection field", 
     ...goStringSlice(propertyWorkspaceProjectionSource, "workspacePropertyBaseFields"),
     ...goStringSlice(propertyWorkspaceProjectionSource, "workspacePropertyInternalFields"),
     ...goStringSlice(propertyPrivacySource, "propertyOwnerContactFields"),
+    ...goStringSlice(propertyPortfolioSource, "propertyPartnerContactFields"),
   ]);
   assert.deepEqual(
     Object.keys(document.components.schemas.PropertyWorkspaceProperty.properties).sort(),

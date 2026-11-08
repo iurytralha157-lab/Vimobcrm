@@ -15485,8 +15485,9 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        Explicit role-aware property projection. Owner-contact fields and internal
-        fields are omitted when the corresponding meta capability is false.
+        Explicit role-aware property projection. Owner and partner contact fields
+        are omitted when meta.can_view_owner_contacts is false. Internal fields
+        are omitted when meta.can_manage is false.
       properties:
         id: {}
         organization_id: {}
@@ -15569,6 +15570,14 @@ components:
         can_edit: {}
         managed_terms:
           $ref: "#/components/schemas/PropertyManagedTerms"
+        portfolio_type:
+          $ref: "#/components/schemas/PropertyPortfolioType"
+        third_party_kind:
+          type: [string, "null"]
+          enum: [partner, private_owner, null]
+        partner_name:
+          type: [string, "null"]
+          maxLength: 160
         owner_phone_residential: {}
         owner_phone_commercial: {}
         owner_cellphone: {}
@@ -15576,9 +15585,22 @@ components:
         owner_notify_email: {}
         owner_media_source: {}
         origin_media: {}
+        partner_contact:
+          type: [string, "null"]
+          maxLength: 200
+          description: Omitted when meta.can_view_owner_contacts is false.
         commission_percentage: {}
         comissao_venda: {}
         comissao_locacao: {}
+        commission_split_percent:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+          description: Omitted when meta.can_manage is false.
+        third_party_authorized_until:
+          type: [string, "null"]
+          format: date
+          description: Omitted when meta.can_manage is false.
         tipo_comissao: {}
         data_inicio_comissao: {}
         condicao_comercial: {}
