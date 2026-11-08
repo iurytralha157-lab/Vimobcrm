@@ -50,7 +50,11 @@ test('API and Web images receive the same immutable release SHA', async () => {
   assert.match(apiDockerfile, releaseArgument)
   assert.match(webDockerfile, releaseArgument)
 
+  assert.match(apiDockerfile, /^ARG TARGETARCH$/m)
+  assert.match(apiDockerfile, /GOARCH="\$TARGETARCH"/)
+  assert.match(workflow, /uses: docker\/setup-qemu-action@v3/)
   for (const stepName of ['Build and push API', 'Build and push Web']) {
+    assert.match(workflowStep(workflow, stepName), /platforms: linux\/amd64,linux\/arm64/)
     assert.match(
       workflowStep(workflow, stepName),
       /^\s+VIMOB_RELEASE_SHA=\$\{\{ github\.sha \}\}$/m,

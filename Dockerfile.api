@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 WORKDIR /src
 
 ARG VIMOB_RELEASE_SHA=unversioned
+ARG TARGETARCH
 
 COPY go.work ./
 COPY apps/api/go.mod apps/api/go.sum ./apps/api/
@@ -28,7 +29,7 @@ RUN release_sha="${VIMOB_RELEASE_SHA:-unversioned}"; \
         ;; \
     esac; \
   fi; \
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" \
   go build -trimpath \
     -ldflags="-s -w -X github.com/vimob-crm/vimob-crm/apps/api/internal/health.releaseSHA=$release_sha" \
     -o /out/vimob-api ./apps/api/cmd/api

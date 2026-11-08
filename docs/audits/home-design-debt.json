@@ -1,25 +1,25 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "c18085e74151ce9ab91bd797b9aa01edabd8bee6faa69c4436d0bd045802480c",
-  "surfaceInventoryDigestSha256": "a9de7ac1310bb40b0a23dbc1ffde016c1b094974f10b75f97145716f0928e911",
+  "sourceDigestSha256": "566ab072ce69b7f835a3a3ca2f89d597112e05abcdef09159610930ace26b1dd",
+  "surfaceInventoryDigestSha256": "eac7f30bc0e67da61a624104b3b37eb23cd7affdb1bb78578d07d413196d82cd",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 667,
+    "filesScanned": 671,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 64,
-    "findings": 147,
-    "protectedReachableFilesWithFindings": 60,
-    "protectedReachableFindings": 143,
+    "filesWithFindings": 70,
+    "findings": 158,
+    "protectedReachableFilesWithFindings": 66,
+    "protectedReachableFindings": 154,
     "bySurfaceScope": {
-      "protected-only": 102,
+      "protected-only": 113,
       "protected-and-public": 41,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 103,
+      "P1": 114,
       "P2": 26,
       "P3": 18
     },
@@ -37,7 +37,7 @@
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 40,
+        "count": 51,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
@@ -183,6 +183,15 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 4,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 2,
+        "oversized-radius": 2
+      }
+    },
+    {
       "file": "components/features/site/VisitorMap.tsx",
       "count": 4,
       "score": 8,
@@ -196,6 +205,22 @@
       "score": 8,
       "rules": {
         "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/dashboard/DashboardKpis.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/dashboard/DashboardScreen.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
       }
     },
     {
@@ -230,6 +255,15 @@
       "rules": {
         "heavy-shadow": 1,
         "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
+      "count": 2,
+      "score": 5,
+      "rules": {
+        "medium-shadow": 1,
+        "oversized-radius": 1
       }
     },
     {
@@ -385,6 +419,38 @@
       }
     },
     {
+      "file": "components/features/dashboard/CampaignLeadsChart.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/DealsEvolutionChart.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/SalesFunnelWithPipeline.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/TopCreativesCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
       "file": "components/features/presence/OnlineUsersPanel.tsx",
       "count": 1,
       "score": 3,
@@ -426,70 +492,6 @@
     },
     {
       "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/property-locations/OwnersPanel.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/PropertyCard.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/settings/IntegrationsTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "heavy-font": 1
-      }
-    },
-    {
-      "file": "components/features/site/dashboard/SiteJourneysTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/site/dashboard/SitePropertySpotlight.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -600,6 +602,15 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 4,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 2,
+        "oversized-radius": 2
+      }
+    },
+    {
       "file": "components/features/site/VisitorMap.tsx",
       "count": 4,
       "score": 8,
@@ -613,6 +624,22 @@
       "score": 8,
       "rules": {
         "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/dashboard/DashboardKpis.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
+      }
+    },
+    {
+      "file": "components/features/dashboard/DashboardScreen.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "oversized-radius": 2
       }
     },
     {
@@ -647,6 +674,15 @@
       "rules": {
         "heavy-shadow": 1,
         "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
+      "count": 2,
+      "score": 5,
+      "rules": {
+        "medium-shadow": 1,
+        "oversized-radius": 1
       }
     },
     {
@@ -786,6 +822,38 @@
       }
     },
     {
+      "file": "components/features/dashboard/CampaignLeadsChart.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/DealsEvolutionChart.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/SalesFunnelWithPipeline.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/TopCreativesCard.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
       "file": "components/features/presence/OnlineUsersPanel.tsx",
       "count": 1,
       "score": 3,
@@ -847,70 +915,6 @@
       "score": 3,
       "rules": {
         "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/PropertyCard.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/settings/IntegrationsTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "heavy-font": 1
-      }
-    },
-    {
-      "file": "components/features/site/dashboard/SiteJourneysTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/site/dashboard/SitePropertySpotlight.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/whatsapp/message-bubble/MessageText.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "heavy-font": 1
-      }
-    },
-    {
-      "file": "components/features/contacts/ImportContactsDialog.tsx",
-      "count": 2,
-      "score": 2,
-      "rules": {
-        "uppercase-tracking": 2
       }
     }
   ],
@@ -1097,7 +1101,7 @@
     },
     {
       "file": "components/features/contacts/ExportContactsDialog.tsx",
-      "line": 428,
+      "line": 475,
       "match": "bg-white/20",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1123,8 +1127,62 @@
       "weight": 1
     },
     {
+      "file": "components/features/dashboard/CampaignLeadsChart.tsx",
+      "line": 84,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/DashboardKpis.tsx",
+      "line": 98,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/DashboardKpis.tsx",
+      "line": 105,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/DashboardScreen.tsx",
+      "line": 746,
+      "match": "rounded-[10px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/DashboardScreen.tsx",
+      "line": 927,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/DealsEvolutionChart.tsx",
+      "line": 143,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 263,
+      "line": 235,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1133,12 +1191,30 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 299,
+      "line": 271,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "line": 328,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "line": 531,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/dashboard/LeadSourcesChart.tsx",
@@ -1148,6 +1224,33 @@
       "rule": "medium-shadow",
       "surfaceScope": "protected-only",
       "weight": 2
+    },
+    {
+      "file": "components/features/dashboard/LeadSourcesChart.tsx",
+      "line": 83,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/SalesFunnelWithPipeline.tsx",
+      "line": 92,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/dashboard/TopCreativesCard.tsx",
+      "line": 330,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
@@ -1610,7 +1713,7 @@
     },
     {
       "file": "components/features/properties/PropertyCard.tsx",
-      "line": 156,
+      "line": 158,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",

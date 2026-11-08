@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "a9de7ac1310bb40b0a23dbc1ffde016c1b094974f10b75f97145716f0928e911",
+  "sourceDigestSha256": "eac7f30bc0e67da61a624104b3b37eb23cd7affdb1bb78578d07d413196d82cd",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1040,10 +1040,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:bf42c2c7b9ffc6ae8dc3",
+          "id": "overlay:3bbe737282f4dbcccbea",
           "column": 17,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 281,
+          "line": 355,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -1084,10 +1084,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:644bf7e08b367051f471",
+          "id": "overlay:a54a8bb01fb6cc05b7d2",
           "column": 7,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 380,
+          "line": 384,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -1095,10 +1095,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:d2c34d8e9ee3453f8565",
+          "id": "overlay:5159d2c0518b9582caa0",
           "column": 7,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 412,
+          "line": 411,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -1389,10 +1389,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:777a12507d6238dadfae",
+          "id": "overlay:271d10307c79d3de3b94",
           "column": 5,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 267,
+          "line": 310,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -1466,10 +1466,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:bf491b6ad65e30f75a4f",
+          "id": "overlay:6a35ff75e981f0dfc41a",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1604,
+          "line": 1247,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -1477,10 +1477,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:55adaedaa9b90951b2b5",
+          "id": "overlay:b056582fdc3e38889177",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1900,
+          "line": 1543,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -1510,10 +1510,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:6c809d4a03574eae1696",
+          "id": "overlay:d74e7cf3dbd073d44705",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 462,
+          "line": 430,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -1521,10 +1521,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:d231dc4321df0615e94f",
+          "id": "overlay:2871e1a493b7e59ff8d8",
           "column": 7,
           "file": "components/features/dashboard/LeadSourcesChart.tsx",
-          "line": 126,
+          "line": 139,
           "owner": "LeadSourcesChart",
           "routes": [
             "/dashboard"
@@ -1532,10 +1532,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:d0dd41ec1747279748ac",
+          "id": "overlay:1e8539747c9e17a4a750",
           "column": 5,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 251,
+          "line": 236,
           "owner": "CreativeImageDialog",
           "routes": [
             "/dashboard"
@@ -1845,10 +1845,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:610fcee704d3f372d58e",
+          "id": "overlay:eba0205f0cc0882e97bc",
           "column": 5,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 911,
+          "line": 1016,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -1902,10 +1902,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:b4ed376c4cfd1472fa2a",
+          "id": "overlay:717d2ed6acb76d2aed7d",
           "column": 9,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1533,
+          "line": 1574,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -2416,10 +2416,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:a49344e359b382e18da2",
+          "id": "overlay:46fa7639a86f705006d0",
           "column": 5,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 205,
+          "line": 221,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -2427,10 +2427,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:dec36cad08d7b4828aa0",
+          "id": "overlay:1116c242a1a921173939",
           "column": 5,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 427,
+          "line": 456,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -2438,10 +2438,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:60cf79669f5444b177f1",
+          "id": "overlay:a9ea30eadecdcc5accc1",
           "column": 5,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 440,
+          "line": 469,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -6305,10 +6305,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:20f4374b0598fab6b355",
+          "id": "form:600cebeae60bddedae56",
           "column": 5,
           "file": "components/features/automations/AutomationForm.tsx",
-          "line": 160,
+          "line": 208,
           "owner": "AutomationFormEditor",
           "routes": [
             "/crm/pipelines"
@@ -6329,10 +6329,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:6f2c9b14a5974c9f470f",
+          "id": "form:097b465631d64f095e0f",
           "column": 7,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 286,
+          "line": 316,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -6513,10 +6513,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:8b0a370edb98e64e8ec7",
+          "id": "form:70128bf1dd08f1faa08f",
           "column": 345,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 970,
+          "line": 1075,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -6887,10 +6887,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:d58d5191264c0e89fb29",
+          "id": "form:4daf81315409b2a85062",
           "column": 9,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1874,
+          "line": 1881,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -6906,10 +6906,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:882cc34e8411bfe6ec3c",
+          "id": "form:bb0ebee8e6042ea42ea2",
           "column": 7,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1928,
+          "line": 1935,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -10975,10 +10975,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c458c1dc69403b22dcde",
+          "id": "cta:5ce4f38a6d9adbbc8a27",
+          "column": 149,
+          "file": "components/features/automations/AutomationForm.tsx",
+          "line": 282,
+          "owner": "AutomationFormEditor",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:a2fec89b0150281ceb8c",
           "column": 121,
           "file": "components/features/automations/AutomationForm.tsx",
-          "line": 238,
+          "line": 315,
           "owner": "AutomationFormEditor",
           "routes": [
             "/crm/pipelines"
@@ -10987,34 +10999,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c988fe5eba6bb8100452",
+          "id": "cta:c3a3cfd3085330befcfa",
           "column": 31,
           "file": "components/features/automations/AutomationForm.tsx",
-          "line": 280,
-          "owner": "AutomationFormEditor",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:5774f764515c77d03335",
-          "column": 11,
-          "file": "components/features/automations/AutomationForm.tsx",
-          "line": 291,
-          "owner": "AutomationFormEditor",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:b575c72babf9507759d5",
-          "column": 9,
-          "file": "components/features/automations/AutomationForm.tsx",
-          "line": 295,
+          "line": 357,
           "owner": "AutomationFormEditor",
           "routes": [
             "/crm/pipelines"
@@ -11263,10 +11251,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:949e8772d88d4e904563",
+          "id": "cta:546cad8cf584a8c8386c",
           "column": 7,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 210,
+          "line": 263,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11275,10 +11263,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:50843a64f5b82b60d2cd",
+          "id": "cta:3410d2ad9fb30f451e06",
           "column": 9,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 228,
+          "line": 287,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11287,10 +11275,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:98ab566c8245d2fc3962",
+          "id": "cta:1974781061cb202b662f",
           "column": 31,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 231,
+          "line": 290,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11299,10 +11287,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:439aa307d38a86be798b",
+          "id": "cta:71285153088e2b0fb0bf",
           "column": 85,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 268,
+          "line": 342,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11311,10 +11299,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fc0dd2f75e365b1fabfd",
+          "id": "cta:62ec9283939baff9aa17",
           "column": 17,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 270,
+          "line": 344,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11323,10 +11311,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:42aeec71d898744b4aaa",
+          "id": "cta:49d918a814aded864266",
           "column": 21,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 282,
+          "line": 356,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -11839,10 +11827,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:62c2b7cbc5d2fde75ad7",
+          "id": "cta:720d4ebb5fb1720ed967",
           "column": 9,
           "file": "components/features/cadences/stage-operational-rules/AttentionSection.tsx",
-          "line": 77,
+          "line": 83,
           "owner": "AttentionSection",
           "routes": [
             "/crm/pipelines"
@@ -11851,10 +11839,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:55acab58c1a155d9bfb3",
+          "id": "cta:b1afeca14164595218bb",
           "column": 9,
           "file": "components/features/cadences/stage-operational-rules/AttentionSection.tsx",
-          "line": 115,
+          "line": 121,
           "owner": "AttentionSection",
           "routes": [
             "/crm/pipelines"
@@ -11863,10 +11851,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f2f0ea170a2702012126",
+          "id": "cta:b0280098cdd7a4031d05",
           "column": 15,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 118,
+          "line": 116,
           "owner": "CadenceSection",
           "routes": [
             "/crm/pipelines"
@@ -11875,10 +11863,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3c4133ca336d66fe932c",
+          "id": "cta:af1c357070adc3127d83",
           "column": 9,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 191,
+          "line": 189,
           "owner": "TaskCard",
           "routes": [
             "/crm/pipelines"
@@ -11887,10 +11875,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4b96f0b41530edb53d10",
+          "id": "cta:42e4de8b1841f90d0089",
           "column": 15,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 380,
+          "line": 378,
           "owner": "TaskCard",
           "routes": [
             "/crm/pipelines"
@@ -11911,10 +11899,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c58a5631ef348c5bae94",
+          "id": "cta:6503bf6ef4383e40580c",
           "column": 11,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 347,
+          "line": 359,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -11923,22 +11911,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cd5b481630549a7b3ad3",
-          "column": 13,
-          "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 364,
-          "owner": "RulesEditor",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:b8aac6de96833de2e623",
+          "id": "cta:f28f6c5dddea822df3f9",
           "column": 9,
           "file": "components/features/cadences/StageOperationalRules.tsx",
-          "line": 55,
+          "line": 57,
           "owner": "StageOperationalRules",
           "routes": [
             "/crm/pipelines"
@@ -13349,10 +13325,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:adacb56efca0db5f51fd",
+          "id": "cta:3eb0a8b7025d84cf321b",
           "column": 13,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 300,
+          "line": 343,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -13361,10 +13337,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c610ddf7db8f240248f9",
-          "column": 13,
+          "id": "cta:00892cd9c96ab7dfe573",
+          "column": 17,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 307,
+          "line": 354,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -13373,10 +13349,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cf57062801170d87e267",
+          "id": "cta:5fd482fc949f8f35c78e",
           "column": 13,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 316,
+          "line": 363,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -13385,10 +13361,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b5750d053a917eb8cad7",
+          "id": "cta:5c485dd777dd31f99f34",
           "column": 13,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 337,
+          "line": 384,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -13397,10 +13373,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5ceff194be27bc7a65dc",
+          "id": "cta:e9dff8efe973f474adf6",
           "column": 15,
           "file": "components/features/contacts/ExportContactsDialog.tsx",
-          "line": 365,
+          "line": 412,
           "owner": "ExportContactsDialog",
           "routes": [
             "/crm/contacts"
@@ -13913,10 +13889,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0dadc402adbac4e7421b",
+          "id": "cta:1b516eb8adde9aa68e8d",
           "column": 174,
           "file": "components/features/dashboard/CampaignLeadsChart.tsx",
-          "line": 101,
+          "line": 104,
           "owner": "CampaignLeadsChart",
           "routes": [
             "/dashboard"
@@ -13925,10 +13901,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4b508dfafc25a917fdff",
+          "id": "cta:50519fee1ae0ca549dd6",
           "column": 21,
           "file": "components/features/dashboard/CampaignLeadsChart.tsx",
-          "line": 134,
+          "line": 132,
           "owner": "CampaignLeadsChart",
           "routes": [
             "/dashboard"
@@ -13937,10 +13913,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ff6ee7331f8d0411e390",
+          "id": "cta:14a343d67e30514dd70c",
           "column": 17,
           "file": "components/features/dashboard/CampaignLeadsChart.tsx",
-          "line": 174,
+          "line": 172,
           "owner": "CampaignLeadsChart",
           "routes": [
             "/dashboard"
@@ -13949,10 +13925,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e26f6e7b78205266363e",
+          "id": "cta:ff6ee7331f8d0411e390",
           "column": 17,
           "file": "components/features/dashboard/CampaignLeadsChart.tsx",
-          "line": 176,
+          "line": 174,
           "owner": "CampaignLeadsChart",
           "routes": [
             "/dashboard"
@@ -14046,10 +14022,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a565ab515ce11bd328a3",
+          "id": "cta:65e5f233301651fba5fe",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 974,
+          "line": 942,
           "owner": "DashboardDataError",
           "routes": [
             "/dashboard"
@@ -14058,10 +14034,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8720c0ce4f93d44519c8",
+          "id": "cta:bc7d055e865ddec7c5c9",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1499,
+          "line": 1142,
           "owner": "DashboardExtraCountsError",
           "routes": [
             "/dashboard"
@@ -14070,10 +14046,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:fdb921427424590287f6",
+          "id": "cta:5553467efb8f9d41deff",
           "column": 7,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1522,
+          "line": 1165,
           "owner": "DashboardStatsStaleNotice",
           "routes": [
             "/dashboard"
@@ -14082,10 +14058,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:df9aeb251904890f960f",
+          "id": "cta:385fdea04bc37dd613f8",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1545,
+          "line": 1188,
           "owner": "DashboardDealDetailsState",
           "routes": [
             "/dashboard"
@@ -14094,10 +14070,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:47b5dac77b9bb840cd16",
+          "id": "cta:8fb617a69510ac03722e",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1845,
+          "line": 1488,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -14106,10 +14082,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:eb5c96234ed5a7537fc7",
+          "id": "cta:313219f4219944f770e8",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 2177,
+          "line": 1820,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -14204,10 +14180,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5b3ab81ea91861c57867",
+          "id": "cta:d9f03007fc3d8ddc2432",
           "column": 23,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 233,
+          "line": 205,
           "owner": "DistributionBars",
           "routes": [
             "/dashboard"
@@ -14216,10 +14192,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:648bd1ef28a493d370fe",
+          "id": "cta:b71f001430c74eb7674c",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 367,
+          "line": 335,
           "owner": "DistributionCard",
           "routes": [
             "/dashboard"
@@ -14228,10 +14204,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:698f0aa5c7e719c3a651",
+          "id": "cta:b5fec61b41be32f9c5b8",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 448,
+          "line": 416,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14240,10 +14216,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ebc296dc27709b186aab",
+          "id": "cta:b77c1c9a2f1b699944a4",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 475,
+          "line": 443,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14252,10 +14228,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:67b8ecf258a4b67e0a76",
+          "id": "cta:604905acd1ecba9bb876",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 495,
+          "line": 463,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14264,10 +14240,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:98438fa0ae72e31745b1",
+          "id": "cta:411e41b13fa167e16e2c",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 498,
+          "line": 466,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14276,10 +14252,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ce00e2ae3201118804f2",
+          "id": "cta:c3561d3aa1caa97acb64",
           "column": 11,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 569,
+          "line": 537,
           "owner": "LeadDistributionSection",
           "routes": [
             "/dashboard"
@@ -14300,10 +14276,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:0ef4199743778e1135c7",
-          "column": 29,
+          "id": "cta:fc5410b6f3db2f3f45fe",
+          "column": 15,
           "file": "components/features/dashboard/LeadSourcesChart.tsx",
-          "line": 90,
+          "line": 91,
           "owner": "LeadSourcesChart",
           "routes": [
             "/dashboard"
@@ -14312,10 +14288,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:13f3cb5af138d8bb7055",
-          "column": 17,
+          "id": "cta:df5dbebffac6adb33f18",
+          "column": 15,
           "file": "components/features/dashboard/LeadSourcesChart.tsx",
-          "line": 116,
+          "line": 101,
           "owner": "LeadSourcesChart",
           "routes": [
             "/dashboard"
@@ -14324,22 +14300,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:82aa554c81951fd6bafa",
-          "column": 13,
-          "file": "components/features/dashboard/LeadSourcesChart.tsx",
-          "line": 123,
-          "owner": "LeadSourcesChart",
-          "routes": [
-            "/dashboard"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:45e84f851fd116a274df",
+          "id": "cta:796c21509c1dec1cdd57",
           "column": 54,
           "file": "components/features/dashboard/LeadSourcesChart.tsx",
-          "line": 134,
+          "line": 154,
           "owner": "LeadSourcesChart",
           "routes": [
             "/dashboard"
@@ -14348,10 +14312,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:dbbd51d519cff18763be",
+          "id": "cta:5f5543a2839e768ff3d3",
           "column": 7,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 137,
+          "line": 133,
           "owner": "CreativeRow",
           "routes": [
             "/dashboard"
@@ -14360,22 +14324,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2fbcf1d563e5edfe4a93",
-          "column": 53,
-          "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 143,
-          "owner": "CreativeRow",
-          "routes": [
-            "/dashboard"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:aebf53397281db7b975b",
+          "id": "cta:1a1ac7e46bc0edd7a456",
           "column": 7,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 212,
+          "line": 198,
           "owner": "CreativeRow",
           "routes": [
             "/dashboard"
@@ -14384,10 +14336,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:16f3f39c97f3ce02726e",
+          "id": "cta:f7d29c439be8388bcbe4",
           "column": 15,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 270,
+          "line": 255,
           "owner": "CreativeImageDialog",
           "routes": [
             "/dashboard"
@@ -14396,10 +14348,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:3a0ed4c23f8aa403866d",
+          "id": "cta:65a3b491f3269d82b89e",
           "column": 174,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 362,
+          "line": 342,
           "owner": "TopCreativesCard",
           "routes": [
             "/dashboard"
@@ -16837,10 +16789,184 @@
           "tag": "Button"
         },
         {
-          "id": "cta:189a33e8bbf24fdf6e03",
+          "id": "cta:9f8d2bf03ba927de9a87",
+          "column": 7,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 924,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:16e27149c73d2df2ca79",
+          "column": 33,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 935,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:475f9528e10b1ad4bd56",
+          "column": 27,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 946,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:3832de1c59fda917fbe2",
           "column": 11,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 947,
+          "line": 1052,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -16895,10 +17021,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1b72679548e4ab2e7dfd",
+          "id": "cta:db7b7c7f896aebb007c4",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 958,
+          "line": 1063,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -16953,184 +17079,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:344499d9668ecb5b769c",
-          "column": 15,
-          "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1013,
-          "owner": "CreateLeadDialog",
-          "routes": [
-            "/agenda",
-            "/automations",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/site",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help/[slug]",
-            "/inicio",
-            "/marketing",
-            "/notifications",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party",
-            "/settings",
-            "/settings/integrations/meta",
-            "/settings/integrations/meta-marketing",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/suporte",
-            "/suporte/[slug]"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:fd8c6f2ddb21e74311fe",
-          "column": 41,
-          "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1022,
-          "owner": "CreateLeadDialog",
-          "routes": [
-            "/agenda",
-            "/automations",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/site",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help/[slug]",
-            "/inicio",
-            "/marketing",
-            "/notifications",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party",
-            "/settings",
-            "/settings/integrations/meta",
-            "/settings/integrations/meta-marketing",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/suporte",
-            "/suporte/[slug]"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:13a6dddbfa589eb0cb2f",
-          "column": 35,
-          "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1033,
-          "owner": "CreateLeadDialog",
-          "routes": [
-            "/agenda",
-            "/automations",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/site",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help/[slug]",
-            "/inicio",
-            "/marketing",
-            "/notifications",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party",
-            "/settings",
-            "/settings/integrations/meta",
-            "/settings/integrations/meta-marketing",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/suporte",
-            "/suporte/[slug]"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:2c43c80b8b62c60e2c02",
+          "id": "cta:aac43addbce2480c94b1",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1155,
+          "line": 1196,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -17185,10 +17137,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7ec1be6d60815cb689a0",
+          "id": "cta:b8120da6f5820d465759",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1263,
+          "line": 1304,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -17243,10 +17195,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:58d64c3b0ccee734ec04",
+          "id": "cta:063c4a5a19169e9efb3e",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1316,
+          "line": 1357,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -17301,10 +17253,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:11940a0c9f5ce52b57e0",
+          "id": "cta:3da3647370dfa85ed10c",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1352,
+          "line": 1393,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -19719,10 +19671,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:64e57035ef700ce2e4d7",
+          "id": "cta:efb81c7c16d557794c2a",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 196,
+          "line": 207,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19731,10 +19683,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9e11719825d6a1b3ac2d",
+          "id": "cta:7c48516da6bc0d161098",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 226,
+          "line": 237,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19743,10 +19695,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4de80e651daf661384d6",
+          "id": "cta:c1d750c449b317a6f75e",
           "column": 25,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 335,
+          "line": 349,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19755,10 +19707,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:05963431bbe3ea28281c",
+          "id": "cta:433f35930c3dde53aedf",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 429,
+          "line": 443,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19767,10 +19719,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:12e4cdb2bee5ce4d97c8",
+          "id": "cta:46e71fe619cd1f83234a",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 451,
+          "line": 465,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19779,10 +19731,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ec97a9153b0af3c4327f",
+          "id": "cta:33dfc38006af3fbc61a6",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 475,
+          "line": 489,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19791,10 +19743,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b10ad844182b5c8a2d5a",
+          "id": "cta:02e0d536c9063feb5a02",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 494,
+          "line": 508,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19803,10 +19755,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:36d072ca6f81c009cfc9",
+          "id": "cta:25531e79f0c63950e146",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 510,
+          "line": 524,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19940,6 +19892,42 @@
           "file": "components/features/pipelines/pipeline-screen/StageColumnMenu.tsx",
           "line": 35,
           "owner": "StageColumnMenu",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:e9409c701d1b92670475",
+          "column": 11,
+          "file": "components/features/pipelines/stage-inactivity-alert.tsx",
+          "line": 166,
+          "owner": "useStageInactivityAlertEditor",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:9eb87ada7416f806d3e5",
+          "column": 9,
+          "file": "components/features/pipelines/stage-settings-footer.tsx",
+          "line": 57,
+          "owner": "StageSettingsActions",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:0a5bd419e7a0a59e8e97",
+          "column": 9,
+          "file": "components/features/pipelines/stage-settings-footer.tsx",
+          "line": 68,
+          "owner": "StageSettingsActions",
           "routes": [
             "/crm/pipelines"
           ],
@@ -20115,46 +20103,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e7d9b89886663f8783a8",
+          "id": "cta:83d2c1392cbc4fada8d3",
           "column": 17,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 341,
-          "owner": "StageSettingsDialog",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:311a938b0e9f78932f6b",
-          "column": 17,
-          "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 344,
-          "owner": "StageSettingsDialog",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:49e39ea011bc075c9fc6",
-          "column": 17,
-          "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 354,
-          "owner": "StageSettingsDialog",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:9a831f94ba3ac75463be",
-          "column": 21,
-          "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 404,
+          "line": 366,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -20537,10 +20489,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0a7924882e284cf28651",
+          "id": "cta:81ca699a3c9efcb04e02",
           "column": 15,
           "file": "components/features/properties/detail/PropertyAssetManager.tsx",
-          "line": 217,
+          "line": 221,
           "owner": "PropertyAssetManager",
           "routes": [
             "/properties/[id]",
@@ -23152,10 +23104,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5c081c6ac49ec21930ef",
+          "id": "cta:8acf614867d73c1b25ab",
           "column": 9,
           "file": "components/features/properties/PropertyCard.tsx",
-          "line": 174,
+          "line": 176,
           "owner": "PropertyCard",
           "routes": [
             "/properties",
@@ -23171,10 +23123,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b1f6ae759ca665c21b49",
+          "id": "cta:c5c70e82c2857da8f0ba",
           "column": 9,
           "file": "components/features/properties/PropertyCard.tsx",
-          "line": 206,
+          "line": 208,
           "owner": "PropertyCard",
           "routes": [
             "/properties",
@@ -23190,10 +23142,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:0cafa75b79b9f085b1bf",
+          "id": "cta:ccbd8ba261c28c855718",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1537,
+          "line": 1538,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23209,10 +23161,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:83073f441849a9d0ebce",
+          "id": "cta:fa335b2ab7a6c3da5f9f",
           "column": 13,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1541,
+          "line": 1542,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23228,10 +23180,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6dd3bf12e3c6068a5d1a",
+          "id": "cta:36e32358db11a99e7277",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1740,
+          "line": 1747,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23247,10 +23199,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e357cb96054de8645b7c",
+          "id": "cta:e88d2c6d773aeb36e49a",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1741,
+          "line": 1748,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23266,10 +23218,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d3ccc5deb1120823822c",
+          "id": "cta:96b665eeb428e44c9ead",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1751,
+          "line": 1758,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23285,10 +23237,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8099c3bf1dc88c323000",
+          "id": "cta:c7aaf4d36c6f2137868f",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1752,
+          "line": 1759,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23304,10 +23256,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bb50f798bb94a161a22d",
+          "id": "cta:9c5acd6c1d715b0aa94e",
           "column": 13,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1762,
+          "line": 1769,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23323,10 +23275,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2ba064d45ae2428e00e3",
+          "id": "cta:e1e5d9db0c954004b27a",
           "column": 13,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1799,
+          "line": 1806,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23342,10 +23294,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c28f582d35ab59911137",
+          "id": "cta:ed54dcf6b0f2de021000",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1822,
+          "line": 1829,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23361,10 +23313,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1f66ea36b0d15016bd87",
+          "id": "cta:31424b6ccd84eb538ef3",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1857,
+          "line": 1864,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23380,10 +23332,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:220b075b93091abefa5f",
+          "id": "cta:8a7a46588707b6e00b33",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1903,
+          "line": 1910,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23399,10 +23351,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:814a9c32a36c4e98ffb1",
+          "id": "cta:5d755b9c82447dd1962e",
           "column": 17,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1955,
+          "line": 1962,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23418,10 +23370,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c1523bca0af625f6b7a6",
+          "id": "cta:34af488e53c67f9643ae",
           "column": 19,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1957,
+          "line": 1964,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23437,10 +23389,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:885c1a2aca10b61cdee8",
+          "id": "cta:39bb6272a2c9fbade87e",
           "column": 21,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1961,
+          "line": 1968,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -23456,10 +23408,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7f5e41b7ac3e3f2f2107",
+          "id": "cta:915ed606c5cd35851769",
           "column": 19,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1965,
+          "line": 1972,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -26363,10 +26315,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3ed08d12f68cb6f9e813",
+          "id": "cta:cac97d00b3cd6c03a4eb",
           "column": 11,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 278,
+          "line": 287,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26375,10 +26327,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b4e571ff0226f41d10fc",
+          "id": "cta:323ef81676d4e9eab200",
           "column": 13,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 296,
+          "line": 305,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26387,10 +26339,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5fe655468d661c539292",
+          "id": "cta:8227b73f4e577f139cb9",
           "column": 15,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 332,
+          "line": 344,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26399,10 +26351,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e1eb8aa4498ce545922f",
+          "id": "cta:e76e57fb50f839e0d06c",
           "column": 15,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 362,
+          "line": 374,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26411,10 +26363,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7570b80e13a68a358ecb",
+          "id": "cta:eaff18a169595b744733",
           "column": 7,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 415,
+          "line": 427,
           "owner": "AgendaEventRow",
           "routes": [
             "/agenda"
@@ -26424,10 +26376,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:ae599b3f2c230f1ab07c",
+          "id": "cta:c5e74847bd1d257ac9cd",
           "column": 7,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 471,
+          "line": 483,
           "owner": "AgendaEventsError",
           "routes": [
             "/agenda"
@@ -28298,10 +28250,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0150c8d403b40b185c73",
+          "id": "cta:1c65e630c0b7a9178efe",
           "column": 15,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 494,
+          "line": 517,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28310,10 +28262,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c22f5c800edad3edf045",
+          "id": "cta:652a14a838cb6706d30f",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 531,
+          "line": 554,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28322,10 +28274,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f82c4a055dff3ff8dc90",
+          "id": "cta:2c7c4908b402c9648f01",
           "column": 23,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 628,
+          "line": 651,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28334,10 +28286,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9f450ff462aa8d4878ce",
+          "id": "cta:891a3bd5b924f470b85b",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 638,
+          "line": 661,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28346,10 +28298,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cb57fdeff70f361ab12f",
+          "id": "cta:b23ced0520b004ef0180",
           "column": 19,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 671,
+          "line": 694,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28358,10 +28310,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ac9f0a303543150476da",
+          "id": "cta:5e5051bbe40875f2d72b",
           "column": 15,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 681,
+          "line": 704,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28370,10 +28322,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:187a1876f651785277b3",
+          "id": "cta:41f50fc633985efe598b",
           "column": 15,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 710,
+          "line": 733,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28382,10 +28334,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1b69923b5a1e7ab70917",
+          "id": "cta:c13565ad2e11803e64dc",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 742,
+          "line": 762,
+          "owner": "AccountTab",
+          "routes": [
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:f6566df7cab91b60f519",
+          "column": 21,
+          "file": "components/features/settings/AccountTab.tsx",
+          "line": 788,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28394,10 +28358,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b9cb2eda04c6adae4376",
+          "id": "cta:7a6f130365da1e5f0b1a",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 791,
+          "line": 837,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28406,10 +28370,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:44915ebb0ccc9f695af7",
+          "id": "cta:5287396b1be9f5658808",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 812,
+          "line": 858,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28418,10 +28382,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:24285a9d1e411fe14cb9",
+          "id": "cta:557eafb173a6294052a5",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 835,
+          "line": 881,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28430,10 +28394,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:11ddd2ada9ff53a966c8",
+          "id": "cta:fddd552f65cc41714767",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 879,
+          "line": 925,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28442,10 +28406,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef5a369af1613171c366",
+          "id": "cta:1638d5c09709a587210c",
           "column": 19,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1109,
+          "line": 1155,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28454,10 +28418,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7e3f8594e70140c4202b",
+          "id": "cta:4d4bf1327f017b132025",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1125,
+          "line": 1171,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -42034,10 +41998,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:069f74f91d98a580ab4d",
+          "id": "control:67ebda1499eb3ed1985d",
           "column": 23,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 294,
+          "line": 368,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -42046,10 +42010,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:4669611af0c3bd0a9fdb",
+          "id": "control:5772573d97f354346ae3",
           "column": 23,
           "file": "components/features/automations/AutomationsList.tsx",
-          "line": 295,
+          "line": 369,
           "owner": "AutomationsListEditor",
           "routes": [
             "/crm/pipelines"
@@ -42130,10 +42094,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:d58a000eb2d297b93e2f",
+          "id": "control:5c1d6a0fa1168355c0c1",
           "column": 13,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 400,
+          "line": 399,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -42142,10 +42106,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:60d51fefcd0fb0d232bb",
+          "id": "control:dab023bec88bcb49182f",
           "column": 13,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 403,
+          "line": 402,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -42154,10 +42118,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:9d018876b6463fbd189e",
+          "id": "control:d8b5161fa1d46a880970",
           "column": 13,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 419,
+          "line": 418,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -42166,10 +42130,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:327b9544de0398595134",
+          "id": "control:9d018876b6463fbd189e",
           "column": 13,
           "file": "components/features/cadences/stage-operational-rules/RulesEditor.tsx",
-          "line": 420,
+          "line": 419,
           "owner": "RulesEditor",
           "routes": [
             "/crm/pipelines"
@@ -42674,10 +42638,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:1932f7f2be1d2b975d43",
+          "id": "control:bb769b4f5093333cbb23",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 779,
+          "line": 747,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -42686,10 +42650,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:a4ae7fae6c9fa77cd15c",
+          "id": "control:5f2064d22f16a4de9aac",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 785,
+          "line": 753,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -43439,10 +43403,68 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:2aa3942fbec07f7a1180",
+          "id": "control:1d740e6212910ea77bd5",
+          "column": 23,
+          "file": "components/features/leads/CreateLeadDialog.tsx",
+          "line": 1082,
+          "owner": "CreateLeadDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "TabsTrigger",
+          "tag": "TabsTrigger"
+        },
+        {
+          "id": "control:0b08d443c9a986d603a8",
           "column": 32,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1536,
+          "line": 1577,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -43497,10 +43519,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:3b5bbdbd29ae60b26729",
+          "id": "control:a31b02321cb9419fd90c",
           "column": 90,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1536,
+          "line": 1577,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -43891,10 +43913,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:fc70d6daa65f9bf92a72",
-          "column": 13,
+          "id": "control:813ca0e490aeccfeff36",
+          "column": 15,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 219,
+          "line": 237,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43903,10 +43925,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:c38d4676cbac05626992",
-          "column": 13,
+          "id": "control:367cb3d46fa9fadbc125",
+          "column": 15,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 220,
+          "line": 238,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43915,10 +43937,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:45414caa95ee79b6f403",
-          "column": 13,
+          "id": "control:888e6355e1b3371023be",
+          "column": 15,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 221,
+          "line": 239,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43927,10 +43949,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:ba5c07e5f9aae365fe11",
+          "id": "control:c33454b9f0713361c4f6",
           "column": 11,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 435,
+          "line": 464,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43939,10 +43961,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:ab054ace6327039442ab",
+          "id": "control:1e789b9608bb506cf94c",
           "column": 11,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 436,
+          "line": 465,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43951,10 +43973,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:b2ed9615587176b6f300",
+          "id": "control:054bf797633f0ef76c6b",
           "column": 11,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 447,
+          "line": 476,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -43963,10 +43985,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:9f6d134ccf490a831252",
+          "id": "control:b7019c911a035a29ac8e",
           "column": 11,
           "file": "components/features/pipelines/StageSettingsDialog.tsx",
-          "line": 448,
+          "line": 477,
           "owner": "StageSettingsDialog",
           "routes": [
             "/crm/pipelines"
@@ -47332,7 +47354,7 @@
         }
       ]
     },
-    "digestSha256": "3c190e00c86fec277a8d5d22114972c83f9fc0ba3213a62d9570e8e1d01db41d"
+    "digestSha256": "db32a0fbe5e74cf2138f0ce542f86f839eda4ee9952db827f72ed0639621414a"
   },
   "routes": [
     {
@@ -51430,6 +51452,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/dashboard/dashboard-ui.tsx",
+      "routes": [
+        "/dashboard"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/dashboard/DashboardChartError.tsx",
       "routes": [
         "/dashboard"
@@ -51440,6 +51471,15 @@
         "protected"
       ],
       "file": "components/features/dashboard/DashboardChartTooltip.tsx",
+      "routes": [
+        "/dashboard"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/dashboard/DashboardKpis.tsx",
       "routes": [
         "/dashboard"
       ]
@@ -51485,15 +51525,6 @@
         "protected"
       ],
       "file": "components/features/dashboard/FirstContactDialog.tsx",
-      "routes": [
-        "/dashboard"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/dashboard/KPICards.tsx",
       "routes": [
         "/dashboard"
       ]
@@ -53327,7 +53358,34 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/pipelines/stage-inactivity-alert.tsx",
+      "routes": [
+        "/crm/pipelines"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/pipelines/stage-settings-footer.tsx",
+      "routes": [
+        "/crm/pipelines"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/pipelines/StageColorPicker.tsx",
+      "routes": [
+        "/crm/pipelines"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/pipelines/StageInactivityScopeField.tsx",
       "routes": [
         "/crm/pipelines"
       ]
@@ -61812,23 +61870,23 @@
       "not-found.tsx": 1
     },
     "surfaces": {
-      "asChildButtonsExcluded": 35,
+      "asChildButtonsExcluded": 36,
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1632,
+      "ctasAll": 1630,
       "ctasByKind": {
-        "actionButton": 1457,
+        "actionButton": 1454,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
-        "unknownDynamic": 54
+        "unknownDynamic": 55
       },
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1572,
-      "internalCtasRouteReachable": 1539,
+      "internalCtas": 1569,
+      "internalCtasRouteReachable": 1536,
       "overlays": 251,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -61838,16 +61896,16 @@
         "sheet": 14
       },
       "overlaysRouteReachable": 246,
-      "supplementalControls": 294,
+      "supplementalControls": 295,
       "supplementalControlsByKind": {
         "AlertDialogAction": 69,
         "AlertDialogCancel": 71,
         "DropdownMenuItem": 95,
         "DropdownMenuRadioItem": 1,
         "DropdownMenuSubTrigger": 1,
-        "TabsTrigger": 57
+        "TabsTrigger": 58
       },
-      "supplementalControlsRouteReachable": 289
+      "supplementalControlsRouteReachable": 290
     }
   },
   "qaDenominators": {
@@ -61856,9 +61914,9 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1539,
+    "routeReachableInternalCtaImplementations": 1536,
     "routeReachableOverlayImplementations": 246,
-    "routeReachableSupplementalOverlayAndTabControls": 289
+    "routeReachableSupplementalOverlayAndTabControls": 290
   },
   "diagnostics": {
     "formsWithoutLocalSubmitContract": [],
