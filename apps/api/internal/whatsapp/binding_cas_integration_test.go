@@ -2,9 +2,13 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,8 +118,8 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 		}
 	}
 
-	sessionIDs := make([]string, 5)
-	conversationIDs := make([]string, 5)
+	sessionIDs := make([]string, 7)
+	conversationIDs := make([]string, len(sessionIDs))
 	for index := range sessionIDs {
 		if err := postgres.Pool().QueryRow(ctx, `
 			insert into public.whatsapp_sessions (
@@ -134,9 +138,23 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 				organization_id, session_id, remote_jid, contact_phone, contact_name, unlinked_retention_v1
 			) values ($1::uuid, $2::uuid, $3, $4, $5, $6)
 			returning id::text
-		`, organizationID, sessionIDs[index], phone+"@s.whatsapp.net", phone, fmt.Sprintf("%s-contact-%d", suffix, index), index != 3).Scan(&conversationIDs[index]); err != nil {
+		`, organizationID, sessionIDs[index], phone+"@s.whatsapp.net", phone, fmt.Sprintf("%s-contact-%d", suffix, index), index < 3 || index == 4).Scan(&conversationIDs[index]); err != nil {
 			t.Fatal(err)
 		}
+	}
+	legacySuppressedIDs := make(map[int]string)
+	for _, index := range []int{5, 6} {
+		var messageID string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_messages (
+			  organization_id, session_id, conversation_id, message_id, provider_message_id,
+			  from_me, direction, message_type, status, capture_state
+			) values ($1::uuid, $2::uuid, $3::uuid, $4, $4, false, 'inbound', 'text', 'received', 'suppressed')
+			returning id::text
+		`, organizationID, sessionIDs[index], conversationIDs[index], fmt.Sprintf("%s-suppressed-%d", suffix, index)).Scan(&messageID); err != nil {
+			t.Fatal(err)
+		}
+		legacySuppressedIDs[index] = messageID
 	}
 
 	repo := NewRepository(postgres, nil, StorageConfig{})
@@ -218,6 +236,66 @@ func TestWhatsAppManualBindingCompareAndSwap(t *testing.T) {
 			where conversation_id=$1::uuid`, conversationIDs[4]).Scan(&bindings); err != nil || bindings != 0 {
 			t.Fatalf("prospective history start created %d bindings: %v", bindings, err)
 		}
+		if err := repo.linkOwnedConversationToLead(ctx, tenantContext, conversationIDs[4], leadIDs[1], unlinkedConversationLeadSnapshot, true); !errors.Is(err, ErrConversationBindingChanged) {
+			t.Fatalf("future-only consent accepted a v1 route: %v", err)
+		}
+	})
+
+	assertLegacyMessageUntouched := func(t *testing.T, index int) {
+		t.Helper()
+		var neutral bool
+		if err := postgres.Pool().QueryRow(ctx, `
+			select lead_id is null and capture_state = 'suppressed' and content is null
+			from public.whatsapp_messages where organization_id=$1::uuid and id=$2::uuid
+		`, organizationID, legacySuppressedIDs[index]).Scan(&neutral); err != nil || !neutral {
+			t.Fatalf("legacy message was attached or changed: neutral=%t err=%v", neutral, err)
+		}
+	}
+
+	t.Run("explicit future-only link preserves old suppressed message and CAS", func(t *testing.T) {
+		const index = 5
+		preview, err := repo.GetConversationLeadLinkPreview(ctx, tenantContext, conversationIDs[index], leadIDs[1], unlinkedConversationLeadSnapshot)
+		if err != nil || !preview.FutureOnly || preview.BindingMode != "active" || preview.EligibleMessageCount != 0 ||
+			preview.ExpiresAt != nil || preview.FirstEligibleAt != nil || preview.LastEligibleAt != nil {
+			t.Fatalf("future-only preview = %+v / %v", preview, err)
+		}
+		other := tenantContext
+		other.UserID = "11111111-1111-4111-8111-111111111111"
+		if _, err := repo.GetConversationLeadLinkPreview(ctx, other, conversationIDs[index], leadIDs[1], unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("future-only preview exposed another owner's route: %v", err)
+		}
+		if err := repo.LinkConversationToLead(ctx, tenantContext, conversationIDs[index], leadIDs[1], unlinkedConversationLeadSnapshot); !errors.Is(err, ErrInvalidReference) {
+			t.Fatalf("old link request accepted legacy route without future-only consent: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/v1/whatsapp/conversations/"+conversationIDs[index]+"/link-lead",
+			strings.NewReader(fmt.Sprintf(`{"leadId":%q,"expectedPreviousLeadId":"unlinked","futureOnly":true}`, leadIDs[1])))
+		request.SetPathValue("id", conversationIDs[index])
+		response := httptest.NewRecorder()
+		NewHandler(repo).LinkConversationToLead(response, request.WithContext(tenant.ContextWithTenant(ctx, tenantContext)))
+		var result struct {
+			Data ConversationLeadLinkResult `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK ||
+			result.Data.BindingMode != "active" || result.Data.AttachedMessageCount != 0 {
+			t.Fatalf("future-only link HTTP %d, %s / %v", response.Code, response.Body.String(), err)
+		}
+		assertConversationLead(t, ctx, postgres, conversationIDs[index], leadIDs[1])
+		assertLegacyMessageUntouched(t, index)
+		if err := repo.linkOwnedConversationToLead(ctx, tenantContext, conversationIDs[index], leadIDs[2], unlinkedConversationLeadSnapshot, true); !errors.Is(err, ErrConversationBindingChanged) {
+			t.Fatalf("stale future-only link transferred the active card: %v", err)
+		}
+	})
+
+	t.Run("personal start claims neutral legacy without adopting messages", func(t *testing.T) {
+		const index = 6
+		opened, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
+			Phone: phone, SessionID: sessionIDs[index], LeadID: leadIDs[1],
+			ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot, OwnSessionOnly: true,
+		})
+		if err != nil || opened.ID != conversationIDs[index] || pointerValue(opened.LeadID) != leadIDs[1] {
+			t.Fatalf("neutral legacy start = %+v / %v", opened, err)
+		}
+		assertLegacyMessageUntouched(t, index)
 	})
 }
 

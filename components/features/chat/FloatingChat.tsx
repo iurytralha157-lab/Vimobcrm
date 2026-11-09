@@ -1032,6 +1032,7 @@ export function FloatingChat() {
         conversation: target.conversation,
         leadId: target.leadId,
         expectedPreviousLeadId: preview.expectedPreviousLeadId,
+        futureOnly: preview.futureOnly,
         ...(target.ownOnly ? { ownSessionOnly: true } : {}),
       });
       if (!current()) return;
@@ -1120,16 +1121,18 @@ export function FloatingChat() {
   void handleStartConversation;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Existing startup effect depends on this legacy async flow; wrapping it would broaden this lint-only pass.
-  async function handleStartConversationWithSession(phone: string, sessionId?: string, leadName?: string, leadId?: string, ownOnly = false) {
+  async function handleStartConversationWithSession(phone: string, sessionId?: string, leadName?: string, leadId?: string, ownOnly = false, resumeConversationId?: string) {
     const intent = { tenantKey: intentTenantKey, generation: intentGeneration };
+    const visit = resumeConversationId ? conversationVisitGenerationRef.current : null;
     if (!isIntentCurrent(intent) || startupScopeRef.current !== startupScope) return;
     if (ownOnly && !sessions?.some(session => session.id === sessionId && session.owner_user_id === currentUserId
       && session.status === 'connected' && session.can_send !== false && session.provider !== 'evolution')) return;
     const requestGeneration = ++startRequestGenerationRef.current;
     setVisibleStartRequestGeneration(requestGeneration);
-    const current = () => isIntentCurrent(intent)
+    const requestCurrent = () => isIntentCurrent(intent)
       && requestGeneration === startRequestGenerationRef.current
       && startupScopeRef.current === startupScope;
+    const current = () => requestCurrent() && (!resumeConversationId || conversationVisitGenerationRef.current === visit);
     if (!originalOrganization) {
       if (!leadId) { clearActiveConversation(intent); return; }
       try {
@@ -1166,6 +1169,21 @@ export function FloatingChat() {
 		  organizationId: activeOrganization.organizationId,
 		}) as WhatsAppConversation | null;
         if (!current()) return;
+        if (resumeConversationId) {
+          if (existingForLead?.id !== resumeConversationId || existingForLead.historical_lead_view
+            || existingForLead.supervisory_lead_view || existingForLead.session_id !== sessionId
+            || (existingForLead.lead_id || existingForLead.lead?.id) !== leadId) {
+            throw Error("A conversa mudou. Abra novamente o atendimento pelo WhatsApp atual.");
+          }
+          const resumed = await startConversation.mutateAsync({ phone: canonicalPhone, sessionId, leadId, leadName,
+            expectedPreviousLeadId: leadId, ownSessionOnly: true, startAttendance: true, suppressErrorToast: true });
+          if (!current()) return;
+          if (resumed.id !== resumeConversationId || resumed.historical_lead_view || resumed.supervisory_lead_view
+            || resumed.session_id !== sessionId || (resumed.lead_id || resumed.lead?.id) !== leadId) {
+            throw Error("A conversa mudou. Abra novamente o atendimento pelo WhatsApp atual.");
+          }
+          return;
+        }
 		if (existingForLead && (!ownOnly || !existingForLead.historical_lead_view)) {
 		  if (sessionId) setSelectedSessionId(sessionId);
 		  openConversation(existingForLead, intent);
@@ -1265,7 +1283,7 @@ export function FloatingChat() {
     } catch (error: unknown) {
       if (!current()) return;
       const confirmation = getWhatsAppPhoneChangeConfirmation(error);
-      if (confirmation && leadId && sessionId && confirmation.leadId === leadId && confirmation.sessionId === sessionId) {
+      if (!resumeConversationId && confirmation && leadId && sessionId && confirmation.leadId === leadId && confirmation.sessionId === sessionId) {
         const target = { phone: canonicalPhone, leadName, confirmation, intent, scope: startupScope, requestGeneration, ownOnly };
         setPhoneChangeError(null);
         setPhoneChangePreview(null);
@@ -1281,9 +1299,9 @@ export function FloatingChat() {
         variant: "destructive"
       });
       // Limpar o estado de pending em caso de erro critico
-      clearActiveConversation(intent);
+      if (!resumeConversationId) clearActiveConversation(intent);
     } finally {
-      if (current()) setIsStartingConversation(false);
+      if (requestCurrent()) setIsStartingConversation(false);
     }
   }
   const senderAvatars = useWhatsAppSenderAvatars({ messages: visibleMessages, conversationId: activeConversationId,
@@ -1323,7 +1341,7 @@ export function FloatingChat() {
     && phoneChangePreview.sessionId === target.confirmation.sessionId
     && phoneChangePreview.leadId === target.confirmation.leadId
     && phoneChangePreview.expectedPreviousLeadId === WHATSAPP_UNLINKED_LEAD_SNAPSHOT
-    && phoneChangePreview.bindingMode === "active");
+    && phoneChangePreview.bindingMode === "active" && !phoneChangePreview.futureOnly);
   async function loadPhoneChangePreview(target: NonNullable<typeof pendingPhoneChange>) {
     if (!phoneChangeCurrent(target) || !target.confirmation.destinationConversationId) return;
     const request = ++phoneChangePreviewRequestRef.current;
@@ -1337,7 +1355,7 @@ export function FloatingChat() {
       if (!current()) return;
       if (preview.conversationId !== target.confirmation.destinationConversationId
         || preview.sessionId !== target.confirmation.sessionId || preview.leadId !== target.confirmation.leadId
-        || preview.expectedPreviousLeadId !== WHATSAPP_UNLINKED_LEAD_SNAPSHOT || preview.bindingMode !== "active") {
+        || preview.expectedPreviousLeadId !== WHATSAPP_UNLINKED_LEAD_SNAPSHOT || preview.bindingMode !== "active" || preview.futureOnly) {
         throw new Error("A prévia não corresponde à nova conversa");
       }
       setPhoneChangePreview(preview);
@@ -1757,7 +1775,8 @@ export function FloatingChat() {
   const startSelectionSessions = sessions?.filter(session => eligibleLeadStartSession(session, currentUserId, pendingStartData?.leadId, originalOrganization)
     && (!pendingStartData?.ownOnly || (session.owner_user_id === currentUserId && session.provider !== "evolution"))) || [];
   const ownStartNotice = getOwnWhatsAppStartNotice({ conversation: activeConversation, sessions,
-    currentUserId, canOperate: canOperateWhatsApp && !localReadOnly && !sessionsFailed, loadingSessions });
+    currentUserId, canOperate: canOperateWhatsApp && !localReadOnly && !sessionsFailed, loadingSessions,
+    attendanceMissing: attendanceGate.attendance?.joined === false });
   const pendingConnection = Boolean(pendingPhone && !activeConversation && originalOrganization && canOperateWhatsApp
     && !loadingSessions && !sessions?.some(session => eligibleLeadStartSession(session, currentUserId, pendingLeadId, originalOrganization)));
   const activeConversationFilterCount = [
@@ -2188,7 +2207,9 @@ export function FloatingChat() {
     const leadId = activeConversationLeadId;
     const intent = { tenantKey: intentTenantKey, generation: intentGeneration };
     const scope = startupScope;
-    const current = () => isIntentCurrent(intent) && startupScopeRef.current === scope;
+    const visit = ownStartNotice?.resumeCapture ? conversationVisitGenerationRef.current : null;
+    const requestCurrent = () => isIntentCurrent(intent) && startupScopeRef.current === scope;
+    const current = () => requestCurrent() && (visit === null || conversationVisitGenerationRef.current === visit);
     if (!canOperateWhatsApp || !leadId || !current() || ownStartNotice?.kind !== 'start' || connectedSessions.length === 0) return;
     setIsStartingConversation(true);
     try {
@@ -2196,7 +2217,13 @@ export function FloatingChat() {
       if (!current()) return;
       const phone = normalizePhoneToE164(lead.phone);
       if (!phone) throw new Error("Cadastre um telefone válido no lead.");
-      if (connectedSessions.length === 1) {
+      if (ownStartNotice.resumeCapture) {
+        if (lead.id !== leadId || lead.assigned_user_id !== currentUserId) throw Error("Este lead não está mais atribuído a você.");
+        const sessionId = ownStartNotice.ownConnectedSessionIds[0];
+        if (activeConversation?.id && sessionId) {
+          await handleStartConversationWithSession(phone, sessionId, lead.name, leadId, true, activeConversation.id);
+        }
+      } else if (connectedSessions.length === 1) {
         await handleStartConversationWithSession(phone, connectedSessions[0].id, lead.name, leadId, true);
       } else {
         setPendingStartData({ phone, leadName: lead.name, leadId, ownOnly: true });
@@ -2204,7 +2231,7 @@ export function FloatingChat() {
       }
     } catch (error) {
       if (current()) toast({ title: "Não foi possível iniciar", description: error instanceof Error ? error.message : "Confira o telefone do lead e tente novamente.", variant: "destructive" });
-    } finally { if (current()) setIsStartingConversation(false); }
+    } finally { if (requestCurrent()) setIsStartingConversation(false); }
   };
   const renderMessageInput = (mobile = false) => {
     const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;

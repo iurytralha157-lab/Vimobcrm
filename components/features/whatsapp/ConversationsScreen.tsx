@@ -540,28 +540,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     ? getWhatsAppUnlinkedExpiresAt(resolvedSelectedConversation)
     : null;
   const selectedConversation = resolvedSelectedConversation;
-  const ownWhatsAppStart = useOwnWhatsAppLeadStart({
-    scope: whatsappQueryScope,
-    selectionKey: JSON.stringify([overlayScopeKey, activePlatform, selectedConversationId, selectedExpectedLeadId,
-      selectedConversation?.session_id, selectedConversation?.historical_lead_view, selectedConversationState?.selectionVersion]),
-    conversation: activePlatform === "whatsapp" ? selectedConversation : null,
-    sessions,
-    canOperate: canOperateWhatsApp && !localReadOnly && !sessionsFailed,
-    loadingSessions,
-    onReady: (conversation) => {
-      setReplySelection(null);
-      setSelectedSessionId(conversation.session_id || "all");
-      setSelectedConversation(conversation as ScreenConversation);
-    },
-  });
-  const composerUnavailableReason = activePlatform === "whatsapp" && selectedConversation && canOperateWhatsApp
-    ? localReadOnly ? "read_only" : sessionsFailed ? "sessions_failed" : undefined : undefined;
-  const ownWhatsAppStartNotice = ownWhatsAppStart.notice || composerUnavailableReason ? <>
-    <OwnWhatsAppStartNotice notice={ownWhatsAppStart.notice} unavailableReason={composerUnavailableReason} onRetry={() => void refetchSessions()} busy={ownWhatsAppStart.busy} onStart={ownWhatsAppStart.begin} />
-    {ownWhatsAppStart.error && !ownWhatsAppStart.pending
-      && <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">{ownWhatsAppStart.error}</p>}
-  </> : null;
-
   useEffect(() => {
     if (activePlatform !== "whatsapp" || !resolvedSelectedConversation
       || selectedUnlinkedExpiresAt === null) return;
@@ -956,6 +934,28 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     enabled: !localReadOnly && canOperateWhatsApp && activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
     identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
   });
+  const ownWhatsAppStart = useOwnWhatsAppLeadStart({
+    scope: whatsappQueryScope,
+    selectionKey: JSON.stringify([overlayScopeKey, activePlatform, selectedConversationId, selectedExpectedLeadId,
+      selectedConversation?.session_id, selectedConversation?.historical_lead_view, selectedConversationState?.selectionVersion]),
+    conversation: activePlatform === "whatsapp" ? selectedConversation : null,
+    sessions,
+    canOperate: canOperateWhatsApp && !localReadOnly && !sessionsFailed,
+    loadingSessions,
+    attendanceMissing: attendanceGate.attendance?.joined === false,
+    onReady: (conversation) => {
+      setReplySelection(null);
+      setSelectedSessionId(conversation.session_id || "all");
+      setSelectedConversation(conversation as ScreenConversation);
+    },
+  });
+  const composerUnavailableReason = activePlatform === "whatsapp" && selectedConversation && canOperateWhatsApp
+    ? localReadOnly ? "read_only" : sessionsFailed ? "sessions_failed" : undefined : undefined;
+  const ownWhatsAppStartNotice = ownWhatsAppStart.notice || composerUnavailableReason ? <>
+    <OwnWhatsAppStartNotice notice={ownWhatsAppStart.notice} unavailableReason={composerUnavailableReason} onRetry={() => void refetchSessions()} busy={ownWhatsAppStart.busy} onStart={ownWhatsAppStart.begin} />
+    {ownWhatsAppStart.error && !ownWhatsAppStart.pending
+      && <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">{ownWhatsAppStart.error}</p>}
+  </> : null;
   const canComposeSelectedConversation = activePlatform === "whatsapp" ? canMutateSelectedWhatsAppConversation
     : canOperateWhatsApp && canViewMeta && !localReadOnly && Boolean(selectedConversation);
   const messageInputDisabled = !canComposeSelectedConversation || (activePlatform === "whatsapp"
@@ -1389,6 +1389,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       conversationId: conversation.id,
       expectedPreviousLeadId,
       confirmHistoryLink: true,
+      futureOnly: preview.futureOnly,
     });
     closeCreateLeadLinkPreview();
     setCreateLeadOpen(true);
@@ -1436,6 +1437,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
         conversation,
         leadId,
         expectedPreviousLeadId: preview.expectedPreviousLeadId,
+        futureOnly: preview.futureOnly,
       });
     } catch (error) {
       if (!current()) return;

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/whatsappbinding"
 )
 
 func (repo Repository) StartConversation(ctx context.Context, tenantContext tenant.Context, request StartConversationRequest) (result Conversation, resultErr error) {
@@ -26,6 +27,10 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	if err := validateStartPhoneConfirmation(request); err != nil {
 		return Conversation{}, err
 	}
+	if request.StartAttendance && (!request.OwnSessionOnly || strings.TrimSpace(request.SessionID) == "" ||
+		strings.TrimSpace(request.LeadID) == "" || request.ConfirmPhoneChange) {
+		return Conversation{}, fmt.Errorf("%w: selecione o lead e a sua conexao para iniciar o atendimento", ErrInvalidInput)
+	}
 	expectedPreviousLeadID, err := validateExpectedPreviousConversationLeadID(request.ExpectedPreviousLeadID)
 	if err != nil {
 		return Conversation{}, err
@@ -41,6 +46,9 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 			return Conversation{}, err
 		}
 		leadID = value
+	}
+	if request.StartAttendance && expectedPreviousLeadID != leadID {
+		return Conversation{}, ErrConversationBindingChanged
 	}
 	session, err := repo.resolveLeadStartSession(ctx, tenantContext, request.SessionID, leadID)
 	if err != nil {
@@ -77,12 +85,25 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	if err != nil {
 		return Conversation{}, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
 	}
-	if sharedSession && leadContact.AssignedUserID != tenantContext.UserID {
+	if (sharedSession || request.StartAttendance) && leadContact.AssignedUserID != tenantContext.UserID {
 		return Conversation{}, ErrSessionAccessRevoked
 	}
 	identity := leadContact.Identity
 	cleanPhone := identity.ContactPhone
 	remoteJID := identity.RemoteJID
+	if request.StartAttendance {
+		conversation, err := repo.findConversationByExactSessionJID(ctx, tenantContext, session.ID, remoteJID)
+		if err != nil {
+			return Conversation{}, err
+		}
+		if conversation == nil || conversation.LeadID == nil || *conversation.LeadID != leadID {
+			return Conversation{}, ErrConversationBindingChanged
+		}
+		if err := repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversation.ID, leadID, expectedPreviousLeadID, session.ID, false, true); err != nil {
+			return Conversation{}, err
+		}
+		return repo.GetConversation(ctx, tenantContext, conversation.ID)
+	}
 	if changed, handled, changeErr := repo.startCorrectedPhoneConversation(ctx, tenantContext, session, leadID, identity, request); handled || changeErr != nil {
 		return changed, changeErr
 	}
@@ -136,7 +157,7 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		}
 		var linkErr error
 		if request.OwnSessionOnly {
-			linkErr = repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversation.ID, leadID, expectedPreviousLeadID, session.ID)
+			linkErr = repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversation.ID, leadID, expectedPreviousLeadID, session.ID, false, false)
 		} else {
 			linkErr = repo.LinkConversationToLead(ctx, tenantContext, conversation.ID, leadID, expectedPreviousLeadID)
 		}
@@ -403,21 +424,19 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		// start path below activate the requested card through the binding RPC.
 		return "", leadContact, false, nil
 	}
-	// Starting a lead chat is not consent to attach an earlier no-lead history.
-	// A truly empty legacy route may still be claimed; any retained message or
-	// prospective ephemeral marker requires a separate preview and confirmation.
-	var hasRetainedMessages bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-		  select 1
-		  from public.whatsapp_messages wm
-		  where wm.organization_id = $1::uuid
-		    and wm.conversation_id = $2::uuid
-		)
-	`, tenantContext.OrganizationID, conversationID).Scan(&hasRetainedMessages); err != nil {
+	if expectedPreviousLeadID != unlinkedConversationLeadSnapshot {
+		return "", accessibleLeadContact{}, false, ErrConversationBindingChanged
+	}
+	// Starting a lead chat claims only a neutral legacy route. Retained history
+	// and the prospective capture marker require their own consent path.
+	if unlinkedRetentionV1 {
+		return "", accessibleLeadContact{}, false, ErrConversationHistoryLinkRequired
+	}
+	eligible, err := whatsappbinding.CanLinkLegacyForFuture(ctx, tx, tenantContext.OrganizationID, conversationID)
+	if err != nil {
 		return "", accessibleLeadContact{}, false, err
 	}
-	if unlinkedRetentionV1 || hasRetainedMessages {
+	if !eligible {
 		return "", accessibleLeadContact{}, false, ErrConversationHistoryLinkRequired
 	}
 

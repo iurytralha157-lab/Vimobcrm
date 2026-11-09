@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/whatsappbinding"
 )
 
 // ConversationLeadLinkPreview contains only counts and timestamps. It never
@@ -24,6 +25,7 @@ type ConversationLeadLinkPreview struct {
 	LeadID                 *string    `json:"leadId"`
 	ExpectedPreviousLeadID string     `json:"expectedPreviousLeadId"`
 	BindingMode            string     `json:"bindingMode"`
+	FutureOnly             bool       `json:"futureOnly,omitempty"`
 	EligibleMessageCount   int        `json:"eligibleMessageCount"`
 	FirstEligibleAt        *time.Time `json:"firstEligibleAt"`
 	LastEligibleAt         *time.Time `json:"lastEligibleAt"`
@@ -75,13 +77,13 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		  wc.lead_id::text,
 		  coalesce(wc.contact_phone, ''),
 		  wc.remote_jid,
-		  wc.is_group,
+		  coalesce(wc.is_group, false),
 		  wc.unlinked_retention_v1,
 		  case when wc.retired_at is null then 'active' else 'history_only' end,
-		 case when wc.lead_id is null then wc.created_at + interval '7 days' else null end,
-		 case when wc.lead_id is null then eligible.message_count else 0 end,
-		 case when wc.lead_id is null then eligible.first_at else null end,
-		 case when wc.lead_id is null then eligible.last_at else null end
+		 case when wc.lead_id is null and wc.unlinked_retention_v1 then wc.created_at + interval '7 days' end,
+		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.message_count else 0 end,
+		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.first_at end,
+		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.last_at end
 		from public.whatsapp_conversations wc
 		join public.whatsapp_sessions ws
 		  on ws.id = wc.session_id
@@ -92,6 +94,8 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		         max(wm.sent_at) as last_at
 		  from public.whatsapp_messages wm
 		  where wm.organization_id = wc.organization_id
+		    and wc.lead_id is null
+		    and wc.unlinked_retention_v1
 		    and wm.session_id = wc.session_id
 		    and wm.conversation_id = wc.id
 		    and wm.lead_id is null
@@ -106,10 +110,12 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and (
 		    (wc.lead_id is null
-		     and wc.unlinked_retention_v1
 		     and ws.owner_user_id = $3::uuid
-		     and wc.created_at > now() - interval '7 days'
-		     and wc.unlinked_retention_scrubbed_at is null)
+		     and (
+		       (wc.unlinked_retention_v1 and wc.created_at > now() - interval '7 days'
+		        and wc.unlinked_retention_scrubbed_at is null)
+		       or (not wc.unlinked_retention_v1 and wc.retired_at is null and ws.status = 'connected')
+		     ))
 		    or (wc.lead_id is not null and wc.retired_at is null)
 		  )
 	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID).Scan(
@@ -160,11 +166,25 @@ func (repo Repository) GetConversationLeadLinkPreview(
 			return ConversationLeadLinkPreview{}, ErrConversationNotFound
 		}
 	} else {
-		if !unlinkedV1 {
-			return ConversationLeadLinkPreview{}, ErrInvalidReference
-		}
 		if expectedPreviousLeadID != unlinkedConversationLeadSnapshot {
 			return ConversationLeadLinkPreview{}, ErrConversationBindingChanged
+		}
+		if !unlinkedV1 {
+			if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
+				return ConversationLeadLinkPreview{}, err
+			}
+			identity := newWhatsAppContactIdentity(contactPhone, remoteJID, false)
+			if identity.IsGroup || identity.PNConflict || identity.ContactPhone == "" {
+				return ConversationLeadLinkPreview{}, ErrConversationNotFound
+			}
+			eligible, err := whatsappbinding.CanLinkLegacyForFuture(ctx, repo.db.Pool(), tenantContext.OrganizationID, conversationID)
+			if err != nil {
+				return ConversationLeadLinkPreview{}, err
+			}
+			if !eligible {
+				return ConversationLeadLinkPreview{}, ErrConversationNotFound
+			}
+			preview.FutureOnly = true
 		}
 	}
 	preview.ExpectedPreviousLeadID = expectedPreviousLeadID

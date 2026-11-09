@@ -51,10 +51,10 @@ before(async () => {
   await mock('@/hooks/use-schedule-events', `${hook} export const useScheduleEvents=()=>h().emptyQuery;`);
   await mock('@/hooks/use-deal-status-change', `${hook} export const useDealStatusChange=()=>({handleDealStatusChange:()=>{},isPending:false});`);
   await mock('@/contexts/LeadRealtimeBus', `export const notifyLeadRealtimeChange=()=>{};`);
-  await mock('@/lib/api/leads', `export const leadsAPI={};`);
+  await mock('@/lib/api/leads', `${hook} export const leadsAPI={getLead:(id,org)=>h().request('lead-phone',{id,org}).then(data=>({data}))};`);
   await mock('sonner', `${hook} export const toast={success:x=>h().toasts.push(x),error:x=>h().toasts.push(x),info:x=>h().toasts.push(x)};`);
   await mock('@/hooks/use-toast', `${hook} export const toast=x=>h().toasts.push(x);`);
-  await mock('@/lib/api/whatsapp', `${hook} export {getWhatsAppPhoneChangeConfirmation} from '@/lib/whatsapp-phone-change';export const whatsappAPI={findConversation:p=>h().request('find',p),getHistoryAccess:p=>h().request('history',p),getConversation:(id,lead)=>h().request('detail',{id,lead}),getConversationLinkPreview:(id,previousLead,lead,organizationId)=>h().request('preview',{id,previousLead,lead,organizationId})};`);
+  await mock('@/lib/api/whatsapp', `${hook} export {getWhatsAppPhoneChangeConfirmation} from '@/lib/whatsapp-phone-change';export const whatsappAPI={findConversation:p=>h().request('find',p),getHistoryAccess:p=>h().request('history',p),getConversation:(id,lead)=>h().request('detail',{id,lead}),getConversationLinkPreview:(id,previousLead,lead,organizationId)=>h().request('preview',{id,previousLead,lead,organizationId}),getSession:async(id,organization_id)=>({...h().sessions.find(s=>s.id===id),organization_id,is_active:true}),startConversation:p=>h().request('start',p)};`);
   await mock('@/lib/api/conversation-lead-detail', `${hook} export const conversationLeadDetailAPI={get:id=>h().request('lead-phone',{id})};`);
   await mock('@/hooks/use-whatsapp-conversations', `${hook}
     export const useWhatsAppConversations=(sessionId,filters,sessionIds,limit,options)=>{
@@ -144,7 +144,7 @@ before(async () => {
     export function AudioRecorderButton(p){useEffect(()=>{h().recorderMounts++;return()=>h().recorderUnmounts++;},[]);
     return React.createElement('button',{'aria-label':'Gravar áudio','data-context':p.contextKey,
       onClick:()=>{p.onActiveChange?.(true);if(h().sendAudioGesture)h().lastAudio=p.onSend('c3ludGhldGlj','audio/webm;codecs=opus',{clientMessageId:'audio-gesture-original',contextKey:p.contextKey}).then(result=>h().audioResult=result);}},'Microfone');}`);
-  await mock('@/components/features/leads/CreateLeadDialog', `import React from 'react';export const CreateLeadDialog=p=>p.open?React.createElement('div',{'data-create-lead':true},p.contactName):null;`);
+  await mock('@/components/features/leads/CreateLeadDialog', `import React from 'react';export const CreateLeadDialog=p=>p.open?React.createElement('div',{'data-create-lead':true,'data-future-only':p.futureOnly,'data-conversation-id':p.conversationId,'data-expected-lead':p.expectedPreviousLeadId,'data-confirm-history-link':p.confirmHistoryLink},p.contactName):null;`);
   await mock('@/components/features/whatsapp/MessageBubble', `import React from 'react';export const MessageBubble=p=>React.createElement('div',{'data-message-id':p.messageId},p.content,p.onReply&&React.createElement('button',{onClick:()=>p.onReply()},'Responder mensagem'),p.onCheckSend&&React.createElement('button',{onClick:()=>p.onCheckSend()},'Verificar envio'));`);
   await mock('@/components/features/whatsapp/conversations$', `
     export * from ${JSON.stringify(join(repository,'components/features/whatsapp/conversations/conversation-model.ts'))};
@@ -390,7 +390,8 @@ test('combined transition ignores late destination preview after navigating to B
   assert.equal(await page.evaluate(()=>window.harness.ctx.state.activeConversation?.id),'chat-b');
   assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='start').length),1);
 });
-test('ordinary unlinked history still requires its own preview and explicit link when no phone transition exists',async t=>{
+for (const futureOnly of [false, true]) test(
+  futureOnly ? 'neutral legacy link confirms future-only mode without sending' : 'ordinary unlinked history still requires its own preview and explicit link when no phone transition exists', async t=>{
   const page=await prepareDestinationPhoneChange(t);
   // A separate fresh intent receives history_required instead of old-route references.
   await page.evaluate(()=>window.harness.ctx.openNewChatWithMessage('+5511999997777','Sem rota P1',window.harness.requests[2].params.leadId));
@@ -401,13 +402,94 @@ test('ordinary unlinked history still requires its own preview and explicit link
   await page.waitForFunction(()=>window.harness.requests.filter(r=>r.kind==='start').length===2);
   await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='start')[1].reject(window.harness.historyError()));
   await page.waitForFunction(()=>window.harness.requests.filter(r=>r.kind==='preview').length===2);
-  await page.evaluate(p=>window.harness.requests.filter(r=>r.kind==='preview')[1].resolve(p),destinationPreview);
-  await page.getByRole('button',{name:'Vincular e anexar histórico',exact:true}).waitFor();
+  const preview = futureOnly ? {...destinationPreview,futureOnly:true,eligibleMessageCount:0,firstEligibleAt:null,lastEligibleAt:null,expiresAt:null} : destinationPreview;
+  await page.evaluate(p=>window.harness.requests.filter(r=>r.kind==='preview')[1].resolve(p),preview);
+  const confirm = page.getByRole('button',{name:futureOnly?'Vincular para as próximas mensagens':'Vincular e anexar histórico',exact:true});
+  await confirm.waitFor();
   assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='link').length),0);
-  await page.getByRole('button',{name:'Vincular e anexar histórico',exact:true}).click();
+  await confirm.click();
   await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='link'));
+  assert.equal(await page.evaluate(()=>window.harness.requests.find(r=>r.kind==='link').params.futureOnly),futureOnly ? true : undefined);
   assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='send').length),0);
 });
+
+test('Central create lead carries the confirmed future-only conversation into the form', async t=>{
+  const page = await harness(t, 'screen');
+  await page.evaluate(c=>{
+    const h = window.harness;
+    h.permissions.push('lead_create');
+    h.sessions = [{...h.sessions[0], status:'connected'}];
+    h.conversations = [c];
+    h.render();
+  }, {...conversation('chat-legacy',null), lead:null, contact_name:'Contato sintético'});
+  await page.getByRole('button',{name:'Abrir chat-legacy',exact:true}).click();
+  await page.getByRole('button',{name:'Mais ações da conversa',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Criar lead',exact:true}).click();
+  await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='preview'));
+  assert.equal(await page.locator('[data-create-lead]').count(),0);
+  await page.evaluate(p=>window.harness.requests.find(r=>r.kind==='preview').resolve(p), {
+    ...destinationPreview, conversationId:'chat-legacy',sessionId:'session-a',leadId:null,
+    futureOnly:true,eligibleMessageCount:0,firstEligibleAt:null,lastEligibleAt:null,expiresAt:null,
+  });
+  await page.getByText('Cadastrar e vincular para as próximas mensagens?',{exact:true}).waitFor();
+  await page.getByText(/o vínculo inicia o atendimento e as próximas respostas chegam ao CRM/).waitFor();
+  await page.getByRole('button',{name:'Continuar para cadastro',exact:true}).click();
+  const form = page.locator('[data-create-lead]');
+  await form.waitFor();
+  assert.equal(await form.getAttribute('data-future-only'),'true');
+  assert.equal(await form.getAttribute('data-conversation-id'),'chat-legacy');
+  assert.equal(await form.getAttribute('data-expected-lead'),'unlinked');
+  assert.equal(await form.getAttribute('data-confirm-history-link'),'true');
+  assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='link'||r.kind==='send').length),0);
+});
+
+for (const mode of ['screen', 'floating']) {
+  test(`${mode} opens the exact owned route without starting attendance until the explicit click`, async t => {
+    const page = await harness(t, mode);
+    const route = conversation('chat-a', 'lead-a');
+    route.lead.assignee = {id:'user-a',name:'Responsável'};
+    await page.evaluate(c=>{
+      const h=window.harness;
+      h.sessions=[{...h.sessions[0],status:'connected'}];
+      h.attendance.attendance={joined:false};
+      h.conversations=[c];
+      h.render();
+      if(h.mode==='floating') h.ctx.openConversation(c);
+    }, route);
+    if (mode === 'screen') await page.getByRole('button',{name:'Abrir chat-a',exact:true}).click();
+    const action = page.getByRole('button',{name:'Iniciar atendimento neste WhatsApp',exact:true});
+    await action.waitFor();
+    assert.equal(await page.evaluate(()=>window.harness.requests.some(r=>r.kind==='start')),false);
+    await action.click();
+    await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='lead-phone'));
+    await page.evaluate(()=>{
+      const h=window.harness;
+      h.requests.find(r=>r.kind==='lead-phone').resolve({id:'lead-a',organization_id:'org-a',assigned_user_id:'user-a',
+        name:'Lead sintético',phone:'+5511999998888'});
+    });
+    await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='find'));
+    assert.equal(await page.evaluate(()=>window.harness.requests.some(r=>r.kind==='start')),false);
+    await page.evaluate(c=>window.harness.requests.find(r=>r.kind==='find').resolve(c),route);
+    await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='start'));
+    const start = await page.evaluate(()=>{
+      const h=window.harness;
+      const r=h.requests.find(item=>item.kind==='start');
+      h.attendance.attendance={joined:true};
+      h.render();
+      return r.params;
+    });
+    assert.equal(start.startAttendance,true);
+    assert.equal(start.ownSessionOnly,true);
+    assert.equal(start.sessionId,'session-a');
+    assert.equal(start.leadId,'lead-a');
+    assert.equal(start.expectedPreviousLeadId,'lead-a');
+    assert.equal(start.confirmPhoneChange,undefined);
+    await page.evaluate(c=>window.harness.requests.find(r=>r.kind==='start').resolve(c),route);
+    await action.waitFor({state:'hidden'});
+    assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>r.kind==='start').length),1);
+    assert.equal(await page.evaluate(()=>window.harness.requests.some(r=>r.kind==='send')),false);
+  });
+}
 
 test('phone transition requires an explicit confirmation with exact authorized references and sends nothing',async t=>{
   const page=await preparePhoneChange(t);

@@ -805,8 +805,8 @@ func (handler Handler) LinkConversationToLead(w http.ResponseWriter, r *http.Req
 	}
 	var result ConversationLeadLinkResult
 	var linkErr error
-	if request.OwnSessionOnly {
-		linkErr = handler.repo.LinkOwnedConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID, expectedPreviousLeadID, &result)
+	if request.OwnSessionOnly || request.FutureOnly {
+		linkErr = handler.repo.linkOwnedConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID, expectedPreviousLeadID, request.FutureOnly, &result)
 	} else {
 		linkErr = handler.repo.LinkConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID, expectedPreviousLeadID, &result)
 	}

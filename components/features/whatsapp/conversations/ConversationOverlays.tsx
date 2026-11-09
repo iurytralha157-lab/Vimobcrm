@@ -24,6 +24,7 @@ export type CreateLeadContact = {
   conversationId?: string;
   expectedPreviousLeadId?: string;
   confirmHistoryLink?: true;
+  futureOnly?: true;
 };
 
 type ConversationOverlaysProps = {
@@ -82,6 +83,7 @@ export function ConversationOverlays({
           conversationId={createLeadContact.conversationId}
           expectedPreviousLeadId={createLeadContact.expectedPreviousLeadId}
           confirmHistoryLink={createLeadContact.confirmHistoryLink}
+          futureOnly={createLeadContact.futureOnly}
           onCreated={onLeadSaved}
         />
       )}

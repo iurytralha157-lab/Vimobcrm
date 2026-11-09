@@ -21,6 +21,7 @@ interface StartConversationParams {
   leadName?: string;
   expectedPreviousLeadId: string;
   ownSessionOnly?: boolean;
+  startAttendance?: boolean;
   confirmPhoneChange?: boolean;
   expectedPreviousConversationId?: string;
   confirmDestinationHistory?: boolean;
@@ -103,7 +104,7 @@ export function useStartConversation() {
   }, [profile?.organization_id, scope]);
 
   const mutation = useMutation({
-    mutationFn: async ({ phone, sessionId, leadId, leadName, expectedPreviousLeadId, ownSessionOnly, confirmPhoneChange,
+    mutationFn: async ({ phone, sessionId, leadId, leadName, expectedPreviousLeadId, ownSessionOnly, startAttendance, confirmPhoneChange,
       expectedPreviousConversationId, confirmDestinationHistory, expectedDestinationConversationId,
       _scope = scope, _generation }: StartConversationParams): Promise<WhatsAppConversation> => {
       if (!mountedRef.current || !isWhatsAppSendScopeCurrent(_scope, currentRef.current.scope) || _generation !== currentRef.current.generation) {
@@ -123,14 +124,21 @@ export function useStartConversation() {
         leadName,
         expectedPreviousLeadId,
         ownSessionOnly,
+        startAttendance,
         confirmPhoneChange,
         expectedPreviousConversationId,
         confirmDestinationHistory,
         expectedDestinationConversationId,
       }, _scope.organizationId, intent) as Promise<WhatsAppConversation>);
     },
-    onSuccess: (_result, variables) => {
-      queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(variables._scope ?? scope) });
+    onSuccess: (result, variables) => {
+      const requestScope = variables._scope ?? scope;
+      void queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(requestScope) });
+      if (variables.startAttendance && variables.leadId && variables.sessionId) {
+        void queryClient.invalidateQueries({
+          queryKey: whatsappQueryKeys.attendance(requestScope, result.id, variables.leadId, variables.sessionId),
+        });
+      }
     },
     onError: (error: Error, variables) => {
       if (variables.suppressErrorToast || variables._generation !== currentRef.current.generation

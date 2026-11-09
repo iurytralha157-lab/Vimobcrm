@@ -175,6 +175,7 @@ type CreateRequest struct {
 	ConversationID         string              `json:"conversationId,omitempty"`
 	ExpectedPreviousLeadID string              `json:"expectedPreviousLeadId,omitempty"`
 	ConfirmHistoryLink     bool                `json:"confirmHistoryLink,omitempty"`
+	FutureOnly             bool                `json:"futureOnly,omitempty"`
 	TagIDs                 []string            `json:"tagIds,omitempty"`
 	Cargo                  string              `json:"cargo,omitempty"`
 	Empresa                string              `json:"empresa,omitempty"`
@@ -228,6 +229,7 @@ type createInput struct {
 	ConversationID         *string
 	ExpectedPreviousLeadID *string
 	ConfirmHistoryLink     bool
+	FutureOnly             bool
 	TagIDs                 []string
 	Cargo                  *string
 	Empresa                *string
@@ -625,9 +627,13 @@ func (request CreateRequest) Validate() (createInput, error) {
 			}
 			expectedPreviousLeadID = normalized
 		}
+		if request.FutureOnly && expectedPreviousLeadID != "unlinked" {
+			return createInput{}, fmt.Errorf("%w: futureOnly requires an unlinked conversation", ErrInvalidInput)
+		}
 		input.ExpectedPreviousLeadID = &expectedPreviousLeadID
-	} else if strings.TrimSpace(request.ExpectedPreviousLeadID) != "" || request.ConfirmHistoryLink {
-		return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId and confirmHistoryLink require conversationId", ErrInvalidInput)
+		input.FutureOnly = request.FutureOnly
+	} else if strings.TrimSpace(request.ExpectedPreviousLeadID) != "" || request.ConfirmHistoryLink || request.FutureOnly {
+		return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId, confirmHistoryLink and futureOnly require conversationId", ErrInvalidInput)
 	}
 
 	if len(request.TagIDs) > 50 {

@@ -36,6 +36,7 @@ export const startWhatsAppConversationInputSchema = z.object({
   leadName: z.string().trim().max(180).optional(),
   expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
   ownSessionOnly: z.boolean().optional(),
+  startAttendance: z.boolean().optional(),
   confirmPhoneChange: z.boolean().optional(),
   expectedPreviousConversationId: uuidSchema.optional(),
   confirmDestinationHistory: z.boolean().optional(),
@@ -48,6 +49,9 @@ export const startWhatsAppConversationInputSchema = z.object({
   ? Boolean(input.confirmPhoneChange && input.expectedDestinationConversationId)
   : !input.expectedDestinationConversationId,
   'O vínculo do histórico de destino exige confirmação da troca e a conversa exata',
+).refine(input => !input.startAttendance || Boolean(input.ownSessionOnly && input.leadId && input.sessionId
+  && input.expectedPreviousLeadId === input.leadId && !input.confirmPhoneChange),
+  'Iniciar atendimento exige o lead vinculado à sessão própria, sem troca de telefone',
 )
 
 export const whatsAppPhoneChangeConfirmationSchema = z.object({
@@ -63,7 +67,9 @@ export const linkWhatsAppConversationLeadInputSchema = z.object({
   leadId: uuidSchema,
   expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
   ownSessionOnly: z.boolean().optional(),
-}).strict()
+  futureOnly: z.literal(true).optional(),
+}).strict().refine(input => !input.futureOnly || input.expectedPreviousLeadId === 'unlinked',
+  'O vínculo para as próximas mensagens exige uma conversa sem lead')
 
 export const whatsAppConversationLinkPreviewSchema = z.object({
   conversationId: uuidSchema,
@@ -77,7 +83,12 @@ export const whatsAppConversationLinkPreviewSchema = z.object({
   lastEligibleAt: timestampSchema.nullable(),
   expiresAt: timestampSchema.nullable(),
   bindingMode: z.enum(['active', 'history_only']),
-}).strict()
+  futureOnly: z.literal(true).optional(),
+}).strict().refine(preview => !preview.futureOnly || (
+  preview.expectedPreviousLeadId === 'unlinked' && preview.bindingMode === 'active'
+  && preview.eligibleMessageCount === 0 && preview.firstEligibleAt === null
+  && preview.lastEligibleAt === null && preview.expiresAt === null
+), 'A prévia para as próximas mensagens não pode conter histórico')
 
 export const whatsAppConversationLinkPreviewResponseSchema = apiEnvelopeSchema(
   whatsAppConversationLinkPreviewSchema,

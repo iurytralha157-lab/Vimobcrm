@@ -18,6 +18,15 @@ test("an authorized current route needs no strip, including assigned shared atte
   assert.equal(get({ conversation: { ...conversation, lead: { id: "lead", assignee: { id: "viewer" } } },
     sessions: [{ ...own, id: "other", owner_user_id: "admin" }] }), null);
 });
+test("only the assigned owner of an exact usable route can explicitly resume missing attendance", () => {
+  const assigned = { ...conversation, session_id: own.id, lead: { id: "lead", assignee: { id: "viewer" } } };
+  assert.deepEqual(get({ conversation: assigned, attendanceMissing: true }), {
+    kind: "start", ownConnectedSessionIds: [own.id], preserveComposer: true, resumeCapture: true,
+  });
+  assert.equal(get({ conversation: assigned }), null);
+  assert.equal(get({ conversation: { ...assigned, lead: { id: "lead", assignee: { id: "other" } } }, attendanceMissing: true }), null);
+  assert.equal(get({ conversation: { ...assigned, historical_lead_view: true }, attendanceMissing: true })?.resumeCapture, undefined);
+});
 test("historical own route remains readonly and can prepare a new own route", () => {
   assert.equal(get({ conversation: { ...conversation, session_id: "own", historical_lead_view: true } })?.kind, "start");
 });

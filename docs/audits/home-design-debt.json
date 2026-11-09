@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "e9bad6825ffdd6f0319a63201c08ab6ae989d9436672d8b59e42391c76bacac9",
-  "surfaceInventoryDigestSha256": "8d1a2f91c2c1be548824d4e842b0caa21a99ca5dd62e8aabced083eee00a7fb6",
+  "sourceDigestSha256": "23b943ee74a953d4a6d72d1d34a164b9b5fa35adab3a78cd89564c27a00a515b",
+  "surfaceInventoryDigestSha256": "9502b84ce64f144d6cc2123a0344ba3e2b3af117e9f72fb3881ce16eb88d7562",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 673,
@@ -2109,7 +2109,7 @@
     },
     {
       "file": "components/features/whatsapp/ConfirmConversationLeadLinkDialog.tsx",
-      "line": 59,
+      "line": 60,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",

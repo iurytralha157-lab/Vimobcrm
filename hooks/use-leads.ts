@@ -46,6 +46,7 @@ export type CreateLeadInput = {
   conversation_id?: string;
   expected_previous_lead_id?: string;
   confirm_history_link?: true;
+  future_only?: true;
   cargo?: string;
   empresa?: string;
   profissao?: string;

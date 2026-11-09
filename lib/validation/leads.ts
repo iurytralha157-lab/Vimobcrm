@@ -81,6 +81,7 @@ export const leadCreateInputSchema = z.object({
   conversationId: optionalUUID,
   expectedPreviousLeadId: z.union([uuidSchema, z.literal('unlinked')]).optional(),
   confirmHistoryLink: z.literal(true).optional(),
+  futureOnly: z.literal(true).optional(),
   tagIds: z.array(uuidSchema).max(50).optional(),
   cargo: optionalText(120),
   empresa: optionalText(160),
@@ -135,6 +136,13 @@ export const leadCreateInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['confirmHistoryLink'],
       message: 'Confirmação do histórico da conversa é obrigatória',
+    })
+  }
+  if (input.futureOnly && (!input.conversationId || input.expectedPreviousLeadId !== 'unlinked')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['futureOnly'],
+      message: 'O vínculo para as próximas mensagens exige uma conversa sem lead',
     })
   }
   if (!input.conversationId && input.confirmHistoryLink) {

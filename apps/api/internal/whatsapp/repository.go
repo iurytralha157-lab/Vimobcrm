@@ -17,6 +17,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/whatsappbinding"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -1257,7 +1258,7 @@ func (repo Repository) LinkConversationToLead(
 	expectedPreviousLeadID string,
 	resultOut ...*ConversationLeadLinkResult,
 ) error {
-	return repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversationID, leadID, expectedPreviousLeadID, "", resultOut...)
+	return repo.linkConversationToLeadWithOwnSession(ctx, tenantContext, conversationID, leadID, expectedPreviousLeadID, "", false, false, resultOut...)
 }
 
 // Public linking keeps its existing scope. A personal start also pins the
@@ -1269,6 +1270,8 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 	leadID string,
 	expectedPreviousLeadID string,
 	ownSessionID string,
+	futureOnly bool,
+	startAttendance bool,
 	resultOut ...*ConversationLeadLinkResult,
 ) error {
 	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
@@ -1291,6 +1294,11 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if futureOnly || startAttendance {
+		if err := lockOriginalWhatsAppActor(ctx, tx, tenantContext); err != nil {
+			return err
+		}
+	}
 	if ownSessionID != "" {
 		if err := lockConversationSendSession(ctx, tx, tenantContext, ownSessionID); err != nil {
 			return err
@@ -1313,7 +1321,7 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 		select
 		  wc.remote_jid,
 		  coalesce(wc.contact_phone, ''),
-		  wc.is_group,
+		  coalesce(wc.is_group, false),
 		  wc.lead_id::text,
 		  ws.owner_user_id::text,
 		  wc.unlinked_retention_v1,
@@ -1376,17 +1384,35 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 	if isGroup {
 		return ErrInvalidReference
 	}
-	if !currentLeadID.Valid && !unlinkedRetentionV1 {
-		// A legacy null lead can be a deleted or previously linked card. Only
-		// the prospective capture marker proves that its history is unowned.
+	if !futureOnly && !currentLeadID.Valid && !unlinkedRetentionV1 {
+		// A legacy null lead may have belonged to another card. A new binding
+		// requires explicit consent to keep all earlier history out of it.
 		return ErrInvalidReference
 	}
 	if (currentLeadID.Valid && currentLeadID.String != expectedPreviousLeadID) ||
 		(!currentLeadID.Valid && expectedPreviousLeadID != unlinkedConversationLeadSnapshot) {
 		return ErrConversationBindingChanged
 	}
-
 	identity := newWhatsAppContactIdentity(contactPhone, remoteJID, isGroup)
+	if futureOnly {
+		if ownSessionID == "" || currentLeadID.Valid || unlinkedRetentionV1 || retiredAt.Valid {
+			return ErrConversationBindingChanged
+		}
+		if err := requireOriginalWhatsAppOrganization(ctx, tx, tenantContext); err != nil {
+			return err
+		}
+		if identity.IsGroup || identity.PNConflict || identity.ContactPhone == "" {
+			return ErrInvalidReference
+		}
+		eligible, err := whatsappbinding.CanLinkLegacyForFuture(ctx, tx, tenantContext.OrganizationID, conversationID)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return ErrConversationBindingChanged
+		}
+	}
+
 	if err := ensureAccessibleLeadMatchesIdentity(ctx, tx, tenantContext, leadID, identity); err != nil {
 		return fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
 	}
@@ -1409,6 +1435,15 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 			leadID,
 			expectedPreviousLeadID,
 		); err != nil {
+			return err
+		}
+	}
+	if startAttendance {
+		if err := startAssignedOwnerAttendance(ctx, tx, tenantContext, conversationID, ownSessionID, leadID); err != nil {
+			return err
+		}
+	} else if futureOnly {
+		if _, err := whatsappbinding.StartAssignedOwnerAttendance(ctx, tx, tenantContext, conversationID, ownSessionID, leadID); err != nil {
 			return err
 		}
 	}

@@ -30,7 +30,7 @@ export function OwnWhatsAppStartNotice({ notice, unavailableReason, onRetry, bus
       ) : (
         <button type="button" className={actionClass} onClick={onStart} disabled={busy || !onStart} aria-busy={busy}>
           {busy && <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
-          Iniciar conversa pelo seu WhatsApp
+          {notice.resumeCapture ? "Iniciar atendimento neste WhatsApp" : "Iniciar conversa pelo seu WhatsApp"}
         </button>
       )}
     </div>

@@ -173,6 +173,14 @@ test('vinculo de conversa na criacao exige snapshot e confirmacao do historico',
   }).success, false)
 })
 
+test('vínculo para mensagens futuras exige conversa sem lead e confirmação', () => {
+  const input = { name: 'Contato WhatsApp', conversationId: ORG_ID, confirmHistoryLink: true, futureOnly: true }
+  assert.equal(leadCreateInputSchema.safeParse({ ...input, expectedPreviousLeadId: 'unlinked' }).success, true)
+  assert.equal(leadCreateInputSchema.safeParse({ ...input, expectedPreviousLeadId: ID }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({ ...input, expectedPreviousLeadId: 'unlinked', confirmHistoryLink: undefined }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({ name: input.name, futureOnly: true }).success, false)
+})
+
 test('valida o controle de distribuicao da importacao', () => {
   const automatic = leadCreateInputSchema.safeParse({
     name: 'Contato distribuido',

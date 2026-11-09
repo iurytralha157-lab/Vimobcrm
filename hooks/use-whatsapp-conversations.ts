@@ -1894,11 +1894,12 @@ export function useLinkConversationToLead() {
   const scope = useWhatsAppQueryScope();
 
   return useWhatsAppIntentMutation({
-    mutationFn: async ({ conversation, leadId, expectedPreviousLeadId, ownSessionOnly }: {
+    mutationFn: async ({ conversation, leadId, expectedPreviousLeadId, ownSessionOnly, futureOnly }: {
       conversation: WhatsAppConversation;
       leadId: string;
       expectedPreviousLeadId: string;
       ownSessionOnly?: boolean;
+      futureOnly?: true;
     }, intent) => {
       if (requireConversationBindingSnapshot(conversation) !== expectedPreviousLeadId) {
         throw new Error('A conversa mudou depois da prévia de vínculo');
@@ -1907,7 +1908,7 @@ export function useLinkConversationToLead() {
         conversation.id,
         leadId,
         expectedPreviousLeadId,
-        scope.organizationId, intent, ownSessionOnly,
+        scope.organizationId, intent, ownSessionOnly, futureOnly,
       );
     },
     onSuccess: (result, variables) => {
@@ -1919,7 +1920,7 @@ export function useLinkConversationToLead() {
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
       toast({
         title: result.bindingMode === 'history_only' ? "Histórico vinculado" : "Conversa vinculada",
-        description: result.attachedMessageCount > 0
+        description: variables.futureOnly ? 'O vínculo vale para as próximas mensagens.' : result.attachedMessageCount > 0
           ? result.attachedMessageCount === 1
             ? "1 mensagem preservada foi anexada ao lead."
             : `${result.attachedMessageCount} mensagens preservadas foram anexadas ao lead.`

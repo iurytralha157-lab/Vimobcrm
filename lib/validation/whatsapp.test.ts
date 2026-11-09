@@ -166,6 +166,18 @@ test('exige snapshot anterior nos vinculos manuais de conversa', () => {
     expectedPreviousLeadId: USER_ID,
   }).success, true)
   assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({ leadId: ID }).success, false)
+  assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({ leadId: ID, expectedPreviousLeadId: 'unlinked', futureOnly: true }).success, true)
+  assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({ leadId: ID, expectedPreviousLeadId: USER_ID, futureOnly: true }).success, false)
+})
+
+test('explicit attendance requires the current lead on an own session and no phone change', () => {
+  const ownRoute = { phone: '5511999999999', sessionId: ORG_ID, leadId: ID,
+    expectedPreviousLeadId: ID, ownSessionOnly: true, startAttendance: true }
+  assert.equal(startWhatsAppConversationInputSchema.safeParse(ownRoute).success, true)
+  for (const change of [{ ownSessionOnly: false }, { sessionId: undefined }, { expectedPreviousLeadId: 'unlinked' },
+    { confirmPhoneChange: true, expectedPreviousConversationId: USER_ID }]) {
+    assert.equal(startWhatsAppConversationInputSchema.safeParse({ ...ownRoute, ...change }).success, false)
+  }
 })
 
 test('previa do vinculo aceita apenas resumo sem conteudo e resultado auditavel', () => {
@@ -185,6 +197,10 @@ test('previa do vinculo aceita apenas resumo sem conteudo e resultado auditavel'
     },
   }
   assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse(preview).success, true)
+  const futureOnly = { ...preview.data, futureOnly: true, eligibleMessageCount: 0, firstEligibleAt: null, lastEligibleAt: null, expiresAt: null }
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({ data: futureOnly }).success, true)
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({ data: { ...preview.data, futureOnly: true } }).success, false)
+  assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({ data: { ...futureOnly, bindingMode: 'history_only' } }).success, false)
   assert.equal(whatsAppConversationLinkPreviewResponseSchema.safeParse({
     data: { ...preview.data, eligibleMessageCount: -1 },
   }).success, false)

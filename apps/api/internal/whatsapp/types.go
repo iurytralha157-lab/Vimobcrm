@@ -432,6 +432,7 @@ type LinkLeadRequest struct {
 	LeadID                 string `json:"leadId"`
 	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
 	OwnSessionOnly         bool   `json:"ownSessionOnly,omitempty"`
+	FutureOnly             bool   `json:"futureOnly,omitempty"`
 }
 
 type ArchiveRequest struct {
@@ -602,6 +603,7 @@ type HistorySyncRequest struct {
 }
 
 type StartConversationRequest struct {
+	StartAttendance                   bool   `json:"startAttendance,omitempty"`
 	Phone                             string `json:"phone"`
 	SessionID                         string `json:"sessionId"`
 	OwnSessionOnly                    bool   `json:"ownSessionOnly,omitempty"`
@@ -1154,6 +1156,9 @@ func (request LinkLeadRequest) Validate() (string, string, error) {
 	expectedPreviousLeadID, err := validateExpectedPreviousConversationLeadID(request.ExpectedPreviousLeadID)
 	if err != nil {
 		return "", "", err
+	}
+	if request.FutureOnly && expectedPreviousLeadID != unlinkedConversationLeadSnapshot {
+		return "", "", fmt.Errorf("%w: futureOnly requires an unlinked conversation snapshot", ErrInvalidInput)
 	}
 
 	return value, expectedPreviousLeadID, nil

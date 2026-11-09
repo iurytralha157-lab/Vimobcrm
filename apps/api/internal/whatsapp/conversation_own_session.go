@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/whatsappbinding"
 )
 
 func validateStartSessionOwnership(ownSessionOnly bool, ownerID, actorID string) error {
@@ -55,6 +56,10 @@ func resolveOwnedConversationLinkSession(ctx context.Context, queryer whatsappQu
 }
 
 func (repo Repository) LinkOwnedConversationToLead(ctx context.Context, actor tenant.Context, conversationID, leadID, expectedPreviousLeadID string, resultOut ...*ConversationLeadLinkResult) error {
+	return repo.linkOwnedConversationToLead(ctx, actor, conversationID, leadID, expectedPreviousLeadID, false, resultOut...)
+}
+
+func (repo Repository) linkOwnedConversationToLead(ctx context.Context, actor tenant.Context, conversationID, leadID, expectedPreviousLeadID string, futureOnly bool, resultOut ...*ConversationLeadLinkResult) error {
 	if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), actor); err != nil {
 		return err
 	}
@@ -66,5 +71,16 @@ func (repo Repository) LinkOwnedConversationToLead(ctx context.Context, actor te
 	if err != nil {
 		return err
 	}
-	return repo.linkConversationToLeadWithOwnSession(ctx, actor, conversationID, leadID, expectedPreviousLeadID, sessionID, resultOut...)
+	return repo.linkConversationToLeadWithOwnSession(ctx, actor, conversationID, leadID, expectedPreviousLeadID, sessionID, futureOnly, false, resultOut...)
+}
+
+func startAssignedOwnerAttendance(ctx context.Context, tx pgx.Tx, actor tenant.Context, conversationID, sessionID, leadID string) error {
+	eligible, err := whatsappbinding.StartAssignedOwnerAttendance(ctx, tx, actor, conversationID, sessionID, leadID)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrInvalidReference
+	}
+	return nil
 }

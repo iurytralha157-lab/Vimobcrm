@@ -9121,7 +9121,10 @@ paths:
       summary: Open a lead conversation on its current canonical phone
       description: >-
         Requires whatsapp_operate and the original organization of the user.
-        Does not join attendance or send a message. A changed phone requires
+        A regular open neither joins attendance nor sends a message. An
+        explicit startAttendance starts receiving future messages for the
+        assigned lead owner on the exact active conversation on their own
+        connected session, with no previous history attachment. A changed phone requires
         explicit confirmation of the exact previous conversation. Existing
         unlinked destination history additionally requires owner-only preview
         and consent; retirement and attachment commit in one transaction.
@@ -9152,6 +9155,84 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/WhatsAppPhoneChangeConfirmation"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/whatsapp/conversations/{conversationId}/link-preview:
+    get:
+      summary: Preview a conversation binding before confirmation
+      description: >-
+        Requires whatsapp_operate and lead_operate. The preview contains counts
+        and dates only. A neutral legacy conversation on the actor's own WhatsApp
+        may return futureOnly=true with zero eligible history.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: expectedPreviousLeadId
+          in: query
+          required: true
+          schema:
+            oneOf:
+              - { type: string, format: uuid }
+              - { const: unlinked }
+        - name: leadId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Preview of the exact conversation and lead snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/WhatsAppConversationLinkPreview"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/whatsapp/conversations/{conversationId}/link-lead:
+    post:
+      summary: Confirm the exact conversation binding
+      description: >-
+        Requires whatsapp_operate and lead_operate. futureOnly=true applies only
+        to an eligible unlinked legacy conversation on the actor's own WhatsApp.
+        The server revalidates the previous lead, ownership and eligibility before
+        binding. The new binding is used for future messages.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppConversationLinkRequest"
+      responses:
+        "200":
+          description: Confirmed binding and count of attached messages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { const: true }
+                  data:
+                    type: object
+                    required: [bindingMode, attachedMessageCount]
+                    properties:
+                      bindingMode: { type: string, enum: [active, history_only] }
+                      attachedMessageCount: { type: integer, minimum: 0 }
+                      historyFirstAt: { type: string, format: date-time }
+                      historyLastAt: { type: string, format: date-time }
+                      expiresAt: { type: string, format: date-time }
+                      confirmedAt: { type: string, format: date-time }
         default:
           $ref: "#/components/responses/APIError"
   /v1/whatsapp/conversations/{conversationId}/send-status:
@@ -10137,7 +10218,9 @@ components:
         confirmPhoneChange requires leadId, sessionId, expectedPreviousConversationId
         and expectedPreviousLeadId equal to leadId. confirmDestinationHistory
         also requires confirmPhoneChange and expectedDestinationConversationId.
-        References without their confirmation flags are invalid.
+        References without their confirmation flags are invalid. startAttendance
+        requires ownSessionOnly, leadId, sessionId, and expectedPreviousLeadId equal
+        to leadId. It cannot be combined with a phone change.
       properties:
         phone: { type: string, minLength: 8, maxLength: 40 }
         sessionId: { type: string, format: uuid }
@@ -10147,10 +10230,73 @@ components:
           oneOf:
             - { type: string, format: uuid }
             - { const: unlinked }
+        ownSessionOnly: { type: boolean }
+        startAttendance: { type: boolean }
         confirmPhoneChange: { type: boolean }
         expectedPreviousConversationId: { type: string, format: uuid }
         confirmDestinationHistory: { type: boolean }
         expectedDestinationConversationId: { type: string, format: uuid }
+      if:
+        required: [startAttendance]
+        properties:
+          startAttendance: { const: true }
+      then:
+        required: [ownSessionOnly, leadId, sessionId]
+        properties:
+          ownSessionOnly: { const: true }
+          expectedPreviousLeadId: { type: string, format: uuid }
+          confirmPhoneChange: { const: false }
+    WhatsAppConversationLinkPreview:
+      type: object
+      additionalProperties: false
+      required: [conversationId, sessionId, sessionDisplayName, contactDisplayName, leadId, expectedPreviousLeadId, eligibleMessageCount, firstEligibleAt, lastEligibleAt, expiresAt, bindingMode]
+      properties:
+        conversationId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        sessionDisplayName: { type: string }
+        contactDisplayName: { type: string }
+        leadId: { type: [string, "null"], format: uuid }
+        expectedPreviousLeadId:
+          oneOf:
+            - { type: string, format: uuid }
+            - { const: unlinked }
+        eligibleMessageCount: { type: integer, minimum: 0 }
+        firstEligibleAt: { type: [string, "null"], format: date-time }
+        lastEligibleAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        bindingMode: { type: string, enum: [active, history_only] }
+        futureOnly: { const: true }
+      if:
+        required: [futureOnly]
+      then:
+        properties:
+          expectedPreviousLeadId: { const: unlinked }
+          eligibleMessageCount: { const: 0 }
+          firstEligibleAt: { type: "null" }
+          lastEligibleAt: { type: "null" }
+          expiresAt: { type: "null" }
+          bindingMode: { const: active }
+    WhatsAppConversationLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [leadId, expectedPreviousLeadId]
+      properties:
+        leadId: { type: string, format: uuid }
+        expectedPreviousLeadId:
+          oneOf:
+            - { type: string, format: uuid }
+            - { const: unlinked }
+        ownSessionOnly: { type: boolean }
+        futureOnly:
+          type: boolean
+          description: True confirms binding for future messages only on an eligible legacy conversation.
+      if:
+        required: [futureOnly]
+        properties:
+          futureOnly: { const: true }
+      then:
+        properties:
+          expectedPreviousLeadId: { const: unlinked }
     WhatsAppPhoneChangeConfirmation:
       type: object
       additionalProperties: false
@@ -18964,7 +19110,10 @@ components:
               enum: [unlinked]
         confirmHistoryLink:
           type: boolean
-          description: Explicit user confirmation to attach eligible retained history from conversationId. Required when conversationId is provided and invalid without it.
+          description: Explicit user confirmation of the binding from conversationId. Required when conversationId is provided and invalid without it.
+        futureOnly:
+          type: boolean
+          description: True confirms binding for future messages only on an eligible legacy conversation. Requires conversationId, expectedPreviousLeadId=unlinked and confirmHistoryLink=true.
         tagIds:
           type: array
           maxItems: 50
@@ -18994,6 +19143,15 @@ components:
           type: string
         faixaValorImovel:
           type: string
+      if:
+        required: [futureOnly]
+        properties:
+          futureOnly: { const: true }
+      then:
+        required: [conversationId, expectedPreviousLeadId, confirmHistoryLink]
+        properties:
+          expectedPreviousLeadId: { const: unlinked }
+          confirmHistoryLink: { const: true }
     CreateLeadResponse:
       type: object
       required: [data, leadId, leadVisible, reentry, distributionOutcome]

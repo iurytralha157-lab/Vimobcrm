@@ -177,6 +177,7 @@ type LeadCreateInput = Partial<LeadInsert> & {
   conversation_id?: string
   expected_previous_lead_id?: string
   confirm_history_link?: true
+  future_only?: true
   import_mode?: boolean
   import_request_key?: string
   auto_distribute?: boolean
@@ -281,6 +282,7 @@ export const leadsAPI = {
       conversationId: data.conversation_id,
       expectedPreviousLeadId: data.expected_previous_lead_id,
       confirmHistoryLink: data.confirm_history_link,
+      futureOnly: data.future_only,
       tagIds: data.tag_ids,
       cargo: data.cargo,
       empresa: data.empresa,

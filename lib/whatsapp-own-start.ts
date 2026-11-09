@@ -8,6 +8,7 @@ export type OwnWhatsAppStartNoticeState = {
   ownConnectedSessionIds: string[];
   /** Keep the authorized original route available while offering an owned route. */
   preserveComposer?: boolean;
+  resumeCapture?: boolean;
 };
 
 export function getOwnWhatsAppStartNotice({
@@ -16,12 +17,14 @@ export function getOwnWhatsAppStartNotice({
   currentUserId,
   canOperate,
   loadingSessions = false,
+  attendanceMissing = false,
 }: {
   conversation: Conversation;
   sessions: Session[] | null | undefined;
   currentUserId: string | null | undefined;
   canOperate: boolean;
   loadingSessions?: boolean;
+  attendanceMissing?: boolean;
 }): OwnWhatsAppStartNoticeState | null {
   if (!canOperate || !currentUserId || loadingSessions || !sessions || !conversation) return null;
   if (conversation.supervisory_lead_view) return null;
@@ -38,6 +41,10 @@ export function getOwnWhatsAppStartNotice({
   if (currentRouteAvailable) {
     if (!conversation.id) return null;
     const currentSession = sessions.find(session => session.id === conversation.session_id);
+    if (attendanceMissing && conversation.lead?.assignee?.id === currentUserId
+      && currentSession?.provider === "evolution_go" && ownConnectedSessionIds.includes(currentSession.id)) {
+      return { kind: "start", ownConnectedSessionIds: [currentSession.id], preserveComposer: true, resumeCapture: true };
+    }
     // Choosing an owned route creates/reuses a different physical conversation;
     // it never changes the session used by the original composer.
     return currentSession?.owner_user_id !== currentUserId && ownConnectedSessionIds.length > 0

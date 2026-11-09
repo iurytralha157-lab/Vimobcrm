@@ -204,6 +204,7 @@ export interface WhatsAppConversationLinkPreview {
   lastEligibleAt: string | null
   expiresAt: string | null
   bindingMode: 'active' | 'history_only'
+  futureOnly?: true
 }
 
 export interface WhatsAppConversationLinkResult {
@@ -765,6 +766,7 @@ export const whatsappAPI = {
     leadName?: string
     expectedPreviousLeadId: string
     ownSessionOnly?: boolean
+    startAttendance?: boolean
     confirmPhoneChange?: boolean
     expectedPreviousConversationId?: string
     confirmDestinationHistory?: boolean
@@ -1034,11 +1036,13 @@ export const whatsappAPI = {
     expectedPreviousLeadId: string,
     organizationId?: string | null, transport?: WhatsAppRequestIntent,
     ownSessionOnly?: boolean,
+    futureOnly?: true,
   ) {
     const body = parseDomainInput(linkWhatsAppConversationLeadInputSchema, {
       leadId,
       expectedPreviousLeadId,
       ownSessionOnly,
+      futureOnly,
     }, 'whatsapp.conversations.link-lead')
     const response = await requestWhatsAppAPI<{ ok: true; data: WhatsAppConversationLinkResult }>(`/v1/whatsapp/conversations/${conversationId}/link-lead`, {
       method: 'POST',

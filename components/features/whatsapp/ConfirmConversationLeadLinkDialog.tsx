@@ -52,6 +52,7 @@ export function ConfirmConversationLeadLinkDialog({
   const expiresAt = formatHistoryDate(preview?.expiresAt ?? null);
   const isReassignment = preview?.expectedPreviousLeadId !== undefined
     && preview.expectedPreviousLeadId !== "unlinked";
+  const futureOnly = preview?.futureOnly === true;
   const canConfirm = Boolean(preview) && !isLoading && !isConfirming && !hasError;
 
   return (
@@ -59,10 +60,13 @@ export function ConfirmConversationLeadLinkDialog({
       <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {mode === "new" ? "Cadastrar e vincular conversa?" : "Vincular conversa ao lead?"}
+            {futureOnly ? (mode === "new" ? "Cadastrar e vincular para as próximas mensagens?" : "Vincular para as próximas mensagens?")
+              : mode === "new" ? "Cadastrar e vincular conversa?" : "Vincular conversa ao lead?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {mode === "new"
+            {futureOnly
+              ? "Confirme o vínculo deste WhatsApp para as próximas mensagens do lead."
+              : mode === "new"
               ? "Confira o histórico antes de cadastrar o lead. Ao salvar, o histórico elegível será anexado automaticamente."
               : isReassignment
                 ? `Confirme a mudança desta conversa${leadName ? ` para ${leadName}` : " para outro lead"}. O histórico anterior continuará no lead de origem.`
@@ -96,10 +100,14 @@ export function ConfirmConversationLeadLinkDialog({
               <p><span className="font-medium text-[var(--app-text-primary)]">Prazo do histórico sem lead:</span> {expiresAt}</p>
             )}
             <p className="border-t border-[var(--app-border)] pt-2 leading-relaxed">
-              {isReassignment
-                ? "As mensagens já atribuídas ao lead de origem permanecerão nele. As próximas mensagens desta conversa seguirão o novo lead."
-                : "Após o vínculo, este histórico ficará visível às pessoas com acesso ao lead."}
-              {" "}Entrar no atendimento é uma ação separada e será necessário para enviar pelo CRM.
+              {futureOnly
+                ? "O vínculo começa nas próximas mensagens deste contato."
+                : isReassignment
+                  ? "As mensagens já atribuídas ao lead de origem permanecerão nele. As próximas mensagens desta conversa seguirão o novo lead."
+                  : "Após o vínculo, este histórico ficará visível às pessoas com acesso ao lead."}
+              {" "}{futureOnly
+                 ? "Se o lead estiver atribuído a você, o vínculo inicia o atendimento e as próximas respostas chegam ao CRM. O histórico anterior não será anexado."
+                : "Entrar no atendimento é uma ação separada e será necessário para enviar pelo CRM."}
             </p>
             {preview.bindingMode === "history_only" && (
               <p className="leading-relaxed">
@@ -115,7 +123,8 @@ export function ConfirmConversationLeadLinkDialog({
           </Button>
           <Button type="button" disabled={!canConfirm} onClick={onConfirm}>
             {isConfirming && <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
-            {mode === "new" ? "Continuar para cadastro" : isReassignment ? "Mudar vínculo da conversa" : "Vincular e anexar histórico"}
+            {mode === "new" ? "Continuar para cadastro" : futureOnly ? "Vincular para as próximas mensagens"
+              : isReassignment ? "Mudar vínculo da conversa" : "Vincular e anexar histórico"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

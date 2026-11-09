@@ -64,6 +64,7 @@ interface CreateLeadDialogProps {
   conversationId?: string | null;
   expectedPreviousLeadId?: string | null;
   confirmHistoryLink?: true;
+  futureOnly?: true;
   lead?: EditableLead | null;
   onSaved?: (lead: Lead) => void;
   onCreated?: (leadId: string) => void;
@@ -130,6 +131,7 @@ export function CreateLeadDialog({
   conversationId,
   expectedPreviousLeadId,
   confirmHistoryLink,
+  futureOnly,
   lead: leadSummary,
   onSaved,
   onCreated,
@@ -613,6 +615,7 @@ export function CreateLeadDialog({
           confirm_history_link: formData.conversation_id
             ? confirmHistoryLink
             : undefined,
+          future_only: formData.conversation_id ? futureOnly : undefined,
           cargo: formData.cargo || undefined,
           empresa: formData.empresa || undefined,
           profissao: formData.profissao || undefined,

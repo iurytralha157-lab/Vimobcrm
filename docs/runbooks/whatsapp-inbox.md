@@ -364,6 +364,19 @@ recusa snapshots de retenção v1. Mantenha
 `WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED=false` durante essa etapa. O
 limite de sete dias se aplica somente às conversas inscritas em retenção v1.
 
+Uma conversa legada própria, sem vínculo anterior e com apenas registros
+suprimidos sem conteúdo, pode ser vinculada para receber mensagens futuras.
+A prévia indica `futureOnly: true` e a confirmação repete esse valor. A API
+revalida o proprietário da sessão, o telefone, o acesso ao lead e a ausência
+de histórico sob o bloqueio da conversa. Se ela passar a ter um vínculo ou
+retenção v1 antes da confirmação, é preciso revisar a prévia. O vínculo
+prospectivo não anexa as mensagens anteriores. A confirmação registra o
+atendimento se o ator é o responsável atual pelo lead e o dono da conexão
+ativa. A opção de iniciar atendimento na conversa atual usa
+`startAttendance: true`, a conexão própria e o vínculo exato com o lead.
+Nas duas opções, a captura usa os limites de horário e sequência do registro
+de atendimento. Trocar de conexão não carrega o histórico de outra sessão.
+
 Antes de desligar a compatibilidade, confira o schema e as políticas de
 visibilidade da captura nova, a RPC de reações e o dreno das réplicas anteriores.
 A reconciliação de recibos usa o contrato de sessão da RPC nova nos dois modos.

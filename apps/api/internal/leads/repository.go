@@ -25,6 +25,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/whatsappbinding"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -1402,6 +1403,10 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 	defer tx.Rollback(ctx)
+	futureSessionID, err := lockFutureLeadWhatsAppSession(ctx, tx, tenantContext, input)
+	if err != nil {
+		return CreateResult{}, err
+	}
 
 	if err := distribution.LockIntakePipelineDestination(ctx, tx, tenantContext.OrganizationID, resolvedDestination.PipelineID, resolvedDestination.StageID); err != nil {
 		return CreateResult{}, err
@@ -1618,6 +1623,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		input.ConversationID,
 		input.ExpectedPreviousLeadID,
 		input.ConfirmHistoryLink,
+		futureSessionID,
 	); err != nil {
 		return CreateResult{}, err
 	}
@@ -1692,6 +1698,10 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, err
 	}
 	defer tx.Rollback(ctx)
+	futureSessionID, err := lockFutureLeadWhatsAppSession(ctx, tx, tenantContext, input)
+	if err != nil {
+		return CreateResult{}, err
+	}
 
 	if err := distribution.LockIntakePipelineDestination(ctx, tx, tenantContext.OrganizationID, resolvedDestination.PipelineID, resolvedDestination.StageID); err != nil {
 		return CreateResult{}, err
@@ -1730,6 +1740,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		input.ConversationID,
 		input.ExpectedPreviousLeadID,
 		input.ConfirmHistoryLink,
+		futureSessionID,
 		func() error { return repo.authorizeLeadReentry(ctx, tx, tenantContext, input, existingLead) },
 	); err != nil {
 		return CreateResult{}, err
@@ -4354,6 +4365,7 @@ func (repo Repository) linkWhatsAppConversations(
 	conversationID *string,
 	expectedPreviousLeadID *string,
 	confirmHistoryLink bool,
+	futureSessionID string,
 	beforeBinding ...func() error,
 ) error {
 	// A lead arriving by phone alone has no consent to claim a previously
@@ -4377,13 +4389,13 @@ func (repo Repository) linkWhatsAppConversations(
 		}
 	}
 	var unlinkedRetentionV1 bool
-	var currentLeadID pgtype.Text
+	var currentLeadID, sessionID pgtype.Text
 	err := tx.QueryRow(ctx, `
-		select unlinked_retention_v1, lead_id::text
+		select unlinked_retention_v1, lead_id::text, session_id::text
 		from public.whatsapp_conversations
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, *conversationID).Scan(&unlinkedRetentionV1, &currentLeadID)
+	`, tenantContext.OrganizationID, *conversationID).Scan(&unlinkedRetentionV1, &currentLeadID, &sessionID)
 	if err != nil {
 		return err
 	}
@@ -4391,7 +4403,18 @@ func (repo Repository) linkWhatsAppConversations(
 		(!currentLeadID.Valid && *expectedPreviousLeadID != "unlinked") {
 		return ErrConversationBindingChanged
 	}
-	if !currentLeadID.Valid && !unlinkedRetentionV1 {
+	if futureSessionID != "" {
+		if !sessionID.Valid || sessionID.String != futureSessionID || currentLeadID.Valid || unlinkedRetentionV1 || *expectedPreviousLeadID != "unlinked" {
+			return ErrConversationBindingChanged
+		}
+		eligible, err := whatsappbinding.CanLinkLegacyForFuture(ctx, tx, tenantContext.OrganizationID, *conversationID)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return ErrConversationBindingChanged
+		}
+	} else if !currentLeadID.Valid && !unlinkedRetentionV1 {
 		return ErrInvalidReference
 	}
 	if unlinkedRetentionV1 && !currentLeadID.Valid {
@@ -4399,9 +4422,16 @@ func (repo Repository) linkWhatsAppConversations(
 			ctx, tx, tenantContext.OrganizationID, *conversationID, leadID, tenantContext.UserID, "manual_lead_create",
 		)
 	}
-	return activateWhatsAppConversationLeadBinding(
+	if err := activateWhatsAppConversationLeadBinding(
 		ctx, tx, tenantContext.OrganizationID, *conversationID, leadID, *expectedPreviousLeadID,
-	)
+	); err != nil {
+		return err
+	}
+	if futureSessionID != "" {
+		_, err := whatsappbinding.StartAssignedOwnerAttendance(ctx, tx, tenantContext, *conversationID, futureSessionID, leadID)
+		return err
+	}
+	return nil
 }
 func (repo Repository) authorizeWhatsAppConversationLeadBinding(
 	ctx context.Context,
