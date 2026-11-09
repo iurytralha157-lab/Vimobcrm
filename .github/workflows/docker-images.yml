@@ -286,7 +286,7 @@ jobs:
     name: Build and push images
     needs: [release-gates, invitation-integration, membership-access-integration, whatsapp-contracts]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -317,9 +317,6 @@ jobs:
             missing=1
           fi
           exit "$missing"
-
-      - name: Set up architecture emulation
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -354,7 +351,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.api
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           build-args: |
             VIMOB_RELEASE_SHA=${{ github.sha }}
@@ -365,7 +362,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.web
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           build-args: |
             VIMOB_RELEASE_SHA=${{ github.sha }}
