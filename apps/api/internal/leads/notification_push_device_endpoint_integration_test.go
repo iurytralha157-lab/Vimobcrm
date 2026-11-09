@@ -1,7 +1,13 @@
 package leads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/settings"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -16,6 +22,60 @@ func pushDeviceFixtureSession(t *testing.T, f *whatsappPushFixture, userID, sid 
 	t.Helper()
 	f.exec(t, `insert into auth.sessions(id,user_id,created_at,updated_at) values($1::uuid,$2::uuid,now(),now())`, sid, userID)
 	return httpserver.ContextWithUser(f.ctx, authpkg.User{ID: userID, SessionID: sid})
+}
+
+func TestNotificationWebPushInactiveSyncPreservesCurrentOwnerIntegration(t *testing.T) {
+	f := newWhatsAppPushDispatchFixture(t)
+	_, vapidPublicKey, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := settings.NewHandler(settings.NewRepository(f.repo.db, settings.ExternalConfig{VAPIDPublicKey: vapidPublicKey}))
+	endpoint := "https://push.example.invalid/subscription/" + f.sessionID
+	firstContext := tenant.ContextWithTenant(pushDeviceFixtureSession(t, f, f.firstID, f.firstID), tenant.Context{OrganizationID: f.organizationID, UserID: f.firstID})
+	nextContext := tenant.ContextWithTenant(pushDeviceFixtureSession(t, f, f.nextID, f.nextID), tenant.Context{OrganizationID: f.organizationID, UserID: f.nextID})
+
+	save := func(ctx context.Context, syncOnly bool) settings.PushTokenResult {
+		t.Helper()
+		body, err := json.Marshal(settings.PushTokenRequest{Endpoint: endpoint, VAPIDPublicKey: &vapidPublicKey, SyncOnly: &syncOnly})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/settings/push-tokens", bytes.NewReader(body)).WithContext(ctx)
+		request.Header.Set("Content-Type", "application/json")
+		handler.SavePushToken(response, request)
+		var result settings.PushTokenResult
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil {
+			t.Fatalf("registration response: %d %s", response.Code, response.Body.String())
+		}
+		return result
+	}
+	assertOwner := func(expected string) {
+		t.Helper()
+		var count int
+		var owner string
+		err := f.repo.db.Pool().QueryRow(f.ctx, `select count(*)::int,coalesce(min(user_id::text),'') from public.push_tokens where endpoint=$1 and is_active is true`, endpoint).Scan(&count, &owner)
+		if err != nil || count != 1 || owner != expected {
+			t.Fatalf("active physical endpoint owner: count=%d owner=%s expected=%s error=%v", count, owner, expected, err)
+		}
+	}
+	active := settings.PushTokenResult{OK: true, Active: true}
+	if save(firstContext, false) != active || save(nextContext, false) != active {
+		t.Fatal("intentional Web Push registration did not report active")
+	}
+	if result := save(firstContext, true); result != (settings.PushTokenResult{OK: true, RequiresResubscribe: true}) {
+		t.Fatalf("inactive sync response: %+v", result)
+	}
+	assertOwner(f.nextID)
+	if save(nextContext, true) != active {
+		t.Fatal("same-account active sync changed its behavior")
+	}
+	assertOwner(f.nextID)
+	if save(firstContext, false) != active {
+		t.Fatal("intentional re-registration failed")
+	}
+	assertOwner(f.firstID)
 }
 
 func TestNotificationPushDeviceEndpointAdmissionIntegration(t *testing.T) {

@@ -80,11 +80,6 @@ func (repo Repository) savePushTokenAtomically(ctx context.Context, actor tenant
 	if err = lockPushDeviceSession(ctx, tx, actor, sid); err != nil {
 		return PushTokenResult{}, err
 	}
-	if _, err = tx.Exec(ctx, `update public.push_tokens set is_active=false,updated_at=now()
-	 where user_id is distinct from $1::uuid and is_active is true
-	 and private.push_device_endpoint_key(endpoint,platform,token)=private.push_device_endpoint_key($2,$3,$4)`, actor.UserID, endpoint, platform, token); err != nil {
-		return PushTokenResult{}, err
-	}
 	if request.SyncOnly != nil && *request.SyncOnly {
 		var dead bool
 		if err = tx.QueryRow(ctx, `select exists(select 1 from public.push_tokens where user_id=$1::uuid
@@ -99,6 +94,13 @@ func (repo Repository) savePushTokenAtomically(ctx context.Context, actor tenant
 			}
 			return PushTokenResult{OK: true, Active: false, RequiresResubscribe: true}, nil
 		}
+	}
+	// A passive sync that needs a new subscription must not revoke the device
+	// currently registered to another account.
+	if _, err = tx.Exec(ctx, `update public.push_tokens set is_active=false,updated_at=now()
+	 where user_id is distinct from $1::uuid and is_active is true
+	 and private.push_device_endpoint_key(endpoint,platform,token)=private.push_device_endpoint_key($2,$3,$4)`, actor.UserID, endpoint, platform, token); err != nil {
+		return PushTokenResult{}, err
 	}
 	// Preserve a sole active legacy row's ID when the sender previously used an
 	// endpoint-less token or a different native platform prefix. If an exact row

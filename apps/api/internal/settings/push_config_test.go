@@ -31,7 +31,7 @@ func TestPublicPushConfigExposesOnlyPublicMaterial(t *testing.T) {
 	}
 }
 
-func TestSavePushTokenTransfersEndpointOwnershipBeforeSync(t *testing.T) {
+func TestSavePushTokenChecksInactiveSyncBeforeTransferringOwnership(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("push_device_admission.go")
@@ -41,8 +41,10 @@ func TestSavePushTokenTransfersEndpointOwnershipBeforeSync(t *testing.T) {
 	content := string(source)
 	transferCall := strings.Index(content, "where user_id is distinct from $1::uuid")
 	syncCheck := strings.Index(content, "if request.SyncOnly != nil && *request.SyncOnly")
-	if transferCall < 0 || syncCheck < 0 || transferCall > syncCheck {
-		t.Fatal("push endpoint ownership must transfer before sync/upsert")
+	resubscribe := strings.Index(content, "RequiresResubscribe: true")
+	upsert := strings.Index(content, "insert into public.push_tokens")
+	if syncCheck < 0 || resubscribe < syncCheck || transferCall < resubscribe || upsert < transferCall {
+		t.Fatal("inactive sync must return before ownership transfer, and transfer must precede upsert")
 	}
 	for _, required := range []string{
 		"where user_id is distinct from $1::uuid",
