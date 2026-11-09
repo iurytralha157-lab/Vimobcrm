@@ -346,7 +346,7 @@ func (repo Repository) hasRuntimeWork(ctx context.Context) (bool, error) {
 			select 1
 			from public.automation_executions e
 			where (
-			    e.status = 'queued'
+			    (e.status = 'queued' and (e.next_execution_at is null or e.next_execution_at <= now()))
 			    or (e.status = 'running' and e.locked_at < now() - interval '15 minutes')
 			    or (e.status = 'waiting' and e.next_execution_at <= now())
 			  )
@@ -390,7 +390,7 @@ func (repo Repository) hasImmediateRuntimeWork(ctx context.Context) (bool, error
 			select 1
 			from public.automation_executions e
 			where (
-			    e.status = 'queued'
+			    (e.status = 'queued' and (e.next_execution_at is null or e.next_execution_at <= now()))
 			    or (e.status = 'running' and e.locked_at < now() - interval '15 minutes')
 			    or (e.status = 'waiting' and e.next_execution_at <= now())
 			  )
