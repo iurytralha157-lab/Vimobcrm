@@ -35,6 +35,8 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   `(created_at, id)` impedem o claim dos posteriores. A chave `__session__`
   impõe uma barreira para a sessão inteira. Rotas independentes podem avançar
   enquanto outra está bloqueada; não há FIFO global entre conversas ou lanes.
+  No backlog, a busca de candidatos usa a primeira barreira da sessão como
+  limite superior, incluindo barreiras em retry ainda fora do prazo.
 - Em `live`, um retry ainda não vencido bloqueia itens posteriores **da mesma
   rota**, mas não itens prontos de outras rotas. Em `backlog`, uma cabeça em
   retry pode pausar o claim daquela sessão nessa lane.

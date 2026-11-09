@@ -5,6 +5,8 @@ package whatsapp
 // whose pending/retry predecessor remains a FIFO barrier. The outer shared
 // session fence is compatible with native inbound processing while excluding
 // the previous exclusive session claimant and explicit cutovers.
+// The first backlog session barrier already excludes every later row via the
+// FIFO predicate. Apply that same bound before inspecting each row's routes.
 const evolutionWebhookCandidateSessionsQuery = `
 			select
 				ws.id as session_id,
@@ -13,6 +15,20 @@ const evolutionWebhookCandidateSessionsQuery = `
 			from public.whatsapp_sessions ws
 			left join private.whatsapp_webhook_session_cutovers cutover
 			  on cutover.session_id = ws.id
+			left join lateral (
+			  select barrier.created_at, barrier.id
+			  from public.whatsapp_webhook_inbox barrier
+			  where $4 = 'backlog'
+			    and barrier.session_id = ws.id
+			    and barrier.processing_epoch = coalesce(cutover.active_epoch, 0)
+			    and barrier.processing_lane = $4
+			    and barrier.status in ('pending', 'retry')
+			    and barrier.attempts < barrier.max_attempts
+			    and coalesce(barrier.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') = '1'
+			    and coalesce(nullif(barrier.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') = '__session__'
+			  order by barrier.created_at, barrier.id
+			  limit 1
+			) first_session_barrier on true
 			cross join lateral (
 			  select head.*
 			  from (
@@ -34,6 +50,10 @@ const evolutionWebhookCandidateSessionsQuery = `
 			  where wi.session_id = ws.id
 			    and wi.processing_epoch = coalesce(cutover.active_epoch, 0)
 			    and wi.processing_lane = $4
+			    and (wi.created_at, wi.id) <= (
+			      coalesce(first_session_barrier.created_at, 'infinity'::timestamptz),
+			      coalesce(first_session_barrier.id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)
+			    )
 			    and wi.status in ('pending', 'retry')
 			    and wi.edge_execution_id is null
 			    and wi.attempts < wi.max_attempts
