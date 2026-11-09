@@ -51,14 +51,14 @@ func TestQueuePoolClaimOutcomeDoesNotExposePrivatePoolExistence(t *testing.T) {
 	}
 }
 
-func TestQueuePoolShortTimeoutNeverProducesAnEarlyWarning(t *testing.T) {
+func TestShortLegacyRedistributionTimeoutRejectsWarningsOutsideDeadline(t *testing.T) {
 	for timeout := 1; timeout <= 5; timeout++ {
 		policy, err := decodeRedistributionPolicy([]byte(`{"enable_redistribution":true,"redistribution_timeout_minutes":` + strconv.Itoa(timeout) + `,"redistribution_warning_minutes":5}`))
-		if err != nil || policy.WarningMinutes != 0 {
-			t.Fatalf("stored short deadline must preserve transfers and suppress warning: %#v %v", policy, err)
+		if err != nil || policy.TimeoutMinutes != timeout || policy.WarningMinutes != 0 {
+			t.Fatalf("stored short deadline must preserve transfers and suppress incompatible warning: %#v %v", policy, err)
 		}
-		if redistributionJobShouldReceiveWarning(redistributionJob{TimeoutMinutes: timeout, WarningMinutes: 1}) {
-			t.Fatalf("short deadline %d generated a warning", timeout)
+		if redistributionJobShouldReceiveWarning(redistributionJob{TimeoutMinutes: timeout, WarningMinutes: 5}) {
+			t.Fatalf("deadline %d generated an incompatible warning", timeout)
 		}
 	}
 }

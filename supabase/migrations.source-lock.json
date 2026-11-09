@@ -1070,6 +1070,10 @@
     {
       "file": "20261108085140_stage_inactivity_redistribution.sql",
       "sha256": "800dbeb13f87bca0e755b6e5f8f01425bbe36affce157eeea0d2ac09aebb6aea"
+    },
+    {
+      "file": "20261109114553_preserve_legacy_short_redistribution_warnings.sql",
+      "sha256": "de3b888f1bf8693927d734c5204ea42a6e72a70b7226eb2b7ad240a590733785"
     }
   ]
 }

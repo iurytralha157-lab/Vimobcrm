@@ -75,7 +75,9 @@ func decodeRedistributionPolicy(raw []byte) (redistributionPolicy, error) {
 		}
 		*destination = number
 	}
-	if policy.TimeoutMinutes <= 5 && policy.WarningMinutes >= 0 {
+	// This worker reconciles legacy jobs. Keep a configured warning that fits
+	// their deadline and suppress an incompatible default on short deadlines.
+	if policy.TimeoutMinutes <= 5 && policy.WarningMinutes >= policy.TimeoutMinutes {
 		policy.WarningMinutes = 0
 	}
 	if policy.TimeoutMinutes < 1 || policy.TimeoutMinutes > 10080 || policy.WarningMinutes < 0 ||

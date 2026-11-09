@@ -71,11 +71,13 @@ func TestOperatingScheduleRejectsIncompleteOrAmbiguousCalendars(t *testing.T) {
 
 func TestOperatingScheduleShortTimeoutAllowsDistributionWithoutWarning(t *testing.T) {
 	for timeout := 1; timeout <= 5; timeout++ {
-		settings, err := normalizeQueueSettings(map[string]any{"enable_redistribution": true, "redistribution_timeout_minutes": timeout})
+		input := map[string]any{"operating_schedule": syntheticOperatingSchedule(), "enable_redistribution": true, "redistribution_timeout_minutes": timeout}
+		settings, err := normalizeQueueSettings(input)
 		if err != nil || settings["redistribution_warning_minutes"] != 0 {
 			t.Fatalf("timeout %d must work without warning: %#v %v", timeout, settings, err)
 		}
-		_, err = normalizeQueueSettings(map[string]any{"enable_redistribution": true, "redistribution_timeout_minutes": timeout, "redistribution_warning_minutes": 1})
+		input["redistribution_warning_minutes"] = 1
+		_, err = normalizeQueueSettings(input)
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("short timeout %d accepted a warning: %v", timeout, err)
 		}

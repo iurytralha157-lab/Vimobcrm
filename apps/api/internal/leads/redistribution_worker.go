@@ -200,7 +200,7 @@ func (repo Repository) processRedistributionWarning(ctx context.Context, tx pgx.
 }
 
 func redistributionJobShouldReceiveWarning(job redistributionJob) bool {
-	return !job.InitialDistributionPending && job.TimeoutMinutes > 5 && job.WarningMinutes > 0 && job.WarningMinutes < job.TimeoutMinutes
+	return !job.InitialDistributionPending && job.WarningMinutes > 0 && job.WarningMinutes < job.TimeoutMinutes
 }
 
 func (repo Repository) processManagedWhatsAppInitialDistribution(
@@ -787,7 +787,7 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 		left join public.round_robins q on q.organization_id = j.organization_id and q.id = j.round_robin_id
 		where j.status = 'pending'
 		  and not (coalesce(q.settings, '{}'::jsonb) ? 'operating_schedule')
-		  and j.timeout_minutes > 5 and j.warning_minutes > 0 and j.warning_minutes < j.timeout_minutes
+		  and j.warning_minutes > 0 and j.warning_minutes < j.timeout_minutes
 		  and j.warning_due_at is not null
 		  and j.warning_due_at <= now()
 		  and j.due_at > now()
