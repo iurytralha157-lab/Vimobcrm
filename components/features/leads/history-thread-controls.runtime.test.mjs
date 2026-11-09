@@ -56,7 +56,7 @@ before(async () => {
     ['OwnWhatsAppStartNotice', 'OwnWhatsAppStartNotice'],
   ]) await mock(`@/components/features/whatsapp/${path}`, `export const ${name}=()=>null;`);
   await mock('@/components/features/whatsapp/MessageBubble', `import React from 'react';
-    export const MessageBubble=p=>React.createElement('div',{'data-message-id':p.messageId},p.content,
+    export const MessageBubble=p=>React.createElement('div',{'data-message-id':p.messageId,tabIndex:-1},p.content,
       React.createElement('button',{onClick:()=>void p.onNavigateQuoted('missing-quote')},'Abrir mensagem citada'));`);
   await mock('@/components/ui/avatar', `import React from 'react';
     export const Avatar=({children})=>React.createElement('span',null,children);
@@ -123,6 +123,50 @@ test('lead history has no search button or search panel', async t => {
     assert.equal(await page.getByRole('button', { name: /Buscar.*histórico do lead|Buscar mensagens/ }).count(), 0);
     assert.equal(await page.getByRole('region', { name: 'Pesquisa no histórico da conversa' }).count(), 0);
     assert.equal(await page.getByRole('textbox', { name: 'Buscar mensagem nesta conversa' }).count(), 0);
+});
+
+test('lead history jumps to an already loaded WhatsApp message hidden behind newer activities', async t => {
+  const page = await fixture(t);
+  await page.evaluate(() => {
+    const h = window.harness;
+    h.history.data = Array.from({ length: 100 }, (_, index) => ({
+      id: `note-${index}`, type: 'note', label: 'Nota adicionada', content: `Atividade ${index}`,
+      timestamp: new Date(Date.UTC(2026, 9, 16, 13, index)).toISOString(), source: 'activity',
+    }));
+    const message = { conversation_id: 'chat-a', session_id: 'session-a', lead_id: 'lead-a',
+      message_type: 'text', from_me: false };
+    h.messages.data = [
+      { ...message, id: 'older-message', content: 'Mensagem anterior', sent_at: '2026-10-16T12:00:00Z' },
+      { ...message, id: 'latest-message', content: 'Mensagem carregada', sent_at: '2026-10-16T12:01:00Z' },
+      { ...message, id: 'internal-notification', content: 'Aviso interno', sent_at: '2026-10-16T12:02:00Z',
+        metadata: { internal_notification: true } },
+    ];
+    h.render();
+  });
+
+  const log = page.getByRole('log');
+  const shortcut = page.getByRole('button', { name: 'Ver mensagens do WhatsApp', exact: true });
+  assert.equal(await log.locator('[data-thread-item-id]').count(), 100);
+  assert.equal(await log.locator('[data-message-id]').count(), 0);
+  assert.equal(await log.getByRole('button', { name: 'Ver mensagens do WhatsApp' }).count(), 0);
+  assert.equal(await shortcut.isVisible(), true);
+  await page.evaluate(() => {
+    window.harness.messages.error = { status: 403 };
+    window.harness.render();
+  });
+  assert.equal(await shortcut.count(), 0);
+  await page.evaluate(() => {
+    window.harness.messages.error = { status: 503 };
+    window.harness.render();
+  });
+  assert.equal(await shortcut.isVisible(), true);
+  await shortcut.click();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-message-id') === 'latest-message');
+  assert.deepEqual(await log.locator('[data-message-id]').evaluateAll(nodes => nodes.map(node => node.dataset.messageId)),
+    ['older-message', 'latest-message']);
+  assert.equal(await shortcut.count(), 0);
+  assert.deepEqual(await page.evaluate(() => [window.harness.historyReads, window.harness.messageReads, window.harness.olderReads]),
+    [0, 0, 0]);
 });
 
 test('history activity retry refetches activities only and recovers the alert', async t => {

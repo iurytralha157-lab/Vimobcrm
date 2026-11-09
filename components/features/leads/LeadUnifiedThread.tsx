@@ -11,6 +11,7 @@ import { useWhatsAppMessageNavigation } from '@/hooks/use-whatsapp-message-navig
 import { useWhatsAppMediaGallery } from '@/hooks/use-whatsapp-media-gallery';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
+import { isWhatsAppAccessUnavailable } from '@/lib/whatsapp-access-revocation';
 import { flattenWhatsAppMessagePages } from '@/lib/whatsapp-query-cache';
 import { sortWhatsAppTimelineItems } from '@/lib/whatsapp-message-order';
 import { getWhatsAppMessageGrouping, isWhatsAppMessageBlockStart } from '@/lib/whatsapp-message-grouping';
@@ -760,6 +761,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
     data: messages = [],
     isLoading: loadingMessages,
     isError: messagesError,
+    error: messagesReadError,
     refetch: refetchMessages,
     hasOlderMessages,
     loadOlderMessages,
@@ -888,6 +890,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
   const isLoading = leadThreadInitialLoading(items.length, loadingHistory, loadingMessages);
   const visibleCount = renderWindow.leadId === leadId ? renderWindow.count : LEAD_HISTORY_RENDER_PAGE_SIZE;
   const displayed = leadThreadWindow(items, visibleCount);
+  const hiddenMessage = canViewWhatsApp && !isWhatsAppAccessUnavailable(messagesReadError) && displayed.hiddenCount > 0
+    && !displayed.items.some((item) => item.kind === 'message')
+    ? items.findLast((item) => item.kind === 'message')?.message
+    : undefined;
   const messageNavigation = useWhatsAppMessageNavigation({
     scopeKey: JSON.stringify([threadIdentity, whatsappScope.accessScope, true]),
     messages: displayed.items.flatMap(item => item.kind === 'message' ? [item.message as WhatsAppMessage] : []),
@@ -901,7 +907,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
     loadOlder: async () => {
       if (visibleCount < items.length) {
         setRenderWindow({ leadId, count: items.length });
-        return { messages: visibleMessages as WhatsAppMessage[], hasMore: Boolean(hasOlderMessages) };
+        // Only return messages that this expansion actually renders and can focus.
+        const loadedMessages = items.flatMap((item) => item.kind === 'message' ? [item.message] : []);
+        return { messages: loadedMessages, hasMore: Boolean(hasOlderMessages) };
       }
       const authorizedScope = audioAuthorizationRef.current;
       const generation = audioAuthorizationGenerationRef.current;
@@ -943,6 +951,14 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
           }
         }}>
       {messageNavigation.error && <p role="status" className="px-3 py-2 text-[length:var(--app-font-size-caption)] font-light text-muted-foreground">{messageNavigation.error}</p>}
+      {hiddenMessage && (
+        <button type="button" disabled={messageNavigation.navigating}
+          onClick={() => void messageNavigation.navigateTo(hiddenMessage.id)}
+          className="mb-2 inline-flex h-8 shrink-0 items-center gap-1.5 self-start rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-xs hover:bg-[var(--app-surface-hover)] disabled:opacity-50">
+          <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          Ver mensagens do WhatsApp
+        </button>
+      )}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
         <div ref={threadScrollRef} onScroll={threadScroll.onScroll} role="log" aria-label="Histórico de mensagens do lead" aria-live="polite" aria-relevant="additions" aria-atomic={false} className="lead-thread-scroll flex-1 overflow-y-auto px-1 pb-3 pt-3 lead-thread-scroll-readable">
           {isLoading && (

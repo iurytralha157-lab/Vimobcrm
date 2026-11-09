@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "c619b26910113fcc2bf37c4a1e59a0e95bc2f7447d1aa5f002aaad4d18c515fc",
+  "sourceDigestSha256": "526c76dbac85033b52fc703bb5cb59e6deec84cfda77cbd8673fe94ba04cc679",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -18357,10 +18357,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:915159adc54339a78de2",
-          "column": 15,
+          "id": "cta:b58cfd4c6ae4a9320260",
+          "column": 9,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 964,
+          "line": 955,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -18370,10 +18370,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7c2a18e71dc2e25f7859",
+          "id": "cta:fae4256112aa8477b8ec",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 986,
+          "line": 980,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -18383,10 +18383,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:49a58c2e204390a09ed9",
+          "id": "cta:4837539cb9c4b8fcfe81",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1000,
+          "line": 1002,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -18396,10 +18396,23 @@
           "tag": "button"
         },
         {
-          "id": "cta:7432ae032639c7827aa7",
+          "id": "cta:036b7e028e2cd83a4397",
+          "column": 15,
+          "file": "components/features/leads/LeadUnifiedThread.tsx",
+          "line": 1016,
+          "owner": "LeadUnifiedThread",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:22844997169e56578daf",
           "column": 37,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1006,
+          "line": 1022,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -47382,7 +47395,7 @@
         }
       ]
     },
-    "digestSha256": "a37b6f2ca5eac1fed562dc547e5982b62bb21a5c425312a96820ea5a1715b449"
+    "digestSha256": "b8390b1a3f50842ff6a3c833816db80a4226f0a69e6112ce1ff74698bc435889"
   },
   "routes": [
     {
@@ -61902,9 +61915,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1632,
+      "ctasAll": 1633,
       "ctasByKind": {
-        "actionButton": 1456,
+        "actionButton": 1457,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
@@ -61913,8 +61926,8 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1571,
-      "internalCtasRouteReachable": 1538,
+      "internalCtas": 1572,
+      "internalCtasRouteReachable": 1539,
       "overlays": 251,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -61942,7 +61955,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1538,
+    "routeReachableInternalCtaImplementations": 1539,
     "routeReachableOverlayImplementations": 246,
     "routeReachableSupplementalOverlayAndTabControls": 290
   },
