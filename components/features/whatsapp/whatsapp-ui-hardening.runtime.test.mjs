@@ -59,6 +59,7 @@ before(async () => {
   await mock('@/hooks/use-whatsapp-conversations', `${hook}
     export const useWhatsAppConversations=(sessionId,filters,sessionIds,limit,options)=>{
       h().listOptions=options;
+      h().listFilters=filters;
       const rows=h().conversations;
       return {...h().emptyQuery,data:options?.includeSupervisoryLeads||!rows.some(row=>row.supervisory_lead_view)
         ? rows : rows.filter(row=>!row.supervisory_lead_view)};
@@ -834,6 +835,46 @@ test('floating discovers active lead history and pins a read-only chat through l
   });
   await page.getByRole('button',{name:'Abrir supervised-chat'}).waitFor();
   assert.equal(await page.getByText('Histórico do lead',{exact:true}).count(),0);
+});
+
+test('floating background refresh keeps search results and empty message history visible',async t=>{
+  const page=await harness(t,'floating');
+  await page.evaluate(row=>{
+    const h=window.harness;
+    h.conversations=[row];
+    h.filters={...h.filters,searchQuery:'lead-a'};
+    h.render();
+    h.ctx.openChat();
+  },conversation('chat-a','lead-a'));
+  await page.waitForFunction(()=>window.harness.listFilters?.search==='lead-a');
+  await page.getByRole('button',{name:'Abrir chat-a'}).waitFor();
+  await page.evaluate(()=>{
+    const h=window.harness;
+    h.emptyQuery={...h.emptyQuery,isFetching:true};
+    h.render();
+  });
+  assert.equal(await page.getByRole('button',{name:'Abrir chat-a'}).count(),1);
+  assert.equal(await page.getByText('Buscando conversas…',{exact:true}).count(),0);
+  await page.evaluate(()=>{
+    const h=window.harness;
+    h.messages={...h.messages,isLoading:true,isFetching:true};
+    h.render();
+  });
+  await page.getByRole('button',{name:'Abrir chat-a'}).click();
+  await page.getByText('Carregando mensagens...',{exact:true}).waitFor();
+  await page.evaluate(()=>{
+    const h=window.harness;
+    h.messages={...h.messages,isLoading:false,isFetching:false};
+    h.render();
+  });
+  await page.getByText('Nenhuma mensagem',{exact:true}).waitFor();
+  await page.evaluate(()=>{
+    const h=window.harness;
+    h.messages={...h.messages,isFetching:true};
+    h.render();
+  });
+  assert.equal(await page.getByText('Nenhuma mensagem',{exact:true}).count(),1);
+  assert.equal(await page.getByText('Carregando mensagens...',{exact:true}).count(),0);
 });
 
 test('floating keeps archived conversations on the operational query',async t=>{

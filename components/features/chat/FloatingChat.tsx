@@ -659,7 +659,6 @@ export function FloatingChat() {
     data: conversations,
     dataUpdatedAt: conversationsRevision = 0,
     isLoading: loadingConversations,
-    isFetching: fetchingConversations,
     isError: conversationsFailed,
     refetch: refetchConversations,
     hasMoreConversations,
@@ -685,7 +684,6 @@ export function FloatingChat() {
   const {
     messages,
     isLoading: loadingMessages,
-    isFetching: fetchingMessages,
     hasOlderMessages,
     loadOlderMessages,
     isLoadingOlder,
@@ -2083,7 +2081,7 @@ export function FloatingChat() {
               )}
             </div>
           )}
-          {((loadingMessages || fetchingMessages) && visibleMessages.length === 0) ? <div className="flex flex-col items-center justify-center gap-2 py-8" role="status" aria-live="polite">
+          {(loadingMessages && visibleMessages.length === 0) ? <div className="flex flex-col items-center justify-center gap-2 py-8" role="status" aria-live="polite">
               <Loader2 className="h-6 w-6 animate-spin motion-reduce:animate-none text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
             </div> : (messagesFailed || reconciliationFailed) && (messages?.length ?? 0) === 0 ? <div className="flex flex-col items-center justify-center gap-3 px-5 py-12 text-center" role="alert">
@@ -2273,7 +2271,7 @@ export function FloatingChat() {
     />
   );
   const searchingConversations = searchTerm.trim() !== debouncedSearchTerm.trim()
-    || (Boolean(searchTerm.trim()) && fetchingConversations);
+    || (Boolean(searchTerm.trim()) && loadingConversations);
   const ConversationList = () => <div className="flex-1 overflow-hidden min-h-0 w-full max-w-full overflow-x-hidden bg-[var(--app-surface-solid)]">
       <ScrollArea
         ref={conversationListScrollAreaRef}
