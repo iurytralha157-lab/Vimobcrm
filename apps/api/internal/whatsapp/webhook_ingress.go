@@ -168,6 +168,8 @@ func (repo Repository) ensureEvolutionWebhookSchema(ctx context.Context) error {
 	return err
 }
 
+var errLegacyNativeCaptureSnapshot = errors.New("legacy WhatsApp native mode requires a legacy capture snapshot")
+
 type evolutionWebhookEnvelope struct {
 	SessionID           string
 	RouteInstanceID     string
@@ -548,7 +550,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err != nil {
 		return evolutionWebhookReceipt{}, webhookIngressStage("processing_epoch", err)
 	}
-	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled)
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled, repo.legacyNativeCompatEnabled)
 	if err != nil {
 		// The terminal retention scrub can commit between the read-only early
 		// replay probe and this transaction. A managed lookup then sees redacted
@@ -970,6 +972,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 	parts []evolutionWebhookDurablePart,
 	processingEpoch int,
 	postFormGuardEnabled bool,
+	legacyNativeCompat bool,
 ) ([]evolutionWebhookDurablePart, error) {
 	result := make([]evolutionWebhookDurablePart, len(parts))
 	copy(result, parts)
@@ -1162,6 +1165,9 @@ func attachEvolutionWebhookRoutingSnapshots(
 			var snapshot map[string]any
 			if err := json.Unmarshal([]byte(snapshotJSON), &snapshot); err != nil {
 				return nil, fmt.Errorf("decode immutable WhatsApp routing snapshot: %w", err)
+			}
+			if legacyNativeCompat && strings.TrimSpace(stringFromAny(snapshot["unlinked_capture_policy"])) != "" {
+				return nil, errLegacyNativeCaptureSnapshot
 			}
 			if version, ok := snapshot["version"].(float64); !ok || version != 1 {
 				return nil, errors.New("immutable WhatsApp routing snapshot has an unsupported version")

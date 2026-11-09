@@ -528,7 +528,7 @@ func TestNativeRoutingSnapshotPinsLeadIntakeSplitWithoutPromotingEarlierHistory(
 func TestNativeUnlinkedEphemeralFlowKeepsLeadEffectsClosed(t *testing.T) {
 	processor := readWhatsAppSourceFunction(t, "webhook_native_processor.go", "func (repo Repository) processNativeEvolutionMessages")
 	for _, required := range []string{
-		"captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, routingSnapshot, managedOutbound)",
+		"captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, captureSnapshot, managedOutbound)",
 		"managedOutbound, err = nativeOutboundManagedByCRM(ctx, tx, session, conversation.ID, message.ProviderMessageID)",
 		"captureState, historyLeadID, err = resolveNativeUnlinkedHistoryCapture(",
 		"!item.CreatedAt.IsZero() && !message.SentAt.After(item.CreatedAt)",

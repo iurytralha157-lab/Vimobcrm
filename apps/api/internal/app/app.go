@@ -378,6 +378,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	automationsHandler := automations.NewHandler(automationsRepository)
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		WhatsAppPostFormFollowUpGuardEnabled: cfg.WhatsApp.PostFormFollowUpGuardEnabled,
+		LegacyNativeCompatEnabled:            cfg.WhatsApp.LegacyNativeCompatEnabled,
 		ProjectURL:                           cfg.Storage.ProjectURL,
 		APIKey:                               cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{

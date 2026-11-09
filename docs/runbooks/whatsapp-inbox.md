@@ -354,6 +354,20 @@ epoch 1 ao processador nativo: ele poderia reenviar esses eventos à Edge. Se
 houver falha nesse ponto, manter o worker pausado em todas as réplicas e
 publicar correção compatível com o contrato de epoch já gravado no banco.
 
+### Compatibilidade do processador nativo durante a atualização
+
+Configure `WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED=true` na API e na bridge
+novas enquanto o banco usar a captura por atendimento e o caminho anterior de
+reações. O padrão é `false` para instalações com o contrato novo completo.
+O modo de compatibilidade conserva os estados `captured` e `suppressed` e
+recusa snapshots de retenção v1. Mantenha
+`WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED=false` durante essa etapa. O
+limite de sete dias se aplica somente às conversas inscritas em retenção v1.
+
+Antes de desligar a compatibilidade, confira o schema e as políticas de
+visibilidade da captura nova, a RPC de reações e o dreno das réplicas anteriores.
+A reconciliação de recibos usa o contrato de sessão da RPC nova nos dois modos.
+
 ### Recuperação manual de token `active` órfão
 
 Um token `active` pode sobreviver a crash ou perda do ACK HTTP. Não o liberar

@@ -31,6 +31,7 @@ type StorageConfig struct {
 	APIKey                               string
 	EvolutionGo                          EvolutionGoConfig
 	WhatsAppPostFormFollowUpGuardEnabled bool
+	LegacyNativeCompatEnabled            bool
 }
 
 type EvolutionGoConfig struct {

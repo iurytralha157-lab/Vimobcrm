@@ -29,7 +29,7 @@ func TestReceiptEffectRetentionKeepsUnresolvedFamilyAndCallbackDedup(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyParts, err := attachEvolutionWebhookRoutingSnapshots(ctx, nil, evolutionWebhookSession{OrganizationID: f.organizationID, ID: f.sessionID}, []evolutionWebhookDurablePart{{Payload: annotatedLegacy}}, 1, false)
+	legacyParts, err := attachEvolutionWebhookRoutingSnapshots(ctx, nil, evolutionWebhookSession{OrganizationID: f.organizationID, ID: f.sessionID}, []evolutionWebhookDurablePart{{Payload: annotatedLegacy}}, 1, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

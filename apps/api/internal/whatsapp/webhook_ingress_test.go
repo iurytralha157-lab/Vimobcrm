@@ -41,7 +41,7 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
 		"processingepoch, err := currentevolutionwebhookprocessingepoch(ctx, tx, session)",
-		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch, repo.postformguardenabled)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch, repo.postformguardenabled, repo.legacynativecompatenabled)",
 		"processing_epoch",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",

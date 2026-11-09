@@ -143,6 +143,19 @@ func TestConfigValidateRejectsInvalidOrOverlyBroadTrustedProxyCIDRs(t *testing.T
 	}
 }
 
+func TestConfigValidateRejectsLegacyNativeCompatWithUnlinkedRetention(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.LegacyNativeCompatEnabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("legacy native compatibility alone must be valid: %v", err)
+	}
+	cfg.WhatsApp.UnlinkedRetentionWorkerEnabled = true
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED cannot be combined") {
+		t.Fatalf("expected incompatible WhatsApp flags to be rejected, got %v", err)
+	}
+}
+
 func TestValidateWebhookRolloutSessionIDs(t *testing.T) {
 	tests := []struct {
 		name    string

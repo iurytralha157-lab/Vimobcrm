@@ -293,6 +293,7 @@ func (repo Repository) retireExpiredExactUnlinkedConversation(
 		  and remote_jid = $3
 		  and retired_at is null
 		  and lead_id is null
+		  and unlinked_retention_v1
 		  and coalesce(is_group, false) = false
 		  and created_at <= clock_timestamp() - interval '7 days'
 		limit 1

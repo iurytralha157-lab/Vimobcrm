@@ -184,6 +184,7 @@ type AIConfig struct {
 
 type WhatsAppConfig struct {
 	PostFormFollowUpGuardEnabled   bool
+	LegacyNativeCompatEnabled      bool
 	AIWorkerEnabled                bool
 	AIWorkerInterval               time.Duration
 	AIFollowUpWorkerEnabled        bool
@@ -337,6 +338,7 @@ func Load() (Config, error) {
 			MediaWorkerLease:               parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
 			MediaWorkerConcurrency:         int(parseInt("WHATSAPP_MEDIA_WORKER_CONCURRENCY", 4)),
 			UnlinkedRetentionWorkerEnabled: parseBool("WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED", false),
+			LegacyNativeCompatEnabled:      parseBool("WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED", false),
 			SessionSupervisorEnabled:       parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
 			SessionSupervisorInitialDelay:  parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
 			SessionSupervisorInterval:      parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
@@ -579,6 +581,9 @@ func (cfg Config) Validate() error {
 	}
 	if err := validateWebhookRolloutSessionIDs(cfg.EvolutionGo.WebhookRolloutSessionIDs); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+	if cfg.WhatsApp.LegacyNativeCompatEnabled && cfg.WhatsApp.UnlinkedRetentionWorkerEnabled {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED cannot be combined with WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED"))
 	}
 	if cfg.WhatsApp.WebhookWorkerEnabled && (cfg.WhatsApp.WebhookWorkerConcurrency < 1 || cfg.WhatsApp.WebhookWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY must be between 1 and 16"))

@@ -104,15 +104,16 @@ type GamificationRecorder interface {
 }
 
 type Repository struct {
-	db                   *dbpkg.Postgres
-	storage              storageClient
-	functions            functionsClient
-	webhookSchemaGate    *evolutionWebhookSchemaGate
-	postFormGuardEnabled bool
-	gamificationRecorder GamificationRecorder
-	leadPublisher        realtime.Publisher
-	avatarURLs           *boundedWhatsAppMediaSignedURLCache
-	avatarSlots          chan struct{}
+	db                        *dbpkg.Postgres
+	storage                   storageClient
+	functions                 functionsClient
+	webhookSchemaGate         *evolutionWebhookSchemaGate
+	postFormGuardEnabled      bool
+	legacyNativeCompatEnabled bool
+	gamificationRecorder      GamificationRecorder
+	leadPublisher             realtime.Publisher
+	avatarURLs                *boundedWhatsAppMediaSignedURLCache
+	avatarSlots               chan struct{}
 }
 
 type scanner interface {
@@ -126,15 +127,16 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 	}
 
 	return Repository{
-		db:                   db,
-		storage:              newStorageClient(storageConfig),
-		functions:            newFunctionsClient(storageConfig, db),
-		webhookSchemaGate:    &evolutionWebhookSchemaGate{},
-		postFormGuardEnabled: storageConfig.WhatsAppPostFormFollowUpGuardEnabled,
-		gamificationRecorder: gamificationRecorder,
-		leadPublisher:        publisher,
-		avatarURLs:           newBoundedWhatsAppMediaSignedURLCache(whatsappMediaSignedURLCacheMaxEntries),
-		avatarSlots:          make(chan struct{}, conversationAvatarConcurrency),
+		db:                        db,
+		storage:                   newStorageClient(storageConfig),
+		functions:                 newFunctionsClient(storageConfig, db),
+		webhookSchemaGate:         &evolutionWebhookSchemaGate{},
+		postFormGuardEnabled:      storageConfig.WhatsAppPostFormFollowUpGuardEnabled,
+		legacyNativeCompatEnabled: storageConfig.LegacyNativeCompatEnabled,
+		gamificationRecorder:      gamificationRecorder,
+		leadPublisher:             publisher,
+		avatarURLs:                newBoundedWhatsAppMediaSignedURLCache(whatsappMediaSignedURLCacheMaxEntries),
+		avatarSlots:               make(chan struct{}, conversationAvatarConcurrency),
 	}
 }
 
@@ -2316,12 +2318,15 @@ func operationalConversationVisibilitySQL(canViewOwn bool) string {
 	)`
 }
 
-// A direct conversation without a current lead leaves the operational inbox
-// seven days after creation. A retired epoch remains owner-readable until its
+// An enrolled direct conversation without a current lead leaves the operational
+// inbox seven days after creation. A retired epoch remains owner-readable until its
 // deadline, but retirement still excludes it from physical routing and sends.
 func conversationRetentionVisibilitySQL() string {
 	return `(
-	  (wc.retired_at is null and (wc.lead_id is not null or coalesce(wc.is_group, false) = true or wc.created_at > now() - interval '7 days'))
+	  (wc.retired_at is null and (
+	    not wc.unlinked_retention_v1 or wc.lead_id is not null
+	    or coalesce(wc.is_group, false) = true or wc.created_at > now() - interval '7 days'
+	  ))
 	  or (
 	    wc.retired_at is not null
 	    and wc.unlinked_retention_v1

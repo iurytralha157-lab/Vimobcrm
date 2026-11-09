@@ -1134,6 +1134,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
+		if repo.legacyNativeCompatEnabled && routingSnapshot != nil && routingSnapshot.UnlinkedCapturePolicy != "" {
+			return errLegacyNativeCaptureSnapshot
+		}
 		message = nativeMessageWithAcceptedIntakePolicy(message, routingSnapshot, nativeInboundRule{})
 		if message.FromMe {
 			// Some provider status endpoints expose the profile name in the field
@@ -1159,7 +1162,11 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			continue
 		}
 		if message.IsReaction {
-			if err := processNativeEvolutionReaction(ctx, tx, session, message, item.CreatedAt, routingSnapshot); err != nil {
+			processReaction := processNativeEvolutionReaction
+			if repo.legacyNativeCompatEnabled {
+				processReaction = processLegacyNativeEvolutionReaction
+			}
+			if err := processReaction(ctx, tx, session, message, item.CreatedAt, routingSnapshot); err != nil {
 				return err
 			}
 			continue
@@ -1377,15 +1384,19 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				return err
 			}
 		}
-		captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, routingSnapshot, managedOutbound)
+		captureSnapshot := routingSnapshot
+		if repo.legacyNativeCompatEnabled {
+			captureSnapshot = nil
+		}
+		captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, captureSnapshot, managedOutbound)
 		if captureState == "suppressed" && nativeInheritedRoutingObservationAllowed(
-			session, item, conversation, message, routingSnapshot, inheritedProof,
+			session, item, conversation, message, captureSnapshot, inheritedProof,
 			bindingID, attendanceEntryID, managedOutbound, storedIdentity.ID != "",
 		) {
 			captureState = "observed_unattended"
 		}
-		if routingSnapshot != nil && routingSnapshot.State == "unlinked" &&
-			routingSnapshot.UnlinkedCapturePolicy == "v1" &&
+		if captureSnapshot != nil && captureSnapshot.State == "unlinked" &&
+			captureSnapshot.UnlinkedCapturePolicy == "v1" &&
 			!message.IsGroup && !nativeCTWAIntakeEligible(message) && !managedOutbound &&
 			!message.ProviderTimestampMissing && !message.SentAt.IsZero() &&
 			!item.CreatedAt.IsZero() && !message.SentAt.After(item.CreatedAt) {
@@ -1395,7 +1406,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			var historyLeadID string
 			captureState, historyLeadID, err = resolveNativeUnlinkedHistoryCapture(
 				ctx, tx, session, conversation.ID, message.ProviderMessageID,
-				routingSnapshot.InboxEventKey,
+				captureSnapshot.InboxEventKey,
 			)
 			if err != nil {
 				return err
@@ -1409,7 +1420,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				conversation.LeadResolutionQuarantineReason = ""
 				conversation.HistoricalBindingReplay = historyLeadID != conversation.LeadID
 			}
-		} else if routingSnapshot != nil && routingSnapshot.State == "unlinked" {
+		} else if captureSnapshot != nil && captureSnapshot.State == "unlinked" {
 			captureState = "suppressed"
 		}
 		if captureState == "observed_unattended" &&
@@ -1417,7 +1428,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				item.CreatedAt.IsZero() || message.SentAt.After(item.CreatedAt)) {
 			captureState = "suppressed"
 		}
-		externalOutbound := message.FromMe && !managedOutbound && captureState != "suppressed"
+		externalOutbound := !repo.legacyNativeCompatEnabled && message.FromMe && !managedOutbound && captureState != "suppressed"
 		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message, captureState, attendanceEntryID, externalOutbound)
 		if err != nil {
 			return err
@@ -2870,7 +2881,7 @@ func ensureNativeEvolutionConversation(
 	if storedIdentity.ID != "" {
 		err = tx.QueryRow(ctx, `
 			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
-			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			       (wc.retired_at is not null or (wc.unlinked_retention_v1 and wc.lead_id is null and coalesce(wc.is_group, false) = false
 			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
@@ -2887,7 +2898,7 @@ func ensureNativeEvolutionConversation(
 	} else if routingSnapshot != nil && routingSnapshot.ConversationID != "" {
 		err = tx.QueryRow(ctx, `
 			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
-			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			       (wc.retired_at is not null or (wc.unlinked_retention_v1 and wc.lead_id is null and coalesce(wc.is_group, false) = false
 			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
@@ -2908,7 +2919,7 @@ func ensureNativeEvolutionConversation(
 	} else {
 		err = tx.QueryRow(ctx, `
 			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
-			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			       (wc.retired_at is not null or (wc.unlinked_retention_v1 and wc.lead_id is null and coalesce(wc.is_group, false) = false
 			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
@@ -3122,7 +3133,7 @@ func ensureNativeEvolutionConversation(
 		var locked nativeEvolutionConversation
 		err = tx.QueryRow(ctx, `
 			select wc.id::text, coalesce(wc.lead_id::text, ''), wc.remote_jid,
-			       (wc.retired_at is not null or (wc.lead_id is null and coalesce(wc.is_group, false) = false
+			       (wc.retired_at is not null or (wc.unlinked_retention_v1 and wc.lead_id is null and coalesce(wc.is_group, false) = false
 			        and wc.created_at <= clock_timestamp() - interval '7 days'))
 			from public.whatsapp_conversations wc
 			where wc.organization_id = $1::uuid
@@ -3169,6 +3180,7 @@ func ensureNativeEvolutionConversation(
 				contact_name = coalesce(whatsapp_conversations.contact_name, excluded.contact_name),
 				updated_at = now()
 			where whatsapp_conversations.lead_id is not null
+			   or not whatsapp_conversations.unlinked_retention_v1
 			   or coalesce(whatsapp_conversations.is_group, false) = true
 			   or whatsapp_conversations.created_at > clock_timestamp() - interval '7 days'
 			returning id::text, coalesce(lead_id::text, ''), remote_jid
@@ -3371,7 +3383,7 @@ func reconcileNativeEvolutionConversationIdentity(
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
 		  and retired_at is null
-		  and (lead_id is not null or coalesce(is_group, false) = true
+		  and (lead_id is not null or not unlinked_retention_v1 or coalesce(is_group, false) = true
 		       or created_at > clock_timestamp() - interval '7 days')
 		  and (remote_jid = $3 or remote_jid = any($4::text[]))
 		order by id
@@ -3418,7 +3430,7 @@ func reconcileNativeEvolutionConversationIdentity(
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
 		  and retired_at is null
-		  and (lead_id is not null or coalesce(is_group, false) = true
+		  and (lead_id is not null or not unlinked_retention_v1 or coalesce(is_group, false) = true
 		       or created_at > clock_timestamp() - interval '7 days')
 		  and id = any($3::uuid[])
 		order by id
@@ -4693,7 +4705,7 @@ func lockNativeEvolutionMessageTarget(
 			limit 2
 		), locked_conversation as materialized (
 			select target.id as target_id, conversation.id, conversation.lead_id,
-			       conversation.is_group, conversation.retired_at, conversation.created_at
+			       conversation.is_group, conversation.retired_at, conversation.created_at, conversation.unlinked_retention_v1
 			from target_identity as target
 			join public.whatsapp_conversations as conversation
 			  on conversation.id = target.conversation_id
@@ -4716,7 +4728,7 @@ func lockNativeEvolutionMessageTarget(
 			  and not coalesce(conversation.is_group, false)
 			  and (
 			    conversation.retired_at is not null
-			    or conversation.created_at <= clock_timestamp() - interval '7 days'
+			    or (conversation.unlinked_retention_v1 and conversation.created_at <= clock_timestamp() - interval '7 days')
 			    or message.unlinked_retention_scrubbed_at is not null
 			  )
 		from target_identity as target
