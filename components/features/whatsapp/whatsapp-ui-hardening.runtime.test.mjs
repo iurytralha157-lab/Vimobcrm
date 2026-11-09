@@ -51,10 +51,10 @@ before(async () => {
   await mock('@/hooks/use-schedule-events', `${hook} export const useScheduleEvents=()=>h().emptyQuery;`);
   await mock('@/hooks/use-deal-status-change', `${hook} export const useDealStatusChange=()=>({handleDealStatusChange:()=>{},isPending:false});`);
   await mock('@/contexts/LeadRealtimeBus', `export const notifyLeadRealtimeChange=()=>{};`);
-  await mock('@/lib/api/leads', `${hook} export const leadsAPI={getLead:(id,org)=>h().request('lead-phone',{id,org}).then(data=>({data}))};`);
+  await mock('@/lib/api/leads', `${hook} export const leadsAPI={getLead:(id,org)=>h().request('lead',{id,org})};`);
   await mock('sonner', `${hook} export const toast={success:x=>h().toasts.push(x),error:x=>h().toasts.push(x),info:x=>h().toasts.push(x)};`);
   await mock('@/hooks/use-toast', `${hook} export const toast=x=>h().toasts.push(x);`);
-  await mock('@/lib/api/whatsapp', `${hook} export {getWhatsAppPhoneChangeConfirmation} from '@/lib/whatsapp-phone-change';export const whatsappAPI={findConversation:p=>h().request('find',p),getHistoryAccess:p=>h().request('history',p),getConversation:(id,lead)=>h().request('detail',{id,lead}),getConversationLinkPreview:(id,previousLead,lead,organizationId)=>h().request('preview',{id,previousLead,lead,organizationId}),getSession:async(id,organization_id)=>({...h().sessions.find(s=>s.id===id),organization_id,is_active:true}),startConversation:p=>h().request('start',p)};`);
+  await mock('@/lib/api/whatsapp', `${hook} export {getWhatsAppPhoneChangeConfirmation} from '@/lib/whatsapp-phone-change';export const whatsappAPI={findConversation:p=>h().request('find',p),getHistoryAccess:p=>h().request('history',p),getConversation:(id,lead)=>h().request('detail',{id,lead}),getConversationLinkPreview:(id,previousLead,lead,organizationId)=>h().request('preview',{id,previousLead,lead,organizationId}),getSession:(id,org)=>h().request('session',{id,org}),startConversation:p=>h().request('start',p)};`);
   await mock('@/lib/api/conversation-lead-detail', `${hook} export const conversationLeadDetailAPI={get:id=>h().request('lead-phone',{id})};`);
   await mock('@/hooks/use-whatsapp-conversations', `${hook}
     export const useWhatsAppConversations=(sessionId,filters,sessionIds,limit,options)=>{
@@ -461,12 +461,20 @@ for (const mode of ['screen', 'floating']) {
     await action.waitFor();
     assert.equal(await page.evaluate(()=>window.harness.requests.some(r=>r.kind==='start')),false);
     await action.click();
-    await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='lead-phone'));
-    await page.evaluate(()=>{
+    const leadRead = mode === 'screen' ? 'lead' : 'lead-phone';
+    await page.waitForFunction(kind=>window.harness.requests.some(r=>r.kind===kind), leadRead);
+    await page.evaluate(kind=>{
       const h=window.harness;
-      h.requests.find(r=>r.kind==='lead-phone').resolve({id:'lead-a',organization_id:'org-a',assigned_user_id:'user-a',
-        name:'Lead sintético',phone:'+5511999998888'});
-    });
+      const data={id:'lead-a',organization_id:'org-a',assigned_user_id:'user-a',name:'Lead sintético',phone:'+5511999998888'};
+      h.requests.find(r=>r.kind===kind).resolve(kind==='lead'?{data}:data);
+    },leadRead);
+    if (mode === 'screen') {
+      await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='session'));
+      await page.evaluate(()=>{
+        const h=window.harness;
+        h.requests.find(r=>r.kind==='session').resolve({...h.sessions[0],organization_id:'org-a',is_active:true});
+      });
+    }
     await page.waitForFunction(()=>window.harness.requests.some(r=>r.kind==='find'));
     assert.equal(await page.evaluate(()=>window.harness.requests.some(r=>r.kind==='start')),false);
     await page.evaluate(c=>window.harness.requests.find(r=>r.kind==='find').resolve(c),route);

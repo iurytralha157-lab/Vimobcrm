@@ -16,8 +16,6 @@ const proof = process.env.WHATSAPP_SEND_ENTRY_PROOF_DIR;
 const original = await readFile(join(repository, 'components/features/whatsapp/conversations/integrated-surfaces-mobile.runtime.test.mjs'), 'utf8');
 const boundary = original.indexOf("\nfor (const mode of ['screen', 'floating'])"); assert.ok(boundary > 0);
 const injection = `bootstrap=bootstrap
- .replace("export const leadsAPI={};", "export const leadsAPI={getLead:(id,org)=>window.harness.request('lead',{id,org})};")
- .replace("export const whatsappAPI={", "export const whatsappAPI={getSession:(id,org)=>h().request('session',{id,org}),startConversation:(p,org)=>h().request('own-start',{...p,org}),")
  .replace("usePathname=()=>'/dashboard'", "usePathname=()=>h().path||'/dashboard'")
  .replace("React.createElement('a',{...p,href},children)", "React.createElement('a',{...p,href,onClick:e=>{e.preventDefault();p.onClick?.();window.harness.path=href.split('?')[0];window.harness.navigation.push(href);window.harness.render();}},children)");\n`;
 const support = original.slice(0, boundary)
@@ -54,7 +52,7 @@ async function setup(t, mode, width, { grant = true, cold = false, theme = 'ligh
       if (kind === 'session') return h.sessions.find(s => s.id === params.id);
       if (kind === 'find') return null;
       if (kind === 'detail') return h.conversations.find(c => c.id === params.id) || h.original;
-      if (['start', 'own-start'].includes(kind)) {
+      if (kind === 'start') {
         if (h.deferStart) await new Promise(resolve => { h.releaseStart = resolve; });
         h.conversations = [h.owned, ...h.conversations.filter(c => c.id !== 'owned')]; h.render(); return h.owned;
       }
@@ -68,7 +66,7 @@ async function setup(t, mode, width, { grant = true, cold = false, theme = 'ligh
 }
 const prepared = 'Mensagem preparada sintética';
 async function screenshot(page, name) { if (proof) await page.screenshot({ path: join(proof, `${name}.png`), fullPage: true }); }
-async function noMutation(page) { assert.equal(await page.evaluate(() => window.harness.requests.filter(r => ['start', 'own-start', 'send', 'link'].includes(r.kind)).length), 0); }
+async function noMutation(page) { assert.equal(await page.evaluate(() => window.harness.requests.filter(r => ['start', 'send', 'link'].includes(r.kind)).length), 0); }
 
 for (const mode of ['screen', 'floating']) for (const width of [320, 390, 1440]) for (const grant of [true, false]) {
   test(`owned choice ${mode} ${width} original grant ${grant}: preserves original route and selects a different physical conversation`, async t => {
@@ -85,10 +83,10 @@ for (const mode of ['screen', 'floating']) for (const width of [320, 390, 1440])
     if (grant) await expect(field).toHaveValue('Rascunho original preservado');
     await noMutation(page); await action.click(); await dialog.getByRole('button', { name: 'Meu número A', exact: true }).click();
     await expect(field).toBeEnabled();
-    await expect.poll(() => page.evaluate(() => window.harness.requests.filter(r => ['start', 'own-start'].includes(r.kind)).length)).toBe(1).catch(async error => {
+    await expect.poll(() => page.evaluate(() => window.harness.requests.filter(r => r.kind === 'start').length)).toBe(1).catch(async error => {
       error.message += JSON.stringify(await page.evaluate(() => ({ requests: window.harness.requests, text: document.body.innerText }))); throw error;
     });
-    const starts = await page.evaluate(() => window.harness.requests.filter(r => ['start', 'own-start'].includes(r.kind)));
+    const starts = await page.evaluate(() => window.harness.requests.filter(r => r.kind === 'start'));
     assert.equal(starts[0].params.sessionId, 'session-a'); assert.equal(starts[0].params.ownSessionOnly, true);
     assert.equal(await page.evaluate(() => window.harness.requests.filter(r => r.kind === 'send').length), 0);
     await field.fill('Envio pelo próprio'); await page.getByRole('button', { name: 'Enviar mensagem', exact: true }).click();
