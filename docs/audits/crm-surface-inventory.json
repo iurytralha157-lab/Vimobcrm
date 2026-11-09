@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "8a9e32031fb7476f0402d3f1b024109a84d239a365db21cda5c39d11038e0791",
+  "sourceDigestSha256": "ddf42f249d82de5a7e8acf6a477a3707f0b2b8089404d47f897562f8e8d53719",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3445,10 +3445,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:c2a0d20c82a604d82841",
+          "id": "overlay:55bbb3cf19f73bed944c",
           "column": 5,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1472,
+          "line": 1496,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -3458,10 +3458,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:7fa5efb95d3e08be3fbc",
+          "id": "overlay:0fb3265b2fa011705032",
           "column": 7,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 291,
+          "line": 293,
           "owner": "QueueEditorStateDialog",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25724,10 +25724,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b868c7118a8cc88524c3",
-          "column": 281,
+          "id": "cta:08fda046d2e171a13ba0",
+          "column": 45,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection.tsx",
-          "line": 20,
+          "line": 24,
           "owner": "DistributionQueueScheduleSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25738,10 +25738,38 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a8691f99a65587d25ebb",
+          "id": "cta:2926e648c3606bddfe66",
+          "column": 281,
+          "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection.tsx",
+          "line": 27,
+          "owner": "DistributionQueueScheduleSection",
+          "routes": [
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:68d118523d59421cebb7",
           "column": 11,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection.tsx",
-          "line": 33,
+          "line": 40,
+          "owner": "DistributionQueueScheduleSection",
+          "routes": [
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:8bc07452e4c684291f38",
+          "column": 23,
+          "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection.tsx",
+          "line": 44,
           "owner": "DistributionQueueScheduleSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25791,10 +25819,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d61c7665ab4f9994566f",
+          "id": "cta:793d74a510471123fedf",
           "column": 24,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1129,
+          "line": 1140,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25805,10 +25833,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c82c07db2b5315a8f0de",
+          "id": "cta:a0a43caa00452b166776",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1135,
+          "line": 1146,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25819,10 +25847,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2d8f55b1cb967c66343c",
+          "id": "cta:11bfecf7496f061e6ab0",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1136,
+          "line": 1147,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25833,10 +25861,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ecd9aee8de245d42e862",
+          "id": "cta:94efd468b03b899fdaad",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1142,
+          "line": 1153,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25847,10 +25875,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ebbf8412f44b61807864",
+          "id": "cta:1e95919beb8a47e0c67a",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1148,
+          "line": 1159,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25862,10 +25890,10 @@
           "tag": "a"
         },
         {
-          "id": "cta:d79b2ab89a5ba038c31c",
+          "id": "cta:20de63ad998e7f5bcd0e",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1149,
+          "line": 1160,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25876,10 +25904,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1e3d07af46ad0350f350",
+          "id": "cta:e1fdf760e6413e15aed4",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1196,
+          "line": 1207,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25890,10 +25918,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b49d9c2f7319d09fcbc5",
+          "id": "cta:b251d3b746e82efcaeca",
           "column": 15,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1205,
+          "line": 1216,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25904,10 +25932,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f9d36d638b6eb9f8258a",
+          "id": "cta:b045303b828f85e91672",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1209,
+          "line": 1220,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25918,10 +25946,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:001b0fa40d8a3e0d117a",
+          "id": "cta:1cf5e70da4b62b1738f7",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 183,
+          "line": 184,
           "owner": "DistributionQueueEditorScreen",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -25931,10 +25959,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:396aa84afc3e26f510b0",
+          "id": "cta:fc08f983f4342776dae1",
           "column": 9,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 329,
+          "line": 331,
           "owner": "QueueMessage",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -47354,7 +47382,7 @@
         }
       ]
     },
-    "digestSha256": "db32a0fbe5e74cf2138f0ce542f86f839eda4ee9952db827f72ed0639621414a"
+    "digestSha256": "a37b6f2ca5eac1fed562dc547e5982b62bb21a5c425312a96820ea5a1715b449"
   },
   "routes": [
     {
@@ -61874,9 +61902,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1630,
+      "ctasAll": 1632,
       "ctasByKind": {
-        "actionButton": 1454,
+        "actionButton": 1456,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
@@ -61885,8 +61913,8 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1569,
-      "internalCtasRouteReachable": 1536,
+      "internalCtas": 1571,
+      "internalCtasRouteReachable": 1538,
       "overlays": 251,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -61914,7 +61942,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1536,
+    "routeReachableInternalCtaImplementations": 1538,
     "routeReachableOverlayImplementations": 246,
     "routeReachableSupplementalOverlayAndTabControls": 290
   },
