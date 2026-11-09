@@ -120,3 +120,33 @@ test('push handler stores only a sanitized navigation target', async () => {
   assert.equal(harness.shown[0].options.icon, '/icons/favicon-laranja.png');
   assert.equal(harness.shown[0].options.badge, '/icons/favicon-laranja.png');
 });
+
+
+test('a malformed push still displays a visible fallback', async () => {
+  for (const payload of [null, [], 3, { notification: null }, { title: {}, body: [] }]) {
+    const harness = createHarness();
+    let work;
+    harness.listeners.get('push')({
+      data: { json: () => payload },
+      waitUntil(promise) { work = promise; },
+    });
+    assert.ok(work, 'the push must extend the service worker lifetime');
+    await work;
+    assert.equal(harness.shown.length, 1);
+    assert.equal(harness.shown[0].title, 'Vimob CRM');
+    assert.equal(harness.shown[0].options.body, 'Você tem uma nova notificação.');
+  }
+});
+
+test('flat Go push payload displays and retains its legacy lead target', async () => {
+  const harness = createHarness();
+  let work;
+  harness.listeners.get('push')({
+    data: { json: () => ({ title: 'Novo lead', body: 'Teste', type: 'lead', lead_id: 'lead 1', target_url: '/leads' }) },
+    waitUntil(promise) { work = promise; },
+  });
+  await work;
+  assert.equal(harness.shown[0].title, 'Novo lead');
+  assert.equal(harness.shown[0].options.body, 'Teste');
+  assert.equal(harness.shown[0].options.data.url, '/crm/pipelines?lead=lead%201');
+});

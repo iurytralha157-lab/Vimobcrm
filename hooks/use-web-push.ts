@@ -24,11 +24,15 @@ type WebPushStateEventDetail = {
   endpoint: string | null;
 };
 
-let webPushOperationQueue: Promise<void> = Promise.resolve();
+let webPushOperationQueue: Promise<void> | null = null;
 
 function serializeWebPushOperation<T>(operation: () => Promise<T>) {
-  const result = webPushOperationQueue.then(operation, operation);
-  webPushOperationQueue = result.then(() => undefined, () => undefined);
+  const result = webPushOperationQueue ? webPushOperationQueue.then(operation) : operation();
+  const completion = result.then(() => undefined, () => undefined);
+  webPushOperationQueue = completion;
+  void completion.then(() => {
+    if (webPushOperationQueue === completion) webPushOperationQueue = null;
+  });
   return result;
 }
 
@@ -181,9 +185,28 @@ async function getServiceWorkerRegistration() {
   });
 }
 
-async function getReadyServiceWorkerRegistration() {
-  await getServiceWorkerRegistration();
-  return navigator.serviceWorker.ready;
+async function getReadyServiceWorkerRegistration(signal: AbortSignal) {
+  const readiness = getServiceWorkerRegistration().then(async (registration) => {
+    const ready = await navigator.serviceWorker.ready;
+    if (ready.scope !== registration.scope || !ready.active || new URL(ready.active.scriptURL).pathname !== '/sw.js') {
+      throw new Error('O Service Worker do Vimob não está ativo.');
+    }
+    return ready;
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  try {
+    return await new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+      abort = () => reject(new DOMException('Cancelled', 'AbortError'));
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+      timeout = setTimeout(() => reject(new Error('O Service Worker do Vimob demorou para ficar pronto.')), 8000);
+      void readiness.then(resolve, reject);
+    });
+  } finally {
+    clearTimeout(timeout);
+    if (abort) signal.removeEventListener('abort', abort);
+  }
 }
 
 async function loadVapidPublicKey() {
@@ -195,36 +218,11 @@ async function loadVapidPublicKey() {
   return publicKey;
 }
 
-async function createOrReusePushSubscription(
-  registration: ServiceWorkerRegistration,
-  vapidPublicKey: string,
-  intent: PushDeviceIntent,
-) {
-  const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
-  const currentKey = arrayBufferToBase64Url(applicationServerKey);
-  const existingSubscription = await registration.pushManager.getSubscription();
-  intent.assertCurrent();
-
-  if (existingSubscription) {
-    const shouldReplace = shouldReplaceSubscription(existingSubscription, currentKey);
-    if (!shouldReplace) {
-      storeCurrentVapidKey(currentKey);
-      return existingSubscription;
-    }
-
-    clearRotatedWebPushState();
-    await existingSubscription.unsubscribe();
-    intent.assertCurrent();
-  }
-
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey,
-  });
-  intent.assertCurrent();
-  storeCurrentVapidKey(currentKey);
-  return subscription;
-}
+type PreparedWebPush = Pick<PushDeviceIntent, 'userId' | 'organizationId' | 'sessionId'> & {
+  registration: ServiceWorkerRegistration;
+  vapidPublicKey: string;
+  applicationServerKey: ArrayBuffer;
+};
 
 interface WebPushState {
   isSupported: boolean;
@@ -239,6 +237,7 @@ interface WebPushState {
 
 type WebPushInitializationResult = WebPushState & {
   endpoint: string | null;
+  prepared: PreparedWebPush | null;
 };
 
 export type WebPushSubscribeResult =
@@ -269,6 +268,7 @@ export function useWebPush() {
     error: null,
   });
   const lastEndpointRef = useRef<string | null>(null);
+  const preparedRef = useRef<PreparedWebPush | null>(null);
 
   // Verifica suporte a Web Push
   const checkSupport = useCallback(() => {
@@ -278,38 +278,6 @@ export function useWebPush() {
       'Notification' in window;
 
     return isSupported;
-  }, []);
-
-  // Verifica se já está inscrito
-  const checkSubscription = useCallback(async (vapidPublicKey: string, intent: PushDeviceIntent): Promise<PushSubscription | null> => {
-    try {
-      await getServiceWorkerRegistration();
-      intent.assertCurrent();
-      const registration = await navigator.serviceWorker.ready;
-      intent.assertCurrent();
-      const subscription = await registration.pushManager.getSubscription();
-      intent.assertCurrent();
-      lastEndpointRef.current = subscription?.endpoint || null;
-
-      if (subscription) {
-        const currentKey = arrayBufferToBase64Url(urlBase64ToUint8Array(vapidPublicKey));
-
-        if (shouldReplaceSubscription(subscription, currentKey)) {
-          console.log('[WebPush] Subscription usa VAPID antigo/desconhecido; removendo para reinscrever.');
-          clearRotatedWebPushState();
-          await subscription.unsubscribe();
-          intent.assertCurrent();
-          return null;
-        }
-        storeCurrentVapidKey(currentKey);
-      }
-
-      return subscription;
-    } catch (error) {
-      if (!intent.isCurrent()) throw error;
-      console.error('[WebPush] Erro ao verificar subscription:', error);
-      return null;
-    }
   }, []);
 
   // Salva subscription no Supabase
@@ -370,184 +338,83 @@ export function useWebPush() {
     }
   }, [captureIntent]);
 
-  // Solicita permissão e cria subscription
   const subscribe = useCallback((): Promise<WebPushSubscribeResult> => {
-    const intent = captureIntent();
-    return serializeWebPushOperation<WebPushSubscribeResult>(async () => {
-    intent.assertCurrent();
-    console.log('[WebPush] Iniciando subscription...');
-    console.log('[WebPush] Configuracao VAPID sera carregada da API.');
-
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-
+    const cancelled: WebPushSubscribeResult = {
+      ok: false, reason: 'unknown', message: 'Ativação cancelada porque a sessão mudou.',
+    };
+    let intent: PushDeviceIntent;
     try {
-      let vapidPublicKey: string;
-      try {
-        vapidPublicKey = await loadVapidPublicKey();
-        intent.assertCurrent();
-      } catch (error) {
-        if (!intent.isCurrent()) throw error;
-        const errorMessage = error instanceof Error
-          ? error.message
-          : 'Notificacoes push nao estao configuradas neste ambiente.';
-        setState(prev => ({
-          ...prev,
-          isLoading: false,
-          isReady: true,
-          configurationStatus: 'unavailable',
-          error: errorMessage,
-        }));
-        return {
-          ok: false,
-          reason: 'configuration',
-          message: errorMessage,
-        };
-      }
-      console.log('[WebPush] Configuracao VAPID carregada da API.');
-      setState(prev => ({
-        ...prev,
-        configurationStatus: 'available',
-      }));
-
-      // Solicita permissão
-      console.log('[WebPush] Solicitando permissão...');
-      const permission = await Notification.requestPermission();
-      intent.assertCurrent();
-      console.log('[WebPush] Permissão:', permission);
-      setState(prev => ({ ...prev, permission }));
-
-      if (permission !== 'granted') {
-        console.log('[WebPush] Permissão negada pelo usuário');
-        setState(prev => ({
-          ...prev,
-          isLoading: false,
-          error: 'Permissão negada para notificações'
-        }));
-        return {
-          ok: false,
-          reason: 'permission_denied',
-          message: 'Permissão de notificação negada. Ative nas configurações do navegador.',
-        };
-      }
-
-      // Aguarda o Service Worker estar pronto
-      console.log('[WebPush] Aguardando Service Worker...');
-      let registration: ServiceWorkerRegistration;
-      try {
-        registration = await getReadyServiceWorkerRegistration();
-        intent.assertCurrent();
-      } catch (error) {
-        if (!intent.isCurrent()) throw error;
-        const errorMessage = error instanceof Error ? error.message : 'Service Worker indisponível';
-        setState(prev => ({
-          ...prev,
-          isLoading: false,
-          error: errorMessage
-        }));
-        return {
-          ok: false,
-          reason: 'service_worker',
-          message: 'Não foi possível preparar o dispositivo para notificações. Atualize a página e tente novamente.',
-        };
-      }
-      console.log('[WebPush] Service Worker pronto:', registration.scope);
-
-      // Cria subscription
-      console.log('[WebPush] Criando subscription com PushManager...');
-      let subscription: PushSubscription;
-      try {
-        subscription = await createOrReusePushSubscription(registration, vapidPublicKey, intent);
-        intent.assertCurrent();
-      } catch (error) {
-        if (!intent.isCurrent()) throw error;
-        const errorMessage = error instanceof Error ? error.message : 'Erro ao criar subscription';
-        console.error('[WebPush] Erro ao criar subscription:', error);
-        setState(prev => ({
-          ...prev,
-          isLoading: false,
-          error: errorMessage
-        }));
-        return {
-          ok: false,
-          reason: 'browser_push',
-          message: 'O navegador recusou a ativação das notificações neste dispositivo.',
-        };
-      }
-
-      console.log('[WebPush] Subscription criada:', subscription.endpoint);
-      lastEndpointRef.current = subscription.endpoint;
-
-      // Salva no banco
-      console.log('[WebPush] Salvando subscription no banco...');
-      try {
-        await saveSubscription(subscription, vapidPublicKey, {}, intent);
-      } catch (error) {
-        if (!intent.isCurrent()) throw error;
-        const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
-        console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
-        await subscription.unsubscribe().catch(() => undefined);
-        intent.assertCurrent();
-        clearRotatedWebPushState();
-        setState(prev => ({
-          ...prev,
-          isSubscribed: false,
-          isLoading: false,
-          error: errorMessage
-        }));
-        return {
-          ok: false,
-          reason: 'save_failed',
-          message: 'Não foi possível registrar este dispositivo no servidor. Tente novamente em instantes.',
-        };
-      }
-      console.log('[WebPush] Subscription salva com sucesso!');
-      writeWebPushOptOut(user?.id, organizationId, false);
-      rememberCurrentPushEndpoint(subscription.endpoint);
-      if (organizationId) {
-        void queryClient.invalidateQueries({
-          queryKey: ['settings', 'push-devices', organizationId],
-        });
-      }
-
-      setState(prev => ({
-        ...prev,
-        isSubscribed: true,
-        isOptedOut: false,
-        isLoading: false,
-        isReady: true,
-        configurationStatus: 'available',
-        error: null
-      }));
-
-      if (user?.id && organizationId) {
-        publishWebPushState({
-          userId: user.id,
-          organizationId,
-          isSubscribed: true,
-          isOptedOut: false,
-          endpoint: subscription.endpoint,
-        });
-      }
-
-      return { ok: true };
-    } catch (error) {
-      if (!intent.isCurrent()) return { ok: false, reason: 'unknown', message: 'Ativação cancelada porque a sessão mudou.' };
-      console.error('[WebPush] Erro ao inscrever:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erro ao ativar notificações';
-      console.error('[WebPush] Mensagem de erro:', errorMessage);
-      setState(prev => ({
-        ...prev,
-        isLoading: false,
-        error: errorMessage
-      }));
-      return {
-        ok: false,
-        reason: 'unknown',
-        message: 'Não foi possível ativar as notificações agora. Tente novamente em instantes.',
-      };
+      intent = captureIntent();
+    } catch {
+      return Promise.resolve(cancelled);
     }
-    }).finally(intent.finish);
-  }, [captureIntent, organizationId, queryClient, saveSubscription, user?.id]);
+
+    const prepared = preparedRef.current;
+    if (!prepared || prepared.userId !== intent.userId || prepared.organizationId !== intent.organizationId ||
+        prepared.sessionId !== intent.sessionId || webPushOperationQueue) {
+      intent.finish();
+      return Promise.resolve({
+        ok: false, reason: 'service_worker',
+        message: 'Este dispositivo ainda está sendo preparado. Aguarde e toque em Ativar novamente.',
+      });
+    }
+
+    // Safari requires subscribe itself to run in the tap handler. Preparation
+    // and key rotation happen during initialization, before enabling the button.
+    return serializeWebPushOperation<WebPushSubscribeResult>(async () => {
+      try {
+        intent.assertCurrent();
+        setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+        let subscription: PushSubscription;
+        try {
+          subscription = await prepared.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: prepared.applicationServerKey,
+          });
+          intent.assertCurrent();
+        } catch (error) {
+          if (!intent.isCurrent()) return cancelled;
+          const permission = Notification.permission;
+          const denied = permission === 'denied';
+          const message = denied
+            ? 'Permissão de notificação negada. Ative nas configurações do aparelho.'
+            : 'O navegador recusou a ativação das notificações neste dispositivo.';
+          setState(prev => ({ ...prev, isLoading: false, permission, error: message }));
+          return { ok: false, reason: denied ? 'permission_denied' : 'browser_push', message };
+        }
+
+        lastEndpointRef.current = subscription.endpoint;
+        storeCurrentVapidKey(arrayBufferToBase64Url(prepared.applicationServerKey));
+        rememberCurrentPushEndpoint(subscription.endpoint);
+        try {
+          const result = await saveSubscription(subscription, prepared.vapidPublicKey, {}, intent);
+          if (!result.ok || result.active !== true) throw new Error('O servidor não confirmou o cadastro.');
+        } catch {
+          if (!intent.isCurrent()) return cancelled;
+          // Preserve the local endpoint for an explicit retry after a temporary
+          // server failure. A browser subscription alone is not active delivery.
+          const message = 'Não foi possível registrar este dispositivo no servidor. Tente ativar novamente.';
+          setState(prev => ({ ...prev, isSubscribed: false, isLoading: false, permission: Notification.permission, error: message }));
+          return { ok: false, reason: 'save_failed', message };
+        }
+
+        writeWebPushOptOut(intent.userId, intent.organizationId, false);
+        void queryClient.invalidateQueries({ queryKey: ['settings', 'push-devices', intent.organizationId] });
+        setState(prev => ({
+          ...prev, isSubscribed: true, isOptedOut: false, isLoading: false,
+          isReady: true, configurationStatus: 'available', permission: Notification.permission, error: null,
+        }));
+        publishWebPushState({
+          userId: intent.userId, organizationId: intent.organizationId,
+          isSubscribed: true, isOptedOut: false, endpoint: subscription.endpoint,
+        });
+        return { ok: true };
+      } finally {
+        intent.finish();
+      }
+    });
+  }, [captureIntent, queryClient, saveSubscription]);
 
   // Cancela subscription
   const unsubscribe = useCallback((): Promise<boolean> => {
@@ -671,93 +538,89 @@ export function useWebPush() {
           permission: null,
           error: null,
           endpoint: null,
+          prepared: null,
         };
       }
 
       const permission = Notification.permission;
-      let existingSubscription: PushSubscription | null = null;
+      let registration: ServiceWorkerRegistration;
+      let subscription: PushSubscription | null;
       try {
-        const registration = await getServiceWorkerRegistration();
+        registration = await getReadyServiceWorkerRegistration(intent.signal);
         intent.assertCurrent();
-        existingSubscription = await registration.pushManager.getSubscription();
+        subscription = await registration.pushManager.getSubscription();
         intent.assertCurrent();
       } catch (error) {
         if (!intent.isCurrent()) throw error;
-        // Configuration loading below provides the actionable setup error.
-      }
-      let syncError: string | null = null;
-      let vapidPublicKey: string;
-      try {
-        vapidPublicKey = await loadVapidPublicKey();
-        intent.assertCurrent();
-      } catch (error) {
-        if (!intent.isCurrent()) throw error;
-        syncError = error instanceof Error
-          ? error.message
-          : 'Notificacoes push nao estao configuradas neste ambiente.';
         return {
-          isSupported: true,
-          isSubscribed: !!existingSubscription,
-          isOptedOut: optedOut,
-          isLoading: false,
-          isReady: true,
-          configurationStatus: 'unavailable',
-          permission,
-          error: syncError,
-          endpoint: existingSubscription?.endpoint || null,
+          isSupported: true, isSubscribed: false, isOptedOut: optedOut,
+          isLoading: false, isReady: true, configurationStatus: 'unavailable',
+          permission, error: 'Não foi possível preparar as notificações. Reabra o aplicativo e tente novamente.',
+          endpoint: null, prepared: null,
         };
       }
-      let subscription = await checkSubscription(vapidPublicKey, intent);
-      intent.assertCurrent();
 
-      if (optedOut) {
-        if (subscription) {
-          try {
-            await removeSubscription(subscription.endpoint, intent);
-            const removedFromBrowser = await subscription.unsubscribe();
-            intent.assertCurrent();
-            if (!removedFromBrowser) {
-              throw new Error('O navegador não removeu a inscrição local.');
-            }
-            subscription = null;
-          } catch (error) {
-            if (!intent.isCurrent()) throw error;
-            syncError = error instanceof Error
-              ? error.message
-              : 'Não foi possível concluir a desativação neste navegador.';
-          }
-        }
-      } else if (subscription && organizationId) {
+      let prepared: PreparedWebPush;
+      try {
+        const vapidPublicKey = await loadVapidPublicKey();
+        intent.assertCurrent();
+        prepared = {
+          userId: intent.userId, organizationId: intent.organizationId, sessionId: intent.sessionId,
+          registration, vapidPublicKey, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        };
+      } catch (error) {
+        if (!intent.isCurrent()) throw error;
+        return {
+          isSupported: true, isSubscribed: false, isOptedOut: optedOut,
+          isLoading: false, isReady: true, configurationStatus: 'unavailable',
+          permission, error: 'A configuração de notificações não está disponível agora.',
+          endpoint: subscription?.endpoint || null, prepared: null,
+        };
+      }
+
+      let confirmed = false;
+      let syncError: string | null = null;
+      if (subscription) {
         try {
-          const syncResult = await saveSubscription(subscription, vapidPublicKey, { syncOnly: true }, intent);
-          if (syncResult?.requiresResubscribe) {
-            console.log('[WebPush] Servidor rejeitou subscription antiga; reinscrevendo dispositivo.');
+          const currentKey = arrayBufferToBase64Url(prepared.applicationServerKey);
+          if (optedOut) {
+            await removeSubscription(subscription.endpoint, intent);
+            intent.assertCurrent();
+            const removed = await subscription.unsubscribe();
+            intent.assertCurrent();
+            if (!removed) throw new Error('O navegador não removeu a inscrição local.');
+            subscription = null;
+          } else if (shouldReplaceSubscription(subscription, currentKey)) {
+            await subscription.unsubscribe();
+            intent.assertCurrent();
             clearRotatedWebPushState();
-            await subscription.unsubscribe().catch(() => undefined);
-            intent.assertCurrent();
-            const registration = await getReadyServiceWorkerRegistration();
-            intent.assertCurrent();
-            subscription = await createOrReusePushSubscription(registration, vapidPublicKey, intent);
-            await saveSubscription(subscription, vapidPublicKey, {}, intent);
+            subscription = null;
+          } else if (permission === 'granted') {
+            const result = await saveSubscription(subscription, prepared.vapidPublicKey, { syncOnly: true }, intent);
+            if (result.requiresResubscribe) {
+              await subscription.unsubscribe();
+              intent.assertCurrent();
+              clearRotatedWebPushState();
+              subscription = null;
+            } else if (result.ok && result.active === true) {
+              storeCurrentVapidKey(currentKey);
+              confirmed = true;
+            } else {
+              syncError = 'O cadastro deste dispositivo não está ativo. Toque em Ativar para tentar novamente.';
+            }
           }
         } catch (error) {
           if (!intent.isCurrent()) throw error;
-          syncError = error instanceof Error
-            ? error.message
-            : 'Não foi possível sincronizar a subscription no servidor.';
+          syncError = optedOut
+            ? 'Não foi possível concluir a desativação neste navegador.'
+            : 'Não foi possível sincronizar este dispositivo. Toque em Ativar para tentar novamente.';
         }
       }
 
       return {
-        isSupported: true,
-        isSubscribed: !!subscription,
-        isOptedOut: optedOut,
-        isLoading: false,
-        isReady: true,
-        configurationStatus: 'available',
-        permission,
-        error: syncError,
-        endpoint: subscription?.endpoint || null,
+        isSupported: true, isSubscribed: confirmed, isOptedOut: optedOut,
+        isLoading: false, isReady: true, configurationStatus: 'available',
+        permission, error: syncError, endpoint: subscription?.endpoint || null, prepared,
       };
     };
 
@@ -787,6 +650,7 @@ export function useWebPush() {
           ...prev,
           isLoading: true,
           isReady: false,
+          isSubscribed: false,
           isOptedOut: optedOut,
           error: null,
         }));
@@ -799,6 +663,7 @@ export function useWebPush() {
 
     void initialization.then((result) => {
       if (cancelled || !intent.isCurrent()) return;
+      preparedRef.current = result.prepared;
       lastEndpointRef.current = result.endpoint;
       if (result.endpoint) rememberCurrentPushEndpoint(result.endpoint);
       else if (result.isOptedOut) forgetCurrentPushEndpoint();
@@ -826,6 +691,7 @@ export function useWebPush() {
 
     return () => {
       cancelled = true;
+      preparedRef.current = null;
       intent.cancel();
     };
   }, [
@@ -833,7 +699,6 @@ export function useWebPush() {
     captureIntent,
     organizationId,
     checkSupport,
-    checkSubscription,
     removeSubscription,
     saveSubscription,
   ]);

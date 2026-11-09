@@ -82,25 +82,33 @@ function getSafePushTarget(rawTarget, data) {
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
-    payload = event.data ? event.data.json() : {};
+    const received = event.data?.json();
+    if (typeof received === "string") {
+      payload = { body: received };
+    } else if (received && typeof received === "object" && !Array.isArray(received)) {
+      payload = received;
+    }
   } catch {
-    payload = {
-      body: event.data ? event.data.text() : "",
-    };
+    payload = { body: event.data?.text() || "" };
   }
 
-  const notification = payload.notification || payload;
-  const notificationData = notification.data && typeof notification.data === "object"
-    ? notification.data
-    : {};
+  const notification = payload.notification && typeof payload.notification === "object"
+    ? payload.notification
+    : payload;
+  const notificationData = {
+    type: notification.type,
+    lead_id: notification.lead_id,
+    ...(notification.data && typeof notification.data === "object" ? notification.data : {}),
+  };
   const rawTarget = notificationData.target_url
     || notificationData.targetUrl
     || notificationData.url
     || notification.target_url
     || notification.url;
-  const title = notification.title || "Vimob CRM";
+  const title = typeof notification.title === "string" && notification.title.trim() ? notification.title : "Vimob CRM";
+  const body = [notification.body, notification.content].find((value) => typeof value === "string" && value.trim());
   const options = {
-    body: notification.body || notification.content || "Voce tem uma nova notificacao.",
+    body: body || "Você tem uma nova notificação.",
     icon: "/icons/favicon-laranja.png",
     badge: "/icons/favicon-laranja.png",
     data: {
