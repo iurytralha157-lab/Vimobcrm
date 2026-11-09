@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "2622439e6729f016a4e645aec52a75133ad4994af9b513b25a307802703e4e95",
+  "sourceDigestSha256": "8d1a2f91c2c1be548824d4e842b0caa21a99ca5dd62e8aabced083eee00a7fb6",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1334,10 +1334,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:52c6210803a44c08d553",
+          "id": "overlay:7e2dee0b73f2dfd97126",
           "column": 9,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 151,
+          "line": 154,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -1345,10 +1345,21 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:d631575cca3cc535cbc3",
+          "id": "overlay:cca7dc23f1e808891dc3",
+          "column": 5,
+          "file": "components/features/contacts/contacts-screen/ContactsLeadActionDialog.tsx",
+          "line": 143,
+          "owner": "ContactsLeadActionDialog",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "dialog"
+        },
+        {
+          "id": "overlay:528eacbb9919010fd5e5",
           "column": 17,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 685,
+          "line": 693,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -1356,10 +1367,21 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:bddbbc0d85f7174100ea",
+          "id": "overlay:cc07050799e8e1d27ab2",
+          "column": 9,
+          "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+          "line": 95,
+          "owner": "ContactsBulkSelectionBar",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "dropdownMenu"
+        },
+        {
+          "id": "overlay:c4633742e48f7d5547aa",
           "column": 7,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 277,
+          "line": 303,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -1367,10 +1389,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:432aaaa93109d2bf2469",
+          "id": "overlay:f150d0bb127576a6e962",
           "column": 7,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 310,
+          "line": 336,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -13025,10 +13047,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ba2c2fb9b39a7fe984e5",
+          "id": "cta:1fdc70ba136892256d38",
           "column": 11,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 109,
+          "line": 112,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -13037,10 +13059,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7370bec9e15146d2554e",
+          "id": "cta:ecf6eba73cdca2d6344d",
           "column": 13,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 153,
+          "line": 156,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -13049,10 +13071,46 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0ff75d4097736aa5a1dd",
+          "id": "cta:4342ebcc1b31ab0c0378",
+          "column": 23,
+          "file": "components/features/contacts/contacts-screen/ContactsLeadActionDialog.tsx",
+          "line": 182,
+          "owner": "ContactsLeadActionDialog",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:d1a1c670d1ecc3655992",
+          "column": 11,
+          "file": "components/features/contacts/contacts-screen/ContactsLeadActionDialog.tsx",
+          "line": 205,
+          "owner": "ContactsLeadActionDialog",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:29739423281550d14ed6",
+          "column": 11,
+          "file": "components/features/contacts/contacts-screen/ContactsLeadActionDialog.tsx",
+          "line": 206,
+          "owner": "ContactsLeadActionDialog",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:66bd2ddeb5ac6f04a56c",
           "column": 7,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 153,
+          "line": 155,
           "owner": "ContactsErrorState",
           "routes": [
             "/crm/contacts"
@@ -13061,10 +13119,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:70de958933566977322b",
+          "id": "cta:64a1420632772c3e949b",
           "column": 9,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 330,
+          "line": 335,
           "owner": "ContactsMobileList",
           "routes": [
             "/crm/contacts"
@@ -13073,10 +13131,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6cc96f6f5b7ddb20aeb0",
+          "id": "cta:773804cca215e890c381",
           "column": 9,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 331,
+          "line": 336,
           "owner": "ContactsMobileList",
           "routes": [
             "/crm/contacts"
@@ -13085,10 +13143,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f8ce3ba91a3ea4c62991",
+          "id": "cta:10a00a6e63e7ca6e4681",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 438,
+          "line": 446,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -13097,10 +13155,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:43a9379958ff6d3a96ce",
+          "id": "cta:82a2cbf97425d1abbd1a",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 465,
+          "line": 473,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -13109,10 +13167,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:02e6893990d4c9ebf9df",
+          "id": "cta:4c9d85506c424169b12e",
           "column": 17,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 512,
+          "line": 520,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -13121,10 +13179,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ef5f60a7e8ec48940abf",
+          "id": "cta:1b3d7fb377815c32c273",
           "column": 21,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 687,
+          "line": 695,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -13133,10 +13191,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d4cde04b1c2284223335",
+          "id": "cta:66f43914c58bb8eb8e91",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 773,
+          "line": 787,
           "owner": "ContactsList",
           "routes": [
             "/crm/contacts"
@@ -13145,10 +13203,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6a7fd6a7215d368ac870",
+          "id": "cta:cc4819dcfd1cc5f95ef5",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 812,
+          "line": 826,
           "owner": "ContactsList",
           "routes": [
             "/crm/contacts"
@@ -13157,20 +13215,8 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5004c0e3ca1c8f08d70e",
-          "column": 7,
-          "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 88,
-          "owner": "ContactsBulkSelectionBar",
-          "routes": [
-            "/crm/contacts"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:0d97b9511316d2edc788",
-          "column": 7,
+          "id": "cta:1cba495c17bc938e24cf",
+          "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
           "line": 97,
           "owner": "ContactsBulkSelectionBar",
@@ -13181,10 +13227,34 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fcf139c97a30e64c81b4",
+          "id": "cta:bc3a2f568c0454be052f",
+          "column": 9,
+          "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+          "line": 113,
+          "owner": "ContactsBulkSelectionBar",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:bbf58d19c42734da5272",
+          "column": 7,
+          "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+          "line": 123,
+          "owner": "ContactsBulkSelectionBar",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:acd8a9ef2a5aa11510fe",
           "column": 11,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 225,
+          "line": 251,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -13193,10 +13263,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:baf820a7e804e31471e1",
+          "id": "cta:0782f93cb18c7bd8a740",
           "column": 11,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 235,
+          "line": 261,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -42415,10 +42485,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:4d2b6dd80b5dc13d87ed",
+          "id": "control:68abdd8b77959cac3d52",
           "column": 13,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 169,
+          "line": 172,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -42427,10 +42497,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:c271aaaace4c5fced708",
+          "id": "control:b8e08be97ec661751d3c",
           "column": 15,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 180,
+          "line": 183,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -42439,10 +42509,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:9962c4a31b55dcf9d478",
+          "id": "control:f4be147e550b3b942ed0",
           "column": 17,
           "file": "components/features/contacts/ContactCard.tsx",
-          "line": 205,
+          "line": 214,
           "owner": "ContactCard",
           "routes": [
             "/crm/contacts"
@@ -42451,11 +42521,11 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:739a35c12f592865b3fb",
-          "column": 21,
-          "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 703,
-          "owner": "ContactsDesktopTable",
+          "id": "control:1932c814a593ed63bc9f",
+          "column": 7,
+          "file": "components/features/contacts/contacts-screen/ContactLeadActionMenuItems.tsx",
+          "line": 22,
+          "owner": "ContactLeadActionMenuItems",
           "routes": [
             "/crm/contacts"
           ],
@@ -42463,8 +42533,8 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:7fb6f2bb37e23dc51cfc",
-          "column": 23,
+          "id": "control:34d0255131bb620e5a36",
+          "column": 21,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
           "line": 711,
           "owner": "ContactsDesktopTable",
@@ -42475,10 +42545,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:85ac3c25a1033b4e2744",
-          "column": 25,
+          "id": "control:0369666903441f88cad1",
+          "column": 23,
           "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-          "line": 722,
+          "line": 719,
           "owner": "ContactsDesktopTable",
           "routes": [
             "/crm/contacts"
@@ -42487,10 +42557,22 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:b89bb5a31afadd66704a",
+          "id": "control:677d796adcb4788a7155",
+          "column": 25,
+          "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+          "line": 736,
+          "owner": "ContactsDesktopTable",
+          "routes": [
+            "/crm/contacts"
+          ],
+          "kind": "DropdownMenuItem",
+          "tag": "DropdownMenuItem"
+        },
+        {
+          "id": "control:0c5c8fe5bbcfe0d95c54",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 290,
+          "line": 316,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -42499,10 +42581,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:ddc3130b76d19e8aeb5b",
+          "id": "control:177abd62dff38860b544",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 293,
+          "line": 319,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -42511,10 +42593,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:307ec26c5468da88316d",
+          "id": "control:060f819434109f38dbcf",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 328,
+          "line": 354,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -42523,10 +42605,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:523fa3e24efa9057cf57",
+          "id": "control:8ddfda4a87bd8d8795a3",
           "column": 13,
           "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-          "line": 331,
+          "line": 357,
           "owner": "ContactsOverlays",
           "routes": [
             "/crm/contacts"
@@ -47395,7 +47477,7 @@
         }
       ]
     },
-    "digestSha256": "ab6893f6a7805988fd6db8ce616c0dc53ed856f28799f4002c7ed6b9bf90adb3"
+    "digestSha256": "1bb8ca85d55f36737a0d0a05b76074705f9df3b811df6cbbc0e0abb0e3f285b1"
   },
   "routes": [
     {
@@ -51248,6 +51330,24 @@
         "/suporte",
         "/suporte/[slug]",
         "/termos-de-uso"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/contacts/contacts-screen/ContactLeadActionMenuItems.tsx",
+      "routes": [
+        "/crm/contacts"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/contacts/contacts-screen/ContactsLeadActionDialog.tsx",
+      "routes": [
+        "/crm/contacts"
       ]
     },
     {
@@ -61913,11 +62013,11 @@
     "surfaces": {
       "asChildButtonsExcluded": 36,
       "asChildButtonsWithUnrecognizedChild": 0,
-      "asChildPrimitiveControlsExcluded": 89,
+      "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1633,
+      "ctasAll": 1637,
       "ctasByKind": {
-        "actionButton": 1457,
+        "actionButton": 1461,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
@@ -61926,27 +62026,27 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1572,
-      "internalCtasRouteReachable": 1539,
-      "overlays": 251,
+      "internalCtas": 1576,
+      "internalCtasRouteReachable": 1543,
+      "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
-        "dialog": 97,
-        "dropdownMenu": 31,
+        "dialog": 98,
+        "dropdownMenu": 32,
         "popover": 35,
         "sheet": 14
       },
-      "overlaysRouteReachable": 246,
-      "supplementalControls": 295,
+      "overlaysRouteReachable": 248,
+      "supplementalControls": 296,
       "supplementalControlsByKind": {
         "AlertDialogAction": 69,
         "AlertDialogCancel": 71,
-        "DropdownMenuItem": 95,
+        "DropdownMenuItem": 96,
         "DropdownMenuRadioItem": 1,
         "DropdownMenuSubTrigger": 1,
         "TabsTrigger": 58
       },
-      "supplementalControlsRouteReachable": 290
+      "supplementalControlsRouteReachable": 291
     }
   },
   "qaDenominators": {
@@ -61955,9 +62055,9 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1539,
-    "routeReachableOverlayImplementations": 246,
-    "routeReachableSupplementalOverlayAndTabControls": 290
+    "routeReachableInternalCtaImplementations": 1543,
+    "routeReachableOverlayImplementations": 248,
+    "routeReachableSupplementalOverlayAndTabControls": 291
   },
   "diagnostics": {
     "formsWithoutLocalSubmitContract": [],

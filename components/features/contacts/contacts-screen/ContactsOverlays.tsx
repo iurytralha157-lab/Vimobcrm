@@ -1,5 +1,5 @@
 import dynamic from 'next/dynamic';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import { AlertTriangle, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -11,6 +11,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { ContactLeadActionMenuItems, type ContactLeadActionKind } from '@/components/features/contacts/contacts-screen/ContactLeadActionMenuItems';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import type { LeadDetailDialogProps } from '@/components/features/leads/lead-detail';
 import type { Lead } from '@/hooks/use-leads';
@@ -69,6 +71,8 @@ type ContactsBulkSelectionBarProps = {
   canDeleteLeads: boolean;
   selectedCount: number;
   onRequestDelete: () => void;
+  onRequestLeadAction?: (kind: ContactLeadActionKind) => void;
+  actionsDisabled: boolean;
   onClear: () => void;
 };
 
@@ -76,24 +80,46 @@ export function ContactsBulkSelectionBar({
   canDeleteLeads,
   selectedCount,
   onRequestDelete,
+  onRequestLeadAction,
+  actionsDisabled,
   onClear,
 }: ContactsBulkSelectionBarProps) {
-  if (!canDeleteLeads || selectedCount === 0) return null;
+  if ((!canDeleteLeads && !onRequestLeadAction) || selectedCount === 0) return null;
 
   return (
     <div className="app-card-soft flex shrink-0 flex-wrap items-center justify-center gap-2 rounded-[8px] border border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] p-2 shadow-sm">
       <span className="whitespace-nowrap px-1 text-[12px] font-light text-[var(--app-text-primary)]">
         {selectedCount} selecionado(s)
       </span>
-      <Button
-        variant="destructive"
-        size="sm"
-        onClick={onRequestDelete}
-        className="h-8 gap-1 rounded-[6px] px-2.5 text-[11px] font-light shadow-none"
-      >
-        <Trash2 className="h-4 w-4 mr-1" />
-        Excluir
-      </Button>
+      {onRequestLeadAction && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Ações para contatos selecionados"
+              disabled={actionsDisabled}
+              className="h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--app-border-strong)] data-[state=open]:bg-[var(--app-surface-hover)] data-[state=open]:text-[var(--app-text-primary)]"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={8} className="app-header-popover w-52 p-2">
+            <ContactLeadActionMenuItems onSelect={onRequestLeadAction} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {canDeleteLeads && (
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={onRequestDelete}
+          className="h-8 gap-1 rounded-[6px] px-2.5 text-[11px] font-light shadow-none"
+        >
+          <Trash2 className="h-4 w-4 mr-1" />
+          Excluir
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="sm"

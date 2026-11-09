@@ -1,6 +1,6 @@
 import type { ContactListFilters } from '@/hooks/use-contacts-list';
 
-export const CONTACT_PAGE_SIZE_OPTIONS = [5, 10, 30, 50, 100] as const;
+export { CONTACT_PAGE_SIZE_OPTIONS } from '@/config/contacts';
 
 export const CONTACT_TABLE_COLUMN_CLASSES = {
   selection: 'w-10',

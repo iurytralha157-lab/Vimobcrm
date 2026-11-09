@@ -1,3 +1,4 @@
+import { ContactLeadActionMenuItems, type ContactLeadActionKind } from "@/components/features/contacts/contacts-screen/ContactLeadActionMenuItems";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ interface ContactCardProps {
   onViewDetails?: () => void;
   onWhatsApp?: () => void;
   onDelete?: () => void;
+  onLeadAction?: (kind: ContactLeadActionKind) => void;
   selected?: boolean;
   selectionDisabled?: boolean;
   onSelect?: () => void;
@@ -68,6 +70,7 @@ export function ContactCard({
   onViewDetails,
   onWhatsApp,
   onDelete,
+  onLeadAction,
   selected,
   selectionDisabled,
   onSelect,
@@ -198,6 +201,12 @@ export function ContactCard({
                   Enviar e-mail
                 </a>
               </DropdownMenuItem>
+            )}
+            {onLeadAction && (
+              <>
+                <DropdownMenuSeparator className="mx-0 my-1 bg-border/30" />
+                <ContactLeadActionMenuItems onSelect={onLeadAction} />
+              </>
             )}
             {onDelete && (
               <>

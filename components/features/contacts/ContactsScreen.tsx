@@ -15,6 +15,7 @@ import {
   toggleCurrentPageSelection,
   type ContactsToolbarFilters,
 } from "@/components/features/contacts/contacts-screen";
+import { ContactsLeadActionDialog } from "@/components/features/contacts/contacts-screen/ContactsLeadActionDialog";
 import { contactSelectionScope } from '@/components/features/contacts/contacts-screen/model';
 import { visibleLeadRead } from '@/lib/lead-read-access';
 import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-scope';
@@ -23,6 +24,7 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFilters } from "@/contexts/FilterContext";
 import { useFloatingChat } from "@/contexts/FloatingChatContext";
+import { useContactLeadActionSelection } from "@/hooks/contacts/use-contact-lead-action-selection";
 import { useContactsList, type ContactListFilters } from "@/hooks/use-contacts-list";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
@@ -51,6 +53,8 @@ export default function Contacts() {
   const { hasPermission } = useUserPermissions();
   const organizationId = activeOrganization.organizationId ?? null;
   const canDeleteLeads = isSuperAdmin || hasPermission("lead_delete");
+  const canOperateLeads = isSuperAdmin || hasPermission("lead_operate");
+  const canSelectLeads = canDeleteLeads || canOperateLeads;
   const canCreateLeads = isSuperAdmin || hasPermission("lead_create");
   const canImportLeads = isSuperAdmin || hasPermission("lead_import");
   const canExportLeads = isSuperAdmin || hasPermission("lead_export");
@@ -300,6 +304,19 @@ export default function Contacts() {
   const isInitialContactsLoading = isLoading && contacts.length === 0;
   const isContactsTransitioning =
     isInitialContactsLoading || contactsPlaceholderData || isSearchSettling;
+  const { leadActionRequest, requestLeadAction, closeLeadAction, handleLeadAction } = useContactLeadActionSelection({
+    contacts,
+    canOperateLeads,
+    isContactsTransitioning,
+    isSearchSettling,
+    periodError,
+    selectionAuthScope: deleteScopeKey,
+    onCompleted: (completeIds, shouldRefetch) => {
+      setSelectedIds((current) => new Set([...current].filter((id) => !completeIds.has(id))));
+      if (shouldRefetch) void refetchContacts();
+    },
+  });
+
   const openLeadDetails = (contactId: string) => {
     if (isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
     setSelectedContactId(contactId);
@@ -340,7 +357,7 @@ export default function Contacts() {
   const clearSelection = () => { setSelectedIds(new Set()); setLastSelectedId(null); };
 
   const toggleSelectAll = () => {
-    if (!canDeleteLeads || isContactsTransitioning || periodError) return;
+    if (!canSelectLeads || isContactsTransitioning || periodError) return;
     setSelectedIds(
       toggleCurrentPageSelection(
         selectedIds,
@@ -350,7 +367,7 @@ export default function Contacts() {
   };
 
   const toggleSelectOne = (contactId: string) => {
-    if (!canDeleteLeads || isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
+    if (!canSelectLeads || isContactsTransitioning || periodError || !contacts.some((contact) => contact.id === contactId)) return;
     setSelectedIds(
       toggleContactSelection({
         selectedIds,
@@ -604,6 +621,7 @@ export default function Contacts() {
             }
           }}
           onRequestDelete={requestContactDelete}
+          onRequestLeadAction={canOperateLeads ? (kind, id) => void requestLeadAction(kind, [id]) : undefined}
           onToggleSelectAll={toggleSelectAll}
           onToggleSelectOne={toggleSelectOne}
           onSort={handleSort}
@@ -625,8 +643,14 @@ export default function Contacts() {
           canDeleteLeads={canDeleteLeads}
           selectedCount={selectedIds.size}
           onRequestDelete={() => setBulkDeleteDialogOpen(true)}
+          onRequestLeadAction={canOperateLeads ? (kind) => void requestLeadAction(kind, [...selectedIds]) : undefined}
+          actionsDisabled={isContactsTransitioning || Boolean(periodError)}
           onClear={clearSelection}
         />
+
+        {leadActionRequest && (
+          <ContactsLeadActionDialog request={leadActionRequest} onClose={closeLeadAction} onConfirm={handleLeadAction} />
+        )}
 
         <ContactsOverlays
           isOpeningLeadDetails={isOpeningLeadDetails}

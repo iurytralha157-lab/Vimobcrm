@@ -40,6 +40,10 @@ export const useOrganizationUsers=()=>({data:[]});
 export const usePipelines=()=>({data:[{id:'${pipelineA}',name:'A',is_default:true},{id:'${pipelineB}',name:'B'}]});
 export const useStages=id=>({data:id==='${pipelineA}'?[{id:'${stageA}',name:'A1'}]:[]});
 window.fixtureQueries=[];
+// These filter cases exercise reads and selection wiring without action transport.
+export const MAX_CONTACT_LEAD_ACTION_TARGETS=100;
+export const useStageAutomations=()=>({data:[]});
+export const useContactLeadActions=()=>({prepare:()=>{throw Error('No lead review in the filter fixture');},run:()=>{throw Error('No lead writes in the filter fixture');}});
 export const useContactsList=filters=>{window.fixtureQuery=filters;window.fixtureQueries.push(JSON.parse(JSON.stringify(filters)));return {data:[],total:200,isLoading:false,isFetching:false,isError:false,isPlaceholderData:false,refetch:noop};};
 export const useLead=()=>({data:null,isFetching:false,isError:false,refetch:noop});
 export const useDeleteLead=()=>({isPending:false,mutateAsync:noop});
@@ -78,7 +82,7 @@ before(async () => {
     writeFile(stub, synthetic), writeFile(entry, fixture),
     writeFile(loader, `const ts=require(${JSON.stringify(require.resolve('typescript'))});module.exports=s=>ts.transpileModule(s,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;`),
   ]);
-  const names = ['contexts/AuthContext', 'contexts/FloatingChatContext', 'hooks/use-user-permissions', 'hooks/use-mobile', 'hooks/use-toast', 'hooks/use-tags', 'hooks/use-teams', 'hooks/use-users', 'hooks/use-stages', 'hooks/use-contacts-list', 'hooks/use-leads', 'lib/api/pipeline-board', 'lib/api/vimob-error', 'lib/auth/global-sign-out', 'components/shared/layout/AppLayout', 'components/features/contacts/contacts-screen'];
+  const names = ['contexts/AuthContext', 'contexts/FloatingChatContext', 'hooks/use-user-permissions', 'hooks/use-mobile', 'hooks/use-toast', 'hooks/use-tags', 'hooks/use-teams', 'hooks/use-users', 'hooks/use-stages', 'hooks/use-contacts-list', 'hooks/use-leads', 'hooks/contacts/use-contact-lead-actions', 'hooks/use-stage-automations', 'lib/api/pipeline-board', 'lib/api/vimob-error', 'lib/auth/global-sign-out', 'components/shared/layout/AppLayout', 'components/features/contacts/contacts-screen'];
   const aliases = Object.fromEntries(names.map(name => [`@/${name}$`, stub]));
   const { webpack } = require('next/dist/compiled/webpack/webpack.js');
   await new Promise((resolve, reject) => {

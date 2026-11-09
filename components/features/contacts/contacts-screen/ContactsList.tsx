@@ -19,6 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { ContactLeadActionMenuItems, type ContactLeadActionKind } from "@/components/features/contacts/contacts-screen/ContactLeadActionMenuItems";
 import { ContactCard } from "@/components/features/contacts/ContactCard";
 import { EmptyState } from "@/components/features/contacts/EmptyState";
 import { TableSkeleton } from "@/components/features/contacts/TableSkeleton";
@@ -82,6 +83,7 @@ type ContactsListProps = {
   onViewDetails: (contactId: string) => void;
   onWhatsApp: (contact: Contact) => void;
   onRequestDelete: (contactId: string) => void;
+  onRequestLeadAction?: (kind: ContactLeadActionKind, contactId: string) => void;
   onToggleSelectAll: () => void;
   onToggleSelectOne: (contactId: string) => void;
   onSort: (column: ContactListFilters["sortBy"]) => void;
@@ -266,6 +268,7 @@ function ContactsMobileList({
   onViewDetails,
   onWhatsApp,
   onRequestDelete,
+  onRequestLeadAction,
   canUseWhatsApp,
   selectedIds,
   onToggleSelectOne,
@@ -291,6 +294,7 @@ function ContactsMobileList({
   | "onViewDetails"
   | "onWhatsApp"
   | "onRequestDelete"
+  | "onRequestLeadAction"
   | "canUseWhatsApp"
   | "selectedIds"
   | "onToggleSelectOne"
@@ -299,6 +303,7 @@ function ContactsMobileList({
   | "sortBy"
   | "sortDir"
 >) {
+  const canSelectLeads = canDeleteLeads || Boolean(onRequestLeadAction);
   if (showErrorState) {
     return (
       <ContactsErrorState
@@ -337,11 +342,12 @@ function ContactsMobileList({
           sourceLabels={CONTACT_SOURCE_LABELS}
           selected={selectedIds.has(contact.id)}
           selectionDisabled={isTransitioning}
-          onSelect={canDeleteLeads ? () => onToggleSelectOne(contact.id) : undefined}
+          onSelect={canSelectLeads ? () => onToggleSelectOne(contact.id) : undefined}
           onViewDetails={() => onViewDetails(contact.id)}
           onWhatsApp={
             canUseWhatsApp ? () => onWhatsApp(contact) : undefined
           }
+          onLeadAction={onRequestLeadAction && ((kind) => onRequestLeadAction(kind, contact.id))}
           onDelete={
             canDeleteLeads ? () => onRequestDelete(contact.id) : undefined
           }
@@ -374,11 +380,13 @@ function ContactsDesktopTable(props: ContactsListProps) {
     onViewDetails,
     onWhatsApp,
     onRequestDelete,
+  onRequestLeadAction,
     canUseWhatsApp,
     onToggleSelectAll,
     onToggleSelectOne,
     onSort,
   } = props;
+  const canSelectLeads = canDeleteLeads || Boolean(onRequestLeadAction);
 
   if (showErrorState) {
     return (
@@ -393,7 +401,7 @@ function ContactsDesktopTable(props: ContactsListProps) {
   if (isLoading) {
     return (
       <Table className="contacts-table crm-management-table min-w-[960px] table-fixed [&_td]:px-2 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2 [&_th]:text-[10px] [&_th]:font-light">
-        <TableSkeleton showSelection={canDeleteLeads} showLostReason={lostLeadsView} />
+        <TableSkeleton showSelection={canSelectLeads} showLostReason={lostLeadsView} />
       </Table>
     );
   }
@@ -415,7 +423,7 @@ function ContactsDesktopTable(props: ContactsListProps) {
     <Table className="contacts-table crm-management-table min-w-[960px] table-fixed border-separate border-spacing-0 [&_td]:px-2 [&_td]:py-2.5 [&_th]:h-8 [&_th]:px-2 [&_th]:text-[10px] [&_th]:font-light [&_th]:text-[var(--app-text-tertiary)]">
       <TableHeader className="crm-management-sticky-header sticky top-0 z-20">
         <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
-          {canDeleteLeads && (
+          {canSelectLeads && (
             <TableHead className={CONTACT_TABLE_COLUMN_CLASSES.selection}>
               <Checkbox
                 data-tour="contacts-select-all"
@@ -497,7 +505,7 @@ function ContactsDesktopTable(props: ContactsListProps) {
               data-deal-status={status}
               onClick={() => onViewDetails(contact.id)}
             >
-              {canDeleteLeads && (
+              {canSelectLeads && (
                 <TableCell onClick={(event) => event.stopPropagation()}>
                   <Checkbox
                     aria-label={`Selecionar ${normalizeDisplayName(contact.name)}`}
@@ -715,6 +723,12 @@ function ContactsDesktopTable(props: ContactsListProps) {
                         <MessageCircle className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
                         WhatsApp
                       </DropdownMenuItem>
+                    )}
+                    {onRequestLeadAction && (
+                      <>
+                        <DropdownMenuSeparator className="mx-0 my-1 bg-border/30" />
+                        <ContactLeadActionMenuItems onSelect={(kind) => onRequestLeadAction(kind, contact.id)} />
+                      </>
                     )}
                     {canDeleteLeads && (
                       <>

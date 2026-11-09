@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ae9ee4e12883ed0b2166c5df83bc397fb59aba69096b5b29af06005e1216a34b",
-  "surfaceInventoryDigestSha256": "2622439e6729f016a4e645aec52a75133ad4994af9b513b25a307802703e4e95",
+  "sourceDigestSha256": "e9bad6825ffdd6f0319a63201c08ab6ae989d9436672d8b59e42391c76bacac9",
+  "surfaceInventoryDigestSha256": "8d1a2f91c2c1be548824d4e842b0caa21a99ca5dd62e8aabced083eee00a7fb6",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 671,
+    "filesScanned": 673,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -1074,7 +1074,7 @@
     },
     {
       "file": "components/features/contacts/ContactCard.tsx",
-      "line": 264,
+      "line": 273,
       "match": "#ffffff",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1083,7 +1083,7 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
-      "line": 656,
+      "line": 664,
       "match": "#ffffff",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1092,7 +1092,7 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-      "line": 84,
+      "line": 90,
       "match": "shadow-sm",
       "priority": "P2",
       "rule": "medium-shadow",
