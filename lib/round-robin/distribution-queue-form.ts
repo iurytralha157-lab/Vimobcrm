@@ -284,7 +284,11 @@ export function hydrateDistributionQueueFormData(
       operating_schedule: queue.settings?.operating_schedule,
       pool_notifications: queue.settings?.pool_notifications,
       ignore_availability: queue.settings?.operating_schedule ? false : queue.settings?.ignore_availability,
-      redistribution_warning_minutes: queueWarningMinutes(queue.settings?.redistribution_timeout_minutes ?? 20, queue.settings?.redistribution_warning_minutes),
+      redistribution_warning_minutes: queueWarningMinutes(
+        queue.settings?.redistribution_timeout_minutes ?? 20,
+        queue.settings?.redistribution_warning_minutes,
+        queue.settings?.operating_schedule !== undefined,
+      ),
       auto_tag_ids: normalizeDistributionQueueAutoTagIds(
         queue.settings?.auto_tag_ids,
       ),

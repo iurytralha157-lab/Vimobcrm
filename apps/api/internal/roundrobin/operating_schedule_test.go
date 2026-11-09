@@ -84,6 +84,20 @@ func TestOperatingScheduleShortTimeoutAllowsDistributionWithoutWarning(t *testin
 	}
 }
 
+func TestLegacyQueueSettingsPreserveValidShortWarnings(t *testing.T) {
+	input := map[string]any{"enable_redistribution": true, "redistribution_timeout_minutes": 5, "redistribution_warning_minutes": 2}
+	revision := int64(1)
+	request := UpdateRequest{ExpectedRevision: &revision, Settings: patchObject{Set: true, Value: input}}
+	update, err := request.Validate()
+	if err != nil || update.Settings.Value["redistribution_warning_minutes"] != 2 {
+		t.Fatalf("legacy warning changed: %#v %v", update.Settings.Value, err)
+	}
+	input["redistribution_warning_minutes"] = 5
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("warning at the deadline was accepted: %v", err)
+	}
+}
+
 func TestOperatingScheduleCannotBeSilentlyDowngradedOrBypassMemberSchedule(t *testing.T) {
 	managed := map[string]any{"operating_schedule": syntheticOperatingSchedule(), "ignore_availability": true}
 	normalized, err := normalizeQueueSettings(managed)

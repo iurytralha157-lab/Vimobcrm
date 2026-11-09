@@ -89,6 +89,18 @@ export function useRoundRobins(options: { enabled?: boolean } = {}) {
   });
 }
 
+export function useManagedQueueSchedules(enabled: boolean) {
+  const organizationId = useActiveOrganizationId();
+  return useQuery({
+    queryKey: ['round-robin-capabilities', organizationId],
+    queryFn: () => roundRobinsAPI.managedSchedulesAvailable(requireOrganizationId(organizationId)),
+    enabled: Boolean(organizationId) && enabled,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    retry: false,
+  });
+}
+
 export function useRoundRobin(
   roundRobinId?: string | null,
   options: { enabled?: boolean } = {},

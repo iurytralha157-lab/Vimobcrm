@@ -823,6 +823,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/round-robin-meta-forms", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.ListMetaFormOptions)))
 	mux.Handle("GET /v1/round-robins", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.List)))
 	mux.Handle("POST /v1/round-robins", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Create)))
+	mux.Handle("GET /v1/round-robins/capabilities", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Capabilities)))
 	mux.Handle("GET /v1/round-robins/{id}", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Get)))
 	mux.Handle("PATCH /v1/round-robins/{id}", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Update)))
 	mux.Handle("DELETE /v1/round-robins/{id}", withActivePermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Delete)))

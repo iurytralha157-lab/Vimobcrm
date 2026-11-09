@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { DistributionQueueSettings } from "@/lib/round-robin/distribution-queue-form";
+import { queueWarningMinutes } from "@/lib/round-robin/operating-schedule";
 import { cn } from "@/lib/utils";
 
 interface DistributionQueueRedistributionSectionProps {
@@ -44,7 +45,8 @@ export function DistributionQueueRedistributionSection({
   onMaxAttemptsChange,
   onReentryBehaviorChange,
 }: DistributionQueueRedistributionSectionProps) {
-  const warningBlocked = (settings.redistribution_timeout_minutes ?? 20) <= 5;
+  const timeout = settings.redistribution_timeout_minutes ?? 20;
+  const warningBlocked = managedSchedule && timeout <= 5;
   return (
     <Collapsible
       data-tour="distribution-queue-redistribution"
@@ -157,7 +159,7 @@ export function DistributionQueueRedistributionSection({
                     aria-label="Prazo sem atendimento em minutos"
                     type="number"
                     min={1} max={10080} step={1}
-                    value={settings.redistribution_timeout_minutes ?? 20}
+                    value={timeout}
                     onChange={(event) =>
                       onTimeoutChange(
                         Math.min(10080, Math.max(1, Math.trunc(Number(event.target.value)) || 1)),
@@ -174,9 +176,9 @@ export function DistributionQueueRedistributionSection({
                     id="distribution-warning"
                     aria-label="Antecedência do aviso em minutos"
                     type="number"
-                    min={0} max={Math.max(0, (settings.redistribution_timeout_minutes ?? 20) - 1)} step={1}
+                    min={0} max={Math.max(0, timeout - 1)} step={1}
                     disabled={warningBlocked}
-                    value={warningBlocked ? 0 : settings.redistribution_warning_minutes ?? 5}
+                    value={queueWarningMinutes(timeout, settings.redistribution_warning_minutes, managedSchedule)}
                     onChange={(event) =>
                       onWarningChange(
                         Math.min(10079, Math.max(0, Math.trunc(Number(event.target.value)) || 0)),

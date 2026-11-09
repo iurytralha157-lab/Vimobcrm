@@ -16,6 +16,11 @@ export function queueScheduleError(value: unknown, required = false): string | n
   return parsed.success ? null : parsed.error.issues[0]?.message || 'Revise o horário semanal da fila.';
 }
 
+export function queueScheduleSaveError(value: unknown, available: boolean): string | null {
+  if (value !== undefined && !available) return 'A escala semanal ainda não está disponível.';
+  return queueScheduleError(value);
+}
+
 export function isQueueOperatingScheduleDraft(value: unknown): value is QueueOperatingSchedule {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const schedule = value as Record<string, unknown>;
@@ -24,6 +29,7 @@ export function isQueueOperatingScheduleDraft(value: unknown): value is QueueOpe
   return days.every((day) => day && Number.isInteger(day.day_of_week) && Number(day.day_of_week) >= 0 && Number(day.day_of_week) <= 6 && typeof day.is_active === 'boolean' && typeof day.is_all_day === 'boolean' && (day.start_time === null || typeof day.start_time === 'string') && (day.end_time === null || typeof day.end_time === 'string')) && new Set(days.map((day) => day.day_of_week)).size === 7;
 }
 
-export function queueWarningMinutes(timeout: number, warning?: number): number {
-  return timeout <= 5 ? 0 : Math.max(0, Math.min(timeout - 1, warning ?? 5));
+export function queueWarningMinutes(timeout: number, warning: number | undefined, managed: boolean): number {
+  if (managed && timeout <= 5) return 0;
+  return Math.max(0, Math.min(timeout - 1, warning ?? (timeout <= 5 ? 0 : 5)));
 }

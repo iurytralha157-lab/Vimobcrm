@@ -84,9 +84,13 @@ implantação.
 - A reabertura retoma apenas os leads ainda no bolsão, com o histórico do mesmo
   episódio. Uma janela realmente nova pode atribuir ao antigo corretor quando
   ele é a única alternativa, sem simular uma nova janela a cada polling.
-- Timeout de 1 a 5 minutos é permitido, com aviso prévio zero. Acima de 5,
-  o aviso positivo precisa ser menor que o prazo. UI, API, jobs e entrega
-  verificam a regra; aviso enfileirado pode ser cancelado por estado atual.
+- Filas com escala permitem prazo de 1 a 5 minutos com aviso prévio zero.
+  Filas legadas preservam avisos positivos já configurados para prazos curtos
+  quando o aviso antecede o prazo. A edição, o worker e a entrega validam o
+  prazo e a autorização atual.
+- O editor consulta `GET /v1/round-robins/capabilities`. Enquanto o banco
+  ainda não admite escalas gerenciadas, a criação de uma fila sem escala
+  permanece disponível. Com a capacidade confirmada, a escala é opcional.
 - Alertas do bolsão são opcionais, desligados por padrão, usam a outbox existente,
   payload mínimo, deduplicação e controle de frequência. A entrega revalida
   vínculo e contexto. Um alerta antigo não ganha validade só porque o lead

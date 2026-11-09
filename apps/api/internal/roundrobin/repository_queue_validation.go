@@ -144,8 +144,8 @@ func (repo Repository) validateUpdatedDestination(ctx context.Context, q queryer
 
 func (repo Repository) validateRedistributionCapacity(ctx context.Context, q queryer, organizationID string, roundRobinID string, settings map[string]any) error {
 	if _, managed := settings["operating_schedule"]; managed {
-		var ready bool
-		if err := q.QueryRow(ctx, `select pg_catalog.to_regprocedure('private.process_queue_runtime_batch(integer,timestamp with time zone)') is not null`).Scan(&ready); err != nil {
+		ready, err := managedQueueSchedulesAvailable(ctx, q)
+		if err != nil {
 			return err
 		}
 		if !ready {
@@ -167,6 +167,25 @@ func (repo Repository) validateRedistributionCapacity(ctx context.Context, q que
 		return fmt.Errorf("%w: automatic redistribution requires at least two active eligible users", ErrInvalidInput)
 	}
 	return nil
+}
+
+func managedQueueSchedulesAvailable(ctx context.Context, q queryer) (bool, error) {
+	var available bool
+	err := q.QueryRow(ctx, `select
+		pg_catalog.to_regprocedure('private.process_queue_runtime_batch(integer,timestamp with time zone)') is not null
+		and pg_catalog.to_regclass('private.queue_runtime_worker_cursors') is not null
+		and exists(select 1 from pg_catalog.pg_trigger
+		  where tgrelid='public.round_robins'::regclass and tgname='zz_validate_queue_operating_schedule'
+		    and tgenabled in ('O','A') and tgfoid=pg_catalog.to_regprocedure('private.validate_queue_operating_schedule_write()'))
+		and exists(select 1 from pg_catalog.pg_policy
+		  where polrelid='public.leads'::regclass and polname='queue_pool_private_read'
+		    and not polpermissive and polcmd='r' and 'authenticated'::regrole::oid=any(polroles))
+		and exists(select 1 from pg_catalog.pg_proc
+		  where oid=pg_catalog.to_regprocedure('private.can_read_lead_by_id(uuid)')
+		    and strpos(prosrc,'private.queue_pool_related_read_access(')>0)
+		and not exists(select 1 from pg_catalog.pg_trigger
+		  where tgrelid='public.round_robins'::regclass and tgname='queue_managed_admission_hold')`).Scan(&available)
+	return available, err
 }
 
 func (repo Repository) ensurePipeline(ctx context.Context, q queryer, organizationID string, pipelineID string) error {

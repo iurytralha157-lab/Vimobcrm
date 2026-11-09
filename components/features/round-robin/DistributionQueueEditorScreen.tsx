@@ -26,7 +26,7 @@ import {
   useCreateQueueAdvanced,
   useUpdateQueueAdvanced,
 } from "@/hooks/use-create-queue-advanced";
-import { useRoundRobin, type RoundRobin } from "@/hooks/use-round-robins";
+import { useManagedQueueSchedules, useRoundRobin, type RoundRobin } from "@/hooks/use-round-robins";
 import { useUserAccessScope } from "@/hooks/use-user-access-scope";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobAPIError } from "@/lib/api/vimob-client";
@@ -104,6 +104,7 @@ export default function DistributionQueueEditorScreen(
   const roundRobinQuery = useRoundRobin(queueId, {
     enabled: canManageDistribution && isEditing,
   });
+  const managedSchedules = useManagedQueueSchedules(canManageDistribution);
   const createQueue = useCreateQueueAdvanced();
   const updateQueue = useUpdateQueueAdvanced();
   const queue = isEditing ? roundRobinQuery.data : undefined;
@@ -223,6 +224,7 @@ export default function DistributionQueueEditorScreen(
         presentation="dialog"
         open
         queue={queue ? normalizeExistingDistributionQueue(queue) : null}
+        managedSchedulesAvailable={managedSchedules.isSuccess && managedSchedules.data}
         closeOnSave={!isEditing}
         onOpenChange={(open) => { if (!open) router.push(MANAGEMENT_DISTRIBUTION_URL); }}
         onReload={isEditing ? async () => normalizeExistingDistributionQueue(requireSuccessfulQueueReload(await roundRobinQuery.refetch())) : undefined}

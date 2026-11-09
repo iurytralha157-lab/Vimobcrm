@@ -86,6 +86,21 @@ func TestQueuePendingDeletionMapsGoAndSQLToConflict(t *testing.T) {
 	}
 }
 
+func TestManagedQueueCapabilityRequiresTenantAndHoldMapsToConflict(t *testing.T) {
+	read := httptest.NewRecorder()
+	(Handler{}).Capabilities(read, httptest.NewRequest(http.MethodGet, "/v1/round-robins/capabilities", nil))
+	if read.Code != http.StatusForbidden {
+		t.Fatalf("unscoped capability response = %d", read.Code)
+	}
+
+	write := httptest.NewRecorder()
+	writeRoundRobinError(write, httptest.NewRequest(http.MethodPost, "/v1/round-robins", nil),
+		&pgconn.PgError{Code: "23514", Message: "queue_managed_admission_on_hold"})
+	if write.Code != http.StatusConflict || !strings.Contains(write.Body.String(), "queue_managed_admission_on_hold") {
+		t.Fatalf("managed hold response = %d %s", write.Code, write.Body.String())
+	}
+}
+
 func TestQueueHistoryHydratesOnlyTenantParticipantsOrExplicitGlobalActors(t *testing.T) {
 	for _, fragment := range []string{
 		"actor.organization_id = $1::uuid or actor.role = 'super_admin'",

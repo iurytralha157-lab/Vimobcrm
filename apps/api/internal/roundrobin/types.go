@@ -1145,7 +1145,7 @@ func normalizeRedistributionSettings(value map[string]any) (map[string]any, erro
 	if timeout < 1 || timeout > 10080 {
 		return nil, fmt.Errorf("%w: redistribution timeout must be between 1 and 10080 minutes", ErrInvalidInput)
 	}
-	if timeout <= 5 && warning > 0 {
+	if _, managed := settings["operating_schedule"]; managed && timeout <= 5 && warning > 0 {
 		return nil, fmt.Errorf("%w: timeouts of five minutes or less do not allow a prior warning", ErrInvalidInput)
 	}
 	if warning < 0 || warning >= timeout {

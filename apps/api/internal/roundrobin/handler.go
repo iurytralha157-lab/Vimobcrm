@@ -74,6 +74,19 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, map[string][]RoundRobin{"data": items})
 }
 
+func (handler Handler) Capabilities(w http.ResponseWriter, r *http.Request) {
+	if _, ok := tenant.RequireOrganizationContext(w, r); !ok {
+		return
+	}
+	available, err := managedQueueSchedulesAvailable(r.Context(), handler.repo.db.Pool())
+	if err != nil {
+		writeRoundRobinError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpserver.WriteJSON(w, http.StatusOK, map[string]map[string]bool{"data": {"managedSchedules": available}})
+}
+
 func (handler Handler) Get(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
@@ -400,6 +413,10 @@ func (handler Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 
 func writeRoundRobinError(w http.ResponseWriter, r *http.Request, err error) {
 	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) && postgresError.Code == "23514" && postgresError.Message == "queue_managed_admission_on_hold" {
+		httpserver.WriteError(w, r, http.StatusConflict, "queue_managed_admission_on_hold", "A escala semanal ainda não está disponível. Salve a fila sem escala ou tente novamente mais tarde.")
+		return
+	}
 	if errors.As(err, &postgresError) && postgresError.Code == "23514" && postgresError.Message == "queue_distribution_pending" {
 		err = ErrQueueDistributionPending
 	}

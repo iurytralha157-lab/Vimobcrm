@@ -426,8 +426,9 @@ const roundRobinSettingsSchema = z.object({
 }).passthrough().superRefine((settings, context) => {
   const timeout = settings.redistribution_timeout_minutes ?? 20;
   const warning = settings.redistribution_warning_minutes ?? (timeout <= 5 ? 0 : 5);
-  if ((timeout <= 5 && warning !== 0) || (timeout > 5 && warning >= timeout)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['redistribution_warning_minutes'], message: timeout <= 5 ? 'Prazos de até 5 minutos não permitem aviso prévio.' : 'O aviso deve ocorrer antes do prazo de redistribuição.' });
+  const managedShortTimeout = settings.operating_schedule !== undefined && timeout <= 5;
+  if ((managedShortTimeout && warning !== 0) || warning >= timeout) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['redistribution_warning_minutes'], message: managedShortTimeout ? 'Prazos de até 5 minutos não permitem aviso prévio.' : 'O aviso deve ocorrer antes do prazo de redistribuição.' });
   }
 })
 const roundRobinShape = {

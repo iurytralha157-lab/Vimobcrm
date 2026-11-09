@@ -210,3 +210,13 @@ test("queue history supports bounded offset pagination without changing its data
   assert.equal(limit.schema.maximum, 100);
   assert.equal(history.responses["200"].content["application/json"].schema.$ref, "#/components/schemas/DistributionQueueHistoryListResponse");
 });
+
+test("queue capabilities report whether an optional managed schedule can be admitted", () => {
+  const path = document.paths["/v1/round-robins/capabilities"];
+  const valid = validator.compile(path.get.responses["200"].content["application/json"].schema);
+  assert.deepEqual(Object.keys(path), ["get"]);
+  assert.equal(valid({ data: { managedSchedules: false } }), true);
+  assert.equal(valid({ data: { managedSchedules: true } }), true);
+  assert.equal(valid({ data: { managedSchedules: "true" } }), false);
+  assert.equal(valid({ data: {} }), false);
+});

@@ -71,7 +71,7 @@ import { useDistributionEditorVisit } from "@/hooks/round-robin/use-distribution
 import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
 import { VimobAPIError } from "@/lib/api/vimob-client";
 import { DistributionQueueScheduleSection } from "@/components/features/round-robin/distribution-queue-editor/DistributionQueueScheduleSection";
-import { queueScheduleError, queueWarningMinutes } from "@/lib/round-robin/operating-schedule";
+import { queueScheduleSaveError, queueWarningMinutes } from "@/lib/round-robin/operating-schedule";
 import { isValidDistributionQueueName } from "@/lib/round-robin/queue-name";
 import { distributionQueueAutoReplyError } from "@/lib/round-robin/whatsapp-auto-reply-validation";
 import { countDistributionQueueInputCharacters } from "@/lib/round-robin/input-text";
@@ -86,6 +86,7 @@ interface DistributionQueueEditorProps {
   aside?: ReactNode;
   summary?: ReactNode;
   closeOnSave?: boolean;
+  managedSchedulesAvailable?: boolean;
   allowedTeamIds?: string[];
   allowedUserIds?: string[];
   allowedPipelineIds?: string[];
@@ -134,6 +135,7 @@ export function DistributionQueueEditor({
   aside,
   summary,
   closeOnSave = true,
+  managedSchedulesAvailable = false,
   allowedTeamIds,
   allowedUserIds,
   allowedPipelineIds,
@@ -637,7 +639,13 @@ export function DistributionQueueEditor({
     }
   };
 
+  const scheduleError = queueScheduleSaveError(formData.settings.operating_schedule, managedSchedulesAvailable);
   const submitQueueForm = async (payload: DistributionQueueFormData, creationReplay: boolean) => {
+    const payloadScheduleError = queueScheduleSaveError(payload.settings.operating_schedule, managedSchedulesAvailable);
+    if (payloadScheduleError) {
+      reportSaveError(payloadScheduleError);
+      return;
+    }
     const operation = beginOperation();
     if (!operation) return;
     setFormData(payload);
@@ -690,7 +698,6 @@ export function DistributionQueueEditor({
       await submitQueueForm(pendingCreationSnapshot, true);
       return;
     }
-    const scheduleError = queueScheduleError(formData.settings.operating_schedule, !queue);
     if (scheduleError) { toast.error(scheduleError); return; }
     if (blockingReferenceDataError) {
       toast.error(
@@ -872,7 +879,7 @@ export function DistributionQueueEditor({
     }
     if (formData.settings.enable_redistribution) {
       const timeout = formData.settings.redistribution_timeout_minutes ?? 20;
-      const warning = queueWarningMinutes(timeout, formData.settings.redistribution_warning_minutes);
+      const warning = queueWarningMinutes(timeout, formData.settings.redistribution_warning_minutes, formData.settings.operating_schedule !== undefined);
       if (timeout < 1 || timeout > 10080) {
         toast.error(
           "O prazo de redistribuicao deve ficar entre 1 minuto e 7 dias.",
@@ -920,7 +927,11 @@ export function DistributionQueueEditor({
     const sanitizedSettings = {
       ...formData.settings,
       ignore_availability: formData.settings.operating_schedule ? false : formData.settings.ignore_availability,
-      redistribution_warning_minutes: queueWarningMinutes(formData.settings.redistribution_timeout_minutes ?? 20, formData.settings.redistribution_warning_minutes),
+      redistribution_warning_minutes: queueWarningMinutes(
+        formData.settings.redistribution_timeout_minutes ?? 20,
+        formData.settings.redistribution_warning_minutes,
+        formData.settings.operating_schedule !== undefined,
+      ),
       auto_tag_ids: normalizeDistributionQueueAutoTagIds(
         formData.settings.auto_tag_ids,
       ),
@@ -952,7 +963,7 @@ export function DistributionQueueEditor({
   };
   const hasValidCriteria = hasValidQueueCriteria(formData, queue);
   const hasValidDestination = hasValidQueueDestination(formData, queue);
-  const hasValidSchedule = queueScheduleError(formData.settings.operating_schedule, !queue) === null;
+  const hasValidSchedule = scheduleError === null;
   const hasRequiredMembers = !formData.is_active || formData.members.some((member) => member.isActive !== false);
   const hasRedistributionCapacity = hasQueueRedistributionCapacity(formData.settings, eligibleRedistributionUserCount);
   const hasUnsavedChanges =
@@ -1066,8 +1077,8 @@ export function DistributionQueueEditor({
       toast.error("Adicione pelo menos um critério de entrada preenchido.");
       return;
     }
-    if (displayedStep === "schedule" && !hasValidSchedule) {
-      toast.error(queueScheduleError(formData.settings.operating_schedule, !queue));
+    if (displayedStep === "schedule" && scheduleError) {
+      toast.error(scheduleError);
       return;
     }
     if (displayedStep === "members" && !hasRequiredMembers) {
@@ -1349,11 +1360,14 @@ export function DistributionQueueEditor({
           )}
           {displayedStep === "schedule" && (
             <DistributionQueueScheduleSection
-              isLegacy={Boolean(queue)}
+              available={managedSchedulesAvailable}
               schedule={formData.settings.operating_schedule}
               poolNotificationsEnabled={formData.settings.pool_notifications?.enabled === true}
               onPoolNotificationsChange={(enabled) => updateDraft((previous) => ({ ...previous, settings: { ...previous.settings, pool_notifications: { enabled } } }))}
               onChange={(schedule) => updateDraft((previous) => ({ ...previous, settings: { ...previous.settings, operating_schedule: schedule, ignore_availability: false } }))}
+              onClear={queue?.settings?.operating_schedule === undefined && !pendingCreationSnapshot
+                ? () => updateDraft((previous) => ({ ...previous, settings: { ...previous.settings, operating_schedule: undefined, ignore_availability: queue?.settings?.ignore_availability, pool_notifications: queue?.settings?.pool_notifications } }))
+                : undefined}
             />
           )}
           {displayedStep === "auto-tags" && (
@@ -1382,8 +1396,11 @@ export function DistributionQueueEditor({
                     enable_redistribution: enableRedistribution,
                     redistribution_timeout_minutes:
                       previous.settings.redistribution_timeout_minutes ?? 20,
-                    redistribution_warning_minutes:
-                      queueWarningMinutes(previous.settings.redistribution_timeout_minutes ?? 20, previous.settings.redistribution_warning_minutes),
+                    redistribution_warning_minutes: queueWarningMinutes(
+                      previous.settings.redistribution_timeout_minutes ?? 20,
+                      previous.settings.redistribution_warning_minutes,
+                      previous.settings.operating_schedule !== undefined,
+                    ),
                     redistribution_max_attempts:
                       previous.settings.redistribution_max_attempts ?? 10,
                   },
@@ -1396,7 +1413,11 @@ export function DistributionQueueEditor({
                     ...previous.settings,
                     redistribution_timeout_minutes:
                       redistributionTimeoutMinutes,
-                    redistribution_warning_minutes: queueWarningMinutes(redistributionTimeoutMinutes, previous.settings.redistribution_warning_minutes),
+                    redistribution_warning_minutes: queueWarningMinutes(
+                      redistributionTimeoutMinutes,
+                      previous.settings.redistribution_warning_minutes,
+                      previous.settings.operating_schedule !== undefined,
+                    ),
                   },
                 }))
               }
@@ -1405,8 +1426,11 @@ export function DistributionQueueEditor({
                   ...previous,
                   settings: {
                     ...previous.settings,
-                    redistribution_warning_minutes:
-                      queueWarningMinutes(previous.settings.redistribution_timeout_minutes ?? 20, redistributionWarningMinutes),
+                    redistribution_warning_minutes: queueWarningMinutes(
+                      previous.settings.redistribution_timeout_minutes ?? 20,
+                      redistributionWarningMinutes,
+                      previous.settings.operating_schedule !== undefined,
+                    ),
                   },
                 }))
               }

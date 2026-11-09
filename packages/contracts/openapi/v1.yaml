@@ -7450,6 +7450,34 @@ paths:
                 $ref: "#/components/schemas/APIErrorEnvelope"
         default:
           $ref: "#/components/responses/APIError"
+  /v1/round-robins/capabilities:
+    get:
+      summary: Read queue management capabilities
+      description: >-
+        Requires distribution_manage and an active organization. Reports
+        whether the database can admit an optional managed schedule. An
+        unavailable schedule does not prevent a legacy queue from being saved.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Queue management capabilities.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [managedSchedules]
+                    properties:
+                      managedSchedules:
+                        type: boolean
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
   /v1/round-robins/{id}:
     get:
       summary: Get a visible round-robin queue

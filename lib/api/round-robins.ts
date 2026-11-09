@@ -235,6 +235,14 @@ export type RoundRobinHistoryEvent = {
 }
 
 export const roundRobinsAPI = {
+  async managedSchedulesAvailable(organizationId: string) {
+    const response = await vimobAPIRequest<{ data?: { managedSchedules?: unknown } }>(
+      '/v1/round-robins/capabilities',
+      { organizationId },
+    )
+    return response.data?.managedSchedules === true
+  },
+
   async getMetaFormOptions(organizationId?: string) {
     const response = await vimobAPIRequest<APIListResponse<APIRoundRobinMetaFormOption>>(
       '/v1/round-robin-meta-forms',

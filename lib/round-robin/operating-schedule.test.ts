@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createQueueOperatingSchedule, isQueueOperatingScheduleDraft, queueScheduleError, queueWarningMinutes } from './operating-schedule';
+import { createQueueOperatingSchedule, isQueueOperatingScheduleDraft, queueScheduleError, queueScheduleSaveError, queueWarningMinutes } from './operating-schedule';
 import { queueOperatingScheduleSchema } from '@/lib/validation/queue-runtime';
-import { createRoundRobinInputSchema } from '@/lib/validation/crm-support';
+import { createRoundRobinInputSchema, updateRoundRobinInputSchema } from '@/lib/validation/crm-support';
 import { hydrateDistributionQueueFormData } from './distribution-queue-form';
 
 test('new draft chooses no timezone, weekday or hour and legacy read does not activate a calendar', () => {
@@ -45,13 +45,38 @@ test('overnight and explicit all-day retain their intended contract', () => {
   assert.equal(queueScheduleError(schedule), null);
 });
 
-test('timeout 1 through 5 stays allowed with warning zero; greater timeouts preserve optional warnings', () => {
-  for (const timeout of [1, 4, 5]) {
-    assert.equal(queueWarningMinutes(timeout, 5), 0);
-    assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Fila QA', settings: { enable_redistribution: true, redistribution_timeout_minutes: timeout, redistribution_warning_minutes: 0 } }).success, true);
-    assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Fila QA', settings: { redistribution_timeout_minutes: timeout, redistribution_warning_minutes: 1 } }).success, false);
+test('managed timeouts of 1 through 5 require warning zero', () => {
+  const schedule = { ...createQueueOperatingSchedule(), timezone: 'UTC' };
+  for (const timeout of [1, 2, 3, 4, 5]) {
+    const settings = { operating_schedule: schedule, enable_redistribution: true, redistribution_timeout_minutes: timeout, redistribution_warning_minutes: 0 };
+    assert.equal(queueWarningMinutes(timeout, 5, true), 0);
+    assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Fila QA', settings }).success, true);
+    assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Fila QA', settings: { ...settings, redistribution_warning_minutes: 1 } }).success, false);
   }
-  assert.equal(queueWarningMinutes(6, 0), 0);
-  assert.equal(queueWarningMinutes(6, 5), 5);
+  assert.equal(queueWarningMinutes(6, 0, true), 0);
+  assert.equal(queueWarningMinutes(6, 5, true), 5);
   assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Fila QA', settings: { redistribution_timeout_minutes: 6, redistribution_warning_minutes: 6 } }).success, false);
+});
+
+test('editing a legacy queue preserves a valid configured short warning in its payload', () => {
+  const form = hydrateDistributionQueueFormData({ id: 'legacy', settings: {
+    enable_redistribution: true, redistribution_timeout_minutes: 5, redistribution_warning_minutes: 2,
+  } }, []);
+  assert.equal(form.settings.redistribution_warning_minutes, 2);
+  assert.equal(queueWarningMinutes(5, form.settings.redistribution_warning_minutes, false), 2);
+  assert.equal(queueWarningMinutes(5, undefined, false), 0);
+  assert.equal(queueWarningMinutes(1, 1, false), 0);
+  const request = updateRoundRobinInputSchema.parse({ expectedRevision: 1, settings: form.settings });
+  assert.equal(request.settings?.redistribution_warning_minutes, 2);
+  assert.equal(updateRoundRobinInputSchema.safeParse({ expectedRevision: 1, settings: { ...form.settings, redistribution_warning_minutes: 5 } }).success, false);
+});
+
+test('new queues can save without a schedule while managed admission is unavailable', () => {
+  const schedule = { ...createQueueOperatingSchedule(), timezone: 'UTC' };
+  assert.equal(queueScheduleSaveError(undefined, false), null);
+  assert.ok(queueScheduleSaveError(schedule, false));
+  assert.equal(queueScheduleSaveError(undefined, true), null);
+  assert.equal(queueScheduleSaveError(schedule, true), null);
+  assert.ok(queueScheduleSaveError({ ...schedule, timezone: '' }, true));
+  assert.equal(createRoundRobinInputSchema.safeParse({ name: 'Nova fila', settings: {} }).success, true);
 });

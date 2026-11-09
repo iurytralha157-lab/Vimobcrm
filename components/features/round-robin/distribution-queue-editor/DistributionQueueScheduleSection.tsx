@@ -10,15 +10,22 @@ import type { QueueOperatingDay, QueueOperatingSchedule } from '@/lib/validation
 
 interface Props {
   schedule?: QueueOperatingSchedule;
-  isLegacy: boolean;
+  available: boolean;
   onChange: (schedule: QueueOperatingSchedule) => void;
+  onClear?: () => void;
   poolNotificationsEnabled?: boolean;
   onPoolNotificationsChange: (enabled: boolean) => void;
 }
 
-export function DistributionQueueScheduleSection({ schedule, isLegacy, onChange, poolNotificationsEnabled = false, onPoolNotificationsChange }: Props) {
+export function DistributionQueueScheduleSection({ schedule, available, onChange, onClear, poolNotificationsEnabled = false, onPoolNotificationsChange }: Props) {
+  if (!available) return (
+    <section data-tour="distribution-queue-schedule" className="space-y-3 text-[12px]">
+      <p className="text-muted-foreground">A escala semanal ainda não está disponível. Você pode salvar uma fila sem escala semanal.</p>
+      {schedule !== undefined && onClear && <Button type="button" variant="outline" onClick={onClear}>Continuar sem escala</Button>}
+    </section>
+  );
   if (schedule !== undefined && !isQueueOperatingScheduleDraft(schedule)) return <section className="space-y-3"><p role="alert" className="text-[11px] text-destructive">A escala salva está em um formato inválido. Defina os horários para revisar a configuração antes de salvar.</p><Button type="button" variant="outline" onClick={() => onChange(createQueueOperatingSchedule())}>Revisar horário da fila</Button></section>;
-  const error = queueScheduleError(schedule, !isLegacy);
+  const error = queueScheduleError(schedule);
   const setDay = (dayOfWeek: number, patch: Partial<QueueOperatingDay>) => {
     if (!schedule) return;
     onChange({ ...schedule, days: schedule.days.map((day) => day.day_of_week === dayOfWeek ? { ...day, ...patch } : day) });
@@ -29,11 +36,12 @@ export function DistributionQueueScheduleSection({ schedule, isLegacy, onChange,
       <p className="text-[11px] leading-5 text-muted-foreground">A entrada de leads continua aberta. Fora destes horários, os leads aguardam no bolsão desta fila. A escala dos integrantes de equipes também é respeitada na distribuição automática.</p>
       {!schedule ? (
         <div className="space-y-3 rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-          <p className="text-[11px] text-muted-foreground">Esta fila ainda usa o funcionamento anterior. Seus horários serão preservados até você definir e salvar uma escala semanal.</p>
+          <p className="text-[11px] text-muted-foreground">Sem escala semanal, a fila usa o funcionamento padrão. A escala é opcional.</p>
           <Button type="button" variant="outline" onClick={() => onChange(createQueueOperatingSchedule())}>Definir horário da fila</Button>
         </div>
       ) : (
         <>
+          {onClear && <Button type="button" variant="outline" onClick={onClear}>Continuar sem escala</Button>}
           <div className="space-y-1.5">
             <Label htmlFor="queue-operating-timezone">Fuso horário</Label>
             <Input id="queue-operating-timezone" value={schedule.timezone} maxLength={100} list="queue-operating-timezones" placeholder="Ex.: America/Sao_Paulo" onChange={(event) => onChange({ ...schedule, timezone: event.target.value })} className="h-10 border-0 bg-[var(--app-surface-soft)]" />
