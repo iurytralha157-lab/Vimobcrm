@@ -74,12 +74,21 @@ const h=window.h={now:${now},auth:{profile:{id:'user-a'},activeOrganization:{org
 };
 Date.now=()=>h.now;
 if(options.muted!==undefined)localStorage.setItem('vimob:new-lead-sound:muted:v1:user-a',String(options.muted));
-window.AudioContext=class {
+if(options.nativeAudio){
+ const NativeAudioContext=window.AudioContext;
+ window.AudioContext=class extends NativeAudioContext {
+   constructor(){super();h.nativeAudio=this;const analyser=this.createAnalyser();analyser.fftSize=1024;analyser.connect(this.destination);this.probe=analyser;
+     const waveform=new Float32Array(analyser.fftSize);h.peak=0;setInterval(()=>{analyser.getFloatTimeDomainData(waveform);for(const sample of waveform)h.peak=Math.max(h.peak,Math.abs(sample));},10);}
+   createGain(){const gain=super.createGain(),connect=gain.connect.bind(gain);gain.connect=(target,...args)=>connect(target===this.destination?this.probe:target,...args);return gain;}
+   createOscillator(){const oscillator=super.createOscillator(),start=oscillator.start.bind(oscillator);
+     oscillator.start=(at)=>{h.firstNote??=at;return start(at);};return oscillator;}
+ };
+}else window.AudioContext=class {
  constructor(){this.state='suspended';this.currentTime=0;this.destination={};h.contexts.push(this);}
  async resume(){if(h.audioFail==='resume')throw Error('Blocked audio');
    if(h.audioHold)await new Promise(resolve=>h.audioResolutions.push(resolve));this.state='running';this.onstatechange?.();}
  createOscillator(){if(h.audioFail==='oscillator')throw Error('Device unavailable');return{frequency:{value:0},
-   connect(){},disconnect(){},start(){h.starts++;},stop(){queueMicrotask(()=>this.onended?.());}};}
+   connect(){},disconnect(){},start(){h.starts++;},stop(){if(h.audioFail!=='completion')queueMicrotask(()=>this.onended?.());}};}
  createGain(){return{gain:{setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},disconnect(){}};}
 };
 function Surface({route}){const sound=useNotificationSound();React.useLayoutEffect(()=>{h.sound=sound;});
@@ -221,6 +230,40 @@ test('audio rejection and device errors leave the test control usable and allow 
   await page.evaluate(() => { window.h.audioFail = undefined; }); await button.click();
   await page.getByRole('status').filter({ hasText: 'Som reproduzido.' }).waitFor(); await sounded([page], 2);
   await publish(page, [row('recovered')]); await sounded([page], 4);
+});
+
+test('Chromium renders an audible-level PCM signal before confirming the manual tone and for a new lead', async t => {
+  const [page] = await open(t, { nativeAudio: true });
+  await openMenu(page);
+  await page.evaluate(() => {
+    const status = document.querySelector('[role="status"]');
+    new MutationObserver((_, observer) => {
+      if (!status.textContent.includes('Som reproduzido.')) return;
+      window.h.confirmedAfter = window.h.nativeAudio.currentTime - window.h.firstNote;
+      observer.disconnect();
+    }).observe(status, { childList: true, characterData: true, subtree: true });
+  });
+  await page.getByRole('menuitem', { name: 'Testar som' }).click();
+  await page.getByRole('status').filter({ hasText: 'Som reproduzido.' }).waitFor();
+  assert.ok(await page.evaluate(() => window.h.confirmedAfter) >= .35, 'wait for the native tone before confirming');
+  assert.ok(await page.evaluate(() => window.h.peak) > .12, 'the manual tone reaches the Chromium output graph');
+  await page.evaluate(() => { window.h.peak = 0; });
+  await publish(page, [row('native-signal')]);
+  await page.waitForFunction(() => window.h.peak > .12);
+});
+
+test('a started tone that never completes does not report success or trap the test control', async t => {
+  const [page] = await open(t, { audioFail: 'completion' });
+  await openMenu(page);
+  const button = page.getByRole('menuitem', { name: 'Testar som' });
+  await button.click();
+  await sounded([page], 2);
+  await page.getByRole('status').filter({ hasText: 'Não foi possível reproduzir' }).waitFor();
+  assert.equal(await button.isDisabled(), false);
+  await page.evaluate(() => { window.h.audioFail = undefined; });
+  await button.click();
+  await page.getByRole('status').filter({ hasText: 'Som reproduzido.' }).waitFor();
+  await sounded([page], 4);
 });
 
 test('scope replacement and unmount fence queued sound claims and obsolete callbacks', async t => {

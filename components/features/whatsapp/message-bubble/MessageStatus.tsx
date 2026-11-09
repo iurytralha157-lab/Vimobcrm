@@ -10,27 +10,28 @@ export function MessageStatus({ fromMe, status, compact = false }: MessageStatus
   if (!fromMe) return null;
 
   const sizeClassName = compact ? "w-[12px] h-[12px]" : "w-[16px] h-[16px]";
+  const iconClassName = `${sizeClassName} shrink-0 motion-safe:transition-[color,opacity] motion-safe:duration-150`;
 
   switch (status) {
     case "read":
     case "played":
-      return <CheckCheck className={`${sizeClassName} text-blue-400`} role="img" aria-label="Mensagem lida" />;
+      return <CheckCheck className={`${iconClassName} text-blue-400`} role="img" aria-label="Mensagem lida" />;
     case "delivered":
-      return <CheckCheck className={`${sizeClassName} opacity-60`} role="img" aria-label="Mensagem entregue" />;
+      return <CheckCheck className={`${iconClassName} opacity-60`} role="img" aria-label="Mensagem entregue" />;
     case "sent":
-      return <Check className={`${sizeClassName} opacity-60`} role="img" aria-label="Mensagem enviada" />;
+      return <Check className={`${iconClassName} opacity-60`} role="img" aria-label="Mensagem enviada" />;
     case "queued":
     case "pending":
-      return <Clock className={`${sizeClassName} opacity-60 animate-pulse motion-reduce:animate-none`} role="img" aria-label="Mensagem na fila" />;
+      return <Clock className={`${iconClassName} opacity-60`} role="img" aria-label="Mensagem na fila" />;
     case "sending":
     case "confirming":
-      return <Clock className={`${sizeClassName} text-amber-300 animate-pulse motion-reduce:animate-none`} role="img" aria-label="Confirmando envio" />;
+      return <Clock className={`${iconClassName} text-amber-300`} role="img" aria-label="Confirmando envio" />;
     case "unconfirmed":
-      return <Clock className={`${sizeClassName} text-amber-300`} role="img" aria-label="Envio não confirmado" />;
+      return <Clock className={`${iconClassName} text-amber-300`} role="img" aria-label="Envio não confirmado" />;
     case "failed":
     case "error":
-      return <AlertCircle className={`${sizeClassName} text-red-300`} role="img" aria-label="Falha no envio" />;
+      return <AlertCircle className={`${iconClassName} text-red-300`} role="img" aria-label="Falha no envio" />;
     default:
-      return <Clock className={`${sizeClassName} opacity-60`} role="img" aria-label="Estado do envio indisponível" />;
+      return <Clock className={`${iconClassName} opacity-60`} role="img" aria-label="Estado do envio indisponível" />;
   }
 }

@@ -498,10 +498,10 @@ após um corte anterior, veta qualquer token remanescente na sessão.
    zerar, continuar o dreno e não executar a ativação.
 
 
-## Consulta de leads ativos na tela Conversas
+## Consulta de leads ativos na tela Conversas e no balão
 
-Na tela Conversas, o cliente compatível envia `includeSupervisoryLeads=true`
-à listagem e ao catálogo de filtros. Em **Todos os números**, a API pode
+A tela Conversas e o balão enviam `includeSupervisoryLeads=true` à lista.
+A tela Conversas também envia ao catálogo de filtros. Em **Todos os números**, a API pode
 mostrar também conversas diretas de leads em aberto que o usuário já pode ler
 no CRM. O escopo é da organização atual e segue as permissões de lead: acesso
 da organização, das equipes que o usuário lidera ou dos leads atribuídos ao

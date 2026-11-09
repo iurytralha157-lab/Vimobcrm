@@ -37,18 +37,23 @@ const source = ts.createSourceFile(hookPath, readFileSync(hookPath, 'utf8'), ts.
 const statements = source.statements.filter(node => ts.isFunctionDeclaration(node) ? names.has(node.name?.text)
   : ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => names.has(declaration.name.getText(source))));
 assert.equal(statements.length, names.size);
-const code = ts.transpileModule(statements.map(node => node.getText(source)).join('\n'), {
+const activityPath = resolve(repository, 'hooks/whatsapp/use-whatsapp-lead-activity-realtime.ts');
+const activitySource = ts.createSourceFile(activityPath, readFileSync(activityPath, 'utf8'), ts.ScriptTarget.Latest, true);
+const activityHook = activitySource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useWhatsAppLeadActivityRealtime');
+assert.ok(activityHook);
+const code = ts.transpileModule([...statements.map(node => node.getText(source)), activityHook.getText(activitySource)].join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 const scope = { organizationId: 'org-a', userId: 'actor-a', accessScope: 'sid-a:permissions-a' };
-function fixture(t, { pages = 2, currentScope = scope, filters = {}, sharedClient } = {}) {
+function fixture(t, { pages = 2, currentScope = scope, filters = {}, sharedClient, includeSupervisoryLeads = false } = {}) {
   const client = sharedClient || new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const requests = [];
   let hookOptions;
   let disposeLead;
   const events = new EventTarget();
+  const document = { visibilityState: 'visible' };
   const bindings = { ...cache, ...refresh, ...refreshHelpers, ...inboxAccess, client, scope: currentScope, exports: {},
-    window: events, useQueryClient: () => client, useCanSubscribeWhatsAppRealtime: () => true,
+    window: events, document, useQueryClient: () => client, useCanSubscribeWhatsAppRealtime: () => true,
     useEffect: run => { disposeLead = run(); }, createClient: () => ({}),
     getPrivateBroadcastRegistry: () => ({ acquire: () => ({ release() {} }) }), reportWhatsAppRealtimeDiagnostic() {},
     useWhatsAppQueryScope: () => currentScope, useInfiniteQuery: value => { hookOptions = value; return {}; },
@@ -57,10 +62,14 @@ function fixture(t, { pages = 2, currentScope = scope, filters = {}, sharedClien
       options.signal.addEventListener('abort', () => { request.aborted = true; }, { once: true });
       requests.push(request);
     }) } };
-  const implementation = Function(...Object.keys(bindings), `${code};useWhatsAppConversations(undefined,${JSON.stringify(filters)},['session-a'],2);
+  const sessionIds = includeSupervisoryLeads ? 'undefined' : "['session-a']";
+  const implementation = Function(...Object.keys(bindings), `${code};useWhatsAppConversations(undefined,${JSON.stringify(filters)},${sessionIds},2,{includeSupervisoryLeads:${includeSupervisoryLeads}});
     return {wake:()=>{scheduleWhatsAppRealtimeRefresh(client,scope,{refreshConversations:true});getWhatsAppRealtimeRefreshCoordinator(client).flush(getWhatsAppRealtimeScopeKey(scope));},
       flush:()=>getWhatsAppRealtimeRefreshCoordinator(client).flush(getWhatsAppRealtimeScopeKey(scope)),
-      subscribeLead:()=>useWhatsAppLeadRealtime(true,['lead-a']),clear:()=>getWhatsAppRealtimeRefreshCoordinator(client).clear()};`)(...Object.values(bindings));
+      subscribeLead:()=>useWhatsAppLeadRealtime(true,['lead-a']),
+      subscribeActivity:(leadId,conversationId)=>useWhatsAppLeadActivityRealtime(true,leadId,conversationId),
+      scheduleMessageWake:(conversationId)=>scheduleWhatsAppRealtimeRefresh(client,scope,{refreshMessages:true,conversationIds:[conversationId]}),
+      clear:()=>getWhatsAppRealtimeRefreshCoordinator(client).clear()};`)(...Object.values(bindings));
   const key = hookOptions.queryKey;
   const seed = { pages: Array.from({ length: pages }, (_, index) => ({ conversations: [{ id: `cached-${index}`, marker: 'cached' }],
     nextCursor: index < pages - 1 ? `cursor-${index + 1}` : null })), pageParams: Array.from({ length: pages }, (_, index) => index ? `cursor-${index}` : null) };
@@ -73,11 +82,53 @@ function fixture(t, { pages = 2, currentScope = scope, filters = {}, sharedClien
   };
   const owner = observe();
   t.after(() => { disposeLead?.(); implementation.clear(); observers.forEach(value => value.stop()); if (!sharedClient) client.clear(); });
-  return { client, key, requests, wake: implementation.wake, flush: implementation.flush, observe, owner, seed, events, subscribeLead: implementation.subscribeLead,
+  return { client, key, requests, wake: implementation.wake, flush: implementation.flush, observe, owner, seed, events, document,
+    subscribeLead: implementation.subscribeLead, subscribeActivity: implementation.subscribeActivity,
+    scheduleMessageWake: implementation.scheduleMessageWake,
     data: () => client.getQueryData(key),
     complete(index, marker, nextCursor = null) { requests[index].resolve({ conversations: [{ id: `${marker}-${requests[index].params.cursor || 'head'}`, marker }], nextCursor }); },
     async settle() { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); },
   };
+}
+
+for (const includeSupervisoryLeads of [false, true]) {
+  test(`backend lead activity refreshes ${includeSupervisoryLeads ? 'supervisory' : 'owner'} data without clearing it or reauthorizing another chat`, async t => {
+    const f = fixture(t, { pages: 1, includeSupervisoryLeads });
+    const threadWakes = [];
+    f.events.addEventListener(cache.WHATSAPP_MESSAGES_RECONCILE_EVENT, event => threadWakes.push(event.detail));
+    f.subscribeActivity('lead-a', 'conversation-a');
+    const emit = (leadId, organizationId = scope.organizationId) =>
+      f.events.dispatchEvent(new CustomEvent('vimob:lead-realtime-change', {
+        detail: { organizationId, leadId, reason: 'lead.whatsapp_activity' },
+      }));
+    emit('lead-a', 'org-b'); f.flush();
+    f.document.visibilityState = 'hidden';
+    emit('lead-a'); f.flush();
+    assert.equal(f.requests.length, 0);
+    assert.deepEqual(threadWakes, []);
+
+    f.document.visibilityState = 'visible';
+    emit('lead-b'); f.flush();
+    assert.equal(f.requests.length, 1, 'other visible leads can wake the list');
+    assert.deepEqual(threadWakes, [], 'unselected lead must not wake the thread');
+    assert.strictEqual(f.data(), f.seed);
+    f.complete(0, 'other-lead'); await f.settle();
+
+    emit('lead-a'); emit('lead-a'); f.flush();
+    assert.equal(f.requests.length, 2, 'duplicate wakes coalesce');
+    assert.equal(f.requests[1].params.includeSupervisoryLeads, includeSupervisoryLeads);
+    assert.equal(f.data().pages[0].conversations[0].marker, 'other-lead');
+    assert.deepEqual(threadWakes, [{ scope, conversationIds: ['conversation-a'] }]);
+    f.complete(1, 'incoming'); await f.settle();
+    assert.equal(f.data().pages[0].conversations[0].marker, 'incoming');
+
+    f.scheduleMessageWake('conversation-b');
+    emit('lead-a'); f.flush();
+    assert.deepEqual(threadWakes.at(-1), { scope, conversationIds: ['conversation-b', 'conversation-a'] },
+      'an overlapping Broadcast hint must retain both conversation IDs');
+    f.complete(2, 'mixed-wakes'); await f.settle();
+    assert.equal(f.data().pages[0].conversations[0].marker, 'mixed-wakes');
+  });
 }
 
 test('ten hints faster than a two-page read never abort it and publish a trailing canonical snapshot', async t => {

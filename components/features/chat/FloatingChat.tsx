@@ -46,6 +46,7 @@ import { getWhatsAppMessageGrouping, isWhatsAppMessageBlockStart } from "@/lib/w
 import { useCancelLeadExecutions, useLeadActiveAutomationExecutions } from "@/hooks/use-automations";
 import { ConversationAutomationAction } from "@/components/features/whatsapp/ConversationAutomationAction";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { useWhatsAppLeadActivityRealtime } from "@/hooks/whatsapp/use-whatsapp-lead-activity-realtime";
 import { projectWhatsAppCanonicalConversationPreview } from "@/lib/whatsapp-canonical-conversation-preview";
 import { useWhatsAppSenderAvatars } from "@/hooks/whatsapp/use-whatsapp-sender-avatars";
 import { useWhatsAppVisibleCanonicalPreviews } from "@/hooks/whatsapp/use-whatsapp-visible-canonical-previews";
@@ -361,6 +362,7 @@ export function FloatingChat() {
     intentGeneration,
     pendingMessageConversationId
   } = state;
+  const activeSupervisoryView = Boolean(activeConversation?.supervisory_lead_view);
   const isMobile = useIsMobile();
   const filterPanelLayout = useFilterPanelLayout();
   const presentationMinimized = filterPanelLayout.active || filterPanelLayout.present;
@@ -460,6 +462,7 @@ export function FloatingChat() {
   const preferredChatFocusRef = useRef<HTMLElement | null>(null);
   const restoringFromFilterPanelRef = useRef(false);
   const activeConversationRef = useRef(activeConversation);
+  const previousAccessScopeRef = useRef(whatsappQueryScope.accessScope);
   const activeConversationTenantRef = useRef(activeTenantKey);
   const wasChatVisibleRef = useRef(false);
   const accessReady = !modulesLoading && !permissionsLoading;
@@ -499,6 +502,12 @@ export function FloatingChat() {
     activeConversationRef.current = activeConversation;
     activeConversationTenantRef.current = activeTenantKey;
   }, [activeConversation, activeTenantKey]);
+
+  useLayoutEffect(() => {
+    if (previousAccessScopeRef.current === whatsappQueryScope.accessScope) return;
+    previousAccessScopeRef.current = whatsappQueryScope.accessScope;
+    if (activeSupervisoryView) clearActiveConversation();
+  }, [activeSupervisoryView, clearActiveConversation, whatsappQueryScope.accessScope]);
 
   useEffect(() => {
     const wasChatVisible = wasChatVisibleRef.current;
@@ -540,7 +549,8 @@ export function FloatingChat() {
     return () => { conversationVisitGenerationRef.current += 1; };
   }, [conversationVisitKey]);
   const { text: messageText, setText: setMessageText, clearConversation: clearConversationDraft, getConversationDraft } = useWhatsAppConversationDraft(
-    whatsappQueryScope, activeConversationId ?? null, activeConversationMessageScope.expectedLeadId,
+    whatsappQueryScope, activeSupervisoryView ? null : activeConversationId ?? null,
+    activeConversationMessageScope.expectedLeadId,
   );
   const activeUnlinkedExpiresAt = getWhatsAppUnlinkedExpiresAt(activeConversation);
   const closeUnavailableUnlinkedConversation = useCallback((conversationId: string, expectedLeadId?: string | null) => {
@@ -551,7 +561,7 @@ export function FloatingChat() {
 
     const currentLeadId = getWhatsAppConversationMessageScope(current).expectedLeadId;
     clearUnavailableWhatsAppMessageCache(queryClient, whatsappQueryScope, conversationId, currentLeadId);
-    clearConversationDraft(conversationId);
+    if (!current.supervisory_lead_view) clearConversationDraft(conversationId);
     clearActiveConversation();
     refreshWhatsAppUnlinkedInbox(queryClient, whatsappQueryScope);
     if (pendingLeadLink?.conversation.id === conversationId) {
@@ -662,6 +672,7 @@ export function FloatingChat() {
     30,
     {
       enabled: shouldSyncFloatingChat && sharedFilters.isHydrated,
+      includeSupervisoryLeads: selectedSessionId === "all" && !showArchived ? true : undefined,
       refetchOnWindowFocus: true,
     },
   );
@@ -782,6 +793,7 @@ export function FloatingChat() {
   ]), [attendanceGate.entries, visibleMessages]);
 
   useWhatsAppInboxRealtime(shouldSyncFloatingChat, true);
+  useWhatsAppLeadActivityRealtime(shouldSyncFloatingChat, activeConversationLeadId, activeConversationId ?? null);
   useWhatsAppLeadRealtime(
     shouldSyncFloatingChat,
     activeConversationLeadId ? [activeConversationLeadId] : [],
@@ -793,7 +805,7 @@ export function FloatingChat() {
   };
 
   useEffect(() => {
-    if (!activeConversationId || !activeConversation || !conversations) return;
+    if (!activeConversationId || !activeConversation || activeSupervisoryView || !conversations) return;
 
     const updatedConv = conversations.find((conversation) => conversation.id === activeConversationId);
     if (updatedConv && updatedConv !== activeConversation) {
@@ -810,7 +822,7 @@ export function FloatingChat() {
 	  );
 	  openConversation(resolvedConversation, { tenantKey: intentTenantKey, generation: intentGeneration });
     }
-  }, [activeConversation, activeConversationId, activeConversationLeadId, conversations, openConversation, intentTenantKey, intentGeneration]);
+  }, [activeConversation, activeConversationId, activeConversationLeadId, activeSupervisoryView, conversations, openConversation, intentTenantKey, intentGeneration]);
 
   const handleOpenConversationFromList = useCallback((conversation: WhatsAppConversation) => {
     conversationListPositionRef.current = captureConversationListReturnPosition(
@@ -898,14 +910,14 @@ export function FloatingChat() {
       const intent = { tenantKey: intentTenantKey, generation: intentGeneration };
       queueMicrotask(() => {
         if (!isActive || !isIntentCurrent(intent)) return;
-        setMessageText(pendingMessage);
+        if (!activeSupervisoryView) setMessageText(pendingMessage);
         clearPendingMessage(intent);
       });
       return () => {
         isActive = false;
       };
     }
-  }, [activeConversation, clearPendingMessage, pendingMessage, pendingMessageConversationId, intentTenantKey, intentGeneration, isIntentCurrent, setMessageText]);
+  }, [activeConversation, activeSupervisoryView, clearPendingMessage, pendingMessage, pendingMessageConversationId, intentTenantKey, intentGeneration, isIntentCurrent, setMessageText]);
 
   useEffect(() => {
     if (!chatSurfaceVisible || isMobile || !activeConversationId || !canMutateActiveConversation
@@ -2198,6 +2210,7 @@ export function FloatingChat() {
   };
   const renderMessageInput = (mobile = false) => {
     const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;
+    if (activeSupervisoryView) return <div role="status" className="border-t border-[var(--app-border)] p-3 text-xs text-muted-foreground">Histórico deste lead (somente leitura)</div>;
     if (!originalOrganization) return <div role="status" className="border-t border-[var(--app-border)] p-3 text-xs text-muted-foreground">Somente leitura nesta organização. Atenda os leads na organização original do seu cadastro.</div>;
     const composerUnavailableReason = canOperateWhatsApp
       ? localReadOnly ? "read_only" : sessionsFailed ? "sessions_failed" : undefined : undefined;

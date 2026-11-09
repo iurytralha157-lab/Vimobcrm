@@ -106,6 +106,26 @@ for(const theme of ['light','dark'])test(`desktop ${theme}: grey surface remains
  await save(page,`desktop-${theme}`,await surfaceStyle(page));
 });
 
+test('screen keeps loaded messages and an established empty state during background refresh', async t => {
+  const page = await fixture(t, 'screen', 1440, 'light', [row(1, { from_me: false, content: 'Mensagem já carregada' })]);
+  const log = page.getByRole('log');
+  await expect(log.getByText('Mensagem já carregada')).toBeVisible();
+  await page.evaluate(() => {
+    const h = window.harness;
+    h.messages = { ...h.messages, isFetching: true };
+    h.render();
+  });
+  await expect(log.getByText('Mensagem já carregada')).toBeVisible();
+  await expect(log.getByText('Carregando mensagens...')).toHaveCount(0);
+  await page.evaluate(() => {
+    const h = window.harness;
+    h.messages = { ...h.messages, messages: [], isLoading: false, isFetching: true };
+    h.render();
+  });
+  await expect(log.getByText('Nenhuma mensagem')).toBeVisible();
+  await expect(log.getByText('Carregando mensagens...')).toHaveCount(0);
+});
+
 for(const theme of ['light','dark'])test(`floating mobile ${theme}: existing fullscreen geometry and close remain intact`,async t=>{
  const page=await fixture(t,'floating',390,theme);
  await noOverflow(page);

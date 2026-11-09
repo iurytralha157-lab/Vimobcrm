@@ -30,6 +30,7 @@ before(async () => {
   await mock('@/contexts/FilterContext', `${hook} export const useFilters=()=>h().filters;`);
   await mock('@/lib/supabase/client', `export const supabase=new Proxy({}, {get(){throw new Error('Unexpected direct Supabase call in isolated UI test');}});`);
   await mock('@/hooks/use-whatsapp-query-scope', `${hook} export const useWhatsAppQueryScope=()=>h().scope;`);
+  await mock('@/hooks/whatsapp/use-whatsapp-lead-activity-realtime', `export const useWhatsAppLeadActivityRealtime=()=>{};`);
   await mock('@/hooks/use-user-permissions', `${hook} export const useUserPermissions=()=>({hasPermission:k=>h().permissions.includes(k),isLoading:false});`);
   await mock('@/hooks/use-organization-modules', `export const useOrganizationModules=()=>({hasModule:k=>k==='whatsapp',isLoading:false});`);
   await mock('@/hooks/use-mobile', `${hook} export const useIsMobile=()=>h().mobile;`);
@@ -56,7 +57,12 @@ before(async () => {
   await mock('@/lib/api/whatsapp', `${hook} export {getWhatsAppPhoneChangeConfirmation} from '@/lib/whatsapp-phone-change';export const whatsappAPI={findConversation:p=>h().request('find',p),getHistoryAccess:p=>h().request('history',p),getConversation:(id,lead)=>h().request('detail',{id,lead}),getConversationLinkPreview:(id,previousLead,lead,organizationId)=>h().request('preview',{id,previousLead,lead,organizationId})};`);
   await mock('@/lib/api/conversation-lead-detail', `${hook} export const conversationLeadDetailAPI={get:id=>h().request('lead-phone',{id})};`);
   await mock('@/hooks/use-whatsapp-conversations', `${hook}
-    export const useWhatsAppConversations=()=>({...h().emptyQuery,data:h().conversations});
+    export const useWhatsAppConversations=(sessionId,filters,sessionIds,limit,options)=>{
+      h().listOptions=options;
+      const rows=h().conversations;
+      return {...h().emptyQuery,data:options?.includeSupervisoryLeads||!rows.some(row=>row.supervisory_lead_view)
+        ? rows : rows.filter(row=>!row.supervisory_lead_view)};
+    };
     export const useWhatsAppConversation=id=>({...h().emptyQuery,data:h().conversations.find(c=>c.id===id)||null,isFetched:true});
     export const useWhatsAppConversationSnapshot=id=>({...h().emptyQuery,data:h().snapshotFetched===false?null:h().conversations.find(c=>c.id===id)||null,isFetched:h().snapshotFetched!==false});
     export const useWhatsAppConversationForLead=()=>({...h().emptyQuery,data:null,isFetched:true});
@@ -71,7 +77,9 @@ before(async () => {
     export const useDeleteConversation=()=>({mutateAsync:p=>h().request('delete',p),isPending:false});
     export const useLinkConversationToLead=()=>({mutateAsync:p=>h().request('link',p),isPending:false});
     export const useWhatsAppInboxRealtime=()=>{};export const useWhatsAppLeadRealtime=()=>{};`);
-  await mock('@/hooks/use-whatsapp-messages-paginated', `${hook} export const useWhatsAppMessagesPaginated=()=>h().messages;`);
+  await mock('@/hooks/use-whatsapp-messages-paginated', `${hook} const empty=[]; export const useWhatsAppMessagesPaginated=(id,options)=>{
+    h().messageRead={id,options};return id ? h().messages : {...h().messages,messages:empty};
+  };`);
   await mock('@/hooks/use-accessible-sessions', `${hook} export const useAccessibleSessions=()=>({data:h().sessions,isLoading:false});`);
   await mock('@/hooks/use-whatsapp-attendance', `${hook} export const useWhatsAppAttendanceGate=()=>h().attendance;`);
   const ts=require('typescript');
@@ -139,7 +147,7 @@ before(async () => {
     export { MobileConversationHeader } from ${JSON.stringify(join(repository,'components/features/whatsapp/conversations/MobileConversationHeader.tsx'))};
     import React,{useEffect} from 'react';
     import {ConversationMessages as ActualMessages} from ${JSON.stringify(join(repository,'components/features/whatsapp/conversations/ConversationMessages.tsx'))};
-    export const ConversationListItem=()=>null;
+    export const ConversationListItem=p=>React.createElement('button',{onClick:p.onClick},'Abrir '+p.conversation.id);
     export const ConversationFilters=()=>null;
     export const ConversationEmptyState=()=>null;
     export const ConversationMessages=p=>{useEffect(()=>{window.harness.screenSelection=p.conversation.id;});return window.harness.scrollScenario?React.createElement('div',{'data-screen-chat':p.conversation.id,'data-layout':p.layout},React.createElement(ActualMessages,p)):React.createElement('div',{'data-screen-chat':p.conversation.id},p.conversation.id);};
@@ -786,6 +794,60 @@ test('secondary organization can read authorized lead history without operationa
   assert.equal(await page.evaluate(()=>window.harness.requests.filter(r=>!['find','history'].includes(r.kind)).length),0);
   assert.equal(await page.evaluate(()=>window.harness.ctx.state.activeConversation.historical_lead_view),true);
 });
+test('floating discovers active lead history and pins a read-only chat through list refresh',async t=>{
+  const page=await harness(t,'floating');
+  await page.evaluate(row=>{
+    const h=window.harness;
+    h.sessions=[];
+    h.conversations=[row];
+    h.messages={...h.messages,messages:[{id:'message-a',conversation_id:row.id,session_id:row.session_id,
+      content:'Histórico do lead',message_type:'text',from_me:false,sent_at:'2026-10-11T00:00:00Z'}]};
+    h.render();
+    h.ctx.openChat();
+  },{...conversation('supervised-chat','lead-a'),session_id:'session-other',historical_lead_view:true,supervisory_lead_view:true,unread_count:0});
+  await page.waitForFunction(()=>window.harness.listOptions?.enabled===true);
+  assert.equal(await page.evaluate(()=>window.harness.listOptions.includeSupervisoryLeads),true);
+  await page.getByRole('button',{name:'Abrir supervised-chat'}).click();
+  await page.getByText('Histórico do lead',{exact:true}).waitFor();
+  await page.getByText('Histórico deste lead (somente leitura)',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('textbox',{name:'Digite sua mensagem'}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Anexar arquivo'}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Gravar áudio'}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Ver lead no funil'}).count(),1);
+  assert.deepEqual(await page.evaluate(()=>{
+    const read=window.harness.messageRead;
+    return [read.id,read.options.expectedLeadId,read.options.historyLeadId,read.options.expectedSessionId];
+  }),['supervised-chat','lead-a','lead-a','session-other']);
+  await page.evaluate(row=>{
+    const h=window.harness;
+    h.conversations=[row];
+    h.sessions=[{id:'session-a',owner_user_id:'user-a',status:'connected',can_send:true,provider:'evolution_go'}];
+    h.render();
+  },conversation('supervised-chat','lead-b'));
+  await page.getByText('Histórico deste lead (somente leitura)',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.harness.ctx.state.activeConversation.lead_id),'lead-a');
+  assert.deepEqual(await page.evaluate(()=>window.harness.requests),[]);
+  await page.evaluate(()=>{
+    const h=window.harness;
+    h.scope={...h.scope,accessScope:'revoked'};
+    h.render();
+  });
+  await page.getByRole('button',{name:'Abrir supervised-chat'}).waitFor();
+  assert.equal(await page.getByText('Histórico do lead',{exact:true}).count(),0);
+});
+
+test('floating keeps archived conversations on the operational query',async t=>{
+  const page=await harness(t,'context');
+  await page.evaluate(()=>{
+    localStorage.setItem('whatsapp-show-archived-floating','true');
+    const h=window.harness;
+    h.render('floating');
+    h.ctx.openChat();
+  });
+  await page.waitForFunction(()=>window.harness.listOptions?.enabled===true);
+  assert.equal(await page.evaluate(()=>window.harness.listOptions.includeSupervisoryLeads),undefined);
+});
+
 test('actual ConversationsScreen detail for linked A cannot overwrite current B after GET settles',async t=>{
   const page=await harness(t,'screen');
   await page.evaluate(cs=>{window.harness.sessions=[{...window.harness.sessions[0],status:'connected'}];window.harness.conversations=cs;window.harness.render();},[conversation('chat-a','lead-a'),conversation('chat-b','lead-b')]);

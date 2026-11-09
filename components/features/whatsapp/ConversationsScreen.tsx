@@ -34,6 +34,7 @@ import { isLocalReadOnlyMode } from "@/lib/local-read-only";
 import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useWhatsAppConversationFilterOptions, useSendWhatsAppMessage, useResolveWhatsAppSendIntent, useDiscardFailedLocalWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppInboxRealtime, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { useWhatsAppLeadActivityRealtime } from "@/hooks/whatsapp/use-whatsapp-lead-activity-realtime";
 import { projectWhatsAppCanonicalConversationPreview } from "@/lib/whatsapp-canonical-conversation-preview";
 import { useWhatsAppSenderAvatars } from "@/hooks/whatsapp/use-whatsapp-sender-avatars";
 import { useWhatsAppVisibleCanonicalPreviews } from "@/hooks/whatsapp/use-whatsapp-visible-canonical-previews";
@@ -373,7 +374,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     data: conversations,
     dataUpdatedAt: conversationsRevision = 0,
     isLoading: loadingConversations,
-    isFetching: fetchingConversations,
     isError: conversationsFailed,
     refetch: refetchConversations,
     hasMoreConversations,
@@ -391,7 +391,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   );
 
   const searchingConversations = activePlatform === "whatsapp" && (trimmedSearchTerm !== debouncedSearchTerm
-    || (Boolean(trimmedSearchTerm) && fetchingConversations));
+    || (Boolean(trimmedSearchTerm) && loadingConversations));
 
   // Legacy notifications may carry only a physical conversation id. Resolve
   // its current binding through a direct authorized read, independent of inbox
@@ -607,7 +607,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const {
     messages: whatsappMessages,
     isLoading: loadingWhatsAppMessages,
-    isFetching: fetchingWhatsAppMessages,
     isError: whatsappMessagesFailed,
     refetch: refetchWhatsAppMessages,
     hasOlderMessages,
@@ -647,7 +646,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
   const messages = activePlatform === 'whatsapp' ? whatsappMessagesWithLazyMedia : metaMessages;
   const loadingMessages = activePlatform === 'whatsapp' ? loadingWhatsAppMessages : loadingMetaMessages;
-  const fetchingMessages = activePlatform === 'whatsapp' ? fetchingWhatsAppMessages : false;
   const messagesFailed = activePlatform === 'whatsapp' ? whatsappMessagesFailed || isReconciliationError : metaMessagesFailed;
   const refetchMessages = activePlatform === 'whatsapp'
     ? () => isReconciliationError ? retryReconciliation() : refetchWhatsAppMessages()
@@ -721,6 +719,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [overlayScopeKey]);
 
   useWhatsAppInboxRealtime(activePlatform === "whatsapp", true);
+  useWhatsAppLeadActivityRealtime(activePlatform === "whatsapp" && hasModule("whatsapp")
+    && (hasPermission("whatsapp_view") || canOperateWhatsApp), selectedLeadId, selectedConversationId);
   useWhatsAppLeadRealtime(
     true,
     selectedRealtimeLeadIds,
@@ -1699,7 +1699,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 mediaGalleryScopeKey={audioContextKey}
                 onNavigateQuoted={(message, id) => messageNavigation.navigateTo(id, { conversationId: message.conversation_id, sessionId: message.session_id })}
                 isLoading={loadingMessages}
-                isFetching={fetchingMessages}
                 isError={messagesFailed}
                 onRetryMessages={() => void refetchMessages()}
                 hasOlderMessages={hasOlderMessages}
@@ -1927,7 +1926,6 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 mediaGalleryScopeKey={audioContextKey}
                 onNavigateQuoted={(message, id) => messageNavigation.navigateTo(id, { conversationId: message.conversation_id, sessionId: message.session_id })}
                 isLoading={loadingMessages}
-                isFetching={fetchingMessages}
                 isError={messagesFailed}
                 onRetryMessages={() => void refetchMessages()}
                 hasOlderMessages={hasOlderMessages}

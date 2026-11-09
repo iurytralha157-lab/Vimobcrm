@@ -57,7 +57,7 @@ export function useNewLeadSound() {
       if (!eligible()) return;
       for (const notification of candidates) {
         void claimNewLeadSound({ scope: current.scope, notificationId: notification.id, now: Date.now() }, eligible)
-          .then((claimed) => { if (claimed && eligible()) playNewLeadAudio(); })
+          .then((claimed) => { if (claimed && eligible()) return playNewLeadAudio(); })
           .catch(() => { /* Notification rendering is independent from audio. */ });
       }
     };
@@ -110,7 +110,9 @@ export function useNewLeadSound() {
     const current = lifetime.current;
     if (!current?.active || current.scope !== `${organizationId}:${userId}`) return false;
     const activated = await activateNewLeadAudio();
-    return activated && current.active && lifetime.current === current && playNewLeadAudio();
+    if (!activated || !current.active || lifetime.current !== current) return false;
+    const played = await playNewLeadAudio();
+    return played && current.active && lifetime.current === current;
   }, [organizationId, userId]);
 
   return useMemo(() => ({ muted, ready, onMutedChange, onTest }), [muted, ready, onMutedChange, onTest]);

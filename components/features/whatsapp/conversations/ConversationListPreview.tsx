@@ -33,7 +33,7 @@ export function ConversationListPreview({ conversation, draftText }: {
       {status && <span data-conversation-receipt-slot className="flex h-4 w-5 shrink-0 items-center text-foreground">
         <MessageStatus fromMe status={status} />
       </span>}
-      <span data-conversation-preview-text className={`min-w-0 flex-1 truncate${hasPresence && !hasDraft ? " text-primary animate-pulse motion-reduce:animate-none" : ""}`}>
+      <span data-conversation-preview-text className={`min-w-0 flex-1 truncate motion-safe:transition-colors motion-safe:duration-150${hasPresence && !hasDraft ? " text-primary" : ""}`}>
         {hasDraft ? <><span className="text-primary">Rascunho: </span>{draftText}</>
           : hasPresence ? presence === "composing" ? "digitando..." : "Gravando áudio..."
             : renderPreview(nodes)}

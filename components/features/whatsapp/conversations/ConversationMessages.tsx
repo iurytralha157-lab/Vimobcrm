@@ -36,7 +36,6 @@ type ConversationMessagesProps = {
   viewerAvatarUrl?: string | null;
   viewerAvatarName?: string | null;
   isLoading: boolean;
-  isFetching: boolean;
   isError: boolean;
   onRetryMessages: () => void;
   hasOlderMessages: boolean;
@@ -81,7 +80,6 @@ export function ConversationMessages({
   viewerAvatarUrl,
   viewerAvatarName,
   isLoading,
-  isFetching,
   isError,
   onRetryMessages,
   hasOlderMessages,
@@ -182,7 +180,7 @@ export function ConversationMessages({
               <Button size="sm" variant="ghost" onClick={onRetryMessages}>Tentar novamente</Button>
             </div>
           )}
-          {(isLoading || isFetching) && messages.length === 0 ? (
+          {isLoading && timelineItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-12" role="status" aria-live="polite">
               <Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Carregando mensagens...</span>

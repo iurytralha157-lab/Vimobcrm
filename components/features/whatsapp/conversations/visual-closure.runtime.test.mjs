@@ -50,7 +50,7 @@ before(async () => {
       if(h.mode==='history')return React.createElement(React.Fragment,null,React.createElement('button',{id:'history-trigger',onClick:()=>h.render('history',{...p,open:true})},'Pesquisar nesta conversa'),React.createElement(ConversationHistorySearch,{navigation:navigation(p),onClose:()=>{h.calls.push(['restore-focus']);document.getElementById('history-trigger').focus();}}));
       if(h.mode==='tags')return React.createElement(ConversationLeadTagBar,{tags:p.tags===false?[]:tags,availableTags:p.cold?[]:options,canManage:p.canManage!==false,busy:!!p.busy,loading:!!p.loading,failed:!!p.failed,onRetry:()=>h.calls.push(['retry']),onAdd:id=>h.calls.push(['add',id]),onRemove:id=>h.calls.push(['remove-tag',id])});
       if(h.mode==='list')return React.createElement(ConversationList,{layout:'desktop',channel:'whatsapp',conversations:p.empty||p.loading&&!p.keepRows?[]:[conversation],isLoading:!!p.loading,isSearching:!!p.searching,isError:false,onRetry:noop,canManageWhatsApp:false,onConnectWhatsApp:noop,canOperate:false,canManageTags:false,canCreateLead:false,availableTags:[],onSelect:noop,onArchive:noop,onDelete:noop,onAddTag:noop,onRemoveTag:noop,onCreateLead:noop,formatTime:()=> '10:00',hasMoreConversations:true,isLoadingMoreConversations:!!p.busy,onLoadMoreConversations:()=>h.calls.push(['more-conversations'])});
-      if(h.mode==='status')return React.createElement(React.Fragment,null,React.createElement(MessageStatus,{fromMe:p.fromMe!==false,status:p.status||'queued'}),React.createElement(ConversationListPreview,{conversation:{...conversation,contact_presence:'composing',presence_updated_at:new Date().toISOString()}}),React.createElement(LoadOlderMessagesButton,{loading:!!p.busy,onClick:()=>h.calls.push(['older'])}));
+      if(h.mode==='status')return React.createElement(React.Fragment,null,React.createElement(MessageStatus,{fromMe:p.fromMe!==false,status:p.status||'queued'}),React.createElement(ConversationListPreview,{conversation:{...conversation,contact_presence:p.presence===false?null:'composing',presence_updated_at:new Date().toISOString()}}),React.createElement(LoadOlderMessagesButton,{loading:!!p.busy,onClick:()=>h.calls.push(['older'])}));
       if(h.mode==='reactions')return React.createElement(MessageReactionPicker,{fromMe:false,reactions:[],isReacting:!!p.busy,onReact:emoji=>h.calls.push(['reaction',emoji])});
       if(h.mode==='own-start')return React.createElement(OwnWhatsAppStartNotice,{notice:p.none?null:{kind:p.connect?'connect':'start',ownConnectedSessionIds:p.connect?[]:['session-a']},unavailableReason:p.unavailableReason,onRetry:()=>h.calls.push(['retry-session']),busy:!!p.busy,onStart:()=>h.calls.push(['start-own'])});
       if(h.mode==='viewer')return React.createElement(MediaViewer,{src:png,type:'image',isOpen:p.open!==false,onClose:()=>{h.calls.push(['viewer-close']);h.render('viewer',{...p,open:false});},messageId:'image-a',filename:'Primeira.png',galleryScopeKey:'synthetic-viewer',gallery:[{id:'image-a',url:png,type:'image',filename:'Primeira.png'},{id:'image-b',url:png,type:'image',filename:'Segunda.png'}]});
@@ -153,10 +153,30 @@ test('history Escape closes only search and returns focus; X and canonical navig
   await page.getByRole('button', { name: /Resposta sintética/ }).click(); assert.deepEqual(await page.evaluate(() => h.calls.at(-1)), ['navigate', 'message-a', { conversationId: 'chat-a', sessionId: 'session-a' }]);
 });
 
-test('reduced motion stops receipt presence and loading pulses while accessible status remains', async t => {
+test('receipt and presence do not blink, including when delivery status changes', async t => {
+  const page = await open(t, 'status');
+  const queued = page.getByRole('img', { name: 'Mensagem na fila' });
+  await expect(queued).toHaveCSS('animation-name', 'none');
+  const size = await queued.evaluate(node => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]);
+  const presence = page.locator('[data-conversation-preview-text]');
+  await expect(presence).toHaveCSS('animation-name', 'none');
+  for (const [status, label] of [['confirming', 'Confirmando envio'], ['delivered', 'Mensagem entregue'], ['read', 'Mensagem lida']]) {
+    await render(page, { status });
+    const receipt = page.getByRole('img', { name: label });
+    await expect(receipt).toHaveCSS('animation-name', 'none');
+    assert.deepEqual(await receipt.evaluate(node => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]), size);
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.getByRole('img', { name: 'Mensagem lida' })).toHaveCSS('transition-duration', '0s');
+  await expect(presence).toHaveCSS('transition-duration', '0s');
+});
+
+test('reduced motion stops loading animations while accessible status remains', async t => {
   const page = await open(t, 'status', { busy: true }); await page.emulateMedia({ reducedMotion: 'reduce' });
   for (const animation of await page.locator('.animate-pulse,.animate-spin').all()) await expect(animation).toHaveCSS('animation-name', 'none');
   await expect(page.getByRole('img', { name: 'Mensagem na fila' })).toBeVisible();
+  await expect(page.locator('[data-conversation-receipt-slot]')).toHaveCount(0);
+  await render(page, { presence: false, busy: true });
   assert.equal(await page.locator('[data-conversation-receipt-slot]').evaluate(n => n.getBoundingClientRect().width), 20);
   await page.evaluate(() => h.render('list', { loading: true })); await expect(page.getByRole('status', { name: 'Carregando conversas' })).toBeVisible();
   await page.evaluate(() => h.render('list', { busy: true })); const more = page.getByRole('button', { name: 'Carregar mais conversas', exact: true });

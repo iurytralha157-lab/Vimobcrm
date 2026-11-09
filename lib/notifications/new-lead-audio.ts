@@ -42,31 +42,49 @@ export async function activateNewLeadAudio(): Promise<boolean> {
   }
 }
 
-/** Two soft notes; no asset download and no browser notification permission. */
-export function playNewLeadAudio(): boolean {
-  if (!context || context.state !== 'running') return false;
-  try {
-    const audio = context;
+/** Play two notes and acknowledge completion in the current audio context. */
+export async function playNewLeadAudio(): Promise<boolean> {
+  const audio = context;
+  if (!audio || audio.state !== 'running') return false;
+
+  return new Promise((resolve) => {
     const start = audio.currentTime;
-    [880, 1046.5].forEach((frequency, index) => {
-      const oscillator = audio.createOscillator();
-      const gain = audio.createGain();
-      const at = start + index * 0.17;
-      oscillator.type = 'sine';
-      oscillator.frequency.value = frequency;
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.linearRampToValueAtTime(0.06, at + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
-      oscillator.connect(gain);
-      gain.connect(audio.destination);
-      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
-      oscillator.start(at);
-      oscillator.stop(at + 0.24);
-    });
-    return true;
-  } catch {
-    return false;
-  }
+    const frequencies = [880, 1046.5];
+    const nodes: AudioNode[] = [];
+    const finish = (played: boolean) => {
+      clearTimeout(deadline);
+      for (const node of nodes.splice(0)) node.disconnect();
+      resolve(played);
+    };
+    // A suspended context may never finish its scheduled notes. Disconnect
+    // their output so an interrupted test does not sound after a later resume.
+    const deadline = setTimeout(() => finish(false), 1500);
+
+    try {
+      for (const [index, frequency] of frequencies.entries()) {
+        const oscillator = audio.createOscillator();
+        nodes.push(oscillator);
+        const gain = audio.createGain();
+        nodes.push(gain);
+        const at = start + index * 0.17;
+        oscillator.type = 'sine';
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.linearRampToValueAtTime(0.18, at + 0.015);
+        gain.gain.setValueAtTime(0.18, at + 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        if (index === frequencies.length - 1) {
+          oscillator.onended = () => finish(context === audio && audio.state === 'running');
+        }
+        oscillator.start(at);
+        oscillator.stop(at + 0.24);
+      }
+    } catch {
+      finish(false);
+    }
+  });
 }
 
 export function isNewLeadSoundMuted(userId: string): boolean {
