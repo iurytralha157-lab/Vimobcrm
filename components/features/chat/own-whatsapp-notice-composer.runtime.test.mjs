@@ -24,6 +24,7 @@ function nodes(tree) { return typeof tree === 'object' && tree ? [tree, ...(tree
 function dependencies(overrides = {}) {
   const noop = () => {};
   return { React, cn: (...values) => values.filter(Boolean).join(' '), originalOrganization: true,
+    activeSupervisoryView: false,
     activeConversation: { id: 'chat-own', lead_id: 'lead-A', is_group: false },
     ownStartNotice: null, leadOwnStartNotice: null, OwnWhatsAppStartNotice: noticeExports.OwnWhatsAppStartNotice,
     isStartingConversation: false, requestOwnWhatsAppStart: noop, localReadOnly: false, sessionsFailed: false, refetchSessions: noop,
@@ -58,6 +59,12 @@ test('the actual floating footer preserves the available own or shared composer 
     assert.equal(result.find(item => item.type === 'ScopedMessageBox')?.props.disabled, false);
   }
 });
+test('supervisory floating history shows only a read-only footer even when own-start is available', () => {
+  const result = nodes(renderFloat({ activeSupervisoryView: true, ownStartNotice: { kind: 'start', ownConnectedSessionIds: ['own-A'] } }));
+  assert.equal(result.some(item => item.props.role === 'status' && item.children.includes('Histórico deste lead (somente leitura)')), true);
+  assert.equal(result.some(item => isNotice(item) || item.type === 'ScopedMessageBox'), false);
+});
+
 test('the original-organization read-only floating footer cannot expose the own-start action', () => {
   const result = nodes(renderFloat({ originalOrganization: false, ownStartNotice: { kind: 'start', ownConnectedSessionIds: ['own-A'] } }));
   assert.equal(result.some(item => isNotice(item) || item.type === 'ScopedMessageBox'), false);

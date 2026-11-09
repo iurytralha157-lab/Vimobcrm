@@ -64,7 +64,7 @@ const tree = item => typeof item === 'object' && item ? [item, ...(item.children
 const noop = () => {};
 test('actual floating renderer keeps the original input alongside the optional owned-start action', () => {
   const render = actual('renderMessageInput', { React, cn: (...x) => x.filter(Boolean).join(' '), originalOrganization: true,
-    activeConversation: conversation, ownStartNotice: { kind: 'start', ownConnectedSessionIds: [own.id], preserveComposer: true },
+    activeSupervisoryView: false, activeConversation: conversation, ownStartNotice: { kind: 'start', ownConnectedSessionIds: [own.id], preserveComposer: true },
     canOperateWhatsApp: true, localReadOnly: false, sessionsFailed: false, OwnWhatsAppStartNotice: noticeExports.OwnWhatsAppStartNotice,
     refetchSessions: noop, isStartingConversation: false, requestOwnWhatsAppStart: noop, attachments: { onPaste: noop, onFileSelect: noop },
     audioContextKey: 'scope-a', fileInputRef: { current: null }, AttachmentPreviewComposer: 'AttachmentPreview', replyTarget: null,
