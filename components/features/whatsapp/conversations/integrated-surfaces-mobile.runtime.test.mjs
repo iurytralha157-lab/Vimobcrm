@@ -33,7 +33,6 @@ bootstrap = bootstrap
   .replace("export const AppLayout=({children})=>React.createElement('div',null,children);", "export const AppLayout=({children})=>React.createElement('div',{'data-synthetic-app-shell':true,className:'app-shell',style:{height:'100dvh',padding:12}},children);")
   .replace("export const useUploadLeadAttachment=()=>h().mutation;", "export const useUploadLeadAttachment=()=>h().mutation; export const useCreateLeadAttachment=()=>h().mutation;")
   .replace("export const useWhatsAppConversationFilterOptions=()=>h().emptyQuery;", "export const useWhatsAppConversationFilterOptions=()=>({...h().emptyQuery,data:undefined});")
-  .replace("export const useWhatsAppConversations=()=>({...h().emptyQuery,data:h().conversations});", "export const useWhatsAppConversations=()=>({...h().emptyQuery,data:h().conversations,hasMoreConversations:!!h().more,isLoadingMoreConversations:!!h().loadingMore,loadMoreConversations:()=>{}});")
   .replace("export const useWhatsAppMessagesPaginated=()=>h().messages;", "export const useWhatsAppMessagesPaginated=id=>id?h().messages:{...h().messages,messages:[]};")
   .replace("data:{id,name:id,phone:'5511999998888',created_at:'2026-10-11T00:00:00Z',tags:[],meta:{}}", "data:{id,name:'Marina Sintética',phone:'5511999998888',created_at:'2026-10-11T00:00:00Z',tags:[],meta:{},...h().leadDetail}")
   .replace('export const whatsappAPI={findConversation:', 'export const whatsappAPI={getMessageMediaURL:(id,org,options)=>h().media(id,org,options),retryMediaDownload:async id=>h().manual.push(id),findConversation:')

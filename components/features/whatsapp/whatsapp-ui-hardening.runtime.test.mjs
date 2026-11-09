@@ -61,8 +61,14 @@ before(async () => {
       h().listOptions=options;
       h().listFilters=filters;
       const rows=h().conversations;
-      return {...h().emptyQuery,data:options?.includeSupervisoryLeads||!rows.some(row=>row.supervisory_lead_view)
-        ? rows : rows.filter(row=>!row.supervisory_lead_view)};
+      return {
+        ...h().emptyQuery,
+        data:options?.includeSupervisoryLeads||!rows.some(row=>row.supervisory_lead_view)
+          ? rows : rows.filter(row=>!row.supervisory_lead_view),
+        hasMoreConversations:!!h().more,
+        isLoadingMoreConversations:!!h().loadingMore,
+        loadMoreConversations:()=>{},
+      };
     };
     export const useWhatsAppConversation=id=>({...h().emptyQuery,data:h().conversations.find(c=>c.id===id)||null,isFetched:true});
     export const useWhatsAppConversationSnapshot=id=>({...h().emptyQuery,data:h().snapshotFetched===false?null:h().conversations.find(c=>c.id===id)||null,isFetched:h().snapshotFetched!==false});
