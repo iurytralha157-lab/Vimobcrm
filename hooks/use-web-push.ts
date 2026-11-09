@@ -373,7 +373,7 @@ export function useWebPush() {
             applicationServerKey: prepared.applicationServerKey,
           });
           intent.assertCurrent();
-        } catch (error) {
+        } catch {
           if (!intent.isCurrent()) return cancelled;
           const permission = Notification.permission;
           const denied = permission === 'denied';
