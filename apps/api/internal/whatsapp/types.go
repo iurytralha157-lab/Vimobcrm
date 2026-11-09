@@ -144,6 +144,8 @@ type Conversation struct {
 	Session            *SessionLite `json:"session,omitempty"`
 	Lead               *LeadLite    `json:"lead,omitempty"`
 	avatarReference    *conversationAvatarReference
+
+	SupervisoryLeadView bool `json:"supervisory_lead_view,omitempty"`
 }
 
 // MarshalJSON keeps the operational Go model ergonomic while making missing
@@ -341,6 +343,8 @@ type ConversationListFilter struct {
 	CursorLastMessageAt *time.Time
 	CursorCreatedAt     time.Time
 	CursorID            string
+
+	IncludeSupervisoryLeads bool
 }
 
 type ConversationListMeta struct {
@@ -636,6 +640,8 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 		ExpandedOptions: parseBool(values.Get("expandedOptions")),
 		OptionsSearch:   strings.TrimSpace(values.Get("optionsSearch")),
 		OptionsLimit:    100,
+
+		IncludeSupervisoryLeads: values.Get("includeSupervisoryLeads") == "true",
 	}
 	if !validConversationFilterText(filter.OptionsSearch, 120) || !validConversationFilterText(filter.Search, 180) {
 		return ConversationListFilter{}, fmt.Errorf("%w: search is too long", ErrInvalidInput)

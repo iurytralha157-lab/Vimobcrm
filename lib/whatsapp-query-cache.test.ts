@@ -226,6 +226,7 @@ test('segrega paginas de conversa por tenant e por filtros aplicados no servidor
   assert.notDeepEqual(keyA, keyOtherFilter)
   assert.notDeepEqual(keyA, keyOtherPeriod)
   assert.notDeepEqual(keyA, keyOtherSource)
+  assert.notDeepEqual(keyA, whatsappQueryKeys.conversations(scopeA, { ...baseParams, includeSupervisoryLeads: true }))
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
 })

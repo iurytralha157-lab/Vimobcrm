@@ -250,6 +250,7 @@ export const whatsAppConversationSchema = z.object({
   created_at: timestampSchema,
   updated_at: timestampSchema,
 	historical_lead_view: z.boolean().optional(),
+  supervisory_lead_view: z.boolean().optional(),
   session: z.object({
     id: uuidSchema,
     instance_name: z.string(),

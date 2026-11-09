@@ -92,8 +92,8 @@ export function ConversationListItem({
   onCreateLead,
   onViewLead,
   onActionsOpenChange,
-  canOperate,
-  canManageTags = canOperate,
+  canOperate: canOperateInbox,
+  canManageTags = canOperateInbox,
   canCreateLead,
   draftText,
   previewCardRef,
@@ -112,7 +112,8 @@ export function ConversationListItem({
   );
   const leadAssignee = conversation.lead?.assignee || null;
   const assigneeName = formatWhatsAppPersonName(leadAssignee?.name) || null;
-  const canManageConversationTags = canManageTags && Boolean(conversation.lead);
+  const canOperate = canOperateInbox && !conversation.supervisory_lead_view;
+  const canManageConversationTags = canManageTags && Boolean(conversation.lead) && !conversation.supervisory_lead_view;
 
   return (
     <div
@@ -145,7 +146,7 @@ export function ConversationListItem({
           </div>
 
           <div className="mt-0 flex min-w-0 items-center">
-            <ConversationListPreview conversation={conversation} draftText={draftText} />
+            <ConversationListPreview conversation={conversation} draftText={conversation.supervisory_lead_view ? undefined : draftText} />
           </div>
         </div>
       </button>
@@ -251,7 +252,7 @@ export function ConversationListItem({
       )}
 
       {(canOperate || canManageConversationTags || onViewLead) && (
-        <DropdownMenu dir="rtl" onOpenChange={onActionsOpenChange}>
+        <DropdownMenu dir="rtl" onOpenChange={canManageConversationTags ? onActionsOpenChange : undefined}>
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={`Mais ações de ${displayName || "conversa"}`}

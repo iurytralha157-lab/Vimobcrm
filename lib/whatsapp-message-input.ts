@@ -6,6 +6,7 @@ type MessageInputConversation = {
   remote_jid?: string | null;
   is_group?: boolean | null;
 	historical_lead_view?: boolean | null;
+  supervisory_lead_view?: boolean;
   lead?: {
     id?: string | null;
     assignee?: { id?: string | null } | null;
@@ -84,7 +85,7 @@ export function getWhatsAppConversationMessageScope(
 	const expectedLeadId = conversation
 		? linkedLeadId || WHATSAPP_UNLINKED_LEAD_SNAPSHOT
 		: null;
-	const historicalLeadView = Boolean(conversation?.historical_lead_view);
+	const historicalLeadView = Boolean(conversation?.historical_lead_view || conversation?.supervisory_lead_view);
 	return {
 		expectedLeadId,
 		historyLeadId: historicalLeadView ? linkedLeadId : null,
@@ -100,7 +101,7 @@ export function getWhatsAppConversationMessageScope(
 export function preserveWhatsAppConversationCardSnapshot<
   T extends RefreshableConversation,
 >(snapshot: T, refreshed: T): T & RefreshableConversation {
-  if (snapshot.historical_lead_view) return snapshot;
+  if (snapshot.historical_lead_view || snapshot.supervisory_lead_view) return snapshot;
 
   const snapshotLeadId = snapshot.lead_id || snapshot.lead?.id || null;
   const refreshedLeadId = refreshed.lead_id || refreshed.lead?.id || null;
@@ -163,6 +164,7 @@ export function getWhatsAppSendSessionId(
   sessions?: MessageInputSession[] | null,
   currentUserId?: string | null,
 ) {
+  if (conversation?.supervisory_lead_view) return undefined;
   if (conversation?.id) {
     // A physical conversation belongs to exactly one WhatsApp. Its nested
     // session status is history, not proof that this user may send on it.
@@ -200,7 +202,7 @@ export function shouldOfferOwnWhatsAppStart(
   sessions: MessageInputSession[] | null | undefined,
   currentUserId?: string | null,
 ) {
-  if (!conversation?.id || !sessions || conversation.is_group) return false;
+  if (!conversation?.id || !sessions || conversation.is_group || conversation.supervisory_lead_view) return false;
   if (!conversation.lead_id && !conversation.lead?.id) return false;
   if (!conversation.session_id) return true;
   return getWhatsAppSendSessionId(conversation, null, sessions, currentUserId) !== conversation.session_id;
@@ -226,7 +228,7 @@ export function getWhatsAppMessageInputState(
     };
   }
 
-  if (conversation.historical_lead_view) {
+  if (conversation.historical_lead_view || conversation.supervisory_lead_view) {
     return {
       disabled: true,
       placeholder: "Histórico deste card (somente leitura)",

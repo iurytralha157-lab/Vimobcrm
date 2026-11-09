@@ -152,6 +152,7 @@ export interface WhatsAppConversation {
   created_at: string
   updated_at: string
 	historical_lead_view?: boolean
+  supervisory_lead_view?: boolean
   session?: {
     id: string
     instance_name: string
@@ -613,6 +614,7 @@ export const whatsappAPI = {
   },
 
   async getConversationsPage(params: {
+    includeSupervisoryLeads?: boolean
     organizationId?: string | null
     sessionId?: string
     filters?: ConversationFilters
@@ -626,6 +628,7 @@ export const whatsappAPI = {
       organizationId: params.organizationId,
       query: parseDomainInput(whatsAppConversationListQuerySchema, {
         sessionId: params.sessionId,
+        includeSupervisoryLeads: params.includeSupervisoryLeads,
         pipelineId: params.filters?.pipelineId,
         teamId: params.filters?.teamId,
         userId: params.filters?.userId,
@@ -670,6 +673,7 @@ export const whatsappAPI = {
   },
 
   async getConversationFilterOptions(params: {
+    includeSupervisoryLeads?: boolean
     organizationId?: string | null
     sessionId?: string
     accessibleSessionIds?: string[]
@@ -692,6 +696,7 @@ export const whatsappAPI = {
         timeoutMs: 8_000,
         query: parseDomainInput(whatsAppConversationOptionsQuerySchema, {
           sessionId: params.sessionId,
+          includeSupervisoryLeads: params.includeSupervisoryLeads,
           sessionIds: params.accessibleSessionIds?.join(','),
           hideGroups: true,
           showArchived: params.showArchived,

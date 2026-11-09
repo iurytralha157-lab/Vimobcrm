@@ -471,3 +471,14 @@ test('exige selecao quando ha varias integracoes conectadas e a conversa antiga 
   assert.equal(state.disabled, true)
   assert.equal(state.sendSessionId, undefined)
 })
+
+test("supervisory marker fails closed without a historical flag", () => {
+  const conversation = { id: "conversation", lead_id: "lead", session_id: "session", supervisory_lead_view: true };
+  const sessions = [{ id: "session", owner_user_id: "user", status: "connected", can_send: true }];
+  assert.deepEqual(getWhatsAppConversationMessageScope(conversation), {
+    expectedLeadId: "lead", historyLeadId: "lead", canMutate: false, canManage: false,
+  });
+  assert.equal(getWhatsAppMessageInputState(conversation, "all", sessions, "user").disabled, true);
+  assert.equal(getWhatsAppSendSessionId(conversation, "all", sessions, "user"), undefined);
+  assert.equal(preserveWhatsAppConversationCardSnapshot(conversation, { ...conversation, supervisory_lead_view: false }), conversation);
+});

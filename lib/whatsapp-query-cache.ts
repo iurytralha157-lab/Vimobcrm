@@ -235,6 +235,7 @@ export const whatsappQueryKeys = {
       lastMessageFrom?: string
       lastMessageTo?: string
       accessibleSessionKey: string
+      includeSupervisoryLeads?: boolean
       limit: number
     },
   ) => [
@@ -262,6 +263,7 @@ export const whatsappQueryKeys = {
     params.adId ?? '',
     params.leadCreatedFrom ?? '',
     params.leadCreatedTo ?? '',
+    params.includeSupervisoryLeads ?? false,
   ] as const,
 	conversation: (scope: WhatsAppQueryScope, conversationId: string | null, expectedLeadId: string | null) => [
     ...scopedPrefix('whatsapp-conversation', scope),

@@ -232,13 +232,13 @@ export function ConversationMessages({
                       contacts={item.message.contacts}
                       location={item.message.location}
                       quotedMessage={item.message.quoted_message}
-                      canAttachToLead={canOperateLeads}
+                      canAttachToLead={canOperateLeads && !conversation.supervisory_lead_view}
                       onReply={onReply && canQuoteWhatsAppMessage(item.message as WhatsAppMessage)
                         ? () => onReply(item.message as WhatsAppMessage) : undefined}
                       onRecoverText={onRecoverText && item.message.content ? () => onRecoverText(item.message as WhatsAppMessage) : undefined}
-                      onCheckSend={onCheckSend && item.message.from_me ? () => onCheckSend(item.message as WhatsAppMessage) : undefined}
+                      onCheckSend={!conversation.supervisory_lead_view && onCheckSend && item.message.from_me ? () => onCheckSend(item.message as WhatsAppMessage) : undefined}
                       onOpenLead={canOperateLeads ? onOpenLead : undefined}
-                      onDiscardLocal={item.message.metadata?.local_delivery_state === "failed" && onDiscardLocal ? () => onDiscardLocal(item.message as WhatsAppMessage) : undefined}
+                      onDiscardLocal={!conversation.supervisory_lead_view && item.message.metadata?.local_delivery_state === "failed" && onDiscardLocal ? () => onDiscardLocal(item.message as WhatsAppMessage) : undefined}
                       mediaStatus={item.message.media_status ?? null}
                       mediaError={item.message.media_error ?? null}
                       storedMedia={Boolean(item.message.media_storage_path)}

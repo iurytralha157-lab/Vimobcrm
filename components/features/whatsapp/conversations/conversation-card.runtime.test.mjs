@@ -20,12 +20,12 @@ before(async () => {
     import {ConversationList} from '@/components/features/whatsapp/conversations/ConversationList';
     import {captureWhatsAppCanonicalConversationPreview,projectWhatsAppCanonicalConversationPreview} from '@/lib/whatsapp-canonical-conversation-preview';
     const app=createRoot(document.getElementById('app'));
-    const h=window.h={opened:0,nodes:new Map(),registrations:0,cleanups:0,mentionNames:{'5511999900000':'Contato sintético'},options:{},scope:{organizationId:'org-a',userId:'actor-a',accessScope:'permissions+sid-a'},
+    const h=window.h={opened:0,viewedLead:null,nodes:new Map(),registrations:0,cleanups:0,mentionNames:{'5511999900000':'Contato sintético'},options:{},scope:{organizationId:'org-a',userId:'actor-a',accessScope:'permissions+sid-a'},
       conversation:{id:'conversation-a',session_id:'session-a',lead_id:'lead-a',remote_jid:'5511999900000@s.whatsapp.net',contact_name:'Contato sintético',contact_phone:'5511999900000',contact_picture:null,contact_presence:null,presence_updated_at:null,last_message:'Mensagem sintética',last_message_at:'2026-10-13T12:00:00Z',last_message_from_me:true,last_message_status:'sent',unread_count:3,is_group:false,archived_at:null,deleted_at:null,created_at:'2026-10-13T11:00:00Z',updated_at:'2026-10-13T12:00:00Z',lead:{id:'lead-a',name:'Lead sintético',assignee:{id:'actor-a',name:'Responsável sintético',avatar_url:null},tags:[]}},
       render(options={}){this.options=options;flushSync(()=>app.render(<Fixture options={options}/>));},patch(patch){this.render({...this.options,conversation:{...this.options.conversation,...patch}})}
     };
     const previewCardRef=node=>{if(!node)return;const id=node.dataset.conversationId;h.nodes.set(id,node);h.registrations++;return()=>{if(h.nodes.get(id)===node)h.nodes.delete(id);h.cleanups++;};};
-    function Fixture({options}){let conversation={...h.conversation,...options.conversation};if(options.legacyPayload){delete conversation.last_message_from_me;delete conversation.last_message_status;}const preview=options.canonicalMessages?captureWhatsAppCanonicalConversationPreview(options.canonicalMessages,{scope:h.scope,conversationId:conversation.id,expectedLeadId:conversation.lead_id,expectedSessionId:conversation.session_id}):null;conversation=projectWhatsAppCanonicalConversationPreview([conversation],preview,options.scope||h.scope)[0];const shared={currentUserId:'actor-a',availableTags:[],canOperate:options.canOperate!==false,canManageTags:options.canOperate!==false,canCreateLead:options.canOperate!==false};const items=options.conversations||[conversation];return <section className="app-shell" data-surface={options.surface||'floating'} style={{width:options.width||280,height:400}}>{options.surface==='page'?<ConversationList {...shared} layout="desktop" channel="whatsapp" conversations={items} previewCardRef={previewCardRef} isLoading={false} onRetry={()=>{}} canManageWhatsApp onConnectWhatsApp={()=>{}} onSelect={()=>h.opened++} onArchive={()=>{}} onDelete={()=>{}} onAddTag={()=>{}} onRemoveTag={()=>{}} onCreateLead={()=>{}} formatTime={()=>'09:00'} hasMoreConversations={false} isLoadingMoreConversations={false} onLoadMoreConversations={()=>{}} getDraftText={()=>options.draft||''}/>:items.map(conversation=><ConversationListItem key={conversation.id} {...shared} conversation={conversation} previewCardRef={previewCardRef} isSelected={false} onClick={()=>h.opened++} formatTime={()=>'09:00'} onArchive={()=>{}} onDelete={()=>{}} onAddTag={()=>{}} onRemoveTag={()=>{}} onCreateLead={()=>{}} draftText={options.draft}/>)}</section>}
+    function Fixture({options}){let conversation={...h.conversation,...options.conversation};if(options.legacyPayload){delete conversation.last_message_from_me;delete conversation.last_message_status;}const preview=options.canonicalMessages?captureWhatsAppCanonicalConversationPreview(options.canonicalMessages,{scope:h.scope,conversationId:conversation.id,expectedLeadId:conversation.lead_id,expectedSessionId:conversation.session_id}):null;conversation=projectWhatsAppCanonicalConversationPreview([conversation],preview,options.scope||h.scope)[0];const shared={currentUserId:'actor-a',availableTags:[],canOperate:options.canOperate!==false,canManageTags:options.canOperate!==false,canCreateLead:options.canOperate!==false};const items=options.conversations||[conversation];return <section className="app-shell" data-surface={options.surface||'floating'} style={{width:options.width||280,height:400}}>{options.surface==='page'?<ConversationList {...shared} layout="desktop" channel="whatsapp" conversations={items} previewCardRef={previewCardRef} isLoading={false} onRetry={()=>{}} canManageWhatsApp onConnectWhatsApp={()=>{}} onSelect={()=>h.opened++} onArchive={()=>{}} onDelete={()=>{}} onAddTag={()=>{}} onRemoveTag={()=>{}} onCreateLead={()=>{}} onViewLead={options.leadNavigation ? id=>{h.viewedLead=id} : undefined} formatTime={()=>'09:00'} hasMoreConversations={false} isLoadingMoreConversations={false} onLoadMoreConversations={()=>{}} getDraftText={()=>options.draft||''}/>:items.map(conversation=><ConversationListItem key={conversation.id} {...shared} conversation={conversation} previewCardRef={previewCardRef} isSelected={false} onClick={()=>h.opened++} formatTime={()=>'09:00'} onArchive={()=>{}} onDelete={()=>{}} onAddTag={()=>{}} onRemoveTag={()=>{}} onCreateLead={()=>{}} onViewLead={options.leadNavigation ? ()=>{h.viewedLead=conversation.lead_id} : undefined} draftText={options.draft}/>)}</section>}
     h.render();
   `);
   const { webpack } = require("next/dist/compiled/webpack/webpack");
@@ -284,4 +284,32 @@ test("canonical first-list80 cards display status synchronously and retain nodes
   assert.equal(await page.evaluate(() => h.registrations - h.initialRegistrations), 20);
   assert.equal(await page.evaluate(() => h.cleanups - h.initialCleanups), 0);
   assert.equal(await page.evaluate(() => h.opened), 0);
+});
+
+test("supervisory cards open the conversation and its lead without edit actions", async t => {
+  for (const surface of ["page", "floating"]) {
+    const page = await fixture(t, {
+      surface,
+      leadNavigation: true,
+      draft: "Rascunho privado anterior",
+      conversation: { historical_lead_view: true, supervisory_lead_view: true, unread_count: 0 },
+    });
+    const card = page.locator('[data-tour="conversations-item"]');
+    await expect(card.getByText("Rascunho privado anterior", { exact: false })).toHaveCount(0);
+    await card.hover();
+    await card.getByRole("button", { name: /Mais ações de/ }).click();
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem")).toHaveCount(1);
+    await menu.getByRole("menuitem", { name: "Ver lead no funil" }).click();
+    assert.equal(await page.evaluate(() => h.viewedLead), "lead-a");
+    await card.getByRole("button").first().click();
+    assert.equal(await page.evaluate(() => h.opened), 1);
+
+    await page.evaluate(() => h.patch({ historical_lead_view: false, supervisory_lead_view: false }));
+    await card.hover();
+    await card.getByRole("button", { name: /Mais ações de/ }).click();
+    await expect(menu.getByRole("menuitem", { name: "Arquivar" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Remover" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Tag", exact: true })).toBeVisible();
+  }
 });

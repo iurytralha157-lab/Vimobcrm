@@ -231,7 +231,7 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $2::uuid, $3, $4, 'owner', true)
+	values ($1::uuid, $2::uuid, $3, $4, 'admin', true)
 		on conflict (id) do update
 		set organization_id = excluded.organization_id,
 		    name = excluded.name,
@@ -243,9 +243,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
-		values ($1::uuid, $2::uuid, 'owner', true)
+		values ($1::uuid, $2::uuid, 'admin', true)
 		on conflict (user_id, organization_id) do update
-		set role = 'owner', is_active = true, deleted_at = null
+		set role = 'admin', is_active = true, deleted_at = null
 	`, organizationID, otherUserID); err != nil {
 		t.Fatal(err)
 	}
@@ -446,6 +446,9 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if snapshot, err := repo.GetConversationSnapshot(ctx, admin, privateConversationID); err != nil || snapshot.ID != privateConversationID {
 		t.Fatalf("admin lost direct lead history across numbers: %+v, %v", snapshot, err)
 	}
+	t.Run("supervisory admin reads active lead history without inbox ownership", func(t *testing.T) {
+		assertSupervisoryAdminInbox(t, ctx, repo, admin, privateConversationID, privateLeadID, privateUnlinkedID, otherSessionID, otherUserID, now)
+	})
 	t.Run("media is signed for admin across sessions but denied to agent", func(t *testing.T) {
 		// Media revalidates current database authority rather than trusting a
 		// hand-built tenant.Context. Keep the synthetic membership aligned.
@@ -659,6 +662,11 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if snapshot, err := repo.GetConversationSnapshot(ctx, leader, privateConversationID); err != nil || snapshot.ID != privateConversationID {
 		t.Fatalf("leader lost direct team lead history across sessions: %+v, %v", snapshot, err)
 	}
+	assertSupervisoryFixtureRow(t, ctx, repo, leader, privateConversationID, true)
+	assertSupervisoryFixtureRow(t, ctx, repo, viewer, privateConversationID, false)
+	t.Run("supervisory leader cannot read a lead from a different team", func(t *testing.T) {
+		assertSupervisoryDifferentTeam(t, ctx, repo, leader, teamID, otherUserID, privateConversationID)
+	})
 
 	// Direct assignment permits canonical history reads, but alone cannot open
 	// another owner's operational inbox.
@@ -684,10 +692,11 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	if snapshot, err := repo.GetConversationSnapshot(ctx, viewer, privateConversationID); err != nil || snapshot.ID != privateConversationID {
 		t.Fatalf("assignment lost canonical history before a number grant: %+v, %v", snapshot, err)
 	}
+	assertSupervisoryFixtureRow(t, ctx, repo, viewer, privateConversationID, true)
 
 	// Only this administrative session owner grants access. READ is sufficient
 	// for assigned conversations; private unlinked contacts remain excluded.
-	privateOwner := tenant.Context{OrganizationID: organizationID, UserID: otherUserID, MemberRole: "owner", UserRole: "owner"}
+	privateOwner := tenant.Context{OrganizationID: organizationID, UserID: otherUserID, MemberRole: "admin", UserRole: "admin"}
 	if err := repo.GrantSessionAccess(ctx, privateOwner, otherSessionID, grantAccessInput{UserID: userID, CanView: true, CanSend: false}); err != nil {
 		t.Fatalf("fixture owner's explicit READ grant: %v", err)
 	}
@@ -701,6 +710,15 @@ func TestConversationListFiltersSourceAndPeriodIntegration(t *testing.T) {
 	}
 	if !sharedFound[privateConversationID] || sharedFound[privateUnlinkedID] {
 		t.Fatalf("assigned READ grant scope = %#v", sharedFound)
+	}
+	optedShared, err := repo.ListConversations(ctx, viewer, ConversationListFilter{IncludeSupervisoryLeads: true, Limit: 120})
+	if err != nil || len(optedShared) != len(sharedInbox) {
+		t.Fatalf("supervisory opt-in altered the granted inbox: %v, %v", optedShared, err)
+	}
+	for _, conversation := range optedShared {
+		if conversation.SupervisoryLeadView || conversation.HistoricalLeadView {
+			t.Fatalf("operational conversation classified as supervisory: %s", conversation.ID)
+		}
 	}
 	if count, err := repo.CountUnreadMessages(ctx, viewer, ConversationListFilter{}); err != nil || count != 25 {
 		t.Fatalf("assigned and granted broker unread = %d, error = %v; want 25", count, err)

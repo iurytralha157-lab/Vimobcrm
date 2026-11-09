@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "526c76dbac85033b52fc703bb5cb59e6deec84cfda77cbd8673fe94ba04cc679",
+  "sourceDigestSha256": "7df7dd89707fd8f8c5b77143e544d4b6c002a9d2148b201791af88adda6cffb2",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -4502,10 +4502,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:72ebc5c958937a78eefa",
+          "id": "overlay:72eddecf41970266de70",
           "column": 83,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 824,
+          "line": 826,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -4559,10 +4559,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:9d7cf2fca471e30c0a0a",
+          "id": "overlay:e48e3c0c2d298a8aba33",
           "column": 13,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1377,
+          "line": 1379,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -4844,10 +4844,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:dacf4188f31efd323d1a",
+          "id": "overlay:2f653af62843aab808cb",
           "column": 9,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 254,
+          "line": 255,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32471,10 +32471,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:97ff3c22590a7f3e8224",
+          "id": "cta:721f388cdb19b776485c",
           "column": 9,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 246,
+          "line": 247,
           "owner": "CampaignTrackingHover",
           "routes": [
             "/agenda",
@@ -32529,10 +32529,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:18e1d5a917fa63434c1b",
+          "id": "cta:c4fea1a46b233152b40a",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 479,
+          "line": 481,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32587,10 +32587,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9d4014eb52cfcb3760e9",
+          "id": "cta:e755ea01975daae1cd9e",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 488,
+          "line": 490,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32645,10 +32645,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cff727265d69c24a38ab",
+          "id": "cta:a85c53804f356246ced8",
           "column": 9,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 768,
+          "line": 770,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32703,10 +32703,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7ce6cad3a31ebbbbf0ab",
+          "id": "cta:0d58335c757ac8fb52b7",
           "column": 39,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 818,
+          "line": 820,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32761,10 +32761,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:58a92a519b65e67430e1",
+          "id": "cta:587f7bebc7302b1056f7",
           "column": 15,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 829,
+          "line": 831,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32819,10 +32819,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fbd2414defd07c2ef97e",
+          "id": "cta:808006a6dff1223591e5",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 925,
+          "line": 927,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32877,10 +32877,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:433da449df98032ed64c",
+          "id": "cta:aabe71feeab6176c112d",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 940,
+          "line": 942,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32935,10 +32935,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:acb2bf1c1faba747e332",
+          "id": "cta:98eae655881ac53a78df",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 973,
+          "line": 975,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -32994,10 +32994,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:8601dee2ef4bd7a77b49",
+          "id": "cta:165d703ecc7721f57255",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 994,
+          "line": 996,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33052,10 +33052,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4494c313a22c699e3034",
+          "id": "cta:6d4ee4cbf39076a427b1",
           "column": 15,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1020,
+          "line": 1022,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33110,10 +33110,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:63b9e45ec9297e3992c9",
+          "id": "cta:8a77e5538f57a0948fe2",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1062,
+          "line": 1064,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33168,10 +33168,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bdb0b1ca562fabc1b57b",
+          "id": "cta:93d9c052e082bcb778a7",
           "column": 23,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1080,
+          "line": 1082,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33226,10 +33226,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:db630247c9b9a4c92f75",
+          "id": "cta:cdf50f6cfacd74369c3e",
           "column": 19,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1108,
+          "line": 1110,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33284,10 +33284,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b42405b70b7c25a4be10",
+          "id": "cta:e6ee1eb58768bb597e1c",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1134,
+          "line": 1136,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33342,10 +33342,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1bf38a24b76f69ff99e4",
+          "id": "cta:377f7216f94bebbbb487",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1146,
+          "line": 1148,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33400,10 +33400,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:08bdbfdb486f35f1e7bf",
+          "id": "cta:d79d16aad27d052651d4",
           "column": 15,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1170,
+          "line": 1172,
           "owner": "ConversationLeadPanelContent",
           "routes": [
             "/agenda",
@@ -33458,10 +33458,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d80a075c28aeaf02da9c",
+          "id": "cta:9f2a12ea3d5c6954f537",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1328,
+          "line": 1330,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -33516,10 +33516,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:64689dbd1ac4ba36d7e0",
+          "id": "cta:9a64aab80824ca0fdc1c",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1379,
+          "line": 1381,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -33574,10 +33574,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:300e148212c9724a6fb0",
+          "id": "cta:6ab4a2bd1264308bb740",
           "column": 13,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1469,
+          "line": 1471,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -34910,10 +34910,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4b1ebf7f80fd71d719c3",
+          "id": "cta:e1f7768d4170b4f7bb82",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationList.tsx",
-          "line": 137,
+          "line": 139,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -34968,10 +34968,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:95b6f4954eb00f30c1d1",
+          "id": "cta:84e66ef17227e7386d7a",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationList.tsx",
-          "line": 145,
+          "line": 147,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -35026,10 +35026,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:08b53535ff3edaca02e7",
+          "id": "cta:c4eeb9a73ffd2882dfc0",
           "column": 19,
           "file": "components/features/whatsapp/conversations/ConversationList.tsx",
-          "line": 172,
+          "line": 174,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -35084,10 +35084,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0d5abc0863f3a4da2c73",
+          "id": "cta:34009164e31512fcf40f",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationList.tsx",
-          "line": 218,
+          "line": 222,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -35142,10 +35142,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ccdc1b7c1b91e4e6d485",
+          "id": "cta:61789b4929d1e72a8f5c",
           "column": 7,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 127,
+          "line": 128,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -35200,10 +35200,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b79bf541974f3842279c",
+          "id": "cta:9a4be944cad0011c278a",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 256,
+          "line": 257,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -35258,10 +35258,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bcb1d58bf84d52faba59",
+          "id": "cta:13f4b98a3b5b9a4882e7",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 327,
+          "line": 328,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -45852,10 +45852,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:a9fff5eecc2f4f8a8b4c",
+          "id": "control:58bcde1e4ce77963593b",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 273,
+          "line": 274,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -45910,10 +45910,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:20b94e02319c223bdb4e",
+          "id": "control:1c9912620187edb7f909",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 282,
+          "line": 283,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -45968,10 +45968,10 @@
           "tag": "DropdownMenuSubTrigger"
         },
         {
-          "id": "control:0488e1c06162a72367c0",
+          "id": "control:7250e341688444b698c1",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 303,
+          "line": 304,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -46026,10 +46026,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:292cc84c21b845019d70",
+          "id": "control:02a05f5aca9c98f6ec30",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 346,
+          "line": 347,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -46084,10 +46084,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:24125f3f4ab6ce6d6d79",
+          "id": "control:b5b2aa8e5d5167645173",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 369,
+          "line": 370,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -46142,10 +46142,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:84c82035bc64b9f91c60",
+          "id": "control:53fd63c5f6e4cb399078",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 376,
+          "line": 377,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -46200,10 +46200,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:7bc9bbd7c9b86136635b",
+          "id": "control:6c2085e1206973ad417a",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 381,
+          "line": 382,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -47395,7 +47395,7 @@
         }
       ]
     },
-    "digestSha256": "b8390b1a3f50842ff6a3c833816db80a4226f0a69e6112ce1ff74698bc435889"
+    "digestSha256": "e90d85094d71b092f0fd59484ac1d061f022879b6571f4731bbd641778d5c926"
   },
   "routes": [
     {

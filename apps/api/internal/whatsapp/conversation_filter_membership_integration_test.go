@@ -127,6 +127,9 @@ func assertConversationSecondaryOrganizationFilters(t *testing.T, ctx context.Co
 			if len(leads) != wantCount || (item.wantLead && leads[0].ID != f.conversationID) {
 				t.Fatalf("secondary-org team list returned %d conversations, want %d", len(leads), wantCount)
 			}
+			leader := viewer
+			leader.Permissions = []string{"lead_view_team"}
+			assertSupervisoryFixtureRow(t, ctx, repo, leader, f.privateConversationID, item.wantLead)
 			count, err := repo.CountUnreadMessages(ctx, viewer, filter)
 			wantUnread := int64(0)
 			if item.wantLead {

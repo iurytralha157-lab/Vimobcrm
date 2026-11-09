@@ -2120,12 +2120,12 @@ export function FloatingChat() {
                           mediaGallery={mediaGallery}
                           mediaGalleryScopeKey={audioContextKey}
                           onNavigateQuoted={(id) => messageNavigation.navigateTo(id, { conversationId: item.message.conversation_id, sessionId: item.message.session_id })}
-                          canAttachToLead={canOperateLeads}
+                          canAttachToLead={canOperateLeads && !activeConversation?.supervisory_lead_view}
                           onReply={!audioDisabled && canQuoteWhatsAppMessage(item.message) ? () => { setReplySelection({ contextKey: audioContextKey, message: item.message }); messageInputRef.current?.focus({ preventScroll: true }); } : undefined}
                           onRecoverText={!audioDisabled && item.message.content ? () => { if (audioContextRef.current === audioContextKey) setMessageText(item.message.content || ""); } : undefined}
-                          onCheckSend={originalOrganization && item.message.from_me ? () => handleResolveAudio(String(item.message.client_message_id || item.message.metadata?.client_message_id || item.message.id)) : undefined}
+                          onCheckSend={!activeConversation?.supervisory_lead_view && originalOrganization && item.message.from_me ? () => handleResolveAudio(String(item.message.client_message_id || item.message.metadata?.client_message_id || item.message.id)) : undefined}
                           onOpenLead={canOperateLeads && activeConversationLeadId ? () => handleViewLead(activeConversationLeadId) : undefined}
-                          onDiscardLocal={item.message.metadata?.local_delivery_state === "failed" ? () => { if (activeConversation && audioContextRef.current === audioContextKey) discardLocalMessage({ conversation: activeConversation, message: item.message }); } : undefined}
+                          onDiscardLocal={!activeConversation?.supervisory_lead_view && item.message.metadata?.local_delivery_state === "failed" ? () => { if (activeConversation && audioContextRef.current === audioContextKey) discardLocalMessage({ conversation: activeConversation, message: item.message }); } : undefined}
                           mediaStatus={item.message.media_status as 'pending' | 'ready' | 'failed' | null}
                           mediaError={item.message.media_error ?? null}
                           storedMedia={Boolean(item.message.media_storage_path)}

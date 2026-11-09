@@ -8,6 +8,7 @@ const user = z.union([uuid, z.literal('unassigned')]).optional();
 
 export const whatsAppConversationListQuerySchema = z.object({
   sessionId: uuid.optional(),
+  includeSupervisoryLeads: z.boolean().optional(),
   sessionIds: z.string().max(100_000).refine((value) => !value || value.split(',').every((id) => uuid.safeParse(id).success)).optional(),
   pipelineId: uuid.optional(), teamId: uuid.optional(), userId: user,
   leadSource: optionalText(MAX_LEAD_SOURCE_FILTER_LENGTH), tagIds: z.array(uuid).max(50).optional(),
@@ -34,6 +35,7 @@ export const whatsAppConversationListQuerySchema = z.object({
 
 export const whatsAppConversationOptionsQuerySchema = z.object({
   sessionId: uuid.optional(),
+  includeSupervisoryLeads: z.boolean().optional(),
   sessionIds: z.string().max(100_000).refine((value) => !value || value.split(',').every((id) => uuid.safeParse(id).success)).optional(),
   hideGroups: z.boolean(), showArchived: z.boolean().optional(),
   lastMessageFrom: instant, lastMessageTo: instant, leadCreatedFrom: instant, leadCreatedTo: instant,

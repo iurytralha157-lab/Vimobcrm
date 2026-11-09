@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "6b5da04d979007d4f554505bc23fdd498cd4837657d90f62710847a9b0f74a84",
-  "surfaceInventoryDigestSha256": "526c76dbac85033b52fc703bb5cb59e6deec84cfda77cbd8673fe94ba04cc679",
+  "sourceDigestSha256": "816a245b83733e3276751dea051be36f4b89b1f6abd67c6d9d5def94f62184f8",
+  "surfaceInventoryDigestSha256": "7df7dd89707fd8f8c5b77143e544d4b6c002a9d2148b201791af88adda6cffb2",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 671,
@@ -2145,7 +2145,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "line": 299,
+      "line": 300,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -2154,7 +2154,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-      "line": 342,
+      "line": 343,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",

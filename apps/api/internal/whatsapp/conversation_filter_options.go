@@ -95,7 +95,8 @@ func conversationFilterOptionsSQL(tc tenant.Context, filter ConversationListFilt
 		LastMessageFrom: filter.LastMessageFrom, LastMessageTo: filter.LastMessageTo,
 		LeadCreatedFrom: filter.LeadCreatedFrom, LeadCreatedTo: filter.LeadCreatedTo,
 	}
-	args, where, empty, err := conversationFilterSQL(tc, scope)
+	args, where, empty, err := conversationFilterSQLWithSupervisoryRead(tc, scope,
+		canIncludeSupervisoryLeads(tc, filter))
 	if err != nil || empty {
 		return nil, "", empty, err
 	}

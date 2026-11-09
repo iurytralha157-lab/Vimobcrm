@@ -89,7 +89,7 @@ export function useWhatsAppVisibleCanonicalPreviews({ conversations, scope, list
     const result = new Map<string, Target>()
     for (const card of conversations) {
       const id = uuid(card.id), sessionId = uuid(card.session_id), leadId = uuid(card.lead_id || card.lead?.id)
-      if (!id || !sessionId || !leadId || card.is_group || card.historical_lead_view
+      if (!id || !sessionId || !leadId || card.is_group || card.historical_lead_view || card.supervisory_lead_view
         || ('platform' in card && card.platform)
         || Object.hasOwn(card, 'last_message_from_me') || Object.hasOwn(card, 'last_message_status')
         || (card.lead_id && card.lead?.id && uuid(card.lead_id) !== uuid(card.lead.id))) continue

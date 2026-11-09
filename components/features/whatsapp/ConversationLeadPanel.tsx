@@ -101,6 +101,7 @@ import { getConversationAssigneeLabel, getConversationPropertyLabel } from "@/co
 
 interface ConversationLeadPanelProps {
   leadId: string;
+  readOnly?: boolean;
   onClose: () => void;
   className?: string;
   contactPicture?: string | null;
@@ -350,6 +351,7 @@ export function ConversationLeadPanel(props: ConversationLeadPanelProps) {
 
 function ConversationLeadPanelContent({
   leadId,
+  readOnly = false,
   onClose,
   className,
   contactPicture,
@@ -376,7 +378,7 @@ function ConversationLeadPanelContent({
     contactPicture, contactPictureFallback,
   );
   const poolReadOnly = Boolean(accessLead?.queue_pool);
-  const canOperateLead = Boolean(accessLead && !poolReadOnly &&
+  const canOperateLead = Boolean(accessLead && !readOnly && !poolReadOnly &&
     canOperateLeadFromFreshRead(membershipMatches && hasPermission("lead_operate"), leadAccessQuery));
   const hasPropertiesModule = hasModule("properties");
   const hasScheduleModule = hasModule("agenda");
@@ -820,7 +822,7 @@ function ConversationLeadPanelContent({
         </div>}
 
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          {poolReadOnly && accessLead ? <QueuePoolClaimButton lead={accessLead} compact
+          {poolReadOnly && accessLead && !readOnly ? <QueuePoolClaimButton lead={accessLead} compact
             disabled={!hasFreshLeadAccess || !hasPermission("lead_operate")} /> : <Popover
             open={assigneePopoverOpen}
             onOpenChange={setAssigneePopoverOpen}

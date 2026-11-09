@@ -30,6 +30,7 @@ type PreviewConversation = {
   last_message_from_me?: boolean | null
   last_message_status?: string | null
   historical_lead_view?: boolean
+  supervisory_lead_view?: boolean
   platform?: string | null
 }
 
@@ -107,7 +108,7 @@ export function projectWhatsAppCanonicalConversationPreview<T extends PreviewCon
   const projected = conversations.map(conversation => {
     // A published canonical DTO, including authoritative nulls, always wins.
     if (Object.hasOwn(conversation, 'last_message_from_me') || Object.hasOwn(conversation, 'last_message_status')
-      || conversation.platform || conversation.historical_lead_view
+      || conversation.platform || conversation.historical_lead_view || conversation.supervisory_lead_view
       || (conversation.lead_id && conversation.lead?.id
         && uuid(conversation.lead_id) !== uuid(conversation.lead.id))
       || uuid(conversation.id) !== preview.conversationId || uuid(conversation.session_id) !== preview.sessionId

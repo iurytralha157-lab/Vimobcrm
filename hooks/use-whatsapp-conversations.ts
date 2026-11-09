@@ -89,6 +89,7 @@ export interface WhatsAppConversation {
   created_at: string;
   updated_at: string;
 	historical_lead_view?: boolean;
+  supervisory_lead_view?: boolean;
   session?: {
     id: string;
     instance_name: string;
@@ -193,7 +194,7 @@ export interface ConversationFilters {
 export function useWhatsAppConversationFilterOptions(
   sessionId?: string,
   accessibleSessionIds?: string[],
-  context?: Pick<ConversationFilters, 'showArchived' | 'lastMessageFrom' | 'lastMessageTo' | 'pageId' | 'campaignIds' | 'adSetId' | 'leadCreatedFrom' | 'leadCreatedTo'> & { optionsSearch?: string },
+  context?: Pick<ConversationFilters, 'showArchived' | 'lastMessageFrom' | 'lastMessageTo' | 'pageId' | 'campaignIds' | 'adSetId' | 'leadCreatedFrom' | 'leadCreatedTo'> & { optionsSearch?: string; includeSupervisoryLeads?: boolean },
   enabled = false,
 ) {
   const queryClient = useQueryClient();
@@ -203,7 +204,7 @@ export function useWhatsAppConversationFilterOptions(
     : 'backend-visibility';
 
   const query = useInfiniteQuery({
-    queryKey: [...whatsappQueryKeys.conversationsScope(scope), 'filter-options', sessionId ?? '', accessibleSessionKey, context?.showArchived ?? false, context?.lastMessageFrom ?? '', context?.lastMessageTo ?? '', context?.pageId ?? '', [...(context?.campaignIds ?? [])].sort(), context?.adSetId ?? '', context?.leadCreatedFrom ?? '', context?.leadCreatedTo ?? '', context?.optionsSearch ?? ''],
+    queryKey: [...whatsappQueryKeys.conversationsScope(scope), 'filter-options', sessionId ?? '', accessibleSessionKey, context?.showArchived ?? false, context?.lastMessageFrom ?? '', context?.lastMessageTo ?? '', context?.pageId ?? '', [...(context?.campaignIds ?? [])].sort(), context?.adSetId ?? '', context?.leadCreatedFrom ?? '', context?.leadCreatedTo ?? '', context?.optionsSearch ?? '', context?.includeSupervisoryLeads ?? false],
     queryFn: ({ signal, pageParam, queryKey }) => readWhatsAppInbox(queryClient, scope, queryKey, signal, () => accessibleSessionIds?.length === 0
       ? Promise.resolve({ pipelines: [], teams: [], users: [], sources: [], tags: [], pages: [], campaigns: [], adSets: [], ads: [], hasMore: false, nextOffset: null })
       : whatsappAPI.getConversationFilterOptions({
@@ -211,6 +212,7 @@ export function useWhatsAppConversationFilterOptions(
         sessionId,
         accessibleSessionIds,
         showArchived: context?.showArchived,
+        includeSupervisoryLeads: context?.includeSupervisoryLeads,
         lastMessageFrom: context?.lastMessageFrom,
         lastMessageTo: context?.lastMessageTo,
         pageId: context?.pageId,
@@ -235,6 +237,7 @@ export function useWhatsAppConversationFilterOptions(
 }
 
 type WhatsAppConversationsQueryOptions = {
+  includeSupervisoryLeads?: boolean;
   enabled?: boolean;
   refetchOnWindowFocus?: boolean;
 };
@@ -267,7 +270,7 @@ const getConversationLeadId = (conversation?: WhatsAppConversation | null) =>
   conversation?.lead_id || conversation?.lead?.id || null;
 
 const requireConversationLeadId = (conversation?: WhatsAppConversation | null) => {
-  if (conversation?.historical_lead_view) {
+  if (conversation?.historical_lead_view || conversation?.supervisory_lead_view) {
     throw new Error("WHATSAPP_HISTORICAL_CONVERSATION_READ_ONLY");
   }
   const leadId = getConversationLeadId(conversation);
@@ -279,7 +282,7 @@ const requireConversationBindingSnapshot = (conversation?: WhatsAppConversation 
   if (!conversation?.id) {
     throw new Error("WHATSAPP_CONVERSATION_UNAVAILABLE");
   }
-  if (conversation.historical_lead_view) {
+  if (conversation.historical_lead_view || conversation.supervisory_lead_view) {
     throw new Error("WHATSAPP_HISTORICAL_CONVERSATION_READ_ONLY");
   }
   return getConversationLeadId(conversation) || WHATSAPP_UNLINKED_LEAD_SNAPSHOT;
@@ -575,6 +578,7 @@ export function useWhatsAppConversations(
       lastMessageFrom: filters?.lastMessageFrom ?? "",
       lastMessageTo: filters?.lastMessageTo ?? "",
       accessibleSessionKey,
+      includeSupervisoryLeads: options?.includeSupervisoryLeads ?? false,
       limit,
     }),
     queryFn: ({ pageParam, signal, queryKey }) => readWhatsAppInbox(queryClient, scope, queryKey, signal, async () => {
@@ -588,6 +592,7 @@ export function useWhatsAppConversations(
         sessionId,
         filters,
         accessibleSessionIds,
+        includeSupervisoryLeads: options?.includeSupervisoryLeads,
         limit,
         cursor: pageParam,
       }, { signal, expectedUserId: scope.userId }) as Promise<{ conversations: WhatsAppConversation[]; nextCursor: string | null }>;

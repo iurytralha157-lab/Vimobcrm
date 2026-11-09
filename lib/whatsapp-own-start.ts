@@ -24,6 +24,7 @@ export function getOwnWhatsAppStartNotice({
   loadingSessions?: boolean;
 }): OwnWhatsAppStartNoticeState | null {
   if (!canOperate || !currentUserId || loadingSessions || !sessions || !conversation) return null;
+  if (conversation.supervisory_lead_view) return null;
   if (conversation.is_group || (!conversation.lead_id && !conversation.lead?.id)) return null;
 
   const ownConnectedSessionIds = sessions.filter((session) =>

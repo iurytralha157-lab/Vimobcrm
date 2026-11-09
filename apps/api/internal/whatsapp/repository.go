@@ -478,7 +478,8 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 		filter.Limit = 120
 	}
 
-	args, where, empty, err := conversationFilterSQL(tenantContext, filter)
+	includeSupervisory := canIncludeSupervisoryLeads(tenantContext, filter)
+	args, where, empty, err := conversationFilterSQLWithSupervisoryRead(tenantContext, filter, includeSupervisory)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -517,8 +518,12 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 	args = append(args, filter.Limit+1)
 	limitArg := len(args)
 
+	selectFields := conversationSelectFields()
+	if includeSupervisory {
+		selectFields += ", not coalesce(" + operationalConversationAccessSQL() + ", false)"
+	}
 	rows, err := repo.db.Pool().Query(ctx, `
-		select `+conversationSelectFields()+`
+		select `+selectFields+`
 		from public.whatsapp_conversations wc
 		left join public.whatsapp_sessions ws on ws.id = wc.session_id
 		left join public.leads l on l.id = wc.lead_id and l.organization_id = wc.organization_id
@@ -535,7 +540,7 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 
 	conversations := []Conversation{}
 	for rows.Next() {
-		conversation, err := scanConversation(rows)
+		conversation, err := scanConversationWithSupervisoryRead(rows, includeSupervisory)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -552,6 +557,11 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 		nextCursor = &cursor
 	}
 
+	for index := range conversations {
+		if conversations[index].SupervisoryLeadView {
+			conversations[index].projectSupervisoryLead()
+		}
+	}
 	repo.hydrateConversationAvatars(ctx, tenantContext.OrganizationID, conversationAvatarPointers(conversations))
 	return conversations, nextCursor, nil
 }
@@ -597,7 +607,8 @@ func (repo Repository) listLegacyConversationFilterOptions(ctx context.Context, 
 		ShowArchived: filter.ShowArchived, LastMessageFrom: filter.LastMessageFrom,
 		LastMessageTo: filter.LastMessageTo,
 	}
-	args, where, empty, err := conversationFilterSQL(tenantContext, scope)
+	args, where, empty, err := conversationFilterSQLWithSupervisoryRead(tenantContext, scope,
+		canIncludeSupervisoryLeads(tenantContext, filter))
 	if err != nil || empty {
 		return options, err
 	}
@@ -728,6 +739,10 @@ func (repo Repository) listLegacyConversationFilterOptions(ctx context.Context, 
 // count visibility. The explicit empty session scope is fail-closed so a
 // client that has not resolved an allowed session never falls back to "all".
 func conversationFilterSQL(tenantContext tenant.Context, filter ConversationListFilter) ([]any, []string, bool, error) {
+	return conversationFilterSQLWithSupervisoryRead(tenantContext, filter, false)
+}
+
+func conversationFilterSQLWithSupervisoryRead(tenantContext tenant.Context, filter ConversationListFilter, includeSupervisory bool) ([]any, []string, bool, error) {
 	if !validConversationFilterText(filter.Search, 180) || !validConversationFilterText(filter.LeadSource, maxLeadSourceFilterLength) {
 		return nil, nil, false, ErrInvalidInput
 	}
@@ -739,12 +754,17 @@ func conversationFilterSQL(tenantContext tenant.Context, filter ConversationList
 	}
 
 	args := baseConversationArgs(tenantContext)
+	visibility := operationalConversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))
+	if includeSupervisory {
+		args = append(args, strings.ToLower(strings.TrimSpace(tenantContext.MemberRole)))
+		rolePlaceholder := fmt.Sprintf("$%d", len(args))
+		visibility = conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)) + " and (" +
+			operationalConversationAccessSQL() + " or " + supervisoryLeadVisibilitySQL(tenantContext, rolePlaceholder) + ")"
+	}
 	where := []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
-		// Linked conversations follow the current lead scope on any number;
-		// unlinked conversations remain visible only to their session owner.
-		operationalConversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
+		visibility,
 	}
 
 	addFilter := func(clause string, value any) {
@@ -2044,6 +2064,10 @@ func scanSessionAccess(row scanner) (SessionAccess, error) {
 }
 
 func scanConversation(row scanner) (Conversation, error) {
+	return scanConversationWithSupervisoryRead(row, false)
+}
+
+func scanConversationWithSupervisoryRead(row scanner, includeSupervisory bool) (Conversation, error) {
 	var conversation Conversation
 	var conversationSessionID pgtype.Text
 	var leadID, contactName, contactPhone, contactPicture, contactPresence, lastMessage pgtype.Text
@@ -2056,7 +2080,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	var listPreviewJSON pgtype.Text
 	var avatarReferenceJSON pgtype.Text
 
-	if err := row.Scan(
+	destinations := []any{
 		&conversation.ID,
 		&conversationSessionID,
 		&leadID,
@@ -2097,7 +2121,11 @@ func scanConversation(row scanner) (Conversation, error) {
 		&tagsJSON,
 		&listPreviewJSON,
 		&avatarReferenceJSON,
-	); err != nil {
+	}
+	if includeSupervisory {
+		destinations = append(destinations, &conversation.SupervisoryLeadView)
+	}
+	if err := row.Scan(destinations...); err != nil {
 		return Conversation{}, err
 	}
 
@@ -2308,7 +2336,11 @@ func conversationVisibilitySQL(canViewOwn bool) string {
 // shared conversations assigned to this recipient. Broader CRM lead history
 // stays readable through snapshot/history endpoints, without sharing a number.
 func operationalConversationVisibilitySQL(canViewOwn bool) string {
-	return conversationVisibilitySQL(canViewOwn) + ` and (
+	return conversationVisibilitySQL(canViewOwn) + " and " + operationalConversationAccessSQL()
+}
+
+func operationalConversationAccessSQL() string {
+	return `(
 		ws.owner_user_id = $2::uuid
 		or (
 			wc.lead_id is not null

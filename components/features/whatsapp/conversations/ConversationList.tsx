@@ -43,6 +43,7 @@ type ConversationListProps = {
   onAddTag: (conversation: ScreenConversation, tagId: string) => void;
   onRemoveTag: (conversation: ScreenConversation, tagId: string) => void;
   onCreateLead: (conversation: ScreenConversation) => void;
+  onViewLead?: (leadId: string) => void;
   formatTime: (date: string | null) => string;
   hasMoreConversations: boolean;
   isLoadingMoreConversations: boolean;
@@ -82,6 +83,7 @@ export function ConversationList({
   onAddTag,
   onRemoveTag,
   onCreateLead,
+  onViewLead,
   formatTime,
   hasMoreConversations,
   isLoadingMoreConversations,
@@ -186,8 +188,9 @@ export function ConversationList({
             )}
           </div>
         ) : (
-          conversations.map((conversation) => (
-            <ConversationListItem
+          conversations.map((conversation) => {
+            const supervisoryLeadId = conversation.supervisory_lead_view ? conversation.lead_id : null;
+            return <ConversationListItem
               key={conversation.id}
               conversation={conversation}
               previewCardRef={previewCardRef}
@@ -210,8 +213,9 @@ export function ConversationList({
               onAddTag={(tagId) => onAddTag(conversation, tagId)}
               onRemoveTag={(tagId) => onRemoveTag(conversation, tagId)}
               onCreateLead={() => onCreateLead(conversation)}
-            />
-          ))
+              onViewLead={onViewLead && supervisoryLeadId ? () => onViewLead(supervisoryLeadId) : undefined}
+            />;
+          })
         )}
         {channel === "whatsapp" && !isLoading && !isError && hasMoreConversations && (
           <div className="flex justify-center p-3">

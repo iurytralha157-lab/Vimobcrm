@@ -37,3 +37,9 @@ test("new lead preserves the normal composer and multiple own numbers require ex
   assert.equal(get({ conversation: { ...conversation, id: null }, sessions: [] })?.kind, "connect");
   assert.deepEqual(get({ sessions: [own, { ...own, id: "own-2" }] })?.ownConnectedSessionIds, ["own", "own-2"]);
 });
+
+test("supervisory access offers neither a new own conversation nor a connection action", () => {
+  const supervisory = { ...conversation, historical_lead_view: true, supervisory_lead_view: true };
+  assert.equal(get({ conversation: supervisory }), null);
+  assert.equal(get({ conversation: supervisory, sessions: [] }), null);
+});

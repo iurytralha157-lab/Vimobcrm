@@ -143,6 +143,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const selectedExpectedLeadId = selectedConversationState?.tenantKey === activeTenantKey
 	  ? selectedConversationState.expectedLeadId
 	  : null;
+  const selectedSupervisoryView = Boolean(selectedConversationId && selectedConversationState?.conversationSnapshot.supervisory_lead_view);
   const selectionGenerationRef = useRef(0);
   const setSelectedConversation = useCallback((conversation: ScreenConversation | null) => {
     selectionGenerationRef.current += 1;
@@ -178,7 +179,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     campaignIds: selectedCampaignIds, setCampaignIds: setSelectedCampaignIds,
   } = sharedLeadFilters;
   const [conversationFiltersOpen, setConversationFiltersOpen] = useState(false);
-  const conversationDraft = useWhatsAppConversationDraft(whatsappQueryScope, selectedConversationId,
+  const conversationDraft = useWhatsAppConversationDraft(whatsappQueryScope, selectedSupervisoryView ? null : selectedConversationId,
     activePlatform === 'whatsapp' ? selectedExpectedLeadId : selectedConversationId ? `channel:${activePlatform}` : null);
   const { text: messageText, setText: setMessageText, clearConversation: clearConversationDraft } = conversationDraft;
   const [showArchived, setShowArchived] = useState(() => {
@@ -263,8 +264,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     data: selectedWhatsAppConversation,
     refetch: refetchSelectedWhatsAppConversation,
   } = useWhatsAppConversation(
-    activePlatform === "whatsapp" ? selectedConversationId : null,
-	activePlatform === "whatsapp" ? selectedExpectedLeadId : null,
+    activePlatform === "whatsapp" && !selectedSupervisoryView ? selectedConversationId : null,
+	activePlatform === "whatsapp" && !selectedSupervisoryView ? selectedExpectedLeadId : null,
   );
   const deepLinkKey = `${activeTenantKey}:${initialConversationId || ""}:${initialLeadId || ""}`;
   useLayoutEffect(() => { deepLinkIntentRef.current = { key: deepLinkKey, generation: selectionGenerationRef.current }; }, [deepLinkKey]);
@@ -301,11 +302,13 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     ),
     [accessibleSessionIds, loadingSessions, selectedSessionId],
   );
+  const includeSupervisoryLeads = selectedSessionId === "all" && !showArchived && !withoutLeadOnly && !pendingReplyOnly;
   const conversationFilterOptionsQuery = useWhatsAppConversationFilterOptions(
     conversationSessionFilter.sessionId,
     conversationSessionFilter.accessibleSessionIds,
     {
       showArchived,
+      includeSupervisoryLeads: includeSupervisoryLeads || undefined,
       pageId: conversationFilters.pageId,
       campaignIds: conversationFilters.campaignIds,
       adSetId: conversationFilters.adSetId,
@@ -381,7 +384,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     conversationFilters,
     conversationSessionFilter.accessibleSessionIds,
     80,
-    { enabled: activePlatform === 'whatsapp' && sharedLeadFilters.isHydrated },
+    {
+      enabled: activePlatform === 'whatsapp' && sharedLeadFilters.isHydrated,
+      includeSupervisoryLeads: includeSupervisoryLeads || undefined,
+    },
   );
 
   const searchingConversations = activePlatform === "whatsapp" && (trimmedSearchTerm !== debouncedSearchTerm
@@ -486,7 +492,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
     if (activePlatform === "whatsapp") {
 	  const conversationSnapshot = selectedConversationState?.conversationSnapshot;
-	  if (conversationSnapshot?.id === selectedConversationId && conversationSnapshot.historical_lead_view) {
+	  if (conversationSnapshot?.id === selectedConversationId && (conversationSnapshot.historical_lead_view || conversationSnapshot.supervisory_lead_view)) {
 		return conversationSnapshot;
 	  }
       const conversationFromList = conversations?.find(
@@ -679,7 +685,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [createLeadOpen, setCreateLeadOpen] = useState(false);
   const [createLeadContact, setCreateLeadContact] = useState<CreateLeadContact>({});
   const canReassignSelectedLead = activePlatform === "whatsapp" && Boolean(selectedConversation)
-    && !selectedConversation?.is_group && !selectedConversation?.historical_lead_view
+    && !selectedConversation?.is_group && selectedMessageScope.canManage
     && canOperateWhatsApp && canOperateLeads;
   const canShowLeadPanel = Boolean(selectedConversation && (selectedLeadId
     || (!selectedConversation.is_group && (canCreateLeads || canReassignSelectedLead))));
@@ -1631,8 +1637,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     <ConversationDetailsPane key={detailsSelectionKey} open={showLeadPanel} docked={detailsDocked}
       onClose={closeLeadPanel} actionsRef={conversationActionsRef}>
       {selectedLeadId && !changingLeadLink ? (
-        <ConversationLeadPanel key={JSON.stringify([overlayScopeKey, selectedLeadId])}
-          leadId={selectedLeadId} onClose={closeLeadPanel}
+        <ConversationLeadPanel key={JSON.stringify([overlayScopeKey, selectedLeadId, selectedConversation.supervisory_lead_view])}
+          leadId={selectedLeadId} readOnly={selectedConversation.supervisory_lead_view} onClose={closeLeadPanel}
           contactPicture={getConversationAvatarUrl(selectedConversation)}
           contactPictureFallback={selectedConversation.contact_picture} />
       ) : (
@@ -1797,6 +1803,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                   tagId,
                 })}
                 onCreateLead={openCreateLeadForConversation}
+            onViewLead={(leadId) => router.push(`/crm/pipelines?lead=${leadId}`)}
                 formatTime={formatConversationTime}
                 hasMoreConversations={activePlatform === "whatsapp" && hasMoreConversations}
                 isLoadingMoreConversations={isLoadingMoreConversations}
@@ -1861,6 +1868,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
               tagId,
             })}
             onCreateLead={openCreateLeadForConversation}
+                onViewLead={(leadId) => router.push(`/crm/pipelines?lead=${leadId}`)}
             formatTime={formatConversationTime}
             hasMoreConversations={activePlatform === "whatsapp" && hasMoreConversations}
             isLoadingMoreConversations={isLoadingMoreConversations}

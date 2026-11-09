@@ -498,6 +498,23 @@ após um corte anterior, veta qualquer token remanescente na sessão.
    zerar, continuar o dreno e não executar a ativação.
 
 
+## Consulta de leads ativos na tela Conversas
+
+Na tela Conversas, o cliente compatível envia `includeSupervisoryLeads=true`
+à listagem e ao catálogo de filtros. Em **Todos os números**, a API pode
+mostrar também conversas diretas de leads em aberto que o usuário já pode ler
+no CRM. O escopo é da organização atual e segue as permissões de lead: acesso
+da organização, das equipes que o usuário lidera ou dos leads atribuídos ao
+usuário. A API exige vínculo ativo com a organização para esse modo.
+
+As linhas adicionais são identificadas por `supervisory_lead_view` e abertas
+no histórico vinculado ao lead, somente para consulta. A lista não conta essas
+linhas como mensagens não lidas do usuário. O modo não se aplica a conversas
+sem lead, grupos, arquivadas, seleção de um número específico ou filtro de
+resposta pendente. Envio e outras ações da caixa continuam sujeitos à posse
+ou ao compartilhamento operacional do número. Clientes antigos que não
+enviam o parâmetro continuam com a caixa operacional.
+
 ## Correções locais de cache e interação — 21/10/2026
 
 Este complemento descreve os seis ajustes locais WA-C01, WA-D02, WA-F02,

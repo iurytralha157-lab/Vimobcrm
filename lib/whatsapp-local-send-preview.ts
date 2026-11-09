@@ -3,7 +3,7 @@ import type { WhatsAppQueryScope } from '@/lib/whatsapp-query-cache'
 type Card = { id: string; session_id: string | null; lead_id: string | null; lead?: { id: string } | null;
   last_message: string | null; last_message_at: string | null; last_message_id?: string | null;
   last_message_sent_at?: string | null; last_message_from_me?: boolean | null; last_message_status?: string | null;
-  historical_lead_view?: boolean; platform?: string | null; is_group?: boolean }
+  historical_lead_view?: boolean; supervisory_lead_view?: boolean; platform?: string | null; is_group?: boolean }
 export type SendPreviewOwner = { scope: WhatsAppQueryScope; active: boolean }
 export type SendPreviewToken = { owner: SendPreviewOwner; sequence: number; conversationId: string; clientId: string }
 export function getWhatsAppLocalSendPreviewText(content: string | null | undefined, kind = 'text') {
@@ -73,7 +73,7 @@ export class WhatsAppLocalSendPreviewStore {
     if (!owner.active || !owner.scope.organizationId || !owner.scope.userId || !owner.scope.accessScope
       || !UUID.test(card.id) || !leadId || !UUID.test(leadId) || !UUID.test(input.sessionId)
       || card.session_id !== input.sessionId || !input.clientId || !Number.isFinite(time(input.sentAt))
-      || card.is_group || card.historical_lead_view || card.platform
+      || card.is_group || card.historical_lead_view || card.supervisory_lead_view || card.platform
       || (card.lead_id && card.lead?.id && card.lead_id !== card.lead.id)) return undefined
     const token: SendPreviewToken = { owner, sequence: ++this.sequence, conversationId: card.id, clientId: input.clientId }
     const previous = this.entries.get(key(owner.scope, card.id))
@@ -118,7 +118,7 @@ export class WhatsAppLocalSendPreviewStore {
   }
   private decision(card: Card, entry: Entry): 'own' | 'same' | 'retire' {
     if ((!entry.token.owner.active && !entry.detached) || entry.expiresAt <= this.now() || card.session_id !== entry.sessionId
-      || (card.lead_id || card.lead?.id) !== entry.leadId || card.platform || card.historical_lead_view || card.is_group
+      || (card.lead_id || card.lead?.id) !== entry.leadId || card.platform || card.historical_lead_view || card.supervisory_lead_view || card.is_group
       || (card.lead_id && card.lead?.id && card.lead_id !== card.lead.id)) return 'retire'
     if (entry.messageId && card.last_message_id === entry.messageId) return card.last_message_from_me === true ? 'same' : 'retire'
     if (card.last_message_id && card.last_message_id === entry.token.clientId) return card.last_message_from_me === true ? 'same' : 'retire'
