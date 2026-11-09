@@ -238,6 +238,73 @@ func TestWebhookRouteClaimDeferredAndDeadRoutesKeepExactBarriers(t *testing.T) {
 			assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
 		})
 	}
+	t.Run("live FIFO successor cannot veto its backlog prerequisite", func(t *testing.T) {
+		f := newWebhookDependencyFixture(t, ctx, db, "route-priority-cycle")
+		control := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+			key: f.suffix + "-control", eventType: "connected", route: "__session__", lane: evolutionWebhookLaneBacklog,
+			epoch: 1, age: 4 * time.Minute, snapshots: []map[string]any{},
+		})
+		rootKey := f.suffix + "-root"
+		root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+			key: rootKey, providerID: "root", route: "jid:dependent", lane: evolutionWebhookLaneBacklog,
+			epoch: 1, age: 3 * time.Minute,
+		})
+		live := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+			key: f.suffix + "-live", providerID: "live", route: "jid:dependent", lane: evolutionWebhookLaneLive,
+			predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: 2 * time.Minute,
+		})
+		receipt := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+			key: f.suffix + "-receipt", eventType: "receipt", route: "jid:dependent", lane: evolutionWebhookLaneLive,
+			epoch: 1, age: time.Minute, snapshots: []map[string]any{},
+		})
+		repo := NewRepository(db, nil, StorageConfig{})
+		if claimed, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, ""); err != nil || len(claimed) != 0 {
+			t.Fatalf("live claim bypassed the dependency or FIFO: %#v / %v", claimed, err)
+		}
+		claimed, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, "")
+		if err != nil || len(claimed) != 1 || claimed[0].ID != control {
+			t.Fatalf("unclaimable live successor vetoed its exact session prerequisite: %#v / %v", claimed, err)
+		}
+		assertRouteClaimState(t, ctx, db.Pool(), control, "processing", 1)
+		for _, id := range []string{root, live, receipt} {
+			assertRouteClaimState(t, ctx, db.Pool(), id, "pending", 0)
+		}
+	})
+	t.Run("pairing acknowledgement completes without connection or routing effects", func(t *testing.T) {
+		f := newWebhookDependencyFixture(t, ctx, db, "route-pair-control")
+		id := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
+			key: f.suffix + "-pair", eventType: "pairsuccess", route: "__session__", lane: evolutionWebhookLaneBacklog,
+			epoch: 1, age: time.Minute, withoutLedger: true,
+			snapshots: []map[string]any{{"provider_message_id": "synthetic-pair-jid", "binding_eligible": false, "processing_epoch": 1}},
+		})
+		if _, err := db.Pool().Exec(ctx, `
+			update public.whatsapp_sessions set status='disconnected' where id=$1::uuid`, f.sessionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Pool().Exec(ctx, `
+			update public.whatsapp_webhook_inbox
+			set payload = payload || '{"event":"PairSuccess","data":{"ID":"5511999990001@s.whatsapp.net","LID":"1000000001@lid","BusinessName":"Synthetic","Platform":"android","jid":"5511999990001:1@s.whatsapp.net","status":"open"}}'::jsonb
+			where id=$1::uuid`, id); err != nil {
+			t.Fatal(err)
+		}
+		repo := NewRepository(db, nil, StorageConfig{})
+		claimed, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, "")
+		if err != nil || len(claimed) != 1 || claimed[0].ID != id {
+			t.Fatalf("pairing control claim: %#v / %v", claimed, err)
+		}
+		if err := repo.processClaimedEvolutionWebhook(ctx, claimed[0]); err != nil {
+			t.Fatal(err)
+		}
+		assertRouteClaimState(t, ctx, db.Pool(), id, "processed", 1)
+		var status string
+		var outcomes int
+		if err := db.Pool().QueryRow(ctx, `
+			select status, (select count(*)::int from public.whatsapp_webhook_routing_outcomes where session_id=$1::uuid)
+			from public.whatsapp_sessions where id=$1::uuid`, f.sessionID).Scan(&status, &outcomes); err != nil ||
+			status != "disconnected" || outcomes != 0 {
+			t.Fatalf("pairing acknowledgement mutated session or routing: status=%q outcomes=%d err=%v", status, outcomes, err)
+		}
+	})
 }
 
 type routeClaimRowReader interface {

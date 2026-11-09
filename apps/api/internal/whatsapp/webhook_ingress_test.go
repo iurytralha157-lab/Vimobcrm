@@ -458,7 +458,6 @@ func TestEvolutionWebhookInlineSessionStateAppliesTerminalConnectionStateImmedia
 		{event: "connected", payload: `{"event":"connected","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "connected"},
 		{event: "disconnected", payload: `{"event":"disconnected","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "disconnected"},
 		{event: "loggedout", payload: `{"event":"loggedout","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "disconnected"},
-		{event: "pairsuccess", payload: `{"event":"pairsuccess","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "connected"},
 	} {
 		t.Run(fixture.event+fixture.payload, func(t *testing.T) {
 			envelope := evolutionWebhookEnvelope{

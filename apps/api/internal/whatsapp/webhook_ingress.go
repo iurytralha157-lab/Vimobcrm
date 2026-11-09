@@ -1598,6 +1598,9 @@ func evolutionWebhookInlineSessionState(envelope evolutionWebhookEnvelope) (evol
 	}
 	event := nativeEvolutionEventName(payload, envelope.EventType)
 	compactEvent := strings.NewReplacer(".", "", "_", "", "-", "", " ", "").Replace(strings.ToLower(event))
+	if compactEvent == "pairsuccess" {
+		return evolutionWebhookSessionState{}, nil
+	}
 	if compactEvent == "qrtimeout" {
 		// QR_TIMEOUT is a provider lifecycle pulse, not a lead message. The
 		// provider emits another QRCODE while attempts remain, so persisting every
@@ -1610,13 +1613,12 @@ func evolutionWebhookInlineSessionState(envelope evolutionWebhookEnvelope) (evol
 		strings.Contains(compactEvent, "session") ||
 		compactEvent == "connected" ||
 		compactEvent == "disconnected" ||
-		compactEvent == "loggedout" ||
-		compactEvent == "pairsuccess"
+		compactEvent == "loggedout"
 
 	connectionStatus, connectionRecognized, connectionError := nativeEvolutionConnectionStatus(payload, event)
 	if !connectionRecognized {
 		switch compactEvent {
-		case "connected", "pairsuccess":
+		case "connected":
 			connectionStatus, connectionRecognized = "connected", true
 		case "disconnected", "loggedout":
 			connectionStatus, connectionRecognized = "disconnected", true

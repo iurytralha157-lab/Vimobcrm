@@ -12,10 +12,13 @@ import (
 
 func deferredEvolutionWebhookSessionState(item pendingEvolutionWebhook, payload map[string]any) (evolutionWebhookSessionState, bool) {
 	event := nativeEvolutionEventName(payload, item.EventType)
+	if compactEvolutionWebhookControlName(event) == "pairsuccess" {
+		return evolutionWebhookSessionState{}, false
+	}
 	status, recognized, connectionError := nativeEvolutionConnectionStatus(payload, event)
 	if !recognized {
 		switch compactEvolutionWebhookControlName(event) {
-		case "connected", "pairsuccess":
+		case "connected":
 			status, recognized = "connected", true
 		case "disconnected", "loggedout":
 			status, recognized = "disconnected", true

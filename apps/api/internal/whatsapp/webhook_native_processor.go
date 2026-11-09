@@ -491,6 +491,11 @@ func nativeEvolutionTechnicalIgnoreReason(item pendingEvolutionWebhook) string {
 	}
 	event := compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType))
 	switch event {
+	case "pairsuccess":
+		if nativeEvolutionPairSuccessControl(payload, event) {
+			return "pair_success_control"
+		}
+		return ""
 	case "message", "messagesupsert", "messagesupdate":
 		messages := extractNativeEvolutionMessages(payload)
 		if len(messages) == 0 {
@@ -801,6 +806,9 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	event := nativeEvolutionEventName(payload, item.EventType)
 	if err := evolutionWebhookMixedReceiptError(item); err != nil {
 		return true, err
+	}
+	if nativeEvolutionPairSuccessControl(payload, event) {
+		return true, nil
 	}
 
 	isStatusEvent := nativeIsStatusEvent(event)

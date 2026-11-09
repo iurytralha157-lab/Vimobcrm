@@ -3,6 +3,7 @@ package whatsapp
 // Evaluate availability and live priority before choosing the one session head.
 // A blocked route may not hide an eligible dependency root in another route;
 // each route's existing older-row barrier still enforces FIFO.
+// A live FIFO successor cannot reserve priority ahead of its own blocked head.
 const evolutionWebhookCandidatePriorityQuery = `
 			  where head.next_attempt_at <= now()
 			    and not exists (
@@ -27,6 +28,22 @@ const evolutionWebhookCandidatePriorityQuery = `
 			          and live_due.attempts < live_due.max_attempts
 			          and coalesce(live_due.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') = '1'
 			          and live_due.next_attempt_at <= now()
+			          and not exists (
+			            select 1 from public.whatsapp_webhook_inbox older_live
+			            where older_live.session_id = live_due.session_id
+			              and older_live.processing_epoch = live_due.processing_epoch
+			              and older_live.processing_lane = live_due.processing_lane
+			              and older_live.status in ('pending', 'retry')
+			              and older_live.attempts < older_live.max_attempts
+			              and coalesce(older_live.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') = '1'
+			              and (older_live.created_at, older_live.id) < (live_due.created_at, live_due.id)
+			              and (
+			                coalesce(nullif(older_live.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') = '__session__'
+			                or coalesce(nullif(live_due.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') = '__session__'
+			                or coalesce(nullif(older_live.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') =
+			                   coalesce(nullif(live_due.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__')
+			              )
+			          )
 			          and not exists (
 			            select 1 from pg_catalog.jsonb_array_elements(
 			              case when pg_catalog.jsonb_typeof(
