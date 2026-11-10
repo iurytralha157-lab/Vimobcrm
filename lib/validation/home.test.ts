@@ -554,7 +554,16 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
     leadDetailSource,
     /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}/,
   );
-  assert.match(leadDetailSource, /disabled=\{!canOperateLead\}/);
+  assert.equal(
+    [...leadDetailSource.matchAll(/disabled=\{!canProgressLead\}\s+aria-label=\{.Mover para /g)].length,
+    2,
+    "stage buttons require the progress permission on both layouts",
+  );
+  assert.equal(
+    [...leadDetailSource.matchAll(/onValueChange=\{handleDealStatusChange\} disabled=\{!canOperateLead \|\|/g)].length,
+    2,
+    "deal status still requires general edit access on both layouts",
+  );
   assert.equal(
     [...leadDetailSource.matchAll(/\{!detailReadState\.hideDetails && overlays\}/g)].length,
     2,
