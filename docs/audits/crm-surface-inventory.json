@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "9502b84ce64f144d6cc2123a0344ba3e2b3af117e9f72fb3881ce16eb88d7562",
+  "sourceDigestSha256": "540a5d7937133bab5c8c91c7a61e59a2c151cc9841cfef02fc2fd66824954c46",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1433,10 +1433,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:b2afe2870881a6c2850d",
+          "id": "overlay:7b9405c287aac08dbd7a",
           "column": 9,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 609,
+          "line": 612,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -2041,10 +2041,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f74f786ae66e9dfb391a",
+          "id": "overlay:cfc29e5bed74c2485218",
           "column": 9,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1543,
+          "line": 1552,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -2053,10 +2053,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:53fd0f6caf8a39d1f178",
+          "id": "overlay:0da70a71430b837d6db4",
           "column": 7,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1588,
+          "line": 1597,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -2065,10 +2065,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:a6e4100989cf7fb0aa2e",
+          "id": "overlay:966adf6f4b5077b4db7a",
           "column": 9,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1925,
+          "line": 1934,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -2077,10 +2077,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:e2e2e463ca3468d1a789",
+          "id": "overlay:c0f476f1d621cc1abdf5",
           "column": 19,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2027,
+          "line": 2036,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -2089,10 +2089,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:1a700b714146e7e4469a",
+          "id": "overlay:11efd8d6c025a81ddb5f",
           "column": 7,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2352,
+          "line": 2361,
           "owner": "LeadDetailDialog",
           "routes": [
             "/crm/contacts",
@@ -13647,10 +13647,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bda96a1b603a29f926bf",
-          "column": 11,
+          "id": "cta:ad0de2d4e990cce2dc6b",
+          "column": 9,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 315,
+          "line": 321,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -13659,32 +13659,8 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ad8ef2483af697e37293",
-          "column": 11,
-          "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 336,
-          "owner": "DistributionTab",
-          "routes": [
-            "/crm/management"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:2e8e418dd3db5beecbf2",
+          "id": "cta:e5ece6f858e343425fb0",
           "column": 13,
-          "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 349,
-          "owner": "DistributionTab",
-          "routes": [
-            "/crm/management"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:2708154e6690f4e3b0bf",
-          "column": 258,
           "file": "components/features/crm-management/DistributionTab.tsx",
           "line": 352,
           "owner": "DistributionTab",
@@ -13695,10 +13671,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7669e0a4e529c9d822e6",
-          "column": 27,
+          "id": "cta:d987df931dc9726cd249",
+          "column": 258,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 579,
+          "line": 355,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -13707,10 +13683,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c8ea524ac03e0b466821",
+          "id": "cta:e6e969697562c8a0aac3",
+          "column": 27,
+          "file": "components/features/crm-management/DistributionTab.tsx",
+          "line": 582,
+          "owner": "DistributionTab",
+          "routes": [
+            "/crm/management"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:9358b1276170a8c6f91a",
           "column": 29,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 589,
+          "line": 592,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -13839,22 +13827,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d6b3ddbe3efa21090e52",
-          "column": 13,
+          "id": "cta:360976e15c866c90f3ef",
+          "column": 11,
           "file": "components/features/crm-management/TeamsTab.tsx",
-          "line": 200,
-          "owner": "TeamsTab",
-          "routes": [
-            "/crm/management"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:f115c48a8e57f2b35ec1",
-          "column": 13,
-          "file": "components/features/crm-management/TeamsTab.tsx",
-          "line": 231,
+          "line": 205,
           "owner": "TeamsTab",
           "routes": [
             "/crm/management"
@@ -17783,10 +17759,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:eb7ffcaecac51d0f59cb",
+          "id": "cta:85fa1b2049e20bef331b",
           "column": 21,
           "file": "components/features/leads/LeadCard.tsx",
-          "line": 607,
+          "line": 608,
           "owner": "renderCard",
           "routes": [
             "/crm/pipelines"
@@ -17795,10 +17771,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2f6e88c903a2dadf8f98",
+          "id": "cta:40cb81168a95ca6e3ec3",
           "column": 19,
           "file": "components/features/leads/LeadCard.tsx",
-          "line": 628,
+          "line": 629,
           "owner": "renderCard",
           "routes": [
             "/crm/pipelines"
@@ -17807,10 +17783,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:88de6c124ff76437b0a4",
+          "id": "cta:33d6758cc74b35e8ce4c",
           "column": 19,
           "file": "components/features/leads/LeadCard.tsx",
-          "line": 639,
+          "line": 640,
           "owner": "renderCard",
           "routes": [
             "/crm/pipelines"
@@ -17819,10 +17795,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e024085acb4eacddbd31",
+          "id": "cta:5c274ee4d6b0d7be40bf",
           "column": 19,
           "file": "components/features/leads/LeadCard.tsx",
-          "line": 650,
+          "line": 651,
           "owner": "renderCard",
           "routes": [
             "/crm/pipelines"
@@ -17831,10 +17807,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8f3d07ed32934af0603b",
+          "id": "cta:3725a470f2292a70d12e",
           "column": 11,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1430,
+          "line": 1439,
           "owner": "renderScheduleEvents",
           "routes": [
             "/crm/contacts",
@@ -17844,10 +17820,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ff16557b1e5dd2c7367e",
+          "id": "cta:28d1d14f0359fedc1da6",
           "column": 9,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1445,
+          "line": 1454,
           "owner": "renderScheduleEvents",
           "routes": [
             "/crm/contacts",
@@ -17857,10 +17833,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:72b5f8567ff4e5d5c6cd",
+          "id": "cta:473bc2048759a7d2042f",
           "column": 13,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1488,
+          "line": 1497,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17870,10 +17846,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:449e3c92ef4608b0789a",
+          "id": "cta:1eebec36565e1d0d4474",
           "column": 7,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1513,
+          "line": 1522,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17883,10 +17859,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5883f7034bfec0618b35",
+          "id": "cta:ccbe27a6e19a26b45097",
           "column": 15,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1532,
+          "line": 1541,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17896,10 +17872,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:96458157aef47024bb30",
+          "id": "cta:870197ad5c9caea178d5",
           "column": 13,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1545,
+          "line": 1554,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17909,36 +17885,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f798f5d9e0ae86d0a8f",
+          "id": "cta:87823299aaebb8c95436",
           "column": 11,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1590,
-          "owner": "MobileContentV2",
-          "routes": [
-            "/crm/contacts",
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:313461e014ba1467cdfe",
-          "column": 11,
-          "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1656,
-          "owner": "MobileContentV2",
-          "routes": [
-            "/crm/contacts",
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:f649eee1366364fa86e8",
-          "column": 33,
-          "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1660,
+          "line": 1599,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17961,10 +17911,36 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c0e0cad6ce2157bcd77a",
+          "id": "cta:fbef9e74fa2bfe611d76",
+          "column": 33,
+          "file": "components/features/leads/LeadDetailDialog.tsx",
+          "line": 1669,
+          "owner": "MobileContentV2",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:abfdc446e267a9293e6e",
+          "column": 11,
+          "file": "components/features/leads/LeadDetailDialog.tsx",
+          "line": 1674,
+          "owner": "MobileContentV2",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:0a61933c839d44981501",
           "column": 17,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1721,
+          "line": 1730,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17974,10 +17950,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:353feb64b8ee59b298e7",
+          "id": "cta:d42e79968fbf8f07c62e",
           "column": 40,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1752,
+          "line": 1761,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -17987,10 +17963,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:caab1b3ca4a500558c96",
+          "id": "cta:b6be7b4a8dbce534e657",
           "column": 25,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1777,
+          "line": 1786,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -18000,10 +17976,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b58aec528aeedc76e8a0",
+          "id": "cta:b78f712c24ebadeacf1b",
           "column": 25,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1791,
+          "line": 1800,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -18013,10 +17989,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c5190fdc3b183bc85ba4",
+          "id": "cta:7fa4d6ede2ea45021114",
           "column": 21,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1821,
+          "line": 1830,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -18026,10 +18002,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ffe8e8dc8102755f5359",
+          "id": "cta:3014518088f9ebc30a9b",
           "column": 21,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1862,
+          "line": 1871,
           "owner": "MobileContentV2",
           "routes": [
             "/crm/contacts",
@@ -18039,10 +18015,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d5b3997c170143247f1a",
+          "id": "cta:3935958b357f719b8126",
           "column": 15,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1919,
+          "line": 1928,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18052,10 +18028,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ce26a78e26b7bfe094bc",
+          "id": "cta:525082776eea823d37ef",
           "column": 13,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1927,
+          "line": 1936,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18065,10 +18041,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f6cc756d0e9c036512dc",
+          "id": "cta:08bfe776e22ff2722260",
           "column": 25,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 1965,
+          "line": 1974,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18078,36 +18054,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:96a210f764293cd9402c",
+          "id": "cta:0cab22e79b1362b3a441",
           "column": 23,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2029,
-          "owner": "DesktopContentV2",
-          "routes": [
-            "/crm/contacts",
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:04a0a7e039d3dd92b790",
-          "column": 21,
-          "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2099,
-          "owner": "DesktopContentV2",
-          "routes": [
-            "/crm/contacts",
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:b6525d178878a60c6194",
-          "column": 43,
-          "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2103,
+          "line": 2038,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18130,8 +18080,21 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c067ff946964f1a26b6c",
-          "column": 40,
+          "id": "cta:75091cba6c05df761555",
+          "column": 43,
+          "file": "components/features/leads/LeadDetailDialog.tsx",
+          "line": 2112,
+          "owner": "DesktopContentV2",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:8425ebce0f017fca52a7",
+          "column": 21,
           "file": "components/features/leads/LeadDetailDialog.tsx",
           "line": 2117,
           "owner": "DesktopContentV2",
@@ -18143,10 +18106,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c004850e24e14fa7c271",
-          "column": 25,
+          "id": "cta:1e422f73327325cfffb9",
+          "column": 40,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2143,
+          "line": 2126,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18156,10 +18119,23 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2856fac92f02ccc70122",
+          "id": "cta:89ae88e34b5407ff8bca",
           "column": 25,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2157,
+          "line": 2152,
+          "owner": "DesktopContentV2",
+          "routes": [
+            "/crm/contacts",
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:c9dace8e671aee3b22d3",
+          "column": 25,
+          "file": "components/features/leads/LeadDetailDialog.tsx",
+          "line": 2166,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18169,10 +18145,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:dcf08ba6abcd7a9bf198",
+          "id": "cta:33cc37f7a5f4ffbf3b4c",
           "column": 21,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2186,
+          "line": 2195,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -18182,10 +18158,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:271d750b69cdad4cf2b7",
+          "id": "cta:3b96fcdb7f6ade28c6c1",
           "column": 21,
           "file": "components/features/leads/LeadDetailDialog.tsx",
-          "line": 2226,
+          "line": 2235,
           "owner": "DesktopContentV2",
           "routes": [
             "/crm/contacts",
@@ -42689,10 +42665,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:48a3c7cf39f540ef75b1",
+          "id": "control:759dc070735df9ef6d04",
           "column": 15,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 625,
+          "line": 628,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -42701,10 +42677,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:759dc070735df9ef6d04",
+          "id": "control:ed601208654d077aa543",
           "column": 15,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 628,
+          "line": 631,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -47477,7 +47453,7 @@
         }
       ]
     },
-    "digestSha256": "ada8cfdd52af3b64da4410d5f15676eae0e7491818556b6c12a0d200667db9ec"
+    "digestSha256": "7b8e7ce9d0d4a0ae1440cb445955fea7693f8b7c6648126ab9909e7401dc771b"
   },
   "routes": [
     {
@@ -62015,9 +61991,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1637,
+      "ctasAll": 1635,
       "ctasByKind": {
-        "actionButton": 1461,
+        "actionButton": 1459,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
@@ -62026,8 +62002,8 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1576,
-      "internalCtasRouteReachable": 1543,
+      "internalCtas": 1574,
+      "internalCtasRouteReachable": 1541,
       "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62055,7 +62031,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1543,
+    "routeReachableInternalCtaImplementations": 1541,
     "routeReachableOverlayImplementations": 248,
     "routeReachableSupplementalOverlayAndTabControls": 291
   },
