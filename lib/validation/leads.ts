@@ -267,6 +267,7 @@ export const apiLeadSchema = z.object({
   id: uuidSchema,
   organizationId: uuidSchema,
   canOperate: z.boolean().optional(),
+  canProgress: z.boolean().optional(),
   financialReviewRequired: z.boolean().optional(),
   queuePool: apiQueuePoolSchema.nullable().optional(),
   tags: z.array(z.object({ id: uuidSchema, name: z.string().nullable(), color: z.string().nullable() })).nullable().optional(),

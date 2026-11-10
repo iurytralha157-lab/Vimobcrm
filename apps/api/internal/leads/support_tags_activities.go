@@ -304,7 +304,7 @@ func createActivityWithTransaction(ctx context.Context, begin func(context.Conte
 		return Activity{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := ensureLeadEditableForUpdate(ctx, tx, actor, input.LeadID); err != nil {
+	if err := ensureLeadProgressAllowedForUpdate(ctx, tx, actor, input.LeadID); err != nil {
 		return Activity{}, err
 	}
 	args := []any{actor.OrganizationID, input.LeadID, actor.UserID, input.Type, input.Content, jsonb(input.Metadata)}

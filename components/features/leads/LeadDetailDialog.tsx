@@ -80,7 +80,7 @@ import { appendOptimisticLeadHistoryEvent, removeOptimisticLeadHistoryEvent } fr
 import { leadsAPI } from '@/lib/api/leads';
 import { hydrateLeadDetail, mergeLeadDetailMutation } from '@/components/features/leads/lead-detail/hydrate-lead-detail';
 import { LeadScheduleReadDialog } from '@/components/features/leads/lead-detail/LeadScheduleReadDialog';
-import { canOperateLeadFromFreshRead, mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
+import { canOperateLeadFromFreshRead, leadProgressCapability, mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 import pipelineDetailStyles from '@/components/features/leads/lead-detail/PipelineLeadDetail.module.css';
 import { PipelineMobileLeadHeader } from '@/components/features/leads/lead-detail/PipelineMobileLeadHeader';
 import { LeadTagPickerContent } from '@/components/features/leads/lead-detail/LeadTagPickerContent';
@@ -274,7 +274,7 @@ export function LeadDetailDialog({
   );
 
   const handleSaveFeedback = async () => {
-    if (!canOperateLead || !feedback.trim() || feedbackSubmittingRef.current) return;
+    if (!canProgressLead || !feedback.trim() || feedbackSubmittingRef.current) return;
     feedbackSubmittingRef.current = true;
     const submittedDraft = feedback;
     let operation: ReturnType<typeof captureDetailOperation> | undefined;
@@ -380,16 +380,23 @@ export function LeadDetailDialog({
   const updateLead = useUpdateLead();
   const recordLeadFeedback = useRecordLeadFeedback();
   const dealStatusChange = useDealStatusChange();
-  const canOperateLead = detailReadState.kind === 'ready' && !readAccessBlocked && !poolReadOnly && !isUpdatingAssignee && !updateLead.isPending && !recordLeadFeedback.isPending && !dealStatusChange.isPending && !stageMovePending && !readAccessPending && canOperateLeadFromFreshRead(
+  const canUseLeadActions = detailReadState.kind === 'ready' && !readAccessBlocked && !poolReadOnly && !isUpdatingAssignee && !updateLead.isPending && !recordLeadFeedback.isPending && !dealStatusChange.isPending && !stageMovePending && !readAccessPending;
+  const canOperateLead = canUseLeadActions && canOperateLeadFromFreshRead(
     hasLeadOperatePermission,
     fullLeadQuery,
     verifiedRead,
   );
-  const outcomeBlockedReason = canOperateLead ? undefined : detailReadState.blockedReason || (
+  const canProgressLead = canUseLeadActions && canOperateLeadFromFreshRead(
+    hasLeadOperatePermission,
+    fullLeadQuery,
+    verifiedRead,
+    'progress',
+  );
+  const outcomeBlockedReason = detailReadState.blockedReason || (
     poolReadOnly ? 'Assuma o lead antes de registrar o resultado.' : !hasLeadOperatePermission
       ? 'Seu acesso a este lead permite apenas visualização.' : 'Aguarde a atualização em andamento para registrar o resultado.'
   );
-  const moveContract = useLeadMoveContract(canOperateLead);
+  const moveContract = useLeadMoveContract(canProgressLead);
   const tagOptimism = useLeadTagOptimism({ leadId, organizationId: activeOrganization.organizationId,
     actorId: user?.id || null, sessionId: getGlobalSignOutSessionId(session), canOperate: canOperateLead, setLead: setLocalLead });
   const fieldOptimism = useLeadFieldOptimism({ leadId, organizationId: activeOrganization.organizationId,
@@ -652,7 +659,7 @@ export function LeadDetailDialog({
   // Quick action handlers for phone/email with outcome dialog
   const handleQuickPhone = () => {
     const currentLead = localLead || lead;
-    if (!canOperateLead || !currentLead.phone) return;
+    if (!canProgressLead || !currentLead.phone) return;
     const phoneHref = normalizePhoneToE164(currentLead.phone);
     if (!phoneHref) return;
 
@@ -675,7 +682,7 @@ export function LeadDetailDialog({
 
   const handleQuickEmail = () => {
     const currentLead = localLead || lead;
-    if (!canOperateLead || !currentLead.email) return;
+    if (!canProgressLead || !currentLead.email) return;
     const gmailUrl = `https://mail.google.com/mail/view=cm&fs=1&tf=1&to=${encodeURIComponent(currentLead.email)}`;
     window.open(gmailUrl, '_blank', 'noopener,noreferrer');
     setQuickActionOutcomeType('email');
@@ -683,7 +690,7 @@ export function LeadDetailDialog({
   };
 
   const handleQuickActionOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
-    if (!canOperateLead || quickActionSubmittingRef.current) return false;
+    if (!canProgressLead || quickActionSubmittingRef.current) return false;
     const operation = captureDetailOperation();
     let command: ReturnType<typeof quickActionDraft.getSubmission>;
     try {
@@ -881,9 +888,11 @@ export function LeadDetailDialog({
       ...localLead, assigned_user_id: userId,
       assignee: selectedUser ? { id: selectedUser.id, name: selectedUser.name, email: selectedUser.email, avatar_url: selectedUser.avatar_url } : undefined,
       can_operate: undefined,
+      can_progress: undefined,
     });
     const receipt = fieldOptimism.begin(localLead, { assigned_user_id: optimisticLead.assigned_user_id,
-      assignee: optimisticLead.assignee, can_operate: optimisticLead.can_operate }, mutationOperation, expectedUpdatedAt);
+      assignee: optimisticLead.assignee, can_operate: optimisticLead.can_operate,
+      can_progress: optimisticLead.can_progress }, mutationOperation, expectedUpdatedAt);
     if (!receipt) return;
     assigneeUpdatingRef.current = true;
     setIsUpdatingAssignee(true);
@@ -1176,7 +1185,7 @@ export function LeadDetailDialog({
   const persistMoveToStage = async (move: LeadStageMoveIntent, lostReason?: string) => {
     const { stageId, revision, operation, requestOperation } = move;
     const mutationOperation = { isCurrent: () => operation.isCurrent() && requestOperation.isCurrent() };
-    if (!mutationOperation.isCurrent() || !canOperateLead || stageId === localLead.stage_id || stageMovePendingRef.current || statusSubmittingRef.current) return false;
+    if (!mutationOperation.isCurrent() || !canProgressLead || stageId === localLead.stage_id || stageMovePendingRef.current || statusSubmittingRef.current) return false;
 
     const stage = stages.find(s => s.id === stageId);
     const submittedLead = localLead;
@@ -1193,7 +1202,7 @@ export function LeadDetailDialog({
       const moveStageContract = moveContract.getCurrent(preparation) ?? await moveContract.ensureCompatible(preparation);
       if (!mutationOperation.isCurrent()) return false;
       const latestRead = queryClient.getQueryData<Lead>(['lead', organizationId, lead.id]);
-      if (latestRead?.can_operate === false) return false;
+      if (leadProgressCapability(latestRead) === false) return false;
       receipt = fieldOptimism.begin(localLead, { stage_id: stageId, stage }, mutationOperation, revision.expectedUpdatedAt);
       if (!receipt) return false;
       fieldOptimism.apply(receipt);
@@ -1266,7 +1275,7 @@ export function LeadDetailDialog({
   };
 
   const handleMoveToStage = async (stageId: string) => {
-    if (!canOperateLead || stageId === localLead.stage_id) return;
+    if (!canProgressLead || stageId === localLead.stage_id) return;
     if (!statusConfirmation.restart()) return;
     const move = captureStageMove(stageId);
     if (!move) return;
@@ -1359,7 +1368,7 @@ export function LeadDetailDialog({
 
   // Confirm lost with reason from dialog
   const handleConfirmLostReason = async (reason: string) => {
-    if (!canOperateLead || statusSubmittingRef.current || dealStatusChange.isPending || stageMovePending) return;
+    if (!(pendingLostStageMove ? canProgressLead : canOperateLead) || statusSubmittingRef.current || dealStatusChange.isPending || stageMovePending) return;
     if (!statusConfirmation.isCurrent()) return;
     if (pendingLostStageMove) {
       const moved = await persistMoveToStage(pendingLostStageMove, reason);
@@ -1488,7 +1497,7 @@ export function LeadDetailDialog({
             <button
               key={stage.id}
               type="button"
-              disabled={!canOperateLead}
+              disabled={!canProgressLead}
               aria-label={`Mover para ${stage.name}`}
               aria-current={isActive ? 'step' : undefined}
               data-lead-stage-step
@@ -1653,7 +1662,7 @@ export function LeadDetailDialog({
     const headerActions = (
       <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
         {localLead.phone && (
-          <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+          <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
             <Phone className="h-3.5 w-3.5" />
           </Button>
         )}
@@ -1662,7 +1671,7 @@ export function LeadDetailDialog({
           Chat
         </Button>}
           {localLead.email && (
-          <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+          <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
             <Mail className="h-3.5 w-3.5" />
           </Button>
         )}
@@ -1854,12 +1863,12 @@ export function LeadDetailDialog({
                     placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
-                    disabled={!canOperateLead}
+                    disabled={!canProgressLead}
                     rows={2}
                     className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
                   />
                   <div className="mt-2 flex justify-end">
-                    <Button className="lead-detail-primary-action h-10 rounded-[6px] px-3" style={mobilePrimaryActionStyle} disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+                    <Button className="lead-detail-primary-action h-10 rounded-[6px] px-3" style={mobilePrimaryActionStyle} disabled={!canProgressLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                       Registrar feedback
                     </Button>
                   </div>
@@ -1964,7 +1973,7 @@ export function LeadDetailDialog({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          disabled={!canOperateLead}
+                          disabled={!canProgressLead}
                           aria-label={`Mover para ${stage.name}`}
                           aria-current={isActive ? 'step' : undefined}
                           data-lead-stage-step
@@ -2096,7 +2105,7 @@ export function LeadDetailDialog({
 
                 <div className="grid grid-flow-col auto-cols-fr gap-2">
                   {localLead.phone && (
-                    <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                    <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Phone className="h-3.5 w-3.5" />
                     </Button>
                   )}
@@ -2105,7 +2114,7 @@ export function LeadDetailDialog({
                     Chat
                   </Button>}
                   {localLead.email && (
-                    <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                    <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Mail className="h-3.5 w-3.5" />
                     </Button>
                   )}
@@ -2218,14 +2227,14 @@ export function LeadDetailDialog({
                     placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
-                    disabled={!canOperateLead}
+                    disabled={!canProgressLead}
                     rows={2}
                     className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
                   />
                   <div className="mt-2 flex justify-end">
                     <Button
                       className="lead-detail-primary-action h-8 rounded-[6px] px-3"
-                      disabled={!canOperateLead || !feedback.trim() || updateLead.isPending}
+                      disabled={!canProgressLead || !feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
                       Registrar feedback
@@ -2258,8 +2267,8 @@ export function LeadDetailDialog({
       onOutcomeDraftChange={outcomeDraft.updateDraft}
       quickActionDraft={quickActionDraft.draft}
       onQuickActionDraftChange={quickActionDraft.updateDraft}
-      outcomeBlockedReason={outcomeBlockedReason}
-      quickActionBlockedReason={outcomeBlockedReason}
+      outcomeBlockedReason={canOperateLead ? undefined : outcomeBlockedReason}
+      quickActionBlockedReason={canProgressLead ? undefined : outcomeBlockedReason}
       onRetryOutcomeRead={detailReadState.canRetry ? retryLeadRead : undefined}
       outcomeReadRetrying={detailReadState.retrying}
       lead={lead}

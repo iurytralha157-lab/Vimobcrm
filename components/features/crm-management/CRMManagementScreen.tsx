@@ -153,7 +153,7 @@ export default function CRMManagement() {
               </div>
               <div
                 ref={setToolbarTarget}
-                className="ml-auto flex min-h-8 w-auto min-w-0 shrink-0 items-center justify-end gap-2 empty:hidden"
+                className="ml-auto flex min-h-8 w-auto min-w-0 max-w-full shrink-0 items-center justify-end gap-2 empty:hidden"
               />
             </div>
 

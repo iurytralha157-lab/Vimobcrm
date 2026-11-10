@@ -228,7 +228,7 @@ func TestLeadContactOutcomeCanonicalLeaderScopeAndAdminArePreserved(t *testing.T
 			}
 			f.leads[actor.OrganizationID+":"+contactOutcomeLead] = lead
 			_, err := submitContactOutcome(t, f, actor, contactOutcomeLead, contactOutcomeRequest())
-			denied := scenario == "foreign team" || scenario == "unled user"
+			denied := scenario == "unled user"
 			if denied && (!errors.Is(err, tenant.ErrOrganizationAccessDenied) || len(f.activities) != 0) || !denied && (err != nil || len(f.activities) != 1) {
 				t.Fatalf("canonical scope changed: %v", err)
 			}

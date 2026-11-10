@@ -19,7 +19,12 @@ type moveStageTransition struct {
 // The caller owns commit/rollback. Manual commands and fenced automation effects
 // share the same status, reservation, provenance and notification transaction.
 func (repo Repository) moveStageTx(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, leadID string, input moveStageInput, provenance *automationStageProvenance) (moveStageTransition, error) {
-	current, err := repo.lockLeadForStageMove(ctx, tx, tenantContext, leadID, input)
+	canMove := canOperateLeadSnapshot
+	// Manual progression does not grant automation or resource-field edits.
+	if provenance == nil && input.IsOwnResource == nil {
+		canMove = canProgressLeadSnapshot
+	}
+	current, err := repo.lockLeadForStageMove(ctx, tx, tenantContext, leadID, input, canMove)
 	if err != nil {
 		return moveStageTransition{}, err
 	}

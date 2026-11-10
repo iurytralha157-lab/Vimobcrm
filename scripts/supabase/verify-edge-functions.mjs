@@ -318,6 +318,11 @@ async function validateManifest(manifest, configRaw) {
     if (!bySlug.has(slug)) problems.push(`${slug}: local function is absent from manifest`);
   }
 
+  const notificationFailover = bySlug.get("notification-evolution-failover");
+  if (!["TOMBSTONE", "RETIRED"].includes(notificationFailover?.lifecycle)) {
+    problems.push("notification-evolution-failover: must remain retired; the Go worker owns notification delivery");
+  }
+
   const { values: configValues, duplicates } = parseFunctionConfig(configRaw);
   for (const slug of duplicates) {
     problems.push(`${slug}: duplicate [functions.${slug}] config section`);

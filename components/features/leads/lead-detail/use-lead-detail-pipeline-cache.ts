@@ -32,6 +32,7 @@ export function useLeadDetailPipelineCache() {
     assigned_user_id: nextLead.assigned_user_id,
     assignee: nextLead.assignee || undefined,
     can_operate: undefined,
+    can_progress: undefined,
   });
 
   const restorePipelineCache = (snapshots: LeadDetailPipelineCacheSnapshot) => {

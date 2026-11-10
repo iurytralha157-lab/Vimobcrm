@@ -94,14 +94,15 @@ test.describe('permissão de operação por card na Pipeline QA isolada', () => 
     }
   });
 
-  test('líder lê lead de membro da equipe, mas não recebe arraste ou edição', async ({ page }) => {
+  test('líder pode mover e registrar atividade no lead de membro sem receber edição geral', async ({ page }) => {
     await signInAs(page, 'leader');
 
     const detailResponse = await authenticatedAPIRequest(page, 'GET', `/v1/leads/${E2E_LEADS.team}`);
     const detailBody = await detailResponse.text();
     expect(detailResponse.status(), detailBody).toBe(200);
-    const detail = JSON.parse(detailBody) as { data: { canOperate?: boolean } };
+    const detail = JSON.parse(detailBody) as { data: { canOperate?: boolean; canProgress?: boolean } };
     expect(detail.data.canOperate).toBe(false);
+    expect(detail.data.canProgress).toBe(true);
 
     const boardResponse = await authenticatedAPIRequest(
       page,
@@ -111,10 +112,11 @@ test.describe('permissão de operação por card na Pipeline QA isolada', () => 
     const boardBody = await boardResponse.text();
     expect(boardResponse.status(), boardBody).toBe(200);
     const board = JSON.parse(boardBody) as {
-      data: Array<{ leads: Array<{ id: string; can_operate: boolean }> }>;
+      data: Array<{ leads: Array<{ id: string; can_operate: boolean; can_progress?: boolean }> }>;
     };
     const card = board.data.flatMap((stage) => stage.leads).find((lead) => lead.id === E2E_LEADS.team);
     expect(card?.can_operate).toBe(false);
+    expect(card?.can_progress).toBe(true);
 
     await page.goto('/crm/pipelines');
     const cardButton = page.getByRole('button', { name: 'Abrir detalhes do lead Lead da Equipe E2E' });
@@ -123,6 +125,8 @@ test.describe('permissão de operação por card na Pipeline QA isolada', () => 
     const dialog = page.locator('[data-tour="lead-detail-dialog"]');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Editar', exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /^Mover para / }).first()).toBeEnabled();
+    await expect(dialog.getByRole('textbox', { name: 'Feedback do lead' })).toBeEnabled();
   });
 
   test('opções da Pipeline seguem equipe e removem origem exclusiva de outra equipe', async ({ page }) => {

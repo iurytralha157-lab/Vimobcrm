@@ -236,6 +236,39 @@ Antes de ampliar o rollout, confirme que `attempts` nunca passa de 2, que jobs n
 
 `DATABASE_URL` deve usar a conexao direta ou o pooler Supabase em modo sessao (porta 5432). Nao use o pooler transacional (porta 6543): a serializacao do lifecycle do WhatsApp e do sync de Marketing depende de advisory locks de sessao mantidos entre as consultas da operacao.
 
+## Notificações de WhatsApp
+
+O worker Go consome `private.notification_deliveries` e envia os avisos ao
+Evolution. O manifesto de release exige que `notification-evolution-failover`
+permaneça aposentada. A configuração `standard_failover.enabled` também precisa
+estar desativada. Uma instalação que ainda tenha o gatilho antigo pode marcar
+avisos novos como `processing` e gravar uma referência de remetente obsoleta
+mesmo com a função Edge aposentada.
+
+Antes de publicar, reverter ou liberar tráfego após restaurar o banco, rode a
+consulta abaixo no banco de destino. Só avance com `pronto_para_enviar = true`.
+A consulta devolve apenas um booleano e não lê credenciais para a saída.
+
+```sql
+select count(*) = 1
+  and coalesce(bool_and(
+    value #> '{notification_dispatch,whatsapp,enabled}' = 'true'::jsonb
+    and coalesce(
+      value #> '{notification_dispatch,whatsapp,standard_failover,enabled}',
+      'false'::jsonb
+    ) = 'false'::jsonb
+  ), false) as pronto_para_enviar
+from public.system_settings
+where key = 'notifications';
+```
+
+Depois da publicação, confirme que um aviso real de novo lead entra na fila e
+é aceito pelo Evolution. Use um único aviso de teste para um usuário interno
+autorizado e confirme que ele chega ao aparelho. Registre separadamente se o
+CRM recebeu a confirmação automática de entrega. Se faltar esse registro,
+investigue o recibo do mesmo envio pelo ID do provedor antes de decidir sobre
+qualquer reenvio.
+
 ## Canary e rollback do WhatsApp
 
 Nunca use `latest` no canario. Antes do deploy, registre os dois tags atualmente executados e fixe `VIMOB_API_IMAGE` e `VIMOB_WEB_IMAGE` no mesmo tag imutavel `${github.sha}` publicado pelo workflow. Guarde os tags anteriores como par de rollback; nao misture uma API nova com um web antigo sem uma validacao especifica dessa combinacao.

@@ -67,3 +67,18 @@ test('detalhe somente opera após GET fresco e autorização explícita', () => 
   assert.equal(canOperateLeadFromFreshRead(true, { ...fetched, data: { can_operate: false } }), false);
   assert.equal(canOperateLeadFromFreshRead(true, { ...fetched, data: {} }), false);
 });
+
+test('capacidade de mover e registrar atividade não libera edição geral e expira após transferência', () => {
+  const lead = { ...cachedLead, can_operate: false, can_progress: true };
+  const read = { isSuccess: true, isFetchedAfterMount: true, isFetching: false, data: lead };
+
+  assert.equal(canOperateLeadFromFreshRead(true, read), false);
+  assert.equal(canOperateLeadFromFreshRead(true, read, undefined, 'progress'), true);
+  assert.equal(canOperateLeadFromFreshRead(true, { ...read, isFetching: true }, undefined, 'progress'), false);
+  assert.equal(canOperateLeadFromFreshRead(true, { ...read, data: { can_operate: true, can_progress: false } }, undefined, 'progress'), false);
+
+  const transferred = mergeLeadOperationCapability(lead, {
+    id: lead.id, name: lead.name, assigned_user_id: 'outside-team', team_id: lead.team_id,
+  });
+  assert.equal(transferred.can_progress, undefined);
+});

@@ -19401,6 +19401,9 @@ components:
       properties:
         queuePool:
           $ref: "#/components/schemas/QueuePoolMetadata"
+        canProgress:
+          type: boolean
+          description: Whether the current viewer may move this lead between stages and record activities.
         id:
           type: string
           format: uuid
@@ -22168,7 +22171,10 @@ components:
           format: uuid
         can_operate:
           type: boolean
-          description: Whether this viewer may mutate this specific lead.
+          description: Whether this viewer has general editing access to this lead.
+        can_progress:
+          type: boolean
+          description: Whether this viewer may move this lead between stages and record activities.
         whatsapp_avatar_url:
           type: [string, "null"]
           format: uri

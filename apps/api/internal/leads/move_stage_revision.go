@@ -9,12 +9,12 @@ import (
 
 // Lock and authorize before comparing revisions, and return before any destination,
 // commercial status, property reservation, activity or audit mutation can occur.
-func (repo Repository) lockLeadForStageMove(ctx context.Context, tx pgx.Tx, actor tenant.Context, leadID string, input moveStageInput) (leadSnapshot, error) {
+func (repo Repository) lockLeadForStageMove(ctx context.Context, tx pgx.Tx, actor tenant.Context, leadID string, input moveStageInput, canMove func(tenant.Context, leadSnapshot) bool) (leadSnapshot, error) {
 	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, actor.OrganizationID, leadID)
 	if err != nil {
 		return leadSnapshot{}, err
 	}
-	if !canOperateLeadSnapshot(actor, current) {
+	if !canMove(actor, current) {
 		return leadSnapshot{}, tenant.ErrOrganizationAccessDenied
 	}
 	if input.ExpectedStageID.Set {

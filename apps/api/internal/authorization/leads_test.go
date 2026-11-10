@@ -59,6 +59,40 @@ func TestLeaderSeesLedBrokerAcrossTeamAssignments(t *testing.T) {
 	}
 }
 
+func TestLeadProgressFollowsLedBrokerWithoutExpandingOtherOperations(t *testing.T) {
+	leader := tenant.Context{
+		UserID: "leader", LedTeamIDs: []string{"team-a"}, LedUserIDs: []string{"broker"},
+		Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate, permissions.LeadDelete},
+	}
+	readOnly := leader
+	readOnly.Permissions = []string{permissions.LeadViewTeam}
+	unscoped := leader
+	unscoped.Permissions = []string{permissions.LeadOperate}
+	poolVisible := true
+	for _, tc := range []struct {
+		name    string
+		actor   tenant.Context
+		lead    LeadResource
+		allowed bool
+	}{
+		{"current broker under another team", leader, LeadResource{AssignedUserID: "broker", TeamID: "team-b"}, true},
+		{"outsider on the former team", leader, LeadResource{AssignedUserID: "outsider", TeamID: "team-a"}, false},
+		{"unassigned on another team", leader, LeadResource{TeamID: "team-b"}, false},
+		{"read only", readOnly, LeadResource{AssignedUserID: "broker", TeamID: "team-b"}, false},
+		{"no team view", unscoped, LeadResource{AssignedUserID: "broker", TeamID: "team-b"}, false},
+		{"private pool", leader, LeadResource{AssignedUserID: "broker", TeamID: "team-b", QueuePoolReadAccess: &poolVisible}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if CanProgressLead(tc.actor, tc.lead) != tc.allowed {
+				t.Fatalf("progress access did not match %t", tc.allowed)
+			}
+			if CanOperateLead(tc.actor, tc.lead) || CanDeleteLead(tc.actor, tc.lead) || CanUseLeadForMutation(tc.actor, tc.lead) {
+				t.Fatal("lead progression expanded general operations")
+			}
+		})
+	}
+}
+
 func TestEachLeaderSeesFourLeadsAssignedToSharedBroker(t *testing.T) {
 	teams := []string{"team-1", "team-2", "team-3", "team-4"}
 	for _, ledTeam := range teams {

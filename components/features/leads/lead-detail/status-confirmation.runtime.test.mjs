@@ -4,6 +4,7 @@ import ts from 'typescript';
 import { QueryClient } from '@tanstack/react-query';
 import { evaluateProduction, productionDeclaration, deferred } from '../../../../hooks/leads/lead-request-runtime-fixture.mjs';
 import { getGlobalSignOutSessionId } from '../../../../lib/auth/global-sign-out.ts';
+import { leadProgressCapability } from '../../../../lib/lead-operation-capability.ts';
 import { mergeLeadDetailMutation } from './hydrate-lead-detail.ts';
 
 // Actual confirmation hook and popup callbacks. No network, DOM or business writes.
@@ -24,7 +25,7 @@ function fixture(status = 'open') {
   const hook = evaluateProduction(productionDeclaration('hooks/leads/use-lead-status-confirmation.ts',
     node => ts.isFunctionDeclaration(node) && node.name?.text === 'useLeadStatusConfirmation'), {
     ...react, useQueryClient: () => client, useAuth: () => auth, useUserPermissions: () => ({ hasPermission: () => permission }),
-    useLeadDetailOperationScope: scopeHook, getGlobalSignOutSessionId, emptyDraft: () => ({ selectedReason: '', details: '' }),
+    useLeadDetailOperationScope: scopeHook, getGlobalSignOutSessionId, leadProgressCapability, emptyDraft: () => ({ selectedReason: '', details: '' }),
   }, 'useLeadStatusConfirmation');
   let lead = { id: 'lead-a', name: 'Synthetic', organization_id: 'org-a', assigned_user_id: 'actor-a', can_operate: true,
     stage_id: 'stage-a', deal_status: status, updated_at: '2026-10-16T10:00:00.000001Z', property_id: 'property-a', valor_interesse: 100 };
@@ -43,7 +44,8 @@ function fixture(status = 'open') {
   function render() {
     cursor = 0;
     currentHook = hook(lead.id, lead, blocked);
-    const deps = { ...refs, canOperateLead: !blocked && permission, dealStatusChange: statusMutation, stageMovePending: false,
+    const deps = { ...refs, canOperateLead: !blocked && permission && lead.can_operate === true,
+      canProgressLead: !blocked && permission && leadProgressCapability(lead) === true, dealStatusChange: statusMutation, stageMovePending: false,
       reopenStatusConfirmation: confirmation,
       localLead, lead, statusConfirmation: currentHook, captureDetailOperation: () => ({ isCurrent: () => mounted }),
       setReopenStatusConfirmation: value => { confirmation = value; }, setPendingLostStageMove: value => { pendingStage = value; },
@@ -84,7 +86,7 @@ function fixture(status = 'open') {
     deny: () => { permission = false; render(); },
     allow: () => { permission = true; render(); },
     closeDetail: () => currentHandlers.handleCloseLeadDetail(),
-    stageReason: () => { currentHook.restart(); pendingStage = { stageId: 'stage-b', revision: lead.updated_at }; lostOpen = true; render(); },
+    stageReason: () => { if (currentHook.restart()) { pendingStage = { stageId: 'stage-b', revision: lead.updated_at }; lostOpen = true; } render(); },
     deferReply: () => reply = deferred(),
     state: () => ({ lead: localLead, serverLead, confirmation, lostOpen, writes, closed, draft: currentHook.draft }),
     close: () => { unmount(); client.clear(); },
@@ -215,6 +217,24 @@ test('the existing pending stage reason still follows its original stage-move pa
   const f = fixture();
   try { f.stageReason(); await f.confirmLost('Stage reason'); assert.equal(f.requests.length, 0); assert.equal(f.state().lostOpen, false); }
   finally { f.close(); }
+});
+
+test('leader with progress permission can confirm an archive move without gaining status edit access', async () => {
+  const f = fixture();
+  try {
+    f.patch({ can_operate: false, can_progress: true });
+    await f.openLost();
+    assert.equal(f.state().lostOpen, false);
+    f.stageReason();
+    f.draft({ selectedReason: 'other', details: 'Synthetic reason' });
+    f.patch({ can_progress: false });
+    await f.confirmLost('Synthetic reason');
+    assert.equal(f.state().lostOpen, true);
+    f.patch({ can_progress: true });
+    await f.confirmLost('Synthetic reason');
+    assert.equal(f.state().lostOpen, false);
+    assert.equal(f.requests.length, 0);
+  } finally { f.close(); }
 });
 
 test('a new stage reason can start after retiring another scope visit', async () => {

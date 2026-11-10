@@ -59,6 +59,7 @@ import { getPipelineLeadPageCursor } from '@/lib/pipeline-pagination-state';
 import { getPipelineBoardOrderAtForIndex } from '@/lib/pipeline-board-order';
 import { getOptimisticPipelineMoveOutcome } from '@/lib/pipeline-stage-outcome';
 import { getLeadStatusFinancialReviewMessage } from '@/lib/lead-financial-review';
+import { leadProgressCapability } from '@/lib/lead-operation-capability';
 import { createPipelineStageSnapshot } from '@/lib/pipeline-stage-snapshot';
 import { pipelineRevisionSchema, stageHexColorInputSchema } from '@/lib/validation';
 import {
@@ -858,7 +859,7 @@ export default function Pipelines() {
     dragMoveSnapshotRef.current = null;
     const lead = stages.find((stage) => stage.id === start.source.droppableId)?.leads
       .find((item) => item.id === start.draggableId);
-    if (!lead || lead.can_operate !== true) return;
+    if (!lead || leadProgressCapability(lead) !== true) return;
     let operation: LeadRequestOperation;
     try { operation = leadMoveRequestScope.capture(); } catch { return; }
     const pending = moveRevisionReceiptByLeadRef.current.get(lead.id);
@@ -961,6 +962,7 @@ export default function Pipelines() {
         updatedLead.deal_status !== selectedLead.deal_status ||
         updatedLead.assigned_user_id !== selectedLead.assigned_user_id ||
         updatedLead.can_operate !== selectedLead.can_operate ||
+        updatedLead.can_progress !== selectedLead.can_progress ||
         updatedLead.name !== selectedLead.name ||
         getLeadTagsSignature(updatedLead) !== getLeadTagsSignature(selectedLead) ||
         updatedLead.updated_at !== selectedLead.updated_at;
@@ -1098,7 +1100,7 @@ export default function Pipelines() {
       isDraggingRef.current = false;
       return;
     }
-    if (movedLead.can_operate !== true || currentLead.can_operate !== true) {
+    if (leadProgressCapability(movedLead) !== true || leadProgressCapability(currentLead) !== true) {
       isDraggingRef.current = false;
       return;
     }
@@ -1110,7 +1112,7 @@ export default function Pipelines() {
       if (!requestOperation.isCurrent() || snapshot.queryKeyId !== pipelineBoardQueryKeyId) return;
       const latestBoard = queryClient.getQueryData<StageWithLeads[]>(pipelineBoardQueryKey) || stages;
       const latestSource = latestBoard.find(stage => stage.id === oldStageId)?.leads.find(lead => lead.id === draggableId);
-      if (!latestSource || latestSource.can_operate !== true) throw new PipelineMoveRevisionConflict();
+      if (leadProgressCapability(latestSource) !== true) throw new PipelineMoveRevisionConflict();
     } catch (error) {
       isDraggingRef.current = false;
       if (requestOperation.isCurrent()) toast.error(getPipelineErrorMessage(error));
@@ -1482,7 +1484,7 @@ export default function Pipelines() {
       isDraggingRef.current = false;
       return;
     }
-    if (!canOperateLeads || movedLead.can_operate !== true) {
+    if (!canOperateLeads || leadProgressCapability(movedLead) !== true) {
       isDraggingRef.current = false;
       return;
     }

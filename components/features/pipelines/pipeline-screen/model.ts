@@ -3,6 +3,7 @@ import type { StageAutomation } from '@/hooks/use-stage-automations';
 import type { PendingPipelineMove } from '@/lib/pipeline-board-cache';
 import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
 import { getLeadDisplayValue } from '@/lib/lead-display-value';
+import { mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 export { getErrorObjectMessage as getPipelineErrorMessage } from '@/lib/api/vimob-error';
 export { formatCompactBRLCurrency as formatCompactCurrency } from '@/lib/utils/formatting';
 
@@ -74,7 +75,7 @@ export function mergeMovedLeadResponse(
 
   return {
     ...currentLead,
-    ...movedLead,
+    ...mergeLeadOperationCapability<Partial<PipelineLead>>(currentLead, movedLead),
     tags: shouldPreserveTags ? currentLead.tags : movedLead.tags,
     stage: currentLead.stage,
   };

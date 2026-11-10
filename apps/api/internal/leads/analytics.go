@@ -733,7 +733,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 	if isQueuePoolSnapshot(current) {
 		return nil, ErrQueuePoolConflict
 	}
-	if !canOperateLeadSnapshot(tenantContext, current) {
+	if !canProgressLeadSnapshot(tenantContext, current) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 

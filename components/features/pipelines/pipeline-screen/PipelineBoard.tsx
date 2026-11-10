@@ -429,7 +429,7 @@ export function PipelineBoard({
                                   index={index}
                                   onClick={onOpenLead}
                                   onAssignNow={onAssignLeadNow}
-                                  isDragDisabled={isDragDisabled || isMobile || lead.can_operate !== true}
+                                  isDragDisabled={isDragDisabled || isMobile}
                                   isMovePending={pendingMoveLeadIds?.has(lead.id) ?? false}
                                   hasWhatsAppModule={hasWhatsAppModule}
                                   canViewWhatsApp={canViewWhatsApp}

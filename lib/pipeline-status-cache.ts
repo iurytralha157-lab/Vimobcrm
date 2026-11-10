@@ -98,7 +98,7 @@ export function applyScopedLeadStatusPatch(
     if (options.authoritative && newerRevision(before, patch)) continue;
     const next = options.authoritative
       ? mergeLeadServerResponse(before, { ...patch, id: leadId } as CacheLead)
-      : mergeLeadOperationCapability<CacheLead>(before, { ...before, ...patch, id: leadId });
+      : mergeLeadOperationCapability<CacheLead>(before, { ...patch, id: leadId });
     const location = kind === 'board' ? findPipelineLeadLocation<CacheLead, CacheStage>(beforeData as CacheStage[], leadId) : null;
     let changed: unknown;
     if (kind === 'board') {
@@ -126,7 +126,9 @@ export function applyScopedLeadStatusPatch(
     const installed = client.setQueryData(query.queryKey, changed);
     const after = leadIn(installed, kind, leadId);
     const keys = (Object.keys(patch) as Array<keyof CacheLead>).filter((key) => !Object.is(before[key], after?.[key]));
-    if (!Object.is(before.can_operate, after?.can_operate) && !keys.includes('can_operate')) keys.push('can_operate');
+    for (const key of ['can_operate', 'can_progress'] as const) {
+      if (!Object.is(before[key], after?.[key]) && !keys.includes(key)) keys.push(key);
+    }
     if (after === before) continue;
     changes.push({ queryKey: query.queryKey, queryHash: query.queryHash, kind, before, after, keys,
       stageId: location?.stageId, leadIndex: location?.leadIndex,

@@ -25,14 +25,15 @@ func TestLeadOperationCapabilityMatchesBoardAndDetail(t *testing.T) {
 		assigneeID string
 		teamID     string
 		want       bool
+		progress   bool
 	}{
-		{"leader's team lead", leader, "broker", "team-a", true},
-		{"leader's broker under another team", leader, "broker", "team-b", false},
-		{"leader's unassigned queue lead", leader, "", "team-a", true},
-		{"unrelated broker from led queue", leader, "outside", "team-a", false},
-		{"broker's own cross-team lead", broker, "broker", "team-b", true},
-		{"manager with full access", tenant.Context{UserID: "manager", MemberRole: "manager", Permissions: []string{permissions.LeadViewAll, permissions.LeadOperate}}, "broker", "team-b", true},
-		{"read-only all-lead viewer", tenant.Context{UserID: "auditor", Permissions: []string{permissions.LeadViewAll}}, "broker", "team-b", false},
+		{"leader's team lead", leader, "broker", "team-a", true, true},
+		{"leader's broker under another team", leader, "broker", "team-b", false, true},
+		{"leader's unassigned queue lead", leader, "", "team-a", true, true},
+		{"unrelated broker from led queue", leader, "outside", "team-a", false, false},
+		{"broker's own cross-team lead", broker, "broker", "team-b", true, true},
+		{"manager with full access", tenant.Context{UserID: "manager", MemberRole: "manager", Permissions: []string{permissions.LeadViewAll, permissions.LeadOperate}}, "broker", "team-b", true, true},
+		{"read-only all-lead viewer", tenant.Context{UserID: "auditor", Permissions: []string{permissions.LeadViewAll}}, "broker", "team-b", false, false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -46,6 +47,9 @@ func TestLeadOperationCapabilityMatchesBoardAndDetail(t *testing.T) {
 			})
 			if boardLead.CanOperate != test.want || detailLead.CanOperate == nil || *detailLead.CanOperate != test.want {
 				t.Fatalf("board can_operate=%v, detail canOperate=%v; want %v", boardLead.CanOperate, detailLead.CanOperate, test.want)
+			}
+			if boardLead.CanProgress != test.progress || detailLead.CanProgress == nil || *detailLead.CanProgress != test.progress {
+				t.Fatalf("board can_progress=%v, detail canProgress=%v; want %v", boardLead.CanProgress, detailLead.CanProgress, test.progress)
 			}
 		})
 	}
@@ -65,6 +69,9 @@ func TestLeadOperationCapabilityJSONUsesExistingResponseConventions(t *testing.T
 	}
 	if boardPayload["can_operate"] != true {
 		t.Fatalf("board JSON can_operate=%v, want true", boardPayload["can_operate"])
+	}
+	if boardPayload["can_progress"] != true {
+		t.Fatalf("board JSON can_progress=%v, want true", boardPayload["can_progress"])
 	}
 
 	detail, err := json.Marshal(withLeadOperationCapability(viewer, Lead{AssignedUserID: "broker"}))
@@ -98,6 +105,9 @@ func TestLeadOperationCapabilityJSONUsesExistingResponseConventions(t *testing.T
 	if readOnlyPayload["canOperate"] != false {
 		t.Fatalf("read-only detail must explicitly report canOperate=false, got %v", readOnlyPayload["canOperate"])
 	}
+	if readOnlyPayload["canProgress"] != true {
+		t.Fatalf("detail JSON canProgress=%v, want true", readOnlyPayload["canProgress"])
+	}
 
 	undecorated, err := json.Marshal(Lead{})
 	if err != nil {
@@ -109,5 +119,8 @@ func TestLeadOperationCapabilityJSONUsesExistingResponseConventions(t *testing.T
 	}
 	if _, exists := undecoratedPayload["canOperate"]; exists {
 		t.Fatal("a write response without a fresh access check must not claim an operation capability")
+	}
+	if _, exists := undecoratedPayload["canProgress"]; exists {
+		t.Fatal("a write response without a fresh access check must not claim a progression capability")
 	}
 }

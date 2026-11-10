@@ -238,7 +238,7 @@ function TeamPipelinesManagement() {
                               </Avatar>
                             ))}
                             {(team.members?.length || 0) > 5 && (
-                              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--app-surface-solid)] text-[9px] font-light text-[var(--app-text-tertiary)]">
+                              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/50 text-[9px] font-light text-white">
                                 +{(team.members?.length || 0) - 5}
                               </span>
                             )}
@@ -268,7 +268,7 @@ function TeamPipelinesManagement() {
                           <Badge
                             key={pipeline.id}
                             variant="secondary"
-                            className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
+                            className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-primary/50 text-[10px] font-light text-white"
                           >
                             <GitBranch className="h-3 w-3" />
                             <span className="min-w-0 truncate" title={pipeline.name}>{pipeline.name}</span>
@@ -335,7 +335,7 @@ function TeamPipelinesManagement() {
                               <Badge
                                 key={team.id}
                                 variant="secondary"
-                                className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-[var(--app-surface-solid)] text-[10px] font-light text-[var(--app-text-secondary)]"
+                                className="min-w-0 max-w-full gap-1 rounded-[4px] border-0 bg-primary/50 text-[10px] font-light text-white"
                               >
                                 <Users className="h-3 w-3" />
                                 <span className="min-w-0 truncate" title={team.name}>{team.name}</span>

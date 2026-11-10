@@ -59,6 +59,17 @@ test('mantem tags enriquecidas quando a resposta do movimento vem vazia', () => 
   assert.equal(getLeadTagsSignature(merged), 'tag-1:Quente:#ff0000');
 });
 
+test('reaproveita a capacidade de andamento somente no mesmo escopo do card', () => {
+  const current: PipelineLead = {
+    id: 'lead-1', stage_id: 'stage-1', assigned_user_id: 'broker-1',
+    can_operate: false, can_progress: true,
+  };
+  assert.equal(mergeMovedLeadResponse(current, { stage_id: 'stage-2' }).can_progress, true);
+  const transferred = mergeMovedLeadResponse(current, { assigned_user_id: 'broker-2' });
+  assert.equal(transferred.can_progress, undefined);
+  assert.equal(transferred.can_operate, undefined);
+});
+
 test('prioriza totais da API e calcula fallback e paginacao por coluna', () => {
   const lead = {
     id: 'lead-1',

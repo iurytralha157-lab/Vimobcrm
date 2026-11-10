@@ -6,6 +6,7 @@ type LeadReadShape = {
   organization_id?: string | null;
   updated_at?: string | null;
   can_operate?: boolean;
+  can_progress?: boolean;
   assigned_user_id?: string | null;
   team_id?: string | null;
   stage_id?: string | null;

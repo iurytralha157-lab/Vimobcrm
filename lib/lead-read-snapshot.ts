@@ -4,6 +4,7 @@ export type LeadReadIdentity = {
   assigned_user_id?: string | null;
   team_id?: string | null;
   can_operate?: boolean;
+  can_progress?: boolean;
 };
 
 export type VerifiedLeadRead<T extends LeadReadIdentity = LeadReadIdentity> = {
@@ -56,7 +57,8 @@ export function hasVerifiedLeadReadInCache(
     Number.isFinite(cache.dataUpdatedAt) && cache.dataUpdatedAt! >= read.confirmedAt &&
     (data.assigned_user_id ?? null) === (read.data.assigned_user_id ?? null) &&
     (data.team_id ?? null) === (read.data.team_id ?? null) &&
-    data.can_operate === read.data.can_operate);
+    data.can_operate === read.data.can_operate &&
+    data.can_progress === read.data.can_progress);
 }
 
 export function canReuseLeadReadOnMount(

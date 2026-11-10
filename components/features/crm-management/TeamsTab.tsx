@@ -191,22 +191,34 @@ export function TeamsTab() {
     });
   };
 
+  const toolbar = (
+    <ManagementToolbarPortal>
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
+          aria-label="Buscar equipes"
+          placeholder="Buscar equipes..."
+          value={teamSearch}
+          onChange={(event) => setTeamSearch(event.target.value)}
+          className="h-8 w-36 min-w-0 py-0 text-[12px] sm:w-40"
+        />
+        {canManageAllTeams && (
+          <Button
+            data-tour="management-team-new"
+            onClick={handleNewTeam}
+            className="h-8 shrink-0 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Nova equipe
+          </Button>
+        )}
+      </div>
+    </ManagementToolbarPortal>
+  );
+
   if (teamsQuery.isLoading || accessScope.isLoading) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        {canManageAllTeams && (
-          <ManagementToolbarPortal>
-            <Input aria-label="Buscar equipes" placeholder="Buscar equipes..." value={teamSearch} onChange={event => setTeamSearch(event.target.value)} className="h-8 w-44 max-w-[40vw] text-[12px]" />
-            <Button
-              data-tour="management-team-new"
-              onClick={handleNewTeam}
-              className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Nova equipe
-            </Button>
-          </ManagementToolbarPortal>
-        )}
+        {canManageAllTeams && toolbar}
         <div
           data-tour="management-teams"
           className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain rounded-[8px] bg-[var(--app-surface-solid)] p-2"
@@ -225,19 +237,7 @@ export function TeamsTab() {
         data-tour="management-teams"
         className="flex h-full min-h-0 flex-col gap-3"
       >
-        <Input aria-label="Buscar equipes" placeholder="Buscar equipes..." value={teamSearch} onChange={event => setTeamSearch(event.target.value)} className="h-8 max-w-sm shrink-0 text-[12px]" />
-        {canManageAllTeams && (
-          <ManagementToolbarPortal>
-            <Button
-              data-tour="management-team-new"
-              onClick={handleNewTeam}
-              className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Nova equipe
-            </Button>
-          </ManagementToolbarPortal>
-        )}
+        {toolbar}
 
         {teamsQuery.isError && teamsQuery.data === undefined ? (
           <div
@@ -551,7 +551,7 @@ export function TeamsTab() {
                                             </AvatarFallback>
                                           </Avatar>
                                           {member.is_leader && (
-                                            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-[var(--app-surface-solid)] bg-primary text-primary-foreground shadow-none">
+                                            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-[var(--app-surface-solid)] bg-primary/50 text-white shadow-none">
                                               <Crown
                                                 className="h-2.5 w-2.5"
                                                 aria-hidden="true"
@@ -589,7 +589,7 @@ export function TeamsTab() {
                                 })}
                                 {remainingMembers > 0 && (
                                   <span
-                                    className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-[var(--app-surface-solid)] bg-[var(--app-surface-soft)] text-[10px] font-medium text-[var(--app-text-secondary)]"
+                                    className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-[var(--app-surface-solid)] bg-primary/50 text-[10px] font-medium text-white"
                                     aria-label={`Mais ${remainingMembers} ${remainingMembers === 1 ? "membro" : "membros"}`}
                                   >
                                     +{remainingMembers}
@@ -644,7 +644,7 @@ export function TeamsTab() {
                                 }
                                 alt=""
                               />
-                              <AvatarFallback className="bg-[var(--app-surface-soft)] text-[9px] font-light text-[var(--app-text-secondary)]">
+                              <AvatarFallback className="bg-primary/50 text-[9px] font-light text-white">
                                 {getInitials(creator)}
                               </AvatarFallback>
                             </Avatar>

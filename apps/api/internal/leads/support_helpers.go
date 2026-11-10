@@ -67,6 +67,25 @@ func ensureLeadEditableForUpdate(
 	tenantContext tenant.Context,
 	leadID string,
 ) error {
+	return ensureLeadAccessForUpdate(ctx, tx, tenantContext, leadID, authorization.CanOperateLead)
+}
+
+func ensureLeadProgressAllowedForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	leadID string,
+) error {
+	return ensureLeadAccessForUpdate(ctx, tx, tenantContext, leadID, authorization.CanProgressLead)
+}
+
+func ensureLeadAccessForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	leadID string,
+	canAccess func(tenant.Context, authorization.LeadResource) bool,
+) error {
 	var assignedUserID, teamID pgtype.Text
 	err := tx.QueryRow(ctx, `
 		select
@@ -90,7 +109,7 @@ func ensureLeadEditableForUpdate(
 	if poolAccess != nil {
 		return ErrQueuePoolConflict
 	}
-	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+	if !canAccess(tenantContext, authorization.LeadResource{
 		AssignedUserID: textValue(assignedUserID),
 		TeamID:         textValue(teamID),
 	}) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -29,6 +30,8 @@ type moveRevisionTx struct {
 	organization string
 	status       string
 	updatedAt    any
+	assignee     string
+	team         string
 	reads        int
 	poolReads    int
 	poolAccess   *bool
@@ -67,11 +70,12 @@ func (row moveRevisionRow) Scan(dest ...any) error {
 		return pgx.ErrNoRows
 	}
 	*dest[0].(*string) = moveRevisionLead
-	*dest[1].(*pgtype.Text) = pgtype.Text{}
+	*dest[1].(*pgtype.Text) = pgtype.Text{String: row.tx.team, Valid: row.tx.team != ""}
 	*dest[2].(*string) = "Synthetic lead"
 	for _, index := range []int{3, 4, 5, 7, 9, 10, 11, 12, 13} {
 		*dest[index].(*pgtype.Text) = pgtype.Text{}
 	}
+	*dest[4].(*pgtype.Text) = pgtype.Text{String: row.tx.assignee, Valid: row.tx.assignee != ""}
 	*dest[6].(*pgtype.Text) = pgtype.Text{String: moveRevisionStage, Valid: true}
 	*dest[8].(*string) = row.tx.status
 	data, err := json.Marshal(map[string]any{"updated_at": row.tx.updatedAt})
@@ -94,7 +98,7 @@ func TestMoveStageRevisionRejectsStaleClosureInUnchangedStage(t *testing.T) {
 			// stage. The old expectedStageId alone would still match.
 			tx := &moveRevisionTx{organization: moveRevisionOrg, status: status, updatedAt: base.Add(time.Microsecond).Format(time.RFC3339Nano)}
 			input := moveStageInput{StageID: moveRevisionDestination, ExpectedStageID: patchString{Set: true, Value: stringPointer(moveRevisionStage)}, ExpectedUpdatedAt: &base}
-			_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, input)
+			_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, input, canProgressLeadSnapshot)
 			if !errors.Is(err, ErrLeadChanged) || tx.reads != 1 || tx.poolReads != 1 || tx.status != status {
 				t.Fatalf("stale closure must stop before effects: status=%q reads=%d err=%v", tx.status, tx.reads, err)
 			}
@@ -106,7 +110,7 @@ func TestMoveStageRevisionRejectsVisibleAndHiddenPoolsBeforeRevision(t *testing.
 	base := time.Now().UTC()
 	for _, access := range []bool{false, true} {
 		tx := &moveRevisionTx{organization: moveRevisionOrg, status: "open", updatedAt: "invalid", poolAccess: &access}
-		_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: moveRevisionDestination, ExpectedUpdatedAt: &base})
+		_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: moveRevisionDestination, ExpectedUpdatedAt: &base}, canProgressLeadSnapshot)
 		if !errors.Is(err, tenant.ErrOrganizationAccessDenied) || tx.reads != 1 || tx.poolReads != 1 {
 			t.Fatalf("pool move crossed the claim boundary: access=%t reads=%d pool_reads=%d error=%v", access, tx.reads, tx.poolReads, err)
 		}
@@ -132,7 +136,7 @@ func TestMoveStageRevisionExactComparisonAndSameStageReorder(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			tx := &moveRevisionTx{organization: moveRevisionOrg, status: "open", updatedAt: testCase.stored}
-			current, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: testCase.target, ExpectedUpdatedAt: &testCase.expected})
+			current, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: testCase.target, ExpectedUpdatedAt: &testCase.expected}, canProgressLeadSnapshot)
 			if errors.Is(err, ErrLeadChanged) != testCase.conflict || (!testCase.conflict && (err != nil || current.StageID != moveRevisionStage)) {
 				t.Fatalf("revision result: current=%+v err=%v", current, err)
 			}
@@ -145,7 +149,7 @@ func TestMoveStageRevisionLegacyContractProtectsClosedLead(t *testing.T) {
 		for _, target := range []string{moveRevisionStage, moveRevisionDestination} {
 			t.Run(status+"/"+target, func(t *testing.T) {
 				tx := &moveRevisionTx{organization: moveRevisionOrg, status: status}
-				_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: target})
+				_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: target}, canProgressLeadSnapshot)
 				wantConflict := status != "open" && target != moveRevisionStage
 				if errors.Is(err, ErrLeadChanged) != wantConflict || (!wantConflict && err != nil) {
 					t.Fatalf("legacy status=%s target=%s: %v", status, target, err)
@@ -156,7 +160,7 @@ func TestMoveStageRevisionLegacyContractProtectsClosedLead(t *testing.T) {
 	base := time.Date(2026, 10, 16, 12, 0, 0, 123456000, time.UTC)
 	for _, status := range []string{"won", "lost"} {
 		tx := &moveRevisionTx{organization: moveRevisionOrg, status: status, updatedAt: base.Format(time.RFC3339Nano)}
-		if _, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: moveRevisionDestination, ExpectedUpdatedAt: &base}); err != nil {
+		if _, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, moveRevisionActor(), moveRevisionLead, moveStageInput{StageID: moveRevisionDestination, ExpectedUpdatedAt: &base}, canProgressLeadSnapshot); err != nil {
 			t.Fatalf("fresh acknowledged %s move should remain allowed: %v", status, err)
 		}
 	}
@@ -178,11 +182,35 @@ func TestMoveStageRevisionPreservesTenantPermissionAndStageGuards(t *testing.T) 
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			tx := &moveRevisionTx{organization: testCase.org, status: "won", updatedAt: "invalid"}
-			_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, testCase.actor, moveRevisionLead, testCase.input)
+			_, err := (Repository{}).lockLeadForStageMove(context.Background(), tx, testCase.actor, moveRevisionLead, testCase.input, canProgressLeadSnapshot)
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("guard order: got %v, want %v", err, testCase.want)
 			}
 		})
+	}
+}
+
+func TestMoveStageProgressScopeLeavesAutomationAndResourceEditsRestricted(t *testing.T) {
+	actor := tenant.Context{
+		OrganizationID: moveRevisionOrg, UserID: "leader",
+		Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate},
+		LedTeamIDs:  []string{"current-team"}, LedUserIDs: []string{"broker"},
+	}
+	input := moveStageInput{StageID: moveRevisionDestination}
+	newTx := func() *moveRevisionTx {
+		return &moveRevisionTx{organization: moveRevisionOrg, status: "open", team: "former-team", assignee: "broker"}
+	}
+	repo := Repository{}
+	if _, err := repo.lockLeadForStageMove(context.Background(), newTx(), actor, moveRevisionLead, input, canProgressLeadSnapshot); err != nil {
+		t.Fatalf("manual progression was denied: %v", err)
+	}
+	if _, err := repo.moveStageTx(context.Background(), newTx(), actor, moveRevisionLead, input, &automationStageProvenance{}); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("automation progression crossed the team scope: %v", err)
+	}
+	value := true
+	input.IsOwnResource = &value
+	if _, err := repo.moveStageTx(context.Background(), newTx(), actor, moveRevisionLead, input, nil); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("resource edit crossed the team scope: %v", err)
 	}
 }
 

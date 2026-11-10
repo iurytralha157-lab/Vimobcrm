@@ -308,19 +308,32 @@ export function DistributionTab() {
       : member.user?.name || member.user?.email || "Usuário";
   };
 
+  const toolbar = (
+    <ManagementToolbarPortal>
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
+          aria-label="Buscar filas de distribuição"
+          placeholder="Buscar filas..."
+          value={queueSearch}
+          onChange={(event) => setQueueSearch(event.target.value)}
+          className="h-8 w-36 min-w-0 py-0 text-[12px] sm:w-40"
+        />
+        <Button
+          data-tour="distribution-new-queue"
+          onClick={openEditor}
+          className="h-8 shrink-0 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Nova fila
+        </Button>
+      </div>
+    </ManagementToolbarPortal>
+  );
+
   if (isLoading || (teamsLoading && roundRobins.length === 0)) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <ManagementToolbarPortal>
-          <Button
-            data-tour="distribution-new-queue"
-            onClick={() => openEditor()}
-            className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Nova fila
-          </Button>
-        </ManagementToolbarPortal>
+        {toolbar}
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto overscroll-contain rounded-[8px] bg-[var(--app-surface-solid)]">
           <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
         </div>
@@ -331,17 +344,7 @@ export function DistributionTab() {
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <Input aria-label="Buscar filas de distribuição" placeholder="Buscar filas por nome..." value={queueSearch} onChange={event => setQueueSearch(event.target.value)} className="h-8 max-w-sm shrink-0 text-[12px]" />
-        <ManagementToolbarPortal>
-          <Button
-            data-tour="distribution-new-queue"
-            onClick={() => openEditor()}
-            className="h-8 gap-1.5 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-white shadow-none hover:bg-primary"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Nova fila
-          </Button>
-        </ManagementToolbarPortal>
+        {toolbar}
 
         {queuesError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-[6px] bg-destructive/10 px-3 py-2 text-[12px] font-light text-destructive">
@@ -533,8 +536,8 @@ export function DistributionTab() {
                               {queue.members.length > members.length && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <div className="flex h-7 w-7 items-center justify-center rounded-full border-0 bg-[var(--app-surface-soft)]">
-                                      <span className="text-xs text-muted-foreground">
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-full border-0 bg-primary/50 text-white">
+                                      <span className="text-xs">
                                         +{queue.members.length - members.length}
                                       </span>
                                     </div>

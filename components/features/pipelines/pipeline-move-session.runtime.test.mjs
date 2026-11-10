@@ -13,11 +13,16 @@ import { VimobAPIError } from '../../../lib/api/vimob-error.ts';
 import { shouldApplyVisualPendingMove } from './pipeline-screen/pending-moves.ts';
 import { getOptimisticDealStatusForStage, getOptimisticAutomationDealStatusForStage, getVisualPendingMoveKey, isPipelineDealStatus, isUnsafePartialStageDrop, mergeMovedLeadResponse, shouldKeepLeadForDealStatusFilter } from './pipeline-screen/model.ts';
 
-function fixture({ holdFirst = true, serverCAS = false, destinationLost = false, fromStatus = 'open', savedStatus = fromStatus, financialReviewRequired = false } = {}) {
+const leadProgressCapability = evaluateProduction(
+  productionDeclaration('lib/lead-operation-capability.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'leadProgressCapability'),
+  {}, 'leadProgressCapability',
+);
+
+function fixture({ holdFirst = true, serverCAS = false, destinationLost = false, fromStatus = 'open', savedStatus = fromStatus, financialReviewRequired = false, capabilities = {} } = {}) {
   const runtime = leadHookRuntime(), requests = [], events = [], notices = [], pendingFirst = deferred();
   const scope = runtime.scope(), queryClient = runtime.client();
   const queryKey = ['stages-with-leads', 'org-a', 'pipeline-a'];
-  const lead = { id: 'lead-a', stage_id: 'stage-a', assigned_user_id: 'actor-a', can_operate: true, deal_status: fromStatus, tags: [], updated_at: '2026-10-16T10:00:00.000001Z' };
+  const lead = { id: 'lead-a', stage_id: 'stage-a', assigned_user_id: 'actor-a', can_operate: true, deal_status: fromStatus, tags: [], updated_at: '2026-10-16T10:00:00.000001Z', ...capabilities };
   const stages = [{ id: 'stage-a', leads: [lead] }, { id: 'stage-b', is_lost: destinationLost, leads: [] }, { id: 'stage-c', leads: [] }];
   let visual = new Map(), reply, lostMove, lostLead, serverLead = { ...lead }, acceptedWrites = 0;
   const refs = Object.fromEntries(['movePersistenceByLeadRef', 'moveRollbackSnapshotByLeadRef', 'latestMoveVersionByLeadRef', 'moveRevisionReceiptByLeadRef'].map(name => [name, { current: new Map() }]));
@@ -30,7 +35,7 @@ function fixture({ holdFirst = true, serverCAS = false, destinationLost = false,
     ...common, leadMoveRequestScope: scope, canOperateLeads: true, isMobile: false, isDraggingRef: { current: false }, dragMoveSnapshotRef: { current: null },
     stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: undefined, pipelineBoardQueryKey: queryKey, pipelineBoardQueryKeyId: 'query-a',
     queryClient, getOptimisticDealStatusForStage, getOptimisticAutomationDealStatusForStage, getOptimisticPipelineMoveOutcome,
-    getVisualPendingMoveKey, shouldKeepLeadForDealStatusFilter, createPipelineStageSnapshot, getPipelineBoardOrderAtForIndex,
+    getVisualPendingMoveKey, shouldKeepLeadForDealStatusFilter, createPipelineStageSnapshot, getPipelineBoardOrderAtForIndex, leadProgressCapability,
     applyPendingPipelineMoves, clearPendingPipelineMove, registerPendingPipelineMove, findPipelineLeadLocation, restorePipelineLeadSnapshot,
     mergeMovedLeadResponse, isPipelineDealStatus, isUnsafePartialStageDrop, shouldApplyVisualPendingMove, enqueueLeadMovePersistence: enqueue, realtimeOrganizationId: 'org-a',
     capturePipelineMoveRevision, resolvePipelineMoveRevision, PipelineMoveRevisionConflict, getLeadStatusFinancialReviewMessage,
@@ -76,6 +81,35 @@ function fixture({ holdFirst = true, serverCAS = false, destinationLost = false,
     close: () => { unsubscribe(); clearPendingPipelineMove(queryKey, 'lead-a'); runtime.close(); } };
 }
 
+test('progress capability lets the leader archive a broker lead through the usual loss confirmation', async () => {
+  const f = fixture({
+    holdFirst: false, destinationLost: true, savedStatus: 'lost',
+    capabilities: { can_operate: false, can_progress: true },
+  });
+  try {
+    f.start();
+    await f.drop();
+    assert.equal(f.requests.length, 0);
+    assert.ok(f.lost());
+    await f.confirm('Synthetic reason');
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0][1].stageId, 'stage-b');
+    assert.equal(f.requests[0][1].lostReason, 'Synthetic reason');
+  } finally { f.close(); }
+});
+
+test('the board does not dispatch when progress permission is revoked during a drag', async () => {
+  const f = fixture({ holdFirst: false, capabilities: { can_progress: true } });
+  try {
+    f.start();
+    f.patchServer({ can_progress: false });
+    f.refresh();
+    await f.drop();
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.board()[0].leads[0].stage_id, 'stage-a');
+  } finally { f.close(); }
+});
+
 for (const [fromStatus, savedStatus, financialReviewRequired, shouldWarn] of [
   ['won', 'open', false, true], ['won', 'lost', false, true],
   ['open', 'won', true, true], ['lost', 'won', true, true],
@@ -92,7 +126,7 @@ for (const [fromStatus, savedStatus, financialReviewRequired, shouldWarn] of [
 });
 
 for (const next of [['org-b', 'actor-b', 'sid-b'], ['org-a', 'actor-a', 'sid-b']]) test(`real move producer/queue does not dispatch the waiting gesture after switching to ${next.join('/')}`, async () => {
-  const f = fixture();
+  const f = fixture({ capabilities: { can_operate: false, can_progress: true } });
   try {
     const queued = f.invoke(); await turn(); assert.equal(f.requests.length, 0);
     f.runtime.switchTo(...next); f.runtime.scope(); f.pendingFirst.resolve(); await f.first; await queued;

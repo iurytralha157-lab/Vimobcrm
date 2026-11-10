@@ -145,13 +145,14 @@ const getErrorCode = (error: unknown) => {
 export type Lead = Tables<'leads'> & {
   queue_pool?: import('@/lib/validation/queue-runtime').QueuePool | null;
   can_operate?: boolean;
+  can_progress?: boolean;
   financial_review_required?: boolean;
   tags?: LeadTag[];
   assignee?: { id: string; name: string; avatar_url: string | null };
   stage?: { id: string; name: string; color: string | null; stage_key: string | null };
 };
 
-const leadReadRelationKeys = new Set<keyof Lead>(['can_operate', 'financial_review_required', 'queue_pool', 'tags', 'assignee', 'stage']);
+const leadReadRelationKeys = new Set<keyof Lead>(['can_operate', 'can_progress', 'financial_review_required', 'queue_pool', 'tags', 'assignee', 'stage']);
 
 export type UpdateLeadInput = Partial<Lead> & {
   id: string;

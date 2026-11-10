@@ -105,7 +105,7 @@ func (repo Repository) recordContactOutcomeWithBegin(ctx context.Context, actor 
 	defer tx.Rollback(ctx)
 	// Lock lead -> receipt -> activity, including on replay. A receipt grants no
 	// access after transfer, permission revocation, deletion or entry into a pool.
-	if err := ensureLeadEditableForUpdate(ctx, tx, actor, leadID); err != nil {
+	if err := ensureLeadProgressAllowedForUpdate(ctx, tx, actor, leadID); err != nil {
 		return LeadContactOutcomeReceipt{}, err
 	}
 	digest := contactOutcomeCommandDigest(leadID, input)

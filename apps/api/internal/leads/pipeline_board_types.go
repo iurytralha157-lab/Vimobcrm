@@ -88,6 +88,7 @@ type PipelineBoardLead struct {
 	AssignedUserID            *string                 `json:"assigned_user_id"`
 	TeamID                    *string                 `json:"team_id"`
 	CanOperate                bool                    `json:"can_operate"`
+	CanProgress               bool                    `json:"can_progress"`
 	QueuePool                 *QueuePoolMetadata      `json:"queuePool,omitempty"`
 	PipelineID                *string                 `json:"pipeline_id"`
 	Message                   *string                 `json:"message"`

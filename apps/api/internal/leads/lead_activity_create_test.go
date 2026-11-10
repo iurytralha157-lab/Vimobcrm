@@ -15,7 +15,7 @@ import (
 
 type activityCreateFixture struct {
 	pgx.Tx
-	org, lead, owner                        string
+	org, lead, owner, team                  string
 	beginErr, lockErr, insertErr, commitErr error
 	poolErr                                 error
 	poolAccess                              *bool
@@ -66,7 +66,7 @@ func (fixture *activityCreateFixture) QueryRow(ctx context.Context, query string
 			fixture.locked = true
 			fixture.locks++
 			*dest[0].(*pgtype.Text) = pgtype.Text{String: fixture.owner, Valid: true}
-			*dest[1].(*pgtype.Text) = pgtype.Text{}
+			*dest[1].(*pgtype.Text) = pgtype.Text{String: fixture.team, Valid: fixture.team != ""}
 			if fixture.cancelAfterLock != nil {
 				fixture.cancelAfterLock()
 			}
@@ -143,6 +143,19 @@ func TestCreateActivityTransactionRejectsTransferForeignOrganizationAndMissingOp
 				t.Fatalf("denied activity was inserted or hydrated: err=%v activity=%+v fixture=%+v", err, activity, fixture)
 			}
 		})
+	}
+}
+
+func TestCreateActivityTransactionAllowsCurrentlyLedBrokerUnderAnotherTeam(t *testing.T) {
+	fixture, actor, input := newActivityCreateFixture()
+	fixture.owner, fixture.team = "broker", "former-team"
+	actor.Permissions = []string{permissions.LeadViewTeam, permissions.LeadOperate}
+	actor.LedTeamIDs = []string{"current-team"}
+	actor.LedUserIDs = []string{fixture.owner}
+
+	activity, err := createActivityWithTransaction(context.Background(), fixture.begin, actor, input)
+	if err != nil || activity.ID == "" || fixture.locks != 1 || fixture.poolReads != 1 || fixture.inserts != 1 || fixture.commits != 1 {
+		t.Fatalf("currently led broker's activity did not commit in the guarded transaction: %v", err)
 	}
 }
 

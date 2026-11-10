@@ -116,7 +116,7 @@ func (repo Repository) recordFeedbackWithBegin(ctx context.Context, actor tenant
 	if isQueuePoolSnapshot(current) {
 		return leadFeedbackResult{}, ErrQueuePoolConflict
 	}
-	if !canOperateLeadSnapshot(actor, current) {
+	if !canProgressLeadSnapshot(actor, current) {
 		return leadFeedbackResult{}, tenant.ErrOrganizationAccessDenied
 	}
 	digest := feedbackCommandDigest(leadID, input.content)

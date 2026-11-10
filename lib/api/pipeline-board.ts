@@ -23,6 +23,7 @@ export type PipelineBoardLead = {
   id: string
   team_id: string | null
   can_operate?: boolean
+  can_progress?: boolean
   updated_at?: string | null
   [key: string]: unknown
 }

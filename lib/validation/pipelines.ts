@@ -152,6 +152,7 @@ export const pipelineBoardLeadSchema = z.object({
   id: uuidSchema,
   team_id: uuidSchema.nullable(),
   can_operate: z.boolean().optional(),
+  can_progress: z.boolean().optional(),
   updated_at: timestampSchema.nullable().optional(),
   board_sort_at: timestampSchema.nullable().optional(),
   board_order_at: timestampSchema.nullable().optional(),

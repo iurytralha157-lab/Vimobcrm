@@ -61,6 +61,7 @@ type Lead struct {
 	AssignedUserID            string             `json:"assignedUserId,omitempty"`
 	TeamID                    string             `json:"teamId,omitempty"`
 	CanOperate                *bool              `json:"canOperate,omitempty"`
+	CanProgress               *bool              `json:"canProgress,omitempty"`
 	FinancialReviewRequired   bool               `json:"financialReviewRequired,omitempty"`
 	QueuePool                 *QueuePoolMetadata `json:"queuePool,omitempty"`
 	QueuePoolReadAccess       *bool              `json:"-"`

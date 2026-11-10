@@ -34,6 +34,16 @@ func CanOperateLead(context tenant.Context, lead LeadResource) bool {
 	return canMutateLead(context, lead) && context.HasPermission(permissions.LeadOperate)
 }
 
+// CanProgressLead allows stage moves and activity on a currently led broker's
+// lead even when the lead was recorded under another team.
+func CanProgressLead(context tenant.Context, lead LeadResource) bool {
+	if lead.QueuePoolReadAccess != nil || !context.HasPermission(permissions.LeadOperate) {
+		return false
+	}
+	return canMutateLead(context, lead) ||
+		(leadscope.CanViewTeam(context) && lead.AssignedUserID != "" && context.LeadsUser(lead.AssignedUserID))
+}
+
 func CanDeleteLead(context tenant.Context, lead LeadResource) bool {
 	return canMutateLead(context, lead) && context.HasPermission(permissions.LeadDelete)
 }

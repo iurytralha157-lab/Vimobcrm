@@ -66,6 +66,7 @@ type LeadCardLead = {
   queue_pool?: QueuePool | null;
   id: string;
   can_operate?: boolean;
+  can_progress?: boolean;
   name?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -168,7 +169,7 @@ export const LeadCard = memo(function LeadCard({
     ? formatShortTime(new Date(lead.stage_entered_at), nowMs)
     : '-';
   const poolReadOnly = Boolean(lead.queue_pool && !lead.assigned_user_id);
-  const canRecordContact = !poolReadOnly && lead.can_operate === true;
+  const canRecordContact = !poolReadOnly && (lead.can_progress ?? lead.can_operate) === true;
   const captureCardOperation = useLeadDetailOperationScope(
     lead.id, activeOrganization.organizationId, user?.id || null, queryClient,
     canRecordContact, getGlobalSignOutSessionId(session),

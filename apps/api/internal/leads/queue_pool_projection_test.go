@@ -78,8 +78,11 @@ func TestQueuePoolProjectionMissingLeadDoesNotReuseStaleCard(t *testing.T) {
 
 func TestQueuePoolReadDoesNotEnableGenericOperation(t *testing.T) {
 	allowed := true
-	lead := withLeadOperationCapability(tenant.Context{MemberRole: "admin"}, Lead{QueuePoolReadAccess: &allowed})
-	if lead.CanOperate == nil || *lead.CanOperate {
-		t.Fatal("pool audience must not enable ordinary editing")
+	actor := tenant.Context{MemberRole: "admin"}
+	lead := withLeadOperationCapability(actor, Lead{QueuePoolReadAccess: &allowed})
+	card := withPipelineLeadOperationCapability(actor, PipelineBoardLead{QueuePool: &QueuePoolMetadata{}})
+	if lead.CanOperate == nil || *lead.CanOperate || lead.CanProgress == nil || *lead.CanProgress ||
+		card.CanOperate || card.CanProgress {
+		t.Fatal("pool audience must not enable ordinary editing or progression")
 	}
 }

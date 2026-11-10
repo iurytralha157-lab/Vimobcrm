@@ -36,6 +36,9 @@ function evaluate(name, context, tree = ast) {
 }
 
 const collisions = evaluate('collisions', { closestCenter, pointerWithin });
+const capabilityPath = join(repository, 'lib/lead-operation-capability.ts');
+const capabilityAST = ts.createSourceFile(capabilityPath, await readFile(capabilityPath, 'utf8'), ts.ScriptTarget.Latest, true);
+const leadProgressCapability = evaluate('leadProgressCapability', {}, capabilityAST);
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const lead = (id, stageId) => ({ id, stage_id: stageId, can_operate: true });
 
@@ -55,7 +58,7 @@ function dropAt({ same = false, sourceIndex = 0, y = 113, heights = [100, 100, 1
   const hit = hits[0], container = containers.find(item => item.id === hit?.id);
   const start = { draggableId: active.id, type: 'DEFAULT', mode: 'FLUID', source: { droppableId: origin.id, index: sourceIndex } };
   let result;
-  const finish = evaluate('finish', { stages, disabled: false, source: { current: start }, keyboardTarget: { current: null },
+  const finish = evaluate('finish', { stages, disabled: false, source: { current: start }, keyboardTarget: { current: null }, leadProgressCapability,
     setActiveId() {}, onDragEnd: value => { result = value; } });
   finish({ active: { id: active.id, rect: { current: { translated: activeRect } } }, collisions: hits,
     over: container ? { id: container.id, data: container.data, rect: rects.get(container.id) } : null });
@@ -100,7 +103,7 @@ test('the actual Screen permits a visible gap in a partial column and still bloc
     const result = dropAt({ y }).result, moves = [], warnings = [];
     const stages = [{ id: 'origin', leads: [lead('moving', 'origin')] },
       { id: 'destination', has_more: true, leads: [0, 1, 2].map(index => lead(`target-${index}`, 'destination')) }];
-    const handleDragEnd = evaluate('handleDragEnd', { stages, stageAutomations: [], canOperateLeads: true,
+    const handleDragEnd = evaluate('handleDragEnd', { stages, stageAutomations: [], canOperateLeads: true, leadProgressCapability,
       dragMoveSnapshotRef: { current: { revision: { leadId: 'moving', sourceStageId: 'origin' },
         operation: { isCurrent: () => true }, queryKeyId: 'board' } }, isDraggingRef: { current: true },
       pipelineBoardQueryKeyId: 'board', pipelineBoardQueryKey: ['stages-with-leads', 'synthetic-org'],

@@ -6,6 +6,10 @@ import { evaluateProduction, productionDeclaration } from '../../../../hooks/lea
 
 test('the production drop handler refuses a one-microsecond gap before any optimistic state or request', async () => {
   const source = productionDeclaration('components/features/pipelines/PipelinesScreen.tsx', node => ts.isVariableDeclaration(node) && node.name.getText() === 'executeLeadMove');
+  const leadProgressCapability = evaluateProduction(
+    productionDeclaration('lib/lead-operation-capability.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'leadProgressCapability'),
+    {}, 'leadProgressCapability',
+  );
   const moved = { id: 'lead-moved', can_operate: true, deal_status: 'open' };
   const stages = [{ id: 'from', leads: [moved] }, { id: 'to', leads: [
     { id: 'above', board_order_at: '2026-10-16T12:00:00.001800Z' },
@@ -18,7 +22,7 @@ test('the production drop handler refuses a one-microsecond gap before any optim
     moveContract: { getCurrent: () => ({ contract: 'revision-v1' }) },
     useCallback: fn => fn, stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: 'all',
     pipelineBoardQueryKey: key, pipelineBoardQueryKeyId: 'key', canOperateLeads: true, isMobile: false,
-    realtimeOrganizationId: 'org-a', isDraggingRef: drag,
+    realtimeOrganizationId: 'org-a', isDraggingRef: drag, leadProgressCapability,
     getOptimisticDealStatusForStage: () => null, getOptimisticAutomationDealStatusForStage: () => null,
     getOptimisticPipelineMoveOutcome: () => 'open', getPipelineBoardOrderAtForIndex,
     queryClient: { getQueryData: () => stages, invalidateQueries: (...args) => { invalidations.push(args); return Promise.resolve(); }, setQueryData: (...args) => writes.push(args) },

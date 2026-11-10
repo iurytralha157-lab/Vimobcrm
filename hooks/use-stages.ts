@@ -70,6 +70,7 @@ export type PipelineLead = Partial<Tables<'leads'>> & {
   id: string;
   stage_id: string | null;
   can_operate?: boolean;
+  can_progress?: boolean;
   board_sort_at?: string | null;
   assigned_user_id?: string | null;
   interest_property_id?: string | null;

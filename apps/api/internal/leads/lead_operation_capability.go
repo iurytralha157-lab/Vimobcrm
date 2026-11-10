@@ -5,22 +5,23 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-// leadOperationCapability uses the same resource boundary as write endpoints.
-// A team leader may read a broker's lead from another team without being able
-// to change that lead.
-func leadOperationCapability(tenantContext tenant.Context, assignedUserID string, teamID string) bool {
-	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{
-		AssignedUserID: assignedUserID,
-		TeamID:         teamID,
+func canProgressLeadSnapshot(actor tenant.Context, current leadSnapshot) bool {
+	return !isQueuePoolSnapshot(current) && authorization.CanProgressLead(actor, authorization.LeadResource{
+		AssignedUserID: current.AssignedUserID,
+		TeamID:         current.TeamID,
 	})
 }
 
 func withLeadOperationCapability(tenantContext tenant.Context, lead Lead) Lead {
-	canOperate := leadOperationCapability(tenantContext, lead.AssignedUserID, lead.TeamID)
-	if lead.QueuePoolReadAccess != nil {
-		canOperate = false
+	resource := authorization.LeadResource{
+		AssignedUserID:      lead.AssignedUserID,
+		TeamID:              lead.TeamID,
+		QueuePoolReadAccess: lead.QueuePoolReadAccess,
 	}
+	canOperate := authorization.CanOperateLead(tenantContext, resource)
+	canProgress := authorization.CanProgressLead(tenantContext, resource)
 	lead.CanOperate = &canOperate
+	lead.CanProgress = &canProgress
 	return lead
 }
 
@@ -33,9 +34,12 @@ func withPipelineLeadOperationCapability(tenantContext tenant.Context, lead Pipe
 	if lead.TeamID != nil {
 		teamID = *lead.TeamID
 	}
-	lead.CanOperate = leadOperationCapability(tenantContext, assignedUserID, teamID)
-	if lead.QueuePool != nil {
-		lead.CanOperate = false
+	if lead.QueuePool == nil {
+		resource := authorization.LeadResource{AssignedUserID: assignedUserID, TeamID: teamID}
+		lead.CanOperate = authorization.CanOperateLead(tenantContext, resource)
+		lead.CanProgress = authorization.CanProgressLead(tenantContext, resource)
+	} else {
+		lead.CanOperate, lead.CanProgress = false, false
 	}
 	return lead
 }

@@ -57,6 +57,7 @@ type APILead = {
   id: string
   organizationId: string
   canOperate?: boolean
+  canProgress?: boolean
   financialReviewRequired?: boolean
   queuePool?: APIQueuePool | null
   tags?: Array<{ id: string; name: string | null; color: string | null }> | null
@@ -614,6 +615,7 @@ function toAPILeadUpdateBody(data: LeadUpdateInput) {
 export function toLegacyLead(lead: APILead): LeadRow & {
   queue_pool: QueuePool | null
   can_operate?: boolean
+  can_progress?: boolean
   financial_review_required?: boolean
   stage?: { id: string; name: string; color: string | null; stage_key: string | null }
   assignee?: { id: string; name: string; avatar_url: string | null }
@@ -622,6 +624,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
   return {
     queue_pool: toQueuePool(lead.queuePool),
     ...(typeof lead.canOperate === 'boolean' ? { can_operate: lead.canOperate } : {}),
+    ...(typeof lead.canProgress === 'boolean' ? { can_progress: lead.canProgress } : {}),
     financial_review_required: lead.financialReviewRequired === true,
     assigned_at: null,
     assigned_user_id: lead.assignedUserId || null,

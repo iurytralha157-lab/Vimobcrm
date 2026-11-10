@@ -102,6 +102,13 @@ acima: `next dev` o atualiza entre os marcadores sem alterar este texto.
   `docs/runbooks/whatsapp-inbox.md`. Não altere modo, allowlist ou sequência de
   cutover como parte incidental de outra tarefa. Código, runbook, CI e `/readyz`
   não comprovam, isoladamente, o comportamento da produção atual.
+- O worker Go é o único responsável pelo envio dos avisos de WhatsApp da fila
+  `private.notification_deliveries`. Mantenha a função Edge
+  `notification-evolution-failover` aposentada e a configuração
+  `notification_dispatch.whatsapp.standard_failover.enabled` desativada,
+  inclusive ao restaurar backups ou reverter releases. Valide conforme a seção
+  de notificações em `docs/deploy-portainer.md`. Aceite do provedor, recebimento
+  no aparelho e registro de entrega no CRM são verificações separadas.
 - Variável nova deve entrar no `.env.example` pertinente com nome, consumidor,
   obrigatoriedade e padrão. Configuração obrigatória em produção não recebe
   fallback silencioso para `localhost`.

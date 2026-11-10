@@ -1550,6 +1550,10 @@ body {
 :where(.crm-management-surface, [data-management-editor])
   :where([class~="bg-primary/50"]) {
   background-color: var(--management-action-bg) !important;
+}
+
+:where(.crm-management-surface, [data-management-editor])
+  :where([class~="bg-primary/50"]:not([class~="text-white"])) {
   color: var(--management-action-text) !important;
 }
 

@@ -10,6 +10,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { DragStart, DropResult } from '@hello-pangea/dnd';
 import { LeadCard } from '@/components/features/leads/LeadCard';
 import type { StageWithLeads } from '@/hooks/use-stages';
+import { leadProgressCapability } from '@/lib/lead-operation-capability';
 import { pipelineLeadCardPropsEqual } from '@/lib/pipeline-lead-card-clock';
 
 type CardProps = ComponentProps<typeof LeadCard> & { stageId: string };
@@ -154,7 +155,7 @@ export function PipelineDragBoard({ stages, disabled, onDragStart, onDragEnd, re
     const id = String(event.active.id);
     const stage = stages.find(item => item.leads.some(lead => lead.id === id));
     const index = stage?.leads.findIndex(lead => lead.id === id) ?? -1;
-    if (disabled || !stage || index < 0 || stage.leads[index].can_operate !== true) return;
+    if (disabled || !stage || index < 0 || leadProgressCapability(stage.leads[index]) !== true) return;
     dropCancellation.current?.();
     const start: DragStart = { draggableId: id, type: 'DEFAULT', source: { droppableId: stage.id, index }, mode: event.activatorEvent.type === 'keydown' ? 'SNAP' : 'FLUID' };
     keyboardTarget.current = start.mode === 'SNAP' ? { id, stageId: stage.id, index, kind: 'lead' } : null;
@@ -168,7 +169,7 @@ export function PipelineDragBoard({ stages, disabled, onDragStart, onDragEnd, re
     const current = stages.find(stage => stage.id === start.source.droppableId)?.leads.find(lead => lead.id === start.draggableId);
     const data = start.mode === 'SNAP' && selected ? selected : event?.over?.data.current;
     const target = stages.find(stage => stage.id === data?.stageId);
-    if (event && !disabled && current?.can_operate === true && target) {
+    if (event && !disabled && leadProgressCapability(current) === true && target) {
       const targetId = start.mode === 'SNAP' && selected ? selected.id : String(event.over!.id);
       let index = data?.kind === 'lead' ? target.leads.findIndex(lead => lead.id === targetId) : target.leads.length;
       if (start.mode === 'FLUID' && data?.kind === 'stage') {
@@ -221,7 +222,7 @@ export function PipelineDropColumn({ stage, className, children }: { stage: Stag
 
 export const PipelineSortableLeadCard = memo(function PipelineSortableLeadCard({ stageId, ...props }: CardProps) {
   const reducedMotion = useContext(ReducedDragMotion);
-  const disabled = props.isDragDisabled || props.lead.can_operate !== true || Boolean(props.lead.queue_pool && !props.lead.assigned_user_id);
+  const disabled = props.isDragDisabled || leadProgressCapability(props.lead) !== true || Boolean(props.lead.queue_pool && !props.lead.assigned_user_id);
   const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: props.lead.id, disabled: { draggable: disabled, droppable: false }, data: { kind: 'lead', stageId, index: props.index }, transition: reducedMotion ? null : dragTransition });
   const suppressPointerClick = useRef(false);
   useLayoutEffect(() => { if (isDragging) suppressPointerClick.current = true; }, [isDragging]);
@@ -242,5 +243,5 @@ export const PipelineSortableLeadCard = memo(function PipelineSortableLeadCard({
     style: { transform: transformStyle, transition: reducedMotion ? 'none' : transition, opacity: isDragging ? 0.25 : undefined },
     isDragging, decorateDragging: false,
   }), [setNodeRef, setActivatorNodeRef, attributes, listeners, transformStyle, transition, isDragging, disabled, reducedMotion, preparePointerClick, guardPointerClick]);
-  return <LeadCard {...props} dragPresentation={presentation} />;
+  return <LeadCard {...props} isDragDisabled={disabled} dragPresentation={presentation} />;
 }, pipelineLeadCardPropsEqual);
