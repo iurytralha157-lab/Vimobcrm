@@ -115,6 +115,8 @@ type Repository struct {
 	leadPublisher             realtime.Publisher
 	avatarURLs                *boundedWhatsAppMediaSignedURLCache
 	avatarSlots               chan struct{}
+
+	liveBoundDeadBacklogBypassEnabled bool
 }
 
 type scanner interface {
@@ -138,6 +140,8 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		leadPublisher:             publisher,
 		avatarURLs:                newBoundedWhatsAppMediaSignedURLCache(whatsappMediaSignedURLCacheMaxEntries),
 		avatarSlots:               make(chan struct{}, conversationAvatarConcurrency),
+
+		liveBoundDeadBacklogBypassEnabled: storageConfig.LiveBoundDeadBacklogBypassEnabled,
 	}
 }
 

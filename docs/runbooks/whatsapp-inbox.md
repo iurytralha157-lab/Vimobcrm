@@ -53,6 +53,35 @@ Fontes: [claim e dependências](../../apps/api/internal/whatsapp/webhook_worker.
 (linhas 552–675), [falha e retry](../../apps/api/internal/whatsapp/webhook_worker.go)
 (linhas 1445–1519).
 
+### Admissão ao vivo com vínculo próprio e histórico encerrado
+
+O candidato `WHATSAPP_LIVE_BOUND_DEAD_BACKLOG_BYPASS_ENABLED` fica desligado
+por padrão. Quando habilitado no contrato legado verificado, apenas um
+callback direto, orgânico e recente, com uma única mensagem de texto
+reconhecida e identidade estável, pode usar a RPC de ingresso v3. A RPC mantém a seleção
+normal, exceto por eventos antigos do backlog comprovadamente encerrados em
+`dead`, sem lease ou execução Edge, cujo snapshot direto já aponta para a
+mesma conversa, o mesmo lead e o mesmo vínculo ativo da entrada nova.
+
+Um predecessor pendente, de outra modalidade, ou sem a prova do vínculo
+continua exigindo resolução. A ordenação entre eventos ao vivo e as barreiras
+de sessão continuam intactas. A regra só é aplicada na primeira admissão;
+snapshots e dependências já gravados permanecem imutáveis. O candidato não
+altera a captura, a retenção, os envios ou o disparo de notificações.
+
+Valide a [preparação v3](../../supabase/cutovers/20261110_prepare_whatsapp_live_bound_dead_backlog.sql)
+em uma cópia descartável com a função v2 exata e confirme a ausência de
+dependências novas em casos elegíveis. Só então prepare o banco alvo e as
+imagens de todos os serviços de ingresso. Acompanhe separadamente novos
+eventos admitidos e cadeias históricas. Para reverter, desative a flag ou
+reponha as imagens anteriores; o SQL é aditivo e a v2 permanece disponível.
+Uma cadeia ao vivo já congelada exige recuperação própria conforme o
+[manifesto de recuperação](whatsapp-webhook-recovery-manifest.md). Para abrir
+uma nova geração na mesma rota, o corte precisará registrar a cadeia antiga
+sob o bloqueio da rota e excluir seu intervalo tanto do ingresso novo
+quanto da seleção do worker. Preserve o payload original, mantenha a ordem
+das mensagens da nova geração e nunca fabrique resultados de processamento.
+
 ## Outbox de envios
 
 A outbox é independente da inbox. Texto e mídia usam lanes que podem reivindicar

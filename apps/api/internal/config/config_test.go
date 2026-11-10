@@ -156,6 +156,18 @@ func TestConfigValidateRejectsLegacyNativeCompatWithUnlinkedRetention(t *testing
 	}
 }
 
+func TestConfigValidateRestrictsLiveBoundDeadBacklogBypassToLegacyCapture(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "WHATSAPP_LIVE_BOUND_DEAD_BACKLOG_BYPASS_ENABLED requires") {
+		t.Fatalf("expected legacy capture requirement, got %v", err)
+	}
+	cfg.WhatsApp.LegacyNativeCompatEnabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("legacy capture should allow the opt-in bypass: %v", err)
+	}
+}
+
 func TestValidateWebhookRolloutSessionIDs(t *testing.T) {
 	tests := []struct {
 		name    string

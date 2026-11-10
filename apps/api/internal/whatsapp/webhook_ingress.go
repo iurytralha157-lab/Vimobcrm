@@ -550,7 +550,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err != nil {
 		return evolutionWebhookReceipt{}, webhookIngressStage("processing_epoch", err)
 	}
-	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled, repo.legacyNativeCompatEnabled)
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled, repo.legacyNativeCompatEnabled, repo.liveBoundDeadBacklogBypassEnabled)
 	if err != nil {
 		// The terminal retention scrub can commit between the read-only early
 		// replay probe and this transaction. A managed lookup then sees redacted
@@ -808,6 +808,7 @@ type evolutionWebhookDurablePart struct {
 	ProcessingLane     string          `json:"processing_lane"`
 	ProcessingEpoch    int             `json:"processing_epoch"`
 	ProviderOccurredAt *time.Time      `json:"provider_occurred_at"`
+	ReceivedAt         time.Time       `json:"-"`
 	Ordinal            int             `json:"ordinal"`
 }
 
@@ -868,6 +869,7 @@ func prepareEvolutionWebhookDurableParts(envelope evolutionWebhookEnvelope) ([]e
 			Payload:            json.RawMessage(annotatedPayload),
 			ProcessingLane:     lane,
 			ProviderOccurredAt: occurredAt,
+			ReceivedAt:         envelope.ReceivedAt,
 			Ordinal:            index,
 		})
 	}
@@ -973,7 +975,13 @@ func attachEvolutionWebhookRoutingSnapshots(
 	processingEpoch int,
 	postFormGuardEnabled bool,
 	legacyNativeCompat bool,
+	liveBoundDeadBacklogBypass bool,
 ) ([]evolutionWebhookDurablePart, error) {
+	const captureArguments = `(
+		$1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::text[], nullif($9, ''),
+		$10, nullif($11, ''), $12, $13, $14, nullif($15, '')::uuid,
+		nullif($16, '')::uuid, nullif($17, '')::uuid, $18::integer
+	)::text`
 	result := make([]evolutionWebhookDurablePart, len(parts))
 	copy(result, parts)
 	nativeSession := nativeEvolutionSession{
@@ -985,8 +993,11 @@ func attachEvolutionWebhookRoutingSnapshots(
 		if err != nil {
 			return nil, err
 		}
-		messages := withoutNativeEvolutionEncryptedEditControls(withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(decoded)))
+		parsedMessages := extractNativeEvolutionMessages(decoded)
+		messages := withoutNativeEvolutionEncryptedEditControls(withoutNativeEvolutionHistorySyncControls(parsedMessages))
 		messages = withoutNativeEvolutionGroupMessages(messages)
+		allowLiveBoundCapture := liveBoundDeadBacklogBypass && legacyNativeCompat &&
+			len(parsedMessages) == 1 && len(extractNativeEvolutionStatuses(decoded)) == 0
 		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
 		schedulingRoutingKey := strings.TrimSpace(stringFromAny(metadata["routing_key"]))
 		if schedulingRoutingKey == "" {
@@ -1089,6 +1100,11 @@ func attachEvolutionWebhookRoutingSnapshots(
 				!message.IsDeletion &&
 				!message.UnsupportedMessage &&
 				routingKey != evolutionWebhookSessionRoute
+			captureQuery := `select private.capture_whatsapp_webhook_routing_snapshot_v2` + captureArguments
+			if allowLiveBoundCapture && bindingEligible && contextKind == "organic" && contextProof == "" &&
+				liveBoundDeadBacklogCaptureEligible(result[index], message, rule, schedulingRoutingKey, routingKey) {
+				captureQuery = `select private.capture_whatsapp_webhook_routing_snapshot_live_bound_v3` + captureArguments
+			}
 			var snapshotJSON string
 			// A contradictory stored LID mapping must quarantine only this part.
 			// Savepoint rollback removes any work/locks of the failed freeze while
@@ -1097,28 +1113,7 @@ func attachEvolutionWebhookRoutingSnapshots(
 			if err != nil {
 				return nil, err
 			}
-			err = freezeTx.QueryRow(ctx, `
-				select private.capture_whatsapp_webhook_routing_snapshot_v2(
-				  $1::uuid,
-				  $2::uuid,
-				  $3,
-				  $4,
-				  $5,
-				  $6,
-				  $7,
-				  $8::text[],
-				  nullif($9, ''),
-				  $10,
-				  nullif($11, ''),
-				  $12,
-				  $13,
-				  $14,
-				  nullif($15, '')::uuid,
-				  nullif($16, '')::uuid,
-				  nullif($17, '')::uuid,
-				  $18::integer
-				)::text
-			`,
+			err = freezeTx.QueryRow(ctx, captureQuery,
 				session.OrganizationID,
 				session.ID,
 				message.ProviderMessageID,

@@ -32,6 +32,7 @@ type StorageConfig struct {
 	EvolutionGo                          EvolutionGoConfig
 	WhatsAppPostFormFollowUpGuardEnabled bool
 	LegacyNativeCompatEnabled            bool
+	LiveBoundDeadBacklogBypassEnabled    bool
 }
 
 type EvolutionGoConfig struct {

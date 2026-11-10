@@ -41,7 +41,7 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
 		"processingepoch, err := currentevolutionwebhookprocessingepoch(ctx, tx, session)",
-		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch, repo.postformguardenabled, repo.legacynativecompatenabled)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts, processingepoch, repo.postformguardenabled, repo.legacynativecompatenabled, repo.livebounddeadbacklogbypassenabled)",
 		"processing_epoch",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",
@@ -81,7 +81,8 @@ func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *
 	for _, required := range []string{
 		"routingkey := evolutionwebhookmessagebindingroutingkey(message)",
 		"bindingeligible := !message.fromme && !message.isreaction && !message.isdeletion && !message.unsupportedmessage",
-		"select private.capture_whatsapp_webhook_routing_snapshot_v2(",
+		"select private.capture_whatsapp_webhook_routing_snapshot_v2",
+		"select private.capture_whatsapp_webhook_routing_snapshot_live_bound_v3",
 		"snapshot[\"processing_epoch\"]",
 		"message.providermessageid",
 		"result[index].eventkey",
@@ -104,7 +105,7 @@ func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *
 	}
 	resolution := strings.Index(normalized, "resolvenativectwaintakedestination(")
 	managedLock := strings.Index(normalized, "locknativemanagedinboundruleforsnapshot(")
-	capture := strings.Index(normalized, "select private.capture_whatsapp_webhook_routing_snapshot_v2(")
+	capture := strings.Index(normalized, "select private.capture_whatsapp_webhook_routing_snapshot_v2")
 	if resolution < 0 || capture < 0 || resolution >= capture {
 		t.Fatalf("canonical CTWA intake must be frozen before the immutable routing snapshot\n%s", source)
 	}

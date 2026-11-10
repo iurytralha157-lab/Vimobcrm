@@ -207,6 +207,8 @@ type WhatsAppConfig struct {
 	SessionSupervisorInterval      time.Duration
 	SessionSupervisorBatch         int
 	SessionSupervisorRecoveryIDs   []string
+
+	LiveBoundDeadBacklogBypassEnabled bool
 }
 
 func (cfg HTTPConfig) Addr() string {
@@ -344,6 +346,8 @@ func Load() (Config, error) {
 			SessionSupervisorInterval:      parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
 			SessionSupervisorBatch:         int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 50)),
 			SessionSupervisorRecoveryIDs:   parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
+
+			LiveBoundDeadBacklogBypassEnabled: parseBool("WHATSAPP_LIVE_BOUND_DEAD_BACKLOG_BYPASS_ENABLED", false),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
@@ -581,6 +585,9 @@ func (cfg Config) Validate() error {
 	}
 	if err := validateWebhookRolloutSessionIDs(cfg.EvolutionGo.WebhookRolloutSessionIDs); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+	if cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled && !cfg.WhatsApp.LegacyNativeCompatEnabled {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_LIVE_BOUND_DEAD_BACKLOG_BYPASS_ENABLED requires legacy native compatibility"))
 	}
 	if cfg.WhatsApp.LegacyNativeCompatEnabled && cfg.WhatsApp.UnlinkedRetentionWorkerEnabled {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED cannot be combined with WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED"))

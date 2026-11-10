@@ -177,7 +177,7 @@ func TestReceiptEffectRollingReplicaCollisionNeverAddsPartialSiblings(t *testing
 				if err != nil {
 					t.Fatal(err)
 				}
-				parts, err := attachEvolutionWebhookRoutingSnapshots(ctx, nil, evolutionWebhookSession{OrganizationID: f.organizationID, ID: f.sessionID}, []evolutionWebhookDurablePart{{EventKey: key, Payload: annotated}}, 1, false, false)
+				parts, err := attachEvolutionWebhookRoutingSnapshots(ctx, nil, evolutionWebhookSession{OrganizationID: f.organizationID, ID: f.sessionID}, []evolutionWebhookDurablePart{{EventKey: key, Payload: annotated}}, 1, false, false, false)
 				if err != nil {
 					t.Fatal(err)
 				}

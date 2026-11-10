@@ -87,6 +87,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 
+	if cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled {
+		if err := whatsapp.ValidateLiveBoundDeadBacklogBypassSchema(ctx, postgres); err != nil {
+			postgres.Close()
+			authVerifier.Close()
+			return nil, err
+		}
+	}
+
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
 	if _, err := backgroundWorkers.RunWithError(func() error {
@@ -163,12 +171,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 					"workerEnabled":            cfg.Notifications.DispatchWorkerEnabled,
 				},
 				"whatsapp": map[string]any{
-					"backgroundWorkersEnabled":       cfg.BackgroundWorkersEnabled,
-					"webhookWorkerEnabled":           cfg.WhatsApp.WebhookWorkerEnabled,
-					"outboxWorkerEnabled":            cfg.WhatsApp.OutboxWorkerEnabled,
-					"mediaWorkerEnabled":             cfg.WhatsApp.MediaWorkerEnabled,
-					"unlinkedRetentionWorkerEnabled": cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
-					"mediaWorkerConcurrency":         cfg.WhatsApp.MediaWorkerConcurrency,
+					"backgroundWorkersEnabled":          cfg.BackgroundWorkersEnabled,
+					"webhookWorkerEnabled":              cfg.WhatsApp.WebhookWorkerEnabled,
+					"outboxWorkerEnabled":               cfg.WhatsApp.OutboxWorkerEnabled,
+					"mediaWorkerEnabled":                cfg.WhatsApp.MediaWorkerEnabled,
+					"unlinkedRetentionWorkerEnabled":    cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
+					"liveBoundDeadBacklogBypassEnabled": cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled,
+					"mediaWorkerConcurrency":            cfg.WhatsApp.MediaWorkerConcurrency,
 				},
 			}
 			if notificationDispatchStats != nil {
@@ -379,6 +388,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		WhatsAppPostFormFollowUpGuardEnabled: cfg.WhatsApp.PostFormFollowUpGuardEnabled,
 		LegacyNativeCompatEnabled:            cfg.WhatsApp.LegacyNativeCompatEnabled,
+		LiveBoundDeadBacklogBypassEnabled:    cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled,
 		ProjectURL:                           cfg.Storage.ProjectURL,
 		APIKey:                               cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
