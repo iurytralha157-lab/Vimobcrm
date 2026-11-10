@@ -68,6 +68,9 @@ func TestLeadProgressFollowsLedBrokerWithoutExpandingOtherOperations(t *testing.
 	readOnly.Permissions = []string{permissions.LeadViewTeam}
 	unscoped := leader
 	unscoped.Permissions = []string{permissions.LeadOperate}
+	nonleader := leader
+	nonleader.LedTeamIDs = nil
+	nonleader.LedUserIDs = []string{nonleader.UserID}
 	poolVisible := true
 	for _, tc := range []struct {
 		name    string
@@ -80,6 +83,7 @@ func TestLeadProgressFollowsLedBrokerWithoutExpandingOtherOperations(t *testing.
 		{"unassigned on another team", leader, LeadResource{TeamID: "team-b"}, false},
 		{"read only", readOnly, LeadResource{AssignedUserID: "broker", TeamID: "team-b"}, false},
 		{"no team view", unscoped, LeadResource{AssignedUserID: "broker", TeamID: "team-b"}, false},
+		{"nonleader listed as self", nonleader, LeadResource{AssignedUserID: nonleader.UserID, TeamID: "team-b"}, false},
 		{"private pool", leader, LeadResource{AssignedUserID: "broker", TeamID: "team-b", QueuePoolReadAccess: &poolVisible}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

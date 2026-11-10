@@ -41,7 +41,8 @@ func CanProgressLead(context tenant.Context, lead LeadResource) bool {
 		return false
 	}
 	return canMutateLead(context, lead) ||
-		(leadscope.CanViewTeam(context) && lead.AssignedUserID != "" && context.LeadsUser(lead.AssignedUserID))
+		(len(context.LedTeamIDs) > 0 && leadscope.CanViewTeam(context) &&
+			lead.AssignedUserID != "" && context.LeadsUser(lead.AssignedUserID))
 }
 
 func CanDeleteLead(context tenant.Context, lead LeadResource) bool {
