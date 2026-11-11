@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestNativeMixedReceiptAdvancesKnownWhileFutureTargetRetries(t *testing.T) {
+func TestNativeMixedReceiptAdvancesKnownAndDropsUnresolvedTarget(t *testing.T) {
 	ctx, db := webhookDependencyDatabase(t)
 	f := newWebhookDependencyFixture(t, ctx, db, "partial-receipt")
 	repo := NewRepository(db, nil, StorageConfig{})
@@ -20,8 +20,10 @@ func TestNativeMixedReceiptAdvancesKnownWhileFutureTargetRetries(t *testing.T) {
 	futureID := deterministicProviderMessageID(futureClient)
 	item := pendingEvolutionWebhook{OrganizationID: f.organizationID, SessionID: f.sessionID, EventType: "receipt"}
 	receipts := []nativeEvolutionStatus{{MessageIDs: []string{known, futureID}, Status: "read", OccurredAt: time.Now().UTC()}}
-	if err := repo.processNativeEvolutionStatuses(ctx, item, receipts); err == nil {
-		t.Fatal("unresolved future target was acknowledged instead of retained for bounded retry")
+	// Regra de produto (11/11/2026): recibo sem alvo nao bloqueia nem fica em
+	// retry. Os alvos conhecidos sao confirmados e o restante e descartado.
+	if err := repo.processNativeEvolutionStatuses(ctx, item, receipts); err != nil {
+		t.Fatalf("mixed receipt with unresolved target must be dropped, not retried: %v", err)
 	}
 	assertReceiptFixtureState(t, ctx, repo, f, known, "read")
 	if id := createConfirmedReceiptFixture(t, ctx, repo, f, futureClient); id != futureID {
@@ -38,7 +40,7 @@ func TestNativeMixedReceiptAdvancesKnownWhileFutureTargetRetries(t *testing.T) {
 	assertReceiptFixtureState(t, ctx, repo, f, known, "read")
 }
 
-func TestNativeIsolatedReceiptUnknownTenantTargetExhaustsWithoutRepeatingKnown(t *testing.T) {
+func TestNativeIsolatedReceiptUnknownTenantTargetDropsWithoutRepeatingKnown(t *testing.T) {
 	ctx, db := webhookDependencyDatabase(t)
 	f := newWebhookDependencyFixture(t, ctx, db, "receipt-never")
 	foreign := newWebhookDependencyFixture(t, ctx, db, "receipt-foreign")
@@ -68,9 +70,6 @@ func TestNativeIsolatedReceiptUnknownTenantTargetExhaustsWithoutRepeatingKnown(t
 		f.organizationID, f.sessionID, receiptIdentityHash(foreignID)).Scan(&unknownID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Pool().Exec(ctx, `update public.whatsapp_webhook_inbox set max_attempts=3 where id=$1::uuid`, unknownID); err != nil {
-		t.Fatal(err)
-	}
 	knownItems, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, "")
 	if err != nil || len(knownItems) != 1 || knownItems[0].ID != receipt.ID {
 		t.Fatalf("known receipt claim=%d/%v", len(knownItems), err)
@@ -78,29 +77,25 @@ func TestNativeIsolatedReceiptUnknownTenantTargetExhaustsWithoutRepeatingKnown(t
 	if err := repo.processClaimedEvolutionWebhook(ctx, knownItems[0]); err != nil {
 		t.Fatal(err)
 	}
-	for attempt := 1; attempt <= 3; attempt++ {
-		items, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, "")
-		if err != nil || len(items) != 1 || items[0].ID != unknownID {
-			t.Fatalf("receipt claim%d=%d/%v", attempt, len(items), err)
-		}
-		if err := repo.processClaimedEvolutionWebhook(ctx, items[0]); err != nil {
-			t.Fatal(err)
-		}
-		assertReceiptFixtureState(t, ctx, repo, f, known, "read")
-		assertReceiptFixtureState(t, ctx, repo, foreign, foreignID, "sent")
-		if attempt < 3 {
-			if _, err := db.Pool().Exec(ctx, `update public.whatsapp_webhook_inbox set next_attempt_at=now() where id=$1::uuid`, unknownID); err != nil {
-				t.Fatal(err)
-			}
-		}
+	// Regra de produto (11/11/2026): o recibo cujo alvo pertence a outra
+	// organizacao e descartado na primeira tentativa, sem repetir o irmao
+	// conhecido e sem tocar o alvo estrangeiro.
+	items, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneLive, 1, "")
+	if err != nil || len(items) != 1 || items[0].ID != unknownID {
+		t.Fatalf("unresolved receipt claim=%d/%v", len(items), err)
 	}
+	if err := repo.processClaimedEvolutionWebhook(ctx, items[0]); err != nil {
+		t.Fatal(err)
+	}
+	assertReceiptFixtureState(t, ctx, repo, f, known, "read")
+	assertReceiptFixtureState(t, ctx, repo, foreign, foreignID, "sent")
 	var status string
 	var attempts int
 	if err := db.Pool().QueryRow(ctx, `select status,attempts from public.whatsapp_webhook_inbox where id=$1::uuid`, unknownID).Scan(&status, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if status != "dead" || attempts != 3 {
-		t.Fatalf("unknown receipt was not bounded: %s/%d", status, attempts)
+	if status != "processed" || attempts != 1 {
+		t.Fatalf("unresolved receipt must be dropped once, not retried: %s/%d", status, attempts)
 	}
 	if err := db.Pool().QueryRow(ctx, `select status,attempts from public.whatsapp_webhook_inbox where id=$1::uuid`, receipt.ID).Scan(&status, &attempts); err != nil {
 		t.Fatal(err)
