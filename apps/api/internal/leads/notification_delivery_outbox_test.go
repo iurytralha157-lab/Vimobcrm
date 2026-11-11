@@ -161,7 +161,7 @@ func TestNormalizedNotificationWorkerUsesCanonicalDeliveryLifecycle(t *testing.T
 	loop := worker[processStart : processStart+processEnd]
 	for _, required := range []string{
 		"sweepNormalizedNotificationDeliveries(ctx)",
-		"processOneNormalizedNotificationDelivery(ctx, logger)",
+		"processOneNormalizedNotificationDeliveryForLane(ctx, logger, lane)",
 	} {
 		if !strings.Contains(loop, required) {
 			t.Fatalf("normalized worker loop is missing %q", required)

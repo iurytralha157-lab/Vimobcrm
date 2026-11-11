@@ -121,6 +121,7 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 	go func() {
 		timer := time.NewTimer(7 * time.Second)
 		defer timer.Stop()
+		lane := repo.startLeadWhatsAppNotificationWorker(ctx, logger)
 
 		for {
 			select {
@@ -133,7 +134,7 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 				} else if created > 0 {
 					logger.Info("schedule notifications enqueued", "count", created)
 				}
-				if err := repo.processNotificationDeliveries(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
+				if err := repo.processNotificationDeliveries(ctx, logger, lane); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("notification delivery worker failed", "error", err)
 				}
 				timer.Reset(notificationDispatchWorkerInterval)
@@ -147,10 +148,10 @@ func (repo Repository) ProcessLeadWhatsAppNotifications(ctx context.Context) err
 }
 
 func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error {
-	return repo.processNotificationDeliveries(ctx, nil)
+	return repo.processNotificationDeliveries(ctx, nil, notificationClaimLegacy)
 }
 
-func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger) (returnErr error) {
+func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger, lane notificationClaimLane) (returnErr error) {
 	defer func() {
 		if repo.notificationStats == nil {
 			return
@@ -186,11 +187,15 @@ func (repo Repository) processNotificationDeliveries(ctx context.Context, logger
 	// and lease. The wall-clock boundary stops new claims without cancelling an
 	// in-flight provider call whose result still needs durable persistence.
 	deadline := time.Now().Add(notificationDispatchDrainTimeout)
+	concurrency := notificationDispatchConcurrency
+	if lane == notificationClaimGeneral {
+		concurrency--
+	}
 	var started atomic.Int64
-	errorChannel := make(chan error, notificationDispatchConcurrency)
+	errorChannel := make(chan error, concurrency)
 	var workers sync.WaitGroup
-	workers.Add(notificationDispatchConcurrency)
-	for range notificationDispatchConcurrency {
+	workers.Add(concurrency)
+	for range concurrency {
 		go func() {
 			defer workers.Done()
 			for {
@@ -200,7 +205,7 @@ func (repo Repository) processNotificationDeliveries(ctx context.Context, logger
 				if started.Add(1) > notificationDispatchDrainLimit {
 					return
 				}
-				processed, err := repo.processOneNormalizedNotificationDelivery(ctx, logger)
+				processed, err := repo.processOneNormalizedNotificationDeliveryForLane(ctx, logger, lane)
 				if err != nil {
 					select {
 					case errorChannel <- err:

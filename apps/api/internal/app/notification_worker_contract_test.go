@@ -70,7 +70,7 @@ func TestNotificationDispatchWorkerIncludesBoundedWhatsAppWaitingSubqueue(t *tes
 		t.Fatal(err)
 	}
 	expire := strings.Index(string(outbox), "select private.expire_whatsapp_inbound_push_waiting(100)")
-	claim := strings.Index(string(outbox), "from private.claim_notification_deliveries(")
+	claim := strings.Index(string(outbox), "cross join lateral private.claim_notification_deliveries(")
 	if expire < 0 || claim < 0 || expire > claim {
 		t.Fatal("waiting expiry must commit separately before the claim's authorization locks")
 	}
@@ -105,7 +105,8 @@ func notificationWorkerCapabilitySuffix(t *testing.T, source []byte) string {
 	}
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "normalizedNotificationWorkerID" || function.Body == nil {
+		if !ok || function.Body == nil ||
+			(function.Name.Name != "normalizedNotificationWorkerID" && function.Name.Name != "normalizedNotificationWorkerIDForLane") {
 			continue
 		}
 		constants := map[string]ast.Expr{}
@@ -143,7 +144,9 @@ func notificationWorkerCapabilitySuffix(t *testing.T, source []byte) string {
 			}
 			return true
 		})
-		return suffix
+		if suffix != "" {
+			return suffix
+		}
 	}
 	return ""
 }

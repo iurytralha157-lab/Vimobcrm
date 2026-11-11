@@ -19,6 +19,14 @@ Essa separação elimina a corrida anterior em que a requisição HTTP enviava i
 
 O endpoint público `POST /v1/notifications/dispatch` confirma apenas `queued: true`. Ele não afirma que o provedor entregou a mensagem.
 
+O worker Go consulta `private.notification_lead_whatsapp_fast_claim_v1()` no
+catálogo ao iniciar. Com a função instalada, cada réplica reserva um executor
+dos três executores existentes para os avisos de lead novo, prazo, recebimento
+após redistribuição e saída da responsabilidade pelo WhatsApp. Ele consulta a
+fila a cada dois segundos quando está livre e usa o mesmo lease, autorização e política de
+retentativa do worker geral. A função deve existir em cada nova reserva dessa
+fila. Uma réplica que inicia sem ela usa a rotina geral.
+
 ## Estados
 
 | Estado | Significado | Próxima ação |

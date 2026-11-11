@@ -144,6 +144,10 @@ func (repo Repository) recordNotificationDispatchError() {
 }
 
 func normalizedNotificationWorkerID() string {
+	return normalizedNotificationWorkerIDForLane(notificationClaimLegacy)
+}
+
+func normalizedNotificationWorkerIDForLane(lane notificationClaimLane) string {
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		hostname = "unknown-host"
@@ -152,7 +156,8 @@ func normalizedNotificationWorkerID() string {
 	// cannot authorize/reroute before token preflight. This is a code capability,
 	// not a rollout flag or user-controlled request parameter.
 	const pushProtocols = "|push_device_v3|wa_push_v2"
-	return trimMax(fmt.Sprintf("vimob-api:%s:%d", hostname, os.Getpid()), 255-len(pushProtocols)) + pushProtocols
+	prefixLimit := 255 - len(lane) - len(pushProtocols)
+	return trimMax(fmt.Sprintf("vimob-api:%s:%d", hostname, os.Getpid()), prefixLimit) + string(lane) + pushProtocols
 }
 
 func notificationPostgresInterval(value time.Duration) string {
@@ -171,15 +176,29 @@ func (repo Repository) sweepNormalizedNotificationDeliveries(ctx context.Context
 	return changed, err
 }
 
-func (repo Repository) claimNormalizedNotificationDelivery(ctx context.Context) (normalizedNotificationDelivery, bool, error) {
+func (repo Repository) claimNormalizedNotificationDelivery(ctx context.Context, lane notificationClaimLane) (normalizedNotificationDelivery, bool, error) {
 	var delivery normalizedNotificationDelivery
 	var rawMetadata string
-	// Expiry does not need a live message row. Commit cleanup before acquiring
-	// parent authorization locks, so orphan removal cannot invert lock order.
-	if _, err := repo.db.Pool().Exec(ctx, "select private.expire_whatsapp_inbound_push_waiting(100)"); err != nil {
-		return normalizedNotificationDelivery{}, false, err
+	fastLeadWhatsApp := lane == notificationClaimLeadWA
+	channels := []string{"whatsapp", "push", "email"}
+	if fastLeadWhatsApp {
+		channels = []string{"whatsapp"}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+	} else {
+		// Commit push expiry before acquiring parent authorization locks.
+		if _, err := repo.db.Pool().Exec(ctx, "select private.expire_whatsapp_inbound_push_waiting(100)"); err != nil {
+			return normalizedNotificationDelivery{}, false, err
+		}
 	}
+	// The dependent LATERAL does not invoke the claim after the capability is
+	// removed. An older claim function does not understand the fast marker.
 	err := repo.db.Pool().QueryRow(ctx, `
+		with claim_worker as materialized (
+		  select $1::text as id
+		  where not $5::boolean or (`+leadWhatsAppClaimCapability+`)
+		)
 		select
 		  claimed.id::text,
 		  claimed.notification_id::text,
@@ -194,16 +213,17 @@ func (repo Repository) claimNormalizedNotificationDelivery(ctx context.Context) 
 		  claimed.expires_at,
 		  claimed.lease_token::text,
 		  claimed.metadata::text
-		from private.claim_notification_deliveries(
-		  $1,
+		from claim_worker
+		cross join lateral private.claim_notification_deliveries(
+		  claim_worker.id,
 		  $2,
 		  $3::interval,
 		  $4::text[]
 		) as claimed
 		limit 1
-	`, normalizedNotificationWorkerID(), notificationDispatchBatchLimit,
+	`, normalizedNotificationWorkerIDForLane(lane), notificationDispatchBatchLimit,
 		notificationPostgresInterval(normalizedNotificationLease),
-		[]string{"whatsapp", "push", "email"}).Scan(
+		channels, fastLeadWhatsApp).Scan(
 		&delivery.ID,
 		&delivery.NotificationID,
 		&delivery.OrganizationID,
@@ -406,7 +426,11 @@ func (repo Repository) persistNormalizedNotificationDecision(
 }
 
 func (repo Repository) processOneNormalizedNotificationDelivery(ctx context.Context, logger *slog.Logger) (bool, error) {
-	delivery, found, err := repo.claimNormalizedNotificationDelivery(ctx)
+	return repo.processOneNormalizedNotificationDeliveryForLane(ctx, logger, notificationClaimLegacy)
+}
+
+func (repo Repository) processOneNormalizedNotificationDeliveryForLane(ctx context.Context, logger *slog.Logger, lane notificationClaimLane) (bool, error) {
+	delivery, found, err := repo.claimNormalizedNotificationDelivery(ctx, lane)
 	if err != nil || !found {
 		return false, err
 	}
@@ -415,6 +439,9 @@ func (repo Repository) processOneNormalizedNotificationDelivery(ctx context.Cont
 	}
 
 	notification, err := repo.loadNormalizedPendingNotification(ctx, delivery)
+	if lane == notificationClaimLeadWA && err == nil && !isFastLeadWhatsAppNotification(delivery.Channel, notification) {
+		return true, errors.New("lead WhatsApp notification claim returned an ineligible event")
+	}
 	if err != nil {
 		result := DispatchChannelResult{
 			Enabled:   true,
