@@ -487,6 +487,29 @@ func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
 	return true
 }
 
+// nativeLeadBelongsToSessionOwnerQuery limita a promocao de visibilidade ao
+// card do dono da conexao: o lead precisa estar atribuido ao dono da sessao,
+// ou a um usuario que recebeu este numero compartilhado com envio. Sem isso,
+// uma conexao recem-criada por outra pessoa vazaria mensagens para o
+// historico de um card alheio (observado no teste de 11/11/2026).
+var nativeLeadBelongsToSessionOwnerQuery = `
+	select exists (
+		select 1
+		from public.leads lead
+		join public.whatsapp_sessions session
+		  on session.id = $3::uuid
+		 and session.organization_id = $1::uuid
+		where lead.organization_id = $1::uuid
+		  and lead.id = $2::uuid
+		  and (
+		    lead.assigned_user_id = session.owner_user_id
+		    or (
+		      lead.assigned_user_id is not null
+		      and ` + sessionGrantExistsSQL("session", "lead.assigned_user_id", true) + `
+		    )
+		  )
+	)`
+
 // evolutionWebhookIsStatusBroadcastReceiptOnly identifies a provider receipt
 // whose every entry refers to a broadcast chat (status@broadcast): a Status
 // (story) view receipt. The CRM has no target for it, so it is acknowledged
@@ -1502,8 +1525,23 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			// disparam para 'captured', e mensagem antiga sera recuperada em
 			// silencio pela etapa 2. 'observed_unattended' segue reservado
 			// para a migration 20261009021248.
-			captureState = "captured"
-			leadVisibilityFallback = true
+			//
+			// Complemento (11/11/2026, teste do Andre): a promocao exige que o
+			// card pertenca ao dono da conexao (ou a quem recebeu o numero
+			// compartilhado com envio). Conversa numa conexao de terceiros com
+			// um contato que e lead de OUTRO responsavel nao entra no
+			// historico daquele card; ela segue o comportamento anterior ate a
+			// caixa privada da etapa 3 existir.
+			sessionOwnsLead := false
+			if err := tx.QueryRow(ctx, nativeLeadBelongsToSessionOwnerQuery,
+				session.OrganizationID, nativeEvolutionMessageLeadID(conversation), session.ID,
+			).Scan(&sessionOwnsLead); err != nil {
+				return err
+			}
+			if sessionOwnsLead {
+				captureState = "captured"
+				leadVisibilityFallback = true
+			}
 		}
 		externalOutbound := !repo.legacyNativeCompatEnabled && message.FromMe && !managedOutbound && captureState != "suppressed"
 		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message, captureState, attendanceEntryID, externalOutbound)
