@@ -371,10 +371,14 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		    'cadence_task_reminder',
 		    'lead_cadence_task'
 		  )
+		  and (
+		    created_at > now() - ($4::bigint * interval '1 second')
+		    or lower(btrim(coalesce(metadata->>'event_key', ''))) like 'billing_%'
+		  )
 		order by created_at asc
 		limit $2
 		for update skip locked
-	`, notificationDispatchMaxAttempts, notificationDispatchBatchLimit, int64(notificationDispatchClaimTimeout/time.Second))
+	`, notificationDispatchMaxAttempts, notificationDispatchBatchLimit, int64(notificationDispatchClaimTimeout/time.Second), int64(notificationDispatchMaxAge/time.Second))
 	if err != nil {
 		return nil, err
 	}
