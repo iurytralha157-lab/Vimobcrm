@@ -415,6 +415,21 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			Inline:    true,
 		}, nil
 	}
+	// Regra de produto (11/11/2026): recibo de Status (stories) nao entra na
+	// inbox duravel. E reconhecido apos validar sessao e credenciais, no mesmo
+	// molde do trafego de grupos abaixo.
+	if evolutionWebhookIsStatusBroadcastReceiptOnly(pendingEvolutionWebhook{
+		EventType: envelope.EventType,
+		Payload:   envelope.Payload,
+	}) {
+		return evolutionWebhookReceipt{
+			ID:        eventKey,
+			SessionID: session.ID,
+			EventType: envelope.EventType,
+			Status:    "processed",
+			Inline:    true,
+		}, nil
+	}
 	filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(pendingEvolutionWebhook{
 		EventType: envelope.EventType,
 		Payload:   envelope.Payload,

@@ -27,6 +27,9 @@ const (
 	notificationDispatchDrainTimeout = 45 * time.Second
 	notificationDispatchMaxAttempts  = 24
 	notificationDispatchClaimTimeout = 15 * time.Minute
+	// Regra de produto (11/11/2026): aviso operacional com mais de uma hora
+	// nao e mais enviado; a reivindicacao o marca como pulado, com auditoria.
+	notificationDispatchMaxAge       = time.Hour
 	normalizedNotificationLease      = 2 * time.Minute
 	scheduleReminderLockKey          = int64(860421706)
 	scheduleNotificationEnqueueLimit = 50
@@ -99,6 +102,7 @@ type pendingNotification struct {
 	Content        string
 	Type           string
 	TargetURL      string
+	CreatedAt      time.Time
 	Metadata       map[string]any
 }
 
@@ -324,6 +328,7 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 			coalesce(content, body, ''),
 			coalesce(type, 'info'),
 			coalesce(target_url, ''),
+			created_at,
 			coalesce(metadata, '{}'::jsonb)::text
 		from public.notifications
 		where (
@@ -380,7 +385,7 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		var item pendingNotification
 		var leadID string
 		var rawMetadata string
-		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.UserID, &leadID, &item.Title, &item.Content, &item.Type, &item.TargetURL, &rawMetadata); err != nil {
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.UserID, &leadID, &item.Title, &item.Content, &item.Type, &item.TargetURL, &item.CreatedAt, &rawMetadata); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(leadID) != "" {
@@ -449,6 +454,20 @@ func (repo Repository) dispatchPendingNotification(ctx context.Context, notifica
 			Error:           "cadence_notification_delivery_disabled",
 			SkipPersistence: true,
 		}
+	}
+	// Regra de produto (11/11/2026): um aviso operacional com mais de uma hora
+	// nao e mais enviado. Marcar o pulo como permanente drena a fila represada
+	// sem disparar push, WhatsApp ou e-mail antigos. Cobranca fica isenta.
+	expiredEventKey := strings.ToLower(strings.TrimSpace(stringFromMap(notification.Metadata, "event_key")))
+	if !notification.CreatedAt.IsZero() && !isBillingNotificationEvent(expiredEventKey) &&
+		time.Since(notification.CreatedAt) > notificationDispatchMaxAge {
+		expired := DispatchChannelResult{
+			Enabled:   true,
+			Permanent: true,
+			Skipped:   1,
+			Error:     "notification_expired_before_dispatch",
+		}
+		return notificationDeliveryResult{WhatsApp: expired, Push: expired, Email: expired, Error: expired.Error}
 	}
 	if stringFromMap(notification.Metadata, "event_key") == "billing_payment_receipt" {
 		return repo.dispatchPendingBillingReceiptNotification(ctx, notification, channels)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"sort"
@@ -408,6 +409,12 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 	if evolutionWebhookIsHistorySyncControl(item) {
 		return nil
 	}
+	// Regra de produto (11/11/2026): recibo de visualizacao de Status nao e
+	// dado do CRM. Reconhecer aqui tambem drena as barreiras ja enfileiradas
+	// na inbox sem tocar em mensagens reais.
+	if evolutionWebhookIsStatusBroadcastReceiptOnly(item) {
+		return nil
+	}
 	// Drain group-only rows that predate the ingress filter without creating
 	// conversations or calling Edge. Mixed historical rows are filtered before
 	// either processor sees them, preserving only their direct messages.
@@ -478,6 +485,50 @@ func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
 		}
 	}
 	return true
+}
+
+// evolutionWebhookIsStatusBroadcastReceiptOnly identifies a provider receipt
+// whose every entry refers to a broadcast chat (status@broadcast): a Status
+// (story) view receipt. The CRM has no target for it, so it is acknowledged
+// without entering the durable inbox. Any non-broadcast entry, any extracted
+// message or an undecodable payload keeps the ordinary path.
+func evolutionWebhookIsStatusBroadcastReceiptOnly(item pendingEvolutionWebhook) bool {
+	payload, err := decodeNativeEvolutionPayload(item.Payload)
+	if err != nil {
+		return false
+	}
+	if compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType)) != "receipt" {
+		return false
+	}
+	if len(extractNativeEvolutionMessages(payload)) > 0 {
+		return false
+	}
+	data := nativeFirstValue(payload, "data", "Data")
+	dataMap := mapFromAny(data)
+	candidates := []any{
+		nativeFirstValue(dataMap, "statuses", "Statuses"),
+		nativeFirstValue(dataMap, "status", "Status"),
+		nativeFirstValue(dataMap, "receipts", "Receipts"),
+		data,
+	}
+	sawBroadcast := false
+	for _, candidate := range candidates {
+		for _, entry := range nativeObjectList(candidate) {
+			chat := firstNonEmpty(
+				firstString(entry, "Chat", "chat", "chatId", "chat_id", "key.remoteJid", "Key.RemoteJID"),
+				firstString(entry, "remoteJid", "RemoteJID", "remote_jid"),
+			)
+			lowerChat := strings.ToLower(normalizeRemoteAlias(chat))
+			if lowerChat == "" {
+				continue
+			}
+			if !strings.Contains(lowerChat, "@broadcast") {
+				return false
+			}
+			sawBroadcast = true
+		}
+	}
+	return sawBroadcast
 }
 
 // nativeEvolutionTechnicalIgnoreReason only identifies provider callbacks that
@@ -1436,6 +1487,20 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				item.CreatedAt.IsZero() || message.SentAt.After(item.CreatedAt)) {
 			captureState = "suppressed"
 		}
+		leadVisibilityFallback := false
+		if captureState == "suppressed" && !conversation.RetentionClosed &&
+			conversation.LeadResolutionQuarantineReason == "" &&
+			!conversation.HistoricalBindingReplay &&
+			!message.IsGroup && !nativeCTWAIntakeEligible(message) &&
+			nativeEvolutionMessageLeadID(conversation) != "" {
+			// Regra de produto (11/11/2026): conversa com lead nunca tem o
+			// conteudo apagado. Sem atendimento, a mensagem entra como
+			// 'captured' comum (estado aceito pelo check de producao) e fica
+			// visivel a quem tem acesso ao lead. 'observed_unattended' segue
+			// reservado para a migration 20261009021248.
+			captureState = "captured"
+			leadVisibilityFallback = true
+		}
 		externalOutbound := !repo.legacyNativeCompatEnabled && message.FromMe && !managedOutbound && captureState != "suppressed"
 		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message, captureState, attendanceEntryID, externalOutbound)
 		if err != nil {
@@ -1513,7 +1578,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 					leadIDsToPublish[leadID] = struct{}{}
 				}
 			}
-			if captureState == "captured" && allowAutomatedReply && applyInboundEffects && eventBindingIsCurrent && conversation.LeadResolutionQuarantineReason == "" && nativeEvolutionMessageLeadID(conversation) != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
+			if captureState == "captured" && !leadVisibilityFallback && allowAutomatedReply && applyInboundEffects && eventBindingIsCurrent && conversation.LeadResolutionQuarantineReason == "" && nativeEvolutionMessageLeadID(conversation) != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
 				autoReplyInputs = append(autoReplyInputs, autoReplyInput{
 					OrganizationID: session.OrganizationID,
 					SessionID:      session.ID,
@@ -5217,10 +5282,13 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 		return err
 	}
 	if len(unresolvedIDs) > 0 {
-		// Known identities are already committed monotonically. Keep the original
-		// signed batch in bounded retry so a future target receives its receipt;
-		// never acknowledge an absent/foreign target or undo its known siblings.
-		return fmt.Errorf("%w: %d unresolved identities", errNativeReceiptTargetsPending, len(unresolvedIDs))
+		// Regra de produto (11/11/2026): um recibo sem alvo nunca bloqueia a
+		// fila da sessao. Os alvos conhecidos ja foram confirmados acima; os
+		// ausentes sao descartados para a conversa seguir, em vez de reter o
+		// lote em retry ate virar barreira do numero.
+		slog.Warn("whatsapp receipt targets missing; dropping batch remainder",
+			"count", len(unresolvedIDs), "session_id", session.ID)
+		return nil
 	}
 	return nil
 }
