@@ -16,8 +16,8 @@ import (
 
 func TestEvolutionWebhookProcessedRetention(t *testing.T) {
 	tests := map[string]time.Duration{
-		"messages.upsert": 24 * time.Hour,
-		"message":         24 * time.Hour,
+		"messages.upsert": 7 * 24 * time.Hour,
+		"message":         7 * 24 * time.Hour,
 		"receipt":         6 * time.Hour,
 		"messages.status": 6 * time.Hour,
 		"message_ack":     6 * time.Hour,

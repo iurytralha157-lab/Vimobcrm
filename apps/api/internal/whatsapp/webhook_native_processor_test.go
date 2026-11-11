@@ -538,7 +538,7 @@ func TestNativeUnlinkedEphemeralFlowKeepsLeadEffectsClosed(t *testing.T) {
 		"if captureState == \"observed_unattended\" && inserted && eventBindingIsCurrent {",
 		"captureState != \"unlinked_ephemeral\" && captureState != \"promoted_unlinked\" &&",
 		"captureState != \"observed_unattended\"",
-		"if captureState == \"captured\" && allowAutomatedReply",
+		"if captureState == \"captured\" && !leadVisibilityFallback && allowAutomatedReply",
 		"if captureState == \"suppressed\" {",
 	} {
 		if !strings.Contains(processor, required) {

@@ -1167,7 +1167,10 @@ func evolutionWebhookProcessedRetention(eventType string) time.Duration {
 		return 6 * time.Hour
 	}
 	if evolutionWebhookContainsMarker(eventType, evolutionWebhookMessageMarkers) {
-		return 24 * time.Hour
+		// Etapa 2 (11/11/2026): o payload original e a fonte da recuperacao
+		// silenciosa das mensagens represadas. Sete dias dao folga para o
+		// backfill rodar antes de qualquer envelope de mensagem expirar.
+		return 7 * 24 * time.Hour
 	}
 	return time.Hour
 }

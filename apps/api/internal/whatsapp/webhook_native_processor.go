@@ -1488,16 +1488,20 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			captureState = "suppressed"
 		}
 		leadVisibilityFallback := false
-		if captureState == "suppressed" && !conversation.RetentionClosed &&
+		if captureState == "suppressed" && item.ProcessingLane == evolutionWebhookLaneLive &&
+			!conversation.RetentionClosed &&
 			conversation.LeadResolutionQuarantineReason == "" &&
 			!conversation.HistoricalBindingReplay &&
 			!message.IsGroup && !nativeCTWAIntakeEligible(message) &&
 			nativeEvolutionMessageLeadID(conversation) != "" {
 			// Regra de produto (11/11/2026): conversa com lead nunca tem o
-			// conteudo apagado. Sem atendimento, a mensagem entra como
-			// 'captured' comum (estado aceito pelo check de producao) e fica
-			// visivel a quem tem acesso ao lead. 'observed_unattended' segue
-			// reservado para a migration 20261009021248.
+			// conteudo apagado. Sem atendimento, a mensagem NOVA (faixa live)
+			// entra como 'captured' comum (estado aceito pelo check de
+			// producao) e fica visivel a quem tem acesso ao lead. A faixa
+			// backlog fica fora de proposito: os gatilhos SQL de automacao
+			// disparam para 'captured', e mensagem antiga sera recuperada em
+			// silencio pela etapa 2. 'observed_unattended' segue reservado
+			// para a migration 20261009021248.
 			captureState = "captured"
 			leadVisibilityFallback = true
 		}
