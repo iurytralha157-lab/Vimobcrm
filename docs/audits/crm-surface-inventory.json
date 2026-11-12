@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "0a98dab69c3ab601855be91173df09cee052efbd72c2feb860cff0d6550b749d",
+  "sourceDigestSha256": "5a0c01b5806c37741bf7883ea99867013ae70d1e8fb4b0be67cb679e69b6eab0",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -46316,10 +46316,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:4fe443f662a8e96b7f10",
+          "id": "control:4adf8f7b407daa1788e9",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationOverlays.tsx",
-          "line": 108,
+          "line": 114,
           "owner": "ConversationOverlays",
           "routes": [
             "/agenda",
@@ -46374,10 +46374,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:ee4f13d72940cc2fe0ed",
+          "id": "control:6df5889eb09a3eee1747",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationOverlays.tsx",
-          "line": 109,
+          "line": 115,
           "owner": "ConversationOverlays",
           "routes": [
             "/agenda",
@@ -47453,7 +47453,7 @@
         }
       ]
     },
-    "digestSha256": "7b8e7ce9d0d4a0ae1440cb445955fea7693f8b7c6648126ab9909e7401dc771b"
+    "digestSha256": "be341b91261202e5a86a3e86ce73d2bb4d249f515695028aeb01a01144f4bcb7"
   },
   "routes": [
     {
