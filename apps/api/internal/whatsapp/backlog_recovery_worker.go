@@ -386,10 +386,11 @@ func recoverSuppressedBacklogMessage(
 	session nativeEvolutionSession,
 	message nativeEvolutionMessage,
 ) (bool, string, error) {
-	var rowID, conversationID, leadID, direction string
+	var rowID, conversationID, leadID, messageLeadID, direction string
 	var isGroup, fromMe, quarantined, scrubbed, retired bool
 	err := tx.QueryRow(ctx, `
 		select m.id::text, m.conversation_id::text, coalesce(c.lead_id::text, ''),
+		       coalesce(m.lead_id::text, ''),
 		       coalesce(c.is_group, false), coalesce(m.from_me, false),
 		       lower(coalesce(m.direction, 'inbound')),
 		       (coalesce(m.metadata, '{}'::jsonb) ? 'lead_resolution_quarantine'),
@@ -407,7 +408,7 @@ func recoverSuppressedBacklogMessage(
 		limit 1
 		for update of m
 	`, session.OrganizationID, session.ID, message.ProviderMessageID).Scan(
-		&rowID, &conversationID, &leadID, &isGroup, &fromMe, &direction,
+		&rowID, &conversationID, &leadID, &messageLeadID, &isGroup, &fromMe, &direction,
 		&quarantined, &scrubbed, &retired,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -422,6 +423,14 @@ func recoverSuppressedBacklogMessage(
 		return false, "", nil
 	}
 
+	// O gatilho estrito do banco (set_whatsapp_message_context) rejeita
+	// qualquer UPDATE em lead_id, entao a recuperacao nunca escreve essa
+	// coluna: so recupera quando o contexto da linha ja bate com o da
+	// conversa, e pula o raro caso em que o vinculo mudou desde a supressao.
+	if messageLeadID != leadID {
+		whatsappBacklogRecoveryStats.skippedOther.Add(1)
+		return false, "", nil
+	}
 	target := ""
 	if leadID != "" {
 		var sessionOwnsLead bool
@@ -470,21 +479,20 @@ func recoverSuppressedBacklogMessage(
 
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages
-		set lead_id = nullif($2, '')::uuid,
-		    content = nullif($3, ''),
-		    media_url = nullif($4, ''),
-		    media_mime_type = nullif($5, ''),
-		    media_storage_path = nullif($6, ''),
-		    media_size = nullif($7::bigint, 0),
-		    media_status = nullif($8, ''),
+		set content = nullif($2, ''),
+		    media_url = nullif($3, ''),
+		    media_mime_type = nullif($4, ''),
+		    media_storage_path = nullif($5, ''),
+		    media_size = nullif($6::bigint, 0),
+		    media_status = nullif($7, ''),
 		    media_error = null,
-		    sender_jid = coalesce(sender_jid, nullif($9, '')),
-		    sender_name = coalesce(sender_name, nullif($10, '')),
-		    capture_state = $11,
-		    metadata = coalesce(metadata, '{}'::jsonb) || $12::jsonb,
+		    sender_jid = coalesce(sender_jid, nullif($8, '')),
+		    sender_name = coalesce(sender_name, nullif($9, '')),
+		    capture_state = $10,
+		    metadata = coalesce(metadata, '{}'::jsonb) || $11::jsonb,
 		    updated_at = now()
 		where id = $1::uuid and capture_state = 'suppressed'
-	`, rowID, leadID, message.Content, message.MediaURL, message.MediaMimeType,
+	`, rowID, message.Content, message.MediaURL, message.MediaMimeType,
 		message.MediaStoragePath, message.MediaSize, mediaStatus,
 		message.SenderJID, message.SenderName, target, jsonb(metadata)); err != nil {
 		return false, "", err
