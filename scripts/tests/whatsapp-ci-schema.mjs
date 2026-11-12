@@ -81,4 +81,5 @@ export const MIGRATIONS = Object.freeze([
   '20261111233000_whatsapp_backlog_recovery_etapa2.sql',
   '20261112105900_whatsapp_semlead_prereqs.sql',
   '20261112110000_whatsapp_semlead_link_history.sql',
+  '20261112160000_whatsapp_media_gc_prereq.sql',
 ]);

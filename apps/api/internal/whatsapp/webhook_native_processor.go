@@ -3328,7 +3328,16 @@ func ensureNativeEvolutionConversation(
 				deleted_at = null,
 				assigned_user_id = coalesce(whatsapp_conversations.assigned_user_id, excluded.assigned_user_id),
 				contact_phone = coalesce(whatsapp_conversations.contact_phone, excluded.contact_phone),
-				contact_name = coalesce(whatsapp_conversations.contact_name, excluded.contact_name),
+				contact_name = case
+				  when whatsapp_conversations.contact_name is null
+				    or whatsapp_conversations.contact_name = ''
+				    or whatsapp_conversations.contact_name = whatsapp_conversations.remote_jid
+				    or whatsapp_conversations.contact_name like '%@lid'
+				    or whatsapp_conversations.contact_name like '%@s.whatsapp.net'
+				    or whatsapp_conversations.contact_name = coalesce(whatsapp_conversations.contact_phone, '')
+				  then coalesce(nullif(excluded.contact_name, ''), whatsapp_conversations.contact_name)
+				  else whatsapp_conversations.contact_name
+				end,
 				updated_at = now()
 			where whatsapp_conversations.lead_id is not null
 			   or not whatsapp_conversations.unlinked_retention_v1
@@ -3651,7 +3660,13 @@ func reconcileNativeEvolutionConversationIdentity(
 			update public.whatsapp_conversations
 			set remote_jid = $4,
 			    contact_phone = coalesce(nullif($5, ''), contact_phone),
-			    contact_name = coalesce(nullif(contact_name, ''), nullif($6, ''), nullif($5, '')),
+			    contact_name = case
+			      when contact_name is null or contact_name = '' or contact_name = remote_jid
+			        or contact_name like '%@lid' or contact_name like '%@s.whatsapp.net'
+			        or contact_name = coalesce(contact_phone, '')
+			      then coalesce(nullif($6, ''), nullif($5, ''), contact_name)
+			      else contact_name
+			    end,
 			    assigned_user_id = coalesce(assigned_user_id, nullif($7, '')::uuid),
 			    deleted_at = null,
 			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -4798,8 +4813,14 @@ func updateNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 		    last_message_preview = case when last_message_at is null or last_message_at <= $4 then $5 else last_message_preview end,
 		    last_message_at = greatest(coalesce(last_message_at, $4), $4),
 		    unread_count = greatest(0, coalesce(unread_count, 0) + $6),
-		    contact_name = coalesce(contact_name, nullif($7, '')),
-		    contact_phone = coalesce(contact_phone, nullif($8, '')),
+		    contact_name = case
+		      when contact_name is null or contact_name = '' or contact_name = remote_jid
+		        or contact_name like '%@lid' or contact_name like '%@s.whatsapp.net'
+		        or contact_name = coalesce(contact_phone, '')
+		      then coalesce(nullif($7, ''), contact_name)
+		      else contact_name
+		    end,
+		    contact_phone = coalesce(nullif(contact_phone, ''), nullif($8, '')),
 		    updated_at = now()
 		where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
 		  and lead_id is not distinct from nullif($9, '')::uuid

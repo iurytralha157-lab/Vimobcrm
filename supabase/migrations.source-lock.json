@@ -1086,6 +1086,10 @@
     {
       "file": "20261112110000_whatsapp_semlead_link_history.sql",
       "sha256": "7c53922fadaab7c447193b5dbd2d6a2321071629fd0aa85c3e4638d1a12345b4"
+    },
+    {
+      "file": "20261112160000_whatsapp_media_gc_prereq.sql",
+      "sha256": "b97779e429c5b183109b0774548478c9c2fa6076642748d37a4ee98ed159f2b2"
     }
   ]
 }

@@ -516,14 +516,25 @@ func recoverSuppressedBacklogMessage(
 	if !message.FromMe {
 		contactName = firstNonEmpty(message.ContactName, message.SenderName)
 		contactPhone = message.ContactPhone
+	} else {
+		// Mensagem nossa para um chat @lid ainda carrega a identidade real do
+		// contato (RecipientAlt); nunca usar SenderName, que e o nosso pushName.
+		contactName = message.ContactName
+		contactPhone = message.ContactPhone
 	}
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_conversations
 		set last_message = case when last_message_at is null or last_message_at <= $4 then $5 else last_message end,
 		    last_message_preview = case when last_message_at is null or last_message_at <= $4 then $5 else last_message_preview end,
 		    last_message_at = greatest(coalesce(last_message_at, $4), $4),
-		    contact_name = coalesce(contact_name, nullif($6, '')),
-		    contact_phone = coalesce(contact_phone, nullif($7, '')),
+		    contact_name = case
+		      when contact_name is null or contact_name = '' or contact_name = remote_jid
+		        or contact_name like '%@lid' or contact_name like '%@s.whatsapp.net'
+		        or contact_name = coalesce(contact_phone, '')
+		      then coalesce(nullif($6, ''), contact_name)
+		      else contact_name
+		    end,
+		    contact_phone = coalesce(nullif(contact_phone, ''), nullif($7, '')),
 		    updated_at = now()
 		where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
 	`, session.OrganizationID, session.ID, conversationID,
