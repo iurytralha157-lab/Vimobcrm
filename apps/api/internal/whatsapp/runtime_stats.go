@@ -140,7 +140,11 @@ func (handler Handler) RuntimeStats() map[string]any {
 		provider["failures"] = uint64(0)
 		provider["outcomeUnknown"] = uint64(0)
 		provider["inFlight"] = int64(0)
-		return map[string]any{"provider": provider, "sessionSupervisor": supervisor}
+		return map[string]any{
+			"provider":          provider,
+			"sessionSupervisor": supervisor,
+			"backlogRecovery":   whatsappBacklogRecoveryRuntime(config),
+		}
 	}
 
 	provider["requests"] = stats.providerRequests.Load()
@@ -186,7 +190,19 @@ func (handler Handler) RuntimeStats() map[string]any {
 		}
 	}
 
-	return map[string]any{"provider": provider, "sessionSupervisor": supervisor}
+	return map[string]any{
+		"provider":          provider,
+		"sessionSupervisor": supervisor,
+		"backlogRecovery":   whatsappBacklogRecoveryRuntime(config),
+	}
+}
+
+func whatsappBacklogRecoveryRuntime(config WorkerConfig) map[string]any {
+	runtime := whatsappBacklogRecoveryStats.snapshot()
+	runtime["enabled"] = config.BacklogRecoveryWorkerEnabled
+	runtime["windowUTC"] = config.BacklogRecoveryWindowUTC
+	runtime["batch"] = config.BacklogRecoveryBatch
+	return runtime
 }
 
 func sessionIDAllowlistCount(allowlist []string) int {

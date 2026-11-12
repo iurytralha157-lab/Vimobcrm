@@ -176,6 +176,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 					"outboxWorkerEnabled":               cfg.WhatsApp.OutboxWorkerEnabled,
 					"mediaWorkerEnabled":                cfg.WhatsApp.MediaWorkerEnabled,
 					"unlinkedRetentionWorkerEnabled":    cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
+					"backlogRecoveryWorkerEnabled":      cfg.WhatsApp.BacklogRecoveryWorkerEnabled,
+					"backlogRecoveryWindowUTC":          cfg.WhatsApp.BacklogRecoveryWindowUTC,
 					"liveBoundDeadBacklogBypassEnabled": cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled,
 					"mediaWorkerConcurrency":            cfg.WhatsApp.MediaWorkerConcurrency,
 				},
@@ -418,6 +420,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		MediaWorkerLease:               cfg.WhatsApp.MediaWorkerLease,
 		MediaWorkerConcurrency:         cfg.WhatsApp.MediaWorkerConcurrency,
 		UnlinkedRetentionWorkerEnabled: cfg.WhatsApp.UnlinkedRetentionWorkerEnabled,
+		BacklogRecoveryWorkerEnabled:   cfg.WhatsApp.BacklogRecoveryWorkerEnabled,
+		BacklogRecoveryWindowUTC:       cfg.WhatsApp.BacklogRecoveryWindowUTC,
+		BacklogRecoveryBatch:           cfg.WhatsApp.BacklogRecoveryBatch,
 		SessionSupervisorEnabled:       cfg.WhatsApp.SessionSupervisorEnabled,
 		SessionSupervisorInitialDelay:  cfg.WhatsApp.SessionSupervisorInitialDelay,
 		SessionSupervisorInterval:      cfg.WhatsApp.SessionSupervisorInterval,
@@ -439,6 +444,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartUnlinkedRetentionWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartBacklogRecoveryWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)

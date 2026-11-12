@@ -1,6 +1,9 @@
 package whatsapp
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	defaultAIWorkerInterval                      = time.Minute
@@ -40,6 +43,9 @@ type WorkerConfig struct {
 	MediaWorkerLease               time.Duration
 	MediaWorkerConcurrency         int
 	UnlinkedRetentionWorkerEnabled bool
+	BacklogRecoveryWorkerEnabled   bool
+	BacklogRecoveryWindowUTC       string
+	BacklogRecoveryBatch           int
 	SessionSupervisorEnabled       bool
 	SessionSupervisorInitialDelay  time.Duration
 	SessionSupervisorInterval      time.Duration
@@ -66,6 +72,9 @@ func DefaultWorkerConfig() WorkerConfig {
 		MediaWorkerLease:               defaultWhatsAppMediaWorkerLease,
 		MediaWorkerConcurrency:         defaultWhatsAppMediaWorkerConcurrency,
 		UnlinkedRetentionWorkerEnabled: false,
+		BacklogRecoveryWorkerEnabled:   false,
+		BacklogRecoveryWindowUTC:       defaultWhatsAppBacklogRecoveryWindowUTC,
+		BacklogRecoveryBatch:           defaultWhatsAppBacklogRecoveryBatch,
 		SessionSupervisorEnabled:       true,
 		SessionSupervisorInitialDelay:  defaultWhatsAppSessionSupervisorInitialDelay,
 		SessionSupervisorInterval:      defaultWhatsAppSessionSupervisorInterval,
@@ -112,6 +121,12 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	}
 	if config.SessionSupervisorBatch <= 0 || config.SessionSupervisorBatch > 100 {
 		config.SessionSupervisorBatch = defaults.SessionSupervisorBatch
+	}
+	if config.BacklogRecoveryBatch <= 0 || config.BacklogRecoveryBatch > maxWhatsAppBacklogRecoveryBatch {
+		config.BacklogRecoveryBatch = defaults.BacklogRecoveryBatch
+	}
+	if strings.TrimSpace(config.BacklogRecoveryWindowUTC) == "" {
+		config.BacklogRecoveryWindowUTC = defaults.BacklogRecoveryWindowUTC
 	}
 
 	return config

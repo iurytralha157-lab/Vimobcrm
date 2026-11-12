@@ -78,4 +78,5 @@ export const MIGRATIONS = Object.freeze([
   '20261012221828_require_active_session_for_whatsapp_broadcast.sql',
   '20261012223733_whatsapp_stored_lid_contact_identity_barrier.sql',
   '20261014211659_whatsapp_personal_quick_replies.sql',
+  '20261111233000_whatsapp_backlog_recovery_etapa2.sql',
 ]);

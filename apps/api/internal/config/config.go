@@ -202,6 +202,9 @@ type WhatsAppConfig struct {
 	MediaWorkerLease               time.Duration
 	MediaWorkerConcurrency         int
 	UnlinkedRetentionWorkerEnabled bool
+	BacklogRecoveryWorkerEnabled   bool
+	BacklogRecoveryWindowUTC       string
+	BacklogRecoveryBatch           int
 	SessionSupervisorEnabled       bool
 	SessionSupervisorInitialDelay  time.Duration
 	SessionSupervisorInterval      time.Duration
@@ -340,6 +343,9 @@ func Load() (Config, error) {
 			MediaWorkerLease:               parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
 			MediaWorkerConcurrency:         int(parseInt("WHATSAPP_MEDIA_WORKER_CONCURRENCY", 4)),
 			UnlinkedRetentionWorkerEnabled: parseBool("WHATSAPP_UNLINKED_RETENTION_WORKER_ENABLED", false),
+			BacklogRecoveryWorkerEnabled:   parseBool("WHATSAPP_BACKLOG_RECOVERY_ENABLED", false),
+			BacklogRecoveryWindowUTC:       strings.TrimSpace(getEnv("WHATSAPP_BACKLOG_RECOVERY_WINDOW_UTC", "04:00-09:30")),
+			BacklogRecoveryBatch:           int(parseInt("WHATSAPP_BACKLOG_RECOVERY_BATCH", 40)),
 			LegacyNativeCompatEnabled:      parseBool("WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED", false),
 			SessionSupervisorEnabled:       parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
 			SessionSupervisorInitialDelay:  parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),

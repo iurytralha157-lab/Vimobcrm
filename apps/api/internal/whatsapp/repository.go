@@ -771,6 +771,13 @@ func conversationFilterSQLWithSupervisoryRead(tenantContext tenant.Context, filt
 		"wc.deleted_at is null",
 		visibility,
 	}
+	if !filter.WithoutLead {
+		// Cards fantasmas: uma conversa sem lead so entra na caixa principal
+		// quando tem ao menos uma mensagem visivel ali. Linhas suprimidas e
+		// mensagens ocultas da caixa "Sem lead" (unlinked) nao contam. A aba
+		// "Sem lead" usa withoutLead=1 e nao passa por este corte.
+		where = append(where, conversationMainListContentSQL())
+	}
 
 	addFilter := func(clause string, value any) {
 		args = append(args, value)
@@ -2346,6 +2353,23 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 		canViewAllWhatsAppLeads(tenantContext),
 		tenantContext.HasPermission("lead_view_team"),
 	}
+}
+
+// A caixa principal nunca lista conversa sem lead e sem historico visivel:
+// os contatos "@lid" do backlog criam conversas cujo conteudo e suprimido ou
+// recuperado como "Sem lead" (unlinked), e sem este corte elas aparecem como
+// cartoes vazios ("Sem mensagens") e inflam o contador de nao lidas.
+func conversationMainListContentSQL() string {
+	return `(
+		wc.lead_id is not null
+		or exists (
+			select 1
+			from public.whatsapp_messages visible_message
+			where visible_message.organization_id = wc.organization_id
+			  and visible_message.conversation_id = wc.id
+			  and coalesce(visible_message.capture_state, 'captured') in ('legacy', 'captured')
+		)
+	)`
 }
 
 func conversationVisibilitySQL(canViewOwn bool) string {

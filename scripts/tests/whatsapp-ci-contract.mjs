@@ -22,6 +22,7 @@ export const GO_TESTS = Object.freeze([
   'TestReceiptKnownSiblingProgressesWhileForeignSessionNotificationRemainsPending',
   'TestNativeMixedReceiptAdvancesKnownAndDropsUnresolvedTarget',
   'TestNativeIsolatedReceiptUnknownTenantTargetDropsWithoutRepeatingKnown',
+  'TestBacklogRecoveryRestoresSuppressedMessagesSilently',
   'TestReceiptEffectRetentionKeepsUnresolvedFamilyAndCallbackDedup',
   'TestQuickReplyPersistenceAndHTTPIsolation',
   'TestQuickReplyConcurrentOwnerLimitAndSlotReuse',
