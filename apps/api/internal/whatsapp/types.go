@@ -1041,7 +1041,9 @@ func (request GrantAccessRequest) Validate() (grantAccessInput, error) {
 }
 
 func (request SendMessageRequest) Validate() (sendMessageInput, error) {
-	expectedLeadID, err := validateExpectedLeadID(request.ExpectedLeadID)
+	// Regra de 12/11: "unlinked" identifica a resposta do dono em conversa
+	// sem lead; o repositorio restringe quem pode e como o envio e gravado.
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(request.ExpectedLeadID)
 	if err != nil {
 		return sendMessageInput{}, err
 	}

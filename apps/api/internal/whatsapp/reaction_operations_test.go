@@ -68,8 +68,11 @@ func TestConversationWriteRequestsRequireExpectedLeadSnapshot(t *testing.T) {
 	if err != nil || !archive || archiveLeadID != unlinkedConversationLeadSnapshot {
 		t.Fatalf("ArchiveRequest.Validate(unlinked) = %v/%q/%v", archive, archiveLeadID, err)
 	}
-	if _, err := (SendMessageRequest{Text: "ola", ExpectedLeadID: unlinkedConversationLeadSnapshot}).Validate(); err == nil {
-		t.Fatal("SendMessageRequest accepted an unlinked conversation snapshot")
+	// Regra de 12/11: a resposta do dono em conversa sem lead usa o
+	// marcador "unlinked"; o repositorio aplica dono-apenas e estado oculto.
+	unlinkedSendInput, err := (SendMessageRequest{Text: "ola", ExpectedLeadID: unlinkedConversationLeadSnapshot}).Validate()
+	if err != nil || unlinkedSendInput.ExpectedLeadID != unlinkedConversationLeadSnapshot {
+		t.Fatalf("SendMessageRequest.Validate(unlinked) = %q/%v", unlinkedSendInput.ExpectedLeadID, err)
 	}
 }
 
@@ -81,7 +84,7 @@ func TestConversationMutationSourcesFailClosedOnStaleCardSnapshot(t *testing.T) 
 	messageSource := string(messageBytes)
 	for _, fragment := range []string{
 		"pointerValue(conversation.LeadID) != input.ExpectedLeadID",
-		"and wc.lead_id = $4::uuid",
+		"and wc.lead_id is not distinct from nullif($4, '')::uuid",
 		"lockConversationSendSession(ctx, tx, tenantContext, session.ID)",
 		"for update of wc",
 	} {
