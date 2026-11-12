@@ -29,7 +29,7 @@ func resolveOutboundQuote(ctx context.Context, queryer quoteQueryer, organizatio
 	  from public.whatsapp_messages target
 	  join public.whatsapp_sessions session on session.id=target.session_id and session.organization_id=target.organization_id
 	  where target.organization_id=$1::uuid and target.session_id=$2::uuid
-	    and target.conversation_id=$3::uuid and target.lead_id=$4::uuid and target.id=$5::uuid
+	    and target.conversation_id=$3::uuid and target.lead_id is not distinct from nullif($4,'')::uuid and target.id=$5::uuid
 	    and `+messageTargetEligibleSQL("target")+`
 	  for share of target
 	`, organizationID, sessionID, conversationID, leadID, targetID).Scan(&quote.providerID, &fromMe, &senderJID, &remoteJID, &sessionPhone)

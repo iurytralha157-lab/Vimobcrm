@@ -222,10 +222,22 @@ export function getWhatsAppMessageInputState(
   }
 
   if (!conversation.lead_id && !conversation.lead?.id) {
-    return {
-      disabled: true,
-      placeholder: "Crie ou vincule um lead para responder",
-    };
+    // Regra de 12/11: o dono da conexão responde direto na conversa sem
+    // lead, como um WhatsApp normal. Outros usuários seguem precisando
+    // criar ou vincular um lead.
+    const unlinkedSession = findSessionById(sessions, conversation.session_id);
+    const ownerCanReply = Boolean(
+      unlinkedSession &&
+      currentUserId &&
+      unlinkedSession.owner_user_id === currentUserId &&
+      canSendFromSession(unlinkedSession, currentUserId),
+    );
+    if (!ownerCanReply) {
+      return {
+        disabled: true,
+        placeholder: "Crie ou vincule um lead para responder",
+      };
+    }
   }
 
   if (conversation.historical_lead_view || conversation.supervisory_lead_view) {

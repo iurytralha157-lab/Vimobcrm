@@ -18,9 +18,12 @@ import (
 func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendingWhatsAppOutbox) error {
 	var senderID, ownerID, origin, grantID, provider, sessionStatus string
 	var attendanceUserID string
-	var sessionActive bool
+	var sessionActive, messageLeadNull bool
+	var messageCapture string
 	err := tx.QueryRow(ctx, `
 		select coalesce(message.sender_user_id::text, ''),
+		       (message.lead_id is null),
+		       coalesce(message.capture_state, ''),
 		       session.owner_user_id::text,
 	       coalesce(nullif(message.metadata->>'attendance_send_origin', ''),
 	                message.metadata->>'origin', ''),
@@ -41,7 +44,7 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 		  and message.session_id = $3::uuid
 		  and message.conversation_id = $4::uuid
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).
-		Scan(&senderID, &ownerID, &origin, &grantID, &provider, &sessionStatus, &sessionActive, &attendanceUserID)
+		Scan(&senderID, &messageLeadNull, &messageCapture, &ownerID, &origin, &grantID, &provider, &sessionStatus, &sessionActive, &attendanceUserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrSessionAccessRevoked
 	}
@@ -57,14 +60,23 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	if origin != "automation" && origin != "human" {
 		return ErrSessionAccessRevoked
 	}
-	if attendanceUserID == "" || (origin == "human" && attendanceUserID != senderID) {
-		return ErrSessionAccessRevoked
+	// Regra de 12/11: resposta do dono da conexao em conversa sem lead nao
+	// tem atendimento; a cerca de lead/bolsao abaixo nao se aplica a ela.
+	unlinkedOwnerSend := origin == "human" && attendanceUserID == "" &&
+		messageLeadNull && messageCapture == "unlinked_ephemeral" && senderID == ownerID
+	if !unlinkedOwnerSend {
+		if attendanceUserID == "" || (origin == "human" && attendanceUserID != senderID) {
+			return ErrSessionAccessRevoked
+		}
 	}
 	// Users removal locks the actor/member before transferring leads or
 	// disabling sessions. Discover identities without locks, then acquire that
 	// same order before any route/work lock. Recheck the discovered identities
 	// after acquiring the session so a changed owner cannot borrow these locks.
 	userIDs := []string{ownerID, attendanceUserID}
+	if unlinkedOwnerSend {
+		userIDs = []string{ownerID}
+	}
 	sort.Strings(userIDs)
 	for index, userID := range userIDs {
 		if index > 0 && userID == userIDs[index-1] {
@@ -126,13 +138,13 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	// transfer or rebind cannot slip between authorization and durable start.
 	var currentLeadID string
 	err = tx.QueryRow(ctx, `
-		select conversation.lead_id::text
+		select coalesce(conversation.lead_id::text, '')
 		from public.whatsapp_messages message
 		join public.whatsapp_conversations conversation
 		  on conversation.id = message.conversation_id
 		 and conversation.organization_id = message.organization_id
 		 and conversation.session_id = message.session_id
-		 and conversation.lead_id = message.lead_id
+		 and conversation.lead_id is not distinct from message.lead_id
 		 and conversation.deleted_at is null
 		where message.id = $1::uuid
 		  and message.organization_id = $2::uuid
@@ -146,6 +158,20 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	}
 	if err != nil {
 		return err
+	}
+	if unlinkedOwnerSend {
+		if currentLeadID != "" {
+			// A conversa ganhou lead depois do clique: a intencao sem lead nao
+			// envia mais por este caminho; o usuario reenvia pelo card.
+			return ErrSessionAccessRevoked
+		}
+		if err := lockWhatsAppOutboxTargetForStart(ctx, tx, item); err != nil {
+			return err
+		}
+		return lockWhatsAppOutboxMediaSourceForStart(ctx, tx, item, senderID)
+	}
+	if currentLeadID == "" {
+		return ErrSessionAccessRevoked
 	}
 	if err := lockWhatsAppOutboxEligibilityRow(ctx, tx, `
 		select id::text from public.leads

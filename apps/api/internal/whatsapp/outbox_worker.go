@@ -845,6 +845,33 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			select 1
 			`+whatsappOutboxAttendanceSQL()+`
 		)
+		or exists (
+			-- Regra de 12/11: resposta do dono da conexao em conversa sem lead
+			-- nao tem atendimento nem bolsao; o envio humano do proprio dono
+			-- despacha como um WhatsApp normal.
+			select 1
+			from public.whatsapp_messages as message
+			join public.whatsapp_conversations as conversation
+			  on conversation.id = message.conversation_id
+			 and conversation.organization_id = message.organization_id
+			 and conversation.session_id = message.session_id
+			 and conversation.lead_id is null
+			 and conversation.deleted_at is null
+			join public.whatsapp_sessions as session
+			  on session.organization_id = message.organization_id
+			 and session.id = message.session_id
+			 and session.provider = 'evolution_go'
+			 and coalesce(session.is_active, true) = true
+			 and coalesce(session.status, '') not in ('deleted', 'disabled')
+			where message.id = $1::uuid
+			  and message.organization_id = $2::uuid
+			  and message.session_id = $3::uuid
+			  and message.conversation_id = $4::uuid
+			  and message.lead_id is null
+			  and message.capture_state = 'unlinked_ephemeral'
+			  and coalesce(nullif(message.metadata->>'attendance_send_origin', ''), message.metadata->>'origin', '') = 'human'
+			  and message.sender_user_id = session.owner_user_id
+		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
 	return attended, err
 }
