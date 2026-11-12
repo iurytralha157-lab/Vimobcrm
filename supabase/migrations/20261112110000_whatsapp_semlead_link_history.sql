@@ -70,6 +70,14 @@ $$;
 revoke all on function private.promote_whatsapp_unlinked_retention_v1()
 from public, anon, authenticated, service_role;
 
+-- Producao nunca recebeu o gatilho de 20261008210143; criar aqui garante a
+-- promocao das mensagens quando a conversa sem lead ganha o lead autorizado.
+drop trigger if exists sz_promote_whatsapp_unlinked_retention_v1
+on public.whatsapp_conversations;
+create trigger sz_promote_whatsapp_unlinked_retention_v1
+before update of lead_id on public.whatsapp_conversations
+for each row execute function private.promote_whatsapp_unlinked_retention_v1();
+
 create or replace function public.confirm_whatsapp_unlinked_history_binding(
   p_organization_id uuid,
   p_conversation_id uuid,

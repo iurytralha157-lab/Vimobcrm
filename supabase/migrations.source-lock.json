@@ -1080,8 +1080,12 @@
       "sha256": "268ae3c6e3fa389e50f9c0958fa9296318da22fe79b21b34d07155193667af16"
     },
     {
+      "file": "20261112105900_whatsapp_semlead_prereqs.sql",
+      "sha256": "01a85fa1d34e9ac44c87636064bda84839d9ff8d3bf0e6fd3e5d1f122b17002d"
+    },
+    {
       "file": "20261112110000_whatsapp_semlead_link_history.sql",
-      "sha256": "ded9dd95ee0916ae9003cdcb9b2ea88cc166d160bf248cbad0a5f1588edd0aec"
+      "sha256": "7c53922fadaab7c447193b5dbd2d6a2321071629fd0aa85c3e4638d1a12345b4"
     }
   ]
 }
