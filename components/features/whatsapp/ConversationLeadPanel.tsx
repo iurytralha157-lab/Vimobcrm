@@ -1222,6 +1222,7 @@ interface ConversationUnregisteredPanelProps {
   onPreviewLinkLead?: (leadId: string) => Promise<WhatsAppConversationLinkPreview>;
   onLinkLead?: (leadId: string, preview: WhatsAppConversationLinkPreview) => Promise<void>;
   isLinkingLead?: boolean;
+  historyDeadlineAt?: string | null;
   onClose?: () => void;
   className?: string;
 }
@@ -1239,6 +1240,7 @@ export function ConversationUnregisteredPanel({
   onPreviewLinkLead,
   onLinkLead,
   isLinkingLead = false,
+  historyDeadlineAt,
   onClose,
   className,
 }: ConversationUnregisteredPanelProps) {
@@ -1268,6 +1270,23 @@ export function ConversationUnregisteredPanel({
     contactName && contactName !== contactPhone
       ? isGroup ? contactName : formatWhatsAppPersonName(contactName)
       : formatPhoneForDisplay(contactPhone || "") || "Contato";
+  // Cronometro dos 7 dias: prazo contado da ultima mensagem (modelo de 12/11).
+  // Mostra a politica; a limpeza automatica fica com o worker de retencao.
+  const historyDeadline = (() => {
+    if (!historyDeadlineAt) return null;
+    const deadline = new Date(historyDeadlineAt);
+    if (Number.isNaN(deadline.getTime())) return null;
+    const ms = deadline.getTime() - Date.now();
+    const label = deadline.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+      + " às " + deadline.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    if (ms <= 0) return { expired: true as const, label, remaining: "" };
+    const days = Math.floor(ms / 86400000);
+    const hours = Math.floor((ms % 86400000) / 3600000);
+    const remaining = days > 0
+      ? `${days} ${days === 1 ? "dia" : "dias"} restante${days === 1 ? "" : "s"}`
+      : `${Math.max(hours, 1)}h restantes`;
+    return { expired: false as const, label, remaining };
+  })();
   const availableCandidateLeads = candidateLeads.filter((candidate) => candidate.id !== currentLeadId);
 
   const loadLinkPreview = async (leadId: string) => {
@@ -1360,6 +1379,13 @@ export function ConversationUnregisteredPanel({
         <Badge className="mt-3 rounded-[5px] border-0 bg-amber-500/14 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
           {currentLeadId ? `Vinculado a ${formatWhatsAppPersonName(currentLeadName) || "um lead"}` : "Não cadastrado"}
         </Badge>
+        {!currentLeadId && historyDeadline && (
+          <p className="mt-2 text-[11px] leading-snug text-[var(--app-text-tertiary)]">
+            {historyDeadline.expired
+              ? "Prazo do histórico sem lead vencido"
+              : `Histórico guardado até ${historyDeadline.label} · ${historyDeadline.remaining}`}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5 text-center">

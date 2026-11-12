@@ -114,6 +114,10 @@ test('troca nome tecnico igual ao telefone ou JID pelo telefone formatado', () =
     formatWhatsAppContactLabel('Maria', '14155552671', '14155552671@s.whatsapp.net'),
     'Maria',
   )
+  assert.equal(
+    formatWhatsAppContactLabel('177807384645887@lid', null, '177807384645887@lid'),
+    'Contato sem identificação',
+  )
 })
 
 test('preserva E.164 no contexto e usa o telefone canonico ao iniciar conversa', () => {

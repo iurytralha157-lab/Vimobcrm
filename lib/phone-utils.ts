@@ -267,10 +267,15 @@ export function formatWhatsAppContactLabel(
   const trimmedName = contactName?.trim() || '';
   const canonical = normalizeWhatsAppContactPhoneToE164(contactPhone, remoteJid);
 
+  let label = '';
   if (trimmedName) {
     const nameCanonical = normalizeWhatsAppContactPhoneToE164(trimmedName, trimmedName);
-    if (!canonical || nameCanonical !== canonical) return trimmedName;
+    if (!canonical || nameCanonical !== canonical) label = trimmedName;
   }
-
-  return canonical ? formatPhoneForDisplay(canonical) : trimmedName;
+  if (!label) label = canonical ? formatPhoneForDisplay(canonical) : trimmedName;
+  // Chats @lid sem numero conhecido mostravam o JID cru como titulo do card.
+  // Sem nenhuma identidade derivavel, um rotulo humano substitui o codigo ate
+  // o numero real chegar (SenderAlt/RecipientAlt) e o nome ser preenchido.
+  if (/@(?:lid|s\.whatsapp\.net)$/u.test(label)) return 'Contato sem identificação';
+  return label;
 }

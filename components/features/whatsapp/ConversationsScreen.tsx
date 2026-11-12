@@ -1656,7 +1656,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
           canLinkLead={canReassignSelectedLead}
           onPreviewLinkLead={previewConversationLeadLink}
           onLinkLead={handleLinkExistingLead}
-          isLinkingLead={linkConversationToLead.isPending} />
+          isLinkingLead={linkConversationToLead.isPending}
+          historyDeadlineAt={!selectedLeadId && selectedConversation.last_message_at
+            ? new Date(new Date(selectedConversation.last_message_at).getTime() + 7 * 86400000).toISOString()
+            : null} />
       )}
     </ConversationDetailsPane>
   ) : null;

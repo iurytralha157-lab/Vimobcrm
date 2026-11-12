@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "5a0c01b5806c37741bf7883ea99867013ae70d1e8fb4b0be67cb679e69b6eab0",
+  "sourceDigestSha256": "311dbb9ffddf7e518f0baf8cc709884dcec3de7428dfd12c19667966b8a0543b",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -4581,10 +4581,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:e48e3c0c2d298a8aba33",
+          "id": "overlay:4a870f89ba37c81f75a9",
           "column": 13,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1379,
+          "line": 1405,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -33504,10 +33504,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9f2a12ea3d5c6954f537",
+          "id": "cta:427294f5aef10135b488",
           "column": 11,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1330,
+          "line": 1349,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -33562,10 +33562,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9a64aab80824ca0fdc1c",
+          "id": "cta:3a8efd31976a5621e7d7",
           "column": 17,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1381,
+          "line": 1407,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -33620,10 +33620,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6ab4a2bd1264308bb740",
+          "id": "cta:7feb7352d3c1fed08b66",
           "column": 13,
           "file": "components/features/whatsapp/ConversationLeadPanel.tsx",
-          "line": 1471,
+          "line": 1497,
           "owner": "ConversationUnregisteredPanel",
           "routes": [
             "/agenda",
@@ -47453,7 +47453,7 @@
         }
       ]
     },
-    "digestSha256": "be341b91261202e5a86a3e86ce73d2bb4d249f515695028aeb01a01144f4bcb7"
+    "digestSha256": "7e0295d7781f209e2091948f395bec72aacbe3cdc9bd5080e07d130f5152b779"
   },
   "routes": [
     {
