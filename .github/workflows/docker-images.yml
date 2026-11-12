@@ -255,7 +255,17 @@ jobs:
           sudo curl --fail --show-error --silent -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main\n' | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y postgresql-17 postgresql-17-pgtap
+          sudo apt-get install --no-install-recommends -y postgresql-17 postgresql-17-pgtap || {
+            # Dia de release menor do PGDG: o indice pode anunciar um pgtap
+            # compilado para um postgresql-17 que o espelho ainda nao serve
+            # (ex.: pgtap exigindo > 17.12 com o servidor 17.11 no pool). O
+            # fallback instala o servidor disponivel e aplica o pgtap anterior
+            # direto do pool, que e uma extensao so-SQL compativel entre minors.
+            sudo apt-get install --no-install-recommends -y postgresql-17
+            curl --fail --show-error --silent -o /tmp/pgtap.deb \
+              'https://ftp.postgresql.org/pub/repos/apt/pool/main/p/pgtap/postgresql-17-pgtap_1.3.4-1.pgdg24.04%2B1_all.deb'
+            sudo dpkg -i /tmp/pgtap.deb
+          }
           /usr/lib/postgresql/17/bin/postgres --version
 
       - name: Test WhatsApp queue, permissions, quick replies and mobile surfaces
