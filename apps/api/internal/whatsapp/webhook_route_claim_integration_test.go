@@ -231,11 +231,23 @@ func TestWebhookRouteClaimDeferredAndDeadRoutesKeepExactBarriers(t *testing.T) {
 				if len(items) != 0 {
 					t.Fatal("unclassified session-wide effect was bypassed without a durable narrower contract")
 				}
+			} else if status == "dead" {
+				// Um predecessor dead-lettered nunca mais sera processado; mante-lo
+				// como barreira congelava a corrente para sempre (producao parou com
+				// 200 mil mortos). A morte conta como baixa e libera o sucessor, que
+				// por FIFO e a cabeca mais antiga da sessao.
+				if len(items) != 1 || items[0].ID != child {
+					t.Fatalf("dead predecessor still vetoed its successor: %#v", items)
+				}
 			} else if len(items) != 1 || items[0].ID != neighbor {
-				t.Fatalf("isolated deferred/dead route hid independent head: %#v", items)
+				t.Fatalf("isolated deferred route hid independent head: %#v", items)
 			}
 			assertRouteClaimState(t, ctx, db.Pool(), root, rootStatus, 0)
-			assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
+			if status == "dead" {
+				assertRouteClaimState(t, ctx, db.Pool(), child, "processing", 1)
+			} else {
+				assertRouteClaimState(t, ctx, db.Pool(), child, "pending", 0)
+			}
 		})
 	}
 	t.Run("live FIFO successor cannot veto its backlog prerequisite", func(t *testing.T) {
