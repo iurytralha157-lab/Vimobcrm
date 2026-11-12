@@ -123,6 +123,42 @@ func ensureAccessibleLeadMatchesIdentity(
 	return err
 }
 
+// ensureAccessibleLeadForConversation mantem a checagem estrita de identidade
+// telefonica sempre que a conversa tem algum telefone comparavel. Chats @lid
+// sem SenderAlt/RecipientAlt preservado nao tem numero nenhum para comparar;
+// manter a trava deixaria esse historico sem dono invinculavel para sempre.
+// Nesses casos a validacao cai para a visibilidade do lead: o vinculo passa a
+// ser a escolha explicita do usuario autorizado, sem afrouxar nenhuma conversa
+// que tenha identidade telefonica.
+func ensureAccessibleLeadForConversation(
+	ctx context.Context,
+	queryer whatsappQueryRower,
+	tenantContext tenant.Context,
+	leadID string,
+	identity whatsappContactIdentity,
+) error {
+	if identity.IsGroup {
+		return ErrInvalidReference
+	}
+	if len(phoneMatchCandidates(identity.LeadMatchValues()...)) > 0 {
+		return ensureAccessibleLeadMatchesIdentity(ctx, queryer, tenantContext, leadID, identity)
+	}
+	args := append(baseConversationArgs(tenantContext), leadID)
+	var visible bool
+	err := queryer.QueryRow(ctx, `
+		select true
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		  and l.id = $5::uuid
+		for share of l
+	`, args...).Scan(&visible)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidReference
+	}
+	return err
+}
+
 func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant.Context, values ...string) (*leadPhoneMatch, error) {
 	candidates := phoneMatchCandidates(values...)
 	if len(candidates) == 0 {

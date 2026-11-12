@@ -202,7 +202,7 @@ func (repo Repository) GetConversationLeadLinkPreview(
 	}
 	if targetLeadID != "" {
 		identity := newWhatsAppContactIdentity(contactPhone, remoteJID, false)
-		if err := ensureAccessibleLeadMatchesIdentity(ctx, repo.db.Pool(), tenantContext, targetLeadID, identity); err != nil {
+		if err := ensureAccessibleLeadForConversation(ctx, repo.db.Pool(), tenantContext, targetLeadID, identity); err != nil {
 			return ConversationLeadLinkPreview{}, fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
 		}
 		preview.LeadID = &targetLeadID

@@ -1442,7 +1442,7 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 		}
 	}
 
-	if err := ensureAccessibleLeadMatchesIdentity(ctx, tx, tenantContext, leadID, identity); err != nil {
+	if err := ensureAccessibleLeadForConversation(ctx, tx, tenantContext, leadID, identity); err != nil {
 		return fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
 	}
 
