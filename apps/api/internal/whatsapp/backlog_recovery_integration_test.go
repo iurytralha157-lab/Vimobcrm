@@ -71,9 +71,19 @@ func TestBacklogRecoveryRestoresSuppressedMessagesSilently(t *testing.T) {
 			'{}'::jsonb, '{}'::jsonb, now(), now()
 		);
 		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $3::uuid, $2, $2, 'corretor', true);
+		values ($1::uuid, $3::uuid, $2, $2, 'corretor', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active;
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($3::uuid, $1::uuid, 'corretor', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, foreignUserID, f.suffix+"-foreign@example.invalid", f.organizationID); err != nil {
 		t.Fatal(err)
 	}

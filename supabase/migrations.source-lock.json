@@ -1074,6 +1074,10 @@
     {
       "file": "20261109114553_preserve_legacy_short_redistribution_warnings.sql",
       "sha256": "de3b888f1bf8693927d734c5204ea42a6e72a70b7226eb2b7ad240a590733785"
+    },
+    {
+      "file": "20261111233000_whatsapp_backlog_recovery_etapa2.sql",
+      "sha256": "268ae3c6e3fa389e50f9c0958fa9296318da22fe79b21b34d07155193667af16"
     }
   ]
 }
