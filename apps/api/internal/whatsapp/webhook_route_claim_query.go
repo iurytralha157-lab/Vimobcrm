@@ -89,7 +89,7 @@ const evolutionWebhookCandidateSessionsQuery = `
 					            and predecessor.session_id = wi.session_id
 					            and predecessor.processing_epoch = wi.processing_epoch
 				            and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
-				            and predecessor.status = 'processed'
+				            and predecessor.status in ('processed', 'dead')
 				        )
 				        and not exists (
 				          select 1

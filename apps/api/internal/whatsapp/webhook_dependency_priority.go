@@ -68,7 +68,7 @@ const evolutionWebhookCandidatePriorityQuery = `
 			                  and predecessor.session_id = live_due.session_id
 			                  and predecessor.processing_epoch = live_due.processing_epoch
 			                  and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
-			                  and predecessor.status = 'processed'
+			                  and predecessor.status in ('processed', 'dead')
 			              )
 			              and not exists (
 			                select 1 from public.whatsapp_webhook_routing_outcomes predecessor_outcome
