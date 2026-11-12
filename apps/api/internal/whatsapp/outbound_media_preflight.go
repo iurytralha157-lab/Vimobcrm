@@ -53,7 +53,7 @@ func (repo Repository) prepareOutboundMedia(ctx context.Context, organizationID,
 	if len(payload) == 0 && sourcePath != "" {
 		payload, err = repo.storage.outboundMediaBytes(ctx, sourcePath)
 		if err != nil {
-			return "", "", "", fmt.Errorf("%w: midia armazenada indisponivel", ErrProviderFailed)
+			return "", "", "", fmt.Errorf("%w: midia armazenada indisponivel: %v", ErrProviderFailed, err)
 		}
 		digest = outboundMediaDigest(payload)
 		if sourceDigest, immutable := immutableOutboundMediaPathDigest(sourcePath); immutable && sourceDigest != digest {
@@ -64,7 +64,7 @@ func (repo Repository) prepareOutboundMedia(ctx context.Context, organizationID,
 	}
 	if len(payload) > 0 {
 		if err := repo.storage.uploadImmutable(ctx, objectPath, mimeType, payload); err != nil {
-			return "", "", "", fmt.Errorf("%w: nao foi possivel persistir a midia antes do envio", ErrProviderFailed)
+			return "", "", "", fmt.Errorf("%w: nao foi possivel persistir a midia antes do envio: %v", ErrProviderFailed, err)
 		}
 	}
 	return mediaURL, objectPath, digest, nil

@@ -657,6 +657,12 @@ func (handler Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	response, err := handler.repo.SendMessage(r.Context(), tenantContext, r.PathValue("id"), input)
 	if err != nil {
+		slog.Error("whatsapp send message failed",
+			"error", err,
+			"conversation_id", r.PathValue("id"),
+			"media_type", input.MediaType,
+			"has_base64", input.Base64 != "",
+		)
 		writeWhatsAppError(w, r, err)
 		return
 	}
