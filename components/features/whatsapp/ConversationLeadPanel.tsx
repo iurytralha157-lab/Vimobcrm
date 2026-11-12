@@ -61,7 +61,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { formatPhoneForDisplay, normalizePhoneToE164 } from "@/lib/phone-utils";
+import { formatPhoneForDisplay, formatWhatsAppContactLabel, normalizePhoneToE164 } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
 import { formatWhatsAppPersonName } from "@/lib/whatsapp-person-name";
 import { commandSearchFilter } from "@/lib/search-text";
@@ -1266,10 +1266,12 @@ export function ConversationUnregisteredPanel({
       enabled: leadPickerOpen && canLinkLead && Boolean(onLinkLead),
     },
   );
-  const displayName =
-    contactName && contactName !== contactPhone
-      ? isGroup ? contactName : formatWhatsAppPersonName(contactName)
-      : formatPhoneForDisplay(contactPhone || "") || "Contato";
+  const contactLabel = formatWhatsAppContactLabel(contactName, contactPhone);
+  const displayName = isGroup
+    ? (contactName || contactLabel || "Contato")
+    : ((contactLabel === "Contato sem identificação"
+        ? contactLabel
+        : formatWhatsAppPersonName(contactLabel)) || "Contato");
   // Cronometro dos 7 dias: prazo contado da ultima mensagem (modelo de 12/11).
   // Mostra a politica; a limpeza automatica fica com o worker de retencao.
   const historyDeadline = (() => {
