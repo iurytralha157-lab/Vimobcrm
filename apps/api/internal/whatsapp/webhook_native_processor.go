@@ -1647,7 +1647,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				// vinculo de lead e fora do contrato efemero de 7 dias. A
 				// entrada de lead por palavra-chave/CTWA ja correu acima, no
 				// fluxo padrao de mensagens suprimidas.
-				recovered, recoveredTarget, err := recoverSuppressedBacklogMessage(ctx, tx, session, message)
+				recovered, recoveredTarget, err := recoverSuppressedBacklogMessage(ctx, tx, session, message, whatsappMediaRealtimePriority)
 				if err != nil {
 					return err
 				}

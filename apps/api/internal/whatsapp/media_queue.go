@@ -36,6 +36,9 @@ const (
 	whatsappMediaUploadFailuresKey = "upload_intent_failures"
 	whatsappMediaCompletionMaxJobs = 100
 	whatsappMediaRealtimePriority  = 100
+	// Midia do acervo recuperado (etapa 2) nunca disputa com a midia ao vivo:
+	// o claim ordena por priority desc, entao o backlog so baixa em folga.
+	whatsappMediaBackfillPriority = 10
 
 	mediaErrorManualOnly     = "media_policy_manual_only_type"
 	mediaErrorTooLarge       = "media_policy_too_large"
@@ -2521,6 +2524,10 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 }
 
 func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversationID string, message nativeEvolutionMessage, messageRowID string) (bool, error) {
+	return enqueueNativeEvolutionMediaJobWithPriority(ctx, tx, session, conversationID, message, messageRowID, whatsappMediaRealtimePriority)
+}
+
+func enqueueNativeEvolutionMediaJobWithPriority(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversationID string, message nativeEvolutionMessage, messageRowID string, priority int) (bool, error) {
 	if !nativeIsMediaType(message.MessageType) || message.MediaStoragePath != "" {
 		return false, nil
 	}
@@ -2673,7 +2680,7 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		jobStatus, whatsappMediaJobMaxAttempts, dedupeKey, assetKey, message.MediaSize,
 		fileSHA256, fileEncSHA256, policy.errorCode,
 		whatsappMediaUploadPathKey, whatsappMediaUploadMIMEKey, whatsappMediaUploadSizeKey,
-		whatsappMediaUploadFailuresKey, whatsappMediaRepairPathKey, whatsappMediaRealtimePriority).Scan(
+		whatsappMediaUploadFailuresKey, whatsappMediaRepairPathKey, priority).Scan(
 		&persistedStatus,
 		&persistedError,
 		&persistedStoragePath,

@@ -364,7 +364,7 @@ func (repo Repository) recoverBacklogEnvelope(
 			whatsappBacklogRecoveryStats.skippedOther.Add(1)
 			continue
 		}
-		recovered, target, err := recoverSuppressedBacklogMessage(ctx, tx, *session, message)
+		recovered, target, err := recoverSuppressedBacklogMessage(ctx, tx, *session, message, whatsappMediaBackfillPriority)
 		if err != nil {
 			return recoveredLead, recoveredUnlinked, fmt.Errorf("mensagem %s: %w", message.ProviderMessageID, err)
 		}
@@ -385,6 +385,7 @@ func recoverSuppressedBacklogMessage(
 	tx pgx.Tx,
 	session nativeEvolutionSession,
 	message nativeEvolutionMessage,
+	mediaPriority int,
 ) (bool, string, error) {
 	var rowID, conversationID, leadID, messageLeadID, direction string
 	var isGroup, fromMe, quarantined, scrubbed, retired bool
@@ -499,7 +500,7 @@ func recoverSuppressedBacklogMessage(
 	}
 
 	if nativeIsMediaType(message.MessageType) && message.MediaStoragePath == "" {
-		queued, queueErr := enqueueNativeEvolutionMediaJob(ctx, tx, session, conversationID, message, rowID)
+		queued, queueErr := enqueueNativeEvolutionMediaJobWithPriority(ctx, tx, session, conversationID, message, rowID, mediaPriority)
 		if queueErr != nil {
 			return false, "", queueErr
 		}
@@ -509,16 +510,24 @@ func recoverSuppressedBacklogMessage(
 	}
 
 	// Previa monotonica da conversa, sem tocar em unread_count: recuperacao
-	// nunca gera aviso nem marca conversa como nao lida.
+	// nunca gera aviso nem marca conversa como nao lida. O pushName e o
+	// telefone resolvido do contato preenchem cartoes "@lid" sem identidade.
+	contactName, contactPhone := "", ""
+	if !message.FromMe {
+		contactName = firstNonEmpty(message.ContactName, message.SenderName)
+		contactPhone = message.ContactPhone
+	}
 	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_conversations
 		set last_message = case when last_message_at is null or last_message_at <= $4 then $5 else last_message end,
 		    last_message_preview = case when last_message_at is null or last_message_at <= $4 then $5 else last_message_preview end,
 		    last_message_at = greatest(coalesce(last_message_at, $4), $4),
+		    contact_name = coalesce(contact_name, nullif($6, '')),
+		    contact_phone = coalesce(contact_phone, nullif($7, '')),
 		    updated_at = now()
 		where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
 	`, session.OrganizationID, session.ID, conversationID,
-		message.SentAt, nativeEvolutionPreview(message)); err != nil {
+		message.SentAt, nativeEvolutionPreview(message), contactName, contactPhone); err != nil {
 		return false, "", err
 	}
 	return true, target, nil
