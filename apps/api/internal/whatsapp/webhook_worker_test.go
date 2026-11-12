@@ -56,7 +56,7 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"routing_message.snapshot->>'binding_eligible' = 'true'",
 		"routing_message.snapshot->>'predecessor_inbox_event_key' <> wi.event_key",
 		"same_inbox_route.snapshot->>'provider_message_id' = routing_message.snapshot->>'predecessor_provider_message_id'",
-		"predecessor.status in ('processed', 'dead')",
+		"predecessor.status = 'processed'",
 		"from public.whatsapp_webhook_routing_outcomes predecessor_outcome",
 		"predecessor_outcome.provider_message_id = routing_message.snapshot->>'predecessor_provider_message_id'",
 		"or head.routing_key = '__session__'",

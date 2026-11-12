@@ -81,7 +81,7 @@ const claimEvolutionWebhooksQuery = `
 			          and predecessor.session_id = wi.session_id
 			          and predecessor.processing_epoch = wi.processing_epoch
 			          and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
-			          and predecessor.status in ('processed', 'dead')
+			          and predecessor.status = 'processed'
 			      )
 			      and not exists (
 			        select 1
@@ -155,7 +155,7 @@ const claimEvolutionWebhooksQuery = `
 			          and predecessor.session_id = wi.session_id
 			          and predecessor.processing_epoch = wi.processing_epoch
 			          and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
-			          and predecessor.status in ('processed', 'dead')
+			          and predecessor.status = 'processed'
 			      )
 			      and not exists (
 			        select 1
