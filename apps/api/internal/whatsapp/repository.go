@@ -1396,7 +1396,24 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 	if isGroup {
 		return ErrInvalidReference
 	}
-	if !futureOnly && !currentLeadID.Valid && !unlinkedRetentionV1 {
+	// Modelo de 12/11: conversa sem lead com mensagens unlinked preservadas
+	// anexa o historico pelo RPC autorizado, seja ou nao do contrato v1.
+	var hasUnlinkedHistory bool
+	if !currentLeadID.Valid {
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from public.whatsapp_messages wm
+				where wm.organization_id = $1::uuid
+				  and wm.conversation_id = $2::uuid
+				  and wm.lead_id is null
+				  and wm.capture_state = 'unlinked_ephemeral'
+				  and wm.unlinked_retention_scrubbed_at is null
+			)
+		`, tenantContext.OrganizationID, conversationID).Scan(&hasUnlinkedHistory); err != nil {
+			return err
+		}
+	}
+	if !futureOnly && !currentLeadID.Valid && !unlinkedRetentionV1 && !hasUnlinkedHistory {
 		// A legacy null lead may have belonged to another card. A new binding
 		// requires explicit consent to keep all earlier history out of it.
 		return ErrInvalidReference
@@ -1430,7 +1447,7 @@ func (repo Repository) linkConversationToLeadWithOwnSession(
 	}
 
 	result := ConversationLeadLinkResult{BindingMode: "active"}
-	if unlinkedRetentionV1 && !currentLeadID.Valid {
+	if !currentLeadID.Valid && (unlinkedRetentionV1 || (hasUnlinkedHistory && !futureOnly)) {
 		result, err = confirmUnlinkedHistoryBinding(ctx, tx, tenantContext.OrganizationID, conversationID, leadID, tenantContext.UserID, "manual_link")
 		if err != nil {
 			return err

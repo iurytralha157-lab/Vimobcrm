@@ -123,6 +123,36 @@ func (repo Repository) mutateConversationInbox(ctx context.Context, actor tenant
 		return err
 	}
 	deleteConversation := len(deleting) > 0 && deleting[0]
+	if deleteConversation && locked.LeadID == "" {
+		// Apagar de vez (regra de 12/11): conversa sem lead pertence ao dono
+		// da conexao; mensagens, jobs de midia e a propria conversa somem do
+		// banco, sem lixeira. Historico de lead nunca passa por aqui: com
+		// lead vinculado o caminho continua sendo o soft delete abaixo.
+		if locked.OwnerID != actor.UserID {
+			return ErrConversationNotFound
+		}
+		if _, err := tx.Exec(ctx, `delete from public.media_jobs
+			 where organization_id = $1::uuid and conversation_id = $2::uuid`,
+			actor.OrganizationID, conversationID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `delete from public.whatsapp_messages
+			 where organization_id = $1::uuid and conversation_id = $2::uuid`,
+			actor.OrganizationID, conversationID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `delete from public.whatsapp_conversations
+			 where organization_id = $1::uuid and id = $2::uuid
+			   and session_id = $3::uuid and lead_id is null`,
+			actor.OrganizationID, conversationID, locked.SessionID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrConversationNotFound
+		}
+		return tx.Commit(ctx)
+	}
 	args := append(baseConversationArgs(locked.Actor), conversationID, locked.SessionID, locked.LeadID, markRead, archive, locked.Snapshot, deleteConversation)
 	tag, err := tx.Exec(ctx, `update public.whatsapp_conversations wc
  set unread_count=case when $8::boolean then 0 else wc.unread_count end,

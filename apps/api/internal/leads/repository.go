@@ -4414,10 +4414,28 @@ func (repo Repository) linkWhatsAppConversations(
 		if !eligible {
 			return ErrConversationBindingChanged
 		}
-	} else if !currentLeadID.Valid && !unlinkedRetentionV1 {
+	}
+	// Modelo de 12/11: conversa sem lead com mensagens unlinked preservadas
+	// anexa o historico pelo RPC autorizado, seja ou nao do contrato v1.
+	var hasUnlinkedHistory bool
+	if !currentLeadID.Valid && futureSessionID == "" {
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from public.whatsapp_messages wm
+				where wm.organization_id = $1::uuid
+				  and wm.conversation_id = $2::uuid
+				  and wm.lead_id is null
+				  and wm.capture_state = 'unlinked_ephemeral'
+				  and wm.unlinked_retention_scrubbed_at is null
+			)
+		`, tenantContext.OrganizationID, *conversationID).Scan(&hasUnlinkedHistory); err != nil {
+			return err
+		}
+	}
+	if futureSessionID == "" && !currentLeadID.Valid && !unlinkedRetentionV1 && !hasUnlinkedHistory {
 		return ErrInvalidReference
 	}
-	if unlinkedRetentionV1 && !currentLeadID.Valid {
+	if !currentLeadID.Valid && (unlinkedRetentionV1 || hasUnlinkedHistory) && futureSessionID == "" {
 		return confirmWhatsAppUnlinkedHistoryBinding(
 			ctx, tx, tenantContext.OrganizationID, *conversationID, leadID, tenantContext.UserID, "manual_lead_create",
 		)

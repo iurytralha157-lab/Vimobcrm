@@ -99,9 +99,15 @@ export function ConversationOverlays({
       <AlertDialog open={!!pendingDeleteConversation} onOpenChange={onDeleteDialogOpenChange}>
         <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover conversa?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingDeleteConversation?.lead_id || pendingDeleteConversation?.lead?.id
+                ? "Remover conversa?"
+                : "Apagar conversa?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {`A conversa com ${pendingDeleteName} sairá da caixa de entrada. O histórico já vinculado ao lead será preservado.`}
+              {pendingDeleteConversation?.lead_id || pendingDeleteConversation?.lead?.id
+                ? `A conversa com ${pendingDeleteName} sairá da caixa de entrada. O histórico já vinculado ao lead será preservado.`
+                : `A conversa com ${pendingDeleteName} não tem lead: as mensagens e a conversa serão apagadas de vez, sem como recuperar.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -115,7 +121,7 @@ export function ConversationOverlays({
               }}
             >
               {isDeletingConversation && <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
-              Remover conversa
+              {pendingDeleteConversation?.lead_id || pendingDeleteConversation?.lead?.id ? "Remover conversa" : "Apagar de vez"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

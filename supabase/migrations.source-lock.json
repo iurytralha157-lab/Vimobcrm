@@ -1078,6 +1078,10 @@
     {
       "file": "20261111233000_whatsapp_backlog_recovery_etapa2.sql",
       "sha256": "268ae3c6e3fa389e50f9c0958fa9296318da22fe79b21b34d07155193667af16"
+    },
+    {
+      "file": "20261112110000_whatsapp_semlead_link_history.sql",
+      "sha256": "ded9dd95ee0916ae9003cdcb9b2ea88cc166d160bf248cbad0a5f1588edd0aec"
     }
   ]
 }

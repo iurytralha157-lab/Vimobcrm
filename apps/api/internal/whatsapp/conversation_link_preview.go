@@ -80,10 +80,11 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		  coalesce(wc.is_group, false),
 		  wc.unlinked_retention_v1,
 		  case when wc.retired_at is null then 'active' else 'history_only' end,
-		 case when wc.lead_id is null and wc.unlinked_retention_v1 then wc.created_at + interval '7 days' end,
-		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.message_count else 0 end,
-		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.first_at end,
-		 case when wc.lead_id is null and wc.unlinked_retention_v1 then eligible.last_at end
+		 case when wc.lead_id is null and eligible.message_count > 0
+		   then greatest(wc.created_at, coalesce(eligible.last_at, wc.created_at)) + interval '7 days' end,
+		 case when wc.lead_id is null then eligible.message_count else 0 end,
+		 case when wc.lead_id is null then eligible.first_at end,
+		 case when wc.lead_id is null then eligible.last_at end
 		from public.whatsapp_conversations wc
 		join public.whatsapp_sessions ws
 		  on ws.id = wc.session_id
@@ -95,7 +96,6 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		  from public.whatsapp_messages wm
 		  where wm.organization_id = wc.organization_id
 		    and wc.lead_id is null
-		    and wc.unlinked_retention_v1
 		    and wm.session_id = wc.session_id
 		    and wm.conversation_id = wc.id
 		    and wm.lead_id is null
@@ -169,7 +169,10 @@ func (repo Repository) GetConversationLeadLinkPreview(
 		if expectedPreviousLeadID != unlinkedConversationLeadSnapshot {
 			return ConversationLeadLinkPreview{}, ErrConversationBindingChanged
 		}
-		if !unlinkedV1 {
+		// Modelo de 12/11: conversa sem lead com mensagens visiveis anexa o
+		// historico, seja ou nao do contrato efemero v1. O caminho legado de
+		// vinculo apenas-futuro fica para conversas sem nada preservado.
+		if !unlinkedV1 && preview.EligibleMessageCount == 0 {
 			if err := requireOriginalWhatsAppOrganization(ctx, repo.db.Pool(), tenantContext); err != nil {
 				return ConversationLeadLinkPreview{}, err
 			}
