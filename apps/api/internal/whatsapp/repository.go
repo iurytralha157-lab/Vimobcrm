@@ -773,9 +773,10 @@ func conversationFilterSQLWithSupervisoryRead(tenantContext tenant.Context, filt
 	}
 	if !filter.WithoutLead {
 		// Cards fantasmas: uma conversa sem lead so entra na caixa principal
-		// quando tem ao menos uma mensagem visivel ali. Linhas suprimidas e
-		// mensagens ocultas da caixa "Sem lead" (unlinked) nao contam. A aba
-		// "Sem lead" usa withoutLead=1 e nao passa por este corte.
+		// quando tem ao menos uma mensagem visivel ali (regra de 12/11:
+		// conversas sem lead convivem com as de lead, como um WhatsApp
+		// normal). Linhas suprimidas nao contam. O filtro "Sem lead" usa
+		// withoutLead=1 e nao passa por este corte.
 		where = append(where, conversationMainListContentSQL())
 	}
 
@@ -2367,7 +2368,7 @@ func conversationMainListContentSQL() string {
 			from public.whatsapp_messages visible_message
 			where visible_message.organization_id = wc.organization_id
 			  and visible_message.conversation_id = wc.id
-			  and coalesce(visible_message.capture_state, 'captured') in ('legacy', 'captured')
+			  and coalesce(visible_message.capture_state, 'captured') in ('legacy', 'captured', 'unlinked_ephemeral')
 		)
 	)`
 }

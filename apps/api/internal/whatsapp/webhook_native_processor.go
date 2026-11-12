@@ -1632,8 +1632,44 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			}
 		}
 		if captureState == "suppressed" {
-			if err := redactSuppressedNativeMessage(ctx, tx, session, messageRowID); err != nil {
-				return err
+			if item.ProcessingLane == evolutionWebhookLaneLive &&
+				!conversation.RetentionClosed &&
+				conversation.LeadResolutionQuarantineReason == "" &&
+				!conversation.HistoricalBindingReplay &&
+				!message.IsGroup && !message.IsReaction && !message.IsDeletion &&
+				!nativeCTWAIntakeEligible(message) &&
+				nativeEvolutionMessageLeadID(conversation) == "" {
+				// Conversa sem lead ao vivo (regra de 12/11): aparece na caixa
+				// como um WhatsApp normal. A linha ja existe suprimida; o mesmo
+				// caminho silencioso da etapa 2 restaura conteudo e estado na
+				// mesma transacao, sem INSERT visivel (nenhum gatilho de
+				// automacao, atencao, avatar ou handoff dispara), sem tocar no
+				// vinculo de lead e fora do contrato efemero de 7 dias. A
+				// entrada de lead por palavra-chave/CTWA ja correu acima, no
+				// fluxo padrao de mensagens suprimidas.
+				recovered, recoveredTarget, err := recoverSuppressedBacklogMessage(ctx, tx, session, message)
+				if err != nil {
+					return err
+				}
+				if recovered && recoveredTarget == "unlinked_ephemeral" {
+					captureState = "unlinked_ephemeral"
+					if !message.FromMe {
+						if _, err := tx.Exec(ctx, `
+							update public.whatsapp_conversations
+							set unread_count = greatest(0, coalesce(unread_count, 0) + 1),
+							    updated_at = now()
+							where organization_id = $1::uuid and session_id = $2::uuid
+							  and id = $3::uuid and lead_id is null
+						`, session.OrganizationID, session.ID, conversation.ID); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			if captureState == "suppressed" {
+				if err := redactSuppressedNativeMessage(ctx, tx, session, messageRowID); err != nil {
+					return err
+				}
 			}
 		}
 	}

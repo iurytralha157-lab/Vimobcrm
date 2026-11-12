@@ -252,8 +252,8 @@ func TestBacklogRecoveryRestoresSuppressedMessagesSilently(t *testing.T) {
 		t.Fatalf("replay recuperou de novo: lead=%d unlinked=%d", leadAgain, unlinkedAgain)
 	}
 
-	// Depois da recuperacao o card sem lead continua fora da caixa principal
-	// (conteudo e da futura caixa "Sem lead"), e aparece no filtro withoutLead.
-	assertListed(map[string]bool{f.conversationID: true, unlinkedConversationID: false}, false, "lista depois")
-	assertListed(map[string]bool{unlinkedConversationID: true}, true, "filtro sem lead")
+	// Depois da recuperacao o card sem lead entra na caixa principal como um
+	// WhatsApp normal (regra de 12/11), e o filtro withoutLead o recorta.
+	assertListed(map[string]bool{f.conversationID: true, unlinkedConversationID: true}, false, "lista depois")
+	assertListed(map[string]bool{unlinkedConversationID: true, f.conversationID: false}, true, "filtro sem lead")
 }
