@@ -457,6 +457,12 @@ func whatsappMediaWorkerScope(client functionsClient, cutoverSessionIDs []string
 	result := make([]string, 0, len(scope))
 	for _, sessionID := range scope {
 		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "*" {
+			// A configured wildcard rollout already covers every session, cutovers
+			// included. Collapse to it so the claim scope stays valid instead of
+			// mixing the wildcard with UUIDs, which claimWhatsAppMediaJob rejects.
+			return []string{"*"}
+		}
 		if sessionID != "" && !seen[sessionID] {
 			seen[sessionID] = true
 			result = append(result, sessionID)

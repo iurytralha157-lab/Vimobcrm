@@ -13,7 +13,7 @@ func TestWhatsAppMediaScopeHonorsDurableCutoverWithoutBroadeningLegacy(t *testin
 		{"edge uses cutover only", webhookProcessorEdge, []string{"*", "legacy"}, []string{"native"}, []string{"native"}},
 		{"edge without cutover never claims", webhookProcessorEdge, []string{"*"}, nil, []string{}},
 		{"native merges deduplicated scopes", webhookProcessorNative, []string{"native", " legacy "}, []string{"native"}, []string{"native", "legacy"}},
-		{"native wildcard stays explicit", webhookProcessorNativeFallback, []string{"*"}, []string{"native"}, []string{"native", "*"}},
+		{"native wildcard collapses to wildcard", webhookProcessorNativeFallback, []string{"*"}, []string{"native"}, []string{"*"}},
 		{"native empty config still owns cutover", webhookProcessorNative, nil, []string{"native"}, []string{"native"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
