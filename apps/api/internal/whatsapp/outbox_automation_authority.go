@@ -109,7 +109,7 @@ func whatsappAutomationOutboxPublisher(ctx context.Context, queryer whatsappQuer
 	}
 	var publisherID string
 	err = queryer.QueryRow(ctx, query, item.MessageRowID, item.OrganizationID, item.SessionID,
-		item.ConversationID, item.ID, queuedPayload, item.LeaseToken, whatsappAutomationOutboxPolicy, item.ClientMessageID).Scan(&publisherID)
+		item.ConversationID, item.ID, string(queuedPayload), item.LeaseToken, whatsappAutomationOutboxPolicy, item.ClientMessageID).Scan(&publisherID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrSessionAccessRevoked
 	}
