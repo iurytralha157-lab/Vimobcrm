@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "028948fbc994fb7051f10356842de59b168a363f63ced2956fd652cb408edd6e",
+  "shared_source_sha256": "58ae6c15021dd0e9da5afb71966fa93d3ce70eb7cd804143b939dcffd0e95821",
   "functions": [
     {
       "slug": "ai-agent-responder",
@@ -114,7 +114,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "d86b8ce025607fb95dac974e0920ef3adabf08a80e5a83419caf6a3016d15c99",
-      "source_sha256": "13f8994fd470f92c38accadf09fc5306ff10b05325854006dfb801c9001dfde1"
+      "source_sha256": "9fd45a8745e0e3fdec0f9347337b4a1e730d36e19cba3297f5d81b8a38e55c4c"
     },
     {
       "slug": "automation-executor",
@@ -124,7 +124,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "cd74c1e540076a1aac8cae0438774bfe6a210d7c33a0e24113ac55b0fea66078",
-      "source_sha256": "30fbd0b06ab087c29b88d61526dc7b63891230ef9510e96783901c13ba81a8fb"
+      "source_sha256": "081025610493964fcc62353e2c4a1cf03513a6068fc71483b12a87e0ed7b9981"
     },
     {
       "slug": "automation-inactivity",
@@ -134,7 +134,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "c8868521210e30fb0795b0379cd450888b52b3874d36ac4a7f483f61393c73fb",
-      "source_sha256": "92910fffc903699c70412f53c43491119a02caac830df89de413efccc01c8413"
+      "source_sha256": "8bcb8f7085a3b35f5a4acfee2d2029c6b1266cc406bb81d71ab5a23f3b9d47c1"
     },
     {
       "slug": "automation-runner",
@@ -144,7 +144,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "8f3b37302881dedb97c8cb88c55385d12343a876d873cea6b0cb6a34601299b6",
-      "source_sha256": "d5019d6ff9ed1867b8488fc3fc9240d3b1e4afdd1289cdcd086f70b0de9b71aa"
+      "source_sha256": "c98059c17c1f3ad64a0184cb05b7874b086538eda68dc08448f7fa18836578f1"
     },
     {
       "slug": "automation-trigger",
@@ -154,7 +154,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "3c5c11c34f7ff2d2b63653870dde43567c0b9aa45f99b5036db0da169a569d34",
-      "source_sha256": "8bae14983796343063bcc8b6ebdc8313d4af333866a766b4f95c1979133c8c1b"
+      "source_sha256": "03f4ba328146ee695513a73b36a80dcc088ee83969e06bf00b08a083bf16e549"
     },
     {
       "slug": "calculate-first-response",

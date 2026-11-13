@@ -23,7 +23,21 @@ func outboundMediaDigest(payload []byte) string {
 }
 
 func outboundMediaImmutablePath(organizationID, sessionID, providerID, mimeType, digest string) string {
-	return fmt.Sprintf("orgs/%s/sessions/%s/outgoing/%s/%s.%s", organizationID, sessionID, providerID, digest, mediaExtension(mimeType))
+	return outboundMediaPathWithExtension(organizationID, sessionID, providerID, digest, mediaExtension(mimeType))
+}
+
+func outboundMediaPathWithExtension(organizationID, sessionID, providerID, digest, extension string) string {
+	return fmt.Sprintf("orgs/%s/sessions/%s/outgoing/%s/%s.%s", organizationID, sessionID, providerID, digest, extension)
+}
+
+// Automation uploads share a fixed mapping with the Edge runtime and SQL RPC.
+// The host MIME registry can differ between the worker image and the runtime.
+var automationOutboundMediaExtensions = map[string]string{
+	"image:image/jpeg": "jpg", "image:image/png": "png", "image:image/webp": "webp", "image:image/gif": "gif",
+	"audio:audio/aac": "aac", "audio:audio/mpeg": "mp3", "audio:audio/mp3": "mp3", "audio:audio/ogg": "ogg",
+	"audio:audio/wav": "wav", "audio:audio/webm": "webm", "audio:audio/mp4": "m4a",
+	"video:video/mp4": "mp4", "video:video/mpeg": "mpeg", "video:video/quicktime": "mov",
+	"video:video/webm": "webm", "video:video/ogg": "ogv",
 }
 
 func immutableOutboundMediaPathDigest(objectPath string) (string, bool) {

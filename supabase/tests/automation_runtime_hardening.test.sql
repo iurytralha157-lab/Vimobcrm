@@ -1,7 +1,32 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(35);
+select plan(53);
+
+select ok(
+  not has_function_privilege('anon', 'public.resume_automation_delay(uuid,uuid,text,timestamptz,jsonb,uuid,uuid)', 'EXECUTE'),
+  'anonymous clients cannot resume a wait directly'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.resume_automation_delay(uuid,uuid,text,timestamptz,jsonb,uuid,uuid)', 'EXECUTE'),
+  'authenticated clients cannot fabricate a reply or resume a wait directly'
+);
+select ok(
+  has_function_privilege('service_role', 'public.resume_automation_delay(uuid,uuid,text,timestamptz,jsonb,uuid,uuid)', 'EXECUTE'),
+  'the backend retains permission to resume a wait'
+);
+select ok(
+  not has_function_privilege('anon', 'public.release_due_automation_delays(integer)', 'EXECUTE'),
+  'anonymous clients cannot sweep or read due executions'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.release_due_automation_delays(integer)', 'EXECUTE'),
+  'authenticated clients cannot sweep or read due executions across organizations'
+);
+select ok(
+  has_function_privilege('service_role', 'public.release_due_automation_delays(integer)', 'EXECUTE'),
+  'the backend retains permission to release due waits'
+);
 
 select is(
   has_table_privilege('authenticated', 'public.automations', 'insert'),
@@ -255,6 +280,99 @@ select ok(public.enter_automation_delay_wait('b2000000-0000-4000-8000-0000000000
 update public.automation_executions set next_execution_at = now() - interval '1 second' where id = 'b6000000-0000-4000-8000-000000000005';
 select is((select count(*)::integer from public.release_due_automation_delays(10) released where released.id = 'b6000000-0000-4000-8000-000000000005'), 1, 'simple delay accepts legacy default branch');
 select is((select current_node_key from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000005'), 'next', 'simple delay advances to its next node');
+
+insert into public.automation_flow_versions (
+  id, automation_id, organization_id, version, trigger_type, trigger_config,
+  graph, graph_checksum, first_node_key, requires_review
+)
+select fixture.id::uuid, fixture.automation_id::uuid, 'b2000000-0000-4000-8000-000000000001',
+       fixture.version, 'manual', '{"trigger_type":"manual"}'::jsonb,
+       jsonb_build_object(
+         'nodes', jsonb_build_array(
+           jsonb_build_object('id', 'delay', 'type', 'delay', 'config',
+             jsonb_build_object('delay_value', 1, 'delay_type', 'minutes', 'stop_on_reply', fixture.reply_aware)),
+           jsonb_build_object('id', 'next', 'type', 'action', 'action_type', 'send_whatsapp', 'config', '{}'::jsonb)
+         ),
+         'connections', jsonb_build_array(jsonb_build_object(
+           'source', 'delay', 'target', 'next', 'source_handle', fixture.branch
+         )),
+         'settings', '{}'::jsonb
+       ),
+       'wait-branch-' || fixture.id, 'delay', false
+from (values
+  ('b5000000-0000-4000-8000-000000000006', 'b4000000-0000-4000-8000-000000000001', 2, true, 'replied'),
+  ('b5000000-0000-4000-8000-000000000007', 'b4000000-0000-4000-8000-000000000001', 3, true, 'no_reply'),
+  ('b5000000-0000-4000-8000-000000000009', 'b4000000-0000-4000-8000-000000000002', 2, false, 'no_reply')
+) as fixture(id, automation_id, version, reply_aware, branch);
+
+insert into public.leads (id, organization_id, name, source)
+values
+  ('b3000000-0000-4000-8000-000000000006', 'b2000000-0000-4000-8000-000000000001', 'Terminal Timeout Lead', 'manual'),
+  ('b3000000-0000-4000-8000-000000000007', 'b2000000-0000-4000-8000-000000000001', 'Terminal Reply Lead', 'manual'),
+  ('b3000000-0000-4000-8000-000000000008', 'b2000000-0000-4000-8000-000000000001', 'Terminal Race Lead', 'manual'),
+  ('b3000000-0000-4000-8000-000000000009', 'b2000000-0000-4000-8000-000000000001', 'Legacy Ordinary Wait Lead', 'manual');
+
+insert into public.automation_executions (
+  id, automation_id, flow_version_id, organization_id, lead_id,
+  status, current_node_key, next_execution_at, attempt_count
+)
+select fixture.id::uuid, version.automation_id, version.id, version.organization_id,
+       fixture.lead_id::uuid, 'waiting', 'delay', now() + fixture.wait, 1
+from (values
+  ('b6000000-0000-4000-8000-000000000006', 'b5000000-0000-4000-8000-000000000006', 'b3000000-0000-4000-8000-000000000006', interval '-1 second'),
+  ('b6000000-0000-4000-8000-000000000007', 'b5000000-0000-4000-8000-000000000007', 'b3000000-0000-4000-8000-000000000007', interval '1 minute'),
+  ('b6000000-0000-4000-8000-000000000008', 'b5000000-0000-4000-8000-000000000006', 'b3000000-0000-4000-8000-000000000008', interval '-1 second'),
+  ('b6000000-0000-4000-8000-000000000009', 'b5000000-0000-4000-8000-000000000009', 'b3000000-0000-4000-8000-000000000009', interval '-1 second')
+) as fixture(id, version_id, lead_id, wait)
+join public.automation_flow_versions version on version.id = fixture.version_id::uuid;
+
+insert into public.automation_execution_steps (
+  execution_id, organization_id, flow_version_id, node_key, node_type, status, attempt, started_at
+)
+select id, organization_id, flow_version_id, 'delay', 'delay', 'waiting', 1, now() - interval '1 minute'
+from public.automation_executions
+where id in (
+  'b6000000-0000-4000-8000-000000000006', 'b6000000-0000-4000-8000-000000000007',
+  'b6000000-0000-4000-8000-000000000008', 'b6000000-0000-4000-8000-000000000009'
+);
+
+insert into public.automation_event_outbox (
+  organization_id, event_type, aggregate_type, aggregate_id, lead_id,
+  dedupe_key, payload, status
+) values (
+  'b2000000-0000-4000-8000-000000000001', 'message_received', 'lead',
+  'b3000000-0000-4000-8000-000000000008', 'b3000000-0000-4000-8000-000000000008',
+  'runtime-terminal-race-reply', jsonb_build_object('occurred_at', now() - interval '30 seconds'), 'pending'
+);
+
+select is(
+  (select count(*)::integer from public.release_due_automation_delays(10) released
+   where released.id in ('b6000000-0000-4000-8000-000000000006', 'b6000000-0000-4000-8000-000000000009')),
+  2, 'an unconnected timeout completes without aborting other releases in the batch'
+);
+select is((select status from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000006'), 'completed', 'timeout completes when only the reply branch is connected');
+select ok((select current_node_key is null and completed_at is not null from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000006'), 'terminal timeout leaves no action to execute');
+select is((select status from public.automation_execution_steps where execution_id = 'b6000000-0000-4000-8000-000000000006'), 'succeeded', 'terminal timeout closes its wait step');
+select is((select output->>'branch' from public.automation_execution_steps where execution_id = 'b6000000-0000-4000-8000-000000000006'), 'no_reply', 'terminal timeout records its outcome');
+select is((select status from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000008'), 'waiting', 'pending reply still prevents terminal timeout');
+select is(
+  (public.resume_automation_delay(
+    'b2000000-0000-4000-8000-000000000001',
+    'b6000000-0000-4000-8000-000000000008', 'replied', now() - interval '30 seconds',
+    '{"content":"sim"}'::jsonb, 'b3000000-0000-4000-8000-000000000008'
+  )->>'status'), 'queued', 'reply resumes a graph with only the reply branch connected'
+);
+select is((select current_node_key from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000008'), 'next', 'reply selects its connected action');
+select is(
+  (public.resume_automation_delay(
+    'b2000000-0000-4000-8000-000000000001',
+    'b6000000-0000-4000-8000-000000000007', 'replied', now(),
+    '{"content":"sim"}'::jsonb, 'b3000000-0000-4000-8000-000000000007'
+  )->>'status'), 'completed', 'reply completes when only the timeout branch is connected'
+);
+select ok((select current_node_key is null and completed_at is not null from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000007'), 'terminal reply leaves no timeout action to execute');
+select is((select output->>'branch' from public.automation_execution_steps where execution_id = 'b6000000-0000-4000-8000-000000000007'), 'replied', 'terminal reply records its outcome');
+select is((select current_node_key from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000009'), 'next', 'simple delay accepts its legacy no_reply output as the default');
 
 select ok(
   coalesce((public.resolve_automation_whatsapp_conversation(

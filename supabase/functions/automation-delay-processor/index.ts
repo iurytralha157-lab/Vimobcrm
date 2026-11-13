@@ -5,6 +5,7 @@ import {
   processExecutions,
   releaseDueDelays,
 } from "../_shared/automation-runtime.ts";
+import { safeAutomationError } from "../_shared/automation-runtime-errors.ts";
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ ok: false, error: "method_not_allowed" }, 405);
@@ -19,7 +20,8 @@ Deno.serve(async (req) => {
     const executions = await processExecutions(body.execution_batch_size || body.batch_size);
     return jsonResponse({ ok: true, delays, executions });
   } catch (error) {
-    console.error("automation-delay-processor failed", error);
-    return jsonResponse({ ok: false, error: error instanceof Error ? error.message : "runtime_failed" }, 500);
+    const failure = safeAutomationError(error);
+    console.error("automation-delay-processor failed", failure);
+    return jsonResponse({ ok: false, error: failure }, 500);
   }
 });

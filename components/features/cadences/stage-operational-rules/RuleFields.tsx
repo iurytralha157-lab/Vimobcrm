@@ -158,20 +158,25 @@ export function ToggleRow({
 }: {
   id: string
   title: string
-  description: string
+  description?: string
   checked: boolean
   disabled: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded-[8px] bg-[var(--app-surface-solid)] p-3">
+    <div className={cn(
+      'flex justify-between gap-3 rounded-[8px] bg-[var(--app-surface-solid)] p-3',
+      description ? 'items-start' : 'items-center',
+    )}>
       <div className="min-w-0">
         <Label htmlFor={id} className="text-xs font-light text-[var(--app-text-primary)]">
           {title}
         </Label>
-        <p className="mt-0.5 text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
-          {description}
-        </p>
+        {description && (
+          <p className="mt-0.5 text-[12px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
+            {description}
+          </p>
+        )}
       </div>
       <Switch
         id={id}

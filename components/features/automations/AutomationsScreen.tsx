@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
   History,
   LayoutTemplate,
   Loader2,
@@ -40,7 +41,7 @@ import { cn } from "@/lib/utils";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 
 type ViewMode = "list" | "build-followup" | "edit-existing";
-type AutomationTab = "automations" | "templates" | "history";
+type AutomationTab = "automations" | "templates" | "history" | "health";
 
 export default function Automations() {
   const router = useRouter();
@@ -68,11 +69,9 @@ export default function Automations() {
 
   const requestedTab = searchParams.get("tab");
   const activeTab: AutomationTab =
-    requestedTab === "templates"
-      ? "templates"
-      : requestedTab === "history" || requestedTab === "health"
-        ? "history"
-        : "automations";
+    requestedTab === "templates" || requestedTab === "history" || requestedTab === "health"
+      ? requestedTab
+      : "automations";
 
   useEffect(() => {
     if (!isMobile && viewMode !== "list") setCollapsed(true);
@@ -244,51 +243,49 @@ export default function Automations() {
   return (
     <AppLayout title="Automações">
       <div className="space-y-6 animate-in">
-        <div className="flex min-w-0 flex-row items-center gap-2">
+        <div
+          data-collapse="compact"
+          className="app-responsive-tab-list flex min-w-0 flex-nowrap items-center gap-2"
+        >
           <div
-            data-collapse="compact"
-            className="app-responsive-tab-list min-w-0 flex-1"
+            data-tour="automations-tabs"
+            data-responsive-tab-scroll
+            role="tablist"
+            aria-label="Seções de automações"
+            className="flex min-w-0 items-center overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1"
           >
-            <div
-              data-tour="automations-tabs"
-              data-responsive-tab-scroll
-              role="tablist"
-              aria-label="Seções de automações"
-              className="flex w-fit max-w-full items-center overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1"
-            >
-              {(
-                [
-                  ["automations", "Automações", Workflow],
-                  ["templates", "Modelos", LayoutTemplate],
-                  ["history", "Histórico", History],
-                ] as const
-              ).map(([value, label, Icon]) => (
-                <button
-                  key={value}
-                  type="button"
-                  data-responsive-tab
-                  role="tab"
-                  aria-label={label}
-                  aria-selected={activeTab === value}
-                  title={label}
-                  onClick={() => navigateToTab(value)}
-                  className={cn(
-                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-                    activeTab === value &&
-                      "bg-[var(--app-surface-solid)] text-foreground shadow-none",
-                  )}
-                >
-                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span className="app-responsive-tab-label">{label}</span>
-                </button>
-              ))}
-            </div>
+            {(
+              [
+                ["automations", "Automações", Workflow],
+                ["templates", "Modelos", LayoutTemplate],
+                ["history", "Histórico", History],
+                ["health", "Alertas operacionais", AlertTriangle],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                data-responsive-tab
+                role="tab"
+                aria-label={label}
+                aria-selected={activeTab === value}
+                title={label}
+                onClick={() => navigateToTab(value)}
+                className={cn(
+                  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                  activeTab === value &&
+                    "bg-[var(--app-surface-solid)] text-foreground shadow-none",
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="app-responsive-tab-label">{label}</span>
+              </button>
+            ))}
           </div>
-
           {canEditAutomations && !isMobile && (
             <Button
               data-tour="automations-new"
-              className="ml-auto h-8 shrink-0 gap-2 rounded-[6px] text-xs"
+              className="h-8 shrink-0 rounded-[6px] border border-transparent bg-primary/50 text-xs text-primary-foreground hover:bg-primary focus-visible:ring-foreground active:bg-primary"
               onClick={() => handleSelectTemplate(null)}
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
@@ -315,10 +312,8 @@ export default function Automations() {
           >
             <AutomationList
               onEdit={handleEditAutomation}
-              onCreate={() => handleSelectTemplate(null)}
               onViewHistory={handleViewHistory}
               canManage={canEditAutomations}
-              canCreate={canEditAutomations}
               allowEditing={!isMobile}
             />
           </TabsContent>
@@ -345,24 +340,10 @@ export default function Automations() {
               automationId={historyAutomationId}
               canManage={canEditAutomations}
             />
-            <section
-              className="mt-6 space-y-3"
-              aria-labelledby="automation-runtime-alerts-title"
-            >
-              <div>
-                <h2
-                  id="automation-runtime-alerts-title"
-                  className="text-[12px] font-normal"
-                >
-                  Alertas operacionais
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Incidentes e reprocessamentos ficam junto ao histórico para
-                  facilitar a investigação.
-                </p>
-              </div>
-              <AutomationRuntimeHealth canManage={canEditAutomations} />
-            </section>
+          </TabsContent>
+
+          <TabsContent value="health" className="mt-0">
+            <AutomationRuntimeHealth canManage={canEditAutomations} />
           </TabsContent>
         </Tabs>
       </div>

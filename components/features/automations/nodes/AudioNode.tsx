@@ -1,114 +1,46 @@
-import { memo, useRef, useState, useCallback, useEffect } from 'react';
+import { memo, useRef, useState, type MouseEvent, type SyntheticEvent } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { Headphones, Play, Pause } from 'lucide-react';
+
+const emptyPlayback = { url: '', isPlaying: false, currentTime: 0, duration: 0 };
+
+function formatTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00';
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+}
 
 export const AudioNode = memo(({ data, selected }: NodeProps) => {
   const url = data.audio_preview_url || data.audio_url || '';
   const isConfigured = Boolean(data.media_path || url);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const progressRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number>(0);
+  const [playback, setPlayback] = useState(emptyPlayback);
+  const { isPlaying, currentTime, duration } = playback.url === url ? playback : emptyPlayback;
 
-  // Continuously poll currentTime via rAF for smooth progress
-  const updateProgress = useCallback(() => {
-    if (audioRef.current && isPlaying) {
-      setCurrentTime(audioRef.current.currentTime);
-      const dur = audioRef.current.duration;
-      if (isFinite(dur) && dur > 0 && duration === 0) {
-        setDuration(dur);
-      }
-      rafRef.current = requestAnimationFrame(updateProgress);
-    }
-  }, [isPlaying, duration]);
+  const syncPlayback = ({ currentTarget: audio }: SyntheticEvent<HTMLAudioElement>) => {
+    setPlayback({
+      url,
+      isPlaying: !audio.paused && !audio.ended && !audio.error,
+      currentTime: audio.ended ? 0 : audio.currentTime,
+      duration: Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0,
+    });
+  };
 
-  useEffect(() => {
-    if (isPlaying) {
-      rafRef.current = requestAnimationFrame(updateProgress);
-    } else {
-      cancelAnimationFrame(rafRef.current);
-    }
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, updateProgress]);
+  const togglePlay = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play().catch(() => {});
+    else audio.pause();
+  };
 
-  // Force duration detection: seek to end briefly
-  useEffect(() => {
-    if (!url) return;
-    const audio = new Audio();
-    audio.preload = 'metadata';
-
-    const onLoaded = () => {
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        setDuration(audio.duration);
-        audio.removeEventListener('loadedmetadata', onLoaded);
-        audio.removeEventListener('durationchange', onDuration);
-        return;
-      }
-      // OGG/Opus workaround: seek to a large value to force duration calc
-      audio.currentTime = 1e10;
-    };
-
-    const onDuration = () => {
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        setDuration(audio.duration);
-        audio.removeEventListener('durationchange', onDuration);
-        audio.removeEventListener('timeupdate', onTimeSeek);
-      }
-    };
-
-    const onTimeSeek = () => {
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        setDuration(audio.duration);
-      }
-      audio.removeEventListener('timeupdate', onTimeSeek);
-    };
-
-    audio.addEventListener('loadedmetadata', onLoaded);
-    audio.addEventListener('durationchange', onDuration);
-    audio.addEventListener('timeupdate', onTimeSeek);
-    audio.src = url;
-
-    return () => {
-      audio.removeEventListener('loadedmetadata', onLoaded);
-      audio.removeEventListener('durationchange', onDuration);
-      audio.removeEventListener('timeupdate', onTimeSeek);
-      audio.src = '';
-    };
-  }, [url]);
-
-  const togglePlay = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioRef.current.play().catch(() => {});
-      setIsPlaying(true);
-    }
-  }, [isPlaying]);
-
-  const handleEnded = useCallback(() => {
-    setIsPlaying(false);
-    setCurrentTime(0);
-  }, []);
-
-  const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (!audioRef.current || !duration || !progressRef.current) return;
-    const rect = progressRef.current.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audioRef.current.currentTime = pct * duration;
-    setCurrentTime(pct * duration);
-  }, [duration]);
-
-  const formatTime = (s: number) => {
-    if (!isFinite(s) || isNaN(s) || s <= 0) return '0:00';
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, '0')}`;
+  const handleSeek = (event: MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    const audio = audioRef.current;
+    const { left, width } = event.currentTarget.getBoundingClientRect();
+    if (!audio || !duration || !width) return;
+    const position = Math.max(0, Math.min(1, (event.clientX - left) / width));
+    audio.currentTime = position * duration;
   };
 
   const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
@@ -132,7 +64,7 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
           <button
             type="button"
             onClick={togglePlay}
-            className="w-7 h-7 rounded-full bg-amber-500 flex items-center justify-center shrink-0 hover:bg-amber-600 transition-colors"
+            className="nodrag w-7 h-7 rounded-full bg-amber-500 flex items-center justify-center shrink-0 hover:bg-amber-600 transition-colors"
             aria-label={isPlaying ? 'Pausar prévia do áudio' : 'Reproduzir prévia do áudio'}
           >
             {isPlaying ? (
@@ -146,8 +78,7 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
       {url && (
         <div className="mt-2 space-y-1.5">
           <div
-            ref={progressRef}
-            className="group relative h-2 cursor-pointer rounded-full bg-[var(--app-surface-hover)]"
+            className="nodrag group relative h-2 cursor-pointer rounded-full bg-[var(--app-surface-hover)]"
             onClick={handleSeek}
           >
             <div
@@ -166,10 +97,17 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
           </div>
 
           <audio
+            key={url}
             ref={audioRef}
             src={url}
-            onEnded={handleEnded}
-            preload="auto"
+            onLoadedMetadata={syncPlayback}
+            onDurationChange={syncPlayback}
+            onTimeUpdate={syncPlayback}
+            onPlay={syncPlayback}
+            onPause={syncPlayback}
+            onEnded={syncPlayback}
+            onError={syncPlayback}
+            preload="none"
           />
         </div>
       )}

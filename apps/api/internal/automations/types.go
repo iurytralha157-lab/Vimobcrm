@@ -565,8 +565,14 @@ func validateFlowDefinition(flow *FlowDefinition) error {
 		case "delay":
 			config := flowNodeConfig(node)
 			if boolConfig(config, "stop_on_reply") {
-				if outgoing != 2 || !hasExactBranches(branches[id], "no_reply", "replied") {
-					return invalidFlow("reply-aware delays require no_reply and replied branches")
+				namedOutcomes := 0
+				for _, outcome := range []string{"replied", "no_reply"} {
+					if _, exists := branches[id][outcome]; exists {
+						namedOutcomes++
+					}
+				}
+				if outgoing == 0 || outgoing != namedOutcomes {
+					return invalidFlow("reply-aware delays require one or both named outcomes, without duplicate branches")
 				}
 			} else if outgoing > 1 {
 				return invalidFlow("delay nodes may have only one output")
@@ -732,6 +738,8 @@ func validateActionConfig(actionType string, config map[string]any) error {
 		}
 	case "assign_user":
 		return requireUUIDConfig(config, "user_id")
+	case "distribute_lead":
+		return requireUUIDConfig(config, "round_robin_id")
 	case "set_variable":
 		switch stringConfig(config, "actionType") {
 		case "property_interest":

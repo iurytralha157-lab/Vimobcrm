@@ -1046,7 +1046,7 @@ export const apiStageAutomationResponseSchema = apiEnvelopeSchema(
 );
 export const apiStageAutomationListResponseSchema = apiEnvelopeSchema(
   z.array(stageAutomationSchema),
-);
+).extend({ inactivity_runtime_available: z.boolean().optional() });
 export const apiStageOperationalResponseSchema = apiEnvelopeSchema(
   stageOperationalConfigSchema,
 );

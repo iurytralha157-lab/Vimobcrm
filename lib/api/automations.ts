@@ -58,6 +58,7 @@ export type ActionType =
   | "add_tag"
   | "remove_tag"
   | "assign_user"
+  | "distribute_lead"
   | "webhook"
   | "set_variable";
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -45,7 +45,6 @@ export function AutomationMediaGallery({
   const { activeOrganization } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const onSelectRef = useRef(onSelect);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
@@ -63,16 +62,6 @@ export function AutomationMediaGallery({
     fetchNextPage,
     isFetchingNextPage,
   } = useAutomationMedia(mediaType, debouncedSearch);
-
-  useEffect(() => {
-    onSelectRef.current = onSelect;
-  }, [onSelect]);
-
-  useEffect(() => {
-    if (!selectedPath) return;
-    const selectedFile = files.find((file) => file.path === selectedPath);
-    if (selectedFile) onSelectRef.current(selectedFile);
-  }, [files, selectedPath]);
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

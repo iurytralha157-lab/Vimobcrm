@@ -31,11 +31,14 @@ try {
       execution_id uuid,node_key text,status text,attempt integer,completed_at timestamptz,error_message text);
   `);
   await db.query(await readFile(new URL('../../supabase/migrations/20261016041918_automation_canonical_stage_command_guard.sql',import.meta.url),'utf8'));
+  const distributionDeferral = await readFile(new URL('../../supabase/migrations/20261113153247_allow_automation_distribution_deferral.sql',import.meta.url),'utf8');
+  await db.query(distributionDeferral);
+  await db.query(distributionDeferral);
   const org='10000000-0000-4000-8000-000000000001',foreign='10000000-0000-4000-8000-000000000002';
   const version='20000000-0000-4000-8000-000000000001',execution='30000000-0000-4000-8000-000000000001';
   const step='40000000-0000-4000-8000-000000000001';
   await db.query('insert into public.organization_modules values($1,\'automations\',true)',[org]);
-  await db.query('insert into public.automation_flow_versions(id,organization_id,graph) values($1,$2,$3)',[version,org,{nodes:[{id:'move-a',type:'action',action_type:'move_lead'},{id:'tag-a',type:'action',action_type:'add_tag'}]}]);
+  await db.query('insert into public.automation_flow_versions(id,organization_id,graph) values($1,$2,$3)',[version,org,{nodes:[{id:'move-a',type:'action',action_type:'move_lead'},{id:'tag-a',type:'action',action_type:'add_tag'},{id:'queue-a',type:'action',action_type:'distribute_lead'}]}]);
   const reset=async(node='move-a')=>{
     await db.query('delete from public.automation_execution_steps');
     await db.query('delete from public.automation_executions');
@@ -49,7 +52,11 @@ try {
   }
   await db.query('update public.automation_executions set cancellation_requested_at=now()');
   check((await defer()).ok===false,'cancelled execution cannot defer');
-  await reset('tag-a');check((await defer([org,execution,step,'tag-a','lease-a'])).ok===false,'non-move action cannot defer');
+  await reset('tag-a');check((await defer([org,execution,step,'tag-a','lease-a'])).ok===false,'other action cannot defer');
+  await reset('queue-a');
+  check((await defer([foreign,execution,step,'queue-a','lease-a'])).ok===false,'foreign distribution cannot defer');
+  const queueDeferral = await defer([org,execution,step,'queue-a','lease-a']);
+  check(queueDeferral.ok && queueDeferral.status === 'queued' && queueDeferral.attempts === 1,'distribution can defer on its original node and lease');
   await reset();
   await db.query('update public.organization_modules set is_enabled=false');
   check((await defer()).ok===false,'disabled module cannot defer');

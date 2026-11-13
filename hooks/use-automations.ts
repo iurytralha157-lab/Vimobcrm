@@ -67,6 +67,8 @@ export function useAutomations(enabled = true) {
     queryKey: ["automations", organizationId],
     queryFn: () => automationsAPI.listAutomations(organizationId),
     enabled: enabled && !!organizationId,
+    // The visual editor unmounts the list before a create or edit invalidates it.
+    refetchOnMount: true,
   });
 }
 
@@ -502,7 +504,8 @@ export function useAutomationExecutionSteps(
   const offset = options.offset ?? 0;
 
   return useQuery({
-    queryKey: ["automation-execution-steps", executionId, organizationId, limit, offset],
+    // The final snapshot must fetch even if polling just cached an active step.
+    queryKey: ["automation-execution-steps", executionId, organizationId, limit, offset, !!options.isExecutionActive],
     queryFn: () => automationsAPI.listExecutionSteps(executionId, {
       limit,
       offset,

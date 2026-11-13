@@ -27,17 +27,19 @@ for (const [hook, file, family] of [
   ['usePipelines', 'hooks/use-stages.ts', 'pipelines'],
   ['useStages', 'hooks/use-stages.ts', 'stages'],
   ['useStagesWithLeads', 'hooks/use-stages.ts', 'stages-with-leads'],
-  ['useStageAutomations', 'hooks/use-stage-automations.ts', 'stage-automations'],
+  ['useStageAutomationList', 'hooks/use-stage-automations.ts', 'stage-automations'],
 ]) test(`${hook} refetches an invalidated deletion cache when reopened despite provider mount policy`, async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnMount: false } } });
   const queryKey = [family, 'org-a', 'pipeline-a']; let reads = 0;
   const get = async () => { reads++; return []; };
+  const wrap = rows => family === 'stage-automations' ? { rows, inactivityRuntimeAvailable: false } : rows;
   const options = productionQueryOptions(file, hook, {
     organizationId: 'org-a', pipelineId: 'pipeline-a', stageId: 'stage-a', currentUserId: 'actor-a', accessSignature: 'scope-a',
     queryKey, isBoardEnabled: true, canViewStageAutomations: true,
     PIPELINE_REFERENCE_STALE_TIME_MS: 600_000, PIPELINE_BOARD_STALE_TIME_MS: 600_000, PIPELINE_CACHE_TIME_MS: 3_600_000, LEADS_PER_STAGE: 12,
-    pipelinesAPI: { getPipelines: get, getStages: get }, stageConfigAPI: { listStageAutomations: get }, getPipelineBoard: get,
+    pipelinesAPI: { getPipelines: get, getStages: get }, stageConfigAPI: { listStageAutomations: async () => wrap(await get()) }, getPipelineBoard: get,
     normalizeAutomation: row => row, stageAutomationsQueryKey: () => queryKey,
+    select: data => family === 'stage-automations' ? data.rows : data,
     shouldRetryPipelineQuery: () => false, reusePreviousDataWhenKeyPartsMatch: previous => previous,
     reconcilePipelineBoardSnapshot: (_old, next) => next, getPendingPipelineMoves: () => [],
     setRestoreError: () => {}, queryClient: client, paginationStorageKey: null, queryKeyId: 'synthetic',
@@ -49,7 +51,7 @@ for (const [hook, file, family] of [
   let unsubscribe;
   try {
     assert.equal(client.getDefaultOptions().queries.refetchOnMount, false);
-    client.setQueryData(key, [{ id: 'removed-remotely' }]);
+    client.setQueryData(key, wrap([{ id: 'removed-remotely' }]));
     const first = new QueryObserver(client, options); unsubscribe = first.subscribe(() => {});
     assert.equal(reads, 0, 'fresh cache is reused before leaving'); unsubscribe(); unsubscribe = undefined;
     // Accepted DELETE arrives after unmount: invalidate only, without a hidden GET.
@@ -63,6 +65,6 @@ for (const [hook, file, family] of [
       });
     });
     assert.equal(reads, 1, 'reopening reconciles the stale projection through its actual queryFn');
-    assert.deepEqual(client.getQueryData(key), []); assert.equal(client.getQueryState(key).isInvalidated, false);
+    assert.deepEqual(client.getQueryData(key), wrap([])); assert.equal(client.getQueryState(key).isInvalidated, false);
   } finally { unsubscribe?.(); client.clear(); }
 });

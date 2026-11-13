@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "02367716eae29a3c4ebacf4d7bf39915c00f4fd414d388921c846d00dac14948",
+  "sourceDigestSha256": "aef9be43d6fdd78fdb03fa3b056facf94c08889a9facd9dd8d58dee3edf68945",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -996,10 +996,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:ad22f7d8e30bb37b4a86",
+          "id": "overlay:823f774b8c6115cb63bc",
           "column": 7,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 393,
+          "line": 375,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -1007,10 +1007,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:aa320dde62b396edec13",
+          "id": "overlay:6c1ee3df8b2bac938a99",
           "column": 7,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 429,
+          "line": 411,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -1018,10 +1018,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:0d8bf0a448b3b115ea29",
+          "id": "overlay:2fe76ef42144d2351dcb",
           "column": 7,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 302,
+          "line": 291,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -1051,10 +1051,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:1eb09632e37e36b7d35d",
+          "id": "overlay:b24d9d87cbee20dbc376",
           "column": 5,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 118,
+          "line": 117,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -1062,21 +1062,21 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:a96aa57933469c7e9c77",
-          "column": 17,
+          "id": "overlay:06960f408f6773d1962b",
+          "column": 13,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 413,
-          "owner": "ExecutionTimelineItem",
+          "line": 373,
+          "owner": "ExecutionRow",
           "routes": [
             "/automations"
           ],
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:311bcbc14985d16e2cc3",
+          "id": "overlay:9ea5cec9587efe4f683f",
           "column": 7,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 911,
+          "line": 946,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -6339,10 +6339,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:45122850fdabb775f56d",
+          "id": "form:53bb05713800fc2519c1",
           "column": 7,
           "file": "components/features/automations/FlowSimulator.tsx",
-          "line": 727,
+          "line": 611,
           "owner": "FlowSimulator",
           "routes": [
             "/automations"
@@ -11033,10 +11033,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4ef8ad9f66ebeefc9283",
+          "id": "cta:1e5cc3cd5f0a1f78fbf9",
           "column": 11,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 205,
+          "line": 195,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11045,10 +11045,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:47e1a4abcc2a2121381b",
+          "id": "cta:9ad2fee1551b92a1a6df",
           "column": 11,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 224,
+          "line": 222,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11057,22 +11057,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ab47be7ce4da16cf6247",
-          "column": 11,
-          "file": "components/features/automations/AutomationList.tsx",
-          "line": 240,
-          "owner": "AutomationList",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:4168e8dc67a6a21e95fe",
+          "id": "cta:582afca151f3e210d412",
           "column": 15,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 263,
+          "line": 245,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11081,10 +11069,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:9f68b4d45f6cafd4e74f",
+          "id": "cta:54cde32c8baec8c971c1",
           "column": 25,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 326,
+          "line": 308,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11093,10 +11081,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b74dacc58fc845cfb367",
+          "id": "cta:5ee2b0a40cee5749b64c",
           "column": 25,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 339,
+          "line": 321,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11105,10 +11093,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c70d70a49918c9909c54",
+          "id": "cta:de390ed7dfe71eb9eb02",
           "column": 17,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 355,
+          "line": 337,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11117,10 +11105,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3316d3be66461b89baa7",
+          "id": "cta:27c6d16c656b7a84c071",
           "column": 17,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 366,
+          "line": 348,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -11129,10 +11117,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d78c31217ea847c049e0",
+          "id": "cta:50aff0c4b1cd0d9c3825",
           "column": 9,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 153,
+          "line": 142,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11141,10 +11129,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1199ed17af30cb720804",
+          "id": "cta:2abc23726a1195f7764f",
           "column": 13,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 201,
+          "line": 190,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11153,10 +11141,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:25a96d46db1d652e369b",
+          "id": "cta:9090fd369ee660eaac80",
           "column": 21,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 220,
+          "line": 209,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11165,10 +11153,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8dc476d16ccc505cb360",
+          "id": "cta:a658a1dc2b3f33a24524",
           "column": 21,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 242,
+          "line": 231,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11177,10 +11165,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:217c82196fc2b94d42b1",
+          "id": "cta:0a4857e0f5738381e0e1",
           "column": 19,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 257,
+          "line": 246,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11189,10 +11177,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:26876f3a89d85240c485",
+          "id": "cta:845f70045d6a8c8ce61e",
           "column": 19,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 273,
+          "line": 262,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11201,10 +11189,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:220ea75233a979786b77",
+          "id": "cta:f88611ebf0984d2b71da",
           "column": 9,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 289,
+          "line": 278,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -11345,10 +11333,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:901287883deb72cb9d79",
+          "id": "cta:43f295bcab84886645e5",
           "column": 11,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 181,
+          "line": 180,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -11357,10 +11345,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9a523824c936bdad1241",
-          "column": 17,
+          "id": "cta:39caa638ce62d46da9ab",
+          "column": 15,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 266,
+          "line": 265,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -11369,10 +11357,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ab407b17cc7aa8e7d959",
+          "id": "cta:5b5c732ff2e32cb69e8c",
           "column": 13,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 289,
+          "line": 286,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -11393,10 +11381,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:31f3a14fb868de718016",
+          "id": "cta:dd1f25e9606df45b92d8",
           "column": 9,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 198,
+          "line": 180,
           "owner": "ExecutionHistory",
           "routes": [
             "/automations"
@@ -11405,83 +11393,11 @@
           "tag": "Button"
         },
         {
-          "id": "cta:71e0e959cf78cf266d7d",
-          "column": 11,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 229,
-          "owner": "ExecutionHistory",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:7a680385d3d2d2e43392",
-          "column": 15,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 270,
-          "owner": "ExecutionHistory",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:da8142d229f15e26e20b",
-          "column": 60,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 294,
-          "owner": "ExecutionHistory",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:b3fb09c53d09a465fda9",
-          "column": 13,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 350,
-          "owner": "ExecutionHistory",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:f8e07392790d294ba81a",
-          "column": 13,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 351,
-          "owner": "ExecutionHistory",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:2625d14b35158bcb1c65",
-          "column": 21,
-          "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 415,
-          "owner": "ExecutionTimelineItem",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:3e7c2ef74a94d0464f5e",
+          "id": "cta:5c5d417a2df302bc352c",
           "column": 17,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 446,
-          "owner": "ExecutionTimelineItem",
+          "line": 243,
+          "owner": "ExecutionHistory",
           "routes": [
             "/automations"
           ],
@@ -11489,11 +11405,11 @@
           "tag": "button"
         },
         {
-          "id": "cta:34bdd2b6f5aa82a3bf7e",
-          "column": 19,
+          "id": "cta:a8c5678f277b94dc2767",
+          "column": 13,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 471,
-          "owner": "ExecutionTimelineItem",
+          "line": 261,
+          "owner": "ExecutionHistory",
           "routes": [
             "/automations"
           ],
@@ -11501,11 +11417,11 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d2ea03826f8bdef52eac",
-          "column": 19,
+          "id": "cta:f002d1a1cf0da3ff4ae0",
+          "column": 15,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 502,
-          "owner": "ExecutionTimelineItem",
+          "line": 319,
+          "owner": "ExecutionHistory",
           "routes": [
             "/automations"
           ],
@@ -11513,11 +11429,11 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7672b965fc9ac9c359fa",
-          "column": 19,
+          "id": "cta:7990886a23a6faf1b020",
+          "column": 15,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 506,
-          "owner": "ExecutionTimelineItem",
+          "line": 320,
+          "owner": "ExecutionHistory",
           "routes": [
             "/automations"
           ],
@@ -11525,10 +11441,70 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ee956235f3353a6a5e08",
+          "id": "cta:0e3ee32fcc300393d8ca",
+          "column": 17,
+          "file": "components/features/automations/ExecutionHistory.tsx",
+          "line": 375,
+          "owner": "ExecutionRow",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:716560adf279afb06e1f",
+          "column": 13,
+          "file": "components/features/automations/ExecutionHistory.tsx",
+          "line": 406,
+          "owner": "ExecutionRow",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:3bfb9cc35f94ddb7d7c4",
+          "column": 15,
+          "file": "components/features/automations/ExecutionHistory.tsx",
+          "line": 432,
+          "owner": "ExecutionRow",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:b408703365196c25ad60",
+          "column": 15,
+          "file": "components/features/automations/ExecutionHistory.tsx",
+          "line": 463,
+          "owner": "ExecutionRow",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:2369cd4ffe89f6b41d30",
+          "column": 15,
+          "file": "components/features/automations/ExecutionHistory.tsx",
+          "line": 467,
+          "owner": "ExecutionRow",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:4c83bad5815b245f0bed",
           "column": 11,
           "file": "components/features/automations/FlowSimulator.tsx",
-          "line": 619,
+          "line": 503,
           "owner": "FlowSimulator",
           "routes": [
             "/automations"
@@ -11537,10 +11513,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:220bb0104eae2d0f77f5",
+          "id": "cta:0f16261db01fa3e14728",
           "column": 9,
           "file": "components/features/automations/FlowSimulator.tsx",
-          "line": 627,
+          "line": 511,
           "owner": "FlowSimulator",
           "routes": [
             "/automations"
@@ -11549,10 +11525,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f8bcfc67b09e732fcaf",
+          "id": "cta:1cf0a756564025c5bb9c",
           "column": 11,
           "file": "components/features/automations/FlowSimulator.tsx",
-          "line": 742,
+          "line": 626,
           "owner": "FlowSimulator",
           "routes": [
             "/automations"
@@ -11561,10 +11537,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:450d7846ac4bd5d22666",
+          "id": "cta:a73be30cc468cb3096cb",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 778,
+          "line": 796,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11573,10 +11549,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:de0ad274bbc37ab84a63",
+          "id": "cta:9d0ce13aec8f63c57a29",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 791,
+          "line": 809,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11585,10 +11561,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:034c77fe48c226be3b6d",
+          "id": "cta:35487a52dca946ba2527",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 799,
+          "line": 817,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11597,10 +11573,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3e3efb6131b2d4a312a1",
+          "id": "cta:2f1e1a595eb8400205c9",
           "column": 21,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 823,
+          "line": 841,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11609,10 +11585,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:931207c4cad499345821",
+          "id": "cta:f766547a6caa4111cf06",
           "column": 29,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 838,
+          "line": 856,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11621,58 +11597,22 @@
           "tag": "button"
         },
         {
-          "id": "cta:7ccc78a88d074de6f4a8",
+          "id": "cta:e47f136482d76df02b94",
           "column": 15,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 865,
-          "owner": "FollowUpBuilderInner",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:611e54d436e8e0106a60",
-          "column": 11,
-          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 872,
-          "owner": "FollowUpBuilderEditInner",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:ef680816041f75af6cec",
-          "column": 11,
-          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 873,
-          "owner": "FollowUpBuilderEditInner",
-          "routes": [
-            "/automations"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:cdd742355f379efb0b34",
-          "column": 9,
-          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
           "line": 883,
-          "owner": "FollowUpBuilderEditInner",
+          "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
           ],
           "kind": "actionButton",
-          "tag": "Button"
+          "tag": "button"
         },
         {
-          "id": "cta:9dcad341968357acbf65",
+          "id": "cta:c5d31aeea2d02969e992",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 896,
+          "line": 886,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11681,10 +11621,46 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2c4e59f2b5c0c44e4fb4",
+          "id": "cta:1e1d59b8ab787f2d9be3",
+          "column": 11,
+          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
+          "line": 887,
+          "owner": "FollowUpBuilderEditInner",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:d5b9d26ee014429c6345",
+          "column": 9,
+          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
+          "line": 897,
+          "owner": "FollowUpBuilderEditInner",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:00b5bb6ac68a7604ea4e",
+          "column": 11,
+          "file": "components/features/automations/FollowUpBuilderEdit.tsx",
+          "line": 910,
+          "owner": "FollowUpBuilderEditInner",
+          "routes": [
+            "/automations"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:69f6a6089e252ad9de21",
           "column": 13,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 921,
+          "line": 935,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11693,10 +11669,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d72de0917d2666bbf8f7",
+          "id": "cta:c276d9019fd9e0d787e8",
           "column": 13,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 929,
+          "line": 943,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11705,10 +11681,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:06a029aad0f9df8769b6",
+          "id": "cta:2dc8645160f4b3387e24",
           "column": 21,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 952,
+          "line": 966,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11717,10 +11693,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b344fbc1b4b8965b37f0",
+          "id": "cta:52a4348022cdaac3ca5b",
           "column": 29,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 962,
+          "line": 976,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11729,10 +11705,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1059b096bfe9134257a0",
+          "id": "cta:b114b896c8f8b795391f",
           "column": 15,
           "file": "components/features/automations/FollowUpBuilderEdit.tsx",
-          "line": 984,
+          "line": 998,
           "owner": "FollowUpBuilderEditInner",
           "routes": [
             "/automations"
@@ -11753,10 +11729,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:d283575828740bd701cd",
+          "id": "cta:f83182ea49dc00ee029e",
           "column": 9,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 201,
+          "line": 206,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11765,10 +11741,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:29450ef7a10ac2aa7b88",
+          "id": "cta:845a917405d627675727",
           "column": 25,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 358,
+          "line": 363,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11777,10 +11753,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:368f60baa04526a66777",
+          "id": "cta:bb3d8ea168d7c34ed313",
           "column": 17,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 645,
+          "line": 672,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11789,10 +11765,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:404bd9a9f9ec4d288ef1",
+          "id": "cta:b82275b4abfb3116e9b4",
           "column": 21,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 659,
+          "line": 686,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11801,10 +11777,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:273e4961cf6072d94f7f",
+          "id": "cta:3e94a00134159659717b",
           "column": 21,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 667,
+          "line": 694,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11813,10 +11789,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f6c8fcd5f288ef5ef39e",
+          "id": "cta:df387ebc838ec1f4657c",
           "column": 19,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 790,
+          "line": 825,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11825,10 +11801,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:db9b03f800bd09f5db62",
+          "id": "cta:4c5fd50391587877904c",
           "column": 15,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 893,
+          "line": 928,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -11837,10 +11813,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3a8526d5343fc15f06bb",
+          "id": "cta:6e2bb1232358ede999c9",
           "column": 11,
           "file": "components/features/automations/nodes/AudioNode.tsx",
-          "line": 132,
+          "line": 64,
           "owner": "<module>",
           "routes": [
             "/automations"
@@ -11897,10 +11873,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4b96f0b41530edb53d10",
+          "id": "cta:e1f1c9d7d9c2954934e5",
           "column": 15,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 380,
+          "line": 376,
           "owner": "TaskCard",
           "routes": [
             "/crm/pipelines"
@@ -11909,10 +11885,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b4f5835a0df34f0b75d2",
+          "id": "cta:672284b20054ca9a362c",
           "column": 5,
           "file": "components/features/cadences/stage-operational-rules/RuleFields.tsx",
-          "line": 230,
+          "line": 235,
           "owner": "IconButton",
           "routes": [
             "/crm/pipelines"
@@ -19958,10 +19934,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bca5c5be67621a86e621",
+          "id": "cta:21b51d8ddec47145f844",
           "column": 11,
           "file": "components/features/pipelines/stage-inactivity-alert.tsx",
-          "line": 182,
+          "line": 184,
           "owner": "useStageInactivityAlertEditor",
           "routes": [
             "/crm/pipelines"
@@ -41989,10 +41965,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:6372a6ca5d8fd396cd14",
+          "id": "control:0afb60fb8b67c2c334b1",
           "column": 13,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 411,
+          "line": 393,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -42001,10 +41977,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:5aeef4205f7755ef7c34",
+          "id": "control:898354cf004244a4f3a7",
           "column": 13,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 414,
+          "line": 396,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -42013,10 +41989,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:c7ab2056d03f3664b3f2",
+          "id": "control:077eb892b2ce71ff4fa4",
           "column": 13,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 447,
+          "line": 429,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -42025,10 +42001,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:cd86756c6eebc0d4b7b3",
+          "id": "control:b335cafa2dbe5c0267c7",
           "column": 13,
           "file": "components/features/automations/AutomationList.tsx",
-          "line": 450,
+          "line": 432,
           "owner": "AutomationList",
           "routes": [
             "/automations"
@@ -42037,10 +42013,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:5e75250e720e2f280cde",
+          "id": "control:e2427ff8859050e48d91",
           "column": 13,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 320,
+          "line": 309,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -42049,10 +42025,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:41201c5292715995fbe2",
+          "id": "control:560959746d332993d412",
           "column": 13,
           "file": "components/features/automations/AutomationMediaGallery.tsx",
-          "line": 323,
+          "line": 312,
           "owner": "AutomationMediaGallery",
           "routes": [
             "/automations"
@@ -42109,10 +42085,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:07ee35d37b2091114d3c",
+          "id": "control:8b139a1406b274f07db7",
           "column": 11,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 130,
+          "line": 129,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -42121,10 +42097,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:a1326baea10dade3ba87",
+          "id": "control:e926f4380f9f88fe9d0a",
           "column": 11,
           "file": "components/features/automations/AutomationsScreen.tsx",
-          "line": 133,
+          "line": 132,
           "owner": "Automations",
           "routes": [
             "/automations"
@@ -42133,11 +42109,11 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:bac2620b5b4e1d97bd2f",
-          "column": 23,
+          "id": "control:8ec16f49ff7a044cd114",
+          "column": 19,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 433,
-          "owner": "ExecutionTimelineItem",
+          "line": 393,
+          "owner": "ExecutionRow",
           "routes": [
             "/automations"
           ],
@@ -42145,11 +42121,11 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:09b72a49a52c9badfec7",
-          "column": 23,
+          "id": "control:6e539dc5cb47a0c7a193",
+          "column": 19,
           "file": "components/features/automations/ExecutionHistory.tsx",
-          "line": 434,
-          "owner": "ExecutionTimelineItem",
+          "line": 394,
+          "owner": "ExecutionRow",
           "routes": [
             "/automations"
           ],
@@ -42157,10 +42133,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:2e601a5d2c6c4ce6998e",
+          "id": "control:754af9f5e566f86efc97",
           "column": 13,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 923,
+          "line": 958,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -42169,10 +42145,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:7abe6613b58bee3ebae0",
+          "id": "control:733db5fa6fc068e82fcc",
           "column": 13,
           "file": "components/features/automations/NodeConfigPanel.tsx",
-          "line": 926,
+          "line": 961,
           "owner": "NodeConfigPanel",
           "routes": [
             "/automations"
@@ -47453,7 +47429,7 @@
         }
       ]
     },
-    "digestSha256": "3b1c0ae0c5c35fa825330431155656c4a4633fbd23085362af0be5d828eb49b1"
+    "digestSha256": "cc26cd0dddacbb3d1ed8f6e1f959ef68178f28495f5f1249f32d26149e3d8a9e"
   },
   "routes": [
     {
@@ -50723,6 +50699,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/automations/DistributionNodeFields.tsx",
+      "routes": [
+        "/automations"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/automations/edges/DeletableEdge.tsx",
       "routes": [
         "/automations"
@@ -50814,6 +50799,15 @@
         "protected"
       ],
       "file": "components/features/automations/nodes/DealStatusNode.tsx",
+      "routes": [
+        "/automations"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/automations/nodes/DistributeLeadNode.tsx",
       "routes": [
         "/automations"
       ]
@@ -61991,9 +61985,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1635,
+      "ctasAll": 1633,
       "ctasByKind": {
-        "actionButton": 1459,
+        "actionButton": 1457,
         "external": 6,
         "internal": 34,
         "internalDynamic": 81,
@@ -62002,8 +61996,8 @@
       "forms": 53,
       "formsRouteReachable": 53,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1574,
-      "internalCtasRouteReachable": 1541,
+      "internalCtas": 1572,
+      "internalCtasRouteReachable": 1539,
       "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62031,7 +62025,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 53,
-    "routeReachableInternalCtaImplementations": 1541,
+    "routeReachableInternalCtaImplementations": 1539,
     "routeReachableOverlayImplementations": 248,
     "routeReachableSupplementalOverlayAndTabControls": 291
   },

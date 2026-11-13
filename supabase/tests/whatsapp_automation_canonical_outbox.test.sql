@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(37);
 
 -- Local development still has the retired `name` column as NOT NULL. Give it
 -- a transaction-local compatibility default while keeping every fixture and
@@ -49,6 +49,22 @@ select ok(
     'EXECUTE'
   ),
   'only the service runtime can enqueue automation WhatsApp deliveries'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'private.lock_automation_whatsapp_binding(uuid,uuid,uuid,uuid)',
+    'execute'
+  ) and not has_function_privilege(
+    'anon',
+    'private.lock_automation_whatsapp_binding(uuid,uuid,uuid,uuid)',
+    'execute'
+  ) and not has_function_privilege(
+    'authenticated',
+    'private.lock_automation_whatsapp_binding(uuid,uuid,uuid,uuid)',
+    'execute'
+  ),
+  'the binding lock helper is limited to the service runtime'
 );
 
 insert into auth.users (
@@ -145,14 +161,14 @@ insert into public.automations (
 
 insert into public.automation_flow_versions (
   id, automation_id, organization_id, version, trigger_type, trigger_config,
-  graph, graph_checksum, first_node_key, requires_review
+  graph, graph_checksum, first_node_key, requires_review, created_by
 ) values (
   'ca500000-0000-4000-8000-000000000001',
   'ca400000-0000-4000-8000-000000000001',
   'ca000000-0000-4000-8000-000000000001',
   1, 'manual', '{}',
   '{"nodes":[{"id":"text","type":"action","action_type":"send_whatsapp","config":{}},{"id":"media","type":"action","action_type":"send_image","config":{}}],"connections":[],"settings":{}}',
-  'canonical-outbox-contract', 'text', false
+  'canonical-outbox-contract', 'text', false, 'cb000000-0000-4000-8000-000000000001'
 );
 
 update public.automations
@@ -174,6 +190,25 @@ insert into public.automation_effect_dispatches (
   ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000002', 'text', 'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000002"}'),
   ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000003', 'media', 'automation:ca600000-0000-4000-8000-000000000003:media:send_image', 'send_image', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000001"}');
 
+-- The strict message-binding cutover removes writes on this ledger from
+-- service_role. Reproduce that ACL here so running as owner cannot mask drift.
+revoke insert, update, delete, truncate on public.whatsapp_conversation_lead_bindings from service_role;
+select ok(
+  has_table_privilege('service_role', 'public.whatsapp_conversation_lead_bindings', 'select')
+  and not has_any_column_privilege('service_role', 'public.whatsapp_conversation_lead_bindings', 'update'),
+  'the service role retains read access and has no binding write grant'
+);
+
+set local role service_role;
+select is(
+  (select count(*)::integer from private.lock_automation_whatsapp_binding(
+    'ca000000-0000-4000-8000-000000000002',
+    'ca300000-0000-4000-8000-000000000001',
+    'ca200000-0000-4000-8000-000000000001',
+    'ca100000-0000-4000-8000-000000000001'
+  )),
+  0, 'the binding lock helper cannot return a binding for a different tenant'
+);
 select throws_ok(
   $$select public.enqueue_automation_whatsapp_outbox(
     'ca000000-0000-4000-8000-000000000001',
@@ -186,6 +221,7 @@ select throws_ok(
   '23514', 'automation_whatsapp_attendance_required',
   'automated text cannot bypass current attendance'
 );
+reset role;
 select is(
   (select count(*)::integer from public.whatsapp_outbox
    where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
@@ -209,11 +245,28 @@ where binding.organization_id = 'ca000000-0000-4000-8000-000000000001'::uuid
   )
   and binding.active_to is null;
 
+set local role service_role;
+select is(
+  private.automation_whatsapp_outbox_attendance(
+    'ca000000-0000-4000-8000-000000000001',
+    'ca300000-0000-4000-8000-000000000001',
+    'ca200000-0000-4000-8000-000000000001',
+    'ca100000-0000-4000-8000-000000000001',
+    (select id from public.whatsapp_conversation_lead_bindings
+     where conversation_id = 'ca300000-0000-4000-8000-000000000001' and active_to is null),
+    'cb000000-0000-4000-8000-000000000002'
+  ),
+  null::uuid,
+  'automation cannot borrow another actor attendance'
+);
+reset role;
+
 -- This actor entered while connected; the later disconnect must independently
 -- block sending even though the exact attendance entry still exists.
 update public.whatsapp_sessions set status='disconnected'
 where id='ca200000-0000-4000-8000-000000000002'::uuid;
 
+set local role service_role;
 create temporary table canonical_text_result as
 select public.enqueue_automation_whatsapp_outbox(
   'ca000000-0000-4000-8000-000000000001',
@@ -225,8 +278,18 @@ select public.enqueue_automation_whatsapp_outbox(
   'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp',
   'text', 'Ola pelo outbox', null, null, null, null
 ) as value;
+reset role;
 
 select ok(coalesce((select (value->>'ok')::boolean from canonical_text_result), false), 'text automation is accepted by the durable queue');
+select is(
+  (select message.metadata->>'attendance_entry_id'
+   from public.whatsapp_messages as message
+   where message.client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
+  (select attendance.id::text from public.whatsapp_attendance_entries as attendance
+   where attendance.conversation_id = 'ca300000-0000-4000-8000-000000000001'
+     and attendance.user_id = 'cb000000-0000-4000-8000-000000000001'),
+  'queued message carries the exact attendance of its flow author'
+);
 select is((select status from public.whatsapp_messages where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'), 'queued', 'message is visible as queued before provider delivery');
 select is(
   (select provider_message_id from public.whatsapp_messages where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
@@ -397,6 +460,21 @@ select ok(
   'rejected media path leaves effect retryable and creates no outbox row'
 );
 
+select throws_ok(
+  $$select public.enqueue_automation_whatsapp_outbox(
+    'ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000003',
+    'media', 'lease-media', 'automation:ca600000-0000-4000-8000-000000000003:media:send_image',
+    'ca300000-0000-4000-8000-000000000003', 'ca200000-0000-4000-8000-000000000001',
+    'automation:ca600000-0000-4000-8000-000000000003:media:send_image',
+    'image', 'Legenda', 'image/jpeg',
+    'orgs/ca000000-0000-4000-8000-000000000001/sessions/ca200000-0000-4000-8000-000000000001/outgoing/photo.jpg',
+    1024, 'foto.jpg'
+  )$$,
+  '22023', 'invalid_automation_whatsapp_immutable_media',
+  'a same-tenant legacy mutable media path fails closed'
+);
+
+set local role service_role;
 create temporary table canonical_media_result as
 select public.enqueue_automation_whatsapp_outbox(
   'ca000000-0000-4000-8000-000000000001',
@@ -407,15 +485,21 @@ select public.enqueue_automation_whatsapp_outbox(
   'ca200000-0000-4000-8000-000000000001',
   'automation:ca600000-0000-4000-8000-000000000003:media:send_image',
   'image', 'Legenda', 'image/jpeg',
-  'orgs/ca000000-0000-4000-8000-000000000001/sessions/ca200000-0000-4000-8000-000000000001/outgoing/photo.jpg',
+  'orgs/ca000000-0000-4000-8000-000000000001/sessions/ca200000-0000-4000-8000-000000000001/outgoing/F5650B46629639D37ADE7BBED4329011/' || repeat('a', 64) || '.jpg',
   1024, 'foto.jpg'
 ) as value;
+reset role;
 
 select ok(coalesce((select (value->>'ok')::boolean from canonical_media_result), false), 'same-tenant persisted media is accepted');
 select is(
   (select payload from public.whatsapp_outbox where client_message_id = 'automation:ca600000-0000-4000-8000-000000000003:media:send_image'),
-  '{"action":"send.media","body":{"id":"F5650B46629639D37ADE7BBED4329011","number":"5511999990003","type":"image","mediatype":"image","mediaType":"image","caption":"Legenda","mimetype":"image/jpeg","filename":"foto.jpg","mediaStoragePath":"orgs/ca000000-0000-4000-8000-000000000001/sessions/ca200000-0000-4000-8000-000000000001/outgoing/photo.jpg"}}'::jsonb,
-  'media payload carries a private storage path for fresh worker signing'
+  '{"action":"send.media","body":{"id":"F5650B46629639D37ADE7BBED4329011","number":"5511999990003","type":"image","mediatype":"image","mediaType":"image","caption":"Legenda","mimetype":"image/jpeg","filename":"foto.jpg","mediaStoragePath":"orgs/ca000000-0000-4000-8000-000000000001/sessions/ca200000-0000-4000-8000-000000000001/outgoing/F5650B46629639D37ADE7BBED4329011/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg","mediaSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'::jsonb,
+  'media payload carries a private immutable path and digest for worker verification'
+);
+select is(
+  (select metadata->>'outbound_media_sha256' from public.whatsapp_messages where client_message_id = 'automation:ca600000-0000-4000-8000-000000000003:media:send_image'),
+  repeat('a', 64),
+  'the message and outbox preserve the same media digest'
 );
 
 select * from finish();

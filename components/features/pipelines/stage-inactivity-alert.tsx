@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { RulesExtraEditor } from '@/components/features/cadences';
-import { managedInactivityAlert, useStageAutomations, type StageAutomation } from '@/hooks/use-stage-automations';
+import { managedInactivityAlert, useStageAutomationList, type StageAutomation } from '@/hooks/use-stage-automations';
 import { useStageInactivityAutomation } from '@/hooks/use-stage-inactivity-automation';
 import { getPublicErrorMessage, VimobAPIError } from '@/lib/api/vimob-error';
 import { isLocalReadOnlyMode } from '@/lib/local-read-only';
@@ -42,11 +42,13 @@ export function useStageInactivityAlertEditor({
   enabled: boolean;
   canEdit: boolean;
 }): RulesExtraEditor | undefined {
-  const query = useStageAutomations(stageId);
+  const query = useStageAutomationList(stageId);
   const mutation = useStageInactivityAutomation(stageId);
-  const managed = managedInactivityAlert(query.data);
-  const others = (query.data ?? []).filter((item) => item.automation_type === 'alert_on_inactivity' && item.id !== managed?.id).length;
-  const runtimeAvailable = managed?.inactivity_runtime_available === true || managed?.inactivity_policy?.runtime_available === true;
+  const managed = managedInactivityAlert(query.data?.rows);
+  const others = (query.data?.rows ?? []).filter((item) => item.automation_type === 'alert_on_inactivity' && item.id !== managed?.id).length;
+  const runtimeAvailable = query.data?.inactivityRuntimeAvailable
+    ?? (managed ? managed.inactivity_runtime_available === true || managed.inactivity_policy?.runtime_available === true : undefined);
+  const runtimeUnavailable = runtimeAvailable === false;
   const base: AlertDraft = {
     enabled: managed?.inactivity_policy?.is_enabled === true,
     days: managed?.trigger_days || DEFAULT_DAYS,
@@ -100,7 +102,7 @@ export function useStageInactivityAlertEditor({
     setError(null);
     try {
       let rule: AlertRevision | null = managed;
-      if (current.enabled && managed && !runtimeAvailable) {
+      if (current.enabled && runtimeUnavailable) {
         setError('O serviço de avisos de inatividade está indisponível neste ambiente.');
         return false;
       }
@@ -144,7 +146,7 @@ export function useStageInactivityAlertEditor({
   };
 
   const summary = current.enabled
-    ? `Sem atividade por ${daysLabel(current.days)}, o responsável recebe um aviso${current.message.trim() ? `: “${current.message.trim()}”` : ''}.${managed && !runtimeAvailable ? ' O serviço de avisos está indisponível neste ambiente.' : ''}`
+    ? `Sem atividade por ${daysLabel(current.days)}, o responsável recebe um aviso${current.message.trim() ? `: “${current.message.trim()}”` : ''}.${runtimeUnavailable ? ' O serviço de avisos está indisponível neste ambiente.' : ''}`
     : null;
 
   const node = (
@@ -169,7 +171,7 @@ export function useStageInactivityAlertEditor({
           <Switch
             id={`stage-inactivity-alert-${stageId}`}
             checked={current.enabled}
-            disabled={!editable}
+            disabled={!editable || (runtimeUnavailable && !current.enabled)}
             onCheckedChange={(checked) => update({ enabled: checked })}
             aria-label={`${current.enabled ? 'Desativar' : 'Ativar'} aviso de lead parado`}
           />
@@ -224,9 +226,9 @@ export function useStageInactivityAlertEditor({
         </div>
       ) : null}
 
-      {managed && !runtimeAvailable && !query.isError ? (
+      {runtimeUnavailable && !query.isError ? (
         <p role="status" className="mt-2 pl-0 text-[10px] font-light leading-[15px] text-[var(--app-text-tertiary)] sm:pl-9">
-          O serviço de avisos de inatividade está indisponível neste ambiente; a regra pode ser configurada, mas não envia avisos.
+          O serviço de avisos de inatividade está indisponível neste ambiente.
         </p>
       ) : null}
       {others > 0 ? (

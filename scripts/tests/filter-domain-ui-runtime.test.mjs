@@ -28,6 +28,10 @@ import { PropertyPickerDialog } from '@/components/features/properties/PropertyP
 import { PropertyOwnerCombobox } from '@/components/features/properties/PropertyOwnerCombobox';
 import { AutomationMediaGallery } from '@/components/features/automations/AutomationMediaGallery';
 import { NodeConfigPanel } from '@/components/features/automations/NodeConfigPanel';
+import { FlowSimulator } from '@/components/features/automations/FlowSimulator';
+import { AudioNode } from '@/components/features/automations/nodes/AudioNode';
+import { WaitNode } from '@/components/features/automations/nodes/WaitNode';
+import ReactFlow from 'reactflow';
 import { MetaCampaignDashboard } from '@/components/features/meta/MetaCampaignDashboard';
 import { MarketingScreen } from '@/components/features/marketing/MarketingScreen';
 import { useCampaignInsights } from '@/hooks/use-campaign-insights';
@@ -36,6 +40,46 @@ import { FixtureContext, dreData } from './synthetic';
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 function QueryBridge({filters}) { const query = useCampaignInsights(filters); const model = useMarketingDashboard(filters); window.queryRefetch=query.refetch; window.syncFixture=model.sync; return null; }
+function MediaNodeFixture() {
+  const [data,setData]=useState({});
+  const handleNodeChange=(id,patch)=>{
+    window.nodeChangeCount=(window.nodeChangeCount||0)+1;
+    window.nodeChanges={id,data:patch};
+    setData(previous=>({...previous,...patch}));
+  };
+  return <NodeConfigPanel selectedNode={{id:'synthetic-node',type:'video',position:{x:0,y:0},data}} position={{x:12,y:12}} onClose={()=>{}} onDeleteNode={()=>{}} onNodeDataChange={handleNodeChange}/>;
+}
+const audioNodeTypes={audio:AudioNode};
+function AudioPreviewFixture() {
+  const [url,setUrl]=useState('');
+  const [closed,setClosed]=useState(false);
+  return <>
+    <button onClick={()=>setUrl('https://audio-preview.invalid/test.wav')}>Selecionar áudio de teste</button>
+    <button onClick={()=>setClosed(true)}>Fechar configuração</button>
+    {closed&&<span>Configuração fechada</span>}
+    <div style={{width:600,height:300}}>
+      <ReactFlow nodeTypes={audioNodeTypes} nodes={[{id:'audio',type:'audio',position:{x:10,y:10},data:{audio_preview_url:url}}]} edges={[]}/>
+    </div>
+  </>;
+}
+const waitNodeTypes={wait:WaitNode};
+const replyFixtureNodes=[
+  {id:'start',type:'start',position:{x:0,y:0},data:{trigger_type:'manual'}},
+  {id:'wait',type:'wait',position:{x:200,y:100},data:{wait_type:'seconds',wait_value:3,stop_on_reply:true}},
+  {id:'message',type:'message',position:{x:500,y:100},data:{message:'Ação depois da resposta'}},
+];
+const replyFixtureEdges=[
+  {id:'start-wait',source:'start',target:'wait'},
+  {id:'wait-replied',source:'wait',sourceHandle:'replied',target:'message'},
+];
+function ReplyPreviewFixture() {
+  return <div style={{display:'flex',height:550}}>
+    <div style={{width:580,height:320}}>
+      <ReactFlow nodeTypes={waitNodeTypes} nodes={replyFixtureNodes} edges={replyFixtureEdges}/>
+    </div>
+    <FlowSimulator nodes={replyFixtureNodes} edges={replyFixtureEdges} onClose={()=>{}}/>
+  </div>;
+}
 function Fixture({name,revision}) {
   window.fixtureName=name;
   const [range,setRange]=useState({from:new Date(2024,0,1),to:new Date(2024,11,31)});
@@ -46,7 +90,7 @@ function Fixture({name,revision}) {
   window.setFixtureValidPeriod=()=>setRange({from:new Date(2024,0,1),to:new Date(2024,11,31)});
   const filters={dateRange:range,datePreset:'custom',teamId:null,pipelineId:null,userId:null,source:null,pageId:null,campaignId:null,campaignIds:[],adSetId:null,adId:null,tagIds:[],dealStatus:null,searchQuery:'',...fixtureState};
   return <FixtureContext.Provider value={filters}><main data-domain-fixture={revision} className="app-shell" style={{padding:12}}>
-    {name==='owner'?<div style={{marginTop:188,width:Math.min(300,window.innerWidth-24)}}><PropertyOwnerCombobox value={owner?.id} selectedLabel={owner?.name} onSelect={value=>{setOwner(value);window.selectedOwner=value?.id??null;}}/></div>:name.startsWith('gallery-')?<section style={{width:Math.min(288,window.innerWidth-24)}}><AutomationMediaGallery mediaType={name.slice(8)} onSelect={file=>{window.selectedFile=file.path;}}/></section>:name==='node-gallery'?<NodeConfigPanel selectedNode={{id:'synthetic-node',type:'video',position:{x:0,y:0},data:{}}} position={{x:12,y:12}} onClose={()=>{}} onDeleteNode={()=>{}} onNodeDataChange={(id,data)=>{window.nodeChanges={id,data};}}/>:name==='entries'?<Entries/>:name==='contracts'?<Contracts/>:name==='dre'?<DRE/>:name==='dre-report'?<DREReport data={dreData} showPrevious={false} regime="cash"/>:name==='picker'?<PropertyPickerDialog properties={[]} open onSelect={()=>{}}/>:name==='meta'?<><QueryBridge filters={filters}/><MetaCampaignDashboard filters={filters}/></>:<><QueryBridge filters={filters}/><MarketingScreen activeTab="overview" tabHrefs={{overview:'/marketing',paid:'/marketing/paid',media:'/marketing/media',acquisition:'/marketing/acquisition',social:'/marketing/social'}}/></>}
+    {name==='owner'?<div style={{marginTop:188,width:Math.min(300,window.innerWidth-24)}}><PropertyOwnerCombobox value={owner?.id} selectedLabel={owner?.name} onSelect={value=>{setOwner(value);window.selectedOwner=value?.id??null;}}/></div>:name.startsWith('gallery-')?<section style={{width:Math.min(288,window.innerWidth-24)}}><AutomationMediaGallery mediaType={name.slice(8)} onSelect={file=>{window.selectedFile=file.path;}}/></section>:name==='node-gallery'?<MediaNodeFixture/>:name==='audio-preview'?<AudioPreviewFixture/>:name==='reply-preview'?<ReplyPreviewFixture/>:name==='entries'?<Entries/>:name==='contracts'?<Contracts/>:name==='dre'?<DRE/>:name==='dre-report'?<DREReport data={dreData} showPrevious={false} regime="cash"/>:name==='picker'?<PropertyPickerDialog properties={[]} open onSelect={()=>{}}/>:name==='meta'?<><QueryBridge filters={filters}/><MetaCampaignDashboard filters={filters}/></>:<><QueryBridge filters={filters}/><MarketingScreen activeTab="overview" tabHrefs={{overview:'/marketing',paid:'/marketing/paid',media:'/marketing/media',acquisition:'/marketing/acquisition',social:'/marketing/social'}}/></>}
   </main></FixtureContext.Provider>;
 }
 const app=createRoot(document.getElementById('app'));
@@ -62,7 +106,7 @@ export const FixtureContext=createContext(null);
 const noop=()=>{};
 const mutation={isPending:false,mutate:noop,mutateAsync:async()=>({})};
 export const dreData={period:{start:'2026-10-01',end:'2026-10-31'},lines:[],totals:{grossRevenue:0,netRevenue:0,grossProfit:0,operatingResult:0,netResult:0}};
-export const useAuth=()=>({user:{id:'20000000-0000-4000-8000-000000000001'},activeOrganization:{organizationId:'10000000-0000-4000-8000-000000000001'},tenantContext:{memberRole:'admin'},isSuperAdmin:true});
+export const useAuth=()=>({user:{id:'20000000-0000-4000-8000-000000000001'},activeOrganization:{status:'ready',organizationId:'10000000-0000-4000-8000-000000000001'},tenantContext:{memberRole:'admin'},isSuperAdmin:true});
 export const supabase={from:()=>{throw new Error('Database access is forbidden in this fixture')},rpc:()=>{throw new Error('Database access is forbidden in this fixture')}};
 export const createClient=()=>supabase;
 export const useUserPermissions=()=>({hasPermission:()=>true,isLoading:false});
@@ -83,8 +127,9 @@ const owners=Array.from({length:51},(_,index)=>({id:'synthetic-owner-'+index,nam
 export const PROPERTY_OWNER_PAGE_SIZE=50;
 window.ownerNextPageCalls=0;window.galleryNextPageCalls=0;
 export const usePropertyOwnersPage=search=>{const state=useContext(FixtureContext);window.lastOwnerSearch=search;const data=useMemo(()=>({pages:[{owners:state.ownerLoading||state.ownerError?[]:owners.slice(0,state.ownerPage===2?51:50).filter(owner=>owner.name.toLowerCase().includes(search.toLowerCase()))}]}),[search,state.ownerLoading,state.ownerError,state.ownerPage]);return {data,isLoading:!!state.ownerLoading,isFetching:!!state.ownerLoading,isError:!!state.ownerError,hasNextPage:!search&&!state.ownerLoading&&!state.ownerError&&state.ownerPage!==2,isFetchingNextPage:false,fetchNextPage:()=>{window.ownerNextPageCalls++;window.setDomainFixtureState({ownerPage:2});},refetch:()=>window.setDomainFixtureState({ownerError:false})};};
-export const useAutomationMedia=(mediaType,search)=>{const state=useContext(FixtureContext);window.lastGallerySearch=search;const extension={audio:'mp3',video:'mp4',image:'png'}[mediaType];const data=useMemo(()=>state.galleryLoading||state.galleryError?[]:Array.from({length:state.galleryPage===2?51:50},(_,index)=>({name:'Arquivo sintético '+index+'.'+extension,path:'synthetic/'+index,bucket:'synthetic',publicUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',contentType:null,size:1024,metadata:{},createdAt:null,updatedAt:null})).filter(file=>file.name.toLowerCase().includes(search.toLowerCase())),[extension,search,state.galleryLoading,state.galleryError,state.galleryPage]);return {data,isLoading:!!state.galleryLoading,error:state.galleryError?Error('Synthetic gallery error'):null,hasNextPage:!search&&!state.galleryLoading&&!state.galleryError&&state.galleryPage!==2,isFetchingNextPage:false,fetchNextPage:()=>{window.galleryNextPageCalls++;window.setDomainFixtureState({galleryPage:2});},refetch:()=>window.setDomainFixtureState({galleryError:false})};};
-export const automationsAPI={uploadMedia:()=>{throw Error('Transport forbidden');},deleteMedia:()=>{throw Error('Transport forbidden');}};
+const preview='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+export const useAutomationMedia=(mediaType,search)=>{const state=useContext(FixtureContext);window.lastGallerySearch=search;const extension={audio:'mp3',video:'mp4',image:'png'}[mediaType];const files=Array.from({length:state.galleryPage===2?51:50},(_,index)=>({name:'Arquivo sintético '+index+'.'+extension,path:'synthetic/'+index,bucket:'synthetic',publicUrl:preview,contentType:null,size:1024,metadata:{},createdAt:null,updatedAt:null}));if(state.uploadedMedia)files.unshift(state.uploadedMedia);const data=state.galleryLoading||state.galleryError?[]:files.filter(file=>file.name.toLowerCase().includes(search.toLowerCase()));return {data,isLoading:!!state.galleryLoading,error:state.galleryError?Error('Synthetic gallery error'):null,hasNextPage:!search&&!state.galleryLoading&&!state.galleryError&&state.galleryPage!==2,isFetchingNextPage:false,fetchNextPage:()=>{window.galleryNextPageCalls++;window.setDomainFixtureState({galleryPage:2});},refetch:()=>window.setDomainFixtureState({galleryError:false})};};
+export const automationsAPI={uploadMedia:async({fileName,mediaType})=>{if(window.fixtureName!=='node-gallery')throw Error('Transport forbidden');const file={name:fileName,path:'synthetic/uploaded',bucket:'synthetic',publicUrl:preview,contentType:mediaType+'/mp4',size:4};window.setDomainFixtureState({uploadedMedia:file});return file;},deleteMedia:()=>{throw Error('Transport forbidden');}};
 export class VimobAPIError extends Error {};
 export const useCreateTag=()=>mutation; export const useAllMetaFormConfigs=()=>({data:[],isLoading:false});export const useLeads=()=>({data:[],isLoading:false});export const useStages=()=>({data:[]});
 export const getPropertySiteInfo=async()=>null;
@@ -334,4 +379,62 @@ test('gallery retains last-file selection when composed in the actual NodeConfig
     assert.deepEqual(await page.evaluate(()=>window.nodeChanges),{id:'synthetic-node',data:{media_path:'synthetic/49',media_bucket:'synthetic',video_preview_url:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}});
   }
   assert.deepEqual(browserErrors,[]);
+});
+
+test('a successful upload selects its file once while gallery results change',async()=>{
+  await show('node-gallery',390,480);
+  await page.evaluate(()=>{window.nodeChangeCount=0;});
+  await page.getByLabel('Selecionar video para envio',{exact:true}).setInputFiles({name:'fixture.mp4',mimeType:'video/mp4',buffer:Buffer.from('test')});
+  await expect(page.getByRole('button',{name:'Selecionar fixture.mp4',exact:true})).toBeVisible();
+  await page.evaluate(()=>window.setDomainFixtureState({galleryPage:2}));
+  await expect(page.getByRole('button',{name:'Carregar mais arquivos',exact:true})).toHaveCount(0);
+  assert.equal(await page.evaluate(()=>window.nodeChangeCount),1);
+  assert.equal(await page.evaluate(()=>window.nodeChanges.data.media_path),'synthetic/uploaded');
+  assert.deepEqual(browserErrors,[]);
+});
+
+test('selecting a flow audio does not fetch media until the user starts playback',async()=>{
+  const silence=Buffer.alloc(32_000);
+  const header=Buffer.from('524946460000000057415645666d74201000000001000100401f0000803e0000020010006461746100000000','hex');
+  header.writeUInt32LE(silence.length+36,4);
+  header.writeUInt32LE(silence.length,40);
+  const audioUrl='https://audio-preview.invalid/test.wav';
+  const requests=[];
+  await page.route(audioUrl,route=>{requests.push(route.request().url());return route.fulfill({contentType:'audio/wav',body:Buffer.concat([header,silence])});});
+  try {
+    await show('audio-preview');
+    await page.getByRole('button',{name:'Selecionar áudio de teste'}).click();
+    const play=page.getByRole('button',{name:'Reproduzir prévia do áudio',exact:true});
+    await expect(play).toBeVisible();
+    await page.getByRole('button',{name:'Fechar configuração'}).click();
+    await expect(page.getByText('Configuração fechada')).toBeVisible();
+    assert.deepEqual(requests,[]);
+    await play.click();
+    const pause=page.getByRole('button',{name:'Pausar prévia do áudio',exact:true});
+    await expect.poll(()=>requests.length).toBe(1);
+    await expect(pause).toBeVisible();
+    await pause.click();
+    await expect(play).toBeVisible();
+    assert.deepEqual(browserErrors,[]);
+  } finally {
+    await page.unroute(audioUrl);
+  }
+});
+
+test('reply preview runs its connected outcome and finishes at the disconnected outcome', async () => {
+  await show('reply-preview');
+  await expect(page.locator('[data-handleid="replied"]')).toHaveAttribute('title', 'Respondeu');
+  await expect(page.locator('[data-handleid="no_reply"]')).toHaveAttribute('title', 'Não respondeu');
+  const reply = page.getByPlaceholder('Digite sua resposta...');
+  await reply.fill('Quero saber mais');
+  await reply.press('Enter');
+  await expect(page.getByText('Ação depois da resposta', { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder('Simulação concluída')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reiniciar', exact: true }).click();
+  await expect(reply).toBeEnabled();
+  await expect(page.getByText('O prazo terminou sem resposta do lead.', { exact: false })).toBeVisible();
+  await expect(page.getByPlaceholder('Simulação concluída')).toBeVisible();
+  await expect(page.getByText('Ação depois da resposta', { exact: true })).toHaveCount(0);
+  assert.deepEqual(browserErrors, []);
 });

@@ -104,7 +104,17 @@ function normalizeAutomation(row: StageAutomationRow): StageAutomation {
   };
 }
 
+type StageAutomationList = { rows: StageAutomation[]; inactivityRuntimeAvailable?: boolean };
+
+function selectStageAutomationRows(list: StageAutomationList) {
+  return list.rows;
+}
+
 export function useStageAutomations(stageId?: string) {
+  return useStageAutomationList(stageId, selectStageAutomationRows);
+}
+
+export function useStageAutomationList<T = StageAutomationList>(stageId?: string, select?: (data: StageAutomationList) => T) {
   const {
     activeOrganization,
     tenantContext,
@@ -143,11 +153,12 @@ export function useStageAutomations(stageId?: string) {
 
   return useQuery({
     queryKey: stageAutomationsQueryKey(stageId, organizationId, currentUserId, accessSignature),
-    queryFn: async () => {
-      if (!organizationId) return [];
-      const data = await stageConfigAPI.listStageAutomations({ stageId, organizationId });
-      return data.map(normalizeAutomation);
+    queryFn: async (): Promise<StageAutomationList> => {
+      if (!organizationId) return { rows: [] };
+      const { rows, inactivityRuntimeAvailable } = await stageConfigAPI.listStageAutomations({ stageId, organizationId });
+      return { rows: rows.map(normalizeAutomation), inactivityRuntimeAvailable };
     },
+    select,
     enabled: !!organizationId && canViewStageAutomations,
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,

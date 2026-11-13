@@ -26,6 +26,10 @@ type automationStageCommand struct {
 }
 
 func (input *automationStageCommand) validate() bool {
+	return input.validateFor("move_lead")
+}
+
+func (input *automationStageCommand) validateFor(action string) bool {
 	var ok bool
 	input.OrganizationID, ok = normalizeUUID(input.OrganizationID)
 	if !ok {
@@ -37,7 +41,7 @@ func (input *automationStageCommand) validate() bool {
 	}
 	return input.NodeKey != "" && strings.TrimSpace(input.NodeKey) == input.NodeKey && len(input.NodeKey) <= 200 &&
 		strings.TrimSpace(input.LeaseToken) != "" && len(input.LeaseToken) <= 512 &&
-		input.EffectKey == "automation:"+input.ExecutionID+":"+input.NodeKey+":move_lead" && len(input.EffectKey) <= 512
+		input.EffectKey == "automation:"+input.ExecutionID+":"+input.NodeKey+":"+action && len(input.EffectKey) <= 512
 }
 
 type automationCommandError struct {
@@ -64,6 +68,10 @@ type AutomationStageCommandHandler struct {
 	execute func(context.Context, automationStageCommand) (automationStageResponse, error)
 }
 
+type AutomationDistributionCommandHandler struct {
+	AutomationStageCommandHandler
+}
+
 func NewAutomationStageCommandHandler(repo Repository, resolver transactionalTenantResolver, token string) AutomationStageCommandHandler {
 	return AutomationStageCommandHandler{token: strings.TrimSpace(token), execute: func(ctx context.Context, input automationStageCommand) (automationStageResponse, error) {
 		return repo.executeAutomationStageCommand(ctx, resolver, input)
@@ -71,6 +79,20 @@ func NewAutomationStageCommandHandler(repo Repository, resolver transactionalTen
 }
 
 func (handler AutomationStageCommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler.serveCommand(w, r, "move_lead")
+}
+
+func NewAutomationDistributionCommandHandler(repo Repository, resolver transactionalTenantResolver, token string) AutomationDistributionCommandHandler {
+	return AutomationDistributionCommandHandler{AutomationStageCommandHandler{token: strings.TrimSpace(token), execute: func(ctx context.Context, input automationStageCommand) (automationStageResponse, error) {
+		return repo.executeAutomationDistributionCommand(ctx, resolver, input)
+	}}}
+}
+
+func (handler AutomationDistributionCommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler.serveCommand(w, r, automationDistributionAction)
+}
+
+func (handler AutomationStageCommandHandler) serveCommand(w http.ResponseWriter, r *http.Request, action string) {
 	if handler.token == "" || handler.execute == nil {
 		httpserver.WriteError(w, r, 503, "automation_command_unavailable", "Automation command service is unavailable.")
 		return
@@ -84,7 +106,7 @@ func (handler AutomationStageCommandHandler) ServeHTTP(w http.ResponseWriter, r 
 	var input automationStageCommand
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF || !input.validate() {
+	if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF || !input.validateFor(action) {
 		httpserver.WriteError(w, r, 400, "automation_command_invalid", "Invalid automation command.")
 		return
 	}

@@ -10,7 +10,7 @@ import (
 )
 
 func TestAutomationStageCommandLocalPostgres(t *testing.T) {
-	f := newAutomationStageFixture(t)
+	f := newAutomationStageFixture(t, "commissions", "financial_entries")
 	run := func(input automationStageCommand) (automationStageResponse, error) {
 		return f.repo.executeAutomationStageCommand(f.ctx, f.resolver, input)
 	}

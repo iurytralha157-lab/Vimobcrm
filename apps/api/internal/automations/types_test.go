@@ -161,6 +161,46 @@ func TestSaveFlowValidateRequiresSafeResponseSentimentTopology(t *testing.T) {
 	}
 }
 
+func TestSaveFlowValidateReplyAwareDelayAllowsUnconnectedOutcome(t *testing.T) {
+	branch := func(value string) *string { return &value }
+	tests := []struct {
+		name     string
+		outcomes []FlowConnection
+		valid    bool
+	}{
+		{"reply only", []FlowConnection{{SourceHandle: branch("replied")}}, true},
+		{"timeout only", []FlowConnection{{ConditionBranch: branch("no_reply")}}, true},
+		{"both", []FlowConnection{{SourceHandle: branch("replied")}, {ConditionBranch: branch("no_reply")}}, true},
+		{"neither", nil, false},
+		{"unnamed", []FlowConnection{{}}, false},
+		{"unknown with valid branch", []FlowConnection{{SourceHandle: branch("unknown")}, {ConditionBranch: branch("no_reply")}}, false},
+		{"duplicates across targets", []FlowConnection{{SourceHandle: branch("replied")}, {ConditionBranch: branch("replied")}}, false},
+		{"conflicting aliases", []FlowConnection{{SourceHandle: branch("replied"), ConditionBranch: branch("no_reply")}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := validSaveFlowRequest()
+			action := request.FlowDefinition.Nodes[1]
+			request.FlowDefinition.Nodes[1] = FlowNode{
+				ID: "wait", Type: "delay",
+				Config: json.RawMessage(`{"delay_type":"minutes","delay_value":1,"stop_on_reply":true}`),
+			}
+			request.FlowDefinition.Connections[0].Target = "wait"
+			for i, outcome := range tt.outcomes {
+				target := action
+				target.ID = fmt.Sprintf("output-%d", i)
+				request.FlowDefinition.Nodes = append(request.FlowDefinition.Nodes, target)
+				outcome.Source = "wait"
+				outcome.Target = target.ID
+				request.FlowDefinition.Connections = append(request.FlowDefinition.Connections, outcome)
+			}
+			if _, err := request.Validate(); (err == nil) != tt.valid {
+				t.Fatalf("Validate() error = %v, want valid = %v", err, tt.valid)
+			}
+		})
+	}
+}
+
 func TestSaveFlowValidateRejectsActionTypeOutsideActionNode(t *testing.T) {
 	request := validSaveFlowRequest()
 	actionType := "send_whatsapp"

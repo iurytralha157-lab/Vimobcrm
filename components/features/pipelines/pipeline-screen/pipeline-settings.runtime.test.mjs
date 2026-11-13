@@ -52,6 +52,7 @@ before(async () => {
   await mock('@/hooks/use-stages', `${mutation}const scopeKey={};const scoped=kind=>({...useMutation(kind),scopeKey,captureScopeGuard:()=>()=>true});export const useUpdateStage=()=>scoped('general');export const useStages=()=>({data:window.h.stages,isPending:false});export const useReorderStages=()=>scoped('reorder');export const useDeleteStage=()=>scoped('stage-delete');`);
   await mock('@/hooks/use-stage-automations', `${mutation}
     export const useStageAutomations=()=>({data:window.h.list,isLoading:false,isError:window.h.listError,isFetching:false,refetch:async()=>{window.h.retries++;return{data:window.h.list}}});
+    export const useStageAutomationList=()=>({...useStageAutomations(),data:{rows:window.h.list,inactivityRuntimeAvailable:window.h.inactivityRuntimeAvailable}});
     export const useCreateStageAutomation=()=>({...useMutation('create'),scopeKey:'synthetic-settings',captureScopeGuard:()=>()=>true});export const useUpdateStageAutomation=()=>useMutation('update');export const useDeleteStageAutomation=()=>useMutation('delete');export const useToggleStageAutomation=()=>useMutation('toggle');
     export const AUTOMATION_TYPE_LABELS={alert_on_inactivity:'Alerta por inatividade',change_assignee_on_enter:'Mudar responsável',change_deal_status_on_enter:'Mudar status',move_stage_on_inactivity:'Mudar etapa por tempo parado',redistribute_on_inactivity:'Redistribuir lead por tempo parado'};
     export const isInactivityAutomationType=type=>['alert_on_inactivity','move_stage_on_inactivity','redistribute_on_inactivity'].includes(type);
@@ -237,6 +238,16 @@ test('settings actions sit in the fixed footer: gray Cancelar and orange Salvar'
     assert.equal(await save.isDisabled(), true);
     await page.getByRole('tab', { name: 'Regras da etapa' }).click();
     assert.equal(await page.getByRole('tab', { name: 'Geral' }).getAttribute('aria-selected'), 'true');
+  } finally { await page.close(); }
+});
+
+test('an empty stage shows unavailable notice service before the first save', async () => {
+  const page = await open('settings', { initialTab: 'cadence', inactivityRuntimeAvailable: false });
+  try {
+    await page.getByRole('status').filter({ hasText: 'O serviço de avisos de inatividade está indisponível neste ambiente.' }).waitFor();
+    assert.equal(await page.getByRole('switch', { name: 'Ativar aviso de lead parado' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Salvar regras', exact: true }).isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.h.calls.length), 0);
   } finally { await page.close(); }
 });
 

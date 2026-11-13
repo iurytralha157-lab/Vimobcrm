@@ -1,25 +1,25 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "5d95fce13ff62c8edff16ae075d3aba912b7b407357443055ec9f9c5b31b9593",
-  "surfaceInventoryDigestSha256": "02367716eae29a3c4ebacf4d7bf39915c00f4fd414d388921c846d00dac14948",
+  "sourceDigestSha256": "4a7d340b1902213484e57f80d446f1771b5e816a6fe41188f3abf5b2c0e85871",
+  "surfaceInventoryDigestSha256": "aef9be43d6fdd78fdb03fa3b056facf94c08889a9facd9dd8d58dee3edf68945",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 673,
+    "filesScanned": 675,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 70,
-    "findings": 158,
-    "protectedReachableFilesWithFindings": 66,
-    "protectedReachableFindings": 154,
+    "filesWithFindings": 71,
+    "findings": 159,
+    "protectedReachableFilesWithFindings": 67,
+    "protectedReachableFindings": 155,
     "bySurfaceScope": {
-      "protected-only": 113,
+      "protected-only": 114,
       "protected-and-public": 41,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 114,
+      "P1": 115,
       "P2": 26,
       "P3": 18
     },
@@ -43,7 +43,7 @@
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 7,
+        "count": 8,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
@@ -419,6 +419,14 @@
       }
     },
     {
+      "file": "components/features/automations/ExecutionHistory.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/dashboard/CampaignLeadsChart.tsx",
       "count": 1,
       "score": 3,
@@ -484,14 +492,6 @@
     },
     {
       "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -822,6 +822,14 @@
       }
     },
     {
+      "file": "components/features/automations/ExecutionHistory.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/dashboard/CampaignLeadsChart.tsx",
       "count": 1,
       "score": 3,
@@ -903,14 +911,6 @@
     },
     {
       "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/property-locations/OwnersPanel.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -1044,6 +1044,15 @@
       "rule": "hardcoded-color",
       "surfaceScope": "protected-and-public",
       "weight": 4
+    },
+    {
+      "file": "components/features/automations/ExecutionHistory.tsx",
+      "line": 285,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",

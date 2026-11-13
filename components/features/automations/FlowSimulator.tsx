@@ -5,6 +5,7 @@ import { X, RotateCcw, Globe, Image as ImageIcon, Headphones, Video, Send } from
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { createClientId } from '@/lib/client-id';
+import { automationGraphSchema } from '@/lib/validation/automations';
 import {
   AUTOMATION_CUSTOM_VARIABLES,
   evaluateAutomationCondition,
@@ -32,6 +33,13 @@ interface FlowSimulatorProps {
 interface PreviewValidationIssue {
   message: string;
   nodeId?: string;
+}
+
+interface PreviewWait {
+  canReply: boolean;
+  seconds: number;
+  signal: AbortSignal;
+  resume: (branch?: string) => Promise<void>;
 }
 
 const PREVIEW_WAIT_LIMIT_SECONDS = 2;
@@ -62,18 +70,17 @@ function previewContext(replyContent?: string | null): Record<string, unknown> {
 }
 
 function validatePreviewFlow(nodes: Node[], edges: Edge[]): PreviewValidationIssue | null {
-  const startNodes = nodes.filter((node) => node.type === 'start');
-  if (startNodes.length !== 1) return { message: 'O fluxo precisa ter exatamente um card de Início.' };
-
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const outgoing = new Map<string, Edge[]>();
-  const incoming = new Map<string, Edge[]>();
-  for (const edge of edges) {
-    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) {
-      return { message: 'Existe uma conexão apontando para um card que não existe mais.' };
-    }
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge]);
-    incoming.set(edge.target, [...(incoming.get(edge.target) ?? []), edge]);
+  const graph = automationGraphSchema.safeParse({
+    nodes: nodes.map(({ id, type, data }) => ({
+      id, type: type === 'start' ? 'trigger' : type === 'wait' ? 'delay' : type === 'condition' ? 'condition' : 'action',
+      config: data,
+    })),
+    connections: edges.map(({ source, target, sourceHandle }) => ({ source, target, source_handle: sourceHandle })),
+  });
+  if (!graph.success) {
+    const issue = graph.error.issues[0];
+    const [field, index] = issue.path;
+    return { message: issue.message, nodeId: field === 'nodes' && typeof index === 'number' ? nodes[index]?.id : undefined };
   }
 
   for (const node of nodes) {
@@ -110,60 +117,21 @@ function validatePreviewFlow(nodes: Node[], edges: Edge[]): PreviewValidationIss
     if (node.type === 'move_stage' && (!node.data.move_pipeline_id || !node.data.move_stage_id)) {
       return { nodeId: node.id, message: 'Selecione a pipeline e a etapa de destino.' };
     }
-    if (node.type === 'wait') {
-      const nodeEdges = outgoing.get(node.id) ?? [];
-      const branches = new Set(nodeEdges.map((edge) => edge.sourceHandle).filter(Boolean));
-      if (node.data.stop_on_reply === true && (
-        nodeEdges.length !== 2 || !branches.has('replied') || !branches.has('no_reply')
-      )) {
-        return { nodeId: node.id, message: 'A espera por resposta precisa das saídas “Respondeu” e “Timeout”.' };
-      }
+    if (node.type === 'assign_user' && !String(node.data.assign_user_id || '').trim()) {
+      return { nodeId: node.id, message: 'Selecione o responsável para este card.' };
     }
-    if (node.type === 'condition') {
-      const nodeEdges = outgoing.get(node.id) ?? [];
-      const branches = new Set(nodeEdges.map((edge) => edge.sourceHandle).filter(Boolean));
-      const conditionType = node.data.condition_type || 'custom';
-      if (conditionType === 'response_sentiment') {
-        if (nodeEdges.length !== 3 || !branches.has('true') || !branches.has('false') || !branches.has('unknown')) {
-          return { nodeId: node.id, message: 'A condição de resposta precisa das saídas “Positiva”, “Negativa” e “Incerta”.' };
-        }
-        const parentEdges = incoming.get(node.id) ?? [];
-        const hasReplyParent = parentEdges.length === 1 && parentEdges.some((edge) => {
-          const parent = nodeById.get(edge.source);
-          return parent?.type === 'wait' && parent.data.stop_on_reply === true && edge.sourceHandle === 'replied';
-        });
-        if (!hasReplyParent) {
-          return { nodeId: node.id, message: 'Conecte esta condição diretamente à saída “Respondeu” de uma espera.' };
-        }
-      } else {
-        if (nodeEdges.length !== 2 || !branches.has('true') || !branches.has('false')) {
-          return { nodeId: node.id, message: 'A condição personalizada precisa das saídas “Sim” e “Não”.' };
-        }
-        if (!AUTOMATION_CUSTOM_VARIABLES.some((item) => item.value === node.data.variable)) {
-          return { nodeId: node.id, message: 'Selecione uma variável válida, sem usar {{chaves}}.' };
-        }
-        if (!CUSTOM_CONDITION_OPERATORS.has(String(node.data.operator || ''))) {
-          return { nodeId: node.id, message: 'Selecione um operador válido para a condição.' };
-        }
+    if (node.type === 'distribute_lead' && !String(node.data.round_robin_id || '').trim()) {
+      return { nodeId: node.id, message: 'Selecione a fila de distribuição para este card.' };
+    }
+    if (node.type === 'condition' && node.data.condition_type !== 'response_sentiment') {
+      if (!AUTOMATION_CUSTOM_VARIABLES.some((item) => item.value === node.data.variable)) {
+        return { nodeId: node.id, message: 'Selecione uma variável válida, sem usar {{chaves}}.' };
+      }
+      if (!CUSTOM_CONDITION_OPERATORS.has(String(node.data.operator || ''))) {
+        return { nodeId: node.id, message: 'Selecione um operador válido para a condição.' };
       }
     }
   }
-
-  const visited = new Set<string>();
-  const visiting = new Set<string>();
-  const visit = (nodeId: string): boolean => {
-    if (visiting.has(nodeId)) return false;
-    if (visited.has(nodeId)) return true;
-    visiting.add(nodeId);
-    for (const edge of outgoing.get(nodeId) ?? []) {
-      if (!visit(edge.target)) return false;
-    }
-    visiting.delete(nodeId);
-    visited.add(nodeId);
-    return true;
-  };
-  if (!visit(startNodes[0].id)) return { nodeId: startNodes[0].id, message: 'O fluxo possui um ciclo e não pode ser simulado.' };
-  if (visited.size !== nodes.length) return { message: 'Todos os cards precisam estar conectados ao Início.' };
   return null;
 }
 
@@ -172,19 +140,16 @@ function validatePreviewFlow(nodes: Node[], edges: Edge[]): PreviewValidationIss
 export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSimulatorProps) {
   const [messages, setMessages] = useState<SimMessage[]>([]);
   const [userInput, setUserInput] = useState('');
-  const [, setIsRunning] = useState(false);
-  const [waitingForReply, setWaitingForReply] = useState(false);
-  const [canReply, setCanReply] = useState(false);
-  const [currentWaitNodeId, setCurrentWaitNodeId] = useState<string | null>(null);
+  const [pendingWait, setPendingWait] = useState<PreviewWait | null>(null);
+  const [isFinished, setIsFinished] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [waitCountdown, setWaitCountdown] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef(false);
+  const runRef = useRef<AbortController | null>(null);
+  const waitRef = useRef<PreviewWait | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Track visited nodes for persistent highlighting
-  const visitedNodesRef = useRef<Set<string>>(new Set());
-  const processedNodesRef = useRef<Set<string>>(new Set());
   const replyContentRef = useRef<string | null | undefined>(undefined);
+  const canReply = pendingWait?.canReply === true;
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -199,7 +164,6 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
   }, [messages, isTyping, scrollToBottom]);
 
   const highlightNode = useCallback((nodeId: string) => {
-    visitedNodesRef.current.add(nodeId);
     onHighlightNode?.(nodeId);
   }, [onHighlightNode]);
 
@@ -244,24 +208,17 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
     };
   }, []);
 
-  const getNextNodes = useCallback((nodeId: string, sourceHandle?: string): Node[] => {
-    const outEdges = edges.filter(e => {
-      if (e.source !== nodeId) return false;
-      if (sourceHandle) {
-        // If we're looking for a specific handle, match it exactly OR match null if it's the default
-        // For wait nodes, null sourceHandle should act as 'no_reply' or default
-        return e.sourceHandle === sourceHandle || (!e.sourceHandle && (sourceHandle === 'no_reply' || sourceHandle === 'default'));
-      }
-      return true;
-    });
-    return outEdges
-      .map(e => nodes.find(n => n.id === e.target))
-      .filter(Boolean) as Node[];
+  const getNextNode = useCallback((nodeId: string, sourceHandle?: string) => {
+    const edge = edges.find((item) => item.source === nodeId && (!sourceHandle || item.sourceHandle === sourceHandle));
+    return edge ? nodes.find((node) => node.id === edge.target) : undefined;
   }, [nodes, edges]);
 
-  const getStartNodes = useCallback((): Node[] => {
-    return nodes.filter(n => n.type === 'start');
-  }, [nodes]);
+  const finishSimulation = useCallback((signal: AbortSignal) => {
+    if (signal.aborted || waitRef.current) return;
+    addSystemMessage('✅ Fluxo finalizado.');
+    setIsFinished(true);
+    clearHighlight();
+  }, [addSystemMessage, clearHighlight]);
 
   // Friendly trigger labels
   const getTriggerLabel = (node: Node): string => {
@@ -291,11 +248,8 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
     return label;
   };
 
-  const processNode = useCallback(async (node: Node): Promise<void> => {
-    if (abortRef.current) return;
-    // Skip already-processed nodes to avoid duplicates
-    if (processedNodesRef.current.has(node.id)) return;
-    processedNodesRef.current.add(node.id);
+  const processNode = useCallback(async function processNode(node: Node, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
 
     // Highlight the node on canvas
     highlightNode(node.id);
@@ -309,7 +263,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       case 'message': {
         setIsTyping(true);
         await delay(800);
-        if (abortRef.current) return;
+        if (signal.aborted) return;
         setIsTyping(false);
         const content = String(node.data.content || node.data.message || 'Mensagem sem conteúdo');
         const parsed = renderAutomationTemplate(content, previewContext(replyContentRef.current));
@@ -320,7 +274,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       case 'image': {
         setIsTyping(true);
         await delay(600);
-        if (abortRef.current) return;
+        if (signal.aborted) return;
         setIsTyping(false);
         addMessage({
           type: 'bot',
@@ -334,7 +288,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       case 'audio': {
         setIsTyping(true);
         await delay(600);
-        if (abortRef.current) return;
+        if (signal.aborted) return;
         setIsTyping(false);
         addMessage({ type: 'bot', content: '🎤 Áudio enviado', mediaType: 'audio', mediaUrl: node.data.audio_preview_url || node.data.audio_url });
         break;
@@ -343,7 +297,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       case 'video': {
         setIsTyping(true);
         await delay(600);
-        if (abortRef.current) return;
+        if (signal.aborted) return;
         setIsTyping(false);
         addMessage({
           type: 'bot',
@@ -371,9 +325,19 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
 
         // Start countdown with the calculated time
         startCountdown(simulationSeconds);
-        setWaitingForReply(true);
-        setCanReply(node.data.stop_on_reply === true);
-        setCurrentWaitNodeId(node.id);
+        const wait: PreviewWait = {
+          canReply: node.data.stop_on_reply === true,
+          seconds: simulationSeconds,
+          signal,
+          resume: async (branch) => {
+            const next = getNextNode(node.id, branch);
+            if (!next) return;
+            await delay(400);
+            await processNode(next, signal);
+          },
+        };
+        waitRef.current = wait;
+        setPendingWait(wait);
         return; // Pause here
       }
 
@@ -391,14 +355,11 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
           addSystemMessage(`🔀 Resposta ${labels[evaluation.classification]}`);
         } else {
           const result = evaluation.branch === 'true' ? 'Sim' : 'Não';
-          addSystemMessage(`🔀 Condição: ${node.data.variable || '?'} ${node.data.operator || 'equals'} ${node.data.value || ''} → ${result}`);
+          addSystemMessage(`🔀 Condição: ${node.data.variable || '?'} ${node.data.operator || 'equals'} ${node.data.value ?? ''} → ${result}`);
         }
-        const nextNodes = getNextNodes(node.id, evaluation.branch);
-        for (const next of nextNodes) {
-          // eslint-disable-next-line react-hooks/immutability -- Recursive flow traversal intentionally continues through connected nodes.
-          await processNode(next);
-        }
-        if (nextNodes.length === 0) addSystemMessage(`ℹ️ Sem caminho conectado para "${evaluation.branch}".`);
+        const next = getNextNode(node.id, evaluation.branch);
+        if (next) await processNode(next, signal);
+        else addSystemMessage(`ℹ️ Sem caminho conectado para "${evaluation.branch}".`);
         return;
       }
 
@@ -415,6 +376,11 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
 
       case 'assign_user': {
         addSystemMessage(`👤 Responsável: ${node.data.user_name || node.data.assign_user_id || '?'}`);
+        break;
+      }
+
+      case 'distribute_lead': {
+        addSystemMessage(`👥 Encaminharia para a fila: ${node.data.queue_name || 'Fila selecionada'}.`);
         break;
       }
 
@@ -438,171 +404,89 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
         addSystemMessage(`⚙️ Nó executado: ${node.type}`);
     }
 
-    if (abortRef.current) return;
-
-    // Process next nodes
-    const nextNodes = getNextNodes(node.id);
-    for (const next of nextNodes) {
+    const next = getNextNode(node.id);
+    if (next) {
       await delay(500);
-      await processNode(next);
+      await processNode(next, signal);
     }
-  }, [addMessage, addSystemMessage, getNextNodes, highlightNode, startCountdown]);
+  }, [addMessage, addSystemMessage, getNextNode, highlightNode, startCountdown]);
 
-  // Continue flow after wait/condition resolves (no "simulação concluída" spam)
-  const continueAfterNode = useCallback(async (nodeId: string, branch: string | null) => {
-    const nextNodes = branch ? getNextNodes(nodeId, branch) : getNextNodes(nodeId);
-
-    if (nextNodes.length > 0) {
-      for (const next of nextNodes) {
-        await delay(400);
-        await processNode(next);
-      }
-    } else if (branch) {
-      const branchLabel = branch === 'replied' ? 'Respondeu' : branch === 'no_reply' ? 'Timeout' : branch;
-      addSystemMessage(`ℹ️ Sem caminho conectado para "${branchLabel}".`);
+  const continueAfterWait = useCallback(async (wait: PreviewWait, reply?: string) => {
+    const { signal } = wait;
+    if (signal.aborted || waitRef.current !== wait) return;
+    waitRef.current = null;
+    setPendingWait(null);
+    stopCountdown();
+    const branch = reply ? 'replied' : wait.canReply ? 'no_reply' : undefined;
+    if (reply) {
+      replyContentRef.current = reply;
+      addMessage({ type: 'user', content: reply });
+      addSystemMessage('✅ Lead respondeu!');
+    } else if (wait.canReply) {
+      replyContentRef.current = undefined;
+      addSystemMessage('⏰ O prazo terminou sem resposta do lead.');
+    } else {
+      addSystemMessage('⏰ Espera concluída.');
     }
 
-    // Only mark done if there's truly nothing more
-    if (!abortRef.current && !waitingForReply) {
-      addSystemMessage('✅ Fluxo finalizado.');
-      setIsRunning(false);
-      clearHighlight();
-    }
-  }, [getNextNodes, processNode, addSystemMessage, clearHighlight, waitingForReply]);
+    await wait.resume(branch);
+    finishSimulation(signal);
+  }, [addMessage, addSystemMessage, finishSimulation, stopCountdown]);
 
   const startSimulation = useCallback(async () => {
-    abortRef.current = false;
+    runRef.current?.abort();
+    const controller = new AbortController();
+    runRef.current = controller;
+    waitRef.current = null;
     setMessages([]);
-    setIsRunning(true);
-    setWaitingForReply(false);
-    setCanReply(false);
-    setCurrentWaitNodeId(null);
+    setUserInput('');
+    setPendingWait(null);
+    setIsFinished(false);
     setIsTyping(false);
     stopCountdown();
-    visitedNodesRef.current.clear();
-    processedNodesRef.current.clear();
+    clearHighlight();
     replyContentRef.current = undefined;
 
     const validationIssue = validatePreviewFlow(nodes, edges);
     if (validationIssue) {
       addSystemMessage(`❌ ${validationIssue.message}`);
       if (validationIssue.nodeId) highlightNode(validationIssue.nodeId);
-      setIsRunning(false);
       return;
     }
 
-    const startNodes = getStartNodes();
-    if (startNodes.length === 0) {
-      addSystemMessage('❌ Nenhum nó de Início encontrado.');
-      setIsRunning(false);
-      return;
-    }
+    const startNode = nodes.find((node) => node.type === 'start');
+    if (!startNode) return;
+    await processNode(startNode, controller.signal);
+    finishSimulation(controller.signal);
+  }, [nodes, edges, processNode, addSystemMessage, stopCountdown, clearHighlight, highlightNode, finishSimulation]);
 
-    await processNode(startNodes[0]);
-
-    // If flow ended without hitting a wait node
-    if (!abortRef.current && !waitingForReply && !currentWaitNodeId) {
-      // processNode already handled next nodes, check if we're still not waiting
-    }
-  }, [nodes, edges, getStartNodes, processNode, addSystemMessage, stopCountdown, waitingForReply, currentWaitNodeId, highlightNode]);
-
-  const handleUserReply = useCallback(async (text: string) => {
-    if (!currentWaitNodeId || !canReply || !text.trim()) return;
-
-    addMessage({ type: 'user', content: text.trim() });
-    setWaitingForReply(false);
-    setCanReply(false);
-    stopCountdown();
-    const nodeId = currentWaitNodeId;
-    setCurrentWaitNodeId(null);
-
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) return;
-
-    await delay(400);
-
-    if (node.type === 'wait') {
-      if (node.data.stop_on_reply) {
-        replyContentRef.current = text.trim();
-        addSystemMessage('✅ Lead respondeu!');
-        await continueAfterNode(nodeId, 'replied');
-      }
-    }
-  }, [currentWaitNodeId, canReply, nodes, addMessage, addSystemMessage, stopCountdown, continueAfterNode]);
-
-  // Timeout for wait nodes - follows dynamic time cap
   useEffect(() => {
-    if (!waitingForReply || !currentWaitNodeId) return;
-    const node = nodes.find(n => n.id === currentWaitNodeId);
-    if (!node || node.type !== 'wait') return;
-
-    const value = node.data.wait_value || node.data.delay_value || 1;
-    const type = node.data.wait_type || node.data.delay_type || 'days';
-
-    let totalSeconds = value;
-    if (type === 'minutes') totalSeconds *= 60;
-    else if (type === 'hours') totalSeconds *= 3600;
-    else if (type === 'days') totalSeconds *= 86400;
-
-    const simulationSeconds = Math.min(totalSeconds, PREVIEW_WAIT_LIMIT_SECONDS);
-
-    const timer = setTimeout(async () => {
-      if (!waitingForReply) return;
-      setWaitingForReply(false);
-      setCanReply(false);
-      stopCountdown();
-      const nodeId = currentWaitNodeId;
-      setCurrentWaitNodeId(null);
-
-      if (node.data.stop_on_reply) {
-        replyContentRef.current = undefined;
-        addSystemMessage('⏰ Timeout — lead não respondeu.');
-        await continueAfterNode(nodeId, 'no_reply');
-      } else {
-        addSystemMessage('⏰ Espera concluída.');
-        await continueAfterNode(nodeId, null);
-      }
-    }, simulationSeconds * 1000);
-
+    if (!pendingWait) return;
+    const timer = setTimeout(() => void continueAfterWait(pendingWait), pendingWait.seconds * 1000);
     return () => clearTimeout(timer);
-  }, [waitingForReply, currentWaitNodeId, nodes, stopCountdown, addSystemMessage, continueAfterNode]);
-
-  const handleRestart = useCallback(() => {
-    abortRef.current = true;
-    setMessages([]);
-    setIsRunning(false);
-    setWaitingForReply(false);
-    setCanReply(false);
-    setCurrentWaitNodeId(null);
-    setIsTyping(false);
-    stopCountdown();
-    visitedNodesRef.current.clear();
-    processedNodesRef.current.clear();
-    clearHighlight();
-    setTimeout(() => startSimulation(), 100);
-  }, [startSimulation, stopCountdown, clearHighlight]);
+  }, [pendingWait, continueAfterWait]);
 
   const handleClose = useCallback(() => {
-    abortRef.current = true;
+    runRef.current?.abort();
     stopCountdown();
     clearHighlight();
     onClose();
   }, [onClose, stopCountdown, clearHighlight]);
 
   // Auto-start on mount
-  /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- Simulator should start once on mount; adding stateful callbacks would restart active previews. */
+  /* eslint-disable react-hooks/exhaustive-deps -- Simulator should start once on mount; adding stateful callbacks would restart active previews. */
   useEffect(() => {
-    startSimulation();
+    void startSimulation();
     return () => {
-      abortRef.current = true;
+      runRef.current?.abort();
       clearHighlight();
     };
   }, []);
-  /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleSend = () => {
-    if (canReply && userInput.trim()) {
-      handleUserReply(userInput);
+    if (pendingWait?.canReply && userInput.trim()) {
+      void continueAfterWait(pendingWait, userInput.trim());
       setUserInput('');
     }
   };
@@ -617,7 +501,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
             Preview
           </div>
           <button
-            onClick={handleRestart}
+            onClick={() => void startSimulation()}
             className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)]"
           >
             <RotateCcw className="h-3 w-3" />
@@ -735,7 +619,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
           <input
             value={userInput}
             onChange={(event) => setUserInput(event.target.value)}
-            placeholder={canReply ? 'Digite sua resposta...' : waitingForReply ? 'Simulando espera...' : 'Aguardando...'}
+            placeholder={canReply ? 'Digite sua resposta...' : pendingWait ? 'Simulando espera...' : isFinished ? 'Simulação concluída' : 'Aguardando...'}
             disabled={!canReply}
             className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
           />

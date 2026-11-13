@@ -13,11 +13,15 @@ O runtime é backend-owned. O navegador nunca escreve diretamente nas tabelas in
 
 `PATCH /v1/automations/{id}` aceita somente metadados/status. Trigger e grafo mudam exclusivamente pelos contratos versionados acima.
 
-O grafo tem exatamente um trigger, é acíclico e totalmente alcançável. Condições usam branches `true`/`false`; delays com resposta usam `replied`/`no_reply`.
+O grafo tem exatamente um trigger, é acíclico e totalmente alcançável. Condições usam os ramos `true` e `false`. Uma espera com resposta conecta pelo menos um dos ramos `replied` e `no_reply`. Se o resultado não tiver conexão, a execução termina após a espera. Uma espera comum usa a saída padrão.
 
 Templates podem usar `{{lead.*}}`, `{{organization.name}}`, `{{date}}`, `{{now}}` e dados em `{{execution.*}}`. `date` é `DD/MM/AAAA` no `settings.timezone` do fluxo (ou timezone do trigger agendado; fallback `America/Sao_Paulo`); `now` é ISO 8601 UTC.
 
 As ações `deal_status` e `property_interest` continuam deliberadamente bloqueadas na validação. `move_lead` e `assign_user` usam comandos transacionais canônicos, com validação de tenant, auditoria, atividade, ciclos de atenção e notificação push para o novo responsável.
+
+O bloco `distribute_lead` pode seguir qualquer ramo, inclusive `replied`, e persiste somente o ID da fila em `config.round_robin_id` como destino operacional. Ao publicar, a API verifica se o autor pode administrar a fila ativa. Durante a execução, o comando interno `POST /v1/internal/automations/distribution-command` revalida autor, organização, acesso atual ao lead, versão do fluxo, nó e lease. Só confirma quando a fila escolhida atribui um novo responsável e o lead continua aberto. Se a fila estiver fechada, sem candidato, se o lead estiver protegido ou se outra fila prevalecer, o passo falha com motivo explícito e mantém o responsável. O comando não altera as regras da fila e não antecipa a rotação.
+
+O endpoint reutiliza `AUTOMATION_COMMAND_TOKEN` na API e no Edge, e `AUTOMATION_COMMAND_API_URL` no Edge. Para liberar novos fluxos com esse bloco, instalar primeiro a migração `20261113153247_allow_automation_distribution_deferral.sql` e a API, depois atualizar os executores Edge e o editor. A migração mantém o contrato antigo de movimentação. Em reversão, desativar fluxos ativos que usam o novo bloco antes de voltar o editor, Edge e API. Preservar os efeitos confirmados para evitar repetição.
 
 Esperas com `stop_on_reply` podem configurar handoff por mídia, resposta inesperada ou rajada de mensagens. Uma mensagem humana enviada na conversa cancela as execuções ativas do lead no banco, e `POST /v1/leads/{id}/automation-executions/cancel` oferece a mesma parada manual para a interface.
 
@@ -32,11 +36,11 @@ O grafo persiste somente referência privada:
 }
 ```
 
-As pastas válidas são `images`, `audios` e `videos`. Antes do envio, o runtime verifica tenant e tipo, copia a mídia para o caminho persistente `whatsapp-media/orgs/.../outgoing/...` e assina uma URL de 15 minutos apenas para o provider. O histórico nunca armazena URL expirada. A exclusão é bloqueada enquanto qualquer versão ativa ou execução `queued/running/waiting` referencia o objeto.
+As pastas válidas são `images`, `audios` e `videos`. O runtime valida a organização e o MIME e copia os bytes originais para a chave `orgs/<organization-uuid>/sessions/<session-uuid>/outgoing/<provider-request-id>/<sha256>.<extensão>` no bucket privado `whatsapp-media`, sem sobrescrever o arquivo. A mensagem e a outbox guardam o mesmo SHA-256. O worker Go confere o digest dos bytes armazenados e gera uma URL assinada de 15 minutos para cada tentativa de envio. A exclusão do arquivo da galeria é bloqueada enquanto uma versão ativa ou execução `queued`, `running` ou `waiting` fizer referência a ele.
 
 `GET /v1/automation-media` é paginado por `limit`/`offset` (máximo 100 por página). A interface oferece carregamento incremental, sem truncar silenciosamente a galeria.
 
-Se um lead ainda não tiver conversa, a sessão configurada é validada como ativa, conectada, `evolution_go` e da mesma organização; telefone/JID são normalizados e a conversa individual é criada/reutilizada de modo idempotente. Depois do provider, uma única RPC grava mensagem, preview da conversa, atividade do lead, identidade canônica e timeline.
+Se o lead ainda não tiver conversa, o resolvedor valida a sessão `evolution_go` ativa e conectada na mesma organização, normaliza telefone/JID e cria ou reutiliza a conversa individual. A admissão exige o atendimento do autor da versão no vínculo ativo. A RPC grava mensagem, preview, timeline e outbox em uma transação antes da chamada ao provedor. O worker confirma o atendimento e as permissões ao iniciar o envio e atualiza o status com o resultado do provedor.
 
 ## Eventos, atrasos e execução
 

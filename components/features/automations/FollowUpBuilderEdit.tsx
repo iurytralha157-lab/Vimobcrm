@@ -32,10 +32,13 @@ import {
   Webhook,
   Tag,
   ArrowRightLeft,
+  UserCheck,
+  UsersRound,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
 import { NodeConfigPanel } from './NodeConfigPanel';
+import { DEFAULT_AUTOMATION_INACTIVITY } from '@/lib/validation/automations';
 import { MessageNode } from './nodes/MessageNode';
 import { WaitNode } from './nodes/WaitNode';
 import { StartNode } from './nodes/StartNode';
@@ -47,6 +50,8 @@ import { WebhookNode } from './nodes/WebhookNode';
 import { TagNode } from './nodes/TagNode';
 import { MoveStageNode } from './nodes/MoveStageNode';
 import { AssignUserNode } from './nodes/AssignUserNode';
+import { DistributeLeadNode } from './nodes/DistributeLeadNode';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { PropertyInterestNode } from './nodes/PropertyInterestNode';
 import { DealStatusNode } from './nodes/DealStatusNode';
 import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
@@ -55,7 +60,7 @@ import { useStages, usePipelines } from '@/hooks/use-stages';
 import {
   useAutomation,
   useAutomationMedia,
-  useSaveAutomationFlow,
+  useSaveAutomationFlowJSON,
   TriggerType,
   ActionType,
   type FlowDefinition,
@@ -65,10 +70,10 @@ import { useProperties } from '@/hooks/use-properties';
 import { toast } from 'sonner';
 import DeletableEdge from './edges/DeletableEdge';
 import { FlowSimulator } from './FlowSimulator';
-import type { Json } from '@/lib/supabase/types';
 import { saveAutomationFlowInputSchema } from '@/lib/validation';
 import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
 import { resolveReplyKeywordConfig } from '@/lib/automations';
+import { automationEditorReplyConfig, automationEditorSession, automationEditorSourceHandle, updateAutomationWaitOutputs } from '@/components/features/automations/flow-editor-compatibility';
 
 const edgeTypes = {
   deletable: DeletableEdge,
@@ -86,6 +91,7 @@ const nodeTypes = {
   tag: TagNode,
   move_stage: MoveStageNode,
   assign_user: AssignUserNode,
+  distribute_lead: DistributeLeadNode,
   property_interest: PropertyInterestNode,
   deal_status: DealStatusNode,
 };
@@ -126,6 +132,8 @@ const NODE_PALETTE: PaletteItem[] = [
   { type: 'webhook', label: 'Webhook', icon: Webhook, color: 'bg-indigo-500 text-white', category: 'actions', defaultData: { webhook_url: '', method: 'POST' } },
   { type: 'tag', label: 'Tag', icon: Tag, color: 'bg-teal-500 text-white', category: 'actions', defaultData: { tag_id: '', tag_action: 'add' } },
   { type: 'move_stage', label: 'Mudar etapa', icon: ArrowRightLeft, color: 'bg-violet-500 text-white', category: 'actions', defaultData: { move_pipeline_id: '', move_stage_id: '' } },
+  { type: 'assign_user', label: 'Mudar responsável', icon: UserCheck, color: 'bg-sky-500 text-white', category: 'actions', defaultData: { assign_user_id: '' } },
+  { type: 'distribute_lead', label: 'Enviar para distribuição', icon: UsersRound, color: 'bg-sky-500 text-white', category: 'actions', defaultData: { round_robin_id: '' } },
 ];
 
 const CATEGORY_LABELS: Record<NodeCategory, string> = {
@@ -158,6 +166,8 @@ interface FollowUpBuilderEditProps {
 }
 
 function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUpBuilderEditProps) {
+  const { hasPermission } = useUserPermissions();
+  const canManageDistribution = hasPermission('distribution_manage') && hasPermission('lead_operate');
   const reactFlowInstance = useReactFlow();
   const { data: automation, isLoading: isLoadingAutomation, error: automationError, refetch: refetchAutomation } = useAutomation(automationId);
   const { data: sessions } = useWhatsAppSessions();
@@ -170,13 +180,14 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
   const videoMedia = useAutomationMedia('video');
   const [pipelineId, setPipelineId] = useState<string>('');
   const { data: stages } = useStages(pipelineId || undefined);
-  const saveFlow = useSaveAutomationFlow();
+  const saveFlow = useSaveAutomationFlowJSON();
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [hasUnreadableNodes, setHasUnreadableNodes] = useState(false);
   const [initialPipelineId, setInitialPipelineId] = useState<string | null>(null);
 
   const mediaPreviewIndex = useMemo(
@@ -198,7 +209,8 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
 
   // Config
   const [name, setName] = useState('');
-  const [sessionId, setSessionId] = useState<string>('');
+  const [whatsappSessionId, setWhatsAppSessionId] = useState<string>('');
+  const [replaceSessions, setReplaceSessions] = useState(false);
   const [triggerType, setTriggerType] = useState<TriggerType>('manual');
   const [stageId, setStageId] = useState<string>('');
   const [tagId, setTagId] = useState<string>('');
@@ -262,26 +274,19 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
             deletable: false,
             position: { x: pos.x, y: node.position_y ?? 50 },
             data: {
+              ...config,
+              ...nodeConfig,
               trigger_type: automation.trigger_type,
-              source: nodeConfig.source || config.source, // Try both node config and trigger config
-              meta_form_id: nodeConfig.meta_form_id || config.meta_form_id,
-              scheduled_at: nodeConfig.scheduled_at || config.scheduled_at,
-              timezone: nodeConfig.timezone || config.timezone,
-              target_type: nodeConfig.target_type || config.target_type,
-              target_lead_id: nodeConfig.target_lead_id || config.target_lead_id,
-              target_lead_name: nodeConfig.target_lead_name || config.target_lead_name,
-              inactivity_value: nodeConfig.inactivity_value || config.inactivity_value,
-              inactivity_unit: nodeConfig.inactivity_unit || config.inactivity_unit,
             }
           });
-          if (nodeConfig.session_id) setSessionId(nodeConfig.session_id as string);
         } else if (node.node_type === 'action' && node.action_type === 'send_whatsapp') {
-          flowNodes.push({ id: node.id, type: 'message', position: pos, data: { message: nodeConfig.message || '', day: nodeConfig.day || 1 } });
+          flowNodes.push({ id: node.id, type: 'message', position: pos, data: { session_id: nodeConfig.session_id, message: nodeConfig.message || '', day: nodeConfig.day } });
           if (nodeConfig.session_id) {
-            setSessionId((current) => current || (nodeConfig.session_id as string));
+            setWhatsAppSessionId((current) => current || (nodeConfig.session_id as string));
           }
         } else if (node.node_type === 'action' && node.action_type === 'send_image') {
           flowNodes.push({ id: node.id, type: 'image', position: pos, data: {
+            session_id: nodeConfig.session_id,
             media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.image_url),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
             image_url: nodeConfig.image_url || '',
@@ -289,28 +294,32 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
             caption: nodeConfig.caption || '',
           } });
           if (nodeConfig.session_id) {
-            setSessionId((current) => current || (nodeConfig.session_id as string));
+            setWhatsAppSessionId((current) => current || (nodeConfig.session_id as string));
           }
         } else if (node.node_type === 'action' && node.action_type === 'send_audio') {
           flowNodes.push({ id: node.id, type: 'audio', position: pos, data: {
+            session_id: nodeConfig.session_id,
             media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.audio_url),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
             audio_url: nodeConfig.audio_url || '',
             audio_preview_url: nodeConfig.audio_url || '',
             audio_type: nodeConfig.audio_type || 'file',
+            caption: nodeConfig.caption,
           } });
           if (nodeConfig.session_id) {
-            setSessionId((current) => current || (nodeConfig.session_id as string));
+            setWhatsAppSessionId((current) => current || (nodeConfig.session_id as string));
           }
         } else if (node.node_type === 'action' && node.action_type === 'send_video') {
           flowNodes.push({ id: node.id, type: 'video', position: pos, data: {
+            session_id: nodeConfig.session_id,
             media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.video_url),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
             video_url: nodeConfig.video_url || '',
             video_preview_url: nodeConfig.video_url || '',
+            caption: nodeConfig.caption,
           } });
           if (nodeConfig.session_id) {
-            setSessionId((current) => current || (nodeConfig.session_id as string));
+            setWhatsAppSessionId((current) => current || (nodeConfig.session_id as string));
           }
         } else if (node.node_type === 'action' && node.action_type === 'webhook') {
           flowNodes.push({ id: node.id, type: 'webhook', position: pos, data: { webhook_url: nodeConfig.webhook_url || '', method: nodeConfig.method || 'POST' } });
@@ -320,6 +329,8 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           flowNodes.push({ id: node.id, type: 'move_stage', position: pos, data: { move_pipeline_id: nodeConfig.pipeline_id || '', move_stage_id: nodeConfig.stage_id || '', stage_name: nodeConfig.stage_name || '', move_lost_reason: nodeConfig.lost_reason || '' } });
         } else if (node.node_type === 'action' && node.action_type === 'assign_user') {
           flowNodes.push({ id: node.id, type: 'assign_user', position: pos, data: { assign_user_id: nodeConfig.user_id || '', user_name: nodeConfig.user_name || '' } });
+        } else if (node.node_type === 'action' && node.action_type === 'distribute_lead') {
+          flowNodes.push({ id: node.id, type: 'distribute_lead', position: pos, data: { round_robin_id: nodeConfig.round_robin_id || '', queue_name: nodeConfig.queue_name || '' } });
         } else if (node.node_type === 'action' && nodeConfig.actionType === 'property_interest') {
           flowNodes.push({ id: node.id, type: 'property_interest', position: pos, data: { property_id: nodeConfig.property_id || '', property_name: nodeConfig.property_name || '' } });
         } else if (node.node_type === 'action' && nodeConfig.actionType === 'deal_status') {
@@ -330,7 +341,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
             condition_type: nodeConfig.condition_type || 'custom',
             variable: nodeConfig.variable || '',
             operator: nodeConfig.operator || 'equals',
-            value: nodeConfig.value || '',
+            value: nodeConfig.value ?? '',
             positive_keywords: replyKeywords.positiveKeywords,
             negative_keywords: replyKeywords.negativeKeywords,
           } });
@@ -343,24 +354,21 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               wait_type: nodeConfig.delay_type || 'days',
               wait_value: nodeConfig.delay_value || 1,
               stop_on_reply: nodeConfig.stop_on_reply || false,
-              on_reply_message: nodeConfig.on_reply_message || '',
-              on_reply_stage_id: nodeConfig.on_reply_stage_id || nodeConfig.on_reply_move_to_stage_id || '',
+              ...automationEditorReplyConfig(nodeConfig),
               handoff_on_non_text: nodeConfig.handoff_on_non_text !== false,
-              reply_match_mode: 'any_text',
-              expected_reply_keywords: [],
-              handoff_on_unmatched_reply: false,
               handoff_after_message_burst: Number.isInteger(nodeConfig.handoff_after_message_burst) ? nodeConfig.handoff_after_message_burst : 3,
             },
           });
         }
       });
 
+      const flowNodesById = new Map(flowNodes.map((node) => [node.id, node]));
       automation.connections?.forEach((conn) => {
         flowEdges.push({
           id: conn.id,
           source: conn.source_node_id,
           target: conn.target_node_id,
-          sourceHandle: conn.source_handle || undefined,
+          sourceHandle: automationEditorSourceHandle(conn, flowNodesById.get(conn.source_node_id)),
           markerEnd: { type: MarkerType.ArrowClosed },
           style: { strokeWidth: 2 },
         });
@@ -368,6 +376,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
 
       setNodes(flowNodes);
       setEdges(flowEdges);
+      setHasUnreadableNodes(flowNodes.length !== (automation.nodes?.length ?? 0));
       setIsInitialized(true);
     }
   }, [automation, isInitialized, setNodes, setEdges]);
@@ -406,7 +415,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
     if (isInitialized && initialPipelineId && nextPipelineId !== initialPipelineId) {
       setInitialPipelineId(null);
     }
-  }, [initialPipelineId, isInitialized]);
+  }, [initialPipelineId, isInitialized, setPipelineId, setStageId]);
 
   const handleDeleteEdge = useCallback((edgeId: string) => {
     setEdges((eds) => eds.filter((e) => e.id !== edgeId));
@@ -443,11 +452,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
       const y = event.clientY - rect.top - 20;
       setPanelPosition({ x: Math.min(x, rect.width - 320), y: Math.max(0, Math.min(y, rect.height - 300)) });
     }
-  }, []);
+  }, [setSelectedNode, setPanelPosition]);
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
-  }, []);
+  }, [setSelectedNode]);
 
   const handleAddNode = useCallback((paletteItem: PaletteItem) => {
     if (paletteItem.type === 'start' && nodes.some((node) => node.type === 'start')) {
@@ -473,6 +482,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         id: `e-${lastNode.id}-${newNodeId}`,
         source: lastNode.id,
         target: newNodeId,
+        sourceHandle: lastNode.type === 'wait' && lastNode.data.stop_on_reply === true ? 'no_reply' : undefined,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { strokeWidth: 2 },
       }]);
@@ -488,7 +498,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
     setNodes((nds) => nds.filter((n) => n.id !== nodeId));
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
     setSelectedNode(null);
-  }, [nodes, setNodes, setEdges]);
+  }, [nodes, setNodes, setEdges, setSelectedNode]);
 
   const handleNodeDataChange = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes((nds) =>
@@ -506,7 +516,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
     if (data.condition_type === 'custom') {
       setEdges((currentEdges) => currentEdges.filter((edge) => edge.source !== nodeId || edge.sourceHandle !== 'unknown'));
     }
-  }, [setNodes, setEdges]);
+    if (typeof data.stop_on_reply === 'boolean') {
+      const stopOnReply = data.stop_on_reply;
+      setEdges((currentEdges) => updateAutomationWaitOutputs(currentEdges, nodeId, stopOnReply));
+    }
+  }, [setNodes, setEdges, setSelectedNode]);
 
   // Undo history
   const undoStackRef = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -586,12 +600,12 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
   }, [reactFlowInstance, nodes, setNodes]);
 
   const handleSave = async () => {
-    if (nodes.some((node) => UNSUPPORTED_CRM_NODE_TYPES.has(node.type || ''))) {
+    if (hasUnreadableNodes || nodes.some((node) => UNSUPPORTED_CRM_NODE_TYPES.has(node.type || ''))) {
       toast.error('Remova as ações de CRM indisponíveis antes de publicar o fluxo');
       return;
     }
     const whatsappNodes = nodes.filter((node) => ['message', 'image', 'audio', 'video'].includes(node.type || ''));
-    if (whatsappNodes.length > 0 && !sessionId) {
+    if (whatsappNodes.some((node) => !automationEditorSession(node.data, whatsappSessionId, replaceSessions))) {
       toast.error('Selecione uma sessão WhatsApp');
       return;
     }
@@ -630,11 +644,6 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
       toast.error('Selecione o lead destinatário do disparo agendado');
       return;
     }
-    if (triggerType === 'inactivity' && (!startNodeData.inactivity_value || !startNodeData.inactivity_unit)) {
-      toast.error('Informe o período de inatividade');
-      return;
-    }
-
     setIsSaving(true);
 
     try {
@@ -644,15 +653,31 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
 
       const startSource = typeof startNodeData.source === 'string' ? startNodeData.source : null;
       const startMetaFormId = typeof startNodeData.meta_form_id === 'string' ? startNodeData.meta_form_id : null;
-      const triggerConfig: Json = {
+      const storedTriggerConfig = { ...((automation?.trigger_config ?? {}) as Record<string, unknown>) };
+      delete storedTriggerConfig.trigger_type;
+      const triggerConfig: Record<string, unknown> = {
+        ...storedTriggerConfig,
+        session_id: null,
+        tag_id: null,
+        pipeline_id: null,
+        to_stage_id: null,
+        scheduled_at: null,
+        timezone: null,
+        target_type: null,
+        target_lead_id: null,
+        inactivity_value: null,
+        inactivity_unit: null,
+        source: null,
+        meta_form_id: null,
         ...(triggerType === 'tag_added' ? { tag_id: tagId } : {}),
+        ...(triggerType === 'message_received' ? { session_id: startNodeData.session_id ?? null } : {}),
         ...(triggerType === 'lead_stage_changed' ? {
           pipeline_id: pipelineId,
           to_stage_id: stageId
         } : {}),
         ...(triggerType === 'lead_created' ? {
           source: startSource,
-          meta_form_id: startMetaFormId
+          meta_form_id: startSource === 'meta' ? startMetaFormId : null,
         } : {}),
         ...(triggerType === 'scheduled' ? {
           scheduled_at: startNodeData.scheduled_at,
@@ -661,13 +686,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           target_lead_id: startNodeData.target_lead_id,
         } : {}),
         ...(triggerType === 'inactivity' ? {
-          inactivity_value: startNodeData.inactivity_value,
-          inactivity_unit: startNodeData.inactivity_unit,
+          inactivity_value: startNodeData.inactivity_value ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_value,
+          inactivity_unit: startNodeData.inactivity_unit ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_unit,
         } : {}),
         filter_user_id: filterUserId && filterUserId !== "__all__" ? filterUserId : null,
         stop_on_reply: shouldStopOnReply,
-        on_reply_move_to_stage_id: null,
-        on_reply_message: null,
       };
 
       // Build nodes for database
@@ -680,40 +703,42 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         position_y: number;
       }[] = [];
 
+      const originals = new Map(automation?.nodes?.map((node) => [node.id, node.config]));
       nodes.forEach((node) => {
         const pos = { position_x: Math.round(node.position.x), position_y: Math.round(node.position.y) };
+        const mediaSessionId = automationEditorSession(node.data, whatsappSessionId, replaceSessions);
 
         if (node.type === 'start') {
           dbNodes.push({
             id: node.id, node_type: 'trigger', action_type: null,
             config: {
               trigger_type: triggerType,
-              ...(triggerConfig as Record<string, unknown>),
+              ...triggerConfig,
             },
             ...pos,
           });
         } else if (node.type === 'message') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_whatsapp',
-            config: { session_id: sessionId, message: node.data.message, actionType: 'send_whatsapp' },
+            config: { session_id: mediaSessionId, message: node.data.message, day: node.data.day, actionType: 'send_whatsapp' },
             ...pos,
           });
         } else if (node.type === 'image') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_image',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_image' },
+            config: { session_id: mediaSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_image' },
             ...pos,
           });
         } else if (node.type === 'audio') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_audio',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, audio_type: node.data.audio_type || 'file', actionType: 'send_audio' },
+            config: { session_id: mediaSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, audio_type: node.data.audio_type || 'file', actionType: 'send_audio' },
             ...pos,
           });
         } else if (node.type === 'video') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_video',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_video' },
+            config: { session_id: mediaSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_video' },
             ...pos,
           });
         } else if (node.type === 'wait') {
@@ -724,13 +749,8 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               delay_type: node.data.wait_type || 'days',
               delay_value: node.data.wait_value || 1,
               stop_on_reply: node.data.stop_on_reply || false,
-              on_reply_message: null,
-              on_reply_stage_id: null,
-              on_reply_move_to_stage_id: null,
+              ...automationEditorReplyConfig(node.data),
               handoff_on_non_text: node.data.handoff_on_non_text !== false,
-              reply_match_mode: 'any_text',
-              expected_reply_keywords: [],
-              handoff_on_unmatched_reply: false,
               handoff_after_message_burst: Number.isInteger(node.data.handoff_after_message_burst) ? node.data.handoff_after_message_burst : 3,
 
               nodeType: 'delay',
@@ -762,21 +782,27 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           const selectedTag = tags?.find(t => t.id === node.data.tag_id);
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag',
-            config: { tag_id: node.data.tag_id, tag_action: node.data.tag_action || 'add', tag_name: selectedTag?.name || '', actionType: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag' },
+            config: { tag_id: node.data.tag_id, tag_action: node.data.tag_action || 'add', tag_name: selectedTag?.name || node.data.tag_name, actionType: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag' },
             ...pos,
           });
         } else if (node.type === 'move_stage') {
           const selectedStage = stages?.find(s => s.id === node.data.move_stage_id);
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'move_lead',
-            config: { pipeline_id: node.data.move_pipeline_id, stage_id: node.data.move_stage_id, stage_name: selectedStage?.name || '', lost_reason: node.data.move_lost_reason || undefined, actionType: 'move_stage' },
+            config: { pipeline_id: node.data.move_pipeline_id || undefined, stage_id: node.data.move_stage_id, stage_name: selectedStage?.name || node.data.stage_name, lost_reason: node.data.move_lost_reason || undefined, actionType: 'move_stage' },
             ...pos,
           });
         } else if (node.type === 'assign_user') {
           const selectedUser = users?.find(u => u.id === node.data.assign_user_id);
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'assign_user',
-            config: { user_id: node.data.assign_user_id, user_name: selectedUser?.name || selectedUser?.email || '', actionType: 'assign_user' },
+            config: { user_id: node.data.assign_user_id, user_name: selectedUser?.name || selectedUser?.email || node.data.user_name, actionType: 'assign_user' },
+            ...pos,
+          });
+        } else if (node.type === 'distribute_lead') {
+          dbNodes.push({
+            id: node.id, node_type: 'action', action_type: 'distribute_lead',
+            config: { round_robin_id: node.data.round_robin_id, queue_name: node.data.queue_name },
             ...pos,
           });
         } else if (node.type === 'property_interest') {
@@ -808,7 +834,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           type: node.node_type,
           action_type: node.action_type,
           position: { x: node.position_x, y: node.position_y },
-          config: node.config,
+          config: { ...originals.get(node.id) as Record<string, unknown>, ...node.config },
         })),
         connections: dbConnections.map((connection) => ({
           source: connection.source_node_id,
@@ -816,7 +842,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           source_handle: connection.source_handle,
           condition_branch: connection.condition_branch,
         })),
-        settings: {},
+        settings: automation?.flow_definition?.settings ?? {},
       };
       const validation = saveAutomationFlowInputSchema.safeParse({ flowDefinition });
       if (!validation.success) {
@@ -827,21 +853,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
       await saveFlow.mutateAsync({
         automationId,
         name,
-        description: `Fluxo visual com ${nodes.length} blocos`,
+        description: automation?.description ?? undefined,
         isActive,
-        nodes: dbNodes.map(n => ({
-          id: n.id,
-          automation_id: automationId,
-          node_type: n.node_type,
-          action_type: n.action_type,
-          config: n.config as unknown as Json,
-          position_x: n.position_x,
-          position_y: n.position_y,
-        })),
-        connections: dbConnections.map(c => ({
-          automation_id: automationId,
-          ...c,
-        })),
+        flowDefinition: validation.data.flowDefinition,
       });
 
       toast.success('Automação salva com sucesso!');
@@ -945,7 +959,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           <div className="automation-sidebar-scroll flex-1 overflow-y-auto overscroll-contain">
             <div className="space-y-1 p-3">
               {(['bubbles', 'conditionals', 'actions'] as NodeCategory[]).map((category) => {
-                const items = NODE_PALETTE.filter(item => item.category === category);
+                const items = NODE_PALETTE.filter(item => item.category === category && (item.type !== 'distribute_lead' || canManageDistribution));
                 const isExpanded = expandedCategories[category];
                 return (
                   <div key={category}>
@@ -1056,8 +1070,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               setStageId={setStageId}
               position={panelPosition || undefined}
               sessions={sessions || []}
-              sessionId={sessionId}
-              setSessionId={setSessionId}
+              whatsappSessionId={whatsappSessionId}
+              setWhatsAppSessionId={(nextSessionId) => {
+                setWhatsAppSessionId(nextSessionId);
+                setReplaceSessions(true);
+              }}
               users={users || []}
               filterUserId={filterUserId}
               setFilterUserId={setFilterUserId}

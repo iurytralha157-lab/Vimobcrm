@@ -73,14 +73,13 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 		"reserve_automation_external_effect",
 		"finish_automation_external_effect",
 		"canonical_whatsapp_outbox_v1",
-		"cross_tenant_or_invalid_media_path",
+		"prepareAutomationMedia(client",
 		"Deno.resolveDns",
 		"redirect: \"manual\"",
 		"idempotency-key",
 		"module_disabled",
 		"webhook_allowlist_required",
 		"readLimitedText",
-		"WHATSAPP_MEDIA_BUCKET",
 		"AbortController",
 		"enter_automation_delay_wait",
 		"process_automation_inbound_message",
@@ -95,6 +94,15 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 	}
 	if strings.Contains(runtime, "evolution-go-proxy") {
 		t.Fatal("automation WhatsApp delivery must use the canonical DB-first outbox, not the legacy provider proxy")
+	}
+	mediaRaw, err := os.ReadFile(filepath.Join(root, "_shared", "automation-whatsapp-media.ts"))
+	if err != nil {
+		t.Fatalf("read automation media runtime: %v", err)
+	}
+	for _, required := range []string{"cross_tenant_or_invalid_media_path", "WHATSAPP_MEDIA_BUCKET", "upsert: false", "sha256Hex"} {
+		if !strings.Contains(string(mediaRaw), required) {
+			t.Fatalf("edge media runtime is missing contract fragment %q", required)
+		}
 	}
 
 	for _, functionName := range []string{"automation-executor", "automation-trigger", "automation-delay-processor", "automation-runner", "automation-inactivity"} {

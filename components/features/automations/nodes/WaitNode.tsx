@@ -1,8 +1,8 @@
-import { memo } from 'react';
-import { Handle, Position, NodeProps } from 'reactflow';
-import { Timer, MessageSquareReply } from 'lucide-react';
+import { memo, useEffect } from 'react';
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from 'reactflow';
+import { Timer } from 'lucide-react';
 
-export const WaitNode = memo(({ data, selected }: NodeProps) => {
+export const WaitNode = memo(({ id, data, selected }: NodeProps) => {
   const getValue = () => {
     const value = data.wait_value || data.delay_value || 1;
     const type = data.wait_type || data.delay_type || 'days';
@@ -11,11 +11,15 @@ export const WaitNode = memo(({ data, selected }: NodeProps) => {
   };
 
   const stopOnReply = data.stop_on_reply === true;
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, stopOnReply, updateNodeInternals]);
 
   return (
-    <div className={`automation-node min-w-[180px] rounded-[8px] px-4 py-3 ${
+    <div className={`automation-node relative rounded-[8px] py-3 pl-4 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': 'var(--chart-3)' } as React.CSSProperties}>
+    } ${stopOnReply ? 'min-w-[235px] pr-24' : 'min-w-[180px] pr-4'}`} style={{ '--node-accent': 'var(--chart-3)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-purple-400 !w-3 !h-3 !border-2 !border-purple-500/50" />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-purple-500 shrink-0">
@@ -24,21 +28,16 @@ export const WaitNode = memo(({ data, selected }: NodeProps) => {
         <div>
           <div className="text-[12px] font-normal text-purple-600 dark:text-purple-400">Aguardar</div>
           <div className="text-[12px] font-normal text-foreground">{getValue()}</div>
-          {stopOnReply && (
-            <div className="flex items-center gap-1 mt-0.5">
-              <MessageSquareReply className="h-3 w-3 text-green-500" />
-              <span className="text-[10px] text-muted-foreground">Se responder</span>
-            </div>
-          )}
         </div>
       </div>
       {/* Default output (no reply / timeout) */}
       <Handle
         type="source"
         position={Position.Right}
-        id="no_reply"
+        id={stopOnReply ? 'no_reply' : undefined}
+        title={stopOnReply ? 'Não respondeu' : 'Continuar após a espera'}
         className="!bg-purple-400 !w-3 !h-3 !border-2 !border-purple-500/50"
-        style={stopOnReply ? { top: '35%' } : {}}
+        style={stopOnReply ? { top: '30%' } : undefined}
       />
       {/* Reply output - only shown when stop_on_reply is enabled */}
       {stopOnReply && (
@@ -46,15 +45,16 @@ export const WaitNode = memo(({ data, selected }: NodeProps) => {
           type="source"
           position={Position.Right}
           id="replied"
+          title="Respondeu"
           className="!bg-green-400 !w-3 !h-3 !border-2 !border-green-500/50"
-          style={{ top: '65%' }}
+          style={{ top: '70%' }}
         />
       )}
       {stopOnReply && (
-        <div className="flex flex-col absolute right-[-50px] top-1/2 -translate-y-1/2 gap-4 text-[10px]">
-          <span className="text-purple-400 font-medium">Timeout</span>
-          <span className="text-green-400 font-medium">Respondeu</span>
-        </div>
+        <>
+          <span className="pointer-events-none absolute right-3 top-[30%] -translate-y-1/2 whitespace-nowrap text-[10px] font-medium text-foreground">Não respondeu</span>
+          <span className="pointer-events-none absolute right-3 top-[70%] -translate-y-1/2 whitespace-nowrap text-[10px] font-medium text-foreground">Respondeu</span>
+        </>
       )}
     </div>
   );

@@ -1,6 +1,4 @@
 import { useState, type MouseEvent } from 'react';
-import { Input } from '@/components/ui/input';
-import { searchTextIncludes } from '@/lib/search-text';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +8,6 @@ import {
   Copy,
   History,
   Loader2,
-  Plus,
   Square,
   Trash2,
   XCircle,
@@ -45,10 +42,8 @@ import { VimobAPIError } from '@/lib/api/vimob-client';
 
 interface AutomationListProps {
   onEdit: (automationId: string) => void;
-  onCreate?: () => void;
   onViewHistory?: (automationId: string) => void;
   canManage?: boolean;
-  canCreate?: boolean;
   allowEditing?: boolean;
 }
 
@@ -92,16 +87,12 @@ void TriggerContext;
 
 export function AutomationList({
   onEdit,
-  onCreate,
   onViewHistory,
   canManage = true,
-  canCreate = canManage,
   allowEditing = true,
 }: AutomationListProps) {
   const isMobile = useIsMobile();
-  const [search, setSearch] = useState('');
   const { data: automations, isLoading, error, refetch } = useAutomations();
-  const visibleAutomations = (automations ?? []).filter(automation => searchTextIncludes(automation.name, search));
   const {
     data: executionSummaries,
     error: summariesError,
@@ -113,7 +104,6 @@ export function AutomationList({
   const duplicateAutomation = useDuplicateAutomation();
   const cancelExecutions = useCancelAutomationExecutions();
   const canOpenEditor = canManage && allowEditing && !isMobile;
-  const showCreateAction = canCreate && canOpenEditor && onCreate;
   const [stopTarget, setStopTarget] = useState<{
     id: string;
     name: string;
@@ -220,20 +210,12 @@ export function AutomationList({
         <p className="max-w-sm text-sm text-muted-foreground">
           Crie um fluxo de follow-up para testar mensagens, esperas, condições e ações automáticas.
         </p>
-        {showCreateAction && (
-          <Button className="mt-5 gap-2" onClick={onCreate}>
-            <Plus className="h-4 w-4" />
-            Nova automação
-          </Button>
-        )}
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <Input aria-label="Buscar automações" placeholder="Buscar automações por nome..." value={search} onChange={event => setSearch(event.target.value)} className="h-9 max-w-sm text-[12px]" />
-      {visibleAutomations.length === 0 && <p role="status" className="text-[12px] text-muted-foreground">Nenhuma automação corresponde à busca.</p>}
       {summariesError && (
         <div className="flex flex-col gap-2 rounded-[8px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between" role="alert">
           <span>As automações foram carregadas, mas as métricas de execução estão indisponíveis.</span>
@@ -244,7 +226,7 @@ export function AutomationList({
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-      {visibleAutomations.map((automation) => {
+      {automations.map((automation) => {
         const stats = getExecutionStats(automation.id);
         const hasStats = stats.total > 0;
         const isClickable = canOpenEditor || !!onViewHistory;

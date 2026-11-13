@@ -536,6 +536,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		integrationsHandler:      integrationsHandler,
 		leadsHandler:             leadsHandler,
 		automationStageHandler:   leads.NewAutomationStageCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
+		automationQueueHandler:   leads.NewAutomationDistributionCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
 		marketingHandler:         marketingHandler,
 		meHandler:                meHandler,
 		metaHandler:              metaHandler,

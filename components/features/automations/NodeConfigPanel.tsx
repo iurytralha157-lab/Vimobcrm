@@ -19,8 +19,9 @@ import {
 import {
   Trash2, Play, MessageSquare, Timer, Image, Headphones, Video,
   GitBranch, Webhook, Tag, ArrowRightLeft, UserCheck, X, GripHorizontal,
-  Home, CircleDot,
+  Home, CircleDot, UsersRound,
 } from 'lucide-react';
+import { DistributionNodeFields } from '@/components/features/automations/DistributionNodeFields';
 import { TriggerType } from '@/hooks/use-automations';
 import { useCreateTag } from '@/hooks/use-tags';
 import { useAllMetaFormConfigs } from '@/hooks/use-meta-forms';
@@ -34,6 +35,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useStages } from '@/hooks/use-stages';
 import { getTagColorStyle } from '@/lib/tag-color';
 import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
+import { DEFAULT_AUTOMATION_INACTIVITY } from '@/lib/validation/automations';
 import {
   AUTOMATION_CUSTOM_VARIABLES,
   DEFAULT_NEGATIVE_REPLY_KEYWORDS,
@@ -60,8 +62,8 @@ interface NodeConfigPanelProps {
   position?: { x: number; y: number };
   // Start node extras
   sessions?: Array<{ id: string; instance_name: string; display_name?: string | null; status: string }>;
-  sessionId?: string;
-  setSessionId?: (id: string) => void;
+  whatsappSessionId?: string;
+  setWhatsAppSessionId?: (id: string) => void;
   users?: Array<{ id: string; name: string | null; email: string }>;
   filterUserId?: string;
   setFilterUserId?: (id: string) => void;
@@ -80,6 +82,7 @@ const NODE_TITLES: Record<string, { icon: React.ComponentType<{ className?: stri
   tag: { icon: Tag, label: 'Tag', color: 'text-teal-600 dark:text-teal-400' },
   move_stage: { icon: ArrowRightLeft, label: 'Mudar Etapa', color: 'text-violet-600 dark:text-violet-400' },
   assign_user: { icon: UserCheck, label: 'Responsável', color: 'text-sky-600 dark:text-sky-400' },
+  distribute_lead: { icon: UsersRound, label: 'Enviar para distribuição', color: 'text-sky-600 dark:text-sky-400' },
   property_interest: { icon: Home, label: 'Imóvel Interesse', color: 'text-emerald-600 dark:text-emerald-400' },
   deal_status: { icon: CircleDot, label: 'Status', color: 'text-pink-600 dark:text-pink-400' },
 };
@@ -131,7 +134,7 @@ export function NodeConfigPanel({
   tags, tagId, setTagId, setTriggerType,
   pipelines, pipelineId, setPipelineId, stages, stageId, setStageId,
   position,
-  sessions, sessionId, setSessionId,
+  sessions, whatsappSessionId, setWhatsAppSessionId,
   users, filterUserId, setFilterUserId,
   properties,
 }: NodeConfigPanelProps) {
@@ -182,6 +185,8 @@ export function NodeConfigPanel({
   }, [panelPos]);
 
   const connectedSessions = sessions?.filter(s => s.status === 'connected') || [];
+  const inboundSessionId = typeof selectedNode.data.session_id === 'string' ? selectedNode.data.session_id : '';
+  const storedInboundSession = sessions?.find(session => session.id === inboundSessionId);
 
   return (
     <div
@@ -294,9 +299,9 @@ export function NodeConfigPanel({
                       min={1}
                       max={selectedNode.data.inactivity_unit === 'hours' ? 8760 : 365}
                       className="w-24 h-9"
-                      value={selectedNode.data.inactivity_value || 1}
+                      value={selectedNode.data.inactivity_value ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_value}
                       onChange={(e) => onNodeDataChange(selectedNode.id, { inactivity_value: parseInt(e.target.value) || 1 })} />
-                    <Select value={selectedNode.data.inactivity_unit || 'days'}
+                    <Select value={selectedNode.data.inactivity_unit ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_unit}
                       onValueChange={(v) => onNodeDataChange(selectedNode.id, { inactivity_unit: v })}>
                       <SelectTrigger className="flex-1 h-9"><SelectValue /></SelectTrigger>
                       <SelectContent className="z-[200]"><SelectItem value="hours">Horas</SelectItem><SelectItem value="days">Dias</SelectItem></SelectContent>
@@ -377,12 +382,32 @@ export function NodeConfigPanel({
                 </div>
               )}
 
-              {/* Session WhatsApp - moved from sidebar */}
-              {connectedSessions.length > 0 && setSessionId && (
+              {selectedNode.data.trigger_type === 'message_received' && (
                 <div className="space-y-1.5 border-t border-[var(--app-border)] pt-2">
-                  <Label className="text-xs">Sessão WhatsApp</Label>
-                  <Select value={sessionId || ''} onValueChange={setSessionId}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <Label htmlFor="automation-inbound-whatsapp-session" className="text-xs">Receber mensagens de</Label>
+                  <Select value={inboundSessionId || '__all__'}
+                    onValueChange={(value) => onNodeDataChange(selectedNode.id, { session_id: value === '__all__' ? null : value })}>
+                    <SelectTrigger id="automation-inbound-whatsapp-session" className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent className="z-[200]">
+                      <SelectItem value="__all__">Todas as sessões</SelectItem>
+                      {inboundSessionId && !connectedSessions.some(session => session.id === inboundSessionId) && (
+                        <SelectItem value={inboundSessionId} disabled>
+                          {storedInboundSession?.display_name || storedInboundSession?.instance_name || 'Sessão indisponível'}
+                        </SelectItem>
+                      )}
+                      {connectedSessions.map(session => (
+                        <SelectItem key={session.id} value={session.id}>{session.display_name || session.instance_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {connectedSessions.length > 0 && setWhatsAppSessionId && (
+                <div className="space-y-1.5 border-t border-[var(--app-border)] pt-2">
+                  <Label htmlFor="automation-outbound-whatsapp-session" className="text-xs">Sessão para enviar mensagens</Label>
+                  <Select value={whatsappSessionId || ''} onValueChange={setWhatsAppSessionId}>
+                    <SelectTrigger id="automation-outbound-whatsapp-session" className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                     <SelectContent className="z-[200]">{connectedSessions.map((s) => (
                       <SelectItem key={s.id} value={s.id}>{s.display_name || s.instance_name}</SelectItem>
                     ))}</SelectContent>
@@ -448,7 +473,9 @@ export function NodeConfigPanel({
                   </Label>
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Cria duas saídas: &quot;Respondeu&quot; e &quot;Timeout&quot;. Configure ações diferentes para cada caminho.
+                  {selectedNode.data.stop_on_reply === true
+                    ? 'Conecte “Respondeu”, “Não respondeu” ou ambas. O fluxo termina se a saída do resultado ficar sem conexão.'
+                    : 'Ative para seguir caminhos diferentes quando o lead responder ou quando o prazo terminar.'}
                 </p>
                 {selectedNode.data.stop_on_reply === true && (
                   <div className="space-y-3 rounded-md border p-3">
@@ -757,6 +784,14 @@ export function NodeConfigPanel({
                 </div>
               )}
             </div>
+          )}
+
+          {selectedNode.type === 'distribute_lead' && (
+            <DistributionNodeFields
+              nodeId={selectedNode.id}
+              queueId={String(selectedNode.data.round_robin_id ?? '')}
+              onQueueChange={(round_robin_id, queue_name) => onNodeDataChange(selectedNode.id, { round_robin_id, queue_name })}
+            />
           )}
 
           {selectedNode.type === 'property_interest' && !isUnsupportedCrmAction && (

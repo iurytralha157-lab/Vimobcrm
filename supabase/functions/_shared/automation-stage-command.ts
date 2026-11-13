@@ -6,6 +6,8 @@ type StageCommandIdentity = {
   effectKey: string;
 };
 
+type AutomationCommandRoute = "stage-command" | "distribution-command";
+
 export class AutomationStageCommandError extends Error {
   readonly code: string;
   readonly retryable: boolean;
@@ -21,7 +23,7 @@ function unavailable(): AutomationStageCommandError {
   return new AutomationStageCommandError("automation_command_unavailable", true);
 }
 
-export function stageCommandURL(value: string): URL {
+export function stageCommandURL(value: string, route: AutomationCommandRoute = "stage-command"): URL {
   let url: URL;
   try { url = new URL(value); } catch { throw unavailable(); }
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -29,7 +31,7 @@ export function stageCommandURL(value: string): URL {
     url.username || url.password || url.search || url.hash || url.pathname !== "/") {
     throw unavailable();
   }
-  return new URL("/v1/internal/automations/stage-command", url);
+  return new URL(`/v1/internal/automations/${route}`, url);
 }
 
 async function responseJSON(response: Response): Promise<Record<string, unknown>> {
@@ -60,9 +62,10 @@ export async function invokeAutomationStageCommand(
   identity: StageCommandIdentity,
   configuration: { apiURL: string; token: string },
   fetchImplementation: typeof fetch = fetch,
+  route: AutomationCommandRoute = "stage-command",
 ): Promise<Record<string, unknown>> {
   if (!configuration.token.trim()) throw unavailable();
-  const url = stageCommandURL(configuration.apiURL);
+  const url = stageCommandURL(configuration.apiURL, route);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
   try {
@@ -88,6 +91,14 @@ export async function invokeAutomationStageCommand(
     }
     return data;
   } finally { clearTimeout(timer); }
+}
+
+export function invokeAutomationDistributionCommand(
+  identity: StageCommandIdentity,
+  configuration: { apiURL: string; token: string },
+  fetchImplementation: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  return invokeAutomationStageCommand(identity, configuration, fetchImplementation, "distribution-command");
 }
 
 export async function deferAutomationStageCommand(

@@ -70,6 +70,8 @@ VIMOB_INTERNAL_API_URL=http://api:8081
 API_CORS_ALLOWED_ORIGINS=https://app.vimobcrm.com.br
 API_TRUSTED_PROXY_CIDRS=10.23.0.0/24,10.24.0.0/24
 AUTOMATION_RUNTIME_WORKER_ENABLED=true
+STAGE_INACTIVITY_WORKER_ENABLED=false
+AUTOMATION_COMMAND_TOKEN=
 PROPERTY_DEVELOPMENT_RESERVATION_WORKER_ENABLED=true
 PROPERTY_PUBLICATION_WORKER_ENABLED=true
 SUPABASE_PROJECT_URL=https://seu-projeto.supabase.co
@@ -187,6 +189,20 @@ além do Traefik do stack, configure o timeout upstream para pelo menos 150
 segundos.
 
 `FCM_SERVICE_ACCOUNT_JSON` habilita notificacoes push nativas pelo Firebase Cloud Messaging HTTP v1. Use o JSON da service account como segredo compactado em uma linha ou base64. `FCM_PROJECT_ID` pode ficar vazio se o JSON tiver `project_id`. `FCM_SERVICE_ACCOUNT_FILE` e alternativa para ambientes que montam o arquivo como secret.
+
+`STAGE_INACTIVITY_WORKER_ENABLED` controla o processamento das regras de
+inatividade da etapa na API. O padrão é `false`. Antes do corte, confira o valor
+efetivo em cada réplica. Para preservar o worker ativo na produção atual,
+defina `STAGE_INACTIVITY_WORKER_ENABLED=true` no Portainer e confirme o mesmo
+valor nas novas réplicas. O processamento também exige os workers gerais da
+API habilitados.
+
+Para habilitar as ações de mover e distribuir leads por automação, configure o
+mesmo segredo exclusivo `AUTOMATION_COMMAND_TOKEN` na API Go e no runtime Edge
+do Supabase. Configure `AUTOMATION_COMMAND_API_URL` no Edge com a origem HTTPS
+da API correspondente, sem caminho, parâmetros ou credenciais. O segredo fica
+restrito ao servidor. Com o valor vazio, os comandos internos da API devolvem
+`503`. Valide a autenticação do par antes de ativar fluxos com essas ações.
 
 `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` e `SUPABASE_SECRET_KEY` sao
 obrigatorios em producao. `SUPABASE_SECRET_KEY` e injetada somente no runtime

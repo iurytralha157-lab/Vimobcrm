@@ -10,11 +10,11 @@ import (
 var errOutboundMediaIntegrityUnverified = errors.New("outbound_media_integrity_unverified: Não foi possível confirmar o arquivo desta mensagem antiga. Anexe o arquivo novamente para criar um novo envio.")
 
 func (repo Repository) whatsappOutboxMediaIntegrityVerified(ctx context.Context, item pendingWhatsAppOutbox, body map[string]any) (bool, error) {
-	var digest, path, mime, sourceID, sourcePath string
+	var digest, path, mime, sourceID, sourcePath, origin, messageType string
 	err := repo.db.Pool().QueryRow(ctx, `select coalesce(metadata->>'outbound_media_sha256',''),coalesce(media_storage_path,''),coalesce(media_mime_type,''),
-	 coalesce(metadata->>'outbound_media_source_message_id',''),coalesce(metadata->>'outbound_media_source_path','')
+	 coalesce(metadata->>'outbound_media_source_message_id',''),coalesce(metadata->>'outbound_media_source_path',''),coalesce(metadata->>'origin',''),coalesce(message_type,'')
 	 from public.whatsapp_messages where organization_id=$1::uuid and id=$2::uuid and session_id=$3::uuid and conversation_id=$4::uuid`,
-		item.OrganizationID, item.MessageRowID, item.SessionID, item.ConversationID).Scan(&digest, &path, &mime, &sourceID, &sourcePath)
+		item.OrganizationID, item.MessageRowID, item.SessionID, item.ConversationID).Scan(&digest, &path, &mime, &sourceID, &sourcePath, &origin, &messageType)
 	if err != nil {
 		return false, err
 	}
@@ -22,7 +22,15 @@ func (repo Repository) whatsappOutboxMediaIntegrityVerified(ctx context.Context,
 	if decodeErr != nil || len(decoded) != 32 || digest != strings.ToLower(digest) || digest != stringFromAny(body["mediaSHA256"]) || path != stringFromAny(body["mediaStoragePath"]) {
 		return false, nil
 	}
-	if path != outboundMediaImmutablePath(item.OrganizationID, item.SessionID, deterministicProviderMessageID(item.ClientMessageID), mime, digest) {
+	providerID := deterministicProviderMessageID(item.ClientMessageID)
+	extension := mediaExtension(mime)
+	if origin == "automation" {
+		extension = automationOutboundMediaExtensions[messageType+":"+mime]
+		if extension == "" || mime != stringFromAny(body["mimetype"]) || messageType != stringFromAny(body["mediaType"]) {
+			return false, nil
+		}
+	}
+	if path != outboundMediaPathWithExtension(item.OrganizationID, item.SessionID, providerID, digest, extension) {
 		return false, nil
 	}
 	if sourcePath != "" {

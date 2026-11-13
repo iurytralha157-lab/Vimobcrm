@@ -29,14 +29,18 @@ import {
   Webhook,
   Tag,
   ArrowRightLeft,
+  UserCheck,
+  UsersRound,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
 import { MessageSquare, Timer } from 'lucide-react';
-import { MessageNode, WaitNode, StartNode, ImageNode, AudioNode, VideoNode, ConditionNode, WebhookNode, TagNode, MoveStageNode, AssignUserNode, PropertyInterestNode, DealStatusNode } from './nodes';
+import { MessageNode, WaitNode, StartNode, ImageNode, AudioNode, VideoNode, ConditionNode, WebhookNode, TagNode, MoveStageNode, AssignUserNode, DistributeLeadNode, PropertyInterestNode, DealStatusNode } from './nodes';
 import { DEFAULT_ON_REPLY_MESSAGE } from './FollowUpTemplates';
 import { NodeConfigPanel } from './NodeConfigPanel';
+import { DEFAULT_AUTOMATION_INACTIVITY } from '@/lib/validation/automations';
 import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useTags } from '@/hooks/use-tags';
 import { useStages, usePipelines } from '@/hooks/use-stages';
 import { useAutomationMedia, useCreateAutomation, TriggerType, ActionType, type FlowDefinition } from '@/hooks/use-automations';
@@ -48,6 +52,7 @@ import DeletableEdge from './edges/DeletableEdge';
 import { FlowSimulator } from './FlowSimulator';
 import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
 import { resolveReplyKeywordConfig } from '@/lib/automations';
+import { updateAutomationWaitOutputs } from '@/components/features/automations/flow-editor-compatibility';
 
 const edgeTypes = {
   deletable: DeletableEdge,
@@ -65,11 +70,14 @@ const nodeTypes = {
   tag: TagNode,
   move_stage: MoveStageNode,
   assign_user: AssignUserNode,
+  distribute_lead: DistributeLeadNode,
   property_interest: PropertyInterestNode,
   deal_status: DealStatusNode,
 };
 
 const UNSUPPORTED_CRM_NODE_TYPES = new Set(['property_interest', 'deal_status']);
+const CANVAS_NODE_SPACING = 300;
+const TEMPLATE_INITIAL_VIEW = { nodes: [{ id: 'start-1' }, { id: 'message-1' }, { id: 'wait-1' }], maxZoom: 1 };
 
 interface FollowUpBuilderProps {
   onBack: () => void;
@@ -102,6 +110,8 @@ const NODE_PALETTE: PaletteItem[] = [
   { type: 'webhook', label: 'Webhook', icon: Webhook, color: 'bg-indigo-500 text-white', category: 'actions', defaultData: { webhook_url: '', method: 'POST' } },
   { type: 'tag', label: 'Tag', icon: Tag, color: 'bg-teal-500 text-white', category: 'actions', defaultData: { tag_id: '', tag_action: 'add' } },
   { type: 'move_stage', label: 'Mudar etapa', icon: ArrowRightLeft, color: 'bg-violet-500 text-white', category: 'actions', defaultData: { move_pipeline_id: '', move_stage_id: '' } },
+  { type: 'assign_user', label: 'Mudar responsável', icon: UserCheck, color: 'bg-sky-500 text-white', category: 'actions', defaultData: { assign_user_id: '' } },
+  { type: 'distribute_lead', label: 'Enviar para distribuição', icon: UsersRound, color: 'bg-sky-500 text-white', category: 'actions', defaultData: { round_robin_id: '' } },
 ];
 
 const CATEGORY_LABELS: Record<NodeCategory, string> = {
@@ -139,6 +149,8 @@ function getWaitReplyConfig(flowNodes: Node[]) {
 }
 
 function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpBuilderProps) {
+  const { hasPermission } = useUserPermissions();
+  const canManageDistribution = hasPermission('distribution_manage') && hasPermission('lead_operate');
   const reactFlowInstance = useReactFlow();
   const { data: sessions } = useWhatsAppSessions();
   const { data: tags } = useTags();
@@ -176,7 +188,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
 
   // Config
   const [name, setName] = useState(initialTemplate?.name || 'Meu Follow-up');
-  const [sessionId, setSessionId] = useState<string>('');
+  const [whatsappSessionId, setWhatsAppSessionId] = useState<string>('');
   const [triggerType, setTriggerType] = useState<TriggerType>('manual');
   const [stageId, setStageId] = useState<string>('');
   const [tagId, setTagId] = useState<string>('');
@@ -237,14 +249,14 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
 
     if (initialTemplate?.messages && initialTemplate.messages.length > 0) {
       let previousId = startId;
-      let yPos = 180;
+      let xPos = 250 + CANVAS_NODE_SPACING;
 
       initialTemplate.messages.forEach((msg, index) => {
         const messageId = `message-${index + 1}`;
         initialNodes.push({
           id: messageId,
           type: 'message',
-          position: { x: 250, y: yPos },
+          position: { x: xPos, y: 50 },
           data: { message: msg.content, day: msg.day },
         });
 
@@ -257,7 +269,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         });
 
         previousId = messageId;
-        yPos += 140;
+        xPos += CANVAS_NODE_SPACING;
 
         // Add wait node between messages (except last)
         if (index < initialTemplate.messages.length - 1) {
@@ -265,7 +277,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           initialNodes.push({
             id: waitId,
             type: 'wait',
-            position: { x: 250, y: yPos },
+            position: { x: xPos, y: 50 },
             data: { wait_type: 'days', wait_value: 1 },
           });
 
@@ -278,7 +290,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           });
 
           previousId = waitId;
-          yPos += 120;
+          xPos += CANVAS_NODE_SPACING;
         }
       });
     } else {
@@ -309,7 +321,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   const handlePipelineIdChange = useCallback((nextPipelineId: string) => {
     setPipelineId(nextPipelineId);
     setStageId('');
-  }, []);
+  }, [setPipelineId, setStageId]);
 
   const handleDeleteEdge = useCallback((edgeId: string) => {
     setEdges((eds) => eds.filter((e) => e.id !== edgeId));
@@ -347,11 +359,11 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       const y = event.clientY - rect.top - 20;
       setPanelPosition({ x: Math.min(x, rect.width - 320), y: Math.max(0, Math.min(y, rect.height - 300)) });
     }
-  }, []);
+  }, [setSelectedNode, setPanelPosition]);
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
-  }, []);
+  }, [setSelectedNode]);
 
   const handleAddNode = useCallback((paletteItem: PaletteItem) => {
     if (paletteItem.type === 'start' && nodes.some((node) => node.type === 'start')) {
@@ -359,7 +371,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       return;
     }
     const lastNode = nodes[nodes.length - 1];
-    const newX = lastNode ? lastNode.position.x + 300 : 250;
+    const newX = lastNode ? lastNode.position.x + CANVAS_NODE_SPACING : 250;
     const newY = lastNode ? lastNode.position.y : 200;
 
     const newNodeId = `${paletteItem.type}-${Date.now()}`;
@@ -379,7 +391,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
 
     // Auto-connect to last node if exists
     if (lastNode && lastNode.type !== 'start') {
-      const sourceHandle = lastNode.type === 'wait' ? 'no_reply' :
+      const sourceHandle = lastNode.type === 'wait' && lastNode.data.stop_on_reply === true ? 'no_reply' :
                           lastNode.type === 'condition' ? 'true' : null;
 
       const newEdge: Edge = {
@@ -403,7 +415,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
     setNodes((nds) => nds.filter((n) => n.id !== nodeId));
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
     setSelectedNode(null);
-  }, [nodes, setNodes, setEdges]);
+  }, [nodes, setNodes, setEdges, setSelectedNode]);
 
   const handleNodeDataChange = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes((nds) =>
@@ -421,7 +433,11 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
     if (data.condition_type === 'custom') {
       setEdges((currentEdges) => currentEdges.filter((edge) => edge.source !== nodeId || edge.sourceHandle !== 'unknown'));
     }
-  }, [setNodes, setEdges]);
+    if (typeof data.stop_on_reply === 'boolean') {
+      const stopOnReply = data.stop_on_reply;
+      setEdges((currentEdges) => updateAutomationWaitOutputs(currentEdges, nodeId, stopOnReply));
+    }
+  }, [setNodes, setEdges, setSelectedNode]);
 
   // Undo history
   const undoStackRef = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -517,7 +533,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       return;
     }
     const whatsappNodes = nodes.filter((node) => ['message', 'image', 'audio', 'video'].includes(node.type || ''));
-    if (whatsappNodes.length > 0 && !sessionId) {
+    if (whatsappNodes.length > 0 && !whatsappSessionId) {
       toast.error('Selecione uma sessão WhatsApp');
       return;
     }
@@ -556,11 +572,6 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       toast.error('Selecione o lead destinatário do disparo agendado');
       return;
     }
-    if (triggerType === 'inactivity' && (!startNodeData.inactivity_value || !startNodeData.inactivity_unit)) {
-      toast.error('Informe o período de inatividade');
-      return;
-    }
-
     const waitReplyConfig = getWaitReplyConfig(nodes);
     const shouldStopOnReply = waitReplyConfig.hasWaitNodes ? waitReplyConfig.stopOnReply : stopOnReply;
     const resolvedOnReplyStageId = shouldStopOnReply
@@ -571,6 +582,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       : null;
     const triggerConfig: Record<string, unknown> = {
       ...(triggerType === 'tag_added' ? { tag_id: tagId } : {}),
+      ...(triggerType === 'message_received' ? { session_id: startNodeData.session_id ?? null } : {}),
       ...(triggerType === 'lead_stage_changed' ? { pipeline_id: pipelineId, to_stage_id: stageId } : {}),
       ...(triggerType === 'lead_created' ? {
         source: typeof startNodeData.source === 'string' ? startNodeData.source : null,
@@ -583,8 +595,8 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         target_lead_id: startNodeData.target_lead_id,
       } : {}),
       ...(triggerType === 'inactivity' ? {
-        inactivity_value: startNodeData.inactivity_value,
-        inactivity_unit: startNodeData.inactivity_unit,
+        inactivity_value: startNodeData.inactivity_value ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_value,
+        inactivity_unit: startNodeData.inactivity_unit ?? DEFAULT_AUTOMATION_INACTIVITY.inactivity_unit,
       } : {}),
       filter_user_id: filterUserId && filterUserId !== '__all__' ? filterUserId : null,
       stop_on_reply: shouldStopOnReply,
@@ -620,25 +632,25 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         } else if (node.type === 'message') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_whatsapp',
-            config: { session_id: sessionId, message: node.data.message, actionType: 'send_whatsapp' },
+            config: { session_id: whatsappSessionId, message: node.data.message, actionType: 'send_whatsapp' },
             ...pos,
           });
         } else if (node.type === 'image') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_image',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_image' },
+            config: { session_id: whatsappSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_image' },
             ...pos,
           });
         } else if (node.type === 'audio') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_audio',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_audio' },
+            config: { session_id: whatsappSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_audio' },
             ...pos,
           });
         } else if (node.type === 'video') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_video',
-            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_video' },
+            config: { session_id: whatsappSessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_video' },
             ...pos,
           });
         } else if (node.type === 'wait') {
@@ -705,6 +717,12 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'assign_user',
             config: { user_id: node.data.assign_user_id, actionType: 'assign_user' },
+            ...pos,
+          });
+        } else if (node.type === 'distribute_lead') {
+          dbNodes.push({
+            id: node.id, node_type: 'action', action_type: 'distribute_lead',
+            config: { round_robin_id: node.data.round_robin_id, queue_name: node.data.queue_name },
             ...pos,
           });
         } else if (node.type === 'property_interest') {
@@ -815,7 +833,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
              <div className="space-y-1 p-3">
               {/* Node Categories - Typebot Style */}
               {(['bubbles', 'conditionals', 'actions'] as NodeCategory[]).map((category) => {
-                const items = NODE_PALETTE.filter(item => item.category === category);
+                const items = NODE_PALETTE.filter(item => item.category === category && (item.type !== 'distribute_lead' || canManageDistribution));
                 const isExpanded = expandedCategories[category];
 
                 return (
@@ -897,6 +915,8 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
+            fitViewOptions={initialTemplate ? TEMPLATE_INITIAL_VIEW : undefined}
+            minZoom={initialTemplate ? 0.1 : undefined}
             className="automation-canvas"
           >
             <Controls />
@@ -938,8 +958,8 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
               setStageId={setStageId}
               position={panelPosition || undefined}
               sessions={sessions || []}
-              sessionId={sessionId}
-              setSessionId={setSessionId}
+              whatsappSessionId={whatsappSessionId}
+              setWhatsAppSessionId={setWhatsAppSessionId}
               users={users || []}
               filterUserId={filterUserId}
               setFilterUserId={setFilterUserId}

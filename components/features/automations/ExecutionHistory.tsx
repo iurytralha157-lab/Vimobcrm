@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, CheckCircle2, XCircle, Clock, Play, AlertTriangle, ChevronDown, ChevronUp, StopCircle, Filter } from 'lucide-react';
+import { Loader2, AlertTriangle, ChevronDown, ChevronUp, StopCircle } from 'lucide-react';
 import {
   useAutomationExecutions,
   useAutomationExecutionSteps,
@@ -45,56 +44,48 @@ const getStatusConfig = (status: string) => {
     case 'completed':
       return {
         label: 'Concluído',
-        icon: CheckCircle2,
-        dotColor: 'bg-emerald-500',
-        badgeClass: 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/10',
+        badgeClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
       };
     case 'running':
       return {
         label: 'Executando',
-        icon: Play,
-        dotColor: 'bg-sky-500',
-        badgeClass: 'bg-sky-500/10 text-sky-500 border border-sky-500/20 hover:bg-sky-500/10',
+        badgeClass: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
       };
     case 'queued':
       return {
         label: 'Na fila',
-        icon: Clock,
-        dotColor: 'bg-sky-500',
-        badgeClass: 'bg-sky-500/10 text-sky-500 border border-sky-500/20 hover:bg-sky-500/10',
+        badgeClass: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
       };
     case 'waiting':
       return {
         label: 'Aguardando',
-        icon: Clock,
-        dotColor: 'bg-amber-500',
-        badgeClass: 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/10',
+        badgeClass: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
       };
     case 'failed':
       return {
         label: 'Falhou',
-        icon: XCircle,
-        dotColor: 'bg-red-500',
-        badgeClass: 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/10',
+        badgeClass: 'bg-red-500/10 text-red-700 dark:text-red-300',
       };
     case 'cancelled':
       return {
         label: 'Cancelado',
-        icon: StopCircle,
-        dotColor: 'bg-neutral-500',
-        badgeClass: 'bg-neutral-500/10 text-neutral-500 border border-neutral-500/20 hover:bg-neutral-500/10',
+        badgeClass: 'bg-muted text-muted-foreground',
       };
     default:
       return {
         label: status,
-        icon: AlertTriangle,
-        dotColor: 'bg-neutral-500',
-        badgeClass: 'bg-neutral-500/10 text-neutral-500 border border-neutral-500/20 hover:bg-neutral-500/10',
+        badgeClass: 'bg-muted text-muted-foreground',
       };
   }
 };
 
 function translateError(error: string): string {
+  if (error === 'automation_queue_destination_unavailable') return 'A fila de distribuição não está mais disponível.';
+  if (error === 'automation_queue_protected') return 'O lead está protegido ou já pertence a outra fila. O responsável foi mantido.';
+  if (error === 'automation_queue_same_owner') return 'A fila não atribuiu um novo responsável. O responsável foi mantido.';
+  if (error === 'automation_queue_unavailable') return 'A fila não pôde atribuir o lead neste momento. O responsável foi mantido.';
+  if (error === 'automation_actor_forbidden') return 'O autor do fluxo não tem permissão para executar esta ação no lead.';
+  if (error === 'automation_command_unavailable') return 'O serviço de ações de CRM está indisponível.';
   if (error.includes("exists") && error.includes("false")) return "Número WhatsApp inválido ou não cadastrado";
   if (error.includes("Connection refused") || error.includes("ECONNREFUSED")) return "Falha na conexão com WhatsApp";
   if (error.includes("timeout") || error.includes("ETIMEDOUT")) return "Tempo limite excedido";
@@ -125,6 +116,7 @@ const EXECUTION_STEP_LABELS: Record<string, string> = {
   remove_tag: 'Remover tag',
   move_lead: 'Mover lead de etapa',
   assign_user: 'Alterar responsável',
+  distribute_lead: 'Enviar para distribuição',
   set_variable: 'Atualizar dado do lead',
   trigger: 'Gatilho',
   condition: 'Condição',
@@ -176,16 +168,6 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
   });
   const { data: automations, error: automationsError, refetch: refetchAutomations } = useAutomations();
 
-  const filteredExecutions = executions;
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   if (error || automationsError) {
     const message = error instanceof Error
       ? error.message
@@ -207,156 +189,144 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
     );
   }
 
-  const filterSelect = (
-    automations && automations.length > 0 ? (
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <Select
-          value={selectedAutomationId || '__all__'}
-          onValueChange={(v) => { setSelectedAutomationId(v === '__all__' ? undefined : v); setOffset(0); }}
-        >
-          <SelectTrigger className="min-w-0 flex-1 sm:w-[260px] sm:flex-none" aria-label="Filtrar por automação">
-            <SelectValue placeholder="Todas as automações" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">Todas as automações</SelectItem>
-            {automations.map((a) => (
-              <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {selectedAutomationId && (
-          <Button variant="ghost" size="sm" onClick={() => { setSelectedAutomationId(undefined); setOffset(0); }}>
-            Limpar
-          </Button>
-        )}
-      </div>
-    ) : null
-  );
-
   const runningExecutions = executions.filter((execution) => ['queued', 'running', 'waiting'].includes(normalizeExecutionStatus(execution.status)));
   const completedExecutions = executions.filter((execution) => normalizeExecutionStatus(execution.status) === 'completed');
   const cancelledExecutions = executions.filter((execution) => normalizeExecutionStatus(execution.status) === 'cancelled');
   const failedOnlyExecutions = executions.filter((execution) => normalizeExecutionStatus(execution.status) === 'failed');
+  const page = Math.floor(offset / limit) + 1;
+  const filtersApplied = Boolean(selectedAutomationId || dateFrom || dateTo || statusFilter !== 'all');
 
   return (
-    <div className="space-y-6 animate-in">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        {filterSelect}
-
-        <div className="flex flex-wrap items-center gap-2 self-start sm:justify-end">
-          <Select value={String(limit)} onValueChange={(value) => { setLimit(Number(value)); setOffset(0); }}>
-            <SelectTrigger className="h-9 w-[150px]" aria-label="Quantidade de execuções">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="50">50 por página</SelectItem>
-              <SelectItem value="100">100 por página</SelectItem>
-              <SelectItem value="200">200 por página</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Segmented status filters */}
-          <div className="flex max-w-full flex-wrap items-center gap-1 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
-          {([
-            ['all', 'Todas'],
-            ['running', 'Em execução'],
-            ['completed', 'Concluídas'],
-            ['failed', 'Falhas'],
-            ['cancelled', 'Canceladas'],
-          ] as const).map(([key, label]) => {
-            const isActive = statusFilter === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => { setStatusFilter(key); setOffset(0); }}
-                aria-pressed={isActive}
-                className={cn(
-                  "h-8 rounded-[6px] px-3 text-xs font-medium transition-all",
-                  isActive
-                    ? "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-          </div>
+    <section aria-labelledby="automation-executions-title" className="@container overflow-hidden rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)]">
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-3 p-4 sm:p-5">
+        <div className="flex min-h-9 basis-full items-center gap-2 @min-[1200px]:shrink-0 @min-[1200px]:basis-auto">
+          <h2 id="automation-executions-title" className="text-base font-medium">Histórico de execuções</h2>
+          {isFetching && !isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Atualizando execuções" />}
         </div>
-      </div>
 
-      {/* Stats */}
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-[12px]">Execuções de<Input type="date" aria-label="Início do período de execuções" value={dateFrom} max={dateTo || undefined} onChange={event => { setDateFrom(event.target.value); setOffset(0); }} className="mt-1 h-9" /></label>
-        <label className="text-[12px]">Até<Input type="date" aria-label="Fim do período de execuções" value={dateTo} min={dateFrom || undefined} onChange={event => { setDateTo(event.target.value); setOffset(0); }} className="mt-1 h-9" /></label>
-        {(dateFrom || dateTo || statusFilter !== 'all') && <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setStatusFilter('all'); setOffset(0); }}>Limpar filtros</Button>}
-        {invalidRange && <p role="alert" className="text-[12px] text-destructive">A data final deve ser igual ou posterior à inicial.</p>}
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
-          <CardContent className="p-4 text-center">
-            <p className="text-[20px] font-normal text-foreground">{runningExecutions.length}</p>
-            <p className="text-xs text-muted-foreground">Em andamento</p>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
-          <CardContent className="p-4 text-center">
-            <p className="text-[20px] font-normal text-primary">{completedExecutions.length}</p>
-            <p className="text-xs text-muted-foreground">Concluídas</p>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
-          <CardContent className="p-4 text-center">
-            <p className="text-[20px] font-normal text-destructive">{failedOnlyExecutions.length}</p>
-            <p className="text-xs text-muted-foreground">Falhas</p>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
-          <CardContent className="p-4 text-center">
-            <p className="text-[20px] font-normal text-muted-foreground">{cancelledExecutions.length}</p>
-            <p className="text-xs text-muted-foreground">Canceladas</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Timeline */}
-      <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
-        <CardHeader>
-          <CardTitle className="text-base">Histórico de Execuções</CardTitle>
-          <CardDescription>
-            Página {Math.floor(offset / limit) + 1} · {executions.length} execuções nos filtros {isFetching ? '• atualizando...' : '• atualização automática enquanto houver execuções ativas'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <ScrollArea className="h-[400px]">
-            <div className="relative px-6 pb-4">
-              {/* Vertical timeline line */}
-              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-[var(--app-border)]" />
-
-              {filteredExecutions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <p className="text-sm text-muted-foreground">Nenhuma execução correspondente ao filtro selecionado.</p>
-                </div>
-              ) : (
-                filteredExecutions.map((execution) => (
-                  <ExecutionTimelineItem key={execution.id} execution={execution} canManage={canManage && !isFetching} />
-                ))
-              )}
-            </div>
-          </ScrollArea>
-          <div className="flex items-center justify-end gap-2 p-3">
-            <Button variant="outline" size="sm" disabled={offset === 0 || isFetching} onClick={() => setOffset(value => Math.max(0, value - limit))}>Anterior</Button>
-            <Button variant="outline" size="sm" disabled={executions.length < limit || isFetching || invalidRange || offset + limit > 100000} onClick={() => setOffset(value => value + limit)}>Próxima</Button>
+        <div role="group" aria-label="Filtros de execuções" className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
+          <div className="grid basis-full grid-cols-2 gap-2 @min-[570px]:basis-auto @min-[570px]:grid-flow-col @min-[570px]:grid-cols-none @min-[570px]:items-end">
+            {automations && automations.length > 0 && (
+              <div className="col-span-2 min-w-0 @min-[570px]:col-span-1 @min-[570px]:w-52">
+                <label htmlFor="automation-history-flow" className="mb-1 block text-xs font-medium text-muted-foreground">Automação</label>
+                <Select value={selectedAutomationId || '__all__'} onValueChange={(value) => { setSelectedAutomationId(value === '__all__' ? undefined : value); setOffset(0); }}>
+                  <SelectTrigger id="automation-history-flow" className="h-9 w-full" aria-label="Filtrar por automação">
+                    <SelectValue placeholder="Todas as automações" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todas as automações</SelectItem>
+                    {automations.map((automation) => <SelectItem key={automation.id} value={automation.id}>{automation.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <label className="min-w-0 text-xs font-medium text-muted-foreground @min-[570px]:w-36">
+              De
+              <Input type="date" aria-label="Início do período de execuções" value={dateFrom} max={dateTo || undefined} onChange={event => { setDateFrom(event.target.value); setOffset(0); }} className="mt-1 h-9 min-w-0 px-3 py-0" />
+            </label>
+            <label className="min-w-0 text-xs font-medium text-muted-foreground @min-[570px]:w-36">
+              Até
+              <Input type="date" aria-label="Fim do período de execuções" value={dateTo} min={dateFrom || undefined} onChange={event => { setDateTo(event.target.value); setOffset(0); }} className="mt-1 h-9 min-w-0 px-3 py-0" />
+            </label>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+
+          <div role="group" aria-label="Status das execuções" className="flex w-fit max-w-full flex-wrap gap-1 rounded-[8px] bg-[var(--app-surface-soft)] px-1 py-0.5">
+            {([
+              ['all', 'Todas'],
+              ['running', 'Em execução'],
+              ['completed', 'Concluídas'],
+              ['failed', 'Falhas'],
+              ['cancelled', 'Canceladas'],
+            ] as const).map(([key, label]) => {
+              const isActive = statusFilter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { setStatusFilter(key); setOffset(0); }}
+                  aria-pressed={isActive}
+                  className={cn(
+                    "h-8 rounded-[6px] px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-foreground",
+                    isActive
+                      ? "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {filtersApplied && (
+            <Button variant="ghost" size="sm" onClick={() => { setSelectedAutomationId(undefined); setDateFrom(''); setDateTo(''); setStatusFilter('all'); setOffset(0); }}>
+              Limpar filtros
+            </Button>
+          )}
+        </div>
+        {invalidRange && <p role="alert" className="basis-full text-xs text-destructive">A data final deve ser igual ou posterior à inicial.</p>}
+      </div>
+
+      {!invalidRange && (isLoading ? (
+        <div role="status" className="flex items-center justify-center gap-2 border-t border-[var(--app-border)] px-4 py-12 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Carregando execuções...
+        </div>
+      ) : (
+        <>
+          <dl aria-label="Resumo desta página" className="grid grid-cols-2 gap-3 border-y border-[var(--app-border)] bg-[var(--app-surface-soft)] px-4 py-3 sm:grid-cols-4 sm:px-5">
+            {[
+              ['Em andamento', runningExecutions.length],
+              ['Concluídas', completedExecutions.length],
+              ['Falhas', failedOnlyExecutions.length],
+              ['Canceladas', cancelledExecutions.length],
+            ].map(([label, count]) => (
+              <div key={label} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="font-semibold tabular-nums">{count}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {executions.length === 0 ? (
+            <p className="px-4 py-12 text-center text-sm text-muted-foreground">
+              {filtersApplied ? 'Nenhuma execução encontrada com esses filtros.' : 'Nenhuma execução registrada.'}
+            </p>
+          ) : (
+            <ScrollArea className="h-[400px]">
+              <ul className="divide-y divide-[var(--app-border)]">
+                {executions.map((execution) => (
+                  <li key={execution.id}>
+                    <ExecutionRow execution={execution} canManage={canManage && !isFetching} />
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--app-border)] p-4 sm:px-5">
+            <p className="text-xs text-muted-foreground">Página {page} · {executions.length} {executions.length === 1 ? 'execução' : 'execuções'}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={String(limit)} onValueChange={(value) => { setLimit(Number(value)); setOffset(0); }}>
+                <SelectTrigger className="h-8 w-[128px] text-xs" aria-label="Quantidade de execuções">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="50">50 por página</SelectItem>
+                  <SelectItem value="100">100 por página</SelectItem>
+                  <SelectItem value="200">200 por página</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" disabled={offset === 0 || isFetching} onClick={() => setOffset(value => Math.max(0, value - limit))}>Anterior</Button>
+              <Button variant="outline" size="sm" disabled={executions.length < limit || isFetching || offset + limit > 100000} onClick={() => setOffset(value => value + limit)}>Próxima</Button>
+            </div>
+          </div>
+        </>
+      ))}
+    </section>
   );
 }
 
-function ExecutionTimelineItem({ execution, canManage }: { execution: AutomationExecution; canManage: boolean }) {
+function ExecutionRow({ execution, canManage }: { execution: AutomationExecution; canManage: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
   const [stepPage, setStepPage] = useState(0);
   const cancelExecution = useCancelExecution();
@@ -378,159 +348,148 @@ function ExecutionTimelineItem({ execution, canManage }: { execution: Automation
   });
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="relative flex gap-4 py-3">
-        {/* Timeline dot */}
-        <div className={cn(
-          "relative z-10 w-3 h-3 rounded-full mt-1.5 shrink-0",
-          statusConfig.dotColor,
-          execution.status === 'running' && "animate-pulse"
-        )} />
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium truncate">{leadName}</span>
-                <span className={`inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-[10px] font-medium leading-none ${statusConfig.badgeClass}`}>
-                  {statusConfig.label}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 truncate">{automationName}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                {formatDistanceToNow(new Date(execution.started_at), { addSuffix: true, locale: ptBR })}
-                {execution.next_execution_at && execution.status === 'waiting' && (
-                  <span className="ml-2 text-accent-foreground">
-                    • Próximo: {formatDistanceToNow(new Date(execution.next_execution_at), { addSuffix: true, locale: ptBR })}
-                  </span>
-                )}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              {canCancel && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 animate-pulse"
-                      disabled={cancelExecution.isPending}
-                      aria-label={`Interromper automação para ${leadName}`}
-                    >
-                      <StopCircle className="h-3.5 w-3.5" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="vimob-dialog-content">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Interromper automação?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Novas etapas serão interrompidas. Um envio que já esteja em andamento ainda pode ser concluído.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => cancelExecution.mutate(execution.id)}
-                        className="bg-destructive hover:bg-destructive/90"
-                      >
-                        Confirmar
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
-
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="rounded p-1 hover:bg-[var(--app-surface-hover)]"
-                  aria-label={`${isOpen ? 'Ocultar' : 'Mostrar'} passos da execução de ${leadName}`}
-                  aria-expanded={isOpen}
-                >
-                  {isOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-                </button>
-              </CollapsibleTrigger>
-            </div>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="px-4 py-3 sm:px-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium truncate">{leadName}</span>
+            <span className={cn('rounded-[4px] px-2 py-0.5 text-xs font-medium leading-tight', statusConfig.badgeClass)}>
+              {statusConfig.label}
+            </span>
           </div>
-
-          <CollapsibleContent>
-            <div className="mt-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[12px] font-normal">Passos executados</p>
-                {stepsQuery.isFetching && !stepsQuery.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Atualizando passos" />}
-              </div>
-              {stepsQuery.isLoading ? (
-                <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground" role="status">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando passos...
-                </div>
-              ) : stepsQuery.error ? (
-                <div className="py-3 text-xs text-destructive" role="alert">
-                  <p>{stepsQuery.error.message}</p>
-                  <Button type="button" size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={() => void stepsQuery.refetch()}>
-                    Tentar novamente
-                  </Button>
-                </div>
-              ) : !stepsQuery.data || stepsQuery.data.length === 0 ? (
-                <p className="py-4 text-xs text-muted-foreground">
-                  {stepPage === 0 ? 'Nenhum passo registrado para esta execução.' : 'Não há mais passos nesta página.'}
-                </p>
-              ) : (
-                <ol className="mt-3 space-y-2">
-                  {stepsQuery.data.map((step) => (
-                    <li key={step.id} className="rounded-md bg-background/70 p-2.5 text-xs">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{getExecutionStepLabel(step.node_type, step.action_type)}</p>
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">
-                            {formatDistanceToNow(new Date(step.started_at), { addSuffix: true, locale: ptBR })}
-                            {step.attempt > 1 ? ` • tentativa ${step.attempt}` : ''}
-                          </p>
-                        </div>
-                        <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', getStepStatusClass(step.status))}>
-                          {getStepStatusLabel(step.status)}
-                        </span>
-                      </div>
-                      {step.error_message && <p className="mt-2 break-words text-[11px] text-destructive">{translateError(step.error_message)}</p>}
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {(stepPage > 0 || (stepsQuery.data?.length ?? 0) === stepPageSize) && (
-                <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--app-border)] pt-2">
-                  <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={stepPage === 0} onClick={() => setStepPage((page) => Math.max(0, page - 1))}>
-                    Anterior
-                  </Button>
-                  <span className="text-[10px] text-muted-foreground">Página {stepPage + 1}</span>
-                  <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={(stepsQuery.data?.length ?? 0) < stepPageSize} onClick={() => setStepPage((page) => page + 1)}>
-                    Próxima
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {hasError && (
-              <div className="mt-2 bg-red-500/10 border border-red-500/20 rounded-[8px] p-3 text-left">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
-                  <div className="space-y-1 min-w-0">
-                    <p className="text-xs font-medium text-red-600 dark:text-red-400">{translatedError}</p>
-                    {execution.error_message !== translatedError && (
-                      <details className="text-[10px] text-muted-foreground mt-1">
-                        <summary className="cursor-pointer hover:text-foreground outline-none">Detalhes técnicos</summary>
-                        <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[10px] text-muted-foreground border border-[var(--app-border)]">
-                          {execution.error_message}
-                        </pre>
-                      </details>
-                    )}
-                  </div>
-                </div>
-              </div>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{automationName}</p>
+          <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+            <time dateTime={execution.started_at}>{formatDistanceToNow(new Date(execution.started_at), { addSuffix: true, locale: ptBR })}</time>
+            {execution.next_execution_at && normalizedStatus === 'waiting' && (
+              <span>
+                Próximo passo <time dateTime={execution.next_execution_at}>{formatDistanceToNow(new Date(execution.next_execution_at), { addSuffix: true, locale: ptBR })}</time>
+              </span>
             )}
-          </CollapsibleContent>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {canCancel && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={cancelExecution.isPending}
+                  aria-label={`Interromper automação para ${leadName}`}
+                >
+                  <StopCircle className="h-3.5 w-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="vimob-dialog-content">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Interromper automação?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Novas etapas serão interrompidas. Um envio que já esteja em andamento ainda pode ser concluído.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => cancelExecution.mutate(execution.id)}
+                    className="bg-destructive hover:bg-destructive/90"
+                  >
+                    Confirmar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              aria-label={`${isOpen ? 'Ocultar' : 'Mostrar'} passos da execução de ${leadName}`}
+            >
+              {isOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </Button>
+          </CollapsibleTrigger>
         </div>
       </div>
+
+      <CollapsibleContent>
+        <div className="mt-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] font-normal">Passos executados</p>
+            {stepsQuery.isFetching && !stepsQuery.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Atualizando passos" />}
+          </div>
+          {stepsQuery.isLoading ? (
+            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground" role="status">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando passos...
+            </div>
+          ) : stepsQuery.error ? (
+            <div className="py-3 text-xs text-destructive" role="alert">
+              <p>{stepsQuery.error.message}</p>
+              <Button type="button" size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={() => void stepsQuery.refetch()}>
+                Tentar novamente
+              </Button>
+            </div>
+          ) : !stepsQuery.data || stepsQuery.data.length === 0 ? (
+            <p className="py-4 text-xs text-muted-foreground">
+              {stepPage === 0 ? 'Nenhum passo registrado para esta execução.' : 'Não há mais passos nesta página.'}
+            </p>
+          ) : (
+            <ol className="mt-3 space-y-2">
+              {stepsQuery.data.map((step) => (
+                <li key={step.id} className="rounded-md bg-background/70 p-2.5 text-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{getExecutionStepLabel(step.node_type, step.action_type)}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {formatDistanceToNow(new Date(step.started_at), { addSuffix: true, locale: ptBR })}
+                        {step.attempt > 1 ? ` • tentativa ${step.attempt}` : ''}
+                      </p>
+                    </div>
+                    <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', getStepStatusClass(step.status))}>
+                      {getStepStatusLabel(step.status)}
+                    </span>
+                  </div>
+                  {step.error_message && <p className="mt-2 break-words text-[11px] text-destructive">{translateError(step.error_message)}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+          {(stepPage > 0 || (stepsQuery.data?.length ?? 0) === stepPageSize) && (
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--app-border)] pt-2">
+              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={stepPage === 0} onClick={() => setStepPage((page) => Math.max(0, page - 1))}>
+                Anterior
+              </Button>
+              <span className="text-[10px] text-muted-foreground">Página {stepPage + 1}</span>
+              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={(stepsQuery.data?.length ?? 0) < stepPageSize} onClick={() => setStepPage((page) => page + 1)}>
+                Próxima
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {hasError && (
+          <div className="mt-2 bg-red-500/10 border border-red-500/20 rounded-[8px] p-3 text-left">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
+              <div className="space-y-1 min-w-0">
+                <p className="text-xs font-medium text-red-600 dark:text-red-400">{translatedError}</p>
+                {execution.error_message !== translatedError && (
+                  <details className="text-[10px] text-muted-foreground mt-1">
+                    <summary className="cursor-pointer hover:text-foreground outline-none">Detalhes técnicos</summary>
+                    <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[10px] text-muted-foreground border border-[var(--app-border)]">
+                      {execution.error_message}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </CollapsibleContent>
     </Collapsible>
   );
 }

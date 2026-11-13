@@ -25,6 +25,7 @@ export const automationActionTypeSchema = z.enum([
   'add_tag',
   'remove_tag',
   'assign_user',
+  'distribute_lead',
   'webhook',
   'set_variable',
 ])
@@ -62,8 +63,11 @@ const automationMediaPathSchema = z.string().trim().max(1_000).regex(
   'Selecione um arquivo valido da galeria',
 )
 
+export const DEFAULT_AUTOMATION_INACTIVITY = { inactivity_value: 1, inactivity_unit: 'days' } as const
+
 export const automationTriggerNodeConfigSchema = z.object({
   trigger_type: automationTriggerTypeSchema,
+  session_id: uuidSchema.nullish(),
   tag_id: uuidSchema.nullish(),
   pipeline_id: uuidSchema.nullish(),
   to_stage_id: uuidSchema.nullish(),
@@ -171,6 +175,7 @@ const automationActionConfigSchemas = {
   remove_tag: z.object({ tag_id: uuidSchema }).passthrough(),
   move_lead: z.object({ pipeline_id: uuidSchema, stage_id: uuidSchema }).passthrough(),
   assign_user: z.object({ user_id: uuidSchema }).passthrough(),
+  distribute_lead: z.object({ round_robin_id: uuidSchema }).passthrough(),
   set_variable: z.record(z.string(), z.unknown()).superRefine((config, ctx) => {
     if (config.actionType === 'property_interest') {
       if (!uuidSchema.safeParse(config.property_id).success) {
@@ -259,7 +264,20 @@ export const automationFlowDefinitionSchema = z.object({
   nodes: z.array(automationFlowNodeSchema).max(250),
   connections: z.array(automationFlowConnectionSchema).max(500),
   settings: z.record(z.string(), z.unknown()).default({}),
-}).strict().superRefine((flow, ctx) => {
+}).strict().superRefine(validateAutomationGraph)
+
+const automationGraphNodeSchema = z.object({
+  id: automationNodeBaseSchema.shape.id,
+  type: automationNodeTypeSchema,
+  config: z.record(z.string(), z.unknown()),
+})
+
+export const automationGraphSchema = z.object({
+  nodes: z.array(automationGraphNodeSchema).min(1, 'O fluxo precisa ter um gatilho.').max(250),
+  connections: z.array(automationFlowConnectionSchema).max(500),
+}).superRefine(validateAutomationGraph)
+
+function validateAutomationGraph(flow: z.infer<typeof automationGraphSchema>, ctx: z.RefinementCtx) {
   const nodeIds = new Set<string>()
   flow.nodes.forEach((node, index) => {
     if (nodeIds.has(node.id)) {
@@ -288,6 +306,9 @@ export const automationFlowDefinitionSchema = z.object({
     }
     if (connection.source === connection.target) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connections', index], message: 'Um no nao pode apontar para ele mesmo' })
+    }
+    if (connection.source_handle != null && connection.condition_branch != null && connection.source_handle !== connection.condition_branch) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connections', index], message: 'A saída e o ramo da conexão precisam coincidir.' })
     }
     const branch = connection.condition_branch || connection.source_handle || ''
     const key = `${connection.source}:${branch}:${connection.target}`
@@ -337,16 +358,18 @@ export const automationFlowDefinitionSchema = z.object({
           return parent?.type === 'delay' && parent.config.stop_on_reply === true && branch === 'replied'
         })
         if (!replyParent) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A condicao de resposta deve vir diretamente da saida replied de uma espera configurada para resposta' })
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'Conecte a condição de resposta diretamente à saída “Respondeu” de uma espera.' })
         }
       } else if (outputCount !== 2 || branches.size !== 2 || !branches.has('true') || !branches.has('false')) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A condicao precisa das saidas true e false' })
       }
     } else if (node.type === 'delay') {
       if (node.config.stop_on_reply) {
-        const hasExpectedBranches = branches.has('no_reply') && branches.has('replied')
-        if (outputCount !== 2 || branches.size !== 2 || !hasExpectedBranches) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A espera com resposta precisa das saidas no_reply e replied' })
+        const namedOutcomes = Number(branches.has('replied')) + Number(branches.has('no_reply'))
+        if (outputCount === 0) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'Conecte pelo menos uma saída da espera: “Respondeu” ou “Não respondeu”.' })
+        } else if (outputCount !== namedOutcomes) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'Use uma conexão por saída da espera: “Respondeu” ou “Não respondeu”.' })
         }
       } else if (outputCount > 1) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'Uma espera pode ter no maximo uma saida' })
@@ -385,7 +408,7 @@ export const automationFlowDefinitionSchema = z.object({
   if (hasCycle) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connections'], message: 'O fluxo nao pode conter ciclos' })
   }
-})
+}
 
 const savedAutomationFlowDefinitionSchema = automationFlowDefinitionSchema.refine(
   (flow) => flow.nodes.length > 0,

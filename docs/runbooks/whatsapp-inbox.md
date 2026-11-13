@@ -84,6 +84,35 @@ das mensagens da nova geração e nunca fabrique resultados de processamento.
 
 ## Outbox de envios
 
+A admissão de automações usa `public.enqueue_automation_whatsapp_outbox` com
+`service_role`. O cutover estrito de vínculos remove as permissões de escrita
+desse papel em `public.whatsapp_conversation_lead_bindings`. A migration
+`20261113145517_restore_automation_whatsapp_binding_lock.sql` mantém o
+enfileirador com `SECURITY INVOKER` e limita o privilégio elevado ao helper
+privado que bloqueia o vínculo ativo da organização, conversa, sessão e lead.
+O enfileirador continua exigindo o atendimento daquele vínculo.
+
+Com `20261113150808_fence_automation_whatsapp_attendance_evidence.sql`, a
+mensagem também registra o atendimento do autor da versão. O autor precisa
+continuar elegível para ler o lead e enviar pela sessão. O worker Go confere
+essa mesma evidência e as permissões vigentes ao iniciar o envio.
+
+Para imagem, áudio e vídeo, aplique
+`20261113151127_fence_automation_whatsapp_immutable_media.sql` junto com a
+versão do runtime Edge de automações e do worker Go compatíveis. A Edge copia
+os bytes originais sem sobrescrever objetos. A mensagem e a outbox registram
+o mesmo SHA-256 e o worker verifica o arquivo antes de assinar a URL. Confirme
+um novo envio de cada tipo pela outbox e pelo recibo do provedor. Se for preciso
+reverter o fluxo de mídia, pause as automações com mídia durante a troca das
+versões. A migration mantém a assinatura do RPC e o contrato de texto.
+
+Antes de aplicar, confira a assinatura e o marcador da função no banco e
+confirme que o papel de serviço não tem `UPDATE` na tabela de vínculos.
+Valide a admissão e a repetição idempotente em banco descartável como
+`service_role` com `whatsapp_automation_canonical_outbox.test.sql`.
+Após aplicar, faça uma nova execução controlada e confira a entrega pelo
+recibo do provedor. A migration não reprocessa efeitos antigos.
+
 A outbox é independente da inbox. Texto e mídia usam lanes que podem reivindicar
 e enviar itens prontos em paralelo; não há garantia de ordem global de entrega.
 Fontes: [worker da outbox](../../apps/api/internal/whatsapp/outbox_worker.go)

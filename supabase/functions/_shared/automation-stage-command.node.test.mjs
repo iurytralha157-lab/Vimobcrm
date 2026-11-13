@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { AutomationStageCommandError, deferAutomationStageCommand, invokeAutomationStageCommand, stageCommandURL } from './automation-stage-command.ts';
+import { AutomationStageCommandError, deferAutomationStageCommand, invokeAutomationDistributionCommand, invokeAutomationStageCommand, stageCommandURL } from './automation-stage-command.ts';
 
 const identity = { organizationId:'org-a', executionId:'execution-a', nodeKey:'move-a', leaseToken:'lease-a', effectKey:'automation:execution-a:move-a:move_lead' };
 const configuration = { apiURL:'https://api.example.invalid', token:'synthetic-secret' };
@@ -101,6 +101,38 @@ test('actual move runtime does not refresh or advance after a rejected command',
   let read=false;
   await assert.rejects(runtime.executeAction({from(){read=true;}},{id:'execution-a',organization_id:'org-a',locked_by:'lease-a'},{id:'move-a',action_type:'move_lead'},{}),/lost_reason_required/);
   assert.equal(read,false);
+});
+
+test('distribution runtime sends only execution identity and refreshes after committed assignment', async () => {
+  const queueIdentity = {...identity,nodeKey:'queue-a',effectKey:'automation:execution-a:queue-a:distribute_lead'};
+  const calls=[];
+  const response={...success,response:{assigned_user_id:'assigned-a'}};
+  const runtime=vm.createContext({
+    Deno:{env:{get:key=>key==='AUTOMATION_COMMAND_API_URL'?configuration.apiURL:configuration.token}},
+    invokeAutomationDistributionCommand:(input, config) => invokeAutomationDistributionCommand(input, config, async (url, options) => {
+      calls.push({url:url.pathname,body:JSON.parse(options.body)});
+      return Response.json(response);
+    }),
+  });
+  vm.runInContext(compiled,runtime);
+  const client={rpc(){throw new Error('distribution must not use the legacy effect');},from(table){
+    assert.equal(table,'leads');
+    const filters={};
+    const query={select(){return query;},eq(k,v){filters[k]=v;return query;},async maybeSingle(){
+      calls.push(filters);
+      return {data:{assigned_user_id:'assigned-a'},error:null};
+    }};
+    return query;
+  }};
+  const context={};
+  const execution={id:'execution-a',organization_id:'org-a',lead_id:'lead-a',locked_by:'lease-a'};
+  const node={id:'queue-a',action_type:'distribute_lead',config:{round_robin_id:'not-trusted-by-api'}};
+  assert.deepEqual(await runtime.executeAction(client,execution,node,context),response);
+  assert.deepEqual(calls,[{url:'/v1/internal/automations/distribution-command',body:queueIdentity},{id:'lead-a',organization_id:'org-a'}]);
+  assert.equal(context.lead.assigned_user_id,'assigned-a');
+  await assert.rejects(invokeAutomationDistributionCommand(queueIdentity,configuration,async()=>{
+    return Response.json({error:{code:'automation_queue_protected'}},{status:409});
+  }),error=>error.code==='automation_queue_protected'&&!error.retryable);
 });
 
 for (const due of [false, true]) {

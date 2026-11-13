@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/roundrobin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -163,7 +164,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		if err := repo.validateFlowMediaObjects(ctx, tenantContext.OrganizationID, *input.ParsedFlow); err != nil {
 			return Automation{}, err
 		}
-		if err := validateFlowReferences(ctx, tx, tenantContext.OrganizationID, *input.ParsedFlow); err != nil {
+		if err := validateFlowReferences(ctx, tx, tenantContext, *input.ParsedFlow); err != nil {
 			return Automation{}, err
 		}
 	}
@@ -358,7 +359,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if err := repo.validateFlowMediaObjects(ctx, tenantContext.OrganizationID, *activationFlow); err != nil {
 			return Automation{}, err
 		}
-		if err := validateFlowReferences(ctx, tx, tenantContext.OrganizationID, *activationFlow); err != nil {
+		if err := validateFlowReferences(ctx, tx, tenantContext, *activationFlow); err != nil {
 			return Automation{}, err
 		}
 	}
@@ -617,7 +618,7 @@ func (repo Repository) SaveFlow(ctx context.Context, tenantContext tenant.Contex
 	if err := repo.validateFlowMediaObjects(ctx, tenantContext.OrganizationID, input.FlowDefinition); err != nil {
 		return nil, err
 	}
-	if err := validateFlowReferences(ctx, tx, tenantContext.OrganizationID, input.FlowDefinition); err != nil {
+	if err := validateFlowReferences(ctx, tx, tenantContext, input.FlowDefinition); err != nil {
 		return nil, err
 	}
 
@@ -1877,7 +1878,8 @@ func publishedFlowMetadata(flow FlowDefinition) (string, json.RawMessage, string
 	return triggerType, triggerConfig, firstNodeKey
 }
 
-func validateFlowReferences(ctx context.Context, tx pgx.Tx, organizationID string, flow FlowDefinition) error {
+func validateFlowReferences(ctx context.Context, tx pgx.Tx, actor tenant.Context, flow FlowDefinition) error {
+	organizationID := actor.OrganizationID
 	for _, node := range flow.Nodes {
 		config := flowNodeConfig(node)
 		if node.Type == "trigger" {
@@ -1933,6 +1935,15 @@ func validateFlowReferences(ctx context.Context, tx pgx.Tx, organizationID strin
 			}
 		case "assign_user":
 			if err := validateOptionalOrganizationReference(ctx, tx, organizationID, "user", stringConfig(config, "user_id")); err != nil {
+				return err
+			}
+		case "distribute_lead":
+			if !actor.HasPermission(permissions.LeadOperate) {
+				return tenant.ErrOrganizationAccessDenied
+			}
+			if err := roundrobin.LockActiveQueueForDistribution(ctx, tx, actor, stringConfig(config, "round_robin_id")); errors.Is(err, roundrobin.ErrRoundRobinNotFound) {
+				return invalidFlow("distribution queue is unavailable")
+			} else if err != nil {
 				return err
 			}
 		case "set_variable":

@@ -116,7 +116,7 @@ export function CadenceSection({
               <Button
                 type="button"
                 size="sm"
-                className="h-8 rounded-[6px] bg-primary/10 px-3 text-[12px] font-light text-primary shadow-none hover:bg-primary hover:text-primary-foreground"
+                className="h-8 rounded-[6px] px-3 text-[12px] font-light shadow-none"
                 onClick={onAddTask}
                 disabled={draft.cadence.tasks.length >= 100}
               >
@@ -316,7 +316,6 @@ function TaskCard({
             <ToggleRow
               id={`task-required-${task.clientKey}`}
               title="Tarefa obrigatória"
-              description="Aparece como pendência até ser concluída."
               checked={task.is_required}
               disabled={!canEdit}
               onCheckedChange={(checked) => onUpdate({ is_required: checked })}
@@ -324,9 +323,6 @@ function TaskCard({
             <ToggleRow
               id={`task-outcome-${task.clientKey}`}
               title="Exigir resultado"
-              description={task.type === 'note'
-                ? 'Anotações não possuem resultado de contato.'
-                : 'Pede o desfecho antes de concluir a ação.'}
               checked={task.outcome_required}
               disabled={!canEdit || task.type === 'note'}
               onCheckedChange={(checked) => onUpdate({ outcome_required: checked })}
@@ -379,9 +375,8 @@ function TaskCard({
             <div className="flex justify-end">
               <Button
                 type="button"
-                variant="ghost"
                 size="sm"
-                className="h-8 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
+                className="h-8 rounded-[6px] px-2.5 text-[12px] font-light shadow-none"
                 onClick={onRemove}
               >
                 <Trash2 className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.5} />

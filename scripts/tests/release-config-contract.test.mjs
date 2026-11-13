@@ -84,6 +84,16 @@ for (const stackPath of [
   'deploy/portainer-stack.yml',
   'deploy/portainer-stack.build.yml',
 ]) {
+  test(`${stackPath} passes the optional stage inactivity worker setting only to the API`, async () => {
+    const stack = await readRepositoryFile(stackPath)
+    const [webService, apiAndFollowingServices] = stack.split(/^  api:\s*$/m)
+    const apiService = apiAndFollowingServices.split(/^  [\w-]+:/m, 1)[0]
+
+    assert.match(apiService, /^      STAGE_INACTIVITY_WORKER_ENABLED: \$\{STAGE_INACTIVITY_WORKER_ENABLED:-false\}$/m)
+    assert.doesNotMatch(webService, /STAGE_INACTIVITY_WORKER_ENABLED/)
+    assert.equal((stack.match(/^      STAGE_INACTIVITY_WORKER_ENABLED:/gm) ?? []).length, 1)
+  })
+
   test(`${stackPath} keeps the web Supabase secret server-only and required`, async () => {
     const stack = await readRepositoryFile(stackPath)
     const webService = stack.split(/^  api:/m, 1)[0]

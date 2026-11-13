@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { AutomationPhaseError } from './automation-runtime-errors.ts';
 
 // Execute the actual Edge action function, without importing its Deno env,
 // starting a server or contacting Supabase. SQL atomicity is tested separately.
@@ -13,7 +14,7 @@ assert.ok(action, 'the actual runtime action must exist');
 const compiled = ts.transpileModule(action.getText(parsed), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
-const runtime = vm.createContext({});
+const runtime = vm.createContext({ AutomationPhaseError });
 vm.runInContext(compiled, runtime);
 const execution = { id:'execution-a', organization_id:'org-a', lead_id:'lead-a', locked_by:'lease-a' };
 
@@ -67,7 +68,10 @@ for(const status of ['failed','execution_not_running']) {
     const f=fixture({ok:false,status});
     const pending=f.run('add_tag');
     f.confirm();
-    await assert.rejects(pending,new RegExp(`internal_effect_failed:${status}`));
+    await assert.rejects(pending, {
+      name: 'AutomationPhaseError',
+      message: `internal_effect:${status}`,
+    });
     assert.equal(f.calls.length,1);
   });
 }

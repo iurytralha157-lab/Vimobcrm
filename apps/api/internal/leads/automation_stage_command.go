@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const automationStageContract = "canonical_lead_stage_v1"
@@ -50,6 +51,24 @@ type automationStageConfig struct {
 }
 
 func deriveAutomationStageConfig(graph []byte, nodeKey string) (automationStageConfig, json.RawMessage, error) {
+	var config automationStageConfig
+	raw, err := deriveAutomationCommandConfig(graph, nodeKey, "move_lead", &config)
+	if err != nil {
+		return automationStageConfig{}, nil, err
+	}
+	normalizedStageID, stageOK := normalizeUUID(config.StageID)
+	normalizedPipelineID, pipelineOK := normalizeUUID(config.PipelineID)
+	if !stageOK || (config.PipelineID != "" && !pipelineOK) {
+		return automationStageConfig{}, nil, commandError("automation_node_invalid", 422)
+	}
+	config.StageID = normalizedStageID
+	if config.PipelineID != "" {
+		config.PipelineID = normalizedPipelineID
+	}
+	return config, raw, nil
+}
+
+func deriveAutomationCommandConfig(graph []byte, nodeKey, action string, config any) (json.RawMessage, error) {
 	var flow struct {
 		Nodes []struct {
 			ID         string          `json:"id"`
@@ -59,29 +78,22 @@ func deriveAutomationStageConfig(graph []byte, nodeKey string) (automationStageC
 		} `json:"nodes"`
 	}
 	if json.Unmarshal(graph, &flow) != nil {
-		return automationStageConfig{}, nil, commandError("automation_node_invalid", 422)
+		return nil, commandError("automation_node_invalid", 422)
 	}
-	var config automationStageConfig
 	var raw json.RawMessage
 	for _, node := range flow.Nodes {
 		if node.ID != nodeKey {
 			continue
 		}
-		if raw != nil || node.Type != "action" || node.ActionType != "move_lead" || json.Unmarshal(node.Config, &config) != nil {
-			return automationStageConfig{}, nil, commandError("automation_node_invalid", 422)
+		if raw != nil || node.Type != "action" || node.ActionType != action || json.Unmarshal(node.Config, config) != nil {
+			return nil, commandError("automation_node_invalid", 422)
 		}
 		raw = node.Config
 	}
-	normalizedStageID, stageOK := normalizeUUID(config.StageID)
-	normalizedPipelineID, pipelineOK := normalizeUUID(config.PipelineID)
-	if raw == nil || !stageOK || (config.PipelineID != "" && !pipelineOK) {
-		return automationStageConfig{}, nil, commandError("automation_node_invalid", 422)
+	if raw == nil {
+		return nil, commandError("automation_node_invalid", 422)
 	}
-	config.StageID = normalizedStageID
-	if config.PipelineID != "" {
-		config.PipelineID = normalizedPipelineID
-	}
-	return config, raw, nil
+	return raw, nil
 }
 
 func (repo Repository) executeAutomationStageCommand(ctx context.Context, resolver transactionalTenantResolver, input automationStageCommand) (automationStageResponse, error) {
@@ -100,59 +112,34 @@ func (repo Repository) executeAutomationStageCommand(ctx context.Context, resolv
 		return automationStageResponse{}, err
 	}
 
-	// Read identities first, then lock lead before execution to follow the lead's
-	// FK/cancellation lock order. Re-read all execution fences under its row lock.
-	initial, err := loadAutomationStageExecution(ctx, tx, input, false)
+	current, execution, err := repo.lockAutomationCommandExecution(ctx, tx, input)
 	if err != nil {
 		return automationStageResponse{}, err
-	}
-	if _, ok := normalizeUUID(initial.LeadID); !ok {
-		return automationStageResponse{}, commandError("automation_lead_required", 422)
-	}
-	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, input.OrganizationID, initial.LeadID)
-	if err != nil {
-		return automationStageResponse{}, err
-	}
-	execution, err := loadAutomationStageExecution(ctx, tx, input, true)
-	if err != nil {
-		return automationStageResponse{}, err
-	}
-	if execution.LeadID != initial.LeadID || execution.VersionID != initial.VersionID {
-		return automationStageResponse{}, commandError("automation_execution_changed", 409)
 	}
 	config, rawConfig, err := deriveAutomationStageConfig(execution.Graph, input.NodeKey)
 	if err != nil {
 		return automationStageResponse{}, err
 	}
 
-	if err = lockAutomationStageActor(ctx, tx, input.OrganizationID, execution.ActorID); err != nil {
-		return automationStageResponse{}, err
-	}
-	actor, err := resolver.ResolveInTx(ctx, tx, execution.ActorID, input.OrganizationID)
+	actor, err := resolveAutomationCommandActor(ctx, tx, resolver, input.OrganizationID, execution.ActorID)
 	if err != nil {
 		return automationStageResponse{}, err
-	}
-	if actor.OrganizationID != input.OrganizationID || actor.UserID != execution.ActorID || !actor.HasModule("automations") || !actor.HasPermission(permissions.LeadOperate) || !actor.HasBillingAccessAt(time.Now()) {
-		return automationStageResponse{}, commandError("automation_actor_forbidden", 403)
 	}
 	binding := automationStageBinding{automationStageContract, execution.VersionID, execution.ActorID, execution.LeadID, rawConfig}
 	// ACK is a read of the exact authorized, committed result. An ambiguous
 	// response must remain recoverable after a trigger cancels the execution,
 	// the cursor advances, or another worker receives a new lease.
-	cached, err := lookupAutomationStageEffect(ctx, tx, input, binding)
+	cached, err := lookupAutomationCommandEffect(ctx, tx, input, binding, "move_lead")
 	if err != nil {
 		return automationStageResponse{}, err
 	}
 	if cached != nil {
 		return *cached, nil
 	}
-	if execution.Status != "running" || execution.Cancelled || execution.NodeKey != input.NodeKey {
-		return automationStageResponse{}, commandError("automation_execution_not_running", 409)
+	if err := execution.validateLease(input); err != nil {
+		return automationStageResponse{}, err
 	}
-	if execution.LeaseToken != input.LeaseToken {
-		return automationStageResponse{}, commandError("automation_lease_changed", 409)
-	}
-	effectID, cached, err := acceptAutomationStageEffect(ctx, tx, input, binding)
+	effectID, cached, err := acceptAutomationCommandEffect(ctx, tx, input, binding, "move_lead")
 	if err != nil {
 		return automationStageResponse{}, err
 	}
@@ -208,6 +195,55 @@ func (repo Repository) executeAutomationStageCommand(ctx context.Context, resolv
 	}
 	repo.dispatchDealStatusSideEffects(actor, transition.Before, transition.StatusInput)
 	return automationStageResponse{true, "succeeded", effectID, json.RawMessage(response)}, nil
+}
+
+func (repo Repository) lockAutomationCommandExecution(ctx context.Context, tx pgx.Tx, input automationStageCommand) (leadSnapshot, automationStageExecution, error) {
+	// Read identities first, then lock lead before execution to follow the lead's
+	// FK/cancellation lock order. Re-read all execution fences under its row lock.
+	initial, err := loadAutomationStageExecution(ctx, tx, input, false)
+	if err != nil {
+		return leadSnapshot{}, automationStageExecution{}, err
+	}
+	if _, ok := normalizeUUID(initial.LeadID); !ok {
+		return leadSnapshot{}, automationStageExecution{}, commandError("automation_lead_required", 422)
+	}
+	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, input.OrganizationID, initial.LeadID)
+	if err != nil {
+		return leadSnapshot{}, automationStageExecution{}, err
+	}
+	execution, err := loadAutomationStageExecution(ctx, tx, input, true)
+	if err != nil {
+		return leadSnapshot{}, automationStageExecution{}, err
+	}
+	if execution.LeadID != initial.LeadID || execution.VersionID != initial.VersionID {
+		return leadSnapshot{}, automationStageExecution{}, commandError("automation_execution_changed", 409)
+	}
+	return current, execution, nil
+}
+
+func (execution automationStageExecution) validateLease(input automationStageCommand) error {
+	if execution.Status != "running" || execution.Cancelled || execution.NodeKey != input.NodeKey {
+		return commandError("automation_execution_not_running", 409)
+	}
+	if execution.LeaseToken != input.LeaseToken {
+		return commandError("automation_lease_changed", 409)
+	}
+	return nil
+}
+
+func resolveAutomationCommandActor(ctx context.Context, tx pgx.Tx, resolver transactionalTenantResolver, organizationID, actorID string) (tenant.Context, error) {
+	if err := lockAutomationStageActor(ctx, tx, organizationID, actorID); err != nil {
+		return tenant.Context{}, err
+	}
+	actor, err := resolver.ResolveInTx(ctx, tx, actorID, organizationID)
+	if err != nil {
+		return tenant.Context{}, err
+	}
+	if actor.OrganizationID != organizationID || actor.UserID != actorID || !actor.HasModule("automations") ||
+		!actor.HasPermission(permissions.LeadOperate) || !actor.HasBillingAccessAt(time.Now()) {
+		return tenant.Context{}, commandError("automation_actor_forbidden", 403)
+	}
+	return actor, nil
 }
 
 func loadAutomationStageExecution(ctx context.Context, tx pgx.Tx, input automationStageCommand, lock bool) (automationStageExecution, error) {

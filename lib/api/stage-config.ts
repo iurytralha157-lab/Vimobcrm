@@ -111,12 +111,12 @@ export const stageConfigAPI = {
 
   async listStageAutomations(params: { stageId?: string; organizationId?: string | null } = {}) {
     const stageId = params.stageId ? parseDomainInput(entityIdSchema, params.stageId, 'stage-config.automations.list.stage-id') : undefined
-    const response = await vimobAPIRequest<Envelope<StageAutomationRow[]>>('/v1/stage-automations', {
+    const response = await vimobAPIRequest<Envelope<StageAutomationRow[]> & { inactivity_runtime_available?: boolean }>('/v1/stage-automations', {
       organizationId: params.organizationId,
       query: { stageId },
     })
     validateDomainResponse(apiStageAutomationListResponseSchema, response, 'stage-config.automations.list')
-    return response.data
+    return { rows: response.data, inactivityRuntimeAvailable: response.inactivity_runtime_available }
   },
 
   async createStageAutomation(input: StageAutomationInput, organizationId?: string | null, intent?: VimobAPIRequestIntent) {

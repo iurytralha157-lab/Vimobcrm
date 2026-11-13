@@ -1094,6 +1094,34 @@
     {
       "file": "20261112230000_whatsapp_semlead_link_mixed_history.sql",
       "sha256": "71e8c4cca1246ff7e8744c8fb014e7ffe17ade8ef72f9dc269d5c18d7477b05e"
+    },
+    {
+      "file": "20261113145517_restore_automation_whatsapp_binding_lock.sql",
+      "sha256": "f1cc4f9f4eaebba79de330b3fe7be463788142284a099e8f50bb2153b3c4fab5"
+    },
+    {
+      "file": "20261113150808_fence_automation_whatsapp_attendance_evidence.sql",
+      "sha256": "3133ccf89b093009f6919e2086b59e6a692e1b6bc031788a6627a22583dfbfd1"
+    },
+    {
+      "file": "20261113151127_fence_automation_whatsapp_immutable_media.sql",
+      "sha256": "0b7b72c27a8fd7248d704fd01aa3dab4f804ce7d5931fbf833672c7c65192a48"
+    },
+    {
+      "file": "20261113153247_allow_automation_distribution_deferral.sql",
+      "sha256": "39173f9909433129dc7893b8483a0f935e71326beceb1985245a95b45e652f70"
+    },
+    {
+      "file": "20261113174342_finish_unconnected_automation_wait_outcome.sql",
+      "sha256": "3bffb0669153d512c249ee58b49c2a34aca0bf3c1e9fa2f0a89dad8c929f9002"
+    },
+    {
+      "file": "20261113181327_restrict_automation_wait_resume_rpc_execution.sql",
+      "sha256": "fd1137c8c49697fdc711ab8aef35676bde75d4f7b434680ebbde654509a8802a"
+    },
+    {
+      "file": "20261113181444_restrict_automation_due_delay_rpc_execution.sql",
+      "sha256": "735b0b5af809e51b24bb2eca42408a1e0d5c11a06934293604b1d7a31b040085"
     }
   ]
 }

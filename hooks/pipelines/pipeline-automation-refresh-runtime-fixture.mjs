@@ -34,7 +34,7 @@ const navigation = evaluate(functions('lib/access/tenant-navigation.ts', [
 ]), { SYSTEM_MODULE_KEYS: new Set(systemModules.map(module => module.key)) },
 '({isTenantContextForOrganization,getTenantEnabledModules,getTenantPermissions})');
 const automationSource = functions('hooks/use-stage-automations.ts', [
-  'isRecord', 'asString', 'asNumber', 'normalizeAutomation', 'useStageAutomations',
+  'isRecord', 'asString', 'asNumber', 'normalizeAutomation', 'selectStageAutomationRows', 'useStageAutomations', 'useStageAutomationList',
 ]);
 const normalize = evaluate(functions('hooks/use-stage-automations.ts', ['isRecord', 'asString', 'asNumber', 'normalizeAutomation']), {}, 'normalizeAutomation');
 const outcomeSource = parse('lib/pipeline-stage-outcome.ts').statements.map(node => node.getText()).join('\n');
@@ -89,11 +89,11 @@ export function pipelineAutomationRefreshRuntime({ allowed = true, modules = ['c
     ...navigation, stageAutomationsQueryKey: queryKey, createTenantQueryAccessSignature: accessSignature,
     useAuth: () => auth,
     stageConfigAPI: { listStageAutomations: async input => {
-      requests.push(input); if (failure) throw failure; return [rawAutomation(serverStatus, input.organizationId)];
+      requests.push(input); if (failure) throw failure; return { rows: [rawAutomation(serverStatus, input.organizationId)] };
     } },
     useQuery: input => {
       options = input;
-      if (!client.getQueryState(input.queryKey)) client.setQueryData(input.queryKey, [normalize(rawAutomation('lost', input.queryKey[2]))]);
+      if (!client.getQueryState(input.queryKey)) client.setQueryData(input.queryKey, { rows: [normalize(rawAutomation('lost', input.queryKey[2]))] });
       if (!observer) { observer = new QueryObserver(client, input); unsubscribe = observer.subscribe(() => {}); }
       else observer.setOptions(input);
       return observer.getCurrentResult();
@@ -130,7 +130,7 @@ export function pipelineAutomationRefreshRuntime({ allowed = true, modules = ['c
     userId, organizationId, memberRole: 'user', permissions: ['automations_view'], enabledModules: ['crm', 'automations'], isSuperAdmin: false,
   }));
   const sentinels = [keyFor('org-b', 'actor-a'), keyFor('org-a', 'actor-b')];
-  for (const key of sentinels) client.setQueryData(key, [normalize(rawAutomation('lost', key[2]))]);
+  for (const key of sentinels) client.setQueryData(key, { rows: [normalize(rawAutomation('lost', key[2]))] });
   render();
   const settled = async () => { for (let index = 0; index < 3 || observer.getCurrentResult().isFetching; index++) {
     assert(index < 30, 'synthetic refetch did not settle'); await turn();

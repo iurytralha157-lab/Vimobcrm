@@ -265,11 +265,11 @@ test('real create form ignores an old error without changing the new editor draf
   await replace([{ sid: 'sid-b' }]);
   await page.getByLabel('Tipo de Automação', { exact: true }).click();
   await page.getByRole('option', { name: 'Alterar status (Ganho/Perdido)', exact: true }).click();
-  await page.getByLabel('Novo Status do Deal', { exact: true }).click();
+  await page.getByLabel('Novo status do lead', { exact: true }).click();
   await page.getByRole('option', { name: 'Perdido', exact: true }).click();
   await page.evaluate(() => window.h.failReply());
   await page.waitForFunction(() => window.h.finishes === 1);
-  assert.equal(await page.getByLabel('Novo Status do Deal', { exact: true }).innerText(), 'Perdido');
+  assert.equal(await page.getByLabel('Novo status do lead', { exact: true }).innerText(), 'Perdido');
   assert.equal(await page.getByRole('button', { name: 'Criar Automação', exact: true }).isEnabled(), true);
   assert.equal(await page.evaluate(() => window.h.formSuccesses), 0);
   assert.deepEqual(await page.evaluate(() => window.h.toasts), []);

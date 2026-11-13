@@ -182,8 +182,8 @@ export function LeadCadencePanel({
         ) : (
           <p className="rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs font-light text-[var(--app-text-tertiary)]">
             {state.enrollment
-              ? 'Nenhuma tarefa operacional nesta etapa.'
-              : 'Nenhuma tarefa neste ciclo. As novas regras valem na próxima entrada na etapa ou reabertura do lead.'}
+              ? 'Cadência ativa nesta etapa. O ciclo atual não tem tarefas.'
+              : 'Cadência ativa nesta etapa. Este ciclo ainda não tem tarefas. A cadência começa na próxima entrada na etapa ou reabertura do lead.'}
           </p>
         )
       ) : (

@@ -4,15 +4,14 @@ import {
   evaluateAutomationCondition,
   renderAutomationTemplate,
 } from "../../../lib/automations/engine.ts";
-import { AutomationStageCommandError, deferAutomationStageCommand, invokeAutomationStageCommand } from "./automation-stage-command.ts";
+import { AutomationStageCommandError, deferAutomationStageCommand, invokeAutomationDistributionCommand, invokeAutomationStageCommand } from "./automation-stage-command.ts";
+import { AutomationPhaseError, safeAutomationError } from "./automation-runtime-errors.ts";
+import { prepareAutomationMedia } from "./automation-whatsapp-media.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_NODES_PER_RUN = 50;
-const AUTOMATION_BUCKET = "automation-media";
-const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
-const MAX_AUTOMATION_MEDIA_BYTES = 10 * 1024 * 1024;
 
 export type RuntimeResult = Record<string, unknown>;
 
@@ -62,7 +61,7 @@ type AutomationEvent = {
 };
 
 function adminClient(): SupabaseClient {
-  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("Supabase service runtime is not configured");
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("runtime_not_configured");
   return createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { "X-Client-Info": "vimob-automation-runtime/1.0" } },
@@ -113,11 +112,6 @@ function bounded(value: unknown, fallback: number, max = 100): number {
 
 function workerID(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
-}
-
-function sanitizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n\t]+/g, " ").slice(0, 1000) || "unknown_error";
 }
 
 async function moduleEnabled(client: SupabaseClient, organizationID: string): Promise<boolean> {
@@ -174,7 +168,7 @@ async function processReplyAwareInboundMessage(client: SupabaseClient, event: Au
     p_occurred_at: occurredAt,
   });
   if (error) throw error;
-  if (data?.ok === false) throw new Error(`inbound_message_processing_failed:${data?.status || "unknown"}`);
+  if (data?.ok === false) throw new AutomationPhaseError("inbound_message", data.status);
 }
 
 async function processEvent(client: SupabaseClient, event: AutomationEvent): Promise<number> {
@@ -268,7 +262,7 @@ export async function processTriggerEvents(limit = 25): Promise<RuntimeResult> {
       await client.rpc("fail_automation_event", {
         p_event_id: event.id,
         p_worker_id: id,
-        p_error: sanitizeError(eventError),
+        p_error: safeAutomationError(eventError),
         p_retry_seconds: retrySeconds,
       });
     }
@@ -455,52 +449,15 @@ async function callWebhook(url: string, method: string, payload: unknown, effect
       body: serialized,
     });
     if (response.status >= 300 && response.status < 400) throw new Error("webhook_redirects_are_disabled");
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`webhook_http_${response.status}`);
+    }
     const body = await readLimitedText(response, 64 * 1024);
-    if (!response.ok) throw new Error(`webhook_http_${response.status}:${body.slice(0, 500)}`);
     return { status: response.status, body };
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function mediaFolder(actionType: string): string {
-  return ({ send_image: "images", send_audio: "audios", send_video: "videos" } as Record<string, string>)[actionType] || "";
-}
-
-type PreparedMedia = { storagePath: string; mimeType: string; size: number };
-
-async function prepareAutomationMedia(
-  client: SupabaseClient,
-  execution: ClaimedExecution,
-  node: FlowNode,
-  sessionID: string,
-): Promise<PreparedMedia> {
-  const config = node.config || {};
-  const actionType = String(node.action_type || "");
-  const sourcePath = String(config.media_path || "");
-  const expectedPrefix = `${execution.organization_id}/${mediaFolder(actionType)}/`;
-  if (config.media_bucket !== AUTOMATION_BUCKET || !sourcePath.startsWith(expectedPrefix) || sourcePath.includes("..") || sourcePath.includes("\\")) {
-    throw new Error("cross_tenant_or_invalid_media_path");
-  }
-  const { data: blob, error: downloadError } = await client.storage.from(AUTOMATION_BUCKET).download(sourcePath);
-  if (downloadError || !blob) throw downloadError || new Error("media_download_failed");
-  if (blob.size < 1 || blob.size > MAX_AUTOMATION_MEDIA_BYTES) throw new Error("invalid_automation_media_size");
-
-  const sourceExtension = sourcePath.split(".").pop()?.toLowerCase() || "";
-  const fallbackExtension = ({ send_image: "jpg", send_audio: "ogg", send_video: "mp4" } as Record<string, string>)[actionType] || "bin";
-  const extension = /^[a-z0-9]{1,8}$/.test(sourceExtension) ? sourceExtension : fallbackExtension;
-  const safeNodeKey = node.id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "node";
-  const destinationPath = `orgs/${execution.organization_id}/sessions/${sessionID}/outgoing/automation-${execution.id}-${safeNodeKey}.${extension}`;
-  const mimeType = String(blob.type || config.mimetype || "application/octet-stream").split(";")[0];
-  const { error: uploadError } = await client.storage.from(WHATSAPP_MEDIA_BUCKET).upload(destinationPath, blob, {
-    contentType: mimeType,
-    upsert: true,
-  });
-  if (uploadError) throw uploadError;
-  // The durable outbox worker creates a fresh short-lived URL immediately
-  // before each provider attempt. Persisting an URL here would make retries
-  // depend on an already-expired credential.
-  return { storagePath: destinationPath, mimeType, size: blob.size };
 }
 
 async function resolveConversation(client: SupabaseClient, execution: ClaimedExecution, sessionID: string): Promise<Record<string, any>> {
@@ -511,8 +468,8 @@ async function resolveConversation(client: SupabaseClient, execution: ClaimedExe
     p_lease_token: execution.locked_by,
     p_session_id: sessionID,
   });
-  if (error) throw error;
-  if (!data?.ok || !data?.id) throw new Error(String(data?.status || "matching_conversation_not_found"));
+  if (error) throw new AutomationPhaseError("whatsapp_resolve", error);
+  if (!data?.ok || !data?.id) throw new AutomationPhaseError("whatsapp_resolve", data?.status ?? "matching_conversation_not_found");
   execution.conversation_id = data.id;
   return data;
 }
@@ -528,7 +485,7 @@ async function reserveExternalEffect(client: SupabaseClient, execution: ClaimedE
     p_request: node.config || {},
   });
   if (error) throw error;
-  if (!data?.execute && data?.status !== "succeeded") throw new Error(`effect_fail_closed:${data?.status || "unknown"}`);
+  if (!data?.execute && data?.status !== "succeeded") throw new AutomationPhaseError("external_effect_reserve", data?.status);
   return data || {};
 }
 
@@ -550,7 +507,7 @@ async function reserveDurableWhatsAppEffect(
       delivery_contract: "canonical_whatsapp_outbox_v1",
     },
   });
-  if (error) throw error;
+  if (error) throw new AutomationPhaseError("whatsapp_reserve", error);
   return normalizeDurableWhatsAppReservation(data || {});
 }
 
@@ -561,7 +518,7 @@ export function normalizeDurableWhatsAppReservation(data: Record<string, any>): 
   // delivery_contract marker, so an old provider-first effect fails closed.
   if (data?.status === "sending") return { ...data, execute: true };
   if (!data?.execute) {
-    throw new Error(`effect_fail_closed:${data?.status || "unknown"}`);
+    throw new AutomationPhaseError("whatsapp_reserve", data?.status);
   }
   return data || {};
 }
@@ -581,7 +538,7 @@ async function finishExternalEffect(client: SupabaseClient, effectKey: string, s
 async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecution, node: FlowNode, context: Record<string, any>, effectKey: string): Promise<Record<string, any>> {
   const config = node.config || {};
   const sessionID = String(config.session_id || "");
-  if (!UUID_RE.test(sessionID)) throw new Error("invalid_whatsapp_session");
+  if (!UUID_RE.test(sessionID)) throw new AutomationPhaseError("whatsapp_resolve", "invalid_whatsapp_session");
   const conversation = await resolveConversation(client, execution, sessionID);
 
   const remoteJID = String(conversation.remote_jid || "");
@@ -589,14 +546,14 @@ async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecuti
     ? remoteJID
     : remoteJID.replace(/@(s\.whatsapp\.net|c\.us)$/i, "").replace(/\D/g, "");
   if (conversation.is_group !== true && (destination.length < 10 || destination.length > 15)) {
-    throw new Error("conversation_has_no_canonical_whatsapp_destination");
+    throw new AutomationPhaseError("whatsapp_resolve", "conversation_has_no_canonical_whatsapp_destination");
   }
   let storedContent = "";
-  let preparedMedia: PreparedMedia | null = null;
+  let preparedMedia: Awaited<ReturnType<typeof prepareAutomationMedia>> | null = null;
   if (node.action_type === "send_whatsapp") {
     storedContent = renderAutomationTemplate(String(config.message || ""), context);
   } else {
-    preparedMedia = await prepareAutomationMedia(client, execution, node, sessionID);
+    preparedMedia = await prepareAutomationMedia(client, execution.organization_id, sessionID, String(node.action_type), effectKey, config);
     storedContent = renderAutomationTemplate(String(config.caption || ""), context);
   }
 
@@ -621,9 +578,9 @@ async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecuti
     p_media_size: preparedMedia?.size || null,
     p_filename: config.filename || null,
   });
-  if (queueError) throw queueError;
+  if (queueError) throw new AutomationPhaseError("whatsapp_outbox_enqueue", queueError);
   if (!queued?.ok || !queued?.outbox_id || !queued?.message_id) {
-    throw new Error(`whatsapp_outbox_enqueue_failed:${queued?.status || "unknown"}`);
+    throw new AutomationPhaseError("whatsapp_outbox_enqueue", queued?.status);
   }
   return {
     delivery: "outbox",
@@ -659,17 +616,18 @@ async function executeAction(client: SupabaseClient, execution: ClaimedExecution
       await finishExternalEffect(client, effectKey, "succeeded", result);
       return result;
     } catch (webhookError) {
-      const message = sanitizeError(webhookError);
+      const message = safeAutomationError(webhookError);
       const status = message.startsWith("webhook_http_") || message.includes("allowlisted") || message.includes("unsafe_") ? "failed" : "unknown";
       await finishExternalEffect(client, effectKey, status, {}, undefined, message);
       throw webhookError;
     }
   }
   const internalType = actionType === "set_variable" ? String(config.actionType || "") : actionType;
-  // move_lead uses the Go commercial transaction, including reservation/history.
-  // Other internal effects retain the existing fenced SQL RPC.
-  const { data, error } = internalType === "move_lead"
-    ? { data: await invokeAutomationStageCommand({
+  // Movement and distribution use their canonical Go transactions.
+  const canonicalCommand = internalType === "move_lead" ? invokeAutomationStageCommand
+    : internalType === "distribute_lead" ? invokeAutomationDistributionCommand : undefined;
+  const { data, error } = canonicalCommand
+    ? { data: await canonicalCommand({
       organizationId: execution.organization_id, executionId: execution.id, nodeKey: node.id,
       leaseToken: execution.locked_by || "", effectKey,
     }, {
@@ -686,11 +644,11 @@ async function executeAction(client: SupabaseClient, execution: ClaimedExecution
     p_payload: config,
   });
   if (error) throw error;
-  if (!data?.ok) throw new Error(`internal_effect_failed:${data?.status || "unknown"}`);
+  if (!data?.ok) throw new AutomationPhaseError("internal_effect", data?.status);
   const { data: refreshedLead, error: refreshError } = await client.from("leads").select("*")
     .eq("id", execution.lead_id).eq("organization_id", execution.organization_id).maybeSingle();
   if (refreshError || !refreshedLead) {
-    if (internalType === "move_lead") throw new AutomationStageCommandError("automation_command_unavailable", true);
+    if (canonicalCommand) throw new AutomationStageCommandError("automation_command_unavailable", true);
     if (refreshError) throw refreshError;
     throw new Error("lead_missing_after_internal_effect");
   }
@@ -707,7 +665,7 @@ async function failExecution(client: SupabaseClient, execution: ClaimedExecution
   await client.from("automation_executions").update({
     status: "failed",
     completed_at: new Date().toISOString(),
-    error_message: sanitizeError(error),
+    error_message: safeAutomationError(error),
     locked_at: null,
     locked_by: null,
     updated_at: new Date().toISOString(),
@@ -872,13 +830,14 @@ async function runExecution(client: SupabaseClient, execution: ClaimedExecution)
         }).eq("id", execution.id).eq("status", "running").eq("locked_by", execution.locked_by || "");
         return;
       }
-      if (node.action_type === "move_lead" && nodeError instanceof AutomationStageCommandError && nodeError.retryable) {
+      if ((node.action_type === "move_lead" || node.action_type === "distribute_lead") &&
+        nodeError instanceof AutomationStageCommandError && nodeError.retryable) {
         if (await deferAutomationStageCommand(client, {
           organizationId: execution.organization_id, executionId: execution.id, nodeKey: node.id,
-          leaseToken: execution.locked_by || "", effectKey: `automation:${execution.id}:${node.id}:move_lead`,
+          leaseToken: execution.locked_by || "", effectKey: `automation:${execution.id}:${node.id}:${node.action_type}`,
         }, step.id)) return;
       }
-      await updateStep(client, step.id, { status: "failed", error_message: sanitizeError(nodeError), completed_at: new Date().toISOString() });
+      await updateStep(client, step.id, { status: "failed", error_message: safeAutomationError(nodeError), completed_at: new Date().toISOString() });
       throw nodeError;
     }
   }
