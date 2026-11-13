@@ -170,9 +170,13 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		if immutable && duplicate {
 			return client.verifyOutboundMediaDigest(ctx, objectPath, immutableDigest)
 		}
-		// A 400 for a mime type outside the bucket allow-list: retry once as
-		// application/octet-stream, which the media bucket allows.
-		if response.StatusCode == http.StatusBadRequest && !duplicate && contentType != "application/octet-stream" {
+		// A 400 that names a rejected mime type (bucket allow-list): retry once
+		// as application/octet-stream, which the media bucket allows. Any other
+		// 400 stays a single attempt.
+		mimeRejected := response.StatusCode == http.StatusBadRequest && !duplicate &&
+			(strings.EqualFold(parsed.Error, "invalid_mime_type") ||
+				strings.Contains(strings.ToLower(parsed.Message), "mime type"))
+		if mimeRejected && contentType != "application/octet-stream" {
 			if seeker, ok := body.(io.Seeker); ok {
 				if _, seekErr := seeker.Seek(0, io.SeekStart); seekErr == nil {
 					return client.upload(ctx, bucket, objectPath, "application/octet-stream", body, upsert)
