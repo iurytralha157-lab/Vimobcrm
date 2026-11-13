@@ -134,7 +134,11 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(contentType) == "" {
+	// Buckets with allowed_mime_types match the Content-Type verbatim, so a
+	// recorder mimetype like "audio/ogg;codecs=opus" is rejected with HTTP 400.
+	// Store the base type; the provider payload keeps the original mimetype.
+	contentType = strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	supabasehttp.SetServiceAuth(request, client.apiKey)
@@ -165,6 +169,15 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 				strings.EqualFold(parsed.Message, "Asset Already Exists"))
 		if immutable && duplicate {
 			return client.verifyOutboundMediaDigest(ctx, objectPath, immutableDigest)
+		}
+		// A 400 for a mime type outside the bucket allow-list: retry once as
+		// application/octet-stream, which the media bucket allows.
+		if response.StatusCode == http.StatusBadRequest && !duplicate && contentType != "application/octet-stream" {
+			if seeker, ok := body.(io.Seeker); ok {
+				if _, seekErr := seeker.Seek(0, io.SeekStart); seekErr == nil {
+					return client.upload(ctx, bucket, objectPath, "application/octet-stream", body, upsert)
+				}
+			}
 		}
 		return storageUploadHTTPError{statusCode: response.StatusCode, objectAlreadyExists: duplicate}
 	}
