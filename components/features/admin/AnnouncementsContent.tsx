@@ -42,6 +42,7 @@ import {
   type Announcement,
   type AnnouncementTargetType,
 } from "@/hooks/use-announcements";
+import { useAuth } from "@/contexts/AuthContext";
 import { adminAPI } from "@/lib/api/admin";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ type AnnouncementForm = {
   buttonText: string;
   buttonUrl: string;
   targetType: AnnouncementTargetType;
+  targetOrganizationId: string;
   targetUserId: string;
   startsAt: string;
   endsAt: string;
@@ -72,6 +74,7 @@ const EMPTY_FORM: AnnouncementForm = {
   buttonText: "",
   buttonUrl: "",
   targetType: "all",
+  targetOrganizationId: "",
   targetUserId: "",
   startsAt: "",
   endsAt: "",
@@ -168,6 +171,7 @@ function DurationLabel({ seconds }: { seconds: number | null }) {
 }
 
 export function AnnouncementsContent() {
+  const { profile } = useAuth();
   const {
     allAnnouncements = [],
     publish,
@@ -180,9 +184,38 @@ export function AnnouncementsContent() {
   const [form, setForm] = useState<AnnouncementForm>(EMPTY_FORM);
   const [announcementToDeactivate, setAnnouncementToDeactivate] =
     useState<Announcement | null>(null);
+  const isSpecific = form.targetType === "specific";
+  const isScheduled = Boolean(form.startsAt);
+
+  const organizationsQuery = useQuery({
+    queryKey: ["admin-announcement-organizations", profile?.id],
+    queryFn: () => adminAPI.listOrganizations(),
+    enabled: Boolean(profile?.id) && (isSpecific || allAnnouncements.some((item) => item.target_organization_ids?.length)),
+    staleTime: 60_000,
+  });
+  const organizationsById = useMemo(
+    () => new Map(organizationsQuery.data?.map((organization) => [organization.id, organization.name])),
+    [organizationsQuery.data],
+  );
+  const availableOrganizations = useMemo(
+    () => (organizationsQuery.data || []).filter((organization) => organization.is_active)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+    [organizationsQuery.data],
+  );
+  const recipientQuery = useQuery({
+    queryKey: ["admin-announcement-recipients", profile?.id, form.targetOrganizationId] as const,
+    queryFn: ({ queryKey: [, , organizationId] }) => adminAPI.listUsers({ organizationId }),
+    enabled: isSpecific && Boolean(profile?.id && form.targetOrganizationId),
+    staleTime: 60_000,
+  });
+  const recipients = useMemo(
+    () => (recipientQuery.data || []).filter((user) => user.is_active)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+    [recipientQuery.data],
+  );
 
   const usersQuery = useQuery({
-    queryKey: ["admin-announcement-users"],
+    queryKey: ["admin-announcement-users", profile?.id],
     queryFn: async () => {
       const users = await adminAPI.listUsers();
       return users
@@ -191,6 +224,7 @@ export function AnnouncementsContent() {
           String(a.name || "").localeCompare(String(b.name || "")),
         ) as UserOption[];
     },
+    enabled: Boolean(profile?.id) && allAnnouncements.some((item) => item.target_user_ids?.length),
     staleTime: 60_000,
   });
 
@@ -199,6 +233,8 @@ export function AnnouncementsContent() {
     (usersQuery.data || []).forEach((user) => map.set(user.id, user));
     return map;
   }, [usersQuery.data]);
+  const selectedRecipient = recipients.find((user) => user.id === form.targetUserId);
+  const selectedOrganization = availableOrganizations.find((organization) => organization.id === form.targetOrganizationId);
 
   const updateForm = <K extends keyof AnnouncementForm>(
     key: K,
@@ -228,8 +264,13 @@ export function AnnouncementsContent() {
       return;
     }
 
-    if (form.targetType === "specific" && !form.targetUserId) {
-      toast.error("Escolha o usuário que deve receber o comunicado.");
+    if (isSpecific && (!selectedOrganization || organizationsQuery.isError)) {
+      toast.error("Escolha uma organização ativa para o comunicado.");
+      return;
+    }
+
+    if (isSpecific && (!selectedRecipient || recipientQuery.isError)) {
+      toast.error("Escolha um usuário ativo da organização selecionada.");
       return;
     }
 
@@ -249,10 +290,13 @@ export function AnnouncementsContent() {
       return;
     }
 
-    if (startsAt && form.sendNotification) {
-      toast.error(
-        "Para enviar também como notificação, publique o comunicado imediatamente.",
-      );
+    if (startsAt && form.sendNotification && new Date(startsAt).getTime() <= Date.now()) {
+      toast.error("Escolha um horário de início futuro para agendar o push.");
+      return;
+    }
+
+    if (endsAt && new Date(endsAt).getTime() <= Date.now()) {
+      toast.error("Escolha um horário de término futuro.");
       return;
     }
 
@@ -264,7 +308,8 @@ export function AnnouncementsContent() {
         showBanner: form.showBanner,
         sendNotification: form.sendNotification,
         targetType: form.targetType,
-        targetUserIds: form.targetType === "specific" ? [form.targetUserId] : [],
+        targetOrganizationIds: isSpecific ? [form.targetOrganizationId] : [],
+        targetUserIds: isSpecific ? [form.targetUserId] : [],
         startsAt,
         endsAt,
         displayDurationSeconds:
@@ -349,49 +394,65 @@ export function AnnouncementsContent() {
               </label>
             </div>
 
-            {form.targetType === "specific" ? (
-              <div className="space-y-2">
-                <Label>Usuário</Label>
-                <Select
-                  value={form.targetUserId || "none"}
-                  onValueChange={(value) =>
-                    updateForm("targetUserId", value === "none" ? "" : value)
-                  }
-                  disabled={usersQuery.isLoading || usersQuery.isError}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Escolha um usuário" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Escolha um usuário</SelectItem>
-                    {(usersQuery.data || []).map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {getUserLabel(user)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {usersQuery.isError && (
-                  <div className="flex items-center justify-between gap-2 rounded-[6px] bg-destructive/10 px-3 py-2 text-[12px] font-light text-destructive">
-                    <span>Não foi possível carregar os usuários.</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-7 shrink-0 rounded-[6px] px-2 text-[12px] font-light"
-                      disabled={usersQuery.isFetching}
-                      onClick={() => void usersQuery.refetch()}
-                    >
-                      Tentar novamente
+            {isSpecific ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="announcement-organization">Organização</Label>
+                  <Select
+                    value={form.targetOrganizationId}
+                    onValueChange={(targetOrganizationId) =>
+                      setForm((current) => ({ ...current, targetOrganizationId, targetUserId: "" }))
+                    }
+                    disabled={organizationsQuery.isLoading || organizationsQuery.isError}
+                  >
+                    <SelectTrigger id="announcement-organization">
+                      <SelectValue placeholder="Escolha uma organização" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableOrganizations.map((organization) => (
+                        <SelectItem key={organization.id} value={organization.id}>{organization.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {organizationsQuery.isError && (
+                    <Button type="button" variant="ghost" onClick={() => void organizationsQuery.refetch()}>
+                      Recarregar organizações
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="announcement-user">Usuário</Label>
+                  <Select
+                    value={form.targetUserId}
+                    onValueChange={(value) => updateForm("targetUserId", value)}
+                    disabled={!form.targetOrganizationId || recipientQuery.isLoading || recipientQuery.isError}
+                  >
+                    <SelectTrigger id="announcement-user">
+                      <SelectValue placeholder={form.targetOrganizationId ? "Escolha um usuário" : "Escolha primeiro a organização"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {recipients.map((user) => (
+                        <SelectItem key={user.id} value={user.id}>{getUserLabel(user)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {recipientQuery.isError && (
+                    <Button type="button" variant="ghost" onClick={() => void recipientQuery.refetch()}>
+                      Recarregar usuários
+                    </Button>
+                  )}
+                  {recipientQuery.isSuccess && recipients.length === 0 && (
+                    <p className="text-xs text-muted-foreground">Nenhum usuário ativo nesta organização.</p>
+                  )}
+                </div>
               </div>
             ) : null}
 
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-2">
-                <Label>Começa em</Label>
+                <Label htmlFor="announcement-starts-at">Começa em</Label>
                 <Input
+                  id="announcement-starts-at"
                   type="datetime-local"
                   value={form.startsAt}
                   onChange={(event) =>
@@ -399,10 +460,12 @@ export function AnnouncementsContent() {
                   }
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
+                <p className="text-xs text-muted-foreground">Horário local do dispositivo.</p>
               </div>
               <div className="space-y-2">
-                <Label>Termina em</Label>
+                <Label htmlFor="announcement-ends-at">Termina em</Label>
                 <Input
+                  id="announcement-ends-at"
                   type="datetime-local"
                   value={form.endsAt}
                   onChange={(event) => updateForm("endsAt", event.target.value)}
@@ -467,7 +530,7 @@ export function AnnouncementsContent() {
                     updateForm("sendNotification", checked)
                   }
                 />
-                Enviar também como notificação
+                {isScheduled ? "Enviar push no horário agendado" : "Enviar também à Central de Notificações"}
               </label>
               <Button
                 className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
@@ -479,9 +542,14 @@ export function AnnouncementsContent() {
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
-                Publicar comunicado
+                {isScheduled ? "Agendar comunicado" : "Publicar comunicado"}
               </Button>
             </div>
+            {form.sendNotification && isScheduled && (
+              <p className="text-xs text-muted-foreground">
+                O comunicado entra na Central de Notificações e o push segue para os dispositivos com notificações ativas.
+              </p>
+            )}
           </div>
 
           <aside className="rounded-[6px] bg-[var(--app-surface-soft)] p-4">
@@ -502,11 +570,15 @@ export function AnnouncementsContent() {
             <div className="mt-4 space-y-3 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Users className="h-4 w-4" strokeWidth={1.7} />
-                <span>{TARGET_LABELS[form.targetType]}</span>
+                <span>
+                  {isSpecific && selectedOrganization
+                    ? `${selectedRecipient?.name || TARGET_LABELS.specific} · ${selectedOrganization.name}`
+                    : TARGET_LABELS[form.targetType]}
+                </span>
               </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CalendarClock className="h-4 w-4" strokeWidth={1.7} />
-                <span>{form.startsAt ? "Agendado" : "Imediato"}</span>
+                <span>{isScheduled ? formatDateTime(toIsoFromLocalInput(form.startsAt)) : "Imediato"}</span>
               </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CheckCircle2 className="h-4 w-4" strokeWidth={1.7} />
@@ -559,6 +631,9 @@ export function AnnouncementsContent() {
               const targetUsers = (announcement.target_user_ids || [])
                 .map((id) => usersById.get(id))
                 .filter((user): user is UserOption => Boolean(user));
+              const targetOrganizations = (announcement.target_organization_ids || [])
+                .map((id) => organizationsById.get(id))
+                .filter(Boolean);
 
               return (
                 <div
@@ -584,6 +659,11 @@ export function AnnouncementsContent() {
                         {targetUsers.map(getUserLabel).join(", ")}
                       </p>
                     ) : null}
+                    {targetOrganizations.length > 0 && (
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {targetOrganizations.join(", ")}
+                      </p>
+                    )}
                   </div>
 
                   <div className="text-sm text-muted-foreground">

@@ -84,6 +84,14 @@ Nem todo evento usa todos os canais. O produtor grava exatamente os canais resol
 
 As funções legadas de envio não devem ser removidas apenas por busca no repositório: a retirada exige confirmar invocações e configuração no ambiente publicado.
 
+### Comunicados agendados e push da Home
+
+O comunicado imediato optado para notificação mantém o registro na Central. Um comunicado com início futuro e a opção de notificar cria um trabalho interno na mesma transação da publicação. Ao chegar ao horário, o worker existente cria uma notificação na Central e o gatilho da fila materializa somente o canal push. A chave por comunicado, organização e usuário evita duplicação entre réplicas ou após uma repetição. Para um usuário específico com organização selecionada, o público é a interseção dos dois filtros. O worker revalida a organização, o vínculo e a conta antes de criar a notificação. O envio ao serviço de push ainda revalida o dispositivo e as permissões existentes.
+
+O worker de notificações verifica comunicados devidos e entregas do canal `push` a cada dois segundos quando está ocioso. A consulta rápida reutiliza a reserva e o limite de tentativas existentes e também atende aos avisos de leads e redistribuição. A rotina geral mantém o processamento dos canais existentes e a recuperação dos itens. O intervalo é uma frequência de consulta, e a exibição depende do serviço de push, da rede e das permissões do aparelho. Um sucesso HTTP do serviço Web Push registra o aceite e não comprova a exibição.
+
+A migração `20261113215431_schedule_home_announcement_notifications.sql` instala os campos de horário ausentes e a rotina privada. Aplique-a antes de publicar a interface que permite agendar o push. Ela só cadastra comunicados explicitamente programados para o futuro. Trabalhos que passaram de uma hora do horário agendado ou do fim do comunicado expiram. Para reverter a imagem, os trabalhos ficam guardados e o worker anterior continua entregando os pushes já enfileirados. Confira os trabalhos pendentes antes de voltar a imagem nova para evitar avisos vencidos.
+
 ### Subfila SQL de push WhatsApp sem dispositivo
 
 `private.whatsapp_inbound_push_waiting` preserva avisos sem nenhum token ativo

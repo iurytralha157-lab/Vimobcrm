@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const announcementNotificationFanoutQuery = `
@@ -35,6 +37,9 @@ const announcementNotificationFanoutQuery = `
 		from announcement
 		join public.organization_members member
 		  on member.is_active is true
+		 and member.deleted_at is null
+		join public.organizations organization
+		  on organization.id = member.organization_id and organization.is_active is true
 		join public.users app_user
 		  on app_user.id = member.user_id
 		 and app_user.is_active is true
@@ -43,6 +48,8 @@ const announcementNotificationFanoutQuery = `
 			or (
 				announcement.target_type = 'specific'
 				and member.user_id = any(announcement.target_user_ids)
+				and (cardinality(announcement.target_organization_ids) = 0
+					or member.organization_id = any(announcement.target_organization_ids))
 			)
 			or (
 				announcement.target_type = 'organizations'
@@ -97,6 +104,11 @@ func (repo Repository) createAnnouncementWithNotifications(ctx context.Context, 
 	if err := normalizeAnnouncementPayload(payload); err != nil {
 		return nil, err
 	}
+	if boolValue(payload["send_notification"]) {
+		if startsAt, ok := announcementTime(payload["starts_at"]); ok && !startsAt.After(time.Now()) {
+			return nil, fmt.Errorf("%w: announcement start must be in the future", ErrInvalidInput)
+		}
+	}
 
 	columns, placeholders, args, err := buildAdminPayload(payload, 0)
 	if err != nil {
@@ -108,6 +120,26 @@ func (repo Repository) createAnnouncementWithNotifications(ctx context.Context, 
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if userIDs, scoped := payload["target_user_ids"].([]pgtype.UUID); scoped && len(userIDs) > 0 {
+		if organizationIDs, ok := payload["target_organization_ids"].([]pgtype.UUID); ok && len(organizationIDs) > 0 {
+			var recipientsValid bool
+			err := tx.QueryRow(ctx, `
+				select count(distinct u.id) = cardinality($1::uuid[])
+				from public.users u
+				join public.organization_members member on member.user_id = u.id
+				join public.organizations o on o.id = member.organization_id and o.is_active is true
+				where u.id = any($1::uuid[]) and u.is_active is true
+				  and member.organization_id = any($2::uuid[])
+				  and member.is_active is true and member.deleted_at is null
+			`, userIDs, organizationIDs).Scan(&recipientsValid)
+			if err != nil {
+				return nil, err
+			}
+			if !recipientsValid {
+				return nil, fmt.Errorf("%w: announcement recipient is not an active member", ErrInvalidInput)
+			}
+		}
+	}
 
 	var raw []byte
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
@@ -138,6 +170,29 @@ func (repo Repository) createAnnouncementWithNotifications(ctx context.Context, 
 	}
 	return item, nil
 }
+
+func (repo Repository) listActiveOrganizationUsers(ctx context.Context, organizationID string) ([]map[string]any, error) {
+	return repo.queryJSONRows(ctx, `
+		select jsonb_build_object(
+			'id', u.id::text,
+			'name', u.name,
+			'email', u.email,
+			'avatar_url', u.avatar_url,
+			'role', member.role,
+			'organization_id', o.id::text,
+			'organization_name', o.name,
+			'is_active', u.is_active,
+			'created_at', u.created_at
+		)
+		from public.organization_members member
+		join public.organizations o on o.id = member.organization_id and o.is_active is true
+		join public.users u on u.id = member.user_id and u.is_active is true
+		where member.organization_id = $1::uuid
+		  and member.is_active is true and member.deleted_at is null
+		order by u.name nulls last, u.id
+	`, organizationID)
+}
+
 func normalizeAnnouncementPayload(payload map[string]any) error {
 	message := strings.TrimSpace(stringValue(payload["message"]))
 	if message == "" || len(message) > 500 {
@@ -165,10 +220,47 @@ func normalizeAnnouncementPayload(payload map[string]any) error {
 	}
 	switch targetType {
 	case "all", "specific", "organizations", "admins":
-		return nil
 	default:
 		return ErrInvalidInput
 	}
+	payload["target_type"] = targetType
+	startsAt, hasStart := announcementTime(payload["starts_at"])
+	endsAt, hasEnd := announcementTime(payload["ends_at"])
+	if (!hasStart && strings.TrimSpace(stringValue(payload["starts_at"])) != "") ||
+		(!hasEnd && strings.TrimSpace(stringValue(payload["ends_at"])) != "") ||
+		(hasStart && hasEnd && !startsAt.Before(endsAt)) {
+		return ErrInvalidInput
+	}
+	for _, key := range []string{"target_user_ids", "target_organization_ids"} {
+		if payload[key] == nil {
+			continue
+		}
+		ids, ok := payload[key].([]any)
+		if !ok {
+			return ErrInvalidInput
+		}
+		values := make([]string, 0, len(ids))
+		for _, id := range ids {
+			text, ok := id.(string)
+			if !ok {
+				return ErrInvalidInput
+			}
+			values = append(values, text)
+		}
+		parsed, err := normalizeHomeUUIDs(values)
+		if err != nil {
+			return err
+		}
+		payload[key] = homeUUIDArray(parsed)
+	}
+	if targetType == "specific" {
+		userIDs, _ := payload["target_user_ids"].([]pgtype.UUID)
+		orgIDs, _ := payload["target_organization_ids"].([]pgtype.UUID)
+		if len(userIDs) == 0 || (hasStart && boolValue(payload["send_notification"]) && len(orgIDs) == 0) {
+			return ErrInvalidInput
+		}
+	}
+	return nil
 }
 
 func isSafeAnnouncementURL(value string) bool {
@@ -183,7 +275,7 @@ func announcementNotificationIsDue(item map[string]any, now time.Time) bool {
 	if !boolValue(item["send_notification"]) || !boolValue(item["is_active"]) {
 		return false
 	}
-	if startsAt, ok := announcementTime(item["starts_at"]); ok && startsAt.After(now) {
+	if _, scheduled := announcementTime(item["starts_at"]); scheduled {
 		return false
 	}
 	if endsAt, ok := announcementTime(item["ends_at"]); ok && endsAt.Before(now) {

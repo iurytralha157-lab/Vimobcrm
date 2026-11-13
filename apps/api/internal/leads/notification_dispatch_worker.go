@@ -121,6 +121,7 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 	if logger == nil {
 		logger = slog.Default()
 	}
+	go repo.runAppPushNotificationWorker(ctx, logger)
 
 	go func() {
 		timer := time.NewTimer(7 * time.Second)

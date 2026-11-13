@@ -14,6 +14,7 @@ const (
 	notificationClaimLegacy   notificationClaimLane = ""
 	notificationClaimGeneral  notificationClaimLane = "|lead_wa_general_v1"
 	notificationClaimLeadWA   notificationClaimLane = "|lead_wa_fast_v1"
+	notificationClaimAppPush  notificationClaimLane = "|app_push"
 	leadWhatsAppClaimInterval                       = 2 * time.Second
 )
 

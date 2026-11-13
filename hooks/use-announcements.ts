@@ -75,9 +75,11 @@ function isAnnouncementTargeted(
     );
   }
   if (announcement.target_type === "specific") {
+    const organizations = announcement.target_organization_ids || [];
     return (
       !!currentUserId &&
-      (announcement.target_user_ids || []).includes(currentUserId)
+      (announcement.target_user_ids || []).includes(currentUserId) &&
+      (organizations.length === 0 || (!!currentOrgId && organizations.includes(currentOrgId)))
     );
   }
   return false;
@@ -186,11 +188,12 @@ export function useAnnouncements() {
         created_by: profile?.id || null,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_announcement, params) => {
       queryClient.invalidateQueries({ queryKey: ["active-announcements"] });
       queryClient.invalidateQueries({ queryKey: ["active-announcement"] });
       queryClient.invalidateQueries({ queryKey: ["all-announcements"] });
-      toast.success("Comunicado publicado!");
+      queryClient.invalidateQueries({ queryKey: ["home", "notices"] });
+      toast.success(params.startsAt ? "Comunicado agendado!" : "Comunicado publicado!");
     },
     onError: (error: unknown) => {
       toast.error("Erro ao publicar: " + getErrorMessage(error));
@@ -209,6 +212,7 @@ export function useAnnouncements() {
       queryClient.invalidateQueries({ queryKey: ["active-announcements"] });
       queryClient.invalidateQueries({ queryKey: ["active-announcement"] });
       queryClient.invalidateQueries({ queryKey: ["all-announcements"] });
+      queryClient.invalidateQueries({ queryKey: ["home", "notices"] });
       toast.success("Comunicado desativado!");
     },
     onError: (error: unknown) => {

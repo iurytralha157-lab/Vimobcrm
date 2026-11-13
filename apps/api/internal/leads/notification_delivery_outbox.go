@@ -181,11 +181,15 @@ func (repo Repository) claimNormalizedNotificationDelivery(ctx context.Context, 
 	var rawMetadata string
 	fastLeadWhatsApp := lane == notificationClaimLeadWA
 	channels := []string{"whatsapp", "push", "email"}
-	if fastLeadWhatsApp {
-		channels = []string{"whatsapp"}
+	if fastLeadWhatsApp || lane == notificationClaimAppPush {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
+		if fastLeadWhatsApp {
+			channels = []string{"whatsapp"}
+		} else {
+			channels = []string{"push"}
+		}
 	} else {
 		// Commit push expiry before acquiring parent authorization locks.
 		if _, err := repo.db.Pool().Exec(ctx, "select private.expire_whatsapp_inbound_push_waiting(100)"); err != nil {
@@ -441,6 +445,9 @@ func (repo Repository) processOneNormalizedNotificationDeliveryForLane(ctx conte
 	notification, err := repo.loadNormalizedPendingNotification(ctx, delivery)
 	if lane == notificationClaimLeadWA && err == nil && !isFastLeadWhatsAppNotification(delivery.Channel, notification) {
 		return true, errors.New("lead WhatsApp notification claim returned an ineligible event")
+	}
+	if lane == notificationClaimAppPush && delivery.Channel != "push" {
+		return true, errors.New("app push notification claim returned another channel")
 	}
 	if err != nil {
 		result := DispatchChannelResult{

@@ -138,9 +138,16 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 	`, searchtext.Pattern(search), status, segment)
 }
 
-func (repo Repository) ListUsers(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+func (repo Repository) ListUsers(ctx context.Context, tenantContext tenant.Context, organizationID string) ([]map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	if strings.TrimSpace(organizationID) != "" {
+		organizationID, valid := normalizeUUID(organizationID)
+		if !valid {
+			return nil, ErrInvalidInput
+		}
+		return repo.listActiveOrganizationUsers(ctx, organizationID)
 	}
 
 	return repo.queryJSONRows(ctx, `
@@ -185,6 +192,8 @@ func (repo Repository) ListActiveAnnouncements(ctx context.Context, tenantContex
 			or (
 				a.target_type = 'specific'
 				and nullif($2, '')::uuid = any(coalesce(a.target_user_ids, '{}'::uuid[]))
+				and (coalesce(cardinality(a.target_organization_ids), 0) = 0
+					or nullif($1, '')::uuid = any(a.target_organization_ids))
 			)
 			or (
 				a.target_type = 'organizations'

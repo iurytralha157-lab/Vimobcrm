@@ -1126,6 +1126,10 @@
     {
       "file": "20261113200932_allow_automation_whatsapp_without_attendance.sql",
       "sha256": "7965434fd3242c6a22831fe1f327d487920918910d6ca15c85a0f1a64c3dedd3"
+    },
+    {
+      "file": "20261113215431_schedule_home_announcement_notifications.sql",
+      "sha256": "56d29cb2b5cc56d55821c69e680025808f575262df0fa3fd26271a1b7419cf20"
     }
   ]
 }

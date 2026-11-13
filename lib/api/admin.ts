@@ -132,9 +132,18 @@ export const adminAPI = {
     return validateDomainResponse(apiAdminOrganizationListResponseSchema, response, 'admin.organizations.list').data;
   },
 
-  async listUsers() {
-    const response = await vimobAPIRequest<Envelope<AdminJSON[]>>('/v1/admin/users');
-    return validateDomainResponse(apiAdminUserListResponseSchema, response, 'admin.users.list').data;
+  async listUsers(params: { organizationId?: string } = {}) {
+    const organizationId = params.organizationId === undefined
+      ? undefined
+      : parseDomainInput(uuidSchema, params.organizationId, 'admin.users.list.organizationId');
+    const response = await vimobAPIRequest<Envelope<AdminJSON[]>>('/v1/admin/users', {
+      query: { organizationId },
+    });
+    const users = validateDomainResponse(apiAdminUserListResponseSchema, response, 'admin.users.list').data;
+    if (organizationId && users.some((user) => user.organization_id !== organizationId)) {
+      throw new Error('A lista retornada contém usuários fora da organização selecionada.');
+    }
+    return users;
   },
 
   async listActiveAnnouncements<T = AdminJSON>() {

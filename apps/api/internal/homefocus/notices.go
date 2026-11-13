@@ -93,6 +93,8 @@ const activeAnnouncementNoticesSQL = `
 		or (
 			a.target_type = 'specific'
 			and nullif($2, '')::uuid = any(coalesce(a.target_user_ids, '{}'::uuid[]))
+			and (coalesce(cardinality(a.target_organization_ids), 0) = 0
+				or nullif($1, '')::uuid = any(a.target_organization_ids))
 		)
 		or (
 			a.target_type = 'organizations'

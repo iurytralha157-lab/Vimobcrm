@@ -58,7 +58,7 @@ func (handler Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := handler.repo.ListUsers(r.Context(), tenantContext)
+	items, err := handler.repo.ListUsers(r.Context(), tenantContext, r.URL.Query().Get("organizationId"))
 	if err != nil {
 		writeAdminError(w, r, err)
 		return
