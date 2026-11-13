@@ -71,7 +71,7 @@ import { toast } from 'sonner';
 import DeletableEdge from './edges/DeletableEdge';
 import { FlowSimulator } from './FlowSimulator';
 import { saveAutomationFlowInputSchema } from '@/lib/validation';
-import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
+import { createAutomationMediaPreviewIndex, restoreAutomationMediaPath, withAutomationMediaPreview } from './media-preview';
 import { resolveReplyKeywordConfig } from '@/lib/automations';
 import { automationEditorReplyConfig, automationEditorSession, automationEditorSourceHandle, updateAutomationWaitOutputs } from '@/components/features/automations/flow-editor-compatibility';
 
@@ -97,19 +97,6 @@ const nodeTypes = {
 };
 
 const UNSUPPORTED_CRM_NODE_TYPES = new Set(['property_interest', 'deal_status']);
-
-function extractAutomationMediaPath(value: unknown) {
-  if (typeof value !== 'string' || !value) return '';
-  try {
-    const pathname = new URL(value).pathname;
-    const marker = '/automation-media/';
-    const markerIndex = pathname.indexOf(marker);
-    if (markerIndex < 0) return '';
-    return decodeURIComponent(pathname.slice(markerIndex + marker.length));
-  } catch {
-    return '';
-  }
-}
 
 type NodeCategory = 'bubbles' | 'conditionals' | 'actions';
 
@@ -287,10 +274,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         } else if (node.node_type === 'action' && node.action_type === 'send_image') {
           flowNodes.push({ id: node.id, type: 'image', position: pos, data: {
             session_id: nodeConfig.session_id,
-            media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.image_url),
+            media_path: restoreAutomationMediaPath(nodeConfig.media_path, nodeConfig.image_url, automation.organization_id, 'image'),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
-            image_url: nodeConfig.image_url || '',
-            image_preview_url: nodeConfig.image_url || '',
+            legacy_media_reference: Boolean(nodeConfig.image_url),
             caption: nodeConfig.caption || '',
           } });
           if (nodeConfig.session_id) {
@@ -299,10 +285,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         } else if (node.node_type === 'action' && node.action_type === 'send_audio') {
           flowNodes.push({ id: node.id, type: 'audio', position: pos, data: {
             session_id: nodeConfig.session_id,
-            media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.audio_url),
+            media_path: restoreAutomationMediaPath(nodeConfig.media_path, nodeConfig.audio_url, automation.organization_id, 'audio'),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
-            audio_url: nodeConfig.audio_url || '',
-            audio_preview_url: nodeConfig.audio_url || '',
+            legacy_media_reference: Boolean(nodeConfig.audio_url),
             audio_type: nodeConfig.audio_type || 'file',
             caption: nodeConfig.caption,
           } });
@@ -312,10 +297,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         } else if (node.node_type === 'action' && node.action_type === 'send_video') {
           flowNodes.push({ id: node.id, type: 'video', position: pos, data: {
             session_id: nodeConfig.session_id,
-            media_path: nodeConfig.media_path || extractAutomationMediaPath(nodeConfig.video_url),
+            media_path: restoreAutomationMediaPath(nodeConfig.media_path, nodeConfig.video_url, automation.organization_id, 'video'),
             media_bucket: nodeConfig.media_bucket || 'automation-media',
-            video_url: nodeConfig.video_url || '',
-            video_preview_url: nodeConfig.video_url || '',
+            legacy_media_reference: Boolean(nodeConfig.video_url),
             caption: nodeConfig.caption,
           } });
           if (nodeConfig.session_id) {

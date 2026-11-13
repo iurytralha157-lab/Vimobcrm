@@ -418,7 +418,7 @@ export function NodeConfigPanel({
               {/* User filter - moved from sidebar */}
               {users && setFilterUserId && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Filtrar por usuário</Label>
+                  <Label className="text-xs">Filtrar por responsável</Label>
                   <Select value={filterUserId || '__all__'} onValueChange={(v) => setFilterUserId(v === '__all__' ? '' : v)}>
                     <SelectTrigger className="h-9"><SelectValue placeholder="Todos" /></SelectTrigger>
                     <SelectContent className="z-[200]">
@@ -427,6 +427,7 @@ export function NodeConfigPanel({
                       {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name || u.email}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground">A opção “Todos os usuários” inclui leads sem responsável.</p>
                 </div>
               )}
             </div>
@@ -554,12 +555,12 @@ export function NodeConfigPanel({
                   })}
                   onClearSelection={() => onNodeDataChange(selectedNode.id, {
                     media_path: '',
-                    image_url: '',
+                    legacy_media_reference: false,
                     image_preview_url: '',
                   })}
                 />
               </div>
-              {selectedNode.data.image_url && !selectedNode.data.media_path && (
+              {selectedNode.data.legacy_media_reference && !selectedNode.data.media_path && (
                 <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
                   Esta automação usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
                 </p>
@@ -595,12 +596,12 @@ export function NodeConfigPanel({
                   })}
                   onClearSelection={() => onNodeDataChange(selectedNode.id, {
                     media_path: '',
-                    audio_url: '',
+                    legacy_media_reference: false,
                     audio_preview_url: '',
                   })}
                 />
               </div>
-              {selectedNode.data.audio_url && !selectedNode.data.media_path && (
+              {selectedNode.data.legacy_media_reference && !selectedNode.data.media_path && (
                 <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
                   Este áudio usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
                 </p>
@@ -623,12 +624,12 @@ export function NodeConfigPanel({
                   })}
                   onClearSelection={() => onNodeDataChange(selectedNode.id, {
                     media_path: '',
-                    video_url: '',
+                    legacy_media_reference: false,
                     video_preview_url: '',
                   })}
                 />
               </div>
-              {selectedNode.data.video_url && !selectedNode.data.media_path && (
+              {selectedNode.data.legacy_media_reference && !selectedNode.data.media_path && (
                 <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
                   Este vídeo usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
                 </p>

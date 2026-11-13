@@ -89,6 +89,7 @@ function translateError(error: string): string {
   const reason = error.split(':').find((part) => part.startsWith('automation_whatsapp_'));
   if (reason === 'automation_whatsapp_attendance_required') return 'Esta execução foi bloqueada pela regra anterior de atendimento do WhatsApp.';
   if (reason === 'automation_whatsapp_session_access_denied') return 'A versão publicada do fluxo não tem permissão para enviar pelo WhatsApp configurado.';
+  if (reason === 'automation_whatsapp_session_unavailable' || error === 'whatsapp_disconnected') return 'A conexão de WhatsApp configurada está indisponível. Confira se ela está ativa e conectada.';
   if (error.includes("exists") && error.includes("false")) return "Número WhatsApp inválido ou não cadastrado";
   if (error.includes("Connection refused") || error.includes("ECONNREFUSED")) return "Falha na conexão com WhatsApp";
   if (error.includes("timeout") || error.includes("ETIMEDOUT")) return "Tempo limite excedido";

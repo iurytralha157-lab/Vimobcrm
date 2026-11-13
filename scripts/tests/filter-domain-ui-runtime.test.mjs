@@ -422,17 +422,28 @@ test('selecting a flow audio does not fetch media until the user starts playback
 });
 
 test('reply preview runs its connected outcome and finishes at the disconnected outcome', async () => {
+  const start = new Date('2026-11-13T12:00:00Z');
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(new Date(start.getTime() + 1000));
   await show('reply-preview');
+  await page.clock.runFor(500);
   await expect(page.locator('[data-handleid="replied"]')).toHaveAttribute('title', 'Respondeu');
   await expect(page.locator('[data-handleid="no_reply"]')).toHaveAttribute('title', 'Não respondeu');
   const reply = page.getByPlaceholder('Digite sua resposta...');
   await reply.fill('Quero saber mais');
   await reply.press('Enter');
+  await page.clock.runFor(1200);
   await expect(page.getByText('Ação depois da resposta', { exact: true })).toBeVisible();
   await expect(page.getByPlaceholder('Simulação concluída')).toBeVisible();
 
   await page.getByRole('button', { name: 'Reiniciar', exact: true }).click();
+  await page.clock.runFor(500);
   await expect(reply).toBeEnabled();
+  await expect(page.getByText('30s', { exact: true })).toBeVisible();
+  await page.clock.runFor(29_000);
+  await expect(reply).toBeEnabled();
+  await expect(page.getByText('1s', { exact: true })).toBeVisible();
+  await page.clock.runFor(1000);
   await expect(page.getByText('O prazo terminou sem resposta do lead.', { exact: false })).toBeVisible();
   await expect(page.getByPlaceholder('Simulação concluída')).toBeVisible();
   await expect(page.getByText('Ação depois da resposta', { exact: true })).toHaveCount(0);

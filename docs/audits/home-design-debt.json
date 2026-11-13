@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "f018ab636b0c287774468b36dfcd1c73083f750377f088d5bd91f4f4fc1aa0a7",
-  "surfaceInventoryDigestSha256": "cf0e8290206d564cc6d026c40022deda1006ee3d0f068cc2e119eea63d406890",
+  "sourceDigestSha256": "fae09a569e75518bd8a62dc3e92a5fa75115545321d6d94fde3e4dabed8901f3",
+  "surfaceInventoryDigestSha256": "419a5da5dbcf08fdcf6789b2b3f161a9faee3c1353c645cfd8bf372fb4fa38e1",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 675,
@@ -1047,7 +1047,7 @@
     },
     {
       "file": "components/features/automations/ExecutionHistory.tsx",
-      "line": 288,
+      "line": 289,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",

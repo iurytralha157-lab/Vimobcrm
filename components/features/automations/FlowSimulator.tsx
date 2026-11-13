@@ -42,7 +42,7 @@ interface PreviewWait {
   resume: (branch?: string) => Promise<void>;
 }
 
-const PREVIEW_WAIT_LIMIT_SECONDS = 2;
+const PREVIEW_WAIT_SECONDS = 30;
 const UNSUPPORTED_PREVIEW_NODE_TYPES = new Set(['property_interest', 'deal_status']);
 const CUSTOM_CONDITION_OPERATORS = new Set([
   'equals', 'not_equals', 'contains', 'not_contains', 'contains_any', 'not_contains_any',
@@ -313,21 +313,12 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
         const type = node.data.wait_type || node.data.delay_type || 'days';
         const unitLabels: Record<string, string> = { seconds: 'segundo(s)', minutes: 'minuto(s)', hours: 'hora(s)', days: 'dia(s)' };
 
-        // Calculate actual duration in seconds
-        let totalSeconds = value;
-        if (type === 'minutes') totalSeconds *= 60;
-        else if (type === 'hours') totalSeconds *= 3600;
-        else if (type === 'days') totalSeconds *= 86400;
+        addSystemMessage(`⏳ Espera configurada: ${value} ${unitLabels[type] || type} — simulação: ${PREVIEW_WAIT_SECONDS}s`);
 
-        const simulationSeconds = Math.min(totalSeconds, PREVIEW_WAIT_LIMIT_SECONDS);
-
-        addSystemMessage(`⏳ Aguardando ${value} ${unitLabels[type] || type} — preview: ${simulationSeconds}s`);
-
-        // Start countdown with the calculated time
-        startCountdown(simulationSeconds);
+        startCountdown(PREVIEW_WAIT_SECONDS);
         const wait: PreviewWait = {
           canReply: node.data.stop_on_reply === true,
-          seconds: simulationSeconds,
+          seconds: PREVIEW_WAIT_SECONDS,
           signal,
           resume: async (branch) => {
             const next = getNextNode(node.id, branch);
@@ -598,7 +589,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-hover)]">
             <div
               className="h-full bg-primary rounded-full transition-all duration-1000 ease-linear"
-              style={{ width: `${(waitCountdown / PREVIEW_WAIT_LIMIT_SECONDS) * 100}%` }}
+              style={{ width: `${(waitCountdown / PREVIEW_WAIT_SECONDS) * 100}%` }}
             />
           </div>
           <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
