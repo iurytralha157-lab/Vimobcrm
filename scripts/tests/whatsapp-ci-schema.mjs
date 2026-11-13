@@ -83,4 +83,8 @@ export const MIGRATIONS = Object.freeze([
   '20261112110000_whatsapp_semlead_link_history.sql',
   '20261112160000_whatsapp_media_gc_prereq.sql',
   '20261112230000_whatsapp_semlead_link_mixed_history.sql',
+  '20261113145517_restore_automation_whatsapp_binding_lock.sql',
+  '20261113150808_fence_automation_whatsapp_attendance_evidence.sql',
+  '20261113151127_fence_automation_whatsapp_immutable_media.sql',
+  '20261113200932_allow_automation_whatsapp_without_attendance.sql',
 ]);

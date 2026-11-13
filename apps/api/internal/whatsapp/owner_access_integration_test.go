@@ -96,12 +96,12 @@ func TestOwnerQueuedSendAndDeletionFollowCurrentLeadAccess(t *testing.T) {
 		where message_id = $1::uuid returning id::text`, item.MessageRowID, item.LeaseToken).Scan(&item.ID); err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, item); err != nil || !allowed {
+	if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, item); err != nil || !allowed {
 		t.Fatalf("owner current attendance = %t, %v", allowed, err)
 	}
 	foreignItem := item
 	foreignItem.OrganizationID = foreign.organizationID
-	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, foreignItem); err != nil || allowed {
+	if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, foreignItem); err != nil || allowed {
 		t.Fatalf("cross-tenant queued item = %t, %v", allowed, err)
 	}
 	if err := repo.DeleteConversation(ctx, owner, foreign.conversationID, foreign.leadID); !errors.Is(err, ErrConversationNotFound) {
@@ -160,7 +160,7 @@ func TestOwnerQueuedSendAndDeletionFollowCurrentLeadAccess(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("owner provider start stayed blocked after transfer")
 	}
-	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, item); err != nil || allowed {
+	if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, item); err != nil || allowed {
 		t.Fatalf("transferred owner attendance = %t, %v", allowed, err)
 	}
 	if err := repo.DeleteConversation(ctx, owner, fixture.conversationID, fixture.leadID); !errors.Is(err, ErrConversationNotFound) {

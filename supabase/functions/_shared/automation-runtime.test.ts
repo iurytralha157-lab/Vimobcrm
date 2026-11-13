@@ -82,6 +82,18 @@ Deno.test("outbox errors preserve the phase, a known domain reason and SQLSTATE"
   }
 });
 
+Deno.test("WhatsApp automation session denials preserve the safe domain reason", () => {
+  for (const phase of ["whatsapp_resolve", "whatsapp_outbox_enqueue"] as const) {
+    const failure = new AutomationPhaseError(phase, {
+      code: "23514",
+      message: "automation_whatsapp_session_access_denied",
+    });
+    if (safeAutomationError(failure) !== `${phase}:automation_whatsapp_session_access_denied:23514`) {
+      throw new Error("unexpected session denial diagnostic");
+    }
+  }
+});
+
 Deno.test("runtime errors never use untrusted messages, hints, details or nested causes", () => {
   const injected = "customer@example.test\nBearer synthetic-credential";
   for (const [failure, expected] of [

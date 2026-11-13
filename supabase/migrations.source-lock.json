@@ -1122,6 +1122,10 @@
     {
       "file": "20261113181444_restrict_automation_due_delay_rpc_execution.sql",
       "sha256": "735b0b5af809e51b24bb2eca42408a1e0d5c11a06934293604b1d7a31b040085"
+    },
+    {
+      "file": "20261113200932_allow_automation_whatsapp_without_attendance.sql",
+      "sha256": "7965434fd3242c6a22831fe1f327d487920918910d6ca15c85a0f1a64c3dedd3"
     }
   ]
 }

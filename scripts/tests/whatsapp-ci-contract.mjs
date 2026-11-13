@@ -28,6 +28,7 @@ export const GO_TESTS = Object.freeze([
   'TestQuickReplyConcurrentOwnerLimitAndSlotReuse',
   'TestLocalWhatsAppMediaSendAndTransferRegression',
   'TestLocalWhatsAppReactionSendAndRemovalRegression',
+  'TestLocalAutomationOutboxStartsWithoutAttendance',
   'TestMediaWorkerAttemptCannotKeepRenewingForever',
   'TestMediaWorkerHeartbeatCannotHoldTheExecutorForever',
   'TestMediaWorkerCompletionWinsItsOwnHeartbeatCancellation',
@@ -69,7 +70,12 @@ export const SQL_BASELINE_TESTS = Object.freeze([
   'whatsapp_realtime_active_session.test.sql',
   'whatsapp_personal_quick_replies.test.sql',
 ]);
-export const SQL_TESTS = Object.freeze([...SQL_BASELINE_TESTS, 'whatsapp_ci_queue_read_scope.test.sql']);
+export const SQL_TESTS = Object.freeze([
+  ...SQL_BASELINE_TESTS,
+  'automation_whatsapp_binding_fences.test.sql',
+  'whatsapp_automation_canonical_outbox.test.sql',
+  'whatsapp_ci_queue_read_scope.test.sql',
+]);
 export const DATABASE_NODE_TESTS = Object.freeze([
   'scripts/tests/whatsapp-inbox-maintenance-retention.test.mjs',
 ]);

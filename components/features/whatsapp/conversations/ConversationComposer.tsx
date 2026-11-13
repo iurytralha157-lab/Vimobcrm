@@ -72,16 +72,26 @@ export function ConversationComposer({
   inputRef,
 }: ConversationComposerProps) {
   const isMobile = layout === "mobile";
-  if (startNotice) return <footer className="shrink-0 bg-[var(--app-surface-soft)]">{startNotice}</footer>;
+  const automationAction = !readOnly && selectedLeadId && canStartAutomations && (
+    <ConversationAutomationAction
+      loading={isLoadingAutomationState} unavailable={isAutomationStateUnavailable} active={hasActiveAutomation}
+      cancelling={isCancellingAutomation} onStart={onStartAutomation} onCancel={onCancelAutomation}
+      showLabel={Boolean(startNotice)}
+    />
+  );
+  if (startNotice) return (
+    <footer className="shrink-0 bg-[var(--app-surface-soft)]">
+      {startNotice}
+      {automationAction && <div className="flex justify-end px-3 pb-2">{automationAction}</div>}
+    </footer>
+  );
   if (readOnly) return <footer role="status" className="shrink-0 bg-[var(--app-surface-soft)] px-3 py-3 text-xs text-muted-foreground">{placeholder || "Somente leitura"}</footer>;
   const leftActions = (
     <>
       {whatsAppControls && <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={disabled}>
         <Paperclip className="w-5 h-5" />
       </button>}
-      {selectedLeadId && canStartAutomations && <ConversationAutomationAction
-        loading={isLoadingAutomationState} unavailable={isAutomationStateUnavailable} active={hasActiveAutomation}
-        cancelling={isCancellingAutomation} onStart={onStartAutomation} onCancel={onCancelAutomation} />}
+      {automationAction}
     </>
   );
 

@@ -4,7 +4,7 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "58ae6c15021dd0e9da5afb71966fa93d3ce70eb7cd804143b939dcffd0e95821",
+  "shared_source_sha256": "3962b0bb9b5291ec21e6b6579d34e6bee3762f2e938f0652b7ee41b16757478f",
   "functions": [
     {
       "slug": "ai-agent-responder",

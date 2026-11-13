@@ -122,7 +122,7 @@ insert into public.automations (
 
 insert into public.automation_flow_versions (
   id, automation_id, organization_id, version, trigger_type, trigger_config,
-  graph, graph_checksum, first_node_key, requires_review
+  graph, graph_checksum, first_node_key, requires_review, created_by
 ) values (
   'b5000000-0000-4000-8000-000000000001',
   'b4000000-0000-4000-8000-000000000001',
@@ -135,7 +135,7 @@ insert into public.automation_flow_versions (
       {"id":"delay","type":"delay","config":{"delay_value":1,"delay_type":"minutes","stop_on_reply":true}},
       {"id":"replied","type":"action","action_type":"send_whatsapp","config":{}},
       {"id":"no_reply","type":"action","action_type":"send_whatsapp","config":{}},
-      {"id":"send","type":"action","action_type":"send_whatsapp","config":{}}
+      {"id":"send","type":"action","action_type":"send_whatsapp","config":{"session_id":"b9000000-0000-4000-8000-000000000001"}}
     ],
     "connections": [
       {"source":"delay","target":"replied","condition_branch":"replied"},
@@ -145,7 +145,8 @@ insert into public.automation_flow_versions (
   }'::jsonb,
   'test-checksum',
   'delay',
-  false
+  false,
+  'b1000000-0000-4000-8000-000000000001'
 );
 
 insert into public.automations (

@@ -90,12 +90,22 @@ desse papel em `public.whatsapp_conversation_lead_bindings`. A migration
 `20261113145517_restore_automation_whatsapp_binding_lock.sql` mantém o
 enfileirador com `SECURITY INVOKER` e limita o privilégio elevado ao helper
 privado que bloqueia o vínculo ativo da organização, conversa, sessão e lead.
-O enfileirador continua exigindo o atendimento daquele vínculo.
+Com `20261113200932_allow_automation_whatsapp_without_attendance.sql`, o
+envio automático usa a sessão configurada na versão publicada do fluxo e o
+vínculo ativo do lead. O dono da conexão pode enviar por automação a um lead
+sem responsável e sem atendimento. O acesso delegado continua limitado aos
+leads atribuídos ao usuário autorizado. O worker Go valida o mesmo vínculo,
+versão, sessão e permissões antes de iniciar a chamada ao provedor. Os itens
+antigos com evidência de atendimento mantêm seu caminho original. A captura
+de mensagens recebidas e o envio manual seguem suas regras de atendimento.
 
-Com `20261113150808_fence_automation_whatsapp_attendance_evidence.sql`, a
-mensagem também registra o atendimento do autor da versão. O autor precisa
-continuar elegível para ler o lead e enviar pela sessão. O worker Go confere
-essa mesma evidência e as permissões vigentes ao iniciar o envio.
+Para publicar esta mudança, suba primeiro todas as réplicas Go que consomem
+a outbox e confira sua saúde. Aplique o SQL só depois, pois as réplicas
+anteriores não reconhecem a nova evidência. Para reverter, restaure as duas
+funções de resolução e enfileiramento a partir das definições anteriores,
+mantenha o worker atualizado até esvaziar os novos itens da outbox e só então
+volte a imagem da API, se necessário. Preserve o helper privado enquanto
+houver itens com a nova evidência e não reprocesse falhas históricas.
 
 Para imagem, áudio e vídeo, aplique
 `20261113151127_fence_automation_whatsapp_immutable_media.sql` junto com a

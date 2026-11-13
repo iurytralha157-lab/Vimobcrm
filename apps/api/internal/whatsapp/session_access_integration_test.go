@@ -426,7 +426,7 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 		ConversationID: fixture.conversationID, MessageRowID: reactionResponse.Reaction.ID,
 		Payload: map[string]any{"session_access_grant_id": reactionOutboxGrantID},
 	}
-	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, sharedReactionOutbox); err != nil || !allowed {
+	if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, sharedReactionOutbox); err != nil || !allowed {
 		t.Fatalf("shared reaction preflight = %v, error = %v", allowed, err)
 	}
 	// A manager can inspect another lead's immutable history, but sharing this
@@ -588,7 +588,7 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 	`, fixture.organizationID, fixture.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, outboxItem)
+	allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, outboxItem)
 	if err != nil || !allowed {
 		t.Fatalf("outbox preflight before revoke = %v, error = %v", allowed, err)
 	}
@@ -632,11 +632,11 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 		t.Fatalf("old intent after revoke = %v, want ErrSessionAccessRevoked", err)
 	}
 	_ = checkTx.Rollback(ctx)
-	allowed, err = repo.whatsappOutboxAttendanceCurrent(ctx, outboxItem)
+	allowed, err = repo.whatsappOutboxDeliveryAuthorized(ctx, outboxItem)
 	if err != nil || allowed {
 		t.Fatalf("outbox preflight after revoke = %v, error = %v", allowed, err)
 	}
-	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, sharedReactionOutbox); err != nil || allowed {
+	if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, sharedReactionOutbox); err != nil || allowed {
 		t.Fatalf("reaction preflight after revoke = %v, error = %v", allowed, err)
 	}
 	revokedCaptureTx, err := pool.Begin(ctx)
@@ -784,7 +784,7 @@ func TestSessionSharingSendAndRevocation(t *testing.T) {
 		if sessions, err := repo.ListSessions(ctx, recipient); err != nil || len(sessions) != 0 {
 			t.Fatalf("%s owner retained an effective shared session: %+v, %v", ownerRole, sessions, err)
 		}
-		if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, freshItem); err != nil || allowed {
+		if allowed, err := repo.whatsappOutboxDeliveryAuthorized(ctx, freshItem); err != nil || allowed {
 			t.Fatalf("shared queued send after %s demotion = %t, %v", ownerRole, allowed, err)
 		}
 		checkTx, err := pool.Begin(ctx)

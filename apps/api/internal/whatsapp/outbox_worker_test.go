@@ -19,12 +19,12 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 	}
 	source := string(raw)
 	workerStart := strings.Index(source, "func (repo Repository) processClaimedWhatsAppOutbox(")
-	guard := strings.Index(source, "repo.whatsappOutboxAttendanceCurrent(ctx, item)")
+	guard := strings.Index(source, "repo.whatsappOutboxDeliveryAuthorized(ctx, item)")
 	providerStart := strings.Index(source, "repo.startWhatsAppOutboxProviderAttempt(ctx, item)")
 	if workerStart < 0 || guard < workerStart || providerStart < guard {
 		t.Fatal("outbox attendance gate must precede the provider boundary")
 	}
-	helperStart := strings.Index(source, "func (repo Repository) whatsappOutboxAttendanceCurrent(")
+	helperStart := strings.Index(source, "func (repo Repository) whatsappOutboxDeliveryAuthorized(")
 	if helperStart < 0 {
 		t.Fatal("outbox attendance helper is missing")
 	}
@@ -54,7 +54,7 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 			t.Fatalf("outbox attendance gate is missing %q", token)
 		}
 	}
-	if !strings.Contains(source[guard:providerStart], "return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)") {
+	if !strings.Contains(source[guard:providerStart], "return repo.failWhatsAppOutbox(ctx, item, authorityErr, true, false)") {
 		t.Fatal("failed attendance must stop before provider delivery")
 	}
 }

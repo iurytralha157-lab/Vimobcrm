@@ -567,6 +567,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 	const canMutateSelectedWhatsAppConversation = canOperateWhatsApp && !localReadOnly && !sessionsFailed
 	  && activePlatform === "whatsapp"
 	  && selectedMessageScope.canMutate;
+  const canStartSelectedConversationAutomation = canStartAutomations && canMutateSelectedWhatsAppConversation;
 	const canManageSelectedWhatsAppConversation = canOperateWhatsApp && !localReadOnly && !sessionsFailed
 	  && activePlatform === "whatsapp"
 	  && selectedMessageScope.canManage;
@@ -1602,7 +1603,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
         onLeadSaved={() => { if (overlayScopeRef.current === overlayScopeKey) void refreshSelectedWhatsAppConversation(); }}
         selectedLeadId={selectedLeadId}
         selectedConversation={selectedConversation}
-        showAutomationDialog={overlaysCurrent && showAutomationDialog}
+        showAutomationDialog={overlaysCurrent && showAutomationDialog && canStartSelectedConversationAutomation}
         onAutomationDialogOpenChange={setShowAutomationDialog}
         pendingDeleteConversation={overlaysCurrent ? pendingDeleteConversation : null}
         isDeletingConversation={deleteConversation.isPending}
@@ -1748,7 +1749,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 disabled={messageInputDisabled}
                 isSending={activePlatform === "whatsapp" ? sendTextMessage.isPending : sendMetaMessage.isPending}
                 selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
+                canStartAutomations={canStartSelectedConversationAutomation}
                 hasActiveAutomation={hasActiveLeadAutomation}
                 isLoadingAutomationState={activeLeadAutomations.isPending}
                 isAutomationStateUnavailable={activeLeadAutomations.isError}
@@ -1975,7 +1976,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 disabled={messageInputDisabled}
                 isSending={activePlatform === "whatsapp" ? sendTextMessage.isPending : sendMetaMessage.isPending}
                 selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
+                canStartAutomations={canStartSelectedConversationAutomation}
                 hasActiveAutomation={hasActiveLeadAutomation}
                 isLoadingAutomationState={activeLeadAutomations.isPending}
                 isAutomationStateUnavailable={activeLeadAutomations.isError}

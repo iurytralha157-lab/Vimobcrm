@@ -247,13 +247,19 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(result.SignedURL) == "" {
+	signedURL := strings.TrimSpace(result.SignedURL)
+	if signedURL == "" {
 		return "", fmt.Errorf("%w: signed storage URL is empty", ErrAutomationStorage)
 	}
-	if strings.HasPrefix(result.SignedURL, "/") {
-		return client.projectURL + result.SignedURL, nil
+	switch {
+	case strings.HasPrefix(signedURL, "/object/"), strings.HasPrefix(signedURL, "object/"):
+		// Storage returns paths relative to its gateway, not the project root.
+		return client.projectURL + "/storage/v1/" + strings.TrimPrefix(signedURL, "/"), nil
+	case strings.HasPrefix(signedURL, "/"):
+		return client.projectURL + signedURL, nil
+	default:
+		return signedURL, nil
 	}
-	return result.SignedURL, nil
 }
 
 func (client storageClient) setJSONHeaders(request *http.Request) {

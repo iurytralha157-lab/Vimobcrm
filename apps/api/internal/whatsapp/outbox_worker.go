@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -656,7 +657,9 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 	}
 
 	action := strings.TrimSpace(stringFromAny(item.Payload["action"]))
-	body := mapFromAny(item.Payload["body"])
+	// Preserve the durable payload for the provider-start check. Signing media
+	// only changes the copy passed to the provider.
+	body := maps.Clone(mapFromAny(item.Payload["body"]))
 	if action == "" || len(body) == 0 {
 		recordWhatsAppOutboxDeliveryFailure(lane)
 		return repo.failWhatsAppOutbox(ctx, item, fmt.Errorf("invalid outbox payload"), true, false)
@@ -670,15 +673,18 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 			return repo.failWhatsAppOutbox(ctx, item, errOutboundMediaIntegrityUnverified, true, false)
 		}
 	}
-	attended, err := repo.whatsappOutboxAttendanceCurrent(ctx, item)
-	if err != nil {
-		return err
+	authorized, authorityErr := repo.whatsappOutboxDeliveryAuthorized(ctx, item)
+	if authorityErr != nil && !errors.Is(authorityErr, ErrSessionAccessRevoked) {
+		return authorityErr
 	}
-	if !attended {
+	if !authorized {
+		if authorityErr == nil {
+			authorityErr = ErrAttendanceRequired
+		}
 		// Pre-migration and suppressed queued work must not cross the provider
 		// boundary merely because it was already in a durable outbox.
 		recordWhatsAppOutboxDeliveryFailure(lane)
-		return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)
+		return repo.failWhatsAppOutbox(ctx, item, authorityErr, true, false)
 	}
 	permanentSessionFailure, sessionErr := repo.validateWhatsAppOutboxSession(ctx, item)
 	if sessionErr != nil {
@@ -838,8 +844,9 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 	return nil
 }
 
-func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item pendingWhatsAppOutbox) (bool, error) {
+func (repo Repository) whatsappOutboxDeliveryAuthorized(ctx context.Context, item pendingWhatsAppOutbox) (bool, error) {
 	var attended bool
+	var hasAutomationPolicy bool
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
@@ -871,9 +878,21 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			  and message.capture_state = 'unlinked_ephemeral'
 			  and coalesce(nullif(message.metadata->>'attendance_send_origin', ''), message.metadata->>'origin', '') = 'human'
 			  and message.sender_user_id = session.owner_user_id
+		), exists (
+			select 1 from public.whatsapp_messages as message
+			where message.id = $1::uuid and message.organization_id = $2::uuid
+			  and message.session_id = $3::uuid and message.conversation_id = $4::uuid
+			  and (`+whatsappAutomationOutboxPolicyPresent+`)
 		)
-	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
-	return attended, err
+	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended, &hasAutomationPolicy)
+	if err != nil {
+		return false, err
+	}
+	if hasAutomationPolicy {
+		_, err := whatsappAutomationOutboxPublisher(ctx, repo.db.Pool(), item, false)
+		return err == nil, err
+	}
+	return attended, nil
 }
 
 // This gate is checked before preparation and again under the provider-start

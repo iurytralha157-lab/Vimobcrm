@@ -86,6 +86,9 @@ function translateError(error: string): string {
   if (error === 'automation_queue_unavailable') return 'A fila não pôde atribuir o lead neste momento. O responsável foi mantido.';
   if (error === 'automation_actor_forbidden') return 'O autor do fluxo não tem permissão para executar esta ação no lead.';
   if (error === 'automation_command_unavailable') return 'O serviço de ações de CRM está indisponível.';
+  const reason = error.split(':').find((part) => part.startsWith('automation_whatsapp_'));
+  if (reason === 'automation_whatsapp_attendance_required') return 'Esta execução foi bloqueada pela regra anterior de atendimento do WhatsApp.';
+  if (reason === 'automation_whatsapp_session_access_denied') return 'A versão publicada do fluxo não tem permissão para enviar pelo WhatsApp configurado.';
   if (error.includes("exists") && error.includes("false")) return "Número WhatsApp inválido ou não cadastrado";
   if (error.includes("Connection refused") || error.includes("ECONNREFUSED")) return "Falha na conexão com WhatsApp";
   if (error.includes("timeout") || error.includes("ETIMEDOUT")) return "Tempo limite excedido";

@@ -622,6 +622,7 @@ export function FloatingChat() {
     refetch: refetchSessions,
   } = useAccessibleSessions({ enabled: shouldLoadFloatingChatData });
   const canMutateActiveConversation = canOperateWhatsApp && !localReadOnly && !sessionsFailed && activeConversationMessageScope.canMutate;
+  const canStartActiveConversationAutomation = canStartAutomations && canMutateActiveConversation;
   const canManageActiveConversation = canOperateWhatsApp && !localReadOnly && !sessionsFailed && activeConversationMessageScope.canManage;
   const accessibleSessionIds = useMemo(
     () => sessions?.map((session) => session.id) || [],
@@ -2239,9 +2240,20 @@ export function FloatingChat() {
     if (!originalOrganization) return <div role="status" className="border-t border-[var(--app-border)] p-3 text-xs text-muted-foreground">Somente leitura nesta organização. Atenda os leads na organização original do seu cadastro.</div>;
     const composerUnavailableReason = canOperateWhatsApp
       ? localReadOnly ? "read_only" : sessionsFailed ? "sessions_failed" : undefined : undefined;
-    if ((ownStartNotice && !ownStartNotice.preserveComposer) || composerUnavailableReason) return (
+    const replaceHumanComposer = Boolean((ownStartNotice && !ownStartNotice.preserveComposer) || composerUnavailableReason);
+    const automationAction = activeLeadId && canStartActiveConversationAutomation && (
+      <ConversationAutomationAction
+        loading={activeLeadAutomations.isPending} unavailable={activeLeadAutomations.isError}
+        active={Boolean(activeLeadAutomations.data?.length)} cancelling={cancelLeadExecutions.isPending}
+        onStart={() => setShowAutomationDialog(true)}
+        onCancel={() => { if (activeConversationLeadId === activeLeadId) cancelLeadExecutions.mutate(activeLeadId); }}
+        showLabel={replaceHumanComposer}
+      />
+    );
+    if (replaceHumanComposer) return (
       <div className={cn("shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3", mobile && "pb-2")}>
         <OwnWhatsAppStartNotice notice={ownStartNotice} unavailableReason={composerUnavailableReason} onRetry={() => void refetchSessions()} busy={isStartingConversation} onStart={() => void requestOwnWhatsAppStart()} />
+        {automationAction && <div className="flex justify-end">{automationAction}</div>}
       </div>
     );
     return (
@@ -2269,11 +2281,7 @@ export function FloatingChat() {
             <button aria-label="Anexar arquivo" title="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled || sendMediaMessage.isPending}>
               <Paperclip className="w-5 h-5" aria-hidden="true" />
             </button>
-            {activeLeadId && canStartAutomations && canMutateActiveConversation && !sessionsFailed && <ConversationAutomationAction
-              loading={activeLeadAutomations.isPending} unavailable={activeLeadAutomations.isError}
-              active={Boolean(activeLeadAutomations.data?.length)} cancelling={cancelLeadExecutions.isPending}
-              onStart={() => setShowAutomationDialog(true)}
-              onCancel={() => { if (activeConversationLeadId === activeLeadId) cancelLeadExecutions.mutate(activeLeadId); }} />}
+            {automationAction}
           </>
         }
         audio={{ contextKey: audioContextKey, onSend: handleSendAudio,
@@ -2533,7 +2541,7 @@ export function FloatingChat() {
         {deleteConversationDialog}
         {enterAttendanceDialog}
         {leadLinkConfirmationDialog}
-        {activeLeadId && canMutateActiveConversation && (
+        {activeLeadId && canStartActiveConversationAutomation && (
           <StartAutomationDialog
             open={showAutomationDialog}
             onOpenChange={setShowAutomationDialog}
@@ -2595,7 +2603,7 @@ export function FloatingChat() {
       {deleteConversationDialog}
       {enterAttendanceDialog}
       {leadLinkConfirmationDialog}
-      {activeLeadId && canMutateActiveConversation && (
+      {activeLeadId && canStartActiveConversationAutomation && (
         <StartAutomationDialog
           open={showAutomationDialog}
           onOpenChange={setShowAutomationDialog}

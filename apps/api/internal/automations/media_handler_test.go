@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -28,6 +29,53 @@ func TestStorageSearchRunsBeforePagingAndKeepsOrganizationPrefix(t *testing.T) {
 	objects, err := client.list(context.Background(), "automation-media", "organization/image", 51, 100, " campanha ")
 	if err != nil || len(objects) != 1 || objects[0].Name != "campanha.png" {
 		t.Fatalf("storage search: %v, %v", objects, err)
+	}
+}
+
+func TestAutomationMediaSignedPreviewUsesStorageGateway(t *testing.T) {
+	const objectPath = "organization/images/synthetic.png"
+	const storagePath = "/storage/v1/object/sign/automation-media/" + objectPath
+	const signedQuery = "?token=synthetic%2Btoken"
+
+	for _, signedPath := range []string{
+		"/object/sign/automation-media/" + objectPath,
+		"object/sign/automation-media/" + objectPath,
+		storagePath,
+	} {
+		t.Run(signedPath, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != storagePath {
+					w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if r.Method == http.MethodPost {
+					_ = json.NewEncoder(w).Encode(map[string]string{"signedURL": signedPath + signedQuery})
+					return
+				}
+				if r.Method != http.MethodGet || r.URL.Query().Get("token") != "synthetic+token" {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "image/png")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			client := newStorageClient(StorageConfig{ProjectURL: server.URL, APIKey: "synthetic-test-key"})
+			preview, err := client.signedURL(context.Background(), "automation-media", objectPath, 15*time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := server.Client().Get(preview)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "image/png" {
+				t.Fatalf("signed preview returned %s, want image/png and 200", response.Status)
+			}
+		})
 	}
 }
 

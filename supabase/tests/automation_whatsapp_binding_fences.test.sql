@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(27);
+select plan(25);
 
 select ok(
   obj_description(
@@ -253,38 +253,6 @@ insert into public.automation_effect_dispatches (
   '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"af300000-0000-4000-8000-000000000001"}'
 );
 
-select throws_ok(
-  $$select public.enqueue_automation_whatsapp_outbox(
-    'af100000-0000-4000-8000-000000000001',
-    'af600000-0000-4000-8000-000000000001', 'send', 'lease-a',
-    'automation:af600000-0000-4000-8000-000000000001:send:send_whatsapp',
-    (select (value->>'id')::uuid from automation_fence_resolution),
-    'af300000-0000-4000-8000-000000000001',
-    'automation:af600000-0000-4000-8000-000000000001:send:send_whatsapp',
-    'text', 'binding-fenced delivery', null, null, null, null
-  )$$,
-  '23514', 'automation_whatsapp_attendance_required',
-  'binding alone does not authorize automated send before attendance'
-);
-select is(
-  (select count(*)::integer from public.whatsapp_outbox
-   where client_message_id = 'automation:af600000-0000-4000-8000-000000000001:send:send_whatsapp'),
-  0, 'missing attendance creates no durable send intent'
-);
-
--- The positive scenario includes the exact current binding attendance.
--- Keep the production constraint; only prepare the synthetic prerequisite.
-insert into public.whatsapp_attendance_entries (
-  organization_id, conversation_id, session_id, lead_id, binding_id,
-  user_id, actor_name_snapshot, ingress_sequence_cutoff, entry_source
-)
-select binding.organization_id, binding.conversation_id,
-  'af300000-0000-4000-8000-000000000001'::uuid, binding.lead_id, binding.id,
-  'af000000-0000-4000-8000-000000000001'::uuid, 'Automation Fence Owner', 0, 'manual'
-from public.whatsapp_conversation_lead_bindings binding
-where binding.conversation_id = (select (value->>'id')::uuid from automation_fence_resolution)
-  and binding.active_to is null;
-
 create temporary table automation_fence_enqueue as
 select public.enqueue_automation_whatsapp_outbox(
   'af100000-0000-4000-8000-000000000001',
@@ -299,7 +267,7 @@ select public.enqueue_automation_whatsapp_outbox(
 
 select ok(
   coalesce((select (value->>'ok')::boolean from automation_fence_enqueue), false),
-  'binding-fenced enqueue accepts the current execution epoch'
+  'binding-fenced enqueue accepts the current execution without attendance'
 );
 select ok(
   (select count(*) = 1 from public.whatsapp_messages
@@ -405,8 +373,8 @@ select throws_ok(
     'text', 'must not escape after rebind', null, null, null, null
   )$$,
   '23514',
-  'automation_whatsapp_attendance_required',
-  'rebind-first removes the exact attendance authority of the stale execution'
+  'automation_whatsapp_queue_context_mismatch',
+  'rebind-first rejects the stale execution lead before creating a send'
 );
 select is(
   (

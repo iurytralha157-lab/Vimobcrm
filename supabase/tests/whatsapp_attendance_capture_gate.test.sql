@@ -610,13 +610,13 @@ from managed_auto_reply_state;
 
 select ok(
   position(
-    $$automation_whatsapp_attendance_required$$
+    $$private.automation_whatsapp_session_can_send$$
     in pg_catalog.pg_get_functiondef(
       'public.enqueue_automation_whatsapp_outbox(uuid,uuid,text,text,text,uuid,uuid,text,text,text,text,text,bigint,text)'::regprocedure
     )
   ) > 0
   and position(
-    $$attendance.binding_id = locked_binding.id$$
+    $$'automation_binding_id', locked_binding.id$$
     in pg_catalog.pg_get_functiondef(
       'public.enqueue_automation_whatsapp_outbox(uuid,uuid,text,text,text,uuid,uuid,text,text,text,text,text,bigint,text)'::regprocedure
     )
@@ -633,7 +633,7 @@ select ok(
       'public.enqueue_automation_whatsapp_outbox(uuid,uuid,text,text,text,uuid,uuid,text,text,text,text,text,bigint,text)'::regprocedure
     )
   ) > 0,
-  'automation dispatch cannot queue, preview or timeline plaintext before exact attendance'
+  'automation dispatch uses explicit session and binding evidence for its captured outbound message'
 );
 
 select ok(

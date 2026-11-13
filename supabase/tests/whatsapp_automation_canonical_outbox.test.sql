@@ -167,7 +167,7 @@ insert into public.automation_flow_versions (
   'ca400000-0000-4000-8000-000000000001',
   'ca000000-0000-4000-8000-000000000001',
   1, 'manual', '{}',
-  '{"nodes":[{"id":"text","type":"action","action_type":"send_whatsapp","config":{}},{"id":"media","type":"action","action_type":"send_image","config":{}}],"connections":[],"settings":{}}',
+  '{"nodes":[{"id":"text","type":"action","action_type":"send_whatsapp","config":{"session_id":"ca200000-0000-4000-8000-000000000001"}},{"id":"media","type":"action","action_type":"send_image","config":{"session_id":"ca200000-0000-4000-8000-000000000001"}}],"connections":[],"settings":{}}',
   'canonical-outbox-contract', 'text', false, 'cb000000-0000-4000-8000-000000000001'
 );
 
@@ -211,58 +211,36 @@ select is(
 );
 select throws_ok(
   $$select public.enqueue_automation_whatsapp_outbox(
-    'ca000000-0000-4000-8000-000000000001',
-    'ca600000-0000-4000-8000-000000000001', 'text', 'lease-text',
-    'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp',
-    'ca300000-0000-4000-8000-000000000001', 'ca200000-0000-4000-8000-000000000001',
-    'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp',
+    'ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000002',
+    'text', 'lease-disconnected', 'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp',
+    'ca300000-0000-4000-8000-000000000002', 'ca200000-0000-4000-8000-000000000002',
+    'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp',
     'text', 'Ola pelo outbox', null, null, null, null
   )$$,
-  '23514', 'automation_whatsapp_attendance_required',
-  'automated text cannot bypass current attendance'
+  '23514', 'automation_whatsapp_queue_context_mismatch',
+  'a connected same-tenant session cannot replace the configured session'
 );
 reset role;
-select is(
-  (select count(*)::integer from public.whatsapp_outbox
-   where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
-  0, 'attendance rejection does not reserve a provider send'
+select ok(
+  (select assigned_user_id is null from public.leads where id = 'ca100000-0000-4000-8000-000000000001')
+  and not exists (
+    select 1 from public.whatsapp_attendance_entries
+    where conversation_id = 'ca300000-0000-4000-8000-000000000001'
+  ),
+  'text fixture has neither attendance nor an assignee'
 );
-
-insert into public.whatsapp_attendance_entries (
-  organization_id, conversation_id, session_id, lead_id, binding_id,
-  user_id, actor_name_snapshot, ingress_sequence_cutoff, entry_source
-)
-select binding.organization_id, binding.conversation_id, conversation.session_id,
-  binding.lead_id, binding.id,
-  'cb000000-0000-4000-8000-000000000001'::uuid, 'Canonical Owner A', 0, 'manual'
-from public.whatsapp_conversation_lead_bindings binding
-join public.whatsapp_conversations conversation on conversation.id = binding.conversation_id
-where binding.organization_id = 'ca000000-0000-4000-8000-000000000001'::uuid
-  and binding.conversation_id in (
-    'ca300000-0000-4000-8000-000000000001'::uuid,
-    'ca300000-0000-4000-8000-000000000002'::uuid,
-    'ca300000-0000-4000-8000-000000000003'::uuid
-  )
-  and binding.active_to is null;
-
 set local role service_role;
-select is(
-  private.automation_whatsapp_outbox_attendance(
+select ok(
+  not private.automation_whatsapp_session_can_send(
     'ca000000-0000-4000-8000-000000000001',
-    'ca300000-0000-4000-8000-000000000001',
     'ca200000-0000-4000-8000-000000000001',
     'ca100000-0000-4000-8000-000000000001',
-    (select id from public.whatsapp_conversation_lead_bindings
-     where conversation_id = 'ca300000-0000-4000-8000-000000000001' and active_to is null),
     'cb000000-0000-4000-8000-000000000002'
   ),
-  null::uuid,
-  'automation cannot borrow another actor attendance'
+  'a member from another tenant cannot use the configured session'
 );
 reset role;
 
--- This actor entered while connected; the later disconnect must independently
--- block sending even though the exact attendance entry still exists.
 update public.whatsapp_sessions set status='disconnected'
 where id='ca200000-0000-4000-8000-000000000002'::uuid;
 
@@ -281,14 +259,16 @@ select public.enqueue_automation_whatsapp_outbox(
 reset role;
 
 select ok(coalesce((select (value->>'ok')::boolean from canonical_text_result), false), 'text automation is accepted by the durable queue');
-select is(
-  (select message.metadata->>'attendance_entry_id'
+select ok(
+  (select message.metadata->>'automation_delivery_policy' = 'tenant_session_v1'
+      and message.metadata->>'automation_flow_version_id' = 'ca500000-0000-4000-8000-000000000001'
+      and message.metadata->>'automation_binding_id' = binding.id::text
+      and not (message.metadata ? 'attendance_entry_id')
    from public.whatsapp_messages as message
+   join public.whatsapp_conversation_lead_bindings binding
+     on binding.conversation_id = message.conversation_id and binding.active_to is null
    where message.client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'),
-  (select attendance.id::text from public.whatsapp_attendance_entries as attendance
-   where attendance.conversation_id = 'ca300000-0000-4000-8000-000000000001'
-     and attendance.user_id = 'cb000000-0000-4000-8000-000000000001'),
-  'queued message carries the exact attendance of its flow author'
+  'queued message records immutable automation authority without attendance'
 );
 select is((select status from public.whatsapp_messages where client_message_id = 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp'), 'queued', 'message is visible as queued before provider delivery');
 select is(

@@ -28,6 +28,7 @@ let bootstrap = source.slice(0, boundary)
   .replace('export const useScheduleEvents=()=>h().emptyQuery;', 'export const useScheduleEvents=()=>h().scheduleQuery||h().emptyQuery;')
   .replace('  // Controlled recorder sentinel', "  await mock('@/components/features/schedule/CompactScheduleEventsList',`import React from 'react';export const CompactScheduleEventsList=p=>React.createElement('div',{'data-events-list':true},p.events.length?'Lista de compromissos sintéticos':p.emptyLabel);`);\n  // Controlled recorder sentinel")
   .replace('  // Controlled recorder sentinel', "  await mock('@/components/features/schedule/EventSheet',`import React from 'react';export const EventSheet=p=>p.open?React.createElement('div',{'data-agenda-open':p.leadId},React.createElement('button',{onClick:()=>p.onOpenChange(false)},'Fechar agenda sintética')):null;`);\n  // Controlled recorder sentinel")
+  .replace('  // Controlled recorder sentinel', "  await mock('@/components/features/whatsapp/StartAutomationDialog',`import React from 'react';export const StartAutomationDialog=p=>p.open?React.createElement('div',{'data-automation-lead':p.leadId,'data-automation-conversation':p.conversationId},React.createElement('button',{onClick:()=>p.onOpenChange(false)},'Fechar automação sintética')):null;`);\n  // Controlled recorder sentinel")
   .replace("  const ts=require('typescript');", "  await mock('@/hooks/use-mention-names',`export const useMentionNames=()=>({namesMap:{}});`);\n  await mock('@/lib/local-read-only',`export const isLocalReadOnlyMode=()=>Boolean(window.harness.localReadOnly);`);\n  const ts=require('typescript');")
   .replace("export const useWhatsAppSessions=()=>({data:h().sessions,isLoading:false,isError:false,refetch:()=>{}});", "export const useWhatsAppSessions=()=>({data:h().sessions,isLoading:false,isError:!!h().sessionsFailed,refetch:()=>h().requests.push({kind:'sessions-refetch'})});")
   .replace("export const useAccessibleSessions=()=>({data:h().sessions,isLoading:false});", "export const useAccessibleSessions=()=>({data:h().sessions,isLoading:false,isError:!!h().sessionsFailed,refetch:()=>h().requests.push({kind:'sessions-refetch'})});")
@@ -205,6 +206,52 @@ test('shared automation states expose only valid actions with bounded controls a
   const cancel = page.getByRole('button', { name: 'Parar automação ativa' }); await expect(cancel).toBeDisabled(); await expect(cancel).toHaveAttribute('aria-busy', 'true');
   await expect(cancel.locator('.animate-spin')).toHaveCSS('animation-name', 'none'); await cancel.evaluate(n => n.click());
   assert.deepEqual(await page.evaluate(() => window.harness.requests.map(r => r.kind)), ['automation-start', 'automation-cancel']);
+});
+
+for (const mode of ['screen', 'floating']) for (const width of [390, 1440]) test(`${mode} ${width}: automation stays available when the WhatsApp composer requires a separate human start`, async t => {
+  const page = await harness(t, mode);
+  await page.setViewportSize({ width, height: 900 });
+  await page.addStyleTag({ content: css });
+  await page.evaluate(({ linked, unlinked, mobile }) => {
+    const h = window.harness;
+    h.mobile = mobile;
+    h.modules = ['whatsapp', 'automations'];
+    h.permissions.push('automations_manage');
+    h.sessions = [h.sessions[0], { ...h.sessions[1], status: 'connected' }];
+    h.attendance.attendance = { joined: false };
+    h.conversations = [linked, unlinked];
+    h.render();
+    if (h.mode === 'floating') h.ctx.openConversation(linked);
+  }, { linked: conversation('chat-a', 'lead-a'), unlinked: conversation('chat-b', null), mobile: width < 768 });
+  if (mode === 'screen') await page.getByRole('button', { name: 'Abrir chat-a', exact: true }).click();
+
+  await expect(page.getByRole('button', { name: 'Iniciar conversa pelo seu WhatsApp', exact: true })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Digite sua mensagem', exact: true })).toHaveCount(0);
+  const automation = page.getByRole('button', { name: 'Iniciar automação', exact: true });
+  await expect(automation).toBeVisible();
+  await automation.click();
+  await expect(page.locator('[data-automation-lead]')).toHaveAttribute('data-automation-lead', 'lead-a');
+  await expect(page.locator('[data-automation-lead]')).toHaveAttribute('data-automation-conversation', 'chat-a');
+  assert.deepEqual(await page.evaluate(() => window.harness.requests.filter(r => ['start', 'send'].includes(r.kind))), []);
+
+  await page.evaluate(() => { window.harness.localReadOnly = true; window.harness.render(); });
+  await expect(page.locator('[data-automation-lead]')).toHaveCount(0);
+  await expect(automation).toHaveCount(0);
+  await page.evaluate(() => {
+    const h = window.harness;
+    h.localReadOnly = false;
+    h.permissions = h.permissions.filter(permission => permission !== 'automations_manage');
+    h.render();
+  });
+  await expect(automation).toHaveCount(0);
+  await page.evaluate(() => { window.harness.permissions.push('automations_manage'); window.harness.render(); });
+  if (mode === 'screen') {
+    if (width < 768) await page.getByRole('button', { name: 'Voltar para a lista de conversas', exact: true }).click();
+    await page.getByRole('button', { name: 'Abrir chat-b', exact: true }).click();
+  } else {
+    await page.evaluate(() => window.harness.ctx.openConversation(window.harness.conversations[1]));
+  }
+  await expect(automation).toHaveCount(0);
 });
 
 for (const mode of ['screen', 'floating']) test(`${mode} history Escape restores its real trigger and leaves the selected conversation open`, async t => {

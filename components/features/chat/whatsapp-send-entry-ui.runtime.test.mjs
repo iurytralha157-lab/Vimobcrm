@@ -71,7 +71,7 @@ test('actual floating renderer keeps the original input alongside the optional o
     ScopedMessageBox: 'ScopedMessageBox', messageText: 'Rascunho original', setMessageText: noop, handleSendMessage: noop,
     handleKeyPress: noop, isReadOnlyMode: false, whatsappMessageInputState: { placeholder: 'Digite sua mensagem...' },
     messageInputDisabled: false, sendMessage: { isPending: false }, messageInputRef: { current: null }, Paperclip: 'Paperclip',
-    sendMediaMessage: { isPending: false }, canStartAutomations: false, handleSendAudio: noop, handleResolveAudio: noop, audioDisabled: false });
+    sendMediaMessage: { isPending: false }, canStartActiveConversationAutomation: false, handleSendAudio: noop, handleResolveAudio: noop, audioDisabled: false });
   const result = tree(render(false));
   assert.equal(result.filter(n => n.props['data-whatsapp-own-start'] === 'start').length, 1);
   assert.equal(result.find(n => n.type === 'ScopedMessageBox')?.props.value, 'Rascunho original');

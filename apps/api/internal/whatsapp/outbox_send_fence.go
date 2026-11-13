@@ -19,6 +19,7 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	var senderID, ownerID, origin, grantID, provider, sessionStatus string
 	var attendanceUserID string
 	var sessionActive, messageLeadNull bool
+	var hasAutomationPolicy bool
 	var messageCapture string
 	err := tx.QueryRow(ctx, `
 		select coalesce(message.sender_user_id::text, ''),
@@ -34,7 +35,8 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 		       coalesce((select attendance.user_id::text from public.whatsapp_attendance_entries attendance
 		        where attendance.id::text=message.metadata->>'attendance_entry_id'
 		        and attendance.organization_id=message.organization_id and attendance.session_id=message.session_id
-		        and attendance.conversation_id=message.conversation_id and attendance.lead_id=message.lead_id),'')
+		        and attendance.conversation_id=message.conversation_id and attendance.lead_id=message.lead_id),''),
+		       (`+whatsappAutomationOutboxPolicyPresent+`)
 		from public.whatsapp_messages message
 		join public.whatsapp_sessions session
 		  on session.id = message.session_id
@@ -44,7 +46,7 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 		  and message.session_id = $3::uuid
 		  and message.conversation_id = $4::uuid
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).
-		Scan(&senderID, &messageLeadNull, &messageCapture, &ownerID, &origin, &grantID, &provider, &sessionStatus, &sessionActive, &attendanceUserID)
+		Scan(&senderID, &messageLeadNull, &messageCapture, &ownerID, &origin, &grantID, &provider, &sessionStatus, &sessionActive, &attendanceUserID, &hasAutomationPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrSessionAccessRevoked
 	}
@@ -60,11 +62,21 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	if origin != "automation" && origin != "human" {
 		return ErrSessionAccessRevoked
 	}
+	var publisherID string
+	if hasAutomationPolicy {
+		if origin != "automation" {
+			return ErrSessionAccessRevoked
+		}
+		publisherID, err = whatsappAutomationOutboxPublisher(ctx, tx, item, false)
+		if err != nil {
+			return err
+		}
+	}
 	// Regra de 12/11: resposta do dono da conexao em conversa sem lead nao
 	// tem atendimento; a cerca de lead/bolsao abaixo nao se aplica a ela.
 	unlinkedOwnerSend := origin == "human" && attendanceUserID == "" &&
 		messageLeadNull && messageCapture == "unlinked_ephemeral" && senderID == ownerID
-	if !unlinkedOwnerSend {
+	if !unlinkedOwnerSend && !hasAutomationPolicy {
 		if attendanceUserID == "" || (origin == "human" && attendanceUserID != senderID) {
 			return ErrSessionAccessRevoked
 		}
@@ -74,7 +86,9 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 	// same order before any route/work lock. Recheck the discovered identities
 	// after acquiring the session so a changed owner cannot borrow these locks.
 	userIDs := []string{ownerID, attendanceUserID}
-	if unlinkedOwnerSend {
+	if hasAutomationPolicy {
+		userIDs = []string{ownerID, publisherID}
+	} else if unlinkedOwnerSend {
 		userIDs = []string{ownerID}
 	}
 	sort.Strings(userIDs)
@@ -178,6 +192,9 @@ func lockWhatsAppOutboxGrantForStart(ctx context.Context, tx pgx.Tx, item pendin
 		where organization_id = $1::uuid and id = $2::uuid for share
 	`, item.OrganizationID, currentLeadID); err != nil {
 		return err
+	}
+	if hasAutomationPolicy {
+		return lockWhatsAppAutomationOutboxForStart(ctx, tx, item, ownerID, publisherID, currentLeadID)
 	}
 	if origin == "human" {
 		if err := requireWhatsAppQueuePoolClaim(ctx, tx, item.OrganizationID, currentLeadID, senderID); err != nil {
