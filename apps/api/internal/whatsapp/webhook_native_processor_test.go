@@ -381,6 +381,19 @@ func TestNativeInheritedOrganicLeadObservationRequiresResolvedCurrentPredecessor
 	if !allowed(base) {
 		t.Fatal("verified current predecessor must make the second organic lead message visible")
 	}
+	proven := func(value fixture) bool {
+		return nativeInheritedRoutingBindingProven(value.session, value.item, value.conversation,
+			value.message, &value.snapshot, value.proof, value.bindingID, value.attendanceID,
+			value.managed, value.stored)
+	}
+	legacy := base
+	legacy.snapshot.UnlinkedCapturePolicy = ""
+	if allowed(legacy) {
+		t.Fatal("a legacy snapshot must keep the existing observation policy")
+	}
+	if !proven(legacy) || !canCheckAutomationReplyCapture(legacy.conversation, legacy.message, &legacy.snapshot, proven(legacy)) {
+		t.Fatal("the exact predecessor still proves the legacy reply's binding for automation capture")
+	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*fixture)
@@ -410,6 +423,10 @@ func TestNativeInheritedOrganicLeadObservationRequiresResolvedCurrentPredecessor
 			tc.mutate(&value)
 			if allowed(value) {
 				t.Fatal("inherited event without current organic lead proof became visible")
+			}
+			value.snapshot.UnlinkedCapturePolicy = ""
+			if proven(value) || canCheckAutomationReplyCapture(value.conversation, value.message, &value.snapshot, proven(value)) {
+				t.Fatal("an invalid legacy predecessor became eligible for automation capture")
 			}
 		})
 	}

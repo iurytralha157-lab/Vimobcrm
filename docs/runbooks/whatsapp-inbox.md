@@ -123,6 +123,25 @@ Valide a admissão e a repetição idempotente em banco descartável como
 Após aplicar, faça uma nova execução controlada e confira a entrega pelo
 recibo do provedor. A migration não reprocessa efeitos antigos.
 
+Quando o WhatsApp confirma o envio da automação pelo dono da conexão, o worker
+Go registra o início do atendimento para as respostas nessa conversa. A prova
+fica vinculada à organização, conexão, conversa, lead e vínculo ativo no momento
+do envio. Isso também vale quando outro usuário é responsável pelo lead. A
+leitura do histórico usa as permissões do card. O registro da automação não
+autoriza envio manual nem marca entrada humana. Cada resposta nova segue o fluxo
+normal de automações que aguardam resposta. Uma resposta recebida enquanto o
+envio ainda aguarda confirmação pode voltar à fila por até 30 segundos. Sem
+confirmação, ela segue a regra de captura existente. Respostas recebidas antes
+do envio e registros já suprimidos não são alterados.
+
+Aplique a migration `20261113231543_whatsapp_automation_reply_attendance.sql`
+antes de subir as réplicas Go de envio e recebimento. Antes de liberar tráfego,
+confira um envio aceito e uma resposta imediata na mesma conversa com um lead
+atribuído a outro usuário. Confira também um envio rejeitado e outra conversa
+sem atendimento. Para reverter, restaure a versão anterior da API e da bridge
+e preserve a tabela privada e os históricos já gravados. Nenhum replay é
+necessário.
+
 A outbox é independente da inbox. Texto e mídia usam lanes que podem reivindicar
 e enviar itens prontos em paralelo; não há garantia de ordem global de entrega.
 Fontes: [worker da outbox](../../apps/api/internal/whatsapp/outbox_worker.go)

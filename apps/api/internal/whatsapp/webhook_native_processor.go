@@ -1471,10 +1471,11 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			captureSnapshot = nil
 		}
 		captureState := nativeEvolutionCaptureState(attendanceEntryID, conversation, message, captureSnapshot, managedOutbound)
-		if captureState == "suppressed" && nativeInheritedRoutingObservationAllowed(
+		inheritedObservationAllowed := captureState == "suppressed" && nativeInheritedRoutingObservationAllowed(
 			session, item, conversation, message, captureSnapshot, inheritedProof,
 			bindingID, attendanceEntryID, managedOutbound, storedIdentity.ID != "",
-		) {
+		)
+		if inheritedObservationAllowed {
 			captureState = "observed_unattended"
 		}
 		if captureSnapshot != nil && captureSnapshot.State == "unlinked" &&
@@ -1541,6 +1542,23 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			if sessionOwnsLead {
 				captureState = "captured"
 				leadVisibilityFallback = true
+			}
+		}
+		if (captureState == "suppressed" || captureState == "observed_unattended") && storedIdentity.ID == "" {
+			inheritedBindingProven := inheritedObservationAllowed || (repo.legacyNativeCompatEnabled && nativeInheritedRoutingBindingProven(
+				session, item, conversation, message, routingSnapshot, inheritedProof,
+				bindingID, attendanceEntryID, managedOutbound, false,
+			))
+			if canCheckAutomationReplyCapture(conversation, message, routingSnapshot, inheritedBindingProven) {
+				openedByAutomation, err := automationReplyCaptureForEvent(ctx, tx, session, conversation, item, providerOccurredAt, ingressSequence)
+				if err != nil {
+					return err
+				}
+				if openedByAutomation {
+					captureState = "captured"
+					// Capturing a reply should not opt this conversation into the AI agent.
+					leadVisibilityFallback = true
+				}
 			}
 		}
 		externalOutbound := !repo.legacyNativeCompatEnabled && message.FromMe && !managedOutbound && captureState != "suppressed"
@@ -1784,11 +1802,26 @@ func nativeInheritedRoutingObservationAllowed(
 	bindingID, attendanceEntryID string,
 	managedOutbound, storedBefore bool,
 ) bool {
+	return snapshot != nil && snapshot.UnlinkedCapturePolicy == "v1" &&
+		nativeInheritedRoutingBindingProven(session, item, conversation, message, snapshot, proof,
+			bindingID, attendanceEntryID, managedOutbound, storedBefore)
+}
+
+func nativeInheritedRoutingBindingProven(
+	session nativeEvolutionSession,
+	item pendingEvolutionWebhook,
+	conversation nativeEvolutionConversation,
+	message nativeEvolutionMessage,
+	snapshot *nativeIngressRoutingSnapshot,
+	proof nativeInheritedRoutingCaptureProof,
+	bindingID, attendanceEntryID string,
+	managedOutbound, storedBefore bool,
+) bool {
 	target := proof.Target
 	return !storedBefore && attendanceEntryID == "" && !managedOutbound &&
 		snapshot != nil && snapshot.State == "predecessor_inherit" &&
 		snapshot.TargetMode == "inherit_predecessor" && snapshot.BindingEligible &&
-		snapshot.UnlinkedCapturePolicy == "v1" && !snapshot.CapturedAt.IsZero() &&
+		!snapshot.CapturedAt.IsZero() &&
 		nativeOrganicRoutingProofMatchesMessage(snapshot, message) &&
 		snapshot.QuarantineReason == "" && snapshot.RoutingKey != "" &&
 		snapshot.RoutingKey != evolutionWebhookSessionRoute &&
@@ -2456,6 +2489,10 @@ func reconcileNativeOutboundOutbox(
 	}
 	if reconciled.RowsAffected() != 1 {
 		return fmt.Errorf("%w: WhatsApp webhook reconciliation outbox identity mismatch", ErrProviderFailed)
+	}
+	if err := acceptWhatsAppAutomationReplyStart(ctx, tx, session.OrganizationID, session.ID,
+		outboxConversationID, outboxID, message.ProviderMessageID); err != nil {
+		return err
 	}
 
 	if pendingMessageRowID != messageRowID {
@@ -5328,6 +5365,13 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 			if tag.RowsAffected() != 1 {
 				return fmt.Errorf("%w: status outbox target changed after lock", errNativeEvolutionTransportIdentityConflict)
+			}
+			switch receipt.Status {
+			case "sent", "delivered", "read":
+				if err := acceptWhatsAppAutomationReplyStart(ctx, tx, session.OrganizationID, session.ID,
+					target.OutboxConversationID, target.OutboxID, target.OutboxProviderMessageID); err != nil {
+					return err
+				}
 			}
 			if outboxStatus == "failed" {
 				if _, alreadyQueued := failedOutboxSeen[target.OutboxID]; !alreadyQueued {

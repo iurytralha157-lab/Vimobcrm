@@ -543,6 +543,10 @@ func (repo Repository) CleanupTerminalWhatsAppOutbox(ctx context.Context, limit 
 			order by updated_at, id
 			limit $1
 			for update skip locked
+		), expired_reply_starts as (
+			delete from private.whatsapp_automation_reply_starts start
+			using expired
+			where start.outbox_id = expired.id and start.accepted_at is null
 		)
 		delete from public.whatsapp_outbox outbox
 		using expired
@@ -1102,23 +1106,37 @@ func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, i
 		return 0, err
 	}
 	var attempts int
+	var startsAutomationReplyCapture bool
 	err = tx.QueryRow(ctx, `
-		update public.whatsapp_outbox
-		set attempts = attempts + 1,
+		update public.whatsapp_outbox outbox
+		set attempts = outbox.attempts + 1,
 		    locked_at = now(),
 		    last_error = $3,
 		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-		  and attempts < max_attempts
-		returning attempts
-	`, item.ID, item.LeaseToken, whatsappOutboxProviderStartedMarker).Scan(&attempts)
+		where outbox.id = $1::uuid
+		  and outbox.status = 'processing'
+		  and outbox.locked_by = $2
+		  and outbox.attempts < outbox.max_attempts
+		returning outbox.attempts, exists (
+		  select 1 from public.whatsapp_messages message
+		  where message.id = outbox.message_id
+		    and message.organization_id = outbox.organization_id
+		    and message.session_id = outbox.session_id
+		    and message.conversation_id = outbox.conversation_id
+		    and message.metadata->>'automation_delivery_policy' = $4
+		)
+	`, item.ID, item.LeaseToken, whatsappOutboxProviderStartedMarker,
+		whatsappAutomationOutboxPolicy).Scan(&attempts, &startsAutomationReplyCapture)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, errWhatsAppOutboxLeaseLost
 	}
 	if err != nil {
 		return 0, err
+	}
+	if startsAutomationReplyCapture {
+		if err := recordWhatsAppAutomationReplyStart(ctx, tx, item); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
@@ -1127,20 +1145,35 @@ func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, i
 }
 
 func (repo Repository) markWhatsAppOutboxProviderAccepted(ctx context.Context, item pendingWhatsAppOutbox, providerMessageID string) (bool, error) {
-	result, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_outbox
-		set provider_message_id = $3,
-		    locked_at = now(),
-		    last_error = $4,
-		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-	`, item.ID, item.LeaseToken, providerMessageID, whatsappOutboxProviderAcceptedMarker)
+	var acknowledged bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		with acknowledged as (
+			update public.whatsapp_outbox
+			set provider_message_id = $3,
+			    locked_at = now(),
+			    last_error = $4,
+			    updated_at = now()
+			where id = $1::uuid
+			  and status = 'processing'
+			  and locked_by = $2
+			returning id, organization_id, session_id, conversation_id, provider_message_id
+		), accepted_reply_start as (
+			update private.whatsapp_automation_reply_starts start
+			set accepted_at = greatest(clock_timestamp(), start.started_at)
+			from acknowledged
+			where start.outbox_id = acknowledged.id
+			  and start.organization_id = acknowledged.organization_id
+			  and start.session_id = acknowledged.session_id
+			  and start.conversation_id = acknowledged.conversation_id
+			  and start.provider_message_id = acknowledged.provider_message_id
+			  and start.accepted_at is null
+		)
+		select exists (select 1 from acknowledged)
+	`, item.ID, item.LeaseToken, providerMessageID, whatsappOutboxProviderAcceptedMarker).Scan(&acknowledged)
 	if err != nil {
 		return false, err
 	}
-	if result.RowsAffected() == 1 {
+	if acknowledged {
 		return false, nil
 	}
 
@@ -1627,6 +1660,10 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	}
 	if result.RowsAffected() != 1 {
 		return errWhatsAppOutboxLeaseLost
+	}
+	if err := acceptWhatsAppAutomationReplyStart(ctx, tx, item.OrganizationID, item.SessionID,
+		item.ConversationID, item.ID, providerMessageID); err != nil {
+		return err
 	}
 	if err := confirmHumanWhatsAppAttendance(ctx, tx, item.OrganizationID, canonicalMessageID); err != nil {
 		return err

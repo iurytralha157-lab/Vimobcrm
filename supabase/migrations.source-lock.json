@@ -1130,6 +1130,10 @@
     {
       "file": "20261113215431_schedule_home_announcement_notifications.sql",
       "sha256": "56d29cb2b5cc56d55821c69e680025808f575262df0fa3fd26271a1b7419cf20"
+    },
+    {
+      "file": "20261113231543_whatsapp_automation_reply_attendance.sql",
+      "sha256": "9a631fafec6ecf2f93509d2703e013dd248518dc59b19d9929204d863d5752df"
     }
   ]
 }
