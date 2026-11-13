@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQueryClient } from "@tanstack/react-query";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { clearUnavailableWhatsAppLeadCache, isWhatsAppAccessUnavailable } from "@/lib/whatsapp-access-revocation";
+import { whatsappQueryKeys } from "@/lib/whatsapp-query-cache";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 let activeRequests = 0;
@@ -46,6 +47,7 @@ export function useWhatsAppMessageMediaURL(input: {
   messageId: string; leadId?: string | null; sessionId?: string | null;
   storedMedia?: boolean; mediaUrl: string | null;
   enabled?: boolean;
+  leadHistory?: boolean;
 }) {
   const sourceScope = useWhatsAppQueryScope();
   const scope = useMemo(() => ({ organizationId: sourceScope.organizationId, userId: sourceScope.userId,
@@ -132,7 +134,19 @@ export function useWhatsAppMessageMediaURL(input: {
         if (!isCurrent()) return null;
         setEntry({ fingerprint, generation: currentScope.generation, url: null, expiresAt: null, failed: true });
         if (isWhatsAppAccessUnavailable(error)) {
-          if (input.leadId) clearUnavailableWhatsAppLeadCache(queryClient, scope, input.leadId);
+          if (input.leadId) {
+            const failure = error as { status: number; code?: string };
+            if (input.leadHistory && failure.status === 404 && failure.code === 'whatsapp_message_not_found') {
+              // The media route also returns this error for a missing object.
+              // Recheck the lead history with its own authorization without
+              // remounting the failed media and automatically fetching it again.
+              void queryClient.invalidateQueries({
+                queryKey: whatsappQueryKeys.leadMessagesScope(scope, input.leadId),
+              }, { cancelRefetch: false });
+            } else {
+              clearUnavailableWhatsAppLeadCache(queryClient, scope, input.leadId);
+            }
+          }
           window.dispatchEvent(new CustomEvent("vimob:whatsapp-media-unavailable", { detail: {
             organizationId: scope.organizationId, userId: scope.userId, accessScope: scope.accessScope,
             messageId: input.messageId, leadId: input.leadId ?? null,
@@ -147,7 +161,7 @@ export function useWhatsAppMessageMediaURL(input: {
     })();
     pendingRef.current = { fingerprint, controller, promise, mode };
     return promise;
-  }, [currentScope.generation, fingerprint, input.leadId, input.messageId, input.storedMedia, queryClient, scope]);
+  }, [currentScope.generation, fingerprint, input.leadHistory, input.leadId, input.messageId, input.storedMedia, queryClient, scope]);
   const refresh = useCallback(() => readMediaURL(false), [readMediaURL]);
   const currentEntry = entry.fingerprint === fingerprint && entry.generation === currentScope.generation ? entry : null;
   useEffect(() => {

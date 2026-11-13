@@ -181,7 +181,9 @@ export function LeadCadencePanel({
           </div>
         ) : (
           <p className="rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs font-light text-[var(--app-text-tertiary)]">
-            Nenhuma tarefa operacional nesta etapa.
+            {state.enrollment
+              ? 'Nenhuma tarefa operacional nesta etapa.'
+              : 'Nenhuma tarefa neste ciclo. As novas regras valem na próxima entrada na etapa ou reabertura do lead.'}
           </p>
         )
       ) : (

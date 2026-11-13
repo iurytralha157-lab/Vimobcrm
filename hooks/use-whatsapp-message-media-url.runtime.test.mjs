@@ -27,18 +27,25 @@ const script = buildReactBrowserHarness({ repository, modules: {
   '@/lib/whatsapp-access-revocation': transpile(join(repository, 'lib/whatsapp-access-revocation.ts')),
   hook: transpile(join(repository, 'hooks/use-whatsapp-message-media-url.ts')),
 }, entry: `
-  const {useWhatsAppMessageMediaURL}=require('hook'),{QueryClient,QueryClientProvider}=require('@tanstack/react-query');
+  const {useWhatsAppMessageMediaURL}=require('hook'),{QueryClient,QueryClientProvider,useQuery}=require('@tanstack/react-query');
+  const {whatsappQueryKeys}=require('@/lib/whatsapp-query-cache');
   const root=createRoot(document.getElementById('root')), client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity}}});
   const h=window.h={requests:[],views:{},count:1,enabled:window.fixtureEnabled!==false,hidden:[],
     scope:{organizationId:'org-a',userId:'actor-a',accessScope:'permission:sid-a'},url:null,
+    leadHistory:false,historyReads:0,observeHistory:false,
     request(id,organizationId,transport){return new Promise((resolve,reject)=>this.requests.push({id,organizationId,transport,resolve,reject}));},
+    historyKey(){return whatsappQueryKeys.leadMessages(this.scope,'lead-0',40);},
+    seedHistory(){client.setQueryData(this.historyKey(),['authorized text']);},
+    readHistory(){return client.getQueryData(this.historyKey());},
     render(changes={}){Object.assign(this,changes);flushSync(()=>root.render(React.createElement(QueryClientProvider,{client},
-      React.createElement('div',null,Array.from({length:this.count},(_,index)=>React.createElement(Source,{key:index,index}))))));},
+      React.createElement('div',null,this.observeHistory&&React.createElement(History),
+        Array.from({length:this.count},(_,index)=>React.createElement(Source,{key:index,index}))))));},
     unmount(){flushSync(()=>root.render(null));},
     complete(index,expiresIn=60){this.requests[index].resolve({url:'https://media.example.invalid/'+this.requests[index].id+'/'+index,expiresIn});},
   };
+  function History(){useQuery({queryKey:h.historyKey(),staleTime:Infinity,queryFn:()=>{h.historyReads++;return new Promise(resolve=>h.resolveHistory=resolve);}});return null;}
   function Source({index}){const value=useWhatsAppMessageMediaURL({messageId:'media-'+index,leadId:'lead-'+index,sessionId:'session-a',
-    storedMedia:true,mediaUrl:h.url,enabled:h.enabled&&!h.hidden.includes(index)});React.useEffect(()=>{h.views[index]=value;});
+    storedMedia:true,mediaUrl:h.url,enabled:h.enabled&&!h.hidden.includes(index),leadHistory:h.leadHistory});React.useEffect(()=>{h.views[index]=value;});
     return React.createElement('div',{'data-media':index},value.mediaUrl||'not loaded');}
   h.render();
 ` });
@@ -144,3 +151,28 @@ test('explicit access denial clears accepted hidden media and remains terminal f
   await page.evaluate(() => h.render({ enabled: true })); await settle(page);
   assert.equal(await count(page), 2);
 });
+
+test('a missing media object in the lead card revalidates history without discarding it or retrying the media automatically', async t => {
+  const page = await fixture(t, { enabled: false });
+  await page.evaluate(() => { h.seedHistory(); h.render({ leadHistory: true, observeHistory: true, enabled: true }); });
+  await page.waitForFunction(() => h.requests.length === 1);
+  await page.evaluate(() => { h.requests[0].reject({ status: 404, code: 'whatsapp_message_not_found' }); });
+  await page.waitForFunction(() => h.resolveHistory && h.views[0].failed);
+  assert.deepEqual(await page.evaluate(() => h.readHistory()), ['authorized text']);
+  await page.evaluate(() => h.resolveHistory(['revalidated text']));
+  await page.waitForFunction(() => h.readHistory()?.[0] === 'revalidated text' && h.views[0].failed);
+  assert.deepEqual(await page.evaluate(() => [h.historyReads, h.requests.length, h.views[0].mediaUrl]), [1, 1, null]);
+});
+
+for (const leadHistory of [false, true]) {
+  test(`confirmed access loss still removes the cache for leadHistory=${leadHistory}`, async t => {
+    const page = await fixture(t, { enabled: false });
+    await page.evaluate(value => { h.seedHistory(); h.render({ leadHistory: value, enabled: true }); }, leadHistory);
+    await page.waitForFunction(() => h.requests.length === 1);
+    await page.evaluate(value => { h.requests[0].reject(value
+      ? { status: 403, code: 'access_denied' }
+      : { status: 404, code: 'whatsapp_message_not_found' }); }, leadHistory);
+    await page.waitForFunction(() => h.views[0].failed);
+    assert.equal(await page.evaluate(() => h.readHistory()), undefined);
+  });
+}

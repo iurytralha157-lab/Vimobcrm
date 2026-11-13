@@ -103,6 +103,7 @@ export function useStageInactivityAutomation(stageId: string) {
   }
   return {
     ...mutation, scopeKey,
+    captureScopeGuard: () => () => currentScope.current === scope,
     mutate: (variables: SaveInactivity, options?: Parameters<typeof mutation.mutate>[1]) => mutation.mutate(capture(variables), options),
     mutateAsync: (variables: SaveInactivity, options?: Parameters<typeof mutation.mutateAsync>[1]) => mutation.mutateAsync(capture(variables), options),
   }

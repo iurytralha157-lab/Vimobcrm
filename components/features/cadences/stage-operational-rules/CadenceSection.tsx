@@ -302,6 +302,8 @@ function TaskCard({
               label="Antecedência em Prioridades"
               minutes={task.warning_minutes}
               defaultMinutes={Math.min(30, Math.max(1, task.due_minutes - 1))}
+              minMinutes={1}
+              maxMinutes={Math.max(1, task.due_minutes - 1)}
               disabled={!canEdit || task.due_minutes <= 1}
               onChange={(minutes) => onUpdate({ warning_minutes: minutes })}
             />

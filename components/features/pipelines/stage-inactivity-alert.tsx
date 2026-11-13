@@ -6,14 +6,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { RulesExtraEditor } from '@/components/features/cadences';
-import { managedInactivityAlert, useStageAutomations } from '@/hooks/use-stage-automations';
+import { managedInactivityAlert, useStageAutomations, type StageAutomation } from '@/hooks/use-stage-automations';
 import { useStageInactivityAutomation } from '@/hooks/use-stage-inactivity-automation';
-import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
+import { getPublicErrorMessage, VimobAPIError } from '@/lib/api/vimob-error';
 import { isLocalReadOnlyMode } from '@/lib/local-read-only';
 import type { StageInactivityStartMode } from '@/lib/validation/stage-inactivity';
 import { StageInactivityScopeField } from '@/components/features/pipelines/StageInactivityScopeField';
 
 type AlertDraft = { enabled: boolean; days: number; message: string; startMode: StageInactivityStartMode };
+type AlertRevision = Pick<StageAutomation, 'id' | 'updated_at' | 'inactivity_policy' | 'inactivity_runtime_available'>;
 
 const DEFAULT_DAYS = 3;
 const UNAVAILABLE = 'O serviço de avisos de inatividade não está disponível neste ambiente. O aviso foi mantido desativado.';
@@ -75,7 +76,7 @@ export function useStageInactivityAlertEditor({
   };
 
   const save = async () => {
-    if (!canSave || isSaving || !isDirty) return !isDirty;
+    if (!editable || !isDirty) return !isDirty;
     if (!Number.isInteger(current.days) || current.days < 1 || current.days > 3650) {
       setError('Informe um prazo entre 1 e 3650 dias.');
       return false;
@@ -85,42 +86,57 @@ export function useStageInactivityAlertEditor({
       return false;
     }
     const input = { trigger_days: current.days, alert_message: current.message.trim(), clock: 'last_interaction' as const, start_mode: current.startMode };
+    const saveExisting = (rule: AlertRevision, isEnabled: boolean) => {
+      if (!rule.updated_at) throw new Error('Não foi possível confirmar a versão do aviso. Recarregue a página antes de salvar.');
+      return mutation.mutateAsync({
+        id: rule.id,
+        input: { ...input, is_enabled: isEnabled, expected_updated_at: rule.updated_at, expected_policy_revision: rule.inactivity_policy?.revision ?? 0 },
+        runtimeAvailable: rule.inactivity_runtime_available === true || rule.inactivity_policy?.runtime_available === true,
+      });
+    };
+    const isCurrent = mutation.captureScopeGuard();
+    let preparedDisabled = false;
     setIsSaving(true);
     setError(null);
     try {
-      if (managed) {
-        if (!managed.updated_at) throw new Error('Não foi possível confirmar a versão do aviso. Recarregue a página antes de salvar.');
-        if (current.enabled && !runtimeAvailable) {
-          setError(UNAVAILABLE);
-          return false;
-        }
-        await mutation.mutateAsync({
-          id: managed.id,
-          input: { ...input, is_enabled: current.enabled, expected_updated_at: managed.updated_at, expected_policy_revision: managed.inactivity_policy?.revision ?? 0 },
-          runtimeAvailable,
-        });
-      } else if (current.enabled) {
-        // A new rule always starts disabled; it is then activated explicitly.
-        const created = await mutation.mutateAsync({ input: { ...input, stage_id: stageId, is_enabled: false } });
-        const createdRuntime = created.inactivity_runtime_available === true || created.inactivity_policy?.runtime_available === true;
-        if (!createdRuntime || !created.updated_at) {
-          setSavedFrom(baseKey);
-          setError(UNAVAILABLE);
-          return false;
-        }
-        await mutation.mutateAsync({
-          id: created.id,
-          input: { ...input, is_enabled: true, expected_updated_at: created.updated_at, expected_policy_revision: created.inactivity_policy?.revision ?? 0 },
-          runtimeAvailable: true,
-        });
+      let rule: AlertRevision | null = managed;
+      if (current.enabled && managed && !runtimeAvailable) {
+        setError('O serviço de avisos de inatividade está indisponível neste ambiente.');
+        return false;
       }
+      if (current.enabled && !rule) {
+        rule = await mutation.mutateAsync({ input: { ...input, stage_id: stageId, is_enabled: false } });
+        preparedDisabled = true;
+      } else if (current.enabled && rule && rule.inactivity_policy?.clock !== 'last_interaction') {
+        // Legacy rules need a committed last-interaction policy before activation.
+        rule = await saveExisting(rule, false);
+        preparedDisabled = true;
+      }
+      if (!isCurrent()) return false;
+      if (rule && current.enabled && !(rule.inactivity_runtime_available || rule.inactivity_policy?.runtime_available)) {
+        setDraft({ ...current, enabled: false });
+        setSavedFrom(baseKey);
+        setError(UNAVAILABLE);
+        return false;
+      }
+      if (rule) await saveExisting(rule, current.enabled);
+      if (!isCurrent()) return false;
       setSavedFrom(baseKey);
       return true;
     } catch (failure) {
-      const conflict = typeof failure === 'object' && failure !== null && 'status' in failure && failure.status === 409;
-      setError(conflict
-        ? 'O aviso de inatividade foi alterado em outra sessão. Recarregue a página para ver a versão atual; seu rascunho não foi salvo.'
-        : getStructuredErrorMessage(failure) || 'Não foi possível salvar o aviso de inatividade.');
+      if (!isCurrent()) return false;
+      if (preparedDisabled) await query.refetch();
+      if (!isCurrent()) return false;
+      const conflict = failure instanceof VimobAPIError && failure.code === 'stage_inactivity_changed';
+      const unavailable = failure instanceof VimobAPIError && ['stage_inactivity_unavailable', 'inactivity_runtime_unavailable'].includes(failure.code);
+      const reference = failure instanceof VimobAPIError && failure.requestId ? ` Referência: ${failure.requestId}.` : '';
+      const fallback = 'Não foi possível salvar o aviso de inatividade. Tente novamente.';
+      const message = conflict
+        ? 'O aviso de inatividade foi alterado em outra sessão. Recarregue a página para ver a versão atual.'
+        : unavailable
+          ? 'O serviço de avisos de inatividade está indisponível neste ambiente.'
+          : getPublicErrorMessage(failure, fallback);
+      setError(`${preparedDisabled ? 'O aviso foi salvo desativado. ' : ''}${message}${reference}`);
       return false;
     } finally {
       setIsSaving(false);

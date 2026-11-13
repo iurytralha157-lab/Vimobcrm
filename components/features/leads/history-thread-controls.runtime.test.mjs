@@ -118,6 +118,26 @@ async function fixture(t) {
 }
 
 // History surface assertions
+test('partial history stays in place while messages load again', async t => {
+  const page = await fixture(t);
+  await page.evaluate(() => {
+    const h = window.harness;
+    h.history.data = [{ id: 'retained-note', type: 'note', label: 'Nota adicionada',
+      content: 'Atividade preservada', timestamp: '2026-10-16T12:00:00Z', source: 'activity' }];
+    h.messages.isLoading = true;
+    h.render();
+  });
+  const log = page.getByRole('log');
+  assert.equal(await log.getByText('Atividade preservada').count(), 1);
+  assert.equal(await log.getByText(/Carregando/).count(), 0);
+
+  await page.evaluate(() => {
+    window.harness.history.data = [];
+    window.harness.render();
+  });
+  await log.getByText('Carregando histórico e mensagens...', { exact: true }).waitFor();
+});
+
 test('lead history has no search button or search panel', async t => {
     const page = await fixture(t);
     assert.equal(await page.getByRole('button', { name: /Buscar.*histórico do lead|Buscar mensagens/ }).count(), 0);

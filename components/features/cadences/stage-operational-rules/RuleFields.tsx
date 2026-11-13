@@ -31,6 +31,7 @@ export function DurationField({
   label,
   minutes,
   minMinutes,
+  maxMinutes = MAX_OPERATIONAL_RULE_MINUTES,
   disabled,
   onChange,
   ariaLabel,
@@ -39,6 +40,7 @@ export function DurationField({
   label: string
   minutes: number
   minMinutes: number
+  maxMinutes?: number
   disabled: boolean
   onChange: (minutes: number) => void
   ariaLabel?: string
@@ -54,8 +56,8 @@ export function DurationField({
           id={id}
           type="number"
           inputMode="decimal"
-          min={minMinutes / divisor}
-          max={MAX_OPERATIONAL_RULE_MINUTES / divisor}
+          min={formatDurationValue(minMinutes, unit)}
+          max={formatDurationValue(maxMinutes, unit)}
           step="any"
           value={formatDurationValue(minutes, unit)}
           aria-label={accessibleLabel}
@@ -64,7 +66,7 @@ export function DurationField({
             const value = event.currentTarget.valueAsNumber
             if (!Number.isFinite(value)) return
             onChange(Math.min(
-              MAX_OPERATIONAL_RULE_MINUTES,
+              maxMinutes,
               Math.max(minMinutes, Math.round(value * divisor)),
             ))
           }}
@@ -97,6 +99,7 @@ export function OptionalDurationField({
   minutes,
   defaultMinutes,
   minMinutes = 0,
+  maxMinutes,
   disabled,
   onChange,
 }: {
@@ -105,6 +108,7 @@ export function OptionalDurationField({
   minutes: number | undefined
   defaultMinutes: number
   minMinutes?: number
+  maxMinutes?: number
   disabled: boolean
   onChange: (minutes: number | undefined) => void
 }) {
@@ -130,6 +134,7 @@ export function OptionalDurationField({
           label=""
           minutes={minutes}
           minMinutes={minMinutes}
+          maxMinutes={maxMinutes}
           disabled={disabled}
           onChange={onChange}
           ariaLabel={label}

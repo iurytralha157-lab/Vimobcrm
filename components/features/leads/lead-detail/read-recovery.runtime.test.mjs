@@ -106,7 +106,7 @@ const notice=page=>page.locator('[data-lead-read-notice]');
 for(const[width,height]of[[320,568],[768,1024],[1366,768]])test(`initial pending and stale read error are explained once and preserve the draft at ${width}`,async t=>{
   const page=await open(t,width,height);assert.equal(await notice(page).count(),1);assert.equal(await page.getByRole('button',{name:'Abrir overlay de prova'}).isDisabled(),true);
   await resolveRead(page);assert.equal(await notice(page).count(),0);await page.getByLabel('Rascunho do lead').fill('Rascunho não salvo');
-  await page.evaluate(()=>void window.h.query.refetch({cancelRefetch:false}));await page.waitForFunction(()=>window.h.requests.length===2);assert.equal(await notice(page).count(),1);assert.equal(await page.getByRole('button',{name:'Abrir overlay de prova'}).isDisabled(),true);
+  await page.evaluate(()=>void window.h.query.refetch({cancelRefetch:false}));await page.waitForFunction(()=>window.h.requests.length===2);assert.equal(await notice(page).count(),0);assert.equal(await page.getByRole('button',{name:'Abrir overlay de prova'}).isDisabled(),true);
   // useLead retries transient failures. Reject each attempt until Query reaches idle.
   for(let index=1;index<5;index++){await fail(page,503,index);if(index<4)await page.waitForFunction(count=>window.h.requests.length>=count,index+2)}
   await page.getByRole('button',{name:'Tentar novamente',exact:true}).waitFor();assert.equal(await notice(page).count(),1);assert.equal(await page.getByLabel('Rascunho do lead').inputValue(),'Rascunho não salvo');

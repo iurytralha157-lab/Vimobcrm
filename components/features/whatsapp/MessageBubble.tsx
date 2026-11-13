@@ -62,6 +62,7 @@ export interface MessageBubbleProps {
   conversationSessionId?: string | null;
   compact?: boolean;
   plainHistory?: boolean;
+  leadHistory?: boolean;
   reactionPickerPosition?: "inside" | "outside";
   reactions: GroupedWhatsAppReaction[];
   onReact?: (emoji: string) => unknown | Promise<unknown>;
@@ -111,6 +112,7 @@ const comparableMessageBubbleProps = [
   "conversationSessionId",
   "compact",
   "plainHistory",
+  "leadHistory",
   "reactionPickerPosition",
   "isReacting",
   "contacts", "location", "quotedMessage",
@@ -163,6 +165,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationSessionId,
   compact = false,
   plainHistory = false,
+  leadHistory = false,
   reactionPickerPosition = "inside",
   reactions = [],
   onReact,
@@ -182,7 +185,7 @@ export const MessageBubble = memo(function MessageBubble({
   const [checkingSend, setCheckingSend] = useState(false);
   const mediaVisible = useWhatsAppMediaVisibility(bubbleRef, JSON.stringify([leadId, conversationSessionId, messageId]), Boolean(storedMedia));
   const storedSource = useWhatsAppMessageMediaURL({ messageId, leadId,
-    sessionId: conversationSessionId, storedMedia, mediaUrl, enabled: mediaVisible });
+    sessionId: conversationSessionId, storedMedia, mediaUrl, enabled: mediaVisible, leadHistory });
   const safeContent = toSafeMessageText(content);
   const mediaKind = getEffectiveMessageMediaKind(messageType, mediaMimeType, storedSource.mediaUrl);
   const safeSenderName = toSafeMessageText(senderName).trim();

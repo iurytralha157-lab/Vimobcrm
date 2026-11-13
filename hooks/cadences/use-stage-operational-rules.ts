@@ -124,6 +124,7 @@ export function useUpdateStageOperationalRules(stageId?: string) {
       void access.client.invalidateQueries({ predicate: query => {
         const key = query.queryKey
         return (key[0] === 'cadence-templates' && key.length === 1) ||
+          (key[0] === 'lead-cadence-state' && key[1] === access.organizationId && key[3] === input.stage_id) ||
           (key[0] === 'attention' && key[2] === access.organizationId) ||
           (key[0] === 'home' && key[2] === access.organizationId && key[3] === access.actorId && ['focus', 'upcoming-tasks'].includes(String(key[1])))
       }, refetchType: scope.isCurrent(captured) ? 'active' : 'none' })

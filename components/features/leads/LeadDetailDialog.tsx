@@ -358,12 +358,13 @@ export function LeadDetailDialog({
   }, [leadProp?.lost_reason, lostReasonLocal]);
   const cadenceOrganizationId =
     leadProp?.organization_id || activeOrganization.organizationId || null;
+  const cadenceStageId = fullLeadQuery.data ? fullLeadQuery.data.stage_id : leadProp?.stage_id;
   const {
     data: leadCadenceState,
     isLoading: leadCadenceLoading,
     error: leadCadenceError,
     refetch: refetchLeadCadence,
-  } = useLeadCadenceState(leadId, cadenceOrganizationId, leadProp?.stage_id);
+  } = useLeadCadenceState(leadId, cadenceOrganizationId, cadenceStageId);
   const { hasPermission } = useUserPermissions();
   const hasLeadOperatePermission = hasPermission('lead_operate');
   const poolReadOnly = Boolean(localLead?.queue_pool || fullLeadQuery.data?.queue_pool);
@@ -1227,7 +1228,7 @@ export function LeadDetailDialog({
       }
       updatePipelineLeadCache(lead.id, updatedLead);
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
-      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
+      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state', organizationId, lead.id] });
       refreshPipelineInBackground(organizationId, lead.id, 'lead.stage_moved');
 
       if (!mutationOperation.isCurrent()) return false;
@@ -1358,7 +1359,7 @@ export function LeadDetailDialog({
       const updatedLead = queryClient.getQueryData<Lead>(['lead', currentLead.organization_id || activeOrganization.organizationId, lead.id]) || result.lead;
       setLocalLead((current) => current?.id === lead.id
         ? mergeLeadDetailMutation(current, updatedLead as LeadDetailLead) : current);
-      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
+      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state', currentLead.organization_id || activeOrganization.organizationId, lead.id] });
     } catch {
       // The hook restores only its own patch or reconciles an uncertain result.
     } finally {
@@ -1411,7 +1412,7 @@ export function LeadDetailDialog({
       const updatedLead = queryClient.getQueryData<Lead>(['lead', currentLead.organization_id || activeOrganization.organizationId, lead.id]) || result.lead;
       setLocalLead((current) => current?.id === lead.id
         ? mergeLeadDetailMutation(current, updatedLead as LeadDetailLead) : current);
-      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
+      void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state', currentLead.organization_id || activeOrganization.organizationId, lead.id] });
     } catch {
       // Cache reconciliation belongs to the mutation hook, including after close.
     } finally {

@@ -56,7 +56,7 @@ before(async () => {
     export const AUTOMATION_TYPE_LABELS={alert_on_inactivity:'Alerta por inatividade',change_assignee_on_enter:'Mudar responsável',change_deal_status_on_enter:'Mudar status',move_stage_on_inactivity:'Mudar etapa por tempo parado',redistribute_on_inactivity:'Redistribuir lead por tempo parado'};
     export const isInactivityAutomationType=type=>['alert_on_inactivity','move_stage_on_inactivity','redistribute_on_inactivity'].includes(type);
     export const managedInactivityAlert=list=>list?.filter(item=>item.automation_type==='alert_on_inactivity'&&(item.inactivity_policy?.action??'notify')==='notify').sort((a,b)=>(a.created_at??'').localeCompare(b.created_at??'')||a.id.localeCompare(b.id))[0]??null;export const AUTOMATION_TYPE_DESCRIPTIONS={};export const DEAL_STATUS_LABELS={open:'Aberto',won:'Ganho',lost:'Perdido'};`);
-  await mock('@/hooks/use-stage-inactivity-automation', `${mutation}export const useStageInactivityAutomation=()=>({...useMutation('inactivity'),scopeKey:'synthetic-settings'});`);
+  await mock('@/hooks/use-stage-inactivity-automation', `${mutation}export const useStageInactivityAutomation=()=>({...useMutation('inactivity'),scopeKey:'synthetic-settings',captureScopeGuard:()=>()=>true});`);
   await mock('@/hooks/cadences', `${mutation}export const useStageOperationalRules=()=>({data:window.h.rules,isPending:false,refetch:async()=>({data:window.h.rules})});export const useUpdateStageOperationalRules=()=>({...useMutation('rules'),captureScopeGuard:()=>()=>true});`);
   await mock('@/hooks/cadences/use-stage-operational-rules', 'export const stageOperationalRulesErrorMessage=(error,fallback)=>error?.message||fallback;');
   await mock('@/hooks/attention', 'export const useAttentionSettings=()=>({data:{engineMode:"enabled",notificationsEnabled:true},isPending:false,isError:false});export const useAttentionPolicies=()=>({data:[],isPending:false,isError:false});');
@@ -67,8 +67,8 @@ before(async () => {
   await writeFile(entry, `import React from'react';import{createRoot}from'react-dom/client';import{StageSettingsDialog}from'@/components/features/pipelines/StageSettingsDialog';import{StagesEditorDialog}from'@/components/features/pipelines/StagesEditorDialog';import{AutomationsList}from'@/components/features/automations/AutomationsList';import{AutomationForm}from'@/components/features/automations/AutomationForm';import{StageColumnMenu}from'@/components/features/pipelines/pipeline-screen/StageColumnMenu';
     const id='11111111-1111-4111-8111-111111111111',pipeline='33333333-3333-4333-8333-333333333333';
     const h=window.h={open:true,mode:'settings',list:[],stages:[],moveTargets:[{id:'44444444-4444-4444-8444-444444444444',name:'Retomar contato'}],listError:false,retries:0,calls:[],pending:null,stage:{id,name:'Novo',color:'#123456',stage_key:'new',pipeline_id:pipeline,position:0,updated_at:'2026-10-12T12:00:00Z'}};
-    h.rules={stage_id:id,pipeline_id:pipeline,revision:7,cadence:{enabled:true,tasks:[{id:'55555555-5555-4555-8555-555555555555',position:0,type:'call',title:'Ligar',due_minutes:60,is_required:true,outcome_required:true}]},attention:{source_mode:'inherit',mode:'enabled',warning_minutes:0,business_hours_only:false},lifecycle:{on_stage_move:'skip_pending',on_won:'cancel_pending',on_lost:'cancel_pending',on_reopen:'new_cycle'}};
-    h.mutate=(kind,payload)=>{h.calls.push({kind,payload});return new Promise((resolve,reject)=>{h.pending={resolve:()=>resolve(kind==='rules'?{...h.rules,...payload,revision:8}:{}),reject:()=>reject(Error('Falha sintética'))}})};
+    h.rules={stage_id:id,pipeline_id:pipeline,revision:7,cadence:{enabled:true,tasks:[{id:'55555555-5555-4555-8555-555555555555',position:0,type:'call',title:'Ligar',due_minutes:60,warning_minutes:0,is_required:true,outcome_required:true}]},attention:{source_mode:'inherit',mode:'enabled',warning_minutes:0,business_hours_only:false},lifecycle:{on_stage_move:'skip_pending',on_won:'cancel_pending',on_lost:'cancel_pending',on_reopen:'new_cycle'}};
+    h.mutate=(kind,payload)=>{h.calls.push({kind,payload});return new Promise((resolve,reject)=>{h.pending={resolve:response=>resolve(response??(kind==='rules'?{...h.rules,...payload,revision:8}:{})),reject:()=>reject(Error('Falha sintética'))}})};
     const root=createRoot(document.getElementById('root'));
     h.render=()=>root.render(h.mode==='menu'?React.createElement(React.Fragment,null,React.createElement(StageColumnMenu,{stageName:h.stage.name,isMobile:false,onSelect:(tab,returnFocusElement)=>{h.initialTab=tab;h.returnFocusElement=returnFocusElement;h.open=true;h.render()}}),h.open?React.createElement(StageSettingsDialog,{key:h.stage.id+':'+h.initialTab,initialTab:h.initialTab,returnFocusElement:h.returnFocusElement,open:true,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):null):h.mode==='settings'?React.createElement(StageSettingsDialog,{initialTab:h.initialTab,open:h.open,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):h.mode==='editor'?React.createElement(StagesEditorDialog,{open:h.open,pipelineId:pipeline,pipelineName:'Vendas',stages:[h.stage],archivedStages:h.archivedStages||[],onOpenChange:open=>{h.open=open;h.render()}}):h.mode==='list'?React.createElement(AutomationsList,{stageId:id,canEdit:true,stageNames:{'44444444-4444-4444-8444-444444444444':'Retomar contato'},hideManagedAlert:h.hideManagedAlert}):React.createElement(AutomationForm,{stageId:id,pipelineId:pipeline,moveTargets:h.moveTargets,onSuccess:()=>{h.success=true},onCancel:()=>{h.cancelled=true}}));`);
   await new Promise((done, reject) => {
@@ -257,6 +257,74 @@ test('inactivity alert is visible above other deadlines and saved by Salvar regr
     await page.evaluate(() => window.h.pending.resolve());
     await page.getByText(/O aviso foi mantido desativado/).waitFor();
     assert.equal(await page.evaluate(() => window.h.calls.length), 1);
+    assert.equal(await page.getByRole('switch', { name: 'Ativar aviso de lead parado' }).getAttribute('aria-checked'), 'false');
+  } finally { await page.close(); }
+});
+
+test('a legacy inactivity alert is prepared disabled before activation with the new revision', async () => {
+  const alert = {
+    id: 'alert', automation_type: 'alert_on_inactivity', trigger_days: 3, alert_message: 'Parado',
+    is_active: false, inactivity_runtime_available: true, created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-16T12:00:00Z',
+  };
+  const page = await open('settings', { initialTab: 'cadence', list: [alert] });
+  try {
+    await page.getByRole('switch', { name: 'Ativar aviso de lead parado' }).click();
+    const save = page.getByRole('button', { name: 'Salvar regras', exact: true });
+    await save.click();
+    await page.waitForFunction(() => window.h.calls.length === 1);
+    const input = { trigger_days: 3, alert_message: 'Parado', clock: 'last_interaction', start_mode: 'activation' };
+    assert.deepEqual(await page.evaluate(() => window.h.calls[0].payload), {
+      id: alert.id, runtimeAvailable: true,
+      input: { ...input, is_enabled: false, expected_updated_at: alert.updated_at, expected_policy_revision: 0 },
+    });
+    const prepared = { ...alert, updated_at: '2026-10-16T12:00:00.123456Z', inactivity_policy: {
+      revision: 1, clock: 'last_interaction', start_mode: 'activation', is_enabled: false, runtime_available: true,
+    } };
+    await page.evaluate((value) => window.h.pending.resolve(value), prepared);
+    await page.waitForFunction(() => window.h.calls.length === 2);
+    assert.deepEqual(await page.evaluate(() => window.h.calls[1].payload), {
+      id: alert.id, runtimeAvailable: true,
+      input: { ...input, is_enabled: true, expected_updated_at: prepared.updated_at, expected_policy_revision: 1 },
+    });
+    await page.evaluate((value) => {
+      window.h.list = [value];
+      window.h.pending.reject();
+    }, prepared);
+    await page.getByRole('alert').filter({ hasText: 'O aviso foi salvo desativado. Falha sintética' }).waitFor();
+    assert.equal(await save.isEnabled(), true);
+    await save.click();
+    await page.waitForFunction(() => window.h.calls.length === 3);
+    assert.deepEqual(await page.evaluate(() => window.h.calls[2].payload), {
+      id: alert.id, runtimeAvailable: true,
+      input: { ...input, is_enabled: true, expected_updated_at: prepared.updated_at, expected_policy_revision: 1 },
+    });
+    const enabled = { ...prepared, updated_at: '2026-10-16T12:00:01.123456Z', inactivity_policy: {
+      ...prepared.inactivity_policy, revision: 2, is_enabled: true,
+    } };
+    await page.evaluate((value) => {
+      window.h.list = [value];
+      window.h.pending.resolve(value);
+    }, enabled);
+    await page.getByText('Tudo salvo', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('switch', { name: 'Desativar aviso de lead parado' }).getAttribute('aria-checked'), 'true');
+  } finally { await page.close(); }
+});
+
+test('cadence edits show no warning for a saved zero and submit a short warning in days', async () => {
+  const page = await open('settings', { initialTab: 'cadence' });
+  try {
+    await page.getByText('Sem aviso', { exact: true }).waitFor();
+    await page.getByLabel('Prazo após entrar na etapa', { exact: true }).fill('0.03');
+    await page.getByRole('switch', { name: 'Ativar antecedência em prioridades' }).click();
+    await page.getByRole('combobox', { name: 'Unidade de antecedência em prioridades' }).click();
+    await page.getByRole('option', { name: 'Dias', exact: true }).click();
+    assert.equal(await page.getByLabel('Antecedência em Prioridades', { exact: true }).inputValue(), '0.0007');
+    await page.getByRole('button', { name: 'Salvar regras', exact: true }).click();
+    await page.waitForFunction(() => window.h.calls.length === 1);
+    const task = await page.evaluate(() => window.h.calls[0].payload.cadence.tasks[0]);
+    assert.equal(task.due_minutes, 2);
+    assert.equal(task.warning_minutes, 1);
   } finally { await page.close(); }
 });
 

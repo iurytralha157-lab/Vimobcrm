@@ -241,6 +241,7 @@ export function toDraft(rules: StageOperationalRulesContract): RulesDraft {
         .map((task, index) => ({
           ...task,
           position: index,
+          warning_minutes: task.warning_minutes || undefined,
           clientKey: task.id || `persisted-${index}`,
         })),
     },
@@ -312,7 +313,8 @@ export function durationUnitFor(minutes: number): DurationUnit {
 
 export function formatDurationValue(minutes: number, unit: DurationUnit) {
   const divisor = unit === 'days' ? 1_440 : 60
-  return Number((minutes / divisor).toFixed(2))
+  // Preserve whole-minute values when a duration is displayed as a fraction.
+  return Number((minutes / divisor).toFixed(unit === 'days' ? 4 : 2))
 }
 
 export function normalizePositions(tasks: DraftTask[]) {

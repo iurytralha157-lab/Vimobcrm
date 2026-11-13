@@ -991,12 +991,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
             </div>
           )}
 
-          {!isLoading && (loadingHistory || loadingMessages) && (
-            <p role="status" className="mx-2 text-xs text-[var(--app-text-secondary)]">
-              {loadingHistory ? 'Carregando atividades...' : 'Carregando mensagens...'}
-            </p>
-          )}
-
           {!isLoading && displayed.hiddenCount > 0 && (
             <div className="flex flex-col items-center justify-center gap-1.5 px-2 pb-1">
               <button type="button" onClick={showEarlierItems} className="h-8 rounded-[6px] bg-[var(--app-surface-solid)] px-3 text-xs">
@@ -1105,6 +1099,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadCreated
                       conversationSessionId={item.message.session_id ?? displayConversation?.session_id ?? null}
                       compact
                       plainHistory
+                      leadHistory
                       reactionPickerPosition="outside"
                       reactions={(item.message.message_id
                         ? reactionsByMessageId.get(item.message.message_id)

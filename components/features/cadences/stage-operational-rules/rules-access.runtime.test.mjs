@@ -42,6 +42,7 @@ before(async () => {
       client.getMutationCache().config.onMutate=()=>h.beforeGate?new Promise(resolve=>h.gates.push(resolve)):undefined;client.getMutationCache().config.onSuccess=()=>h.successGate?new Promise(resolve=>h.releaseSuccess=resolve):undefined;client.getMutationCache().config.onSettled=()=>{h.finishes++;return h.settledGate?new Promise(resolve=>h.releaseSettled=resolve):undefined};
       client.setQueryData(stageOperationalRulesQueryKey('${org}','${stage}'),h.initial);
       for(const key of [['cadence-templates'],['cadence-templates','unrelated'],['attention','items','${org}','mine'],['attention','items','77777777-7777-4777-8777-777777777777','mine'],['home','focus','${org}','${actor}','mine'],['home','focus','${org}','55555555-5555-4555-8555-555555555555','mine'],['home','focus','77777777-7777-4777-8777-777777777777','${actor}','mine']])client.setQueryData(key,[]);
+      for(const key of [['lead-cadence-state','${org}','lead-a','${stage}'],['lead-cadence-state','${org}','lead-b','other-stage'],['lead-cadence-state','other-org','lead-c','${stage}']])client.setQueryData(key,[]);
       const invalidate=client.invalidateQueries.bind(client);client.invalidateQueries=(filters,...rest)=>{h.invalidations.push({keys:client.getQueryCache().findAll(filters).map(query=>query.queryKey),refetchType:filters.refetchType});return invalidate(filters,...rest)};
     };
     h.seed=revision=>{const rules={...structuredClone(h.initial),revision};rules.cadence.tasks[0].title='R'+revision+' task';h.readRules=rules;h.client.setQueryData(h.key(),rules)};
@@ -100,7 +101,9 @@ test('input tasks and nested attention are snapshotted before global onMutate', 
 });
 test('current save preserves pins, callbacks and tenant-only derived invalidations', async () => {
   await page.evaluate(() => window.h.start());const state = await finish();assert.equal(state.outcome.ok, true);assert.equal(state.cached.revision, 2);assert.equal(state.requests[0].expectedUserId, actor);assert.equal(state.requests[0].expectedSessionId, 'sid-a');assert.equal(state.requests[0].hasSignal, true);assert.equal(state.requests[0].retry, false);assert.deepEqual(state.callbacks, ['onSuccess', 'onSettled']);
-  assert(state.invalidations.flatMap(item => item.keys).every(key => key[0] === 'cadence-templates' ? key.length === 1 : key[2] === org && (key[0] !== 'home' || key[3] === actor)));
+  const keys = state.invalidations.flatMap(item => item.keys);
+  assert.deepEqual(keys.filter(key => key[0] === 'lead-cadence-state'), [['lead-cadence-state', org, 'lead-a', stage]]);
+  assert(keys.filter(key => key[0] !== 'lead-cadence-state').every(key => key[0] === 'cadence-templates' ? key.length === 1 : key[2] === org && (key[0] !== 'home' || key[3] === actor)));
 });
 for (const gate of ['before', 'reply']) test(`same-SID token refresh preserves the save during ${gate}`, async () => {
   await page.evaluate(gate => { window.h[gate === 'before' ? 'beforeGate' : 'replyGate'] = true;window.h.start(); }, gate);await page.waitForFunction(gate => window.h[gate === 'before' ? 'gates' : 'replies'].length === 1, gate);await replace([{ nonce: 1 }]);await page.evaluate(gate => gate === 'before' ? window.h.gates[0]() : window.h.replies[0].resolve(), gate);assert.equal((await finish()).outcome.ok, true);

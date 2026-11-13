@@ -12,7 +12,7 @@ type ReadQuery = {
 };
 
 export type LeadDetailReadState = {
-  kind: 'ready' | 'refreshing' | 'error' | 'unavailable';
+  kind: 'ready' | 'refreshing' | 'revalidating' | 'error' | 'unavailable';
   hideDetails: boolean;
   message: string;
   blockedReason: string | undefined;
@@ -48,7 +48,7 @@ export function getLeadDetailReadState({ leadId, organizationId, leadOrganizatio
   const confirmed = query.isFetchedAfterMount || hasVerifiedLeadReadInCache(verifiedRead, {
     data: query.data, dataUpdatedAt: query.dataUpdatedAt, organizationId, leadId,
   });
-  if (query.isFetching || !query.isSuccess || !confirmed) {
+  if (!query.isSuccess || !confirmed) {
     const message = 'Atualizando o lead. Aguarde a confirmação do acesso para registrar alterações.';
     return { kind: 'refreshing', hideDetails: false, message, blockedReason: message,
       canRetry: false, retrying: query.isFetching };
@@ -56,7 +56,12 @@ export function getLeadDetailReadState({ leadId, organizationId, leadOrganizatio
   if (typeof query.data?.can_operate !== 'boolean') {
     const message = 'Não foi possível confirmar as ações disponíveis. Tente atualizar o lead.';
     return { kind: 'error', hideDetails: false, message, blockedReason: message,
-      canRetry: true, retrying: false };
+      canRetry: true, retrying: query.isFetching };
+  }
+  if (query.isFetching) {
+    return { kind: 'revalidating', hideDetails: false, message: '',
+      blockedReason: 'Aguarde a confirmação do acesso para registrar alterações.',
+      canRetry: false, retrying: true };
   }
   return { kind: 'ready', hideDetails: false, message: '', canRetry: false, retrying: false,
     blockedReason: query.data.can_operate ? undefined : 'Seu acesso a este lead permite apenas visualização.' };

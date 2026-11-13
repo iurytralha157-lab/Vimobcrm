@@ -96,6 +96,21 @@ test('a fresh read-only capability is a valid read, not a recoverable permission
   } finally { f.close(); }
 });
 
+test('background revalidation keeps an already confirmed lead visible and blocks actions until it resolves', async () => {
+  const f = fixture();
+  try {
+    await f.resolve(lead());
+    const pending = f.observer.refetch();
+    const state = f.state();
+    assert.equal(state.kind, 'revalidating');
+    assert.equal(state.hideDetails, false);
+    assert.equal(state.message, '');
+    assert.ok(state.blockedReason);
+    await f.resolve(lead()); await pending;
+    assert.equal(f.state().kind, 'ready');
+  } finally { f.close(); }
+});
+
 for (const status of [401, 403, 404]) test(`HTTP ${status} hides even a retained successful snapshot and keeps that state during retry`, async () => {
   const f = fixture(lead());
   try {

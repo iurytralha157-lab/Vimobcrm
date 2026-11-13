@@ -670,6 +670,16 @@ body {
   color: var(--app-text-primary) !important;
 }
 
+.vimob-dialog-content
+  .stage-operational-rules-form
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    button[role="combobox"]
+  ) {
+  background: var(--app-surface-hover) !important;
+}
+
 .vimob-dialog-content :where(input::placeholder, textarea::placeholder) {
   color: var(--app-text-muted) !important;
 }

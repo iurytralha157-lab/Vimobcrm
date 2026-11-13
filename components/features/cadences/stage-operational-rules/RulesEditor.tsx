@@ -313,7 +313,7 @@ export function RulesEditor({
 
   return (
     <>
-      <form id={formId} onSubmit={handleSubmit} className="space-y-4 pb-2">
+      <form id={formId} onSubmit={handleSubmit} className="stage-operational-rules-form space-y-4 pb-2">
         <fieldset disabled={updateRules.isPending || isReloading} className="space-y-4">
         <CadenceSection
           draft={draft}

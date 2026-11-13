@@ -7,7 +7,7 @@ export function LeadDetailReadNotice({ state, onRetry, onClose }: {
   onRetry: () => void;
   onClose?: () => void;
 }) {
-  if (state.kind === 'ready') return null;
+  if (state.kind === 'ready' || state.kind === 'revalidating') return null;
   return (
     <div data-lead-read-notice role="status" aria-live="polite" aria-busy={state.retrying}
       className="shrink-0 space-y-2 bg-[var(--app-surface-soft)] px-3 py-2 text-xs font-light text-[var(--app-text-secondary)]">
